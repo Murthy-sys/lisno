@@ -88,6 +88,7 @@ function installClientDashboardApi() {
     if (url.endsWith("/api/v1/client/estimates")) {
       return Response.json({ data: [] });
     }
+    if (url.endsWith("/design-workflow")) return Response.json({ data: { projectId: url.split("/").at(-2), projectName: "Shared project", serverNow: new Date().toISOString(), floors: [] } });
     throw new Error(`Unhandled request: ${url}`);
   });
 }

@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import type { ClientDesignVersion, ClientProjectSummary } from "../../api/types";
 import { AsyncState } from "../../components/ui/AsyncState";
 import "../../styles/client-dashboard.css";
 import { getClientLatestApprovedVersions, getClientProjectSummaries, clientKeys } from "./clientApi";
 import { EstimateReviewPanel } from "../estimates/EstimateReviewPanel";
+import { ClientWorkflowTaskSummary } from "./ClientWorkflowTaskSummary";
 
 export function ClientDashboard() {
+  const [searchParams] = useSearchParams();
   const projectsQuery = useQuery({ queryKey: clientKeys.projects, queryFn: getClientProjectSummaries });
   const latestQuery = useQuery({ queryKey: clientKeys.latestVersions, queryFn: getClientLatestApprovedVersions });
   const projects = projectsQuery.data ?? [];
@@ -42,7 +44,7 @@ export function ClientDashboard() {
       </dl>
     </section>
     <section className="client-dashboard__estimates" aria-label="Estimate review">
-      <EstimateReviewPanel />
+      <EstimateReviewPanel selectedEstimateId={searchParams.get("estimate") ?? undefined} />
     </section>
     {/*
       Nothing is rendered for an empty account: the "Shared projects" tile
@@ -84,6 +86,7 @@ function ClientProjectCard({ project, latest, loading, failed, onRetry }: { proj
       </button>
     </div>
 
+    <ClientWorkflowTaskSummary projectId={project.id} projectName={project.name} />
     {expanded ? <div id={detailsId} className="client-project-card__details">
       <p>Expected completion: {formatDate(project.plannedEndAt)}</p>
       <div className="client-project-card__update"><span>Latest approved update</span>{loading ? <strong>Loading approved plans…</strong> : failed ? <><strong>Latest approved update unavailable.</strong><button type="button" className="button button--secondary" onClick={onRetry}>Retry approved updates</button></> : latest ? <strong>{latest.originalFilename}</strong> : <strong>No approved plan available yet.</strong>}</div>

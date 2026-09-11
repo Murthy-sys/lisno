@@ -1,8 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { ApiError } from "../../api/client";
+import { ROLE_LABELS } from "../../api/authorization-contract";
 import type { DesignPlanReviewTask } from "../../api/types";
+import { useAuth } from "../../auth/AuthProvider";
+import { hasFrontendPermission } from "../../auth/authorization";
 import { Button } from "../../components/ui/Button";
 import { Field, FileInput, Radio, Textarea } from "../../components/ui/Field";
 import { PageHeader } from "../../components/ui/PageHeader";
@@ -10,16 +13,23 @@ import { PageState } from "../../components/ui/PageState";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
 import { DownloadButton } from "../../components/ui/DownloadButton";
+import { ProgressBar } from "../../components/ui/ProgressBar";
+import { DesignPlanAttachmentPreview } from "../workflow/DesignPlanAttachmentPreview";
+import { clientKeys } from "../client/clientApi";
+import { designerKeys } from "../designer/designerApi";
+import { estimateDesignKeys } from "../leads/estimateDesignApi";
 import { projectFinanceKeys } from "../finance/projectFinanceApi";
 import { adminProjectKeys } from "./adminProjectsApi";
 import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 import {
   decideDesignPlanReview,
   downloadDesignPlanReviewAttachment,
+  downloadDesignPlanReviewProof,
   getDesignPlanReviewTasks,
   projectWorkflowKeys,
   retryDesignPlanReviewEmail
 } from "../workflow/projectWorkflowApi";
+import "../workflow/projectClientActions.css";
 
 const submittedAt = new Intl.DateTimeFormat("en-GB", {
   dateStyle: "medium",
@@ -66,30 +76,59 @@ export function DesignPlanResponseInboxPage() {
   );
 }
 
-function DesignReviewCard({ task }: { task: DesignPlanReviewTask }) {
+export function DesignReviewCard({ task }: { task: DesignPlanReviewTask }) {
+  // A newer server version requires a fresh decision and proof selection.
+  return <DesignReviewCardContent key={`${task.id}:${task.version}`} task={task} />;
+}
+
+function DesignReviewCardContent({ task }: { task: DesignPlanReviewTask }) {
   const client = useQueryClient();
+  const { user, authorization } = useAuth();
+  const canDecide = task.status === "pending" && task.canDecide === true &&
+    (user?.role === "admin" || user?.role === "super_admin") &&
+    hasFrontendPermission(authorization, "design.plan_response_tasks.decide");
   const [decision, setDecision] = useState<"approve" | "request_changes">("approve");
   const [note, setNote] = useState("");
   const [proof, setProof] = useState<File | null>(null);
   const [validation, setValidation] = useState("");
+  const [progress, setProgress] = useState(0);
+  const [stale, setStale] = useState(false);
+  const [recorded, setRecorded] = useState(false);
+  const inFlight = useRef(false);
+  const proofRef = useRef<HTMLInputElement>(null);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
   const mutation = useMutation({
     mutationFn: () => decideDesignPlanReview({
       roundId: task.id,
       expectedVersion: task.version,
       decision,
-      note,
+      note: note.trim(),
       proof: proof!
-    }),
+    }, setProgress),
     onSuccess: async (updated) => {
+      setRecorded(true);
       await Promise.all([
         client.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
         client.invalidateQueries({ queryKey: adminProjectKeys.all }),
         client.invalidateQueries({ queryKey: dashboardKeys.all }),
         client.invalidateQueries({ queryKey: projectFinanceKeys.projects }),
         client.invalidateQueries({ queryKey: projectFinanceKeys.bucket(updated.projectId) }),
-        client.invalidateQueries({ queryKey: projectFinanceKeys.entries(updated.projectId) })
+        client.invalidateQueries({ queryKey: projectFinanceKeys.entries(updated.projectId) }),
+        client.invalidateQueries({ queryKey: clientKeys.projects }),
+        client.invalidateQueries({ queryKey: clientKeys.latestVersions }),
+        client.invalidateQueries({ queryKey: designerKeys.all }),
+        client.invalidateQueries({ queryKey: estimateDesignKeys.all }),
+        client.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(task.estimateId) }),
+        client.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(task.estimateId) })
       ]);
-    }
+    },
+    onError: async (error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        setStale(true);
+        await client.invalidateQueries({ queryKey: projectWorkflowKeys.all });
+      }
+    },
+    onSettled: () => { inFlight.current = false; }
   });
   const retryEmail = useMutation({
     mutationFn: () => retryDesignPlanReviewEmail(task.id, task.version),
@@ -105,22 +144,38 @@ function DesignReviewCard({ task }: { task: DesignPlanReviewTask }) {
   });
 
   const submit = () => {
+    if (inFlight.current || !canDecide || stale || recorded || retryEmail.isPending) return;
     if (!proof) {
       setValidation("Upload proof of the Client's design decision.");
+      proofRef.current?.focus();
+      return;
+    }
+    if (!/\.(pdf|jpe?g|png|webp)$/iu.test(proof.name) ||
+      (proof.type && !["application/pdf", "image/jpeg", "image/png", "image/webp"].includes(proof.type))) {
+      setValidation("Choose a PDF, JPG, PNG, or WebP proof file.");
+      proofRef.current?.focus();
       return;
     }
     if (decision === "request_changes" && !note.trim()) {
       setValidation("Explain the Client's requested design changes.");
+      noteRef.current?.focus();
+      return;
+    }
+    if (note.trim().length > 1000) {
+      setValidation("Keep the note within 1000 characters.");
+      noteRef.current?.focus();
       return;
     }
     setValidation("");
+    setProgress(0);
+    inFlight.current = true;
     mutation.mutate();
   };
 
   const changesRequested = decision === "request_changes";
-  const retryable = task.status === "pending" &&
+  const retryable = canDecide && !recorded && !stale &&
     (task.deliveryStatus === "failed" || task.deliveryStatus === "disabled");
-  const busy = mutation.isPending || retryEmail.isPending;
+  const busy = mutation.isPending || retryEmail.isPending || stale;
   const noteId = `design-review-note-${task.id}`;
   const proofId = `design-review-proof-${task.id}`;
 
@@ -133,6 +188,10 @@ function DesignReviewCard({ task }: { task: DesignPlanReviewTask }) {
           <p>{task.clientName}</p>
         </div>
         <div className="design-review-card__delivery">
+          {task.status !== "pending" ? <StatusBadge
+            tone={task.status === "approved" ? "success" : task.status === "changes_requested" ? "warning" : "neutral"}
+            label={task.status === "approved" ? "Approved" : task.status === "changes_requested" ? "Changes requested" : "Withdrawn"}
+          /> : null}
           <StatusBadge
             tone={task.deliveryStatus === "failed"
               ? "danger"
@@ -191,6 +250,7 @@ function DesignReviewCard({ task }: { task: DesignPlanReviewTask }) {
         {task.attachmentNames.map((attachmentName, attachmentIndex) => (
           <li key={`${attachmentIndex}-${attachmentName}`}>
             <span>{attachmentName}</span>
+            <DesignPlanAttachmentPreview roundId={task.id} attachmentIndex={attachmentIndex} filename={attachmentName} />
             <DownloadButton
               iconOnly
               label={`Download ${attachmentName}`}
@@ -204,8 +264,29 @@ function DesignReviewCard({ task }: { task: DesignPlanReviewTask }) {
         ))}
       </ul>
 
-      <form
+      {task.decision ? <div className="design-review-card__history" aria-label="Decision history">
+        <h3>Client decision recorded</h3>
+        <dl className="design-review-card__meta">
+          <div><dt>Performed by</dt><dd>{task.decision.performedByName ?? "Name unavailable"}</dd></div>
+          <div><dt>Role at decision</dt><dd>{task.decision.performedByRole ? ROLE_LABELS[task.decision.performedByRole] : "Role unavailable"}</dd></div>
+          <div><dt>Recorded</dt><dd><time dateTime={task.decision.performedAt}>{submittedAt.format(new Date(task.decision.performedAt))} UTC</time></dd></div>
+          <div><dt>Decision</dt><dd>{task.decision.action === "approve" ? "Approved" : "Changes requested"}</dd></div>
+        </dl>
+        {task.decision.source === "admin_proof" && task.decision.onBehalfOfClient ? <p>Recorded on behalf of the Client.</p> : null}
+        {task.decision.note ? <p className="design-review-card__history-note">{task.decision.note}</p> : null}
+        {task.decision.proof ? <DownloadButton
+          label={`Download decision proof: ${task.decision.proof.filename}`}
+          loadingLabel="Downloading decision proof…"
+          errorMessage="The decision proof could not be downloaded."
+          fallbackFilename={task.decision.proof.filename}
+          getFile={() => downloadDesignPlanReviewProof(task.id)}
+          className="ui-button ui-button--secondary ui-button--compact"
+        /> : null}
+      </div> : task.status !== "pending" ? <p>Decision details are unavailable for this review.</p> : null}
+
+      {recorded ? <p role="status">Client design response recorded.</p> : canDecide ? <form
         className="design-review-card__form"
+        noValidate
         onSubmit={(event) => {
           event.preventDefault();
           submit();
@@ -241,11 +322,12 @@ function DesignReviewCard({ task }: { task: DesignPlanReviewTask }) {
           {(controlProps) => (
             <Textarea
               {...controlProps}
+              ref={noteRef}
               rows={3}
               value={note}
               maxLength={1000}
               disabled={busy}
-              onChange={(event) => setNote(event.target.value)}
+              onChange={(event) => { setNote(event.target.value); setValidation(""); }}
             />
           )}
         </Field>
@@ -259,10 +341,11 @@ function DesignReviewCard({ task }: { task: DesignPlanReviewTask }) {
           {(controlProps) => (
             <FileInput
               {...controlProps}
+              ref={proofRef}
               aria-label="Client decision proof"
               accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp"
               disabled={busy}
-              onChange={(event) => setProof(event.target.files?.[0] ?? null)}
+              onChange={(event) => { setProof(event.target.files?.[0] ?? null); setValidation(""); }}
             />
           )}
         </Field>
@@ -272,11 +355,14 @@ function DesignReviewCard({ task }: { task: DesignPlanReviewTask }) {
         ) : null}
         {mutation.isError ? (
           <p className="design-review-card__error" role="alert">
-            {mutation.error instanceof ApiError
+            {stale ? "This Client response task changed. Review the refreshed task before deciding."
+              : mutation.error instanceof ApiError
               ? mutation.error.message
               : "The design decision could not be recorded."}
           </p>
         ) : null}
+        {mutation.isPending ? <ProgressBar value={progress} label="Decision proof upload"
+          valueText={progress >= 100 ? "Upload complete. Recording decision…" : `${progress}% uploaded`} /> : null}
 
         <div className="design-review-card__actions">
           <Button
@@ -284,12 +370,12 @@ function DesignReviewCard({ task }: { task: DesignPlanReviewTask }) {
             variant={changesRequested ? "primary" : "success"}
             busy={mutation.isPending}
             busyLabel="Recording…"
-            disabled={retryEmail.isPending}
+            disabled={busy}
           >
             {changesRequested ? "Send changes with proof" : "Approve with proof"}
           </Button>
         </div>
-      </form>
+      </form> : task.status === "pending" ? <p className="design-review-card__readonly">Awaiting the Client's design response.</p> : null}
     </Surface>
   );
 }

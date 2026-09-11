@@ -26,6 +26,7 @@ import { StatusBadge } from "../../components/ui/StatusBadge";
 import { designerKeys } from "./designerApi";
 import { DesignUploadsWorkspace } from "./DesignUploadsWorkspace";
 import { EstimatePlanChangeRequests } from "../leads/EstimatePlanChangeRequests";
+import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
 import {
   ProjectStructureDialog,
   type StructureAction
@@ -144,6 +145,21 @@ export function ProjectWorkspace() {
           </strong>
         </div>
       </div>
+
+      <ProjectWorkflowPanel
+        projectId={project.id}
+        presentation="designer"
+        onOpenTask={(taskId) => {
+          const task = findTask(project, taskId);
+          if (!task) return;
+          setOpenFloors((current) => new Set([...current, task.floorId]));
+          setOpenStages((current) => new Set([...current, task.stageId]));
+          requestAnimationFrame(() => {
+            document.getElementById(`workflow-task-${taskId}`)?.scrollIntoView({ block: "center" });
+            document.getElementById(`workflow-task-${taskId}`)?.focus();
+          });
+        }}
+      />
 
       <details className="project-plan-requests" open={planRequestsOpen} onToggle={(event) => setPlanRequestsOpen(event.currentTarget.open)}>
         <summary>Client plan change requests</summary>

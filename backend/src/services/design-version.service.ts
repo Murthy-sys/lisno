@@ -16,6 +16,7 @@ import type {
 import type { FileStorage } from "../storage/storage.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
+import { assertDesignWorkflowSubmissionAllowed } from "./design-workflow-state.service.js";
 import {
   forbidden,
   requireActor,
@@ -113,6 +114,7 @@ export function createDesignVersionService(
       ) {
         forbidden();
       }
+      await assertDesignWorkflowSubmissionAllowed(repository, project.id, { phase: "upload" });
 
       let stored;
       try {
@@ -131,6 +133,7 @@ export function createDesignVersionService(
       const uploadedAt = clock().toISOString();
       try {
         const created = await repository.runInTransaction(async (transaction) => {
+          await assertDesignWorkflowSubmissionAllowed(transaction, project.id, { lock: true, phase: "upload" });
           const version = await transaction.createNextDesignVersion({
             projectId: task.projectId,
             floorId: task.floorId,

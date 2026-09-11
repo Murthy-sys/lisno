@@ -7,9 +7,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { apiClient } from "../../api/client";
 import type { DesignPlanReviewTask } from "../../api/types";
 import { renderWithQuery } from "../../test/render";
+import { authorizationFor } from "../../test/authFixtures";
 import { server } from "../../test/server";
 import { DesignPlanResponseInboxPage } from "./DesignPlanResponseInboxPage";
 import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
+
+vi.mock("../../auth/AuthProvider", () => ({
+  useAuth: () => ({ user: { role: "admin" }, authorization: authorizationFor("admin", ["design.plan_response_tasks.read", "design.plan_response_tasks.decide"]) })
+}));
 
 const pendingReview: DesignPlanReviewTask = {
   id: "design-round-1",
@@ -22,7 +27,8 @@ const pendingReview: DesignPlanReviewTask = {
   deliveryStatus: "sent",
   submittedAt: "2026-08-25T08:15:00.000Z",
   version: 4,
-  attachmentNames: ["ground-floor-plan.pdf"]
+  attachmentNames: ["ground-floor-plan.pdf"],
+  canDecide: true
 };
 
 afterEach(() => vi.restoreAllMocks());
@@ -36,7 +42,7 @@ describe("DesignPlanResponseInboxPage", () => {
     const getBlob = vi.spyOn(apiClient, "getBlob").mockImplementation(
       () => new Promise(() => undefined)
     );
-    vi.spyOn(apiClient, "postMultipart").mockImplementation(
+    vi.spyOn(apiClient, "postMultipartWithProgress").mockImplementation(
       async function <T>(path: string, body: FormData): Promise<T> {
         decisionPath = path;
         submitted = body;

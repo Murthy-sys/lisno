@@ -235,8 +235,8 @@ export function AdminProjectInitiationDialog({
       eyebrow="Project administration"
       title="Initiate project"
       description={selectsSalesManager
-        ? "Create your project and select the Sales Manager who will oversee it."
-        : "Create the project now and hand its lead to Sales."}
+        ? "Create your project and select the Sales Manager who will oversee it. The six-stage design workflow is included."
+        : "Create the project now and hand its lead to Sales. The six-stage design workflow is included."}
       onClose={onClose}
       busy={mutation.isPending}
     >

@@ -1,4 +1,5 @@
 export const EXISTING_AUDIT_ACTIONS = [
+  "design_workflow_action_recorded",
   "client_project_linked",
   "client_signed_up",
   "design_extraction_completed",

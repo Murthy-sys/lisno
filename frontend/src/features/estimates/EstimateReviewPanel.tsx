@@ -50,7 +50,7 @@ for (const section of estimateBuilderSections) {
   }
 }
 
-export function EstimateReviewPanel() {
+export function EstimateReviewPanel({ selectedEstimateId }: { selectedEstimateId?: string } = {}) {
   const role = useAuth().user!.role;
   const queryClient = useQueryClient();
   const [designerByEstimate, setDesignerByEstimate] = useState<Record<string, string>>({});
@@ -114,6 +114,7 @@ export function EstimateReviewPanel() {
       actionPending={action.isPending && action.variables?.id === estimate.id}
       designers={designers.data ?? []}
       estimate={estimate}
+      initiallyExpanded={estimate.id === selectedEstimateId}
       key={estimate.id}
       note={noteByEstimate[estimate.id] ?? ""}
       role={role}
@@ -143,6 +144,7 @@ function canReviewDesign(role: Role, estimate: EstimateQueueItem) {
 
 function EstimateReviewCard({
   estimate,
+  initiallyExpanded = false,
   role,
   actionable,
   designers,
@@ -155,6 +157,7 @@ function EstimateReviewCard({
   onAction
 }: {
   estimate: EstimateQueueItem;
+  initiallyExpanded?: boolean;
   role: Role;
   actionable: boolean;
   designers: Awaited<ReturnType<typeof getEstimateDesigners>>;
@@ -167,7 +170,7 @@ function EstimateReviewCard({
   onAction: (action: "assign" | "approve" | "changes") => void;
 }) {
   const queryClient = useQueryClient();
-  const [clientExpanded, setClientExpanded] = useState(false);
+  const [clientExpanded, setClientExpanded] = useState(initiallyExpanded);
   const [selectedPlanPage, setSelectedPlanPage] = useState<EstimatePlanPage>();
   const isClient = role === "client";
   const detailsId = `client-estimate-${estimate.id}-details`;

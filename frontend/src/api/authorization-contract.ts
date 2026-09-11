@@ -106,6 +106,9 @@ export const PERMISSION_CODES = [
   "projects.client_summary.read",
   "projects.create",
   "projects.read",
+  "projects.design_workflow.read",
+  "projects.design_workflow.act",
+  "projects.design_workflow.payments.read",
   "projects.initiate",
   "projects.floor.create",
   "projects.stage.create",
@@ -226,7 +229,7 @@ export const PERMISSION_CODES = [
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-09-09.designer-upload-delete.v1" as const;
+  "2026-09-12.design-workflow-actions.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

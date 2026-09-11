@@ -19,7 +19,7 @@ import { UserModel } from "../src/models/User.js";
 import type { AuditService } from "../src/services/audit.service.js";
 import { createEstimateDecisionService } from "../src/services/estimate-decision.service.js";
 import { createEstimateDesignService } from "../src/services/estimate-design.service.js";
-import { createProjectWorkflowService } from "../src/services/project-workflow.service.js";
+import { createProjectWorkflowService, DesignDecisionProofRetentionError } from "../src/services/project-workflow.service.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
 const NOW = new Date("2026-08-25T10:00:00.000Z");
@@ -1329,7 +1329,9 @@ describe("Design review replacement delivery and Admin feedback", () => {
     expect(decidedRound).toMatchObject({
       status: "changes_requested",
       decision: "request_changes",
-      decisionSource: "admin_proof"
+      decisionSource: "admin_proof",
+      decidedByName: superAdmin.name,
+      decidedByRole: "super_admin"
     });
     expect(await DesignPlanResponseProofModel.countDocuments({
       reviewRoundId: prepared.roundId
@@ -2857,4 +2859,131 @@ async function createOperationalCompletionFixture(
     createdAt,
     updatedAt: createdAt
   })));
+}
+
+
+describe("scoped Design review history and evidence", () => {
+  it("filters within the project before the inbox limit and keeps legacy snapshots nullable", async () => {
+    const { workflow, admin, client, designer } = await createReviewEvidenceFixture();
+    await DesignPlanReviewRoundModel.collection.insertMany(Array.from({ length: 105 }, (_, i) => ({
+      _id: `foreign-${i}`, estimateId: "foreign-estimate", projectId: "foreign-project", leadId: "foreign-lead",
+      projectName: "Foreign project", clientName: "Foreign client", designPlanVersion: i + 1,
+      assignedAdminId: admin.id, status: "pending", deliveryStatus: "sent", submittedAt: new Date(NOW.getTime() + i + 1), version: 1, attachments: []
+    })));
+    for (const actor of [admin, client, designer]) {
+      const result = await workflow.listDesignReviewTasks(actor, undefined, "evidence-project");
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({ id: "evidence-round", decision: null, canDecide: actor.role === "admin" });
+    }
+    await expect(workflow.listDesignReviewTasks(client)).rejects.toMatchObject({ status: 400 });
+    await expect(workflow.listDesignReviewTasks(designer, undefined, "foreign-project")).rejects.toMatchObject({ status: 404 });
+    await expect(workflow.listDesignReviewTasks({ ...client, id: "other-client" }, undefined, "evidence-project")).rejects.toMatchObject({ status: 404 });
+    await DesignPlanReviewRoundModel.updateOne({ _id: "evidence-round" }, { $set: { status: "approved", decision: "approve", decisionSource: "client_portal", decidedById: client.id, decidedAt: NOW } });
+    const legacy = (await workflow.listDesignReviewTasks(client, undefined, "evidence-project"))[0]!;
+    expect(legacy.decision).toMatchObject({ performedByName: null, performedByRole: null, proof: null, onBehalfOfClient: false });
+  });
+
+  it("stores actual performer snapshots and immutable evidence, scopes downloads and verifies bytes", async () => {
+    const { workflow, admin, client, designer, proof, read } = await createReviewEvidenceFixture();
+    const outcome = await workflow.decideDesignReviewAsAdmin({ actor: admin, roundId: "evidence-round", expectedVersion: 1, decision: "request_changes", note: "Client requested a revision.", proof });
+    expect(outcome).toMatchObject({ canDecide: false, decision: {
+      action: "request_changes", performedById: admin.id, performedByName: admin.name, performedByRole: "admin",
+      performedAt: NOW.toISOString(), onBehalfOfClient: true,
+      proof: { filename: "approval.pdf", mimeType: "application/pdf", byteSize: proof.byteSize }
+    } });
+    for (const actor of [admin, client, designer]) {
+      expect((await workflow.listDesignReviewTasks(actor, undefined, "evidence-project"))[0]!.decision).toEqual(outcome.decision);
+      expect((await workflow.readDesignReviewProof(actor, "evidence-round")).bytes).toEqual(Buffer.from("proof evidence"));
+    }
+    await expect(workflow.decideDesignReviewAsAdmin({ actor: admin, roundId: "evidence-round", expectedVersion: 1, decision: "approve", note: "", proof })).rejects.toMatchObject({ status: 409 });
+    await expect(workflow.readDesignReviewProof({ ...client, id: "other-client" }, "evidence-round")).rejects.toMatchObject({ status: 404 });
+    await ProjectAccessGrantModel.updateOne({ _id: "evidence-grant" }, { $set: { active: false } });
+    await expect(workflow.readDesignReviewProof(admin, "evidence-round")).rejects.toMatchObject({ status: 404 });
+    await expect(workflow.requireDesignReviewDecisionScope(admin, "evidence-round")).rejects.toMatchObject({ status: 404 });
+    read.mockResolvedValueOnce(Buffer.from("tampered evidence"));
+    await expect(workflow.readDesignReviewProof(client, "evidence-round")).rejects.toMatchObject({ status: 409, code: "DESIGN_PLAN_PROOF_UNAVAILABLE" });
+    expect(await DesignPlanResponseProofModel.countDocuments({ reviewRoundId: "evidence-round" })).toBe(1);
+  });
+
+  it("recovers an acknowledged-late committed decision without discarding its proof", async () => {
+    const { workflow, admin, proof } = await createReviewEvidenceFixture();
+    const session = await mongoose.startSession();
+    const originalTransaction = session.withTransaction.bind(session);
+    const transactionSpy = vi.spyOn(session, "withTransaction").mockImplementation(async (...args: any[]) => {
+      await originalTransaction(args[0], args[1]);
+      throw new Error("Commit reply unavailable after successful commit");
+    });
+    const startSpy = vi.spyOn(mongoose, "startSession").mockResolvedValueOnce(session);
+    try {
+      const result = await workflow.decideDesignReviewAsAdmin({ actor: admin, roundId: "evidence-round", expectedVersion: 1, decision: "request_changes", note: "Client requested changes.", proof });
+      expect(result.status).toBe("changes_requested");
+      expect(result.decision?.proof?.filename).toBe("approval.pdf");
+      expect(await DesignPlanResponseProofModel.countDocuments({ reviewRoundId: "evidence-round" })).toBe(1);
+    } finally { startSpy.mockRestore(); transactionSpy.mockRestore(); }
+  });
+
+  it.each([false, true])("handles an aborted transaction after the callback with unknown commit label=%s", async (unknownCommit) => {
+    const { workflow, admin, proof } = await createReviewEvidenceFixture();
+    const failure = Object.assign(new Error("Transaction failed after callback"), {
+      errorLabels: unknownCommit ? ["UnknownTransactionCommitResult"] : []
+    });
+    const session = await mongoose.startSession();
+    const transactionSpy = vi.spyOn(session, "withTransaction").mockImplementation(async (callback: any) => {
+      session.startTransaction();
+      await callback(session);
+      await session.abortTransaction();
+      // Models and audit writes from the completed callback have been rolled back.
+      throw new Error("Transaction operation failed", { cause: failure });
+    });
+    const startSpy = vi.spyOn(mongoose, "startSession").mockResolvedValueOnce(session);
+    let caught: unknown;
+    try {
+      await workflow.decideDesignReviewAsAdmin({ actor: admin, roundId: "evidence-round", expectedVersion: 1, decision: "request_changes", note: "Please revise.", proof });
+    } catch (error) { caught = error; }
+    finally { startSpy.mockRestore(); transactionSpy.mockRestore(); }
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught instanceof DesignDecisionProofRetentionError).toBe(unknownCommit);
+    if (!unknownCommit) expect((caught as Error).cause).toBe(failure);
+    expect(await DesignPlanResponseProofModel.countDocuments({ reviewRoundId: "evidence-round" })).toBe(0);
+    expect(await DesignPlanReviewRoundModel.findById("evidence-round").lean()).toMatchObject({ status: "pending", version: 1 });
+  });
+
+  it("serializes competing decisions to one round and one evidence record", async () => {
+    const { workflow, admin, proof } = await createReviewEvidenceFixture();
+    const outcomes = await Promise.allSettled(["first", "second"].map((label) => workflow.decideDesignReviewAsAdmin({
+      actor: admin, roundId: "evidence-round", expectedVersion: 1, decision: "request_changes", note: label,
+      proof: { ...proof, storageReference: `proof/${label}.pdf` }
+    })));
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+    expect(await DesignPlanResponseProofModel.countDocuments({ reviewRoundId: "evidence-round" })).toBe(1);
+    expect(await DesignPlanReviewRoundModel.findById("evidence-round").lean()).toMatchObject({ version: 2 });
+  });
+
+  it("keeps Client portal decisions in the same round with the actual Client snapshot", async () => {
+    const { workflow, client } = await createReviewEvidenceFixture();
+    const session = await mongoose.startSession();
+    try { await session.withTransaction(async () => workflow.recordClientDrawingDecision("evidence-estimate", client, "request_changes", "Client portal revision", NOW, session)); }
+    finally { await session.endSession(); }
+    const [round] = await workflow.listDesignReviewTasks(client, undefined, "evidence-project");
+    expect(round?.decision).toMatchObject({ source: "client_portal", performedByName: client.name, performedByRole: "client", onBehalfOfClient: false, proof: null });
+  });
+});
+
+async function createReviewEvidenceFixture() {
+  const admin = { id: "evidence-admin", name: "Sales Manager at decision", role: "admin", email: "manager@example.test" } as const;
+  const client = { id: "evidence-client", name: "Client at decision", role: "client", email: "client@example.test" } as const;
+  const designer = { id: "evidence-designer", name: "Designer", role: "designer", email: "designer@example.test" } as const;
+  const bytes = Buffer.from("proof evidence");
+  const read = vi.fn(async () => bytes);
+  await Promise.all([
+    ProjectModel.collection.insertOne({ _id: "evidence-project", clientId: client.id, assignedDesignerIds: [designer.id], name: "Evidence project" } as never),
+    ProjectAccessGrantModel.collection.insertOne({ _id: "evidence-grant", projectId: "evidence-project", userId: admin.id, module: "projects", source: "admin_initiator", active: true } as never),
+    EstimateModel.collection.insertOne({ _id: "evidence-estimate", projectId: "evidence-project", status: "client_approved", designPlanStatus: "ready_for_client", designPlanVersion: 1, designFrozenAt: null } as never),
+    EstimateDesignDrawingModel.collection.insertOne({ _id: "evidence-drawing", estimateId: "evidence-estimate", uploadId: "evidence-upload", active: true } as never),
+    EstimateDesignRevisionModel.collection.insertOne({ _id: "evidence-revision", drawingId: "evidence-drawing", sourcePageId: "evidence-page", revisionNumber: 1, reviewStatus: "submitted" } as never),
+    DesignPlanReviewRoundModel.create({ _id: "evidence-round", estimateId: "evidence-estimate", projectId: "evidence-project", leadId: "evidence-lead", projectName: "Evidence project", clientName: client.name, recipientEmail: client.email, designPlanVersion: 1, submittedRevisionIds: ["evidence-revision"], attachments: [{ uploadId: "evidence-upload", filename: "plan.pdf", mimeType: "application/pdf", byteSize: bytes.length, sha256: sha256Hex(bytes), storageReference: "plan/source.pdf" }], submittedById: designer.id, submittedAt: NOW, assignedAdminId: admin.id, deliveryStatus: "sent", status: "pending", version: 1 })
+  ]);
+  const workflow = createProjectWorkflowService({ storage: { read } as never, mailer: { deliveryKind: "disabled" }, portalUrl: "https://portal.example.test/client", audit: { appendInMongoTransaction: vi.fn(async () => ({ id: "evidence-audit" })) } as never, now: () => NOW });
+  return { workflow, admin, client, designer, read, proof: { storageReference: "proof/approval.pdf", originalFilename: "approval.pdf", mimeType: "application/pdf" as const, byteSize: bytes.length, sha256: sha256Hex(bytes) } };
 }

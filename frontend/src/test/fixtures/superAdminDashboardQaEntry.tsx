@@ -2,6 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 
+import { tokenStorage } from "../../api/client";
+import { AuthProvider } from "../../auth/AuthProvider";
 import { FeedbackProvider } from "../../components/feedback/FeedbackProvider";
 import {
   dashboardProjectRowsFixture,
@@ -12,6 +14,7 @@ import {
 } from "../../features/admin/dashboard/dashboardFixtures";
 import { SuperAdminDashboardPage } from "../../features/admin/dashboard/SuperAdminDashboardPage";
 import { dashboardKeys } from "../../features/admin/dashboard/superAdminDashboardApi";
+import { authorizationFor } from "../authFixtures";
 import "../../styles/index.css";
 import "../../styles/role-themes.css";
 
@@ -73,8 +76,13 @@ const workforcePage = qaState === "empty"
   ? { ...superAdminDashboardWorkforcePageFixture, items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false } }
   : { ...superAdminDashboardWorkforcePageFixture, items: dashboardWorkforceRowsFixture };
 
+// Like the dashboard metrics, this QA session is served entirely by the stub transport.
+tokenStorage.set("dashboard-qa-token");
 window.fetch = async (input) => {
   const path = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  if (path.includes("/auth/me")) return Response.json({ data: { id: "dashboard-qa-super-admin", name: "Dashboard reviewer", email: "dashboard-reviewer@lisno.example", role: "super_admin" } });
+  if (path.includes("/auth/authorization")) return Response.json({ data: authorizationFor("super_admin", ["admin.dashboard.read", "projects.design_workflow.payments.read"]) });
+  if (path.includes("/design-workflow/payment-confirmations")) return Response.json({ data: [] });
   if (path.includes("/admin/dashboard/overview")) {
     if (qaState === "loading" || qaState === "background-refresh") {
       return new Promise<Response>(() => undefined);
@@ -105,9 +113,11 @@ if (qaState === "background-refresh") {
 createRoot(document.getElementById("root")!).render(
   <QueryClientProvider client={queryClient}>
     <BrowserRouter>
+      <AuthProvider>
       <FeedbackProvider>
         <main className="app-main"><SuperAdminDashboardPage /></main>
       </FeedbackProvider>
+      </AuthProvider>
     </BrowserRouter>
   </QueryClientProvider>
 );

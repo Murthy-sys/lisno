@@ -22,7 +22,7 @@ const clientSignupSchema = z
     name: z.string().trim().min(1, "Name is required."),
     email: normalizedEmailSchema,
     mobile: z.string().trim().min(1, "Mobile is required."),
-    address: z.string().trim().min(1, "Address is required."),
+    address: z.string().trim().optional(),
     password: z
       .string()
       .min(12, "Password must be at least 12 characters.")

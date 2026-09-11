@@ -158,6 +158,50 @@ function CachedReview({ data }: { data: DesignSectionReviewData }) {
 }
 
 describe("DesignSectionReview", () => {
+  it("keeps populated client reviews collapsed until opened and preserves review actions", async () => {
+    tokenStorage.set("client-token");
+    vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:section-preview"), revokeObjectURL: vi.fn() });
+    const api = installApi();
+    renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" hideWhenEmpty collapsible />);
+    const user = userEvent.setup();
+    const summary = await screen.findByText("Design review");
+    expect(summary).toHaveTextContent("2 awaiting review");
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+    expect(screen.queryByRole("article", { name: "Front elevation review" })).not.toBeInTheDocument();
+    expect(api.mock.calls.some(([input]) => apiRequestPath(input).endsWith("/image"))).toBe(false);
+    await user.click(summary);
+    expect(await screen.findByRole("article", { name: "Front elevation review" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Approve Front elevation" }));
+    await user.click(screen.getByRole("button", { name: "Confirm approval" }));
+    expect(await screen.findByRole("article", { name: "Site plan review" })).toBeVisible();
+    expect(summary).toHaveTextContent("1 awaiting review");
+    await user.click(summary);
+    await waitFor(() => expect(screen.queryByRole("article", { name: "Site plan review" })).not.toBeInTheDocument());
+  });
+
+  it("omits the empty client review section when requested", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
+    queryClient.setQueryData(clientKeys.designSections("project-1"), {
+      projectId: "project-1", sections: [], progress: { approved: 0, rejected: 0, awaitingReview: 0, total: 0 }
+    });
+    const { container } = render(<QueryClientProvider client={queryClient}><DesignSectionReview projectId="project-1" mode="client" hideWhenEmpty collapsible /></QueryClientProvider>);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("keeps failed compact reviews retryable without an empty review card", async () => {
+    const options = { failList: true };
+    installApi(options);
+    renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" hideWhenEmpty collapsible />);
+    const user = userEvent.setup();
+    const retry = await screen.findByRole("button", { name: "Retry design reviews" });
+    expect(screen.queryByRole("heading", { name: "Design review" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "No plans ready for review" })).not.toBeInTheDocument();
+    options.failList = false;
+    await user.click(retry);
+    expect(await screen.findByText("2 awaiting review")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Retry design reviews" })).not.toBeInTheDocument();
+  });
+
   it("shows submitted revisions with a project-level source modal, history, and semantic progress", async () => {
     tokenStorage.set("client-token");
     vi.stubGlobal("URL", {

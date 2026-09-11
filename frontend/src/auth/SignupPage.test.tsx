@@ -12,7 +12,6 @@ const signup = {
   name: "Priya Shah",
   email: "priya@example.com",
   mobile: "+91 98765 43210",
-  address: "42 Garden Lane, Bengaluru",
   password: "StrongPassword!23",
   passwordConfirmation: "StrongPassword!23"
 };
@@ -21,13 +20,12 @@ async function fillSignupForm() {
   await userEvent.type(screen.getByLabelText("Full name"), signup.name);
   await userEvent.type(screen.getByLabelText("Email address"), signup.email);
   await userEvent.type(screen.getByLabelText("Mobile number"), signup.mobile);
-  await userEvent.type(screen.getByLabelText("Address"), signup.address);
   await userEvent.type(screen.getByLabelText("Password", { exact: true }), signup.password);
   await userEvent.type(screen.getByLabelText("Confirm password"), signup.passwordConfirmation);
 }
 
 describe("SignupPage", () => {
-  it("renders one page landmark and six fields through shared native controls", () => {
+  it("renders one page landmark and five fields without an address field", () => {
     const { container } = renderApp(["/signup"]);
 
     expect(container.querySelectorAll("main")).toHaveLength(1);
@@ -38,7 +36,6 @@ describe("SignupPage", () => {
       ["Full name", "signup-name", "name", "input"],
       ["Email address", "signup-email", "email", "input"],
       ["Mobile number", "signup-mobile", "tel", "input"],
-      ["Address", "signup-address", "street-address", "textarea"],
       ["Password", "signup-password", "new-password", "input"],
       ["Confirm password", "signup-password-confirmation", "new-password", "input"]
     ] as const;
@@ -49,6 +46,8 @@ describe("SignupPage", () => {
       expect(control).toHaveAttribute("id", id);
       expect(control).toHaveAttribute("autocomplete", autocomplete);
     }
+    expect(screen.queryByLabelText("Address")).not.toBeInTheDocument();
+    expect(container.querySelector("textarea")).not.toBeInTheDocument();
   });
 
   it("requires every client signup field and focuses the first invalid field", async () => {
@@ -62,7 +61,7 @@ describe("SignupPage", () => {
     expect(summary).toHaveTextContent("Name is required.");
     expect(summary).toHaveTextContent("Enter a valid email address.");
     expect(summary).toHaveTextContent("Mobile number is required.");
-    expect(summary).toHaveTextContent("Address is required.");
+    expect(summary).not.toHaveTextContent("Address is required.");
     expect(summary).toHaveTextContent("Password is required.");
     expect(summary).toHaveTextContent("Confirm your password.");
     expect(screen.getByLabelText("Full name")).toHaveFocus();
@@ -73,7 +72,6 @@ describe("SignupPage", () => {
     await userEvent.type(screen.getByLabelText("Full name"), signup.name);
     await userEvent.type(screen.getByLabelText("Email address"), "not-an-email");
     await userEvent.type(screen.getByLabelText("Mobile number"), signup.mobile);
-    await userEvent.type(screen.getByLabelText("Address"), signup.address);
     await userEvent.type(screen.getByLabelText("Password", { exact: true }), signup.password);
     await userEvent.type(screen.getByLabelText("Confirm password"), "DifferentPassword!23");
 
@@ -87,10 +85,12 @@ describe("SignupPage", () => {
     );
   });
 
-  it("submits backend-shaped signup input, persists the session, and enters the client dashboard", async () => {
+  it("submits signup without an address, persists the session, and enters the client dashboard", async () => {
     server.use(
       http.post("/api/v1/auth/client-signup", async ({ request }) => {
-        expect(await request.json()).toEqual(signup);
+        const payload = await request.json();
+        expect(payload).toEqual(signup);
+        expect(payload).not.toHaveProperty("address");
         return HttpResponse.json(
           {
             data: {
@@ -167,7 +167,6 @@ describe("SignupPage", () => {
       ["Full name", signup.name],
       ["Email address", signup.email],
       ["Mobile number", signup.mobile],
-      ["Address", signup.address],
       ["Password", signup.password],
       ["Confirm password", signup.passwordConfirmation]
     ] as const) {

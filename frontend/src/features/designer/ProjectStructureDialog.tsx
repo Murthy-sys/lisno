@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 
 import { ApiError } from "../../api/client";
 import type {
@@ -9,6 +10,7 @@ import type {
   DesignStageType
 } from "../../api/types";
 import { Dialog } from "../../components/ui/Dialog";
+import "./projectStructureDialog.css";
 import {
   createFloor,
   createStage,
@@ -46,10 +48,12 @@ interface StructureForm {
 }
 
 const stageTypes: Array<{ value: DesignStageType; label: string }> = [
-  { value: "internal_kickoff", label: "Internal kickoff" },
-  { value: "client_kickoff", label: "Client kickoff" },
-  { value: "key_collection", label: "Key collection" },
-  { value: "site_measurement", label: "Site measurement" },
+  { value: "internal_kickoff", label: "Internal Kick off" },
+  { value: "client_kickoff", label: "Client Kick off" },
+  { value: "key_collection", label: "Key Collection" },
+  { value: "site_measurement", label: "On Site Actual Measurement" },
+  { value: "existing_furniture_dimensions", label: "Collection of existing furniture dimensions" },
+  { value: "space_planning_tentative_look_feel", label: "Designer Uploading Space planning with Tentative look and Feel" },
   { value: "concept_mood_board", label: "Concept and mood board" },
   { value: "floor_plan", label: "Floor plan" },
   { value: "client_revisions", label: "Client revisions" },
@@ -59,7 +63,7 @@ const stageTypes: Array<{ value: DesignStageType; label: string }> = [
 
 function initialForm(action: StructureAction): StructureForm {
   return {
-    name: "",
+    name: action.kind === "stage" ? "Internal Kick off" : "",
     number: "",
     type: "internal_kickoff",
     title: "",
@@ -112,6 +116,7 @@ export function ProjectStructureDialog({
       );
     },
     onSuccess: async (record) => {
+      void queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.designWorkflow(action.projectId) });
       await queryClient.invalidateQueries({
         queryKey: designerKeys.project(action.projectId)
       });
@@ -128,6 +133,18 @@ export function ProjectStructureDialog({
 
   const update = (field: keyof StructureForm, value: string) => {
     setForm((current) => ({ ...current, [field]: value }));
+  };
+  const updateStageType = (type: DesignStageType) => {
+    setForm((current) => {
+      const currentLabel = stageTypes.find((option) => option.value === current.type)?.label;
+      const nextLabel = stageTypes.find((option) => option.value === type)?.label;
+      const useDefaultName = !current.name.trim() || current.name.trim() === currentLabel;
+      return {
+        ...current,
+        type,
+        name: useDefaultName && nextLabel ? nextLabel : current.name
+      };
+    });
   };
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -149,11 +166,13 @@ export function ProjectStructureDialog({
   return (
     <Dialog
       title={title}
-      description="Add the next part of this project's delivery structure."
+      description={action.kind === "floor"
+        ? "Add a floor with the project's design workflow stages."
+        : "Add the next part of this project's delivery structure."}
       onClose={onClose}
       busy={mutation.isPending}
     >
-      <form className="modal-form project-form" onSubmit={submit}>
+      <form className={`modal-form project-form project-structure-form${action.kind === "stage" ? " project-structure-form--stage" : ""}`} onSubmit={submit}>
         {error ? <div className="form-alert" role="alert">{error}</div> : null}
         {action.kind === "floor" ? (
           <>
@@ -169,7 +188,7 @@ export function ProjectStructureDialog({
             <Field label="Stage name" value={form.name} onChange={(value) => update("name", value)} />
             <label className="field">
               <span>Stage type</span>
-              <select value={form.type} onChange={(event) => update("type", event.target.value)}>
+              <select title={stageTypes.find((option) => option.value === form.type)?.label} value={form.type} onChange={(event) => updateStageType(event.target.value as DesignStageType)}>
                 {stageTypes.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}

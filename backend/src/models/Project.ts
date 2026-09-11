@@ -1,8 +1,17 @@
+import { DESIGN_STAGE_TYPES } from "../domain/design-workflow.js";
 import { model, models, Schema } from "./mongoose.js";
+
+const workflowStageSchema = new Schema({
+  id: { type: String, required: true },
+  type: { type: String, enum: DESIGN_STAGE_TYPES, required: true },
+  name: { type: String, required: true },
+  order: { type: Number, required: true, min: 0 }
+}, { _id: false });
 
 const projectSchema = new Schema(
   {
     _id: { type: String, required: true },
+    designWorkflowStages: { type: [workflowStageSchema], default: undefined },
     name: { type: String, required: true, trim: true },
     clientId: { type: String, ref: "User", default: null },
     clientName: { type: String, required: true, default: "" },

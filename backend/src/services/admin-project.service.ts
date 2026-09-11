@@ -1,3 +1,4 @@
+import { createProjectDesignWorkflow } from "../domain/design-workflow.js";
 import { randomUUID } from "node:crypto";
 
 import { normalizeEmail } from "../domain/email.js";
@@ -123,8 +124,10 @@ export function createAdminProjectService(
         const timestamp = occurredAt.toISOString();
         const plannedEndAt = new Date(occurredAt);
         plannedEndAt.setUTCDate(plannedEndAt.getUTCDate() + 90);
+        const projectId = `project-${randomUUID()}`;
         const project: ProjectRecord = {
-          id: `project-${randomUUID()}`,
+          id: projectId,
+          designWorkflowStages: createProjectDesignWorkflow(projectId),
           name: input.projectName,
           clientId: existingClient?.id ?? null,
           clientName: input.clientName,

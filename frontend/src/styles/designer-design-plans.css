@@ -12,6 +12,11 @@
   align-items: start;
 }
 
+.designer-plan-progress {
+  grid-column: 1 / -1;
+  min-inline-size: 0;
+}
+
 .designer-plan-queue {
   position: sticky;
   inset-block-start: var(--space-5);

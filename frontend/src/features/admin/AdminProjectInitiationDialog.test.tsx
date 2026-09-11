@@ -115,6 +115,7 @@ describe("AdminProjectInitiationDialog", () => {
     );
     renderDialog();
     const dialog = screen.getByRole("dialog", { name: "Initiate project" });
+    expect(dialog).toHaveAccessibleDescription(/The six-stage design workflow is included\./);
     for (const name of [
       "Client name",
       "Client email",

@@ -48,6 +48,7 @@ describe("ProjectCreateDialog", () => {
     renderWithQuery(<DialogHarness />);
 
     const dialog = screen.getByRole("dialog", { name: "Create project" });
+    expect(dialog).toHaveAccessibleDescription(/The six-stage design workflow is included\./);
     const manager = within(dialog).getByRole("combobox", { name: "Project manager" });
     await user.click(manager);
     expect(manager).toHaveAttribute("aria-expanded", "true");

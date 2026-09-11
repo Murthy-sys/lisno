@@ -1,24 +1,16 @@
+import { DESIGN_STAGE_TYPES } from "../domain/design-workflow.js";
 import { model, models, Schema } from "./mongoose.js";
 
 const designStageSchema = new Schema(
   {
     _id: { type: String, required: true },
     projectId: { type: String, ref: "Project", required: true },
+    workflowStageId: { type: String, default: undefined },
     floorId: { type: String, ref: "Floor", required: true },
     name: { type: String, required: true },
     type: {
       type: String,
-      enum: [
-        "internal_kickoff",
-        "client_kickoff",
-        "key_collection",
-        "site_measurement",
-        "concept_mood_board",
-        "floor_plan",
-        "client_revisions",
-        "final_approval",
-        "design_handoff"
-      ],
+      enum: DESIGN_STAGE_TYPES,
       required: true
     },
     order: { type: Number, required: true, min: 0 },

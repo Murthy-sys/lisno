@@ -12,6 +12,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import { RiskBadge } from "../../components/tasks/RiskBadge";
 import { AsyncState } from "../../components/ui/AsyncState";
 import { DesignSectionReview } from "../client/DesignSectionReview";
+import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
 import {
   getManagementProjectActivity,
   getManagementProjectVersions
@@ -98,6 +99,8 @@ export function ManagementProjectWorkspace() {
           </p>
         </div>
       </header>
+
+      <ProjectWorkflowPanel projectId={projectId} />
 
       <section aria-labelledby="delivery-structure-title">
         <h2 id="delivery-structure-title">Delivery structure</h2>

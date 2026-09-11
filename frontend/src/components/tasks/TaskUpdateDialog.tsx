@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { projectWorkflowKeys } from "../../features/workflow/projectWorkflowApi";
 
 import { ApiError, apiClient } from "../../api/client";
 import type {
@@ -107,6 +108,7 @@ export function TaskUpdateDialog({
     },
     onSuccess: async (updated) => {
       await Promise.all([
+        queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.designWorkflow(task.projectId) }),
         queryClient.invalidateQueries({
           queryKey: designerKeys.project(task.projectId),
           exact: true

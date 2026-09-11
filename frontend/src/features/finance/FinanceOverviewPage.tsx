@@ -12,6 +12,7 @@ import { Surface } from "../../components/ui/Surface";
 import { formatPaise } from "./financeFormat";
 import { PortfolioFinanceChart } from "./ProjectFinanceChart";
 import { getProjectFinanceBuckets, projectFinanceKeys } from "./projectFinanceApi";
+import { DesignPaymentConfirmations } from "./DesignPaymentConfirmations";
 
 const deadlineDate = new Intl.DateTimeFormat("en-IN", {
   dateStyle: "medium",
@@ -57,6 +58,7 @@ export function FinanceOverviewPage() {
           />
         ) : undefined}
       />
+      <DesignPaymentConfirmations />
       {query.isPending ? <PageState state="loading" message="Loading portfolio finance…" /> : null}
       {query.isError ? <PageState state="error" message="Portfolio finance could not be loaded." action={{ label: "Try again", onAction: () => void query.refetch() }} /> : null}
       {summary ? (

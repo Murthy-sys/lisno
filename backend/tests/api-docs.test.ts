@@ -230,7 +230,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 195 routes without versioning paths twice", () => {
+  it("contains all 200 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -239,7 +239,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 13);
-    expect(operationCount).toBe(195);
+    expect(operationCount).toBe(200);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);

@@ -154,7 +154,7 @@ export function ProjectCreateDialog({
   return (
     <Dialog
       title="Create project"
-      description="Set the client, assigned team, location, and delivery window."
+      description="Set the client, assigned team, location, and delivery window. The six-stage design workflow is included."
       onClose={onClose}
       busy={mutation.isPending}
     >

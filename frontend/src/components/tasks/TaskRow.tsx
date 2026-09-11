@@ -61,7 +61,7 @@ export function TaskRow({
         : null;
 
   return (
-    <article className="task-row" aria-label={task.title}>
+    <article id={`workflow-task-${task.id}`} tabIndex={-1} className="task-row" aria-label={task.title}>
       <div className="task-row__heading">
         <div>
           <p className="task-row__order">Task {String(task.order).padStart(2, "0")}</p>

@@ -1,3 +1,4 @@
+import { DESIGN_STAGE_TYPES } from "../domain/design-workflow.js";
 import { Router } from "express";
 import { z } from "zod";
 
@@ -40,17 +41,7 @@ const floorSchema = z
 const stageSchema = z
   .object({
     name: z.string().trim().min(1),
-    type: z.enum([
-      "internal_kickoff",
-      "client_kickoff",
-      "key_collection",
-      "site_measurement",
-      "concept_mood_board",
-      "floor_plan",
-      "client_revisions",
-      "final_approval",
-      "design_handoff"
-    ]),
+    type: z.enum(DESIGN_STAGE_TYPES),
     order: z.number().int().nonnegative(),
     dependencyStageIds: z.array(z.string().trim().min(1)).optional()
   })
@@ -156,6 +147,19 @@ export function createProjectsRouter(
       } catch (error) {
         next(error);
       }
+    }
+  );
+
+  router.get(
+    "/projects/:projectId/design-workflow",
+    protectedRoute,
+    requireOperation("GET /projects/:projectId/design-workflow"),
+    async (request, response, next) => {
+      try {
+        response.set("Cache-Control", "private, no-store").json({
+          data: await projectService.designWorkflow(request.authenticatedUser!, String(request.params.projectId))
+        });
+      } catch (error) { next(error); }
     }
   );
 

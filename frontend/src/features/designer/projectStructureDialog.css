@@ -1,0 +1,8 @@
+.project-structure-form--stage > .field {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.ui-dialog:has(.project-structure-form) .ui-dialog__header .eyebrow {
+  color: var(--color-text-muted);
+}

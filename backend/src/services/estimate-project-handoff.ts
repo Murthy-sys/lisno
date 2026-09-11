@@ -1,3 +1,4 @@
+import { createProjectDesignWorkflow } from "../domain/design-workflow.js";
 import { randomUUID } from "node:crypto";
 import type { ClientSession } from "mongoose";
 
@@ -47,6 +48,7 @@ export async function resolveApprovalProject(
     const projectId = `project-${randomUUID()}`;
     await ProjectModel.create([{
       _id: projectId,
+      designWorkflowStages: createProjectDesignWorkflow(projectId),
       name: lead.projectName,
       clientId,
       clientName: lead.clientName,

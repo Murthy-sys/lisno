@@ -1,0 +1,23 @@
+.client-project-workflow { min-width: 0; }
+.client-page--project .workflow-progress--external { border: 0; padding: 0; background: transparent; box-shadow: none; }
+.client-page--project .workflow-progress__details--client { margin-block-start: 0; }
+.client-page.client-page--project { gap: var(--space-4); }
+.client-project-identity { display: grid; gap: var(--space-1); padding-block: var(--space-2); min-width: 0; }
+.client-page--project .client-project-identity h1 { margin: 0; font-size: clamp(1.4rem, 3vw, 1.9rem); line-height: 1.2; color: var(--color-text); overflow-wrap: anywhere; }
+.client-project-identity p { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.client-project-disclosure { min-width: 0; border-block-start: 1px solid var(--color-border); }
+.client-project-disclosure > summary { cursor: pointer; min-height: 52px; padding-block: var(--space-4); color: var(--color-text); font-size: var(--text-sm); font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.client-project-disclosure > summary > span { margin-inline-start: var(--space-2); color: var(--color-text-muted); font-size: var(--text-xs); font-weight: 400; }
+.client-project-disclosure > summary:focus-visible { outline: 2px solid var(--color-brand-violet); outline-offset: 3px; border-radius: var(--radius-control); }
+.client-project-disclosure > section { margin-block-end: var(--space-4); }
+.client-project-secondary-state { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); padding-block: var(--space-3); font-size: var(--text-sm); color: var(--color-text-muted); }
+.client-project-secondary-state p { margin: 0; }
+.client-project-secondary-state button { min-height: 44px; }
+.client-workflow-task { display: grid; gap: var(--space-2); padding: var(--space-4); border-block-start: 1px solid var(--color-border); background: var(--color-surface-subtle); min-width: 0; }
+.client-workflow-task[data-actionable] { border-inline-start: 3px solid var(--color-brand-violet); }
+.client-workflow-task p { margin: 0; font-size: var(--text-sm); color: var(--color-text-muted); line-height: 1.5; overflow-wrap: anywhere; }
+.client-workflow-task strong { font-size: var(--text-md); overflow-wrap: anywhere; }
+.client-workflow-task .client-workflow-task__label { font-size: var(--text-xs); font-weight: 600; color: var(--color-text); }
+.client-workflow-task__link { display: inline-flex; align-items: center; justify-self: start; min-height: 44px; color: var(--color-text); font-size: var(--text-sm); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.client-workflow-task__link:focus-visible { outline: 2px solid var(--color-brand-violet); outline-offset: 3px; border-radius: var(--radius-control); }
+.client-workflow-task .ui-button { justify-self: start; white-space: normal; }

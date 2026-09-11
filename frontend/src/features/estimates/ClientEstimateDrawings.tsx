@@ -27,6 +27,7 @@ import {
 } from "../leads/estimateDesignApi";
 import { clientKeys } from "../client/clientApi";
 import { estimateWorkflowKeys } from "./estimateWorkflowApi";
+import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 
 export interface ClientEstimateDrawingOption {
   id: string;
@@ -370,6 +371,7 @@ function ClientDrawingRow({
         queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimateId) }),
         queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimateId) }),
         queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client }),
+        queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
         queryClient.invalidateQueries({ queryKey: clientKeys.projects })
       ]);
     }
@@ -402,7 +404,8 @@ function ClientDrawingRow({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimateId) }),
         queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimateId) }),
-        queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client })
+        queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client }),
+        queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all })
       ]);
     }
   });
@@ -425,7 +428,8 @@ function ClientDrawingRow({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimateId) }),
         queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimateId) }),
-        queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client })
+        queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client }),
+        queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all })
       ]);
     }
   });

@@ -51,6 +51,8 @@ interface EstimateDesignUploadsProps {
   items: EstimateDesignItemOption[];
   variant?: "estimator" | "designer";
   readOnly?: boolean;
+  title?: string;
+  designPlanVersion?: number;
   onUploaded?: () => void;
   onSubmitted?: () => void;
 }
@@ -120,6 +122,8 @@ export function EstimateDesignUploads({
   items,
   variant = "estimator",
   readOnly = false,
+  title,
+  designPlanVersion,
   onUploaded,
   onSubmitted
 }: EstimateDesignUploadsProps) {
@@ -346,8 +350,9 @@ export function EstimateDesignUploads({
             {designerExperience ? "Assigned design work" : "Plans and drawing review"}
           </p>
           <h2 id={titleId}>
-            {designerExperience ? "Upload design" : "Upload design plans"}
+            {title ?? (designerExperience ? "Upload design" : "Upload design plans")}
           </h2>
+          {designerExperience && designPlanVersion !== undefined ? <p className="estimate-design-uploads__version">Design version <strong>v{designPlanVersion}</strong></p> : null}
           <p>
             {readOnly
               ? "The submitted design and extracted images remain available for review."

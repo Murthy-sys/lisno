@@ -21,6 +21,7 @@ import { DesignAssignmentPanel } from "./DesignAssignmentPanel";
 import { WorkerAssignmentPanel } from "./WorkerAssignmentPanel";
 import { ProjectFinancePanel } from "../finance/ProjectFinancePanel";
 import { ProjectWorkflowSnapshot } from "../finance/FinanceProjectWorkflowControl";
+import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
 
 const money = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
 const dateTime = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" });
@@ -134,6 +135,7 @@ export function AdminProjectDetailPage() {
           </AdminDetailSection>
         </div>
       </Surface>
+      <ProjectWorkflowPanel projectId={project.id} />
       {canReadFinance ? (
         <ProjectFinancePanel
           projectId={project.id}

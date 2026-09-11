@@ -14,7 +14,6 @@ const signupSchema = z
     name: z.string().trim().min(1, "Name is required."),
     email: z.string().trim().email("Enter a valid email address."),
     mobile: z.string().trim().min(1, "Mobile number is required."),
-    address: z.string().trim().min(1, "Address is required."),
     password: z
       .string()
       .min(1, "Password is required.")
@@ -38,7 +37,6 @@ const fieldOrder: Array<keyof SignupFields> = [
   "name",
   "email",
   "mobile",
-  "address",
   "password",
   "passwordConfirmation"
 ];
@@ -51,7 +49,7 @@ export function SignupPage() {
   const [showPasswordConfirmation, setShowPasswordConfirmation] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [validationSummary, setValidationSummary] = useState<string[]>([]);
-  const fields = useRef<Partial<Record<keyof SignupFields, HTMLInputElement | HTMLTextAreaElement | null>>>({});
+  const fields = useRef<Partial<Record<keyof SignupFields, HTMLInputElement | null>>>({});
   const resolveSignupIntent = useRef<(() => void) | null>(null);
   const signupIntentActive = useRef(false);
   const mounted = useRef(true);
@@ -65,7 +63,6 @@ export function SignupPage() {
       name: "",
       email: "",
       mobile: "",
-      address: "",
       password: "",
       passwordConfirmation: ""
     }
@@ -75,8 +72,8 @@ export function SignupPage() {
     const { ref, ...registration } = register(field);
     return {
       ...registration,
-      ref: (element: HTMLInputElement | HTMLTextAreaElement | null) => {
-        ref(element as HTMLInputElement);
+      ref: (element: HTMLInputElement | null) => {
+        ref(element);
         fields.current[field] = element;
       }
     };
@@ -318,27 +315,6 @@ export function SignupPage() {
                 {errors.mobile?.message ?? ""}
               </p>
             </div>
-
-            {/* <div className="login-field">
-              <label htmlFor="signup-address" className="login-field__label">
-                Address
-              </label>
-              <textarea
-                id="signup-address"
-                rows={3}
-                autoComplete="street-address"
-                aria-invalid={errors.address ? true : undefined}
-                aria-describedby="signup-address-error"
-                className="login-textarea"
-                {...assignRef("address")}
-              />
-              <p
-                id="signup-address-error"
-                className={errors.address ? "login-field__message login-field__message--error" : "login-field__message"}
-              >
-                {errors.address?.message ?? ""}
-              </p>
-            </div> */}
 
             <div className="login-field">
               <label htmlFor="signup-password" className="login-field__label">

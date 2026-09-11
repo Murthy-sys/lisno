@@ -186,6 +186,9 @@ function installWorkspaceApi(options?: {
     const url = apiRequestPath(input);
     if (url === "/api/v1/auth/me") return response(designer);
     if (url === "/api/v1/auth/authorization") return response(authorizationFor(designer.role));
+    if (url === `/api/v1/projects/${project.id}/design-workflow`) return response({
+      projectId: project.id, projectName: project.name, serverNow: new Date().toISOString(), floors: []
+    });
     if (url === `/api/v1/projects/${project.id}`) {
       projectReads += 1;
       const hierarchy = structuredClone(project);
@@ -399,6 +402,7 @@ describe("ProjectWorkspace", () => {
     await user.click(await screen.findByRole("button", { name: /Ground Floor/ }));
     await user.click(screen.getByRole("button", { name: "Add stage to Ground Floor" }));
     const stageDialog = screen.getByRole("dialog", { name: "Add stage" });
+    await user.clear(within(stageDialog).getByLabelText("Stage name"));
     await user.type(
       within(stageDialog).getByLabelText("Stage name"),
       "Terrace concept"

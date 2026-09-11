@@ -3,9 +3,11 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "../../../api/client";
+import { useAuth } from "../../../auth/AuthProvider";
+import { authorizationFor } from "../../../test/authFixtures";
 import { LoadingProvider } from "../../../components/ui/GlobalRequestLoader";
 import {
   superAdminDashboardOverviewFixture,
@@ -18,6 +20,11 @@ import type {
   SuperAdminDashboardProjectsPage
 } from "./superAdminDashboardApi";
 import { dashboardKeys } from "./superAdminDashboardApi";
+
+vi.mock("../../../auth/AuthProvider", () => ({ useAuth: vi.fn(() => ({ user: null, authorization: null })) }));
+beforeEach(() => {
+  vi.mocked(useAuth).mockReturnValue({ user: { id: "super-admin-one", role: "super_admin" }, authorization: authorizationFor("super_admin", []) } as ReturnType<typeof useAuth>);
+});
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -32,6 +39,7 @@ function installDashboardApi({
     if (path.startsWith("/admin/dashboard/overview?")) return overview as never;
     if (path.startsWith("/admin/dashboard/projects?")) return projects as never;
     if (path.startsWith("/admin/dashboard/workforce?")) return superAdminDashboardWorkforcePageFixture as never;
+    if (path === "/design-workflow/payment-confirmations") return [] as never;
     throw new Error(`Unexpected dashboard request: ${path}`);
   });
 }
@@ -61,6 +69,16 @@ function deferred<T>() {
 }
 
 describe("Super Admin dashboard page", () => {
+  it("makes approved-project payment confirmations available from Overview", async () => {
+    vi.mocked(useAuth).mockReturnValue({ user: { id: "super-admin-one", role: "super_admin" }, authorization: authorizationFor("super_admin", ["projects.design_workflow.payments.read", "projects.design_workflow.act"]) } as ReturnType<typeof useAuth>);
+    const get = installDashboardApi();
+    renderDashboard();
+    const region = await screen.findByRole("region", { name: "Initial payment confirmations" });
+    expect(region).toHaveTextContent("After estimate approval");
+    expect(await within(region).findByText("No projects are waiting for initial-payment confirmation.")).toBeVisible();
+    expect(get).toHaveBeenCalledWith("/design-workflow/payment-confirmations", { showGlobalLoader: false });
+  });
+
   it("shows only one logo while the dashboard API and page are both loading", async () => {
     const pending = deferred<Response>();
     vi.spyOn(globalThis, "fetch").mockReturnValueOnce(pending.promise);
