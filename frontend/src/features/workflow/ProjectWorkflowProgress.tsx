@@ -68,7 +68,12 @@ function countdown(deadline: number, now: number): string {
   return `${days > 0 ? `${days}d ` : ""}${clock}`;
 }
 
-function countdownUrgency(remainingMs: number) {
+function countdownUrgency(remainingMs: number, allowanceMs?: number | null) {
+  if (typeof allowanceMs === "number" && Number.isFinite(allowanceMs) && allowanceMs > 0) {
+    if (remainingMs > allowanceMs * (2 / 3)) return { level: "comfortable", description: "More than two thirds of the allowed time remaining." };
+    if (remainingMs > allowanceMs / 3) return { level: "approaching", description: "Between one third and two thirds of the allowed time remaining." };
+    return { level: "urgent", description: "One third or less of the allowed time remaining." };
+  }
   if (remainingMs > 172_800_000) return { level: "comfortable", description: "More than 2 days remaining." };
   if (remainingMs >= 86_400_000) return { level: "approaching", description: "1 to 2 days remaining." };
   return { level: "urgent", description: "Less than 1 day remaining." };
@@ -82,7 +87,7 @@ function OperationalStageDeadline({ stage, now, serverNow, id }: { stage: Workfl
   const adjusted = timing.remainingMs! - elapsed;
   const overdue = ticking && (adjusted < 0 || Boolean(timing.targetAt && Date.parse(timing.targetAt) < now));
   const label = timing.state === "paused" ? "Paused" : overdue ? "Overdue" : adjusted === 0 ? "Due now" : "Time remaining";
-  const urgency = countdownUrgency(adjusted);
+  const urgency = countdownUrgency(adjusted, timing.slaAllowanceMs);
   return (
     <><span id={id} className="workflow-progress__deadline" data-overdue={overdue || undefined} data-urgency={urgency.level}>
       <span><Clock3 aria-hidden="true" />{label}</span>

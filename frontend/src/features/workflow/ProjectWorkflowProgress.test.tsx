@@ -60,6 +60,76 @@ function user() {
 }
 
 describe("ProjectWorkflowProgress", () => {
+  describe.each([32_400_000, 1_296_000_000])("with a %s millisecond allowance", (slaAllowanceMs) => {
+    it.each([
+      [slaAllowanceMs + 1, "comfortable", "More than two thirds of the allowed time remaining."],
+      [slaAllowanceMs, "comfortable", "More than two thirds of the allowed time remaining."],
+      [slaAllowanceMs * 2 / 3 + 1, "comfortable", "More than two thirds of the allowed time remaining."],
+      [slaAllowanceMs * 2 / 3, "approaching", "Between one third and two thirds of the allowed time remaining."],
+      [slaAllowanceMs / 3 + 1, "approaching", "Between one third and two thirds of the allowed time remaining."],
+      [slaAllowanceMs / 3, "urgent", "One third or less of the allowed time remaining."],
+      [0, "urgent", "One third or less of the allowed time remaining."],
+      [-1_000, "urgent", "One third or less of the allowed time remaining."]
+    ] as const)("uses proportional urgency at %s remaining milliseconds", (remainingMs, urgency, description) => {
+      render(<ProjectWorkflowProgress workflow={workflow([stage({ operational: operational({ slaAllowanceMs, remainingMs, band: "Amber" }) })])} />);
+      const timer = screen.getByRole("timer");
+      expect(timer.closest(".workflow-progress__deadline")).toHaveAttribute("data-urgency", urgency);
+      expect(timer).toHaveAccessibleDescription(description);
+      if (remainingMs <= 0) expect(timer).toHaveTextContent("00:00:00");
+    });
+  });
+
+  it("changes relative urgency as the running timer crosses both thirds", () => {
+    render(<ProjectWorkflowProgress workflow={workflow([stage({ operational: operational({ slaAllowanceMs: 9_000, remainingMs: 7_000 }) })])} />);
+    const timer = screen.getByRole("timer");
+    const deadline = timer.closest(".workflow-progress__deadline");
+    expect(deadline).toHaveAttribute("data-urgency", "comfortable");
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(timer).toHaveTextContent("00:00:06");
+    expect(deadline).toHaveAttribute("data-urgency", "approaching");
+    expect(timer).toHaveAccessibleDescription("Between one third and two thirds of the allowed time remaining.");
+    act(() => vi.advanceTimersByTime(3_000));
+    expect(timer).toHaveTextContent("00:00:03");
+    expect(deadline).toHaveAttribute("data-urgency", "urgent");
+    expect(timer).toHaveAccessibleDescription("One third or less of the allowed time remaining.");
+  });
+
+  it("keeps paused thirds fixed and recalculates urgency when the allowance or remaining time refreshes", () => {
+    const paused = (slaAllowanceMs: number, remainingMs = 5_000) => ({
+      ...workflow([stage({ operational: operational({ state: "paused", slaAllowanceMs, remainingMs }) })]),
+      receivedAt: Date.now()
+    });
+    const { rerender } = render(<ProjectWorkflowProgress workflow={paused(6_000)} />);
+    const timer = screen.getByRole("timer");
+    const deadline = timer.closest(".workflow-progress__deadline");
+    expect(deadline).toHaveAttribute("data-urgency", "comfortable");
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(timer).toHaveTextContent("00:00:05");
+    expect(deadline).toHaveAttribute("data-urgency", "comfortable");
+    rerender(<ProjectWorkflowProgress workflow={paused(9_000)} />);
+    expect(deadline).toHaveAttribute("data-urgency", "approaching");
+    rerender(<ProjectWorkflowProgress workflow={paused(15_000)} />);
+    expect(deadline).toHaveAttribute("data-urgency", "urgent");
+    rerender(<ProjectWorkflowProgress workflow={paused(15_000, 12_000)} />);
+    expect(deadline).toHaveAttribute("data-urgency", "comfortable");
+    expect(timer).toHaveAccessibleDescription("More than two thirds of the allowed time remaining.");
+    expect(screen.getByText("Paused")).toBeVisible();
+  });
+
+  describe.each([undefined, null, 0, -9_000, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])("with invalid allowance %s", (slaAllowanceMs) => {
+    it.each([
+      [172_800_001, "comfortable", "More than 2 days remaining."],
+      [172_800_000, "approaching", "1 to 2 days remaining."],
+      [86_400_000, "approaching", "1 to 2 days remaining."],
+      [86_399_999, "urgent", "Less than 1 day remaining."]
+    ] as const)("preserves fixed urgency at %s remaining milliseconds", (remainingMs, urgency, description) => {
+      render(<ProjectWorkflowProgress workflow={workflow([stage({ operational: operational({ slaAllowanceMs, remainingMs }) })])} />);
+      const timer = screen.getByRole("timer");
+      expect(timer.closest(".workflow-progress__deadline")).toHaveAttribute("data-urgency", urgency);
+      expect(timer).toHaveAccessibleDescription(description);
+    });
+  });
+
   it.each([
     [172_800_001, "comfortable", "More than 2 days remaining."],
     [172_800_000, "approaching", "1 to 2 days remaining."],
