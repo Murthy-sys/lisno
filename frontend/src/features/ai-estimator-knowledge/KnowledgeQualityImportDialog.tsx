@@ -2,7 +2,7 @@ import "./knowledge-quality.css";
 import { FileSpreadsheet, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../components/ui/Button";
-import { Dialog } from "../../components/ui/Dialog";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { qualityImportIssues, qualitySamplingSummary, validateQualityParameters } from "./knowledgeQuality";
@@ -49,7 +49,15 @@ export function KnowledgeQualityImportDialog({ basketName, currentParameters, di
   }
   const canImport = Boolean(result?.parameters.length && !result.issues.length && !mergeIssues.length && !reading && !disabled);
   const count = result?.parameters.length ?? 0;
-  return <Dialog title="Import quality checks" eyebrow={`Main Basket · ${basketName}`} description="Choose an Excel workbook and review its questions before adding them to the shared checklist." onClose={onClose}>
+  return <ContextPanel title="Import quality checks" eyebrow={`Main Basket · ${basketName}`} description="Choose an Excel workbook and review its questions before adding them to the shared checklist." onClose={onClose}
+    width="wide" className="knowledge-context-panel knowledge-context-panel--quality" dirty={Boolean(result?.parameters.length)}
+    footer={({ requestClose }) => (<div className="knowledge-quality-import__footer">
+        <p>Adds to your draft.<br /> Save the checklist to apply changes.</p>
+        <div className="knowledge-quality-import__actions">
+          <Button variant="secondary" onClick={requestClose}>Cancel</Button>
+          <Button variant="primary" disabled={!canImport} onClick={() => { if (canImport && result) onImport(result.parameters); }}>Add {count > 0 ? `${count} ${count === 1 ? "check" : "checks"}` : "checks"} to checklist</Button>
+        </div>
+      </div>)}>
     <div className="knowledge-quality-import">
       <div className="knowledge-quality-import__body">
         <Field id="quality-workbook" label="Excel workbook" hint="Columns: Question, Answer type, Options, Acceptance criteria and Photo evidence.">
@@ -100,13 +108,7 @@ export function KnowledgeQualityImportDialog({ basketName, currentParameters, di
           </ol>
         </section> : null}
       </div>
-      <div className="knowledge-quality-import__footer">
-        <p>Adds to your draft.<br /> Save the checklist to apply changes.</p>
-        <div className="knowledge-quality-import__actions">
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={!canImport} onClick={() => { if (canImport && result) onImport(result.parameters); }}>Add {count > 0 ? `${count} ${count === 1 ? "check" : "checks"}` : "checks"} to checklist</Button>
-        </div>
-      </div>
+
     </div>
-  </Dialog>;
+  </ContextPanel>;
 }

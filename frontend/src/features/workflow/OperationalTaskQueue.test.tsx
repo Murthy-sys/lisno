@@ -38,6 +38,24 @@ const carpenterTask: ProjectWorkflowTask = {
 afterEach(() => vi.restoreAllMocks());
 
 describe("OperationalTaskQueue", () => {
+  it("preserves an unsaved progress draft when the worker keeps editing", async () => {
+    server.use(http.get("/api/v1/workflow-tasks", () => HttpResponse.json({ data: [carpenterTask] })));
+    const user = userEvent.setup();
+    renderWithQuery(<OperationalTaskQueue role="worker_carpenter" />);
+    await user.click(await screen.findByRole("button", { name: "Update progress for Carpentry · Living Room" }));
+    const progress = screen.getByLabelText("Progress percentage");
+    await user.clear(progress);
+    await user.type(progress, "60");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("alertdialog", { name: "Discard unsaved changes?" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(progress).toHaveValue(60);
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText("25% complete")).toBeVisible();
+  });
+
   it("renders the worker queue with progress and trade context", async () => {
     server.use(
       http.get("/api/v1/workflow-tasks", () =>

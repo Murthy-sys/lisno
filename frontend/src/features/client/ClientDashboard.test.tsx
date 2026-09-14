@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -28,6 +28,74 @@ const summaries = projects.map((project, index) => ({
 }));
 
 describe("ClientDashboard", () => {
+  it("surfaces an active Client task without expanding the project or waiting for approved plans", async () => {
+    tokenStorage.set("client-token");
+    const workflowReads: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/auth/me")) return Response.json({ data: client });
+      if (url.endsWith("/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
+      if (url.includes("/client/project-summaries?")) return Response.json({ data: { items: summaries, pagination: { limit: 100, offset: 0, total: 2, hasMore: false } } });
+      if (url.endsWith("/client/latest-approved-versions")) return Response.json({ error: { code: "UNAVAILABLE", message: "Plans unavailable" } }, { status: 503 });
+      if (url.endsWith("/client/estimates")) return Response.json({ data: [] });
+      if (url.endsWith("/design-workflow")) {
+        const projectId = url.split("/").at(-2)!;
+        workflowReads.push(projectId);
+        const forClient = projectId === "project-villa";
+        return Response.json({ data: { projectId, projectName: forClient ? "Aurora Villa" : "Cedar Loft", serverNow: new Date().toISOString(), floors: [], projectStages: [{
+          id: `${projectId}:current`, name: forClient ? "Client Kick off" : "Internal Kick off", type: forClient ? "client_kickoff" : "internal_kickoff", order: 1,
+          status: "in_progress", progress: 0, dependencyStageIds: [], deadlineAt: null, deadlineTaskId: null, tasks: [],
+          operational: { status: "in_progress", availableActions: forClient ? [{ id: "client_kickoff_complete", label: "Complete Client Kick off", actor: "client", requiresProof: false }] : [] }
+        }] } });
+      }
+      throw new Error(`Unhandled request: ${url}`);
+    });
+    renderApp(["/client"]);
+    const task = await screen.findByRole("region", { name: "Aurora Villa current task" });
+    expect(await within(task).findByText("Complete Client Kick off")).toBeVisible();
+    expect(within(task).getByRole("link", { name: "Open task" })).toHaveAttribute("href", "/client/projects/project-villa");
+    const other = screen.getByRole("region", { name: "Cedar Loft current task" });
+    expect(await within(other).findByText("Internal Kick off")).toBeVisible();
+    expect(within(other).queryByRole("link", { name: "Open task" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: "Aurora Villa" });
+    const approvedMetric = within(screen.getByRole("region", { name: "Client overview" })).getByLabelText("Unavailable");
+    expect(approvedMetric).toHaveTextContent("—");
+    expect(screen.getByRole("button", { name: "Retry approved plans" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Project details: Aurora Villa" }));
+    const projectDetails = screen.getByRole("dialog", { name: "Aurora Villa" });
+    expect(within(projectDetails).getByText("Latest approved update unavailable.")).toBeVisible();
+    expect(within(projectDetails).queryByText("No approved plan available yet.")).not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(toggle);
+    await userEvent.click(toggle);
+    await waitFor(() => expect(workflowReads.slice().sort()).toEqual(["project-loft", "project-villa"]));
+  });
+
+  it("shows a retryable task failure instead of assuming that the Client has nothing to do", async () => {
+    tokenStorage.set("client-token");
+    let workflowRequests = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/auth/me")) return Response.json({ data: client });
+      if (url.endsWith("/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
+      if (url.includes("/client/project-summaries?")) return Response.json({ data: { items: summaries.slice(0, 1), pagination: { limit: 100, offset: 0, total: 1, hasMore: false } } });
+      if (url.endsWith("/client/latest-approved-versions") || url.endsWith("/client/estimates")) return Response.json({ data: [] });
+      if (url.endsWith("/design-workflow")) {
+        workflowRequests += 1;
+        return workflowRequests === 1 ? Response.json({ error: { code: "UNAVAILABLE", message: "Workflow unavailable" } }, { status: 503 }) : Response.json({ data: { projectId: "project-villa", projectName: "Aurora Villa", serverNow: new Date().toISOString(), floors: [] } });
+      }
+      throw new Error(`Unhandled request: ${url}`);
+    });
+    renderApp(["/client"]);
+    expect(await screen.findByText("The current project task could not be refreshed.")).toBeVisible();
+    expect(screen.queryByText("No action is needed from you at this stage.")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry project task" }));
+    expect(await screen.findByText("Stage information is not available yet.")).toBeVisible();
+    expect(workflowRequests).toBe(2);
+  });
+
   it("shows an approved estimate as completed history without decision buttons", async () => {
     tokenStorage.set("client-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -50,6 +118,7 @@ describe("ClientDashboard", () => {
         projectId: "project-1",
         lead: { _id: "lead-1", clientName: "Aurora Homes", clientEmail: "client@lisno.example", projectName: "Aurora Villa", location: "Bengaluru" }
       }] });
+      if (url.endsWith("/design-workflow")) return Response.json({ data: { projectId: url.split("/").at(-2), projectName: "Shared project", serverNow: new Date().toISOString(), floors: [] } });
       throw new Error(`Unhandled request: ${url}`);
     });
 
@@ -75,6 +144,7 @@ describe("ClientDashboard", () => {
         { id: "version-villa", projectId: "project-villa", floorId: "floor-1", stageId: "stage-1", taskId: null, versionNumber: 2, originalFilename: "Villa floor plan.pdf", mimeType: "application/pdf", sizeBytes: 1200, uploadedAt: "2026-07-12T00:00:00.000Z", approvalStatus: "approved", approvedAt: "2026-07-14T00:00:00.000Z", clientVisible: true, createdAt: "2026-07-12T00:00:00.000Z", updatedAt: "2026-07-14T00:00:00.000Z" },
         { id: "draft-never-show", projectId: "project-loft", floorId: "floor-2", stageId: "stage-2", taskId: null, versionNumber: 1, originalFilename: "Internal draft.pdf", mimeType: "application/pdf", sizeBytes: 1200, uploadedAt: "2026-07-12T00:00:00.000Z", approvalStatus: "draft", approvedAt: null, clientVisible: false, createdAt: "2026-07-12T00:00:00.000Z", updatedAt: "2026-07-12T00:00:00.000Z" }
       ] });
+      if (url.endsWith("/design-workflow")) return Response.json({ data: { projectId: url.split("/").at(-2), projectName: "Shared project", serverNow: new Date().toISOString(), floors: [] } });
       throw new Error(`Unhandled request: ${url}`);
     });
 
@@ -95,8 +165,8 @@ describe("ClientDashboard", () => {
     expect(screen.getByText("Cedar Loft")).toBeVisible();
     expect(screen.getByText("64% complete")).toBeVisible();
     expect(screen.getByText("3 floors")).toBeVisible();
-    await userEvent.click(await screen.findByRole("button", { name: /Aurora Villa/ }));
-    await userEvent.click(screen.getByRole("button", { name: /Cedar Loft/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "Aurora Villa" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cedar Loft" }));
     expect(await screen.findByText("Villa floor plan.pdf")).toBeVisible();
     expect(screen.getByText(/No approved plan available yet/)).toBeVisible();
     expect(screen.queryByText("Internal draft.pdf")).not.toBeInTheDocument();
@@ -115,12 +185,13 @@ describe("ClientDashboard", () => {
         attempts += 1;
         return attempts === 1 ? Response.json({ error: { code: "REQUEST_FAILED", message: "Unavailable" } }, { status: 503 }) : Response.json({ data: [] });
       }
+      if (url.endsWith("/design-workflow")) return Response.json({ data: { projectId: url.split("/").at(-2), projectName: "Shared project", serverNow: new Date().toISOString(), floors: [] } });
       throw new Error(`Unhandled request: ${url}`);
     });
 
     renderApp(["/client"]);
-    await userEvent.click(await screen.findByRole("button", { name: /Aurora Villa/ }));
-    await userEvent.click(screen.getByRole("button", { name: /Cedar Loft/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "Aurora Villa" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cedar Loft" }));
     expect(await screen.findAllByText("Latest approved update unavailable.")).toHaveLength(2);
     expect(screen.queryByText("No approved plan available yet.")).not.toBeInTheDocument();
     await userEvent.click(screen.getAllByRole("button", { name: "Retry approved updates" })[0]!);
@@ -134,6 +205,7 @@ describe("ClientDashboard", () => {
       if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
       if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
       if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
+      if (url.endsWith("/design-workflow")) return Response.json({ data: { projectId: url.split("/").at(-2), projectName: "Shared project", serverNow: new Date().toISOString(), floors: [] } });
       throw new Error(`Unhandled request: ${url}`);
     });
 

@@ -1,4 +1,4 @@
-.estimator-dashboard { gap: var(--space-6); background: #fff; }
+.estimator-dashboard { gap: var(--space-5); background: var(--color-bg); }
 @media (min-width: 901px) {
   .ui-app-shell[data-role] .estimator-dashboard .estimate-builder-layout {
     max-height: calc(100dvh - 260px);
@@ -77,11 +77,9 @@
 }
 @media (min-width: 768px) {
   .ui-app-shell[data-role] .lead-page.estimator-dashboard {
-    max-height: calc(100dvh - 104px);
-    overflow: hidden;
-    padding-inline: 10px;
+    min-inline-size: 0;
     display: grid;
-    grid-template-rows: auto auto auto minmax(0, 1fr);
+    grid-template-rows: auto;
   }
   .ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__section {
     display: flex;
@@ -125,6 +123,7 @@
 }
 .ui-app-shell[data-role] .estimator-dashboard .lead-row__actions {
   grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-proposal article > div {
   border-bottom-color: var(--color-primary);
@@ -137,10 +136,10 @@
 .ui-app-shell[data-role] .estimator-dashboard .estimate-proposal > header .eyebrow {
   color: var(--color-text-strong);
   font-family: "Poppins", sans-serif;
-  font-weight: var(--text-title);
-  font-size: var(--text-title-size);
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
+  font-weight: 600;
+  font-size: var(--text-xs);
+  letter-spacing: .06em;
+  text-transform: none;
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-proposal > header h2 {
   color: var(--color-text-strong);
@@ -223,7 +222,7 @@
   border-bottom-color: var(--color-border-default);
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-total-card span:last-child strong {
-  color: var(--color-highlight);
+  color: var(--color-primary);
   font-family: "Poppins", sans-serif;
   font-weight: var(--text-mainheading2);
   font-size: var(--text-mainheading2-size);
@@ -280,9 +279,10 @@
   background-image: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  border-radius: var(--radius-card);
-  border: 1px solid #e5e5e5;
-  box-shadow: var(--shadow-card);
+  border-radius: 0;
+  border: 0;
+  border-block-end: 1px solid var(--color-border);
+  box-shadow: none;
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-tabs button {
   display: inline-flex;
@@ -428,8 +428,8 @@
   font-family: "Poppins", sans-serif;
   font-weight: var(--text-subheading2);
   font-size: var(--text-subheading2-size);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  letter-spacing: normal;
+  text-transform: none;
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-room-sidebar {
   background: var(--color-bg);
@@ -519,7 +519,7 @@
   background-color: #fff;
   background-image: none;
   box-shadow: var(--shadow-card);
-  border-radius: 22px;
+  border-radius: var(--radius-surface);
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-dimension-row {
   color: var(--color-primary);
@@ -571,7 +571,7 @@
   background-color: #fff;
   background-image: none;
   box-shadow: var(--shadow-card);
-  border-radius: 22px;
+  border-radius: var(--radius-surface);
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-scope strong {
   color: var(--color-text-strong);
@@ -649,18 +649,19 @@
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-workspace__header {
   background: transparent;
-  border-radius: var(--radius-card);
-  border: 1px solid #e5e5e5;
-  box-shadow: var(--shadow-card);
-  padding: 25px 20px;
+  border-radius: 0;
+  border: 0;
+  border-block-end: 1px solid var(--color-border);
+  box-shadow: none;
+  padding: 0 0 var(--space-4);
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-workspace__header .eyebrow {
-  color: var(--color-highlight);
+  color: var(--color-text-muted);
   font-family: "Poppins", sans-serif;
-  font-weight: var(--text-title);
-  font-size: var(--text-title-size);
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
+  font-weight: 600;
+  font-size: var(--text-xs);
+  letter-spacing: .06em;
+  text-transform: none;
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-workspace__header h1,
 .ui-app-shell[data-role] .estimator-dashboard .estimate-workspace__summary span {
@@ -668,9 +669,7 @@
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-workspace__summary strong {
   color: var(--color-text-strong);
-  font-family: "Poppins", sans-serif;
-  font-weight: var(--text-subheading);
-  font-size: var(--text-subheading-size);
+  font: 600 1.5rem/1.25 var(--font-interface);
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-workspace__header p {
   color: var(--color-text-strong);
@@ -689,8 +688,6 @@
   background-color: #F7F6FA;
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__overview dl > div,
-.ui-app-shell[data-role] .estimator-dashboard .lead-controls,
-.ui-app-shell[data-role] .estimator-dashboard .lead-controls input,
 .ui-app-shell[data-role] .estimator-dashboard .lead-row {
   background-color: #fff;
   background-image: none;
@@ -723,10 +720,11 @@
 .ui-app-shell[data-role] .estimator-dashboard .workspace-header { background: rgb(30 24 59 / var(--tw-bg-opacity, 1)); }
 .ui-app-shell[data-role] .lead-detail.estimator-dashboard .workspace-header {
   background: transparent;
-  border-radius: var(--radius-card);
-  border: 1px solid #e5e5e5;
-  box-shadow: var(--shadow-card);
-  padding: 25px 20px;
+  border-radius: 0;
+  border: 0;
+  border-block-end: 1px solid var(--color-border);
+  box-shadow: none;
+  padding: 0 0 var(--space-4);
 }
 .ui-app-shell[data-role] .lead-detail.estimator-dashboard .workspace-header p:last-child {
   color: var(--color-text-strong);
@@ -739,16 +737,16 @@
     font-family: "Poppins", sans-serif;
     font-weight: var(--text-subheading2);
     font-size: var(--text-subheading2-size);
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
+    letter-spacing: normal;
+    text-transform: none;
   }
 .ui-app-shell[data-role] .lead-detail.estimator-dashboard .workspace-header h1 {
   color: var(--color-primary);
 }
-.ui-app-shell[data-role] .estimator-dashboard .workspace-header .eyebrow { color: var(--color-highlight); font-family: "Poppins", sans-serif; font-weight: var(--text-title); font-size: var(--text-title-size); letter-spacing: 0.15em; text-transform: uppercase; }
-.ui-app-shell[data-role] .estimator-dashboard .workspace-header p:last-child { color: #fff; }
-.ui-app-shell[data-role] .estimator-dashboard .workspace-header h1 { color: #fff; }
-.ui-app-shell[data-role] .estimator-dashboard .workspace-header label { color: #fff; }
+.ui-app-shell[data-role] .estimator-dashboard .workspace-header .eyebrow { color: var(--color-text-muted); font-family: "Poppins", sans-serif; font-weight: 600; font-size: var(--text-xs); letter-spacing: .06em; text-transform: none; }
+.ui-app-shell[data-role] .estimator-dashboard .workspace-header p:last-child { color: var(--color-text-muted); }
+.ui-app-shell[data-role] .estimator-dashboard .workspace-header h1 { color: var(--color-primary); font: var(--type-page-title); }
+.ui-app-shell[data-role] .estimator-dashboard .workspace-header label { color: var(--color-text-strong); }
 .ui-app-shell[data-role] .lead-page.estimator-dashboard .workspace-header {
   background: transparent;
   box-shadow: none;
@@ -809,8 +807,8 @@
 }
 .estimator-dashboard .lead-detail__grid > section,
 .estimator-dashboard .lead-estimate-boundary { border-width: 1px; border-color: #e5e5e5; border-radius: var(--radius-card); box-shadow: var(--shadow-card); background: #fff; }
-.estimator-dashboard .lead-estimate-boundary { border-radius: 14px; display: flex; flex-direction: column; }
-.estimator-dashboard .lead-detail__grid > section { padding-block-start: 1.25rem; padding-block-end: 1.65rem; }
+.estimator-dashboard .lead-estimate-boundary { border-radius: var(--radius-surface); display: flex; flex-direction: column; }
+.estimator-dashboard .lead-detail__grid > section { padding: var(--space-4); }
 .ui-app-shell[data-role] .estimator-dashboard .lead-detail__grid h2 {
   display: inline-flex;
   align-items: center;
@@ -819,8 +817,8 @@
   font-family: "Poppins", sans-serif;
   font-weight: var(--text-subheading2);
   font-size: var(--text-subheading2-size);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  letter-spacing: normal;
+  text-transform: none;
 }
 .ui-app-shell[data-role] .estimator-dashboard .lead-detail__grid h2 svg {
   color: var(--color-text-strong);
@@ -831,12 +829,12 @@
   padding-block-end: 5px;
   font-weight: var(--text-subheading2);
   font-size: var(--text-subheading2-size);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  letter-spacing: normal;
+  text-transform: none;
 }
 .ui-app-shell[data-role] .estimator-dashboard .lead-detail__grid > section:nth-child(1) > h2,
 .ui-app-shell[data-role] .estimator-dashboard .lead-detail__grid .lead-estimate-boundary > h2 {
-  padding-block-end: 2rem;
+  padding-block-end: var(--space-2);
 }
 .ui-app-shell[data-role] .estimator-dashboard .lead-detail__grid p {
   color: var(--color-text-strong);
@@ -860,7 +858,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  color: var(--color-highlight);
+  color: var(--color-primary);
   font-family: "Poppins", sans-serif;
   font-weight: var(--text-text2);
   font-size: var(--text-text2-size);
@@ -870,32 +868,32 @@
   stroke: var(--color-highlight);
 }
 .ui-app-shell[data-role] .estimator-dashboard .lead-detail__back-link:hover {
-  color: var(--color-highlight);
+  color: var(--color-primary);
   text-decoration: none;
 }
 .estimator-dashboard__overview dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); margin: 0; }
-.estimator-dashboard__overview dl > div { display: grid; gap: var(--space-2); min-block-size: 7rem; padding: var(--space-4); background: var(--color-surface); }
+.estimator-dashboard__overview dl > div { display: grid; gap: var(--space-2); min-block-size: 0; padding: var(--space-4); background: var(--color-surface); }
 .ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__overview dl > div:last-child { background: rgb(30 24 59 / var(--tw-bg-opacity, 1)); }
 .ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__overview dl > div::before { content: none; }
-.estimator-dashboard__overview dt { color: var(--color-text-muted); font-weight: 700; }
-.ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__overview dt { color: var(--color-text-strong); font-family: "Poppins", sans-serif; font-weight: var(--text-subheading2); letter-spacing: 0.1em; text-transform: uppercase; }
+.estimator-dashboard__overview dt { color: var(--color-text-muted); font-weight: 600; }
+.ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__overview dt { color: var(--color-text-strong); font-family: "Poppins", sans-serif; font-weight: var(--text-subheading2); letter-spacing: normal; text-transform: none; }
 .ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__overview dl > div:last-child dt { color: var(--color-highlight); }
 .ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__overview dl > div:last-child dd { color: #fff; }
-.estimator-dashboard__overview dd { margin: 0; color: var(--color-text); font: 400 2rem/1 var(--font-editorial); }
+.estimator-dashboard__overview dd { margin: 0; color: var(--color-text); font: 600 1.5rem/1.25 var(--font-interface); }
 .estimator-dashboard .lead-controls { padding: var(--space-4); background: var(--color-surface); }
-.ui-app-shell[data-role] .estimator-dashboard .lead-controls label { color: var(--color-text-strong); font-family: "Poppins", sans-serif; font-weight: var(--text-subheading2); letter-spacing: 0.1em; text-transform: uppercase; }
+.ui-app-shell[data-role] .estimator-dashboard .lead-controls label { color: var(--color-text-strong); font-family: "Poppins", sans-serif; font-weight: var(--text-subheading2); letter-spacing: normal; text-transform: none; }
 .ui-app-shell[data-role] .estimator-dashboard .inline-empty { background: #F7F6FA; border-color: var(--color-primary); }
 .ui-app-shell[data-role] .estimator-dashboard .inline-empty h2,
 .ui-app-shell[data-role] .estimator-dashboard .inline-empty p { color: rgb(30 24 59 / var(--tw-text-opacity, 1)); }
 .estimator-dashboard .lead-controls input,
-.estimator-dashboard .lead-controls select { min-block-size: 44px; border-color: var(--color-border-strong); background: var(--color-canvas); }
+.estimator-dashboard .lead-controls select { min-block-size: var(--control-height); border-color: var(--color-border-strong); background: var(--color-canvas); }
 .ui-app-shell[data-role] .estimator-dashboard .lead-controls input { border-color: var(--color-border-default); }
 .ui-app-shell[data-role] .estimator-dashboard .lead-controls input:focus-visible {
   border-width: 1px;
   border-color: var(--color-primary);
   box-shadow: none;
 }
-.ui-app-shell[data-role] .estimator-dashboard .lead-controls select { border-width: 1px; border-radius: var(--radius-card); border-color: var(--color-border-default); color: var(--color-primary); font-weight: 700; background: #fff; }
+.ui-app-shell[data-role] .estimator-dashboard .lead-controls select { border-width: 1px; border-radius: var(--radius-control); border-color: var(--color-border-default); color: var(--color-primary); font-weight: 600; background: #fff; }
 .ui-app-shell[data-role] .estimator-dashboard .lead-controls select:focus-visible {
   border-width: 1px;
   border-color: var(--color-primary);
@@ -913,14 +911,14 @@
 .ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__section-heading > span { color: rgb(30 24 59 / var(--tw-text-opacity, 1)); }
 .ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__section-heading { border-block-end-color: var(--color-primary); }
 .ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__section-heading > span { border-width: 1px; border-radius: var(--radius-card); border-color: var(--color-border-default); background: #fff; }
-.ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__section-heading .eyebrow { color: var(--color-highlight); font-family: "Poppins", sans-serif; font-weight: var(--text-title); font-size: var(--text-title-size); letter-spacing: 0.15em; text-transform: uppercase; }
+.ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__section-heading .eyebrow { color: var(--color-text-muted); font-family: "Poppins", sans-serif; font-weight: 600; font-size: var(--text-xs); letter-spacing: .06em; text-transform: none; }
 /* The actions column is a fixed width, not `auto`: the header's matching cell
    is empty, so `auto` collapsed it to 0 there and every label drifted right. */
 .lead-list__header,
 .estimator-dashboard .lead-row { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.05fr) minmax(0, .8fr) minmax(0, 1fr) 12rem; }
-.lead-list__header { display: grid; gap: var(--space-3); padding-inline: 1.1rem; color: var(--color-text-muted); font: var(--type-metadata); font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
-.ui-app-shell[data-role] .estimator-dashboard .lead-list__header { color: var(--color-text-strong); font-family: "Poppins", sans-serif; font-weight: var(--text-subheading2); letter-spacing: 0.1em; }
-.estimator-dashboard .lead-row { min-block-size: 5rem; }
+.lead-list__header { display: grid; gap: var(--space-3); padding-inline: var(--space-3); color: var(--color-text-muted); font: var(--type-metadata); font-weight: 600; text-transform: none; letter-spacing: normal; }
+.ui-app-shell[data-role] .estimator-dashboard .lead-list__header { color: var(--color-text-strong); font-family: "Poppins", sans-serif; font-weight: var(--text-subheading2); letter-spacing: normal; }
+.estimator-dashboard .lead-row { min-block-size: 4rem; padding: var(--space-3); border-radius: var(--radius-surface); }
 .estimator-dashboard .lead-row:hover { transform: none; border-color: var(--color-border-strong); background: var(--color-surface-subtle); }
 .ui-app-shell[data-role] .estimator-dashboard .lead-row:hover,
 .ui-app-shell[data-role] .estimator-dashboard .lead-row:focus-visible { border-color: var(--color-primary); }
@@ -929,7 +927,7 @@
 .ui-app-shell[data-role] .estimator-dashboard .lead-row__name { color: var(--color-text-strong); font-family: "Poppins", sans-serif; font-weight: var(--text-text2); font-size: var(--text-text2-size); }
 .ui-app-shell[data-role] .estimator-dashboard .lead-row__project h3 { color: var(--color-text-strong); font-family: "Poppins", sans-serif; font-weight: var(--text-text2); font-size: var(--text-text2-size); }
 .ui-app-shell[data-role] .estimator-dashboard .lead-row small { font-family: "Poppins", sans-serif; font-weight: var(--text-text3); font-size: var(--text-text3-size); }
-.lead-stage-badge { display: inline-flex; inline-size: max-content; padding: .3rem .6rem; border-radius: var(--radius-pill); color: var(--color-info); background: color-mix(in srgb, var(--color-info) 12%, var(--color-surface)); font-weight: 800; }
+.lead-stage-badge { display: inline-flex; inline-size: max-content; padding: .3rem .6rem; border-radius: var(--radius-pill); color: var(--color-info); background: color-mix(in srgb, var(--color-info) 12%, var(--color-surface)); font-weight: 600; }
 .ui-app-shell[data-role] .estimator-dashboard .lead-stage-badge,
 .ui-app-shell[data-role] .estimator-dashboard .estimate-status {
   border-width: 1px;
@@ -984,13 +982,13 @@
   .estimator-dashboard .workspace-header,
   .estimator-dashboard__section-heading { align-items: stretch; flex-direction: column; }
   .estimator-dashboard__overview dl,
-  .estimator-dashboard .saved-estimate-grid { grid-template-columns: 1fr; }
+  .estimator-dashboard .saved-estimate-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lead-list__header { display: none; }
   .estimator-dashboard .lead-row { grid-template-columns: 1fr; }
   .estimator-dashboard .lead-row > [data-label] { display: grid; gap: .2rem; }
-  .estimator-dashboard .lead-row > [data-label]::before { content: attr(data-label); color: var(--color-text-muted); font: var(--type-metadata); font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+  .estimator-dashboard .lead-row > [data-label]::before { content: attr(data-label); color: var(--color-text-muted); font: var(--type-metadata); font-weight: 600; text-transform: none; letter-spacing: normal; }
   .estimator-dashboard .lead-row__actions { grid-auto-flow: row; }
-  .estimator-dashboard .lead-row__actions > * { width: 100%; }
+  .estimator-dashboard .lead-row__actions > * { width: auto; }
   .ui-app-shell[data-role] .estimator-dashboard .estimate-workspace__header {
     flex-direction: row;
     flex-wrap: wrap;
@@ -1003,4 +1001,47 @@
   .ui-app-shell[data-role] .estimator-dashboard .estimate-workspace__summary {
     margin-inline-start: auto;
   }
+}
+
+/* Contextual sales review and estimate controls share the foundation geometry. */
+.lead-row__identity { display: flex; align-items: center; gap: var(--space-1); min-inline-size: 0; }
+.lead-row__identity .lead-row__name { min-inline-size: 0; flex: 1; overflow-wrap: anywhere; }
+.lead-row__identity .ui-icon-button { flex-shrink: 0; min-inline-size: var(--control-height-compact); min-block-size: var(--control-height-compact); inline-size: var(--control-height-compact); }
+.lead-quick-review, .lead-create-form { display: grid; gap: var(--space-4); min-inline-size: 0; }
+.lead-quick-review h3 { margin: 0 0 var(--space-2); font: var(--type-heading-3); }
+.lead-quick-review p { margin: 0; }
+.lead-quick-review__metadata { display: grid; margin: 0; }
+.lead-quick-review__metadata > div { display: grid; grid-template-columns: 6rem minmax(0, 1fr); gap: var(--space-3); padding-block: var(--space-2); border-block-end: 1px solid var(--color-border); }
+.lead-quick-review__metadata dt { color: var(--color-text-muted); font: var(--type-metadata); }
+.lead-quick-review__metadata dd { margin: 0; overflow-wrap: anywhere; }
+.lead-quick-review__metadata small { display: block; color: var(--color-text-muted); }
+.lead-quick-review .lead-timeline { padding-inline-start: var(--space-5); }
+.lead-quick-review .lead-timeline li { display: grid; gap: var(--space-1); }
+.lead-quick-review .ui-button { justify-self: start; }
+.lead-create-form__fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+.lead-contact-card { display: flex; flex-direction: column; gap: var(--space-3); min-inline-size: 0; padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-surface); background: var(--color-bg); overflow-wrap: anywhere; }
+.lead-contact-card__heading { display: flex; align-items: center; gap: var(--space-2); margin: 0; font: var(--type-heading-3); }
+.lead-follow-up__actions { display: flex; justify-content: flex-start; }
+.lead-follow-up__empty { color: var(--color-text-muted); }
+.estimator-dashboard .lead-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(10rem, 16rem); gap: var(--space-3); padding: 0; background: transparent; }
+.estimator-dashboard .lead-detail__grid form { gap: var(--space-3); }
+.estimator-dashboard .lead-detail__grid .ui-field__label { margin: 0; }
+.estimator-dashboard .lead-detail__grid .ui-textarea { min-block-size: 5rem; }
+.estimate-workspace.estimator-dashboard .estimate-panel { padding: var(--space-4); }
+.estimate-workspace.estimator-dashboard .estimate-panel h2 { font: var(--type-section-title); }
+.estimate-workspace.estimator-dashboard .estimate-workspace__summary strong,
+.estimate-workspace.estimator-dashboard .estimate-total-card span:last-child strong { font-size: var(--text-3xl); }
+.estimate-workspace.estimator-dashboard .estimate-workspace__footer { gap: var(--space-3); padding: var(--space-3) var(--space-4); }
+.estimate-workspace.estimator-dashboard .estimate-actions { gap: var(--space-2); }
+.estimate-workspace.estimator-dashboard :is(button, [role="button"]) { min-block-size: var(--control-height-compact); }
+.estimate-workspace.estimator-dashboard :is(input, select) { min-block-size: var(--control-height); }
+.estimate-workspace.estimator-dashboard input[type="checkbox"] { min-block-size: 1rem; }
+.estimate-workspace.estimator-dashboard :is(button, [role="button"], input, select):focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 2px; }
+.estimate-scope-section > button:focus-visible { outline-offset: -3px; }
+.estimate-line-row .ui-icon-button { min-inline-size: var(--control-height-compact); }
+.estimate-line-row .ui-select { max-inline-size: 12rem; }
+@media (max-width: 767px) {
+  .lead-create-form__fields, .estimator-dashboard .lead-controls { grid-template-columns: 1fr; }
+  .estimate-workspace.estimator-dashboard :is(input, select) { font-size: 1rem; }
+  .lead-quick-review__metadata > div { grid-template-columns: 5.5rem minmax(0, 1fr); }
 }

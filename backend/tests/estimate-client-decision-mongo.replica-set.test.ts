@@ -1,3 +1,4 @@
+import { createProjectDesignWorkflow } from "../src/domain/design-workflow.js";
 import express from "express";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -541,6 +542,7 @@ async function assertSingleDecision(
     );
     if (fixture.projectId === null) {
       expect(committedProjectId).toMatch(/^project-/);
+      expect(projects[0]!.designWorkflowStages).toEqual(createProjectDesignWorkflow(committedProjectId));
       expect(lead).toMatchObject({
         _id: fixture.leadId,
         projectId: committedProjectId,
@@ -566,6 +568,7 @@ async function assertSingleDecision(
       });
     } else {
       expect(committedProjectId).toBe(fixture.projectId);
+      expect(projects[0]).not.toHaveProperty("designWorkflowStages");
       expect(lead).toMatchObject({
         _id: fixture.leadId,
         projectId: fixture.projectId,

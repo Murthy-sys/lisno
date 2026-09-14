@@ -66,7 +66,7 @@ export interface AuthPayload {
 }
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-09-09.designer-upload-delete.v1" as const;
+  "2026-09-12.design-workflow-actions.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;
@@ -86,7 +86,7 @@ export interface ClientSignupInput {
   name: string;
   email: string;
   mobile: string;
-  address: string;
+  address?: string;
   password: string;
 }
 
@@ -221,7 +221,7 @@ export function createAuthService(
               name: input.name.trim(),
               email: input.email.trim(),
               mobile: input.mobile.trim(),
-              address: input.address.trim(),
+              address: input.address?.trim() || null,
               passwordHash: await bcrypt.hash(input.password, 12),
               role: "client",
               active: true,

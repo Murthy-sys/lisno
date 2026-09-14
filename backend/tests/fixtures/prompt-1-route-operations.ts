@@ -152,5 +152,9 @@ export const EXPECTED_HUMAN_JWT_OPERATIONS: readonly ExpectedHumanJwtOperation[]
   ...EXPECTED_HUMAN_JWT_OPERATIONS_24_39,
   ...EXPECTED_HUMAN_JWT_OPERATIONS_40_65,
   ...EXPECTED_HUMAN_JWT_OPERATIONS_66_84,
-  ...EXPECTED_HUMAN_JWT_OPERATIONS_85_93
+  ...EXPECTED_HUMAN_JWT_OPERATIONS_85_93,
+  { key: "POST /projects/:projectId/design-workflow/actions", permission: "projects.design_workflow.act", scope: { kind: "project", module: "projects" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "baseline" },
+  { key: "GET /projects/:projectId/design-workflow/history/:eventId/proof", permission: "projects.design_workflow.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
+  { key: "GET /design-workflow/payment-confirmations", permission: "projects.design_workflow.payments.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
+  { key: "GET /projects/:projectId/design-workflow", permission: "projects.design_workflow.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" }
 ];

@@ -1,4 +1,5 @@
 import { model, models, Schema } from "./mongoose.js";
+import { ROLE_CODES } from "../domain/roles.js";
 import { ESTIMATE_CLIENT_SHA256 } from "../domain/estimate-client-review.js";
 
 const attachmentSchema = new Schema(
@@ -84,6 +85,8 @@ const designPlanReviewRoundSchema = new Schema(
     },
     decisionNote: { type: String, default: null, maxlength: 1_000 },
     decidedById: { type: String, ref: "User", default: null },
+    decidedByName: { type: String, default: null },
+    decidedByRole: { type: String, enum: [...ROLE_CODES, null], default: null },
     decidedAt: { type: Date, default: null },
     version: { type: Number, required: true, default: 1, min: 1 }
   },

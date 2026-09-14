@@ -443,12 +443,32 @@ describe("DesignerDashboard", () => {
       row.classList.contains("designer-project-row")
     );
     expect(rows.map((row) => row.getAttribute("aria-labelledby"))).toEqual([
-      "designer-project-project-aurora-villa",
-      "designer-project-project-aurora-studio"
+      "designer-project-estimate-aurora-villa:design-plan-upload",
+      "designer-project-estimate-aurora-studio:design-plan-upload"
     ]);
     expect(within(rows[0]).getByText("High priority")).toBeVisible();
     expect(within(rows[1]).getByText("Priority")).toBeVisible();
     expect(screen.getByText("2 priority · 2 assigned")).toBeVisible();
+  });
+
+  it("reviews loaded project identity and restores its trigger without fetching project detail", async () => {
+    tokenStorage.set("designer-token");
+    installDashboardApi();
+    const user = userEvent.setup();
+    renderApp(["/designer"]);
+    const trigger = await screen.findByRole("button", { name: "Quick review Aurora Villa" });
+    await user.click(trigger);
+    const panel = screen.getByRole("dialog", { name: "Aurora Villa" });
+    expect(within(panel).getByText("Priya Shah")).toBeVisible();
+    expect(within(panel).getByRole("link", { name: "Open design workspace" })).toHaveAttribute("href", "/designer/design-plans?estimate=estimate-aurora-villa");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+    await user.click(screen.getByRole("button", { name: "Quick review Aurora Studio" }));
+    const second = screen.getByRole("dialog", { name: "Aurora Studio" });
+    expect(within(second).getByText("Rhea Kapoor")).toBeVisible();
+    expect(within(second).queryByText("Priya Shah")).not.toBeInTheDocument();
+    expect(within(second).getByRole("link", { name: "Open design workspace" })).toHaveAttribute("href", "/designer/design-plans?estimate=estimate-aurora-studio");
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => /\/projects\/project-/.test(String(input)))).toBe(false);
   });
 
   it("offers retry when dashboard data cannot be loaded", async () => {

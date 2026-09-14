@@ -11,6 +11,7 @@ import type {
 } from "../../api/types";
 import { useFeedback } from "../../components/feedback/FeedbackProvider";
 import { Button } from "../../components/ui/Button";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Dialog } from "../../components/ui/Dialog";
 import { Field, Select } from "../../components/ui/Field";
 import { adminUserKeys, updateManagedUser } from "./adminApi";
@@ -209,8 +210,33 @@ export function UserMutationDialog({
   }
 
   return (
-    <Dialog
+    <ContextPanel
       key="user-mutation"
+      dirty={selectedRole !== user.role}
+      className="administration-context-panel"
+      footer={({ requestClose }) => (
+        <div className="admin-user-dialog__actions">
+          <Button
+            variant="quiet"
+            disabled={mutation.isPending}
+            onClick={requestClose}
+          >
+            Cancel
+          </Button>
+          <Button
+            busy={mutation.isPending}
+            busyLabel="Saving…"
+            disabled={
+              interactionBlocked ||
+              selectedRole === user.role ||
+              !manageableRoles.includes(selectedRole as ManageableRole)
+            }
+            onClick={submitRole}
+          >
+            Save role
+          </Button>
+        </div>
+      )}
       title={`Manage ${user.name}`}
       eyebrow="Access administration"
       description="Change one access setting at a time."
@@ -254,20 +280,7 @@ export function UserMutationDialog({
           )}
         </Field>
 
-        <div className="admin-user-dialog__role-action">
-          <Button
-            busy={mutation.isPending}
-            busyLabel="Saving…"
-            disabled={
-              interactionBlocked ||
-              selectedRole === user.role ||
-              !manageableRoles.includes(selectedRole as ManageableRole)
-            }
-            onClick={submitRole}
-          >
-            Save role
-          </Button>
-        </div>
+
 
         <section
           className="admin-user-dialog__account"
@@ -305,16 +318,8 @@ export function UserMutationDialog({
           )}
         </section>
 
-        <div className="admin-user-dialog__actions">
-          <Button
-            variant="quiet"
-            disabled={mutation.isPending}
-            onClick={onClose}
-          >
-            Cancel
-          </Button>
-        </div>
+
       </div>
-    </Dialog>
+    </ContextPanel>
   );
 }

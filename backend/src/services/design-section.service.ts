@@ -18,6 +18,7 @@ import { RepositoryConflictError } from "../repositories/types.js";
 import type { FileStorage } from "../storage/storage.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
+import { assertDesignWorkflowSubmissionAllowed } from "./design-workflow-state.service.js";
 import {
   requireActor,
   requireProjectOperationAccess,
@@ -356,7 +357,8 @@ export function createDesignSectionService(
     },
 
     async submit(actor, versionId) {
-      const { job } = await requireEditable(actor, versionId);
+      const { job, project } = await requireEditable(actor, versionId);
+      await assertDesignWorkflowSubmissionAllowed(repository, project.id);
       if (job.status !== "designer_review" && job.status !== "changes_requested") {
         throw new ApiError(409, "INVALID_EXTRACTION_STATE", "Sections are not ready to submit.");
       }
@@ -368,6 +370,7 @@ export function createDesignSectionService(
       let submittedCount: number;
       try {
         submittedCount = await repository.runInTransaction(async (transaction) => {
+          await assertDesignWorkflowSubmissionAllowed(transaction, project.id, { lock: true });
           const count = await transaction.submitDesignSectionDrafts(versionId, occurredAt);
           await audit.append({
             actorId: actor.id,

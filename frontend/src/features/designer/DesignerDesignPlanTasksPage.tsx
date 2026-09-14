@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
+import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import type { DesignPlanStatus, DesignPlanTask } from "../../api/types";
@@ -16,12 +17,17 @@ import { estimateBuilderSections } from "../leads/estimateBuilderCatalogue";
 import { EstimatePlanChangeRequests } from "../leads/EstimatePlanChangeRequests";
 import {
   getDesignerPlanTasks,
+  getDesignWorkflow,
+  type DesignWorkflowStage,
+  type DesignWorkflowView,
   projectWorkflowKeys
 } from "../workflow/projectWorkflowApi";
+import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
+import { currentProjectWorkflowStage, workflowStageStatus } from "../workflow/projectWorkflowSelectors";
 
 const statusLabels: Record<DesignPlanStatus, string> = {
   pending_assignment: "Awaiting assignment",
-  assigned: "Ready to upload",
+  assigned: "Assigned",
   in_progress: "Extraction in progress",
   ready_for_client: "Awaiting Client approval",
   changes_requested: "Changes requested",
@@ -37,23 +43,46 @@ const statusTones: Record<DesignPlanStatus, StatusTone> = {
   approved: "success"
 };
 
-function taskAction(status: DesignPlanStatus) {
+function designAction(status: DesignPlanStatus) {
   if (status === "changes_requested") return "Update and resubmit the design";
-  if (status === "ready_for_client") return "Review submitted images";
+  if (status === "ready_for_client") return "Await Client approval";
   if (status === "approved") return "View approved design images";
   if (status === "in_progress") return "Review extracted images";
   return "Upload the design plan";
 }
 
-function isReadOnly(status: DesignPlanStatus) {
-  return status === "ready_for_client" || status === "approved";
+function stageAction(workflow: DesignWorkflowView, stage: DesignWorkflowStage | undefined, status: DesignPlanStatus) {
+  if (workflow.initialPayment && !workflow.initialPayment.confirmedAt) {
+    return workflow.initialPayment.status === "awaiting_estimate_approval" ? "Await estimate approval" : "Await initial payment confirmation";
+  }
+  if (!stage) {
+    if (!workflow.projectStages?.length) return "Configure the project workflow";
+    return status === "ready_for_client" || status === "approved" ? designAction(status) : "Review project designs";
+  }
+  const actions = stage.operational?.availableActions ?? [];
+  const enabled = actions.filter((action) => !action.disabledReason);
+  const completion = enabled.find((action) => action.id.endsWith("_complete"));
+  if (completion) return completion.label;
+  if (enabled.length) return enabled[0]!.label;
+  if (stage.operational?.blockingReasons.length) return stage.operational.blockingReasons[0]!;
+  if (stage.type === "space_planning_tentative_look_feel") return designAction(status);
+  return `Await completion of ${stage.name}`;
 }
 
 export function DesignerDesignPlanTasksPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const [timelineContainer, setTimelineContainer] = useState<HTMLDivElement | null>(null);
   const tasks = useQuery({
     queryKey: projectWorkflowKeys.designerPlans,
     queryFn: getDesignerPlanTasks
+  });
+  const requestedEstimateId = searchParams.get("estimate");
+  const task = tasks.data?.find((item) => item.estimateId === requestedEstimateId) ?? tasks.data?.[0];
+  // This observer shares the panel's query; its polling updates upload eligibility and next action together.
+  const workflow = useQuery({
+    queryKey: projectWorkflowKeys.designWorkflow(task?.projectId ?? ""),
+    queryFn: () => getDesignWorkflow(task!.projectId),
+    enabled: Boolean(task?.projectId)
   });
 
   if (tasks.isPending) {
@@ -69,12 +98,16 @@ export function DesignerDesignPlanTasksPage() {
     );
   }
 
-  const requestedEstimateId = searchParams.get("estimate");
-  const task = tasks.data.find((item) => item.estimateId === requestedEstimateId) ??
-    tasks.data[0];
-  const uploadReadyCount = tasks.data.filter((item) =>
-    ["assigned", "in_progress", "changes_requested"].includes(item.status)
-  ).length;
+  const savedWorkflow = workflow.data?.projectId === task?.projectId ? workflow.data : undefined;
+  const currentStage = savedWorkflow ? currentProjectWorkflowStage(savedWorkflow) : undefined;
+  const uploadStage = savedWorkflow?.projectStages?.find((stage) => stage.type === "space_planning_tentative_look_feel");
+  const atUploadStage = Boolean(uploadStage && currentStage?.id === uploadStage.id);
+  const showDesignSection = Boolean(uploadStage && (atUploadStage || workflowStageStatus(uploadStage) === "completed"));
+  const canEditDesign = Boolean(atUploadStage && uploadStage?.operational &&
+    uploadStage.operational.status !== "blocked" && uploadStage.operational.blockingReasons.length === 0 &&
+    !["waiting", "paused"].includes(uploadStage.operational.timing.state) && !workflow.isError &&
+    task && ["assigned", "in_progress", "changes_requested"].includes(task.status));
+  const nextAction = workflow.isError ? "Refresh the project workflow" : !savedWorkflow ? "Loading project workflow…" : stageAction(savedWorkflow, currentStage, task!.status);
 
   return (
     <section
@@ -85,17 +118,11 @@ export function DesignerDesignPlanTasksPage() {
         id="design-plan-tasks-title"
         eyebrow="Assigned design work"
         title="Design plan workspace"
-        description="Upload the assigned project design, review every extracted image, and submit the final set for Client approval."
+        description="Complete each project stage, then upload and review the designs for Client approval."
         breadcrumb={(
           <Link to="/designer" className="back-link">
             <ArrowLeft aria-hidden="true" /> Back to dashboard
           </Link>
-        )}
-        metadata={(
-          <StatusBadge
-            tone={uploadReadyCount ? "warning" : "info"}
-            label={`${uploadReadyCount} ready for action`}
-          />
         )}
       />
 
@@ -106,6 +133,7 @@ export function DesignerDesignPlanTasksPage() {
         />
       ) : (
         <div className="designer-plan-layout">
+          <div className="designer-plan-progress" ref={setTimelineContainer} />
           <Surface
             as="section"
             padding="compact"
@@ -140,7 +168,6 @@ export function DesignerDesignPlanTasksPage() {
                         />
                       </span>
                       <span>{item.clientName}</span>
-                      <small>Design plan v{item.designPlanVersion}</small>
                     </button>
                   </li>
                 );
@@ -170,31 +197,34 @@ export function DesignerDesignPlanTasksPage() {
               </div>
               <dl>
                 <div><dt>Client</dt><dd>{task.clientName}</dd></div>
-                <div><dt>Design version</dt><dd>v{task.designPlanVersion}</dd></div>
-                <div><dt>Next action</dt><dd>{taskAction(task.status)}</dd></div>
+                <div><dt>Next action</dt><dd>{nextAction}</dd></div>
               </dl>
             </Surface>
 
-            {task.status === "changes_requested" ? (
+            <ProjectWorkflowPanel key={`workflow-${task.projectId}`} projectId={task.projectId} timelineContainer={timelineContainer} presentation="designer" />
+
+            {showDesignSection && task.status === "changes_requested" ? (
               <EstimatePlanChangeRequests estimateId={task.estimateId} />
             ) : null}
-            {task.status === "ready_for_client" ? (
+            {showDesignSection && task.status === "ready_for_client" ? (
               <p className="designer-plan-workspace__notice" role="status">
                 Submitted to the Client. Other edits are read-only while approval is pending.
                 You can delete your unapproved uploads to withdraw the review and update the design.
               </p>
             ) : null}
-            <EstimateDesignUploads
+            {showDesignSection ? <EstimateDesignUploads
               key={task.estimateId}
               estimateId={task.estimateId}
               rooms={roomOptions(task)}
               scopes={scopeOptions(task)}
               items={itemOptions(task)}
               variant="designer"
-              readOnly={isReadOnly(task.status)}
+              title={canEditDesign ? "Upload design" : task.status === "approved" ? "Approved design" : "Design review"}
+              designPlanVersion={task.designPlanVersion}
+              readOnly={!canEditDesign}
               onUploaded={() => void tasks.refetch()}
               onSubmitted={() => void tasks.refetch()}
-            />
+            /> : null}
           </section>
         </div>
       )}

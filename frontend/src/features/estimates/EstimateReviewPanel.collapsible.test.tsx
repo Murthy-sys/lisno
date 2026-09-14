@@ -131,6 +131,17 @@ function ruleBody(source: string, selector: string) {
 }
 
 describe("EstimateReviewPanel client disclosures", () => {
+  it("opens the exact Client design task selected from a project workflow", async () => {
+    tokenStorage.set("client-token");
+    installClientApi();
+    renderApp(["/client?estimate=estimate-approved"]);
+    const selected = await screen.findByRole("button", { name: /Cedar Loft/ });
+    expect(selected).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: /Aurora Villa/ })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: /Harbor Penthouse/ })).toHaveAttribute("aria-expanded", "false");
+    expect(await screen.findByRole("button", { name: "Open uploaded plan client-design.pdf" })).toBeVisible();
+  });
+
   it("stacks collapsed and expanded controls from the client card width before they collide", () => {
     expect(ruleBody(stylesheet, ".estimate-review-card--client")).toMatch(
       /container-type:\s*inline-size/

@@ -1,7 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { useState } from "react";
-import { Download, Plus } from "lucide-react";
+import { Download, Eye, Plus } from "lucide-react";
 
 import type { Lead, LeadStage } from "../../api/types";
 import { useAuth } from "../../auth/AuthProvider";
@@ -9,6 +9,9 @@ import { hasFrontendPermission } from "../../auth/authorization";
 import { AsyncState } from "../../components/ui/AsyncState";
 import { Button } from "../../components/ui/Button";
 import { DownloadButton } from "../../components/ui/DownloadButton";
+import { Field, Input, Select } from "../../components/ui/Field";
+import { IconButton } from "../../components/ui/IconButton";
+import { LeadQuickReview } from "./LeadQuickReview";
 import { AdminProjectInitiationDialog } from "../admin/AdminProjectInitiationDialog";
 import "../../styles/estimator-dashboard.css";
 import {
@@ -36,12 +39,15 @@ export function LeadDashboard() {
   const auth = useAuth();
   const navigate = useNavigate();
   const [initiationOpen, setInitiationOpen] = useState(false);
+  const [reviewLeadId, setReviewLeadId] = useState<string | null>(null);
+  const canReview = hasFrontendPermission(auth.authorization, "estimation.lead.read");
   const canInitiate = hasFrontendPermission(auth.authorization, "projects.initiate");
   const [search, setSearch] = useState("");
   const [stage, setStage] = useState<LeadStage | "all">("all");
   const query = useQuery({
     queryKey: leadKeys.page(search, stage),
-    queryFn: () => getLeadPage(search, stage)
+    queryFn: () => getLeadPage(search, stage),
+    placeholderData: keepPreviousData
   });
   const estimates = useQuery({
     queryKey: [...leadKeys.all, "saved-estimates"],
@@ -87,14 +93,15 @@ export function LeadDashboard() {
     </section>
 
     <div className="lead-controls">
-      <label>Search leads<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Client, email or project" /></label>
-      <label>Lead stage<select value={stage} onChange={(event) => setStage(event.target.value as LeadStage | "all")}><option value="all">All stages</option>{Object.entries(labels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <Field id="lead-search" label="Search leads">{(props) => <Input {...props} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Client, email or project" />}</Field>
+      <Field id="lead-stage-filter" label="Lead stage">{(props) => <Select {...props} value={stage} onChange={(event) => setStage(event.target.value as LeadStage | "all")}><option value="all">All stages</option>{Object.entries(labels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select>}</Field>
     </div>
 
-    <section className="estimator-dashboard__section" aria-labelledby="leads-title">
+    <section className="estimator-dashboard__section" aria-labelledby="leads-title" aria-busy={query.isFetching}>
+      {query.isFetching ? <p role="status">Updating leads…</p> : null}
       <header className="estimator-dashboard__section-heading">
         <div><p className="eyebrow">Opportunity pipeline</p><h2 id="leads-title">Leads</h2></div>
-        <span>{query.data.items.length} total</span>
+        <span>{query.data.items.length} shown{query.data.pagination.hasMore ? ` of ${query.data.pagination.total}` : ""}</span>
       </header>
       {query.data.items.length ? <div className="lead-list">
         <div className="lead-list__header" aria-hidden="true">
@@ -106,9 +113,11 @@ export function LeadDashboard() {
           estimate={estimateByLead.get(lead.id)}
           estimatesPending={estimates.isPending}
           estimatesUnavailable={estimates.isError}
+          onReview={canReview ? () => setReviewLeadId(lead.id) : undefined}
         />)}
       </div> : <div className="inline-empty"><h2>No leads yet</h2><p>{canInitiate ? "Initiate a project to create your first lead." : "Assigned project leads appear here."}</p></div>}
     </section>
+    {reviewLeadId && canReview ? <LeadQuickReview key={reviewLeadId} leadId={reviewLeadId} onClose={() => setReviewLeadId(null)} /> : null}
     {initiationOpen && canInitiate ? (
       <AdminProjectInitiationDialog
         assignmentMode="sales-manager"
@@ -123,19 +132,21 @@ function LeadRow({
   lead,
   estimate,
   estimatesPending,
-  estimatesUnavailable
+  estimatesUnavailable,
+  onReview
 }: {
   lead: Lead;
   estimate: SavedEstimate | undefined;
   estimatesPending: boolean;
   estimatesUnavailable: boolean;
+  onReview?: () => void;
 }) {
-  const leadPath = `/estimator-sales/leads/${lead.id}`;
+  const leadPath = `/estimator-sales/leads/${encodeURIComponent(lead.id)}`;
   const projectHeadingId = `lead-${lead.id}-project`;
 
   return <article className="lead-row" aria-labelledby={projectHeadingId}>
     <span className="lead-row__client" data-label="Client">
-      <Link className="lead-row__name" to={leadPath}>{lead.clientName}</Link>
+      <span className="lead-row__identity"><Link className="lead-row__name" to={leadPath}>{lead.clientName}</Link>{onReview ? <IconButton variant="quiet" label={`Review ${lead.projectName}`} tooltip="Quick review" icon={<Eye size={16} />} onClick={onReview} /> : null}</span>
       <small>{lead.clientEmail} · {lead.clientMobile}</small>
     </span>
     <span className="lead-row__project" data-label="Project">

@@ -15,7 +15,7 @@ import type {
 } from "../../api/types";
 import { useFeedback } from "../../components/feedback/FeedbackProvider";
 import { Button } from "../../components/ui/Button";
-import { Dialog } from "../../components/ui/Dialog";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field, Input } from "../../components/ui/Field";
 import { SearchCombobox } from "../../components/ui/SearchCombobox";
 import {
@@ -231,20 +231,30 @@ export function AdminProjectInitiationDialog({
     !selectedAssignee;
 
   return (
-    <Dialog
+    <ContextPanel
       eyebrow="Project administration"
       title="Initiate project"
       description={selectsSalesManager
-        ? "Create your project and select the Sales Manager who will oversee it."
-        : "Create the project now and hand its lead to Sales."}
+        ? "Create your project and select the Sales Manager who will oversee it. The six-stage design workflow is included."
+        : "Create the project now and hand its lead to Sales. The six-stage design workflow is included."}
       onClose={onClose}
       busy={mutation.isPending}
+      width="wide"
+      dirty={Object.values(form).some(Boolean) || selectedAssignee !== null || assigneeSearch.length > 0}
+      className="administration-context-panel"
+      footer={({ requestClose }) => (
+        <div className="modal-form__actions admin-project-form__actions">
+          <Button variant="secondary" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
+          <Button type="submit" form="admin-project-initiation-form" busy={mutation.isPending} busyLabel="Initiating…" disabled={submitDisabled}>Initiate project</Button>
+        </div>
+      )}
     >
-      <form className="modal-form admin-project-form" onSubmit={submit} noValidate>
+      <form id="admin-project-initiation-form" className="modal-form admin-project-form" onSubmit={submit} noValidate>
         {submissionError ? <div className="form-alert admin-project-form__alert" role="alert">{submissionError}</div> : null}
         {fields.map(([key, label, type, placeholder]) => (
           <Field
             key={key}
+            className={key === "clientName" || key === "projectName" ? "admin-project-form__wide" : undefined}
             id={`admin-project-${key}`}
             label={label}
             required
@@ -263,7 +273,6 @@ export function AdminProjectInitiationDialog({
                   value={form[key]}
                   onChange={update(key)}
                 />
-                <span className="admin-project-form__control-icon" data-field={key} aria-hidden="true" />
               </div>
             )}
           </Field>
@@ -310,11 +319,7 @@ export function AdminProjectInitiationDialog({
             <p className="ui-field__hint">Pick an option from the list — Initiate project stays disabled until {selectsSalesManager ? "a Sales Manager" : "a Sales user"} is selected.</p>
           ) : null}
         </div>
-        <div className="modal-form__actions admin-project-form__actions">
-          <Button variant="secondary" onClick={onClose} disabled={mutation.isPending}>Cancel</Button>
-          <Button type="submit" busy={mutation.isPending} busyLabel="Initiating…" disabled={submitDisabled}>Initiate project</Button>
-        </div>
       </form>
-    </Dialog>
+    </ContextPanel>
   );
 }

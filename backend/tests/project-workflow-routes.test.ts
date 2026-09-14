@@ -6,12 +6,13 @@ import { ApiError, errorHandler } from "../src/middleware/errors.js";
 import { createProjectWorkflowRouter } from "../src/routes/project-workflow.js";
 import type { AuthService, PublicUser } from "../src/services/auth.service.js";
 import type { EstimateClientReviewStorage } from "../src/services/estimate-client-review-storage.js";
-import type { ProjectWorkflowService } from "../src/services/project-workflow.service.js";
+import { DesignDecisionProofRetentionError, type ProjectWorkflowService } from "../src/services/project-workflow.service.js";
 
 const ACTORS = {
   admin: actor("workflow-route-admin", "admin"),
   superAdmin: actor("workflow-route-super-admin", "super_admin"),
   estimator: actor("workflow-route-estimator", "estimator_sales"),
+  client: actor("workflow-route-client", "client"),
   designer: actor("workflow-route-designer", "designer"),
   procurement: actor("workflow-route-procurement", "procurement"),
   carpenter: actor("workflow-route-carpenter", "worker_carpenter")
@@ -52,6 +53,8 @@ function setup() {
     deliverDesignReview: vi.fn(),
     recordClientDrawingDecision: vi.fn(),
     listDesignReviewTasks: vi.fn(async () => []),
+    requireDesignReviewDecisionScope: vi.fn(async () => undefined),
+    readDesignReviewProof: vi.fn(async () => ({ filename: "proof.pdf", mimeType: "application/pdf", bytes: Buffer.from("proof") })),
     readDesignReviewAttachment: vi.fn(async () => ({
       filename: "design-plan.pdf",
       mimeType: "application/pdf",
@@ -68,7 +71,9 @@ function setup() {
       deliveryStatus: "sent",
       submittedAt: "2026-08-25T10:00:00.000Z",
       version: 5,
-      attachmentNames: ["design-plan.pdf"]
+      attachmentNames: ["design-plan.pdf"],
+      decision: null,
+      canDecide: false
     })),
     decideDesignReviewAsAdmin: vi.fn(async () => ({
       id: "round-1",
@@ -81,7 +86,9 @@ function setup() {
       deliveryStatus: "sent",
       submittedAt: "2026-08-25T10:00:00.000Z",
       version: 2,
-      attachmentNames: ["design-plan.pdf"]
+      attachmentNames: ["design-plan.pdf"],
+      decision: null,
+      canDecide: false
     })),
     listAssignableWorkers: vi.fn(async () => [{
       id: "workflow-route-carpenter",
@@ -263,7 +270,8 @@ describe("project workflow routes", () => {
       .expect(200, { data: [] });
     expect(service.listDesignReviewTasks).toHaveBeenCalledWith(
       ACTORS.superAdmin,
-      "changes_requested"
+      "changes_requested",
+      undefined
     );
 
     await request(app)
@@ -617,5 +625,67 @@ describe("project workflow routes", () => {
     expect(proofStorage.deleteQuietly).toHaveBeenCalledWith(
       savedProof.storageReference
     );
+  });
+});
+
+
+describe("Design workflow review evidence access", () => {
+  it.each(["client", "designer", "admin", "superAdmin"] as const)("forwards scoped project filters and proof downloads for %s", async (role) => {
+    const { app, service } = setup();
+    await request(app).get("/api/v1/admin/design-plan-response-tasks?projectId=project-1&status=approved")
+      .set("Authorization", bearer(role)).expect(200);
+    expect(service.listDesignReviewTasks).toHaveBeenCalledWith(ACTORS[role], "approved", "project-1");
+    const result = await request(app).get("/api/v1/admin/design-plan-response-tasks/round-1/proof")
+      .set("Authorization", bearer(role)).expect(200);
+    expect(result.headers["cache-control"]).toBe("private, no-store");
+    expect(result.headers["x-content-type-options"]).toBe("nosniff");
+    expect(service.readDesignReviewProof).toHaveBeenCalledWith(ACTORS[role], "round-1");
+  });
+
+  it("rejects out-of-scope evidence before parsing or storing the upload", async () => {
+    const { app, service, proofStorage } = setup();
+    service.requireDesignReviewDecisionScope.mockRejectedValueOnce(new ApiError(404, "NOT_FOUND", "Not found."));
+    await request(app).post("/api/v1/admin/design-plan-response-tasks/round-1/decision")
+      .set("Authorization", bearer("admin")).attach("proof", Buffer.from("invalid"), "proof.jpg").expect(404);
+    expect(proofStorage.saveProof).not.toHaveBeenCalled();
+    expect(service.decideDesignReviewAsAdmin).not.toHaveBeenCalled();
+  });
+
+  it("rejects missing proof and forged file signatures before storage", async () => {
+    const { app, service, proofStorage } = setup();
+    await request(app).post("/api/v1/admin/design-plan-response-tasks/round-1/decision")
+      .set("Authorization", bearer("admin")).field("expectedVersion", "1").field("decision", "approve").expect(400);
+    await request(app).post("/api/v1/admin/design-plan-response-tasks/round-1/decision")
+      .set("Authorization", bearer("admin")).field("expectedVersion", "1").field("decision", "approve")
+      .attach("proof", Buffer.from("not an image"), { filename: "proof.jpg", contentType: "image/jpeg" }).expect(415);
+    expect(proofStorage.saveProof).not.toHaveBeenCalled();
+    expect(service.decideDesignReviewAsAdmin).not.toHaveBeenCalled();
+  });
+
+  it("cleans the stored upload after a definite transaction abort following the callback", async () => {
+    const { app, service, proofStorage, savedProof } = setup();
+    service.decideDesignReviewAsAdmin.mockRejectedValueOnce(new Error("Confirmed transaction abort after callback"));
+    await request(app).post("/api/v1/admin/design-plan-response-tasks/round-1/decision")
+      .set("Authorization", bearer("admin")).field("expectedVersion", "1").field("decision", "approve")
+      .attach("proof", JPEG, { filename: "proof.jpg", contentType: "image/jpeg" }).expect(500);
+    expect(proofStorage.saveProof).toHaveBeenCalledOnce();
+    expect(proofStorage.deleteQuietly).toHaveBeenCalledWith(savedProof.storageReference);
+  });
+
+  it("retains evidence when commit recovery cannot safely confirm the outcome", async () => {
+    const { app, service, proofStorage } = setup();
+    service.decideDesignReviewAsAdmin.mockRejectedValueOnce(new DesignDecisionProofRetentionError());
+    await request(app).post("/api/v1/admin/design-plan-response-tasks/round-1/decision")
+      .set("Authorization", bearer("admin")).field("expectedVersion", "1").field("decision", "approve")
+      .attach("proof", JPEG, { filename: "proof.jpg", contentType: "image/jpeg" }).expect(500);
+    expect(proofStorage.saveProof).toHaveBeenCalledOnce();
+    expect(proofStorage.deleteQuietly).not.toHaveBeenCalled();
+  });
+
+  it.each(["client", "designer", "estimator"] as const)("keeps the Admin proof decision unavailable to %s", async (role) => {
+    const { app, service } = setup();
+    await request(app).post("/api/v1/admin/design-plan-response-tasks/round-1/decision")
+      .set("Authorization", bearer(role)).expect(403);
+    expect(service.requireDesignReviewDecisionScope).not.toHaveBeenCalled();
   });
 });

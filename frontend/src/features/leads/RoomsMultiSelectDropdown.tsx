@@ -24,6 +24,7 @@ export function RoomsMultiSelectDropdown({
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const filtered = useMemo(
@@ -70,7 +71,7 @@ export function RoomsMultiSelectDropdown({
   const clearAll = () => onChange([]);
 
   const onSearchKeyDown = (event: KeyboardEvent) => {
-    if (event.key === "Escape") { setOpen(false); return; }
+    if (event.key === "Escape") { setOpen(false); triggerRef.current?.focus(); return; }
     if (event.key === "ArrowDown") { event.preventDefault(); setHighlight((current) => Math.min(current + 1, filtered.length - 1)); return; }
     if (event.key === "ArrowUp") { event.preventDefault(); setHighlight((current) => Math.max(current - 1, 0)); return; }
     if (event.key === "Enter") {
@@ -84,42 +85,22 @@ export function RoomsMultiSelectDropdown({
 
   return (
     <div ref={rootRef} className="relative w-full">
-      <div
-        role="button"
-        tabIndex={0}
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label="Select rooms"
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            setOpen((current) => !current);
-          }
-        }}
-        className={`flex w-full cursor-pointer flex-wrap items-center gap-1.5 rounded-lg border bg-[var(--color-bg)] px-3.5 py-2.5 text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${open ? "border-[var(--color-primary)]" : "border-[var(--color-primary)]/20"}`}
+        className={`flex w-full items-center gap-2 rounded-lg border bg-[var(--color-bg)] px-3 py-2 text-sm transition-colors ${open ? "border-[var(--color-primary)]" : "border-[var(--color-primary)]/20"}`}
       >
-        {selectedOptions.length ? (
-          selectedOptions.map((option) => (
-            <span
-              key={option.id}
-              className="flex items-center gap-1 rounded-full bg-[var(--color-primary)] px-2.5 py-1 text-xs font-medium text-[var(--color-bg)]"
-            >
-              {option.label}
-              <button
-                type="button"
-                aria-label={`Remove ${option.label}`}
-                onClick={(event) => { event.stopPropagation(); toggle(option.id); }}
-                className="text-[var(--color-bg)]"
-              >
-                <X size={12} aria-hidden="true" />
-              </button>
-            </span>
-          ))
-        ) : (
-          <span className="flex-1 text-[var(--color-primary)]/40">Select rooms</span>
-        )}
-        <ChevronDown size={16} className={`ml-auto shrink-0 text-[var(--color-primary)] transition-transform ${open ? "rotate-180" : ""}`} />
-      </div>
+        <span className="flex-1 text-left">{selectedOptions.length ? `${selectedOptions.length} rooms selected` : "Select rooms"}</span>
+        <ChevronDown size={16} aria-hidden="true" className={`shrink-0 text-[var(--color-primary)] transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {selectedOptions.length ? <ul aria-label="Selected rooms" className="mt-2 flex flex-wrap gap-2">{selectedOptions.map((option) => <li key={option.id} className="flex items-center gap-1 rounded-lg bg-[var(--color-primary)] px-2 text-xs text-[var(--color-bg)]">
+        {option.label}
+        <button type="button" aria-label={`Remove ${option.label}`} onClick={() => toggle(option.id)} className="px-1 text-[var(--color-bg)]"><X size={14} aria-hidden="true" /></button>
+      </li>)}</ul> : null}
 
       {open ? (
         <div className="absolute z-20 mt-1.5 w-full min-w-[16rem] rounded-lg border border-[var(--color-primary)]/20 bg-[var(--color-bg)] shadow-lg">
@@ -130,22 +111,23 @@ export function RoomsMultiSelectDropdown({
               value={query}
               onChange={(event) => { setQuery(event.target.value); setHighlight(0); }}
               onKeyDown={onSearchKeyDown}
+              aria-label="Search rooms"
               placeholder="Search rooms"
-              className="w-full appearance-none border-0 bg-transparent text-sm text-[var(--color-primary)] shadow-none outline-none placeholder:text-[var(--color-primary)]/40 focus:border-0 focus:!shadow-none focus:outline-none focus:ring-0 focus-visible:!shadow-none focus-visible:outline-none"
+              className="w-full appearance-none border-0 bg-transparent text-sm text-[var(--color-primary)] shadow-none placeholder:text-[var(--color-text-muted)] focus:border-0"
             />
           </div>
 
           <div className="flex items-center justify-between px-3 py-2 text-xs">
-            <button type="button" onClick={toggleFilteredSelection} className="font-bold text-[var(--color-primary)]" disabled={!filteredIds.length}>
+            <button type="button" onClick={toggleFilteredSelection} className="font-semibold text-[var(--color-primary)]" disabled={!filteredIds.length}>
               {allFilteredSelected ? "Deselect all" : "Select all"}
             </button>
-            <span className="text-[var(--color-primary)]/50">{selected.length} of {options.length} selected</span>
+            <span className="text-[var(--color-text-muted)]">{selected.length} of {options.length} selected</span>
           </div>
 
-          <div role="listbox" aria-multiselectable="true" className="max-h-64 overflow-y-auto py-1">
+          <div role="listbox" aria-label="Rooms" aria-multiselectable="true" className="max-h-64 overflow-y-auto py-1">
             {groups.map(({ group, items }) => (
               <div key={group}>
-                <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-primary)]/50">
+                <p className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
                   {group}
                 </p>
                 {items.map((option) => {
@@ -173,7 +155,7 @@ export function RoomsMultiSelectDropdown({
                 })}
               </div>
             ))}
-            {!filtered.length ? <p className="px-3 py-4 text-center text-sm text-[var(--color-primary)]/50">No rooms found</p> : null}
+            {!filtered.length ? <p className="px-3 py-4 text-center text-sm text-[var(--color-text-muted)]">No rooms found</p> : null}
           </div>
 
           <div className="flex items-center justify-between border-t border-[var(--color-primary)]/15 px-3 py-2">
@@ -182,7 +164,7 @@ export function RoomsMultiSelectDropdown({
             </button>
             <button
               type="button"
-              onClick={() => setOpen(false)}
+              onClick={() => { setOpen(false); triggerRef.current?.focus(); }}
               className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-xs font-semibold text-[var(--color-bg)]"
             >
               Done

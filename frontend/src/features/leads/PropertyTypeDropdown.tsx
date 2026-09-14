@@ -55,9 +55,9 @@ export function PropertyTypeDropdown({
         onKeyDown={onKeyDown}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className={`flex w-full items-center justify-between gap-2 rounded-lg border bg-[var(--color-bg)] px-3.5 py-2.5 text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${open ? "border-[var(--color-primary)]" : "border-[var(--color-primary)]/20"}`}
+        className={`flex w-full items-center justify-between gap-2 rounded-lg border bg-[var(--color-bg)] px-3.5 py-2.5 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${open ? "border-[var(--color-primary)]" : "border-[var(--color-primary)]/20"}`}
       >
-        <span className={value ? "font-medium text-[var(--color-primary)]" : "text-[var(--color-primary)]/40"}>
+        <span className={value ? "font-medium text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}>
           {value || placeholder}
         </span>
         <ChevronDown
@@ -69,6 +69,7 @@ export function PropertyTypeDropdown({
       {open ? (
         <ul
           role="listbox"
+          aria-label="Property type"
           className="absolute z-20 mt-1.5 max-h-64 w-full overflow-auto rounded-lg border border-[var(--color-primary)]/20 bg-[var(--color-bg)] py-1 shadow-lg"
         >
           {options.map((option, index) => {

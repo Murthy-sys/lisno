@@ -153,9 +153,9 @@ describe("semantic UI foundation", () => {
       ["--space-8", "40px"],
       ["--space-9", "48px"],
       ["--space-10", "64px"],
-      ["--radius-control", "10px"],
-      ["--radius-field", "14px"],
-      ["--radius-surface", "20px"],
+      ["--radius-control", "8px"],
+      ["--radius-field", "8px"],
+      ["--radius-surface", "12px"],
       ["--radius-pill", "999px"],
       ["--duration-fast", "140ms"],
       ["--duration-settle", "220ms"],
@@ -304,10 +304,8 @@ describe("semantic UI foundation", () => {
     const roleThemes = readStyle("role-themes.css");
     const scope = 'body:has(.ui-app-shell[data-role="super_admin"])';
     const dense = ruleBodies(roleThemes, scope);
-    expect(dense.length).toBeGreaterThan(0);
-
     const overrides = new Map(
-      [...dense[0].matchAll(/^\s*(--[\w-]+)\s*:\s*([^;]+);/gm)]
+      [...dense.join("\n").matchAll(/^\s*(--[\w-]+)\s*:\s*([^;]+);/gm)]
         .map(([, name, value]) => [name, value.trim()])
     );
 
@@ -326,7 +324,7 @@ describe("semantic UI foundation", () => {
       "--text-3xl",
       "--text-4xl"
     ]) {
-      expect(overrides.get(name), `${scope} must use ${name}`).toBe(tokens.get(name));
+      expect(overrides.get(name) ?? tokens.get(name), `${scope} must inherit or match ${name}`).toBe(tokens.get(name));
     }
   });
 

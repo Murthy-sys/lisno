@@ -74,7 +74,8 @@ const PROJECT_WORKFLOW_ADDITIONS = {
     "design.plan_response_tasks.read",
     "design.plan_response_tasks.decide"
   ],
-  designer: ["design.plan_task.read"],
+  designer: ["design.plan_task.read", "design.plan_response_tasks.read"],
+  client: ["design.plan_response_tasks.read"],
   procurement: ["workflow.tasks.read", "workflow.tasks.update"],
   finance_head: ["workflow.tasks.read", "workflow.tasks.update"],
   site_manager: ["workflow.tasks.read", "workflow.tasks.update"],
@@ -200,7 +201,10 @@ describe("authorization policy", () => {
       if (role === "super_admin") continue;
       const historicalPermissions = ROLE_PERMISSIONS[role].filter(
         (permission) =>
+          permission !== "projects.design_workflow.read" &&
           permission !== "estimation.design_upload.delete" &&
+          permission !== "projects.design_workflow.act" &&
+          permission !== "projects.design_workflow.payments.read" &&
           !(role === "estimator_sales" && permission === "projects.initiate") &&
           !ESTIMATE_CLIENT_RESPONSE_PERMISSIONS.includes(permission as never) &&
           !PROJECT_WORKFLOW_PERMISSIONS.includes(permission as never) &&
@@ -225,8 +229,8 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(120);
-    expect(new Set(PERMISSION_CODES).size).toBe(120);
+    expect(PERMISSION_CODES).toHaveLength(123);
+    expect(new Set(PERMISSION_CODES).size).toBe(123);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
@@ -420,6 +424,7 @@ describe("authorization policy", () => {
   it("registers only bounded AI Estimator Knowledge audit action names", () => {
     expect(AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS).toEqual([
       "ai_estimator_knowledge_basket_created",
+      "ai_estimator_knowledge_sub_basket_created",
       "ai_estimator_knowledge_basket_updated",
       "ai_estimator_knowledge_basket_archived",
       "ai_estimator_knowledge_basket_permanently_deleted",

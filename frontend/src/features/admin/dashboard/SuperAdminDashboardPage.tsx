@@ -12,6 +12,7 @@ import { PageHeader } from "../../../components/ui/PageHeader";
 import { PageState } from "../../../components/ui/PageState";
 import { SectionState } from "../../../components/ui/SectionState";
 import { Surface } from "../../../components/ui/Surface";
+import { DesignPaymentConfirmations } from "../../finance/DesignPaymentConfirmations";
 import { DashboardModuleCharts } from "./DashboardModuleCharts";
 import { DashboardNavigation } from "./DashboardNavigation";
 import { DashboardOverview } from "./DashboardOverview";
@@ -354,6 +355,7 @@ export function SuperAdminDashboardPage() {
       <p className="sr-only" aria-live="polite">{announcement}</p>
       {data.dataQuality.status === "partial" ? <InlineMessage tone="warning"><strong>Some dashboard metrics are unavailable.</strong> {data.dataQuality.issues.map((issue) => issue.message).join(" ")}</InlineMessage> : null}
       {overview.isError && overview.data ? <InlineMessage tone="error">The latest refresh failed. Showing the last successfully observed dashboard.</InlineMessage> : null}
+      {tab === "overview" || tab === "finance" ? <DesignPaymentConfirmations /> : null}
       <DashboardNavigation activeTab={tab} onSelect={selectTab} />
       <section id={`dashboard-panel-${tab}`} role="tabpanel" aria-labelledby={`dashboard-tab-${tab}`} aria-busy={refreshing || undefined} className="dashboard-panel">
         <h2 ref={panelHeading} tabIndex={-1}>{humanize(tab)}</h2>

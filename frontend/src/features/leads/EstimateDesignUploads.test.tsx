@@ -315,6 +315,11 @@ describe("EstimateDesignUploads", () => {
     await user.click(screen.getByRole("menuitem", { name: "Assign estimate item" }));
     await user.selectOptions(screen.getByLabelText("Room"), "room-bedroom");
     await user.selectOptions(screen.getByLabelText("Exact estimate item"), "CA01");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    const discard = screen.getByRole("alertdialog", { name: "Discard unsaved changes?" });
+    await user.click(within(discard).getByRole("button", { name: "Keep editing" }));
+    expect(screen.getByLabelText("Room")).toHaveValue("room-bedroom");
+    expect(screen.getByLabelText("Exact estimate item")).toHaveValue("CA01");
     await user.click(screen.getByRole("button", { name: "Assign item" }));
 
     const put = await vi.waitFor(() => {

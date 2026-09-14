@@ -105,11 +105,11 @@ function installSalesApi(
 }
 
 describe("LeadDashboard estimate PDF export", () => {
-  it("exports every saved estimate independently without navigating", async () => {
+  it("exports a published estimate without navigating and keeps draft continuation usable", async () => {
     tokenStorage.set("sales-token");
     const pending = deferredResponse();
     installSalesApi((url) => {
-      if (url === "/api/v1/estimates/estimate-draft/pdf") return pending.promise;
+      if (url === "/api/v1/estimates/estimate-sent/pdf") return pending.promise;
       throw new Error(`Unexpected PDF request: ${url}`);
     });
     const user = userEvent.setup();
@@ -124,29 +124,27 @@ describe("LeadDashboard estimate PDF export", () => {
       name: "Cedar Loft",
       level: 3
     }).closest("article")!;
-    const draftExport = within(draftCard).getByRole("button", {
-      name: "Export as PDF"
-    });
+    expect(within(draftCard).queryByRole("button", { name: "Export as PDF" })).not.toBeInTheDocument();
     const sentExport = within(sentCard).getByRole("button", {
       name: "Export as PDF"
     });
 
-    await user.click(draftExport);
+    await user.click(sentExport);
 
     expect(router.state.location.pathname).toBe("/estimator-sales");
-    expect(within(draftCard).getByRole("button", {
+    expect(within(sentCard).getByRole("button", {
       name: "Preparing PDF..."
     })).toBeDisabled();
-    expect(sentExport).toBeEnabled();
+    expect(within(draftCard).getByRole("link", { name: "Continue estimate" })).toBeVisible();
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      "/api/v1/estimates/estimate-draft/pdf",
+      "/api/v1/estimates/estimate-sent/pdf",
       expect.objectContaining({
         method: "GET",
         headers: expect.any(Headers)
       })
     );
     const pdfRequest = vi.mocked(globalThis.fetch).mock.calls.find(
-      ([input]) => String(input) === "/api/v1/estimates/estimate-draft/pdf"
+      ([input]) => String(input) === "/api/v1/estimates/estimate-sent/pdf"
     );
     expect((pdfRequest?.[1]?.headers as Headers).get("Authorization")).toBe(
       "Bearer sales-token"
@@ -156,7 +154,7 @@ describe("LeadDashboard estimate PDF export", () => {
   it("shows a failed export only on the affected saved estimate", async () => {
     tokenStorage.set("sales-token");
     installSalesApi((url) => {
-      if (url === "/api/v1/estimates/estimate-draft/pdf") {
+      if (url === "/api/v1/estimates/estimate-sent/pdf") {
         return Response.json(
           { error: { code: "PDF_FAILED", message: "PDF failed" } },
           { status: 500 }
@@ -177,15 +175,15 @@ describe("LeadDashboard estimate PDF export", () => {
       level: 3
     }).closest("article")!;
 
-    await user.click(within(draftCard).getByRole("button", {
+    await user.click(within(sentCard).getByRole("button", {
       name: "Export as PDF"
     }));
 
-    expect(await within(draftCard).findByRole("alert")).toHaveTextContent(
-      "PDF export failed for Aurora Villa. Try again."
+    expect(await within(sentCard).findByRole("alert")).toHaveTextContent(
+      "PDF export failed for Cedar Loft. Try again."
     );
-    expect(within(sentCard).queryByRole("alert")).not.toBeInTheDocument();
-    await waitFor(() => expect(within(draftCard).getByRole("button", {
+    expect(within(draftCard).queryByRole("alert")).not.toBeInTheDocument();
+    await waitFor(() => expect(within(sentCard).getByRole("button", {
       name: "Export as PDF"
     })).toBeEnabled());
     expect(within(sentCard).getByRole("button", {

@@ -10,8 +10,11 @@ import type {
 } from "../../api/types";
 import { useAuth } from "../../auth/AuthProvider";
 import { RiskBadge } from "../../components/tasks/RiskBadge";
+import { PageHeader } from "../../components/ui/PageHeader";
+import "./managementWorkspace.css";
 import { AsyncState } from "../../components/ui/AsyncState";
 import { DesignSectionReview } from "../client/DesignSectionReview";
+import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
 import {
   getManagementProjectActivity,
   getManagementProjectVersions
@@ -83,21 +86,12 @@ export function ManagementProjectWorkspace() {
 
   return (
     <section
-      className="designer-page"
+      className="designer-page management-workspace"
       aria-labelledby="management-project-title"
     >
-      <Link className="back-link" to={base}>
-        Back to workspace
-      </Link>
-      <header className="workspace-header">
-        <div>
-          <p className="eyebrow">Project inspection</p>
-          <h1 id="management-project-title">{data.name}</h1>
-          <p>
-            {data.location} · {data.status}
-          </p>
-        </div>
-      </header>
+      <PageHeader id="management-project-title" title={data.name} eyebrow="Project inspection" description={`${data.location} · ${data.status}`} breadcrumb={<Link className="back-link" to={base}>Back to workspace</Link>} />
+
+      <ProjectWorkflowPanel projectId={projectId} />
 
       <section aria-labelledby="delivery-structure-title">
         <h2 id="delivery-structure-title">Delivery structure</h2>

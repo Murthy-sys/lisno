@@ -12,7 +12,7 @@ import {
   deleteStoredProofQuietly,
   type EstimateClientReviewStorage
 } from "../services/estimate-client-review-storage.js";
-import type { ProjectWorkflowService } from "../services/project-workflow.service.js";
+import { DesignDecisionProofRetentionError, type ProjectWorkflowService } from "../services/project-workflow.service.js";
 import { sendDownload } from "./estimate-client-responses.js";
 
 const assignmentSchema = z.object({
@@ -20,7 +20,8 @@ const assignmentSchema = z.object({
 }).strict();
 
 const reviewListSchema = z.object({
-  status: z.enum(["pending", "approved", "changes_requested"]).optional()
+  status: z.enum(["pending", "approved", "changes_requested"]).optional(),
+  projectId: z.string().trim().min(1).optional()
 }).strict();
 
 const reviewDecisionSchema = z.object({
@@ -139,7 +140,8 @@ export function createProjectWorkflowRouter(
         response.json({
           data: await service.listDesignReviewTasks(
             request.authenticatedUser!,
-            response.locals.validatedQuery.status
+            response.locals.validatedQuery.status,
+            response.locals.validatedQuery.projectId
           )
         });
       } catch (error) {
@@ -187,6 +189,18 @@ export function createProjectWorkflowRouter(
     }
   );
 
+  router.get(
+    "/admin/design-plan-response-tasks/:roundId/proof",
+    protectedRoute,
+    requireOperation("GET /admin/design-plan-response-tasks/:roundId/proof"),
+    async (request, response, next) => {
+      try {
+        response.set("Cache-Control", "private, no-store").set("X-Content-Type-Options", "nosniff");
+        sendDownload(response, await service.readDesignReviewProof(request.authenticatedUser!, String(request.params.roundId)));
+      } catch (error) { next(error); }
+    }
+  );
+
   router.post(
     "/admin/design-plan-response-tasks/:roundId/email/retry",
     protectedRoute,
@@ -211,6 +225,12 @@ export function createProjectWorkflowRouter(
     "/admin/design-plan-response-tasks/:roundId/decision",
     protectedRoute,
     requireOperation("POST /admin/design-plan-response-tasks/:roundId/decision"),
+    async (request, _response, next) => {
+      try {
+        await service.requireDesignReviewDecisionScope(request.authenticatedUser!, String(request.params.roundId));
+        next();
+      } catch (error) { next(error); }
+    },
     uploadSingleFile(maxUploadBytes, proofUploadOptions),
     validateBody(reviewDecisionSchema),
     async (request, response, next) => {
@@ -230,7 +250,7 @@ export function createProjectWorkflowRouter(
         storedProof = null;
         response.json({ data: result });
       } catch (error) {
-        if (storedProof) {
+        if (storedProof && !(error instanceof DesignDecisionProofRetentionError)) {
           await deleteStoredProofQuietly(proofStorage, storedProof);
         }
         next(error);

@@ -7,7 +7,9 @@ import {
   WORKER_ROLES
 } from "../../api/authorization-contract";
 import type { ProjectWorkflowTask, Role } from "../../api/types";
-import { Dialog } from "../../components/ui/Dialog";
+import { Button } from "../../components/ui/Button";
+import { ContextPanel } from "../../components/ui/ContextPanel";
+import { Field, Input } from "../../components/ui/Field";
 import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
@@ -284,14 +286,15 @@ function WorkflowTaskCard({
         <div><dt>Updated</dt><dd>{dateTime.format(new Date(task.updatedAt))}</dd></div>
       </dl>
       {canUpdate ? (
-        <button
-          type="button"
-          className="button button--secondary workflow-task-card__update"
+        <Button
+          variant="secondary"
+          size="compact"
+          className="workflow-task-card__update"
           aria-label={`Update progress for ${task.title}`}
           onClick={onUpdate}
         >
           Update progress
-        </button>
+        </Button>
       ) : null}
     </article>
   );
@@ -315,6 +318,7 @@ function ProgressUpdateDialog({
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (busy) return;
     const value = Number(progress);
     if (
       progress.trim() === "" ||
@@ -330,20 +334,23 @@ function ProgressUpdateDialog({
   };
 
   return (
-    <Dialog
+    <ContextPanel
       title={`Update ${task.title} progress`}
       eyebrow={ROLE_LABELS[task.assigneeRole]}
       description={`Current progress ${task.progress}%. Completing the task requires 100%.`}
+      metadata={<span>{task.projectName} · Version {task.version}</span>}
+      width="narrow"
+      dirty={progress !== String(task.progress)}
       onClose={onClose}
       busy={busy}
+      footer={({ requestClose }) => <div className="workflow-progress-form__actions">
+        <Button variant="secondary" disabled={busy} onClick={requestClose}>Cancel</Button>
+        <Button type="submit" form={`workflow-progress-form-${task.id}`} busy={busy} busyLabel="Saving…">Save progress</Button>
+      </div>}
     >
-      <form className="workflow-progress-form" noValidate onSubmit={submit}>
-        <label htmlFor={`workflow-progress-${task.id}`}>
-          Progress percentage
-          <span className="workflow-progress-form__control">
-            <input
-              id={`workflow-progress-${task.id}`}
-              aria-label="Progress percentage"
+      <form id={`workflow-progress-form-${task.id}`} className="workflow-progress-form" noValidate onSubmit={submit}>
+        <Field id={`workflow-progress-${task.id}`} label="Progress percentage" hint="Enter a whole number from 0 to 100.">
+          {(props) => <Input {...props}
               type="number"
               min="0"
               max="100"
@@ -354,26 +361,11 @@ function ProgressUpdateDialog({
                 setProgress(event.target.value);
                 setValidation("");
               }}
-            />
-            <span aria-hidden="true">%</span>
-          </span>
-        </label>
+            />}
+        </Field>
         {validation || error ? <p role="alert">{validation || error}</p> : null}
-        <div className="workflow-progress-form__actions">
-          <button
-            type="button"
-            className="button button--secondary"
-            disabled={busy}
-            onClick={onClose}
-          >
-            Cancel
-          </button>
-          <button type="submit" className="button button--primary" disabled={busy}>
-            {busy ? "Saving…" : "Save progress"}
-          </button>
-        </div>
       </form>
-    </Dialog>
+    </ContextPanel>
   );
 }
 

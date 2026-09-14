@@ -32,6 +32,8 @@
   position: relative;
 }
 
+.ui-app-shell[data-role="designer"] .ui-sidebar__brand .brand__logo { visibility: visible; }
+
 .ui-app-shell[data-role="designer"] .ui-sidebar__brand::before {
   content: "";
   position: absolute;
@@ -116,20 +118,19 @@ body:has(.ui-app-shell[data-role="designer"]) {
   }
 }
 
-/* Tighter section rhythm and a bigger page title, matched to the reference
-   layout's denser vertical spacing. Scoped to the designer page only —
+/* Compact section rhythm and shared page-title scale. Scoped to the designer page only —
    PageHeader and .ui-workspace > * spacing are shared by every role. */
 .ui-app-shell[data-role="designer"] .designer-dashboard {
   gap: var(--space-3);
 }
 
 .ui-app-shell[data-role="designer"] .ui-page-header__title {
-  font-size: 2rem;
+  font-size: var(--text-3xl);
   color: #241e41;
 }
 
 .ui-app-shell[data-role="designer"] .ui-page-header__eyebrow {
-  color: #c8852f;
+  color: var(--color-primary);
 }
 
 /* .ui-page-header is a shared flex row with justify-content: space-between,
@@ -165,7 +166,7 @@ body:has(.ui-app-shell[data-role="designer"]) {
   padding: 0;
   border: 0;
   background: none;
-  color: #c8852f;
+  color: var(--color-primary);
 }
 
 .ui-app-shell[data-role="designer"] .back-link:hover {
@@ -181,18 +182,14 @@ body:has(.ui-app-shell[data-role="designer"]) {
   align-self: center;
 }
 
-/* Header action buttons (e.g. "Create request") use gold, distinct from
-   the navy used for pagination/other controls elsewhere on the page. */
+/* Header actions use the same readable navy surface as other primary controls. */
 .ui-app-shell[data-role="designer"] .ui-page-header__actions .ui-button {
   border: 1px solid transparent !important;
-  background: linear-gradient(135deg, #a66a1f 0%, #c8852f 58%, #e2ab5c 100%) !important;
+  background: var(--color-primary) !important;
   color: #ffffff !important;
 }
 
-/* Round, pill-shaped buttons everywhere in this role, matching the admin
-   "Initiate project" CTA convention instead of the default rectangular
-   shape — with wider horizontal padding so the label clears the curved
-   ends instead of crowding them. Dialogs (Dialog.tsx) portal to
+/* Keep role buttons aligned with shared control geometry. Dialogs (Dialog.tsx) portal to
    document.body, landing outside .ui-app-shell, so every rule here is
    duplicated under body:has(...) to reach them too. Excludes .modal-backdrop:
    Dialog.tsx implements the full-screen click-to-close overlay as a
@@ -203,12 +200,12 @@ body:has(.ui-app-shell[data-role="designer"]) {
 .ui-app-shell[data-role="designer"] .ui-icon-button:not(.modal-backdrop):not(.ui-drawer-backdrop),
 body:has(.ui-app-shell[data-role="designer"]) .ui-button:not(.modal-backdrop):not(.ui-drawer-backdrop),
 body:has(.ui-app-shell[data-role="designer"]) .ui-icon-button:not(.modal-backdrop):not(.ui-drawer-backdrop) {
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-control);
 }
 
 .ui-app-shell[data-role="designer"] .ui-button:not(.modal-backdrop):not(.ui-drawer-backdrop):not(.ui-button--compact),
 body:has(.ui-app-shell[data-role="designer"]) .ui-button:not(.modal-backdrop):not(.ui-drawer-backdrop):not(.ui-button--compact) {
-  padding-inline: var(--space-6);
+  padding-inline: var(--space-3);
 }
 
 /* Small, regular-weight button label everywhere in this role, not just one
@@ -226,6 +223,11 @@ body:has(.ui-app-shell[data-role="designer"]) .ui-button:not(.modal-backdrop):no
 body:has(.ui-app-shell[data-role="designer"]) .ui-button--primary:not(.modal-backdrop):not(.ui-drawer-backdrop) {
   background: #1e183b;
   color: #ffffff;
+}
+
+.ui-app-shell[data-role="designer"] :is(.ui-button--primary, .button--primary):not(:focus-visible),
+body:has(.ui-app-shell[data-role="designer"]) .ui-button--primary:not(:focus-visible) {
+  box-shadow: none;
 }
 
 .ui-app-shell[data-role="designer"] .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop),
@@ -249,13 +251,13 @@ body:has(.ui-app-shell[data-role="designer"]) .modal:has(.access-request-dialog)
   scrollbar-width: none;
 }
 
-/* Tighter, gold eyebrow-to-title-to-description header block. */
+/* Compact and readable eyebrow-to-title-to-description header block. */
 body:has(.ui-app-shell[data-role="designer"]) .modal:has(.access-request-dialog) .modal__header {
   padding-block: var(--space-4) var(--space-3);
 }
 
 body:has(.ui-app-shell[data-role="designer"]) .modal:has(.access-request-dialog) .eyebrow {
-  color: #f0c012;
+  color: var(--color-primary);
   margin-block-end: var(--space-1);
   font-weight: 400;
 }
@@ -346,7 +348,7 @@ body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
 .ui-app-shell[data-role="designer"] .designer-kpi__identity h2,
 .ui-app-shell[data-role="designer"] .section-heading h2 {
   font-family: var(--font-interface);
-  font-size: 1.05rem;
+  font-size: var(--text-lg);
   font-weight: 700;
   letter-spacing: normal;
 }
@@ -360,7 +362,7 @@ body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
   padding-inline: var(--space-2);
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, #c8852f 12%, transparent);
-  color: #c8852f;
+  color: var(--color-primary);
   font-size: 0.75rem;
   font-weight: 700;
 }
@@ -378,9 +380,9 @@ body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
 .ui-app-shell[data-role="designer"] .designer-kpi {
   padding: var(--space-3);
   gap: var(--space-3);
-  border-color: #ecdfc4;
-  background-color: #fbf3e6;
-  background-image: linear-gradient(135deg, #f7e6c8 0%, #fbf3e6 45%, #ffffff 100%);
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  box-shadow: none;
 }
 
 .ui-app-shell[data-role="designer"] .designer-kpi__content {
@@ -438,7 +440,7 @@ body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
    the shared 44px touch-target button and 1rem field label read oversized
    next to these compact cards. */
 .ui-app-shell[data-role="designer"] .designer-kpi__toggle {
-  min-block-size: 36px;
+  min-block-size: var(--control-height);
   padding-inline: var(--space-1);
   font-size: 0.8125rem;
   font-weight: 400;
@@ -453,7 +455,7 @@ body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
    dialog fields; give it a clearly visible border, matching the "Show
    breakdown" button beside it. */
 .ui-app-shell[data-role="designer"] .designer-kpi__period .ui-select-menu__trigger {
-  min-block-size: 36px;
+  min-block-size: var(--control-height);
   border: 1px solid var(--color-border-strong);
   border-radius: 12px;
   padding-inline: var(--space-4);
@@ -539,7 +541,7 @@ body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
    (top, sides, and bottom alike), instead of nearly touching them. */
 .ui-app-shell[data-role="designer"] .designer-projects {
   gap: var(--space-3);
-  padding: var(--space-5) !important;
+  padding: var(--space-4) !important;
 }
 
 /* Numeral on the left; the icon+copy group centers itself in the remaining
@@ -567,14 +569,14 @@ body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
 
 .ui-app-shell[data-role="designer"] .designer-projects .project-empty > span::before {
   content: "0";
-  font-size: 1.75rem;
+  font-size: var(--text-2xl);
 }
 
 .ui-app-shell[data-role="designer"] .designer-projects .project-empty h3 {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  font-size: 1.15rem;
+  font-size: var(--text-lg);
 }
 
 .ui-app-shell[data-role="designer"] .designer-projects .project-empty h3::before {
@@ -621,7 +623,7 @@ body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
 }
 
 .ui-app-shell[data-role="designer"] .designer-metric-chip__label {
-  font-size: 0.9rem;
+  font-size: var(--text-sm);
 }
 
 .ui-app-shell[data-role="designer"] .designer-metric-chip__value {
@@ -712,7 +714,7 @@ body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
 }
 
 .ui-app-shell[data-role="designer"] .access-administration__table th {
-  padding-block: 1.1rem;
+  padding-block: var(--space-3);
   border-block-end-color: #d7e3f7;
 }
 
@@ -743,7 +745,7 @@ body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
    smudged blob. */
 .ui-app-shell[data-role="designer"] .access-administration__pagination .ui-button,
 .ui-app-shell[data-role="designer"] .access-requests__table .ui-button {
-  min-block-size: 32px;
+  min-block-size: var(--control-height-compact);
   padding-inline: var(--space-3);
   font-size: 0.8125rem;
   box-shadow: none;
@@ -787,4 +789,21 @@ body:has(.ui-app-shell[data-role="designer"]) .ui-button__busy {
 .ui-app-shell[data-role="designer"] .section-heading {
   min-inline-size: 0;
   max-inline-size: 100%;
+}
+
+.designer-project-review { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); margin: 0; }
+.designer-project-review dt { font: var(--type-metadata); color: var(--color-text-muted); }
+.designer-project-review dd { margin: var(--space-1) 0 0; font: var(--type-body); }
+.ui-app-shell[data-role="designer"] .designer-project-row__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.ui-app-shell[data-role="designer"] .project-workspace .workspace-overview { gap: var(--space-4); padding: var(--space-4); }
+.ui-app-shell[data-role="designer"] .project-workspace .workspace-overview strong { font: var(--type-heading-3); overflow-wrap: anywhere; }
+@media (max-width: 480px) { .designer-project-review { grid-template-columns: minmax(0, 1fr); } }
+
+@media (max-width: 1024px) {
+  .ui-app-shell[data-role="designer"] .ui-mobile-header__trigger { color: var(--color-primary); }
+  .ui-app-shell[data-role="designer"] .ui-mobile-header .brand__logo { filter: none; }
+}
+@media (max-width: 760px) {
+  .ui-app-shell[data-role="designer"] .designer-metrics { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .ui-app-shell[data-role="designer"] .designer-metric-chip { inline-size: 100%; }
 }

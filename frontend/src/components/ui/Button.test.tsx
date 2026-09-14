@@ -117,7 +117,7 @@ describe("Button and Spinner", () => {
   it("uses the tokenized cursor, target, and transition rules for shared controls", () => {
     expect(primitives).toMatch(/\.ui-button\[data-busy\]\s*\{[^}]*cursor:\s*progress/s);
     expect(primitives).toMatch(/\.ui-button:disabled\s*\{[^}]*cursor:\s*default/s);
-    expect(primitives).toMatch(/\.ui-icon-button\s*\{[^}]*min-(?:inline-)?size:\s*44px/s);
+    expect(primitives).toMatch(/\.ui-icon-button\s*\{[^}]*min-inline-size:\s*var\(--control-height\)/s);
     expect(primitives).toMatch(/transition:[^;]*var\(--duration-fast\)/);
     expect(primitives).not.toMatch(/transition:[^;]*(?:140ms|220ms)/);
   });

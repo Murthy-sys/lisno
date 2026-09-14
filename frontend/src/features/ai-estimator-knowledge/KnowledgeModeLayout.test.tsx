@@ -209,7 +209,7 @@ describe("Knowledge Mode toolbar layout", () => {
 
     const mobileStart = stylesheet.indexOf(
       "@media (max-width: 480px)",
-      professionalWorkspaceStart
+      stylesheet.indexOf("@media (max-width: 768px)", professionalWorkspaceStart)
     );
     expect(mobileStart).toBeGreaterThan(compactStart);
 
@@ -285,7 +285,7 @@ describe("Knowledge Mode toolbar layout", () => {
 
     const mobileStart = stylesheet.indexOf(
       "@media (max-width: 480px)",
-      professionalWorkspaceStart
+      stylesheet.indexOf("@media (max-width: 768px)", professionalWorkspaceStart)
     );
     expect(declarations(
       ".knowledge-page--item-workspace .knowledge-priority-editor__state .ui-button",
@@ -313,7 +313,7 @@ describe("Knowledge Mode toolbar layout", () => {
 
     const mobileStart = stylesheet.indexOf(
       "@media (max-width: 480px)",
-      professionalWorkspaceStart
+      stylesheet.indexOf("@media (max-width: 768px)", professionalWorkspaceStart)
     );
     expect(declarations(
       ".knowledge-page--item-workspace .knowledge-mode-surfaces__controls",
@@ -328,7 +328,7 @@ describe("Knowledge Mode toolbar layout", () => {
   it("turns the single Surface table DOM into non-overflowing mobile cards", () => {
     const mobileStart = stylesheet.indexOf(
       "@media (max-width: 480px)",
-      professionalWorkspaceStart
+      stylesheet.indexOf("@media (max-width: 768px)", professionalWorkspaceStart)
     );
     const scroll = declarations(".knowledge-surface-table-scroll", mobileStart);
     expect(scroll.get("overflow")).toBe("visible");
@@ -385,7 +385,7 @@ describe("Knowledge Mode toolbar layout", () => {
 
     const mobileStart = stylesheet.indexOf(
       "@media (max-width: 480px)",
-      professionalWorkspaceStart
+      stylesheet.indexOf("@media (max-width: 768px)", professionalWorkspaceStart)
     );
     expect(
       declarations(

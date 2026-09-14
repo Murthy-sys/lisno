@@ -1,3 +1,5 @@
+import { createDesignWorkflowStateService } from "./services/design-workflow-state.service.js";
+import { createDesignWorkflowStateRouter } from "./routes/design-workflow-state.js";
 import express, { type RequestHandler } from "express";
 import mongoose from "mongoose";
 import path from "node:path";
@@ -257,6 +259,7 @@ export function createApp(dependencies: AppDependencies) {
   );
   const clientPortalUrl = dependencies.clientPortalUrl ?? "http://localhost:5173/client";
   const estimateClientReviewStorage = createEstimateClientReviewStorage(storage);
+  const designWorkflowStateService = createDesignWorkflowStateService(repository, auditService, clock);
   const projectFinanceService = createProjectFinanceService({
     now: clock,
     storage
@@ -409,6 +412,7 @@ export function createApp(dependencies: AppDependencies) {
       aiEstimatorKnowledgeContextService
     )
   );
+  app.use("/api/v1", createDesignWorkflowStateRouter(authService, designWorkflowStateService, estimateClientReviewStorage, maxUploadBytes));
   app.use(
     "/api/v1",
     createProjectWorkflowRouter(

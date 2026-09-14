@@ -63,6 +63,22 @@ function page(
 }
 
 describe("ClientResponseInboxPage", () => {
+  it("opens a contextual summary for the selected response while retaining its full review route", async () => {
+    installAdmin();
+    server.use(http.get("/api/v1/admin/estimate-client-response-tasks", () => HttpResponse.json(page([pendingTask]))));
+    const user = userEvent.setup();
+    const { router } = renderApp(["/admin/client-responses"]);
+    const trigger = await screen.findByRole("button", { name: "Summary Priya Shah response" });
+    await user.click(trigger);
+    const panel = screen.getByRole("dialog", { name: "Client response summary" });
+    expect(within(panel).getByText("round-pending")).toBeVisible();
+    expect(within(panel).getByText("Email sent")).toBeVisible();
+    expect(within(panel).getByRole("link", { name: "Open full review" })).toHaveAttribute("href", "/admin/client-responses/round-pending");
+    expect(router.state.location.pathname).toBe("/admin/client-responses");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
   it("marks the inbox busy while loading and renders its server-scoped empty state", async () => {
     installAdmin();
     let release!: () => void;

@@ -289,4 +289,64 @@ describe("LeadDashboard", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("keeps list context and isolates a late response after reviewing another lead", async () => {
+    tokenStorage.set("sales-token");
+    let resolveFirst!: (response: Response) => void;
+    const firstDetail = new Promise<Response>((resolve) => { resolveFirst = resolve; });
+    const requests: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "/api/v1/auth/me") return Response.json({ data: salesUser });
+      if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(salesUser.role) });
+      if (url.startsWith("/api/v1/leads?")) return Response.json({ data: { items: leads, pagination: { limit: 20, offset: 0, total: 2, hasMore: false } } });
+      if (url === "/api/v1/estimates") return Response.json({ data: savedEstimates });
+      if (url === "/api/v1/leads/lead-draft") return firstDetail;
+      if (url === "/api/v1/leads/lead-sent") return Response.json({ data: leads[1] });
+      if (url.includes("/activities?")) return Response.json({ data: { items: [], pagination: { limit: 50, offset: 0, total: 0, hasMore: false } } });
+      throw new Error(`Unhandled request: ${url}`);
+    });
+    const user = userEvent.setup();
+    const { router, queryClient } = renderApp(["/estimator-sales"]);
+    await user.type(await screen.findByRole("textbox", { name: "Search leads" }), "Homes");
+    const firstTrigger = await screen.findByRole("button", { name: "Review Aurora Villa" });
+    await user.click(firstTrigger);
+    expect(screen.getByRole("dialog", { name: "Lead review" })).toHaveTextContent("Loading lead details");
+    await user.click(within(screen.getByRole("dialog", { name: "Lead review" })).getByRole("button", { name: "Close lead review" }));
+    await waitFor(() => expect(firstTrigger).toHaveFocus());
+    await user.click(screen.getByRole("button", { name: "Review Cedar Loft" }));
+    const panel = screen.getByRole("dialog", { name: "Lead review" });
+    expect(await within(panel).findByText("Cedar Homes")).toBeVisible();
+    resolveFirst(Response.json({ data: leads[0] }));
+    await waitFor(() => expect(queryClient.getQueryData(["leads", "lead-draft"])).toMatchObject({ id: "lead-draft" }));
+    await waitFor(() => expect(within(panel).queryByText("Aurora Homes")).not.toBeInTheDocument());
+    expect(within(panel).getByRole("link", { name: "Open lead workspace" })).toHaveAttribute("href", "/estimator-sales/leads/lead-sent");
+    expect(requests).toContain("/api/v1/leads/lead-draft");
+    expect(requests).toContain("/api/v1/leads/lead-sent");
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("textbox", { name: "Search leads" })).toHaveValue("Homes");
+    expect(router.state.location.pathname).toBe("/estimator-sales");
+  });
+
+  it("does not expose quick review or fetch detail without the read grant", async () => {
+    tokenStorage.set("sales-token");
+    const requests: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "/api/v1/auth/me") return Response.json({ data: salesUser });
+      if (url === "/api/v1/auth/authorization") {
+        const authorization = authorizationFor(salesUser.role);
+        return Response.json({ data: { ...authorization, permissions: authorization.permissions.filter((permission) => permission !== "estimation.lead.read") } });
+      }
+      if (url.startsWith("/api/v1/leads?")) return Response.json({ data: { items: leads, pagination: { limit: 20, offset: 0, total: 2, hasMore: false } } });
+      if (url === "/api/v1/estimates") return Response.json({ data: [] });
+      throw new Error(`Unhandled request: ${url}`);
+    });
+    renderApp(["/estimator-sales"]);
+    expect(await screen.findByRole("heading", { name: "Aurora Villa" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Review Aurora/ })).not.toBeInTheDocument();
+    expect(requests.some((url) => url.startsWith("/api/v1/leads/"))).toBe(false);
+  });
+
 });

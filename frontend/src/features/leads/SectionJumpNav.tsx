@@ -25,8 +25,8 @@ export function SectionJumpNav({
             key={section.id}
             aria-current={active ? "true" : undefined}
             onClick={() => onJump(section.id)}
-            className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold shadow-none outline-none transition-colors focus:!shadow-none focus:outline-none focus:ring-0 focus-visible:!shadow-none focus-visible:outline-none ${
-              active ? "bg-[var(--color-primary)]/8 text-[var(--color-primary)]" : "bg-transparent text-[var(--color-primary)]/50"
+            className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-semibold shadow-none transition-colors ${
+              active ? "bg-[var(--color-primary)]/8 text-[var(--color-primary)]" : "bg-transparent text-[var(--color-text-muted)]"
             }`}
           >
             {section.label} · {money(section.subtotal)}

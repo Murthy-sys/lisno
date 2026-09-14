@@ -158,6 +158,71 @@ function CachedReview({ data }: { data: DesignSectionReviewData }) {
 }
 
 describe("DesignSectionReview", () => {
+  it("keeps a drafted change request through cancellation and restores its section trigger after discard", async () => {
+    const user = userEvent.setup();
+    const api = installApi();
+    renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" />);
+    const trigger = await screen.findByRole("button", { name: "Request changes for Front elevation" });
+    await user.click(trigger);
+    const panel = screen.getByRole("dialog", { name: "Request changes for Front elevation" });
+    expect(panel).toHaveClass("ui-drawer--contextual");
+    const comment = within(panel).getByRole("textbox", { name: "Modification comment" });
+    await user.type(comment, "Keep the entrance aligned with the shared site plan.");
+    await user.click(within(panel).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("alertdialog", { name: "Discard unsaved changes?" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(comment).toHaveValue("Keep the entrance aligned with the shared site plan.");
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(api.mock.calls.filter(([input]) => apiRequestPath(input).endsWith("/decision"))).toHaveLength(0);
+  });
+
+  it("keeps populated client reviews collapsed until opened and preserves review actions", async () => {
+    tokenStorage.set("client-token");
+    vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:section-preview"), revokeObjectURL: vi.fn() });
+    const api = installApi();
+    renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" hideWhenEmpty collapsible />);
+    const user = userEvent.setup();
+    const summary = await screen.findByText("Design review");
+    expect(summary).toHaveTextContent("2 awaiting review");
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+    expect(screen.queryByRole("article", { name: "Front elevation review" })).not.toBeInTheDocument();
+    expect(api.mock.calls.some(([input]) => apiRequestPath(input).endsWith("/image"))).toBe(false);
+    await user.click(summary);
+    expect(await screen.findByRole("article", { name: "Front elevation review" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Approve Front elevation" }));
+    await user.click(screen.getByRole("button", { name: "Confirm approval" }));
+    expect(await screen.findByRole("article", { name: "Site plan review" })).toBeVisible();
+    expect(summary).toHaveTextContent("1 awaiting review");
+    await user.click(summary);
+    await waitFor(() => expect(screen.queryByRole("article", { name: "Site plan review" })).not.toBeInTheDocument());
+  });
+
+  it("omits the empty client review section when requested", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
+    queryClient.setQueryData(clientKeys.designSections("project-1"), {
+      projectId: "project-1", sections: [], progress: { approved: 0, rejected: 0, awaitingReview: 0, total: 0 }
+    });
+    const { container } = render(<QueryClientProvider client={queryClient}><DesignSectionReview projectId="project-1" mode="client" hideWhenEmpty collapsible /></QueryClientProvider>);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("keeps failed compact reviews retryable without an empty review card", async () => {
+    const options = { failList: true };
+    installApi(options);
+    renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" hideWhenEmpty collapsible />);
+    const user = userEvent.setup();
+    const retry = await screen.findByRole("button", { name: "Retry design reviews" });
+    expect(screen.queryByRole("heading", { name: "Design review" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "No plans ready for review" })).not.toBeInTheDocument();
+    options.failList = false;
+    await user.click(retry);
+    expect(await screen.findByText("2 awaiting review")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Retry design reviews" })).not.toBeInTheDocument();
+  });
+
   it("shows submitted revisions with a project-level source modal, history, and semantic progress", async () => {
     tokenStorage.set("client-token");
     vi.stubGlobal("URL", {
@@ -345,7 +410,7 @@ describe("DesignSectionReview", () => {
 
     await user.click(await screen.findByRole("button", { name: "Request changes for Front elevation" }));
     const dialog = screen.getByRole("dialog", { name: "Request changes for Front elevation" });
-    await user.type(within(dialog).getByLabelText("Modification comment"), "Raise the roof line.");
+    await user.type(within(dialog).getByRole("textbox", { name: "Modification comment" }), "Raise the roof line.");
     await user.click(within(dialog).getByRole("button", { name: "Send request" }));
 
     expect(await screen.findByRole("status", { name: "Design review updates" })).toHaveTextContent("Review saved. Now showing Site plan, the next plan awaiting review.");
@@ -359,7 +424,7 @@ describe("DesignSectionReview", () => {
 
     await user.click(await screen.findByRole("button", { name: "Request changes for Front elevation" }));
     const dialog = screen.getByRole("dialog", { name: "Request changes for Front elevation" });
-    const comment = within(dialog).getByLabelText("Modification comment");
+    const comment = within(dialog).getByRole("textbox", { name: "Modification comment" });
     await user.type(comment, "Include the full roof line.");
     await user.click(within(dialog).getByRole("button", { name: "Send request" }));
 
@@ -482,11 +547,11 @@ describe("DesignSectionReview", () => {
     renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" />);
     await user.click(await screen.findByRole("button", { name: "Request changes for Front elevation" }));
     const dialog = screen.getByRole("dialog", { name: "Request changes for Front elevation" });
-    const comment = within(dialog).getByLabelText("Modification comment");
+    const comment = within(dialog).getByRole("textbox", { name: "Modification comment" });
     expect(comment).toHaveFocus();
     await user.click(within(dialog).getByRole("button", { name: "Send request" }));
     expect(comment).toHaveAttribute("aria-invalid", "true");
-    expect(comment).toHaveAccessibleDescription("Explain what the designer should modify.");
+    expect(comment).toHaveAccessibleDescription("0/1000 characters Explain what the designer should modify.");
     await user.type(comment, "Include the full roof line.");
     await user.click(within(dialog).getByRole("button", { name: "Send request" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Already reviewed.");

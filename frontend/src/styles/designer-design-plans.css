@@ -12,6 +12,11 @@
   align-items: start;
 }
 
+.designer-plan-progress {
+  grid-column: 1 / -1;
+  min-inline-size: 0;
+}
+
 .designer-plan-queue {
   position: sticky;
   inset-block-start: var(--space-5);
@@ -64,7 +69,7 @@
   display: grid;
   gap: var(--space-2);
   inline-size: 100%;
-  min-block-size: 7.25rem;
+  min-block-size: var(--control-height);
   padding: var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-field);
@@ -81,8 +86,7 @@
 
 .designer-plan-task:hover {
   border-color: var(--color-border-strong);
-  box-shadow: var(--shadow-soft);
-  transform: translateY(-1px);
+  box-shadow: none;
 }
 
 .designer-plan-task:focus-visible {
@@ -130,7 +134,7 @@
 
 .designer-plan-project dl {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   gap: var(--space-3);
   margin: 0;
 }
@@ -138,9 +142,7 @@
 .designer-plan-project dl div {
   display: grid;
   gap: var(--space-1);
-  padding: var(--space-3);
-  border-radius: var(--radius-control);
-  background: var(--color-surface-subtle);
+  padding: 0;
 }
 
 .designer-plan-project dt {
@@ -152,7 +154,7 @@
 .designer-plan-project dd {
   margin: 0;
   overflow-wrap: anywhere;
-  font-weight: 750;
+  font-weight: 500;
 }
 
 .designer-plan-workspace__notice {
@@ -167,11 +169,9 @@
 
 .estimate-design-uploads--designer {
   gap: var(--space-5);
-  padding: clamp(var(--space-4), 3vw, var(--space-6));
+  padding: var(--space-4);
   border-radius: var(--radius-surface);
-  background:
-    radial-gradient(circle at 100% 0, rgb(142 124 255 / 12%), transparent 28rem),
-    var(--color-surface);
+  background: var(--color-surface);
   box-shadow: var(--shadow-soft);
 }
 
@@ -204,7 +204,7 @@
   grid-row: 1;
   justify-self: end;
   white-space: nowrap;
-  min-block-size: 40px;
+  min-block-size: var(--control-height);
   padding: var(--space-2) var(--space-3);
   border: 1px solid #d9aeb2;
   border-radius: var(--radius-control);
@@ -217,7 +217,7 @@
 .estimate-design-uploads__delete-confirmation {
   display: grid;
   gap: var(--space-4);
-  padding: var(--space-6);
+  padding: var(--space-4);
 }
 
 .estimate-design-uploads__delete-confirmation p {
@@ -245,7 +245,7 @@
 }
 
 .estimate-design-uploads__delete-actions .ui-button {
-  min-block-size: 44px;
+  min-block-size: var(--control-height);
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
@@ -296,7 +296,7 @@
   grid-template-rows: auto auto auto;
   gap: var(--space-2);
   overflow: hidden;
-  min-block-size: 18rem;
+  min-block-size: 0;
   padding: var(--space-2);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-field);
@@ -375,4 +375,16 @@
   .estimate-design-uploads--designer .estimate-drawing-row {
     grid-template-columns: minmax(0, 1fr) auto;
   }
+}
+
+.designer-plan-queue__heading h2, .designer-plan-project__heading h2 { font: var(--type-heading-3); }
+.designer-plan-task { font: var(--type-body); }
+.designer-plan-task small, .designer-plan-task > span:not(.designer-plan-task__topline) { font: var(--type-metadata); }
+.designer-plan-project dl { padding-block-start: var(--space-3); border-block-start: 1px solid var(--color-border); }
+
+.ui-app-shell[data-role="designer"] .estimate-design-uploads__status-list strong,
+.ui-app-shell[data-role="designer"] .estimate-design-uploads__placement h3,
+.ui-app-shell[data-role="designer"] .estimate-design-uploads__group h3,
+.ui-app-shell[data-role="designer"] .estimate-design-uploads__misc h3 {
+  color: var(--color-primary);
 }

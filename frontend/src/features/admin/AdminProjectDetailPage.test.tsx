@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { AUTHORIZATION_POLICY_VERSION } from "../../api/authorization-contract";
 import type { PermissionCode } from "../../api/authorization-contract";
@@ -9,6 +9,14 @@ import { tokenStorage } from "../../api/client";
 import type { ProjectFinanceBucket } from "../../api/types";
 import { renderApp } from "../../test/render";
 import { server } from "../../test/server";
+
+beforeEach(() => {
+  server.use(http.get("/api/v1/projects/:projectId/design-workflow", ({ params }) =>
+    HttpResponse.json({ data: {
+      projectId: params.projectId, projectName: "Project", serverNow: new Date().toISOString(), floors: []
+    } })
+  ));
+});
 
 const project = {
   id: "project-1",

@@ -1,6 +1,8 @@
 .access-administration {
   display: grid;
   gap: var(--space-5);
+  min-inline-size: 0;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .access-administration__filters {
@@ -13,10 +15,68 @@
   display: grid;
   gap: var(--space-4);
   min-inline-size: 0;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .access-administration__table-scroll {
+  position: relative;
   overflow-x: auto;
+  max-inline-size: 100%;
+  overscroll-behavior-inline: contain;
+  min-inline-size: 0;
+  inline-size: 100%;
+}
+
+.access-administration__table-scroll:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.administration-context-panel .admin-project-form,
+.administration-context-panel .user-invitation-dialog,
+.administration-context-panel .admin-user-dialog,
+.administration-context-panel .access-request-dialog {
+  padding: 0;
+  gap: var(--space-4);
+}
+
+.administration-context-panel .admin-project-form__actions,
+.administration-context-panel .user-invitation-dialog__actions,
+.administration-context-panel .admin-user-dialog__actions,
+.administration-context-panel .access-request-dialog__actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  inline-size: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.administration-summary {
+  display: grid;
+  gap: var(--space-4);
+  margin: 0;
+}
+
+.administration-summary > div {
+  display: grid;
+  gap: var(--space-1);
+  padding-block-end: var(--space-3);
+  border-block-end: 1px solid var(--color-border);
+}
+
+.administration-summary dt {
+  color: var(--color-text-muted);
+  font: var(--type-metadata);
+}
+
+.administration-summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
 }
 
 .access-administration__table {
@@ -28,9 +88,10 @@
 .access-administration__table th,
 .access-administration__table td {
   border-block-end: 1px solid var(--color-border);
-  padding: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   text-align: start;
   vertical-align: middle;
+  font-size: var(--text-sm);
 }
 
 .access-administration__table th {
@@ -136,12 +197,12 @@
 
 .admin-projects__workspace {
   display: grid;
-  gap: var(--space-4);
+  gap: var(--space-2);
 }
 
 .admin-projects__list {
   display: grid;
-  gap: var(--space-4);
+  gap: var(--space-2);
   list-style: none;
   margin: 0;
   padding: 0;
@@ -157,8 +218,8 @@
   gap: 0;
   min-inline-size: 0;
   overflow: hidden;
-  box-shadow: var(--shadow-soft);
-  transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+  box-shadow: none;
+  transition: border-color var(--duration-fast) var(--ease-standard);
 }
 
 .admin-project-card::before {
@@ -173,15 +234,15 @@
 
 .admin-project-card:hover {
   border-color: color-mix(in srgb, var(--color-brand-violet) 36%, var(--color-border));
-  box-shadow: var(--shadow-raised);
-  transform: translateY(-2px);
+  box-shadow: none;
+  transform: none;
 }
 
 .admin-project-card__link {
   display: grid;
   grid-template-columns: minmax(12rem, .72fr) minmax(0, 2fr) auto;
   align-items: center;
-  gap: clamp(var(--space-4), 2vw, var(--space-6));
+  gap: var(--space-3);
   color: var(--color-text);
   text-decoration: none;
 }
@@ -279,9 +340,10 @@
 .admin-project-card__actions {
   display: flex;
   justify-content: flex-end;
-  margin-block-start: var(--space-4);
-  padding-block-start: var(--space-3);
-  border-block-start: 1px solid var(--color-border);
+  margin-block-start: var(--space-2);
+  padding-block-start: 0;
+  border-block-start: 0;
+  gap: var(--space-2);
 }
 
 .admin-project-detail,
@@ -337,6 +399,7 @@
 }
 
 .admin-project-form__alert,
+.admin-project-form__wide,
 .admin-project-form__estimator,
 .admin-project-form__actions {
   grid-column: 1 / -1;
@@ -407,6 +470,7 @@
   display: grid;
   gap: var(--space-4);
   min-inline-size: 0;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .user-invitations__header,
@@ -479,6 +543,7 @@
 @media (max-width: 1180px) {
   .admin-project-card__link {
     grid-template-columns: minmax(12rem, .75fr) minmax(0, 1.5fr);
+    gap: var(--space-3);
   }
 
   .admin-project-card__meta {
@@ -508,6 +573,11 @@
     inline-size: 100%;
   }
 
+  .administration-context-panel .user-invitation-dialog__actions button {
+    inline-size: auto;
+    flex: 1;
+  }
+
   .access-administration__pagination,
   .admin-user-dialog__account {
     align-items: stretch;
@@ -522,6 +592,7 @@
 
   .admin-project-card__link {
     grid-template-columns: 1fr;
+    gap: var(--space-3);
   }
 
   .admin-project-card__view {

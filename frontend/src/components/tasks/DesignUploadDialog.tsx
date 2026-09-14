@@ -5,8 +5,10 @@ import { ApiError, apiClient } from "../../api/client";
 import type { DesignVersion, TaskRecord } from "../../api/types";
 import { designerKeys } from "../../features/designer/designerApi";
 import { Button } from "../ui/Button";
-import { Dialog } from "../ui/Dialog";
+import { ContextPanel } from "../ui/ContextPanel";
+import { Field, FileInput } from "../ui/Field";
 import { ProgressBar } from "../ui/ProgressBar";
+import "./taskPanels.css";
 
 export function DesignUploadDialog({
   task,
@@ -70,28 +72,30 @@ export function DesignUploadDialog({
   };
 
   return (
-    <Dialog
+    <ContextPanel
       title="Upload design"
       description={`Add a new design version for ${task.title}.`}
+      width="medium"
+      dirty={file !== null}
       onClose={onClose}
       busy={mutation.isPending}
+      footer={({ requestClose }) => (
+        <div className="task-panel__actions">
+          <Button variant="secondary" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
+          <Button type="submit" form={`design-upload-form-${task.id}`} busy={mutation.isPending} busyLabel="Uploading…">Upload file</Button>
+        </div>
+      )}
     >
-      <form className="modal-form design-upload-form" onSubmit={submit}>
+      <form id={`design-upload-form-${task.id}`} className="task-panel__form design-upload-form" onSubmit={submit}>
         {error ? <div className="form-alert" role="alert">{error}</div> : null}
-        <div className="upload-dropzone">
-          <label htmlFor={`design-file-${task.id}`}>Design file</label>
-          <input
-            id={`design-file-${task.id}`}
-            type="file"
+        <Field id={`design-file-${task.id}`} label="Design file" hint="PDF, PNG, JPEG, or WebP. Server upload limits apply.">
+          {(props) => <FileInput {...props}
             accept="application/pdf,image/png,image/jpeg,image/webp"
             disabled={mutation.isPending}
             onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-          />
-          <p>PDF, PNG, JPEG, or WebP. Server upload limits apply.</p>
-          {file ? (
-            <strong>{file.name} · {formatBytes(file.size)}</strong>
-          ) : null}
-        </div>
+          />}
+        </Field>
+        {file ? <p className="task-panel__file" role="status">{file.name} · {formatBytes(file.size)}</p> : null}
 
         {mutation.isPending ? (
           <div className="upload-progress" role="status">
@@ -99,27 +103,8 @@ export function DesignUploadDialog({
             <ProgressBar label="Upload in progress" />
           </div>
         ) : null}
-
-        <div className="modal-form__actions">
-          <button
-            type="button"
-            className="button button--secondary"
-            onClick={onClose}
-            disabled={mutation.isPending}
-          >
-            Cancel
-          </button>
-          <Button
-            type="submit"
-            className="button button--primary"
-            busy={mutation.isPending}
-            busyLabel="Uploading…"
-          >
-            Upload file
-          </Button>
-        </div>
       </form>
-    </Dialog>
+    </ContextPanel>
   );
 }
 

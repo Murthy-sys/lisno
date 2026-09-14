@@ -1,3 +1,6 @@
+import { ProjectFinanceBucketModel } from "../models/ProjectFinanceBucket.js";
+import { DesignWorkflowStateModel } from "../models/DesignWorkflowState.js";
+import type { DesignWorkflowState } from "../domain/design-workflow-state.js";
 import { randomUUID } from "node:crypto";
 import mongoose, { type ClientSession, type Model, type PipelineStage } from "mongoose";
 import { normalizeEmail } from "../domain/email.js";
@@ -415,6 +418,52 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
   };
 
   const repository: AppRepository = {
+    async findDesignWorkflowRoomContext(projectId) {
+      const bucketQuery = ProjectFinanceBucketModel.findOne({ projectId }).select({ estimateId: 1, estimateVersion: 1, estimateReviewRoundId: 1 });
+      if (session) bucketQuery.session(session);
+      const bucket = await bucketQuery.lean();
+      const query = EstimateModel.find({ projectId, status: "client_approved", ...(bucket ? { _id: bucket.estimateId } : {}) }).limit(2).select({ rooms: 1, version: 1 });
+      if (session) query.session(session);
+      const estimates = await query.lean();
+      if (estimates.length > 1 || bucket && estimates.length !== 1) throw new RepositoryConflictError("The project's approved estimate source is ambiguous or unavailable.");
+      const estimate = estimates[0];
+      if (!estimate) return null;
+      const currentVersion = Number(estimate.version);
+      const approvedVersion = currentVersion > 1 ? currentVersion - 1 : 1;
+      if (!Number.isSafeInteger(currentVersion) || currentVersion < 1 || bucket && Number(bucket.estimateVersion) !== approvedVersion) throw new RepositoryConflictError("The approved estimate version does not match its finance source.");
+      if (bucket?.estimateReviewRoundId) {
+        const roundQuery = EstimateClientReviewRoundModel.exists({ _id: bucket.estimateReviewRoundId, estimateId: estimate._id, estimateVersion: approvedVersion, status: "approved", $or: [{ projectId }, { projectId: null }] });
+        if (session) roundQuery.session(session);
+        if (!(await roundQuery)) throw new RepositoryConflictError("The approved estimate snapshot does not match its finance source.");
+      }
+      return { estimateId: String(estimate._id), estimateVersion: approvedVersion, rooms: (Array.isArray(estimate.rooms) ? estimate.rooms : []).flatMap((room: PlainDocument) => typeof room?.id === "string" && typeof room.label === "string" ? [{ id: room.id, name: room.label }] : []) };
+    },
+    async findDesignWorkflowRoomOptions(projectId) {
+      return (await repository.findDesignWorkflowRoomContext(projectId))?.rooms ?? [];
+    },
+    async findDesignWorkflowState(projectId) {
+      const query = DesignWorkflowStateModel.findById(projectId).select("+history");
+      if (session) query.session(session);
+      const row = await query.lean();
+      if (!row) return null;
+      const { _id, ...state } = row;
+      return state as unknown as DesignWorkflowState;
+    },
+    async saveDesignWorkflowState(projectId, expectedVersion, state) {
+      const saved = { ...state, projectId, version: expectedVersion + 1 };
+      if (expectedVersion === 0) {
+        try { await DesignWorkflowStateModel.create([{ _id: projectId, ...saved }], { session }); }
+        catch (error) { if (isMongoDuplicateKeyError(error)) throw new RepositoryConflictError("Design workflow changed."); throw error; }
+      } else {
+        const result = await DesignWorkflowStateModel.updateOne({ _id: projectId, version: expectedVersion }, { $set: saved }, { session, runValidators: true });
+        if (result.matchedCount !== 1) throw new RepositoryConflictError("Design workflow changed.");
+      }
+      return saved;
+    },
+    async listDesignWorkflowPaymentProjects() {
+      const confirmed = await DesignWorkflowStateModel.find({ initialPaymentAt: { $ne: null } }).select({ projectId: 1 }).lean();
+      return (await ProjectModel.find({ "designWorkflowStages.0": { $exists: true }, _id: { $nin: confirmed.map((row) => row.projectId) } }).sort({ createdAt: -1, _id: 1 }).lean()).map(mapProject);
+    },
     async runInTransaction(operation) {
       if (session) return operation(repository);
       for (
@@ -3593,6 +3642,11 @@ function mapProjectAccessGrant(document: PlainDocument): ProjectAccessGrantRecor
 function mapProject(document: PlainDocument): ProjectRecord {
   return {
     id: idOf(document),
+    ...(Array.isArray(document.designWorkflowStages) ? {
+      designWorkflowStages: document.designWorkflowStages.map((stage: PlainDocument) => ({
+        id: String(stage.id), type: stage.type, name: stage.name, order: stage.order
+      }))
+    } : {}),
     name: document.name,
     clientId: document.clientId ?? null,
     clientName: document.clientName ?? "",
@@ -3658,6 +3712,7 @@ function mapStage(document: PlainDocument): DesignStageRecord {
     id: idOf(document),
     projectId: document.projectId,
     floorId: document.floorId,
+    ...(document.workflowStageId !== undefined ? { workflowStageId: document.workflowStageId == null ? null : String(document.workflowStageId) } : {}),
     name: document.name,
     type: document.type,
     order: document.order,

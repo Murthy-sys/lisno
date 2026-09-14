@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useState } from "react";
 import { Image, X } from "lucide-react";
 
 import { ApiError } from "../../api/client";
@@ -7,9 +7,14 @@ import type { DesignSectionReviewData, DesignSectionReviewItem } from "../../api
 import { ProtectedImage } from "../../components/design/ProtectedImage";
 import { SectionReviewCard } from "../../components/design/SectionReviewCard";
 import { Dialog } from "../../components/ui/Dialog";
+import { Button } from "../../components/ui/Button";
+import { ContextPanel } from "../../components/ui/ContextPanel";
+import { Field, Textarea } from "../../components/ui/Field";
 import { clientKeys, decideDesignSection, getDesignSectionReview } from "./clientApi";
+import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
+import "./clientWorkflow.css";
 
-export function DesignSectionReview({ projectId, mode }: { projectId: string; mode: "client" | "read-only" }) {
+export function DesignSectionReview({ projectId, mode, hideWhenEmpty = false, collapsible = false }: { projectId: string; mode: "client" | "read-only"; hideWhenEmpty?: boolean; collapsible?: boolean }) {
   const queryClient = useQueryClient();
   const review = useQuery({
     queryKey: clientKeys.designSections(projectId),
@@ -23,6 +28,7 @@ export function DesignSectionReview({ projectId, mode }: { projectId: string; mo
   const [sourcePreviewOpen, setSourcePreviewOpen] = useState(false);
   const [activeSectionId, setActiveSectionId] = useState<string>();
   const [announcement, setAnnouncement] = useState({ sequence: 0, message: "" });
+  const [expanded, setExpanded] = useState(false);
   const reviewClassName = `design-review design-review--${mode === "client" ? "client" : "read-only"}`;
   const sections = review.data?.sections ?? [];
   const preferredSection =
@@ -54,6 +60,7 @@ export function DesignSectionReview({ projectId, mode }: { projectId: string; mo
       decideDesignSection(section.revision.id, section.revision.revisionNumber, decision, value),
     onMutate: ({ section }) => ({ decidedSectionId: section.id }),
     onSuccess: async (result, variables, context) => {
+      void queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all });
       const queryKey = clientKeys.designSections(projectId);
       queryClient.setQueryData<DesignSectionReviewData>(queryKey, (current) => {
         if (!current) return current;
@@ -100,8 +107,9 @@ export function DesignSectionReview({ projectId, mode }: { projectId: string; mo
     }
   });
 
-  if (review.isPending) return <section className={reviewClassName}><h2>Design review</h2><p>Loading design sections…</p></section>;
-  if (review.isError && !review.data) return <section className={reviewClassName}><h2>Design review</h2><p role="alert">We couldn't load the design review.</p><button type="button" onClick={() => void review.refetch()}>Try again</button></section>;
+  if (review.isPending) return hideWhenEmpty ? null : <section className={reviewClassName}><h2>Design review</h2><p>Loading design sections…</p></section>;
+  if (review.isError && !review.data) return hideWhenEmpty ? <div className="client-project-secondary-state" role="status"><p>Design reviews could not be loaded.</p><button className="secondary-button" type="button" disabled={review.isFetching} onClick={() => void review.refetch()}>Retry design reviews</button></div> : <section className={reviewClassName}><h2>Design review</h2><p role="alert">We couldn't load the design review.</p><button type="button" onClick={() => void review.refetch()}>Try again</button></section>;
+  if (hideWhenEmpty && sections.length === 0) return null;
 
   const { progress } = review.data;
   const projectSource = sections.reduce<DesignSectionReviewItem | undefined>((current, section) => {
@@ -117,7 +125,7 @@ export function DesignSectionReview({ projectId, mode }: { projectId: string; mo
     setCommentError("");
     mutation.mutate({ section: choice.section, decision: "rejected", comment: comment.trim() });
   };
-  return (
+  const content = (
     <section className={reviewClassName} aria-labelledby={`design-review-${projectId}`}>
       <header>
         <div><p className="eyebrow">{mode === "client" ? "Client decisions" : "Read-only inspection"}</p><h2 id={`design-review-${projectId}`}>Design review</h2></div>
@@ -205,25 +213,33 @@ export function DesignSectionReview({ projectId, mode }: { projectId: string; mo
       </Dialog> : null}
     </section>
   );
+  return collapsible ? <details className="client-project-disclosure" onToggle={(event) => setExpanded(event.currentTarget.open)}>
+    <summary>Design review <span>{progress.awaitingReview ? `${progress.awaitingReview} awaiting review` : `${sections.length} reviewed ${sections.length === 1 ? "plan" : "plans"}`}</span></summary>
+    {expanded ? content : null}
+  </details> : content;
 }
 
 function RejectionDialog({ section, comment, error, requestError, busy, onComment, onSubmit, onClose }: {
   section: DesignSectionReviewItem; comment: string; error: string; requestError: string; busy: boolean;
   onComment: (value: string) => void; onSubmit: () => void; onClose: () => void;
 }) {
-  const errorId = useId();
-  return <Dialog title={`Request changes for ${section.label}`} description="Tell the designer exactly what needs modification." busy={busy} onClose={onClose}>
-    <div className="form-field">
-      <label htmlFor={`reject-${section.id}`}>Modification comment</label>
-      <textarea data-dialog-initial-focus id={`reject-${section.id}`} value={comment} onChange={(event) => onComment(event.target.value)} maxLength={1000} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} />
-      {error ? <p id={errorId} className="field-error">{error}</p> : null}
-    </div>
+  return <ContextPanel
+    title={`Request changes for ${section.label}`}
+    description="Tell the designer exactly what needs modification."
+    metadata={<span>Revision {section.revision.revisionNumber}</span>}
+    dirty={Boolean(comment)}
+    busy={busy}
+    onClose={onClose}
+    footer={({ requestClose }) => <>
+      <Button onClick={onSubmit} disabled={busy}>Send request</Button>
+      <Button variant="secondary" onClick={requestClose} disabled={busy}>Cancel</Button>
+    </>}
+  >
+    <Field id={`reject-${section.id}`} label="Modification comment" hint={`${comment.length}/1000 characters`} error={error} required>
+      {(controlProps) => <Textarea {...controlProps} data-dialog-initial-focus value={comment} onChange={(event) => onComment(event.target.value)} maxLength={1000} rows={6} disabled={busy} />}
+    </Field>
     {requestError ? <p role="alert">{requestError}</p> : null}
-    <div className="modal__actions">
-      <button type="button" onClick={onSubmit} disabled={busy}>Send request</button>
-      <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
-    </div>
-  </Dialog>;
+  </ContextPanel>;
 }
 
 function errorMessage(error: Error) {

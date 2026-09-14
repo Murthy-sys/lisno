@@ -34,6 +34,7 @@ import type { PublicUser as AuthenticatedUser } from "./auth.service.js";
 import type { AuditService, AuditWrite } from "./audit.service.js";
 import type { Storage } from "../storage/storage.js";
 import type { CropRect } from "../repositories/types.js";
+import { createMongoRepository } from "../repositories/mongo.js";
 import {
   advancePlanPageForDrawingRevision,
   approvePlanTargetsForDrawingRevision,
@@ -43,6 +44,7 @@ import type { ProjectWorkflowService } from "./project-workflow.service.js";
 import { synchronizeEstimateDesignReviewState } from "./estimate-design-review-state.js";
 import { deleteEstimateDesignUpload, uploadDeleteAvailability } from "./estimate-design-upload-deletion.js";
 import { deduplicateExtractionProposals } from "./extraction-worker.service.js";
+import { assertDesignWorkflowSubmissionAllowed } from "./design-workflow-state.service.js";
 
 const mutableDesignEstimateStatuses = [
   "draft",
@@ -316,6 +318,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
   return {
     async upload(user, estimateId, file) {
       const estimate = await requireOwnedEditableEstimate(user, estimateId);
+      await assertEstimateDesignWorkflowAllowed(estimate, { phase: "upload" });
       if (file.sizeBytes > input.maxUploadBytes) {
         throw new ApiError(413, "FILE_TOO_LARGE", "The uploaded file exceeds the configured size limit.");
       }
@@ -715,6 +718,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       if (!drawing || drawing.deletedAt) throw estimateNotFound();
       const estimate = await requireOwnedEstimate(user, String(drawing.estimateId));
       if (!estimateCanReplaceDrawingForActor(estimate, user)) drawingLocked();
+      await assertEstimateDesignWorkflowAllowed(estimate, { phase: "upload" });
       const latest = await EstimateDesignRevisionModel.findOne({ drawingId })
         .sort({ revisionNumber: -1 })
         .lean();
@@ -795,6 +799,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             String(currentDrawing.estimateId),
             session
           );
+          await assertEstimateDesignWorkflowAllowed(currentEstimate, { phase: "upload" }, session);
           const current = await EstimateDesignRevisionModel.findOne({ drawingId })
             .sort({ revisionNumber: -1 })
             .session(session)
@@ -2028,13 +2033,16 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
 
     async submitDrawings(user, estimateId) {
       const submittedAt = now();
-      await requireOwnedEstimate(user, estimateId);
+      const requestEstimate = await requireOwnedEstimate(user, estimateId);
       const requestDrawings = await EstimateDesignDrawingModel.find({
         estimateId,
         active: true
       })
         .sort({ _id: 1 })
         .lean();
+      await assertEstimateDesignWorkflowAllowed(requestEstimate, {
+        roomIds: designDrawingRoomIds(requestDrawings)
+      });
       const requestRevisionIds = new Map<string, string | null>();
       for (const drawing of requestDrawings) {
         const revision = await EstimateDesignRevisionModel.findOne({
@@ -2075,6 +2083,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             "Add at least one drawing before submitting."
           );
         }
+        await assertEstimateDesignWorkflowAllowed(estimate, {
+          roomIds: designDrawingRoomIds(drawings)
+        }, session);
         const extractionCandidates = await EstimateDesignUploadModel.find({
           deletedAt: null,
           estimateId,
@@ -2883,6 +2894,7 @@ async function persistUploadAndJob(input: {
       if (!estimateDesignIsEditableForActor(currentEstimate, input.user)) {
         drawingLocked();
       }
+      await assertEstimateDesignWorkflowAllowed(currentEstimate, { phase: "upload" }, session);
       await guardDesignLifecycle(currentEstimate, session);
       await EstimateDesignUploadModel.create(
         [{
@@ -2997,6 +3009,7 @@ async function persistReplacementUploadAndJob(input: {
       if (!estimateCanReplaceDrawingForActor(estimate, input.user)) {
         drawingLocked();
       }
+      await assertEstimateDesignWorkflowAllowed(estimate, { phase: "upload" }, session);
       await guardDesignLifecycle(estimate, session);
       const reserved = await EstimateDesignRevisionModel.updateOne(
         {
@@ -3062,6 +3075,25 @@ async function persistReplacementUploadAndJob(input: {
   } finally {
     await session.endSession().catch(() => undefined);
   }
+}
+
+async function assertEstimateDesignWorkflowAllowed(
+  estimate: Record<string, any>,
+  options: { phase?: "upload"; roomIds?: string[] },
+  session?: mongoose.ClientSession
+) {
+  // Sales drawings prepared before commercial approval have no design-stage workflow.
+  if (estimate.status !== "client_approved" || typeof estimate.projectId !== "string") return;
+  await assertDesignWorkflowSubmissionAllowed(createMongoRepository(session), estimate.projectId, {
+    ...options,
+    lock: Boolean(session)
+  });
+}
+
+function designDrawingRoomIds(drawings: Array<Record<string, any>>): string[] | undefined {
+  // An unmapped drawing represents unknown scope; require every affected room to be cleared.
+  if (drawings.some((drawing) => typeof drawing.roomId !== "string" || !drawing.roomId.trim())) return undefined;
+  return [...new Set(drawings.map((drawing) => String(drawing.roomId)))];
 }
 
 async function openStoredImage(storage: Storage, reference: string) {

@@ -1,4 +1,11 @@
+import { RepositoryConflictError } from "../repositories/types.js";
+import { instructionsForStage, type DesignStageInstructions } from "../domain/design-workflow-instructions.js";
+import { emptyDesignWorkflowState, workflowStageStartAt, workflowIsPaused } from "../domain/design-workflow-state.js";
+import { projectInitialPayment, projectOperationalStage, requireDesignWorkflowScope } from "./design-workflow-state.service.js";
+import { createProjectDesignWorkflow } from "../domain/design-workflow.js";
 import { randomUUID } from "node:crypto";
+
+import type { TaskStatus, TaskRisk } from "../contracts/domain.js";
 
 import { normalizeEmail } from "../domain/email.js";
 import { AuthorizationConfigurationError } from "../domain/authorization.js";
@@ -85,7 +92,44 @@ export type ClientProject = Pick<
 
 export type ClientProjectSummary = ClientProject & { floorCount: number };
 
+export interface DesignWorkflowTaskDto {
+  id: string; title: string; description: string; status: TaskStatus;
+  progress: number; order: number; ownerName: string | null;
+  floorName?: string;
+  plannedStartAt: string; originalDeadlineAt: string; currentDeadlineAt: string;
+  completedAt: string | null; dependencyTaskIds: string[];
+  blockedByTaskIds: string[]; risk: TaskRisk;
+}
+
+export interface DesignWorkflowStageDto {
+  instructions?: DesignStageInstructions;
+  operational?: ReturnType<typeof projectOperationalStage>;
+  id: string; name: string; type: DesignStageType; order: number;
+  dependencyStageIds: string[];
+  status: TaskStatus | null; progress: number | null;
+  deadlineAt: string | null; deadlineTaskId: string | null;
+  tasks: DesignWorkflowTaskDto[];
+  sourceStages?: Array<{ id: string; name: string; floorName: string }>;
+}
+
+export interface DesignWorkflowDto {
+  notices?: Array<{ id: string; stageId: string; message: string }>;
+  initialPayment?: Awaited<ReturnType<typeof projectInitialPayment>>;
+  measurementDesigners?: Array<{ id: string; name: string }>;
+  furnitureRooms?: Array<{ id: string; name: string }>;
+  furnitureScopeIssue?: string;
+  projectId: string;
+  projectName: string;
+  serverNow: string;
+  projectStages?: DesignWorkflowStageDto[];
+  floors: Array<{
+    id: string; name: string; number: string; order: number;
+    stages: DesignWorkflowStageDto[];
+  }>;
+}
+
 export interface ProjectService {
+  designWorkflow(actor: PublicUser, projectId: string): Promise<DesignWorkflowDto>;
   list(
     actor: PublicUser,
     pagination: PaginationInput
@@ -155,6 +199,142 @@ export function createProjectService(
   clock: Clock
 ): ProjectService {
   return {
+    async designWorkflow(actor, projectId) {
+      const { capabilities } = await requireDesignWorkflowScope(repository, actor, projectId).catch((error: unknown) => {
+        if (error instanceof ApiError && error.status === 401) throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
+        throw error;
+      });
+      const hierarchy = await repository.getProjectHierarchy(projectId);
+      if (!hierarchy) throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
+      const now = clock();
+      const allTasks = hierarchy.floors.flatMap((floor) => floor.stages.flatMap((stage) => stage.tasks));
+      const taskById = new Map(allTasks.map((task) => [task.id, task]));
+      const owners = await Promise.all([...new Set(allTasks.map((task) => task.ownerId))].map(async (id) =>
+        [id, (await repository.findUserById(id))?.name ?? null] as const
+      ));
+      const ownerById = new Map(owners);
+      const ordered = <T extends { order: number; id: string }>(items: T[]) =>
+        [...items].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+      const stageView = (
+        stage: Pick<DesignStageRecord, "id" | "name" | "type" | "order" | "dependencyStageIds">,
+        stageTasks: Array<TaskRecord & { floorName?: string }>
+      ): DesignWorkflowStageDto => {
+        const tasks = ordered(stageTasks);
+        const unfinished = tasks.filter((task) => task.status !== "completed");
+        const deadline = [...unfinished].sort((a, b) =>
+          Date.parse(a.currentDeadlineAt) - Date.parse(b.currentDeadlineAt) || a.id.localeCompare(b.id)
+        )[0];
+        const status: TaskStatus | null = tasks.length === 0 ? null
+          : unfinished.length === 0 ? "completed"
+          : unfinished.some((task) => task.status === "in_progress") ? "in_progress"
+          : unfinished.some((task) => task.status === "in_review") ? "in_review"
+          : unfinished.some((task) => task.status === "blocked") ? "blocked"
+          : unfinished.length < tasks.length ? "in_progress" : "not_started";
+        return {
+          id: stage.id, name: stage.name, type: stage.type, order: stage.order,
+          dependencyStageIds: [...stage.dependencyStageIds], status,
+          progress: tasks.length ? taskProgress(tasks) : null,
+          deadlineAt: deadline?.currentDeadlineAt ?? null,
+          deadlineTaskId: deadline?.id ?? null,
+          tasks: tasks.map((task) => ({
+            id: task.id, title: task.title, description: actor.role === "client" ? "" : task.description,
+            status: task.status, progress: task.progress, order: task.order,
+            ownerName: ownerById.get(task.ownerId) ?? null,
+            ...(task.floorName === undefined ? {} : { floorName: task.floorName }),
+            plannedStartAt: task.plannedStartAt, originalDeadlineAt: task.originalDeadlineAt,
+            currentDeadlineAt: task.currentDeadlineAt, completedAt: task.completedAt,
+            dependencyTaskIds: [...task.dependencyTaskIds],
+            blockedByTaskIds: task.dependencyTaskIds.filter((id) => taskById.get(id)?.status !== "completed"),
+            risk: calculateTaskRisk(task, now)
+          }))
+        };
+      };
+      const savedStages = hierarchy.designWorkflowStages;
+      const operationalState = savedStages ? await repository.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId) : null;
+      const initialPayment = operationalState ? await projectInitialPayment(repository, projectId, operationalState, capabilities.finance) : undefined;
+      const measurementDesigners = savedStages && capabilities.designer ? (await Promise.all(hierarchy.assignedDesignerIds.map((id) => repository.findUserById(id)))).flatMap((user) => user?.active && user.role === "designer" ? [{ id: user.id, name: user.name }] : []) : undefined;
+      const measurementAssigneeId = operationalState?.stages.site_measurement?.assignedDesignerId;
+      const measurementAssigneeName = measurementAssigneeId ? (await repository.findUserById(measurementAssigneeId))?.name : undefined;
+      let furnitureRooms: Array<{ id: string; name: string }> | undefined;
+      let furnitureScopeIssue: string | undefined;
+      if (savedStages && (capabilities.designer || capabilities.client)) {
+        try { furnitureRooms = await repository.findDesignWorkflowRoomOptions(projectId); }
+        catch (error) {
+          if (!(error instanceof RepositoryConflictError)) throw error;
+          furnitureRooms = [];
+          furnitureScopeIssue = "The approved estimate room source is ambiguous or unavailable. Reconcile the project approved source before confirming furniture requirements.";
+        }
+      }
+      const notices: Array<{ id: string; stageId: string; message: string }> = [];
+      if (operationalState?.initialPaymentAt && capabilities.client && savedStages) {
+        const addNotice = (type: DesignStageType, key: string, message: string) => {
+          const stage = savedStages.find((stage) => stage.type === type);
+          if (stage) notices.push({ id: `${projectId}:${key}`, stageId: stage.id, message });
+        };
+        if (!operationalState.stages.internal_kickoff?.completedAt) addNotice("internal_kickoff", "internal-alignment", "Thanks for confirming the order. We are aligning the internal processes, roughly a three-day process, and your Designer will request a meeting.");
+        if (workflowStageStartAt(operationalState, "client_kickoff", now.getTime()) && !operationalState.stages.client_kickoff?.completedAt) addNotice("client_kickoff", "kickoff-pending", "Internal Kick off is complete. Your Client Kick off task is ready with a four-day countdown. Complete it once the meeting is done.");
+        if (workflowStageStartAt(operationalState, "key_collection", now.getTime()) && !operationalState.stages.key_collection?.completedAt) addNotice("key_collection", "key-handover", operationalState.stages.key_collection?.handedOverAt ? "Key handover recorded; awaiting Designer receipt." : "Confirm that the keys have been handed over. Your Designer will separately confirm receipt.");
+        if (operationalState.stages.client_kickoff?.completedAt) addNotice("client_kickoff", "kickoff-complete", "Congratulations, we have officially kickstarted your project.");
+        if (workflowIsPaused(operationalState)) addNotice("site_measurement", "site-access-blocked", "Site access is unavailable. Measurement and all workflow clocks are paused; technical drawing preparation cannot proceed until access is restored.");
+        else if (operationalState.stages.site_measurement?.completedAt) addNotice("site_measurement", "measurement-complete", "Measurements are complete. Your project is on the right path.");
+      }
+      const snapshotById = new Map(savedStages?.map((stage) => [stage.id, stage]));
+      const linkedStages = ordered(hierarchy.floors).flatMap((floor) =>
+        ordered(floor.stages).filter((stage) => {
+          const configured = stage.workflowStageId ? snapshotById.get(stage.workflowStageId) : undefined;
+          return configured !== undefined && configured.type === stage.type &&
+            stage.projectId === hierarchy.id && stage.floorId === floor.id && floor.projectId === hierarchy.id;
+        }).map((stage) => ({ stage, floor }))
+      );
+      const linkedStageIds = new Set(linkedStages.map(({ stage }) => stage.id));
+      return {
+        projectId: hierarchy.id,
+        projectName: hierarchy.name,
+        serverNow: now.toISOString(),
+        ...(savedStages === undefined ? {} : {
+          ...(capabilities.client ? { notices } : {}),
+          initialPayment: initialPayment!,
+          ...(measurementDesigners ? { measurementDesigners } : {}),
+          ...(furnitureRooms ? { furnitureRooms } : {}),
+          ...(furnitureScopeIssue ? { furnitureScopeIssue } : {}),
+          projectStages: ordered(savedStages).map((stage) => {
+            const sources = linkedStages.filter(({ stage: actual }) => actual.workflowStageId === stage.id);
+            const view = stageView({ ...stage, dependencyStageIds: [] }, sources.flatMap(({ stage: actual, floor }) => actual.tasks.map((task) => ({ ...task, floorName: floor.name }))));
+            const operational = projectOperationalStage(stage, operationalState!, capabilities, now, actor.id, measurementAssigneeName, { paymentStatus: initialPayment!.status, projectId: hierarchy.id, internalKickoffStageId: savedStages.find((configured) => configured.type === "internal_kickoff")?.id });
+            const instructions = instructionsForStage(stage.type);
+            // Space-planning progress comes from floor tasks, independently of its help content.
+            const taskDerivedProgress = stage.type === "space_planning_tentative_look_feel" || !instructions;
+            if (stage.type === "existing_furniture_dimensions" && furnitureScopeIssue) {
+              operational.blockingReasons.push(furnitureScopeIssue);
+              operational.availableActions = [];
+              operational.status = "blocked";
+            }
+            if (taskDerivedProgress) {
+              operational.status = operational.blockingReasons.length ? "blocked" : (view.status === "completed" ? "completed" : view.status === "blocked" ? "blocked" : view.status === "in_progress" || view.status === "in_review" ? "in_progress" : "not_started");
+              operational.timing.state = operational.status === "completed" ? "completed" : operational.blockingReasons.length ? "waiting" : "not_applicable";
+              operational.timing.startsAt = null;
+              operational.timing.endsAt = view.status === "completed" ? view.tasks.map((task) => task.completedAt).filter((at): at is string => at !== null).sort().at(-1) ?? null : null;
+            }
+            return {
+              ...view,
+              status: operational.status,
+              progress: taskDerivedProgress ? view.progress : operational.status === "completed" ? 100 : operational.status === "not_started" ? 0 : null,
+              ...(instructions ? { instructions } : {}), operational,
+              sourceStages: sources.map(({ stage: actual, floor }) => ({ id: actual.id, name: actual.name, floorName: floor.name }))
+            };
+          })
+        }),
+        floors: ordered(hierarchy.floors).flatMap((floor) => {
+          const stages = ordered(floor.stages).filter((stage) => !linkedStageIds.has(stage.id));
+          if (floor.stages.length > 0 && stages.length === 0) return [];
+          return [{
+            id: floor.id, name: floor.name, number: floor.number, order: floor.order,
+            stages: stages.map((stage) => stageView(stage, stage.tasks))
+          }];
+        })
+      };
+    },
+
     async list(actor, pagination) {
       const user = await requireActor(repository, actor);
       const page = await repository.pageProjectsForUserInModule(
@@ -257,8 +437,10 @@ export function createProjectService(
             { clientEmail: "This email belongs to an internal account." }
           );
         }
+        const projectId = `project-${randomUUID()}`;
         const projectInput: ProjectRecord = {
-          id: `project-${randomUUID()}`,
+          id: projectId,
+          designWorkflowStages: createProjectDesignWorkflow(projectId),
           name: input.name,
           clientId: existingClient?.id ?? null,
           clientName: input.clientName,
@@ -363,6 +545,28 @@ export function createProjectService(
       };
       return repository.runInTransaction(async (transaction) => {
         const floor = await transaction.createFloor(floorInput);
+        for (const configured of project.designWorkflowStages ?? []) {
+          const stage = await transaction.createDesignStage({
+            id: `stage-${randomUUID()}`,
+            projectId: project.id,
+            floorId: floor.id,
+            workflowStageId: configured.id,
+            name: configured.name,
+            type: configured.type,
+            order: configured.order,
+            dependencyStageIds: [],
+            createdAt: timestamp,
+            updatedAt: timestamp
+          });
+          await audit.append({
+            actorId: actor.id,
+            action: "stage_created",
+            entityType: "design_stage",
+            entityId: stage.id,
+            occurredAt: timestamp,
+            newValues: { projectId: project.id, floorId: floor.id, name: stage.name, workflowStageId: configured.id }
+          }, transaction);
+        }
         await audit.append(
           {
             actorId: actor.id,

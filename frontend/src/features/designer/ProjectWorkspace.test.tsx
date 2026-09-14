@@ -186,6 +186,9 @@ function installWorkspaceApi(options?: {
     const url = apiRequestPath(input);
     if (url === "/api/v1/auth/me") return response(designer);
     if (url === "/api/v1/auth/authorization") return response(authorizationFor(designer.role));
+    if (url === `/api/v1/projects/${project.id}/design-workflow`) return response({
+      projectId: project.id, projectName: project.name, serverNow: new Date().toISOString(), floors: []
+    });
     if (url === `/api/v1/projects/${project.id}`) {
       projectReads += 1;
       const hierarchy = structuredClone(project);
@@ -399,6 +402,7 @@ describe("ProjectWorkspace", () => {
     await user.click(await screen.findByRole("button", { name: /Ground Floor/ }));
     await user.click(screen.getByRole("button", { name: "Add stage to Ground Floor" }));
     const stageDialog = screen.getByRole("dialog", { name: "Add stage" });
+    await user.clear(within(stageDialog).getByLabelText("Stage name"));
     await user.type(
       within(stageDialog).getByLabelText("Stage name"),
       "Terrace concept"
@@ -551,7 +555,7 @@ describe("ProjectWorkspace", () => {
     });
     await user.click(trigger);
     const dialog = screen.getByRole("dialog", { name: "Update task" });
-    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.documentElement.style.overflow).toBe("hidden");
     await user.selectOptions(within(dialog).getByLabelText("Status"), "blocked");
     await user.clear(within(dialog).getByLabelText("Progress"));
     await user.type(within(dialog).getByLabelText("Progress"), "60");
@@ -576,7 +580,7 @@ describe("ProjectWorkspace", () => {
     expect(screen.queryByRole("dialog", { name: "Update task" }))
       .not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
-    expect(document.body.style.overflow).toBe("");
+    expect(document.documentElement.style.overflow).toBe("");
     expect(screen.getByText("Blocked")).toBeVisible();
     expect(screen.getByText("60% complete")).toBeVisible();
   });
@@ -663,7 +667,7 @@ describe("ProjectWorkspace", () => {
       type: "application/pdf"
     });
     await user.upload(within(dialog).getByLabelText("Design file"), file);
-    const uploadButton = within(dialog).getByRole("button", { name: "Upload file" });
+    const uploadButton = within(dialog).getByRole<HTMLButtonElement>("button", { name: "Upload file" });
     await user.click(uploadButton);
 
     expect(uploadButton).toHaveAttribute("aria-busy", "true");
@@ -671,12 +675,10 @@ describe("ProjectWorkspace", () => {
     expect(uploadButton.querySelector(".ui-spinner")).toBeInTheDocument();
     expect(uploadButton).toHaveTextContent("Uploading…");
     expect(within(dialog).getByLabelText("Design file")).toBeDisabled();
-    fireEvent.submit(uploadButton.closest("form")!);
+    fireEvent.submit(uploadButton.form!);
     expect(api.getUploadCount()).toBe(1);
 
-    expect(within(dialog).getByRole("status")).toHaveTextContent(
-      "Uploading securely"
-    );
+    expect(within(dialog).getByText("Uploading securely…").closest('[role="status"]')).toBeVisible();
     expect(within(dialog).getByRole("progressbar", { name: "Upload in progress" }))
       .not.toHaveAttribute("aria-valuenow");
     fireEvent.keyDown(document, { key: "Escape" });
@@ -704,7 +706,7 @@ describe("ProjectWorkspace", () => {
     const input = within(dialog).getByLabelText("Design file") as HTMLInputElement;
     const file = new File(["%PDF-1.7"], "spoofed.pdf", { type: "application/pdf" });
     await user.upload(input, file);
-    const uploadButton = within(dialog).getByRole("button", { name: "Upload file" });
+    const uploadButton = within(dialog).getByRole<HTMLButtonElement>("button", { name: "Upload file" });
     await user.click(uploadButton);
 
     expect(uploadButton).toHaveAttribute("aria-busy", "true");

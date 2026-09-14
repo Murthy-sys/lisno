@@ -122,6 +122,43 @@ describe("Admin project API paths", () => {
 });
 
 describe("AdminProjectsPage", () => {
+  it("keeps quick view tied to the selected ID, preserves the list route, and never fetches detail", async () => {
+    installSession();
+    let detailGets = 0;
+    const second = { ...project, id: "project-second", name: project.name, client: { ...project.client, name: "Different client" } };
+    server.use(
+      http.get("/api/v1/admin/projects", () => HttpResponse.json(page([project, second]))),
+      http.get("/api/v1/admin/projects/:id", () => { detailGets += 1; return HttpResponse.json({ error: { message: "Not permitted" } }, { status: 403 }); })
+    );
+    const user = userEvent.setup();
+    const { router } = renderApp(["/admin/projects"]);
+    const triggers = await screen.findAllByRole("button", { name: "Quick view Asha home" });
+    await user.click(triggers[1]);
+    const panel = screen.getByRole("dialog", { name: "Asha home" });
+    expect(within(panel).getByText("Different client")).toBeVisible();
+    expect(within(panel).getByRole("link", { name: "Open project workspace" })).toHaveAttribute("href", "/admin/projects/project-second");
+    expect(router.state.location.pathname).toBe("/admin/projects");
+    expect(detailGets).toBe(0);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(triggers[1]).toHaveFocus());
+    await user.click(triggers[0]);
+    expect(within(screen.getByRole("dialog", { name: "Asha home" })).getByText("Asha Shah")).toBeVisible();
+    expect(within(screen.getByRole("dialog", { name: "Asha home" })).queryByText("Different client")).not.toBeInTheDocument();
+    expect(detailGets).toBe(0);
+  });
+
+  it("offers only the authorized list summary when full project read is unavailable", async () => {
+    installSession();
+    server.use(
+      http.get("/api/v1/auth/authorization", () => HttpResponse.json({ data: { role: "admin", policyVersion: AUTHORIZATION_POLICY_VERSION, permissions: ["identity.self.read", "identity.authorization.read", "projects.list"] } })),
+      http.get("/api/v1/admin/projects", () => HttpResponse.json(page([project])))
+    );
+    const user = userEvent.setup();
+    renderApp(["/admin/projects"]);
+    await user.click(await screen.findByRole("button", { name: "Quick view Asha home" }));
+    expect(within(screen.getByRole("dialog", { name: "Asha home" })).queryByRole("link", { name: "Open project workspace" })).not.toBeInTheDocument();
+  });
+
   it("renders the global Super Admin collection and offers project initiation", async () => {
     installSuperAdminSession();
     server.use(

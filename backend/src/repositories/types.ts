@@ -1,3 +1,6 @@
+import type { DesignWorkflowState } from "../domain/design-workflow-state.js";
+import type { DesignStageType, ProjectDesignWorkflowStage } from "../domain/design-workflow.js";
+export type { DesignStageType } from "../domain/design-workflow.js";
 import type { Role, TaskStatus } from "../contracts/domain.js";
 import type { AccountKind } from "../domain/demo-identities.js";
 import type {
@@ -44,16 +47,6 @@ export type LeadStage =
 
 export type LeadActivityType = "call" | "whatsapp" | "meeting" | "email" | "note";
 
-export type DesignStageType =
-  | "internal_kickoff"
-  | "client_kickoff"
-  | "key_collection"
-  | "site_measurement"
-  | "concept_mood_board"
-  | "floor_plan"
-  | "client_revisions"
-  | "final_approval"
-  | "design_handoff";
 
 export type TaskEventType =
   | "status_changed"
@@ -265,6 +258,7 @@ export interface UserResponsibilityCounts {
 }
 
 export interface ProjectRecord {
+  designWorkflowStages?: ProjectDesignWorkflowStage[];
   id: string;
   name: string;
   clientId: string | null;
@@ -356,6 +350,7 @@ export interface EstimatorOption {
 }
 
 export interface EstimateSummaryRecord {
+  rooms?: Array<{id: string; label: string}>;
   id: string;
   leadId: string;
   projectId: string | null;
@@ -449,6 +444,7 @@ export interface FloorRecord {
 }
 
 export interface DesignStageRecord {
+  workflowStageId?: string | null;
   id: string;
   projectId: string;
   floorId: string;
@@ -874,6 +870,7 @@ export interface GrantRevocation {
 }
 
 export interface SeedData {
+  designWorkflowStates?: DesignWorkflowState[];
   users: UserRecord[];
   userInvitations: UserInvitationRecord[];
   passwordResetRequests?: PasswordResetRequestRecord[];
@@ -922,6 +919,11 @@ export type NewDesignStage = DesignStageRecord;
 export type NewTask = TaskRecord;
 
 export interface AppRepository {
+  findDesignWorkflowState(projectId: string): Promise<DesignWorkflowState | null>;
+  saveDesignWorkflowState(projectId: string, expectedVersion: number, state: DesignWorkflowState): Promise<DesignWorkflowState>;
+  listDesignWorkflowPaymentProjects(): Promise<ProjectRecord[]>;
+  findDesignWorkflowRoomContext(projectId: string): Promise<{estimateId: string; estimateVersion: number; rooms: Array<{id: string; name: string}>} | null>;
+  findDesignWorkflowRoomOptions(projectId: string): Promise<Array<{id: string; name: string}>>;
   runInTransaction<T>(
     operation: (repository: AppRepository) => Promise<T>
   ): Promise<T>;

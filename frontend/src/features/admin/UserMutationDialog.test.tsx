@@ -410,7 +410,7 @@ describe("UserMutationDialog", () => {
     const cancel = within(dialog).getByRole("button", { name: "Cancel" });
     cancel.focus();
     await user.tab();
-    expect(within(dialog).getByRole("button", { name: "Close Manage Arun Patel" })).toHaveFocus();
+    expect(within(dialog).getByRole("button", { name: /Close manage arun patel/i })).toHaveFocus();
     await expectNoAxeViolations();
 
     await user.keyboard("{Escape}");
@@ -499,7 +499,7 @@ describe("UserMutationDialog", () => {
       within(first.dialog).getByRole("button", { name: "Deactivate user" })
     ).toBeDisabled();
     expect(
-      within(first.dialog).getByRole("button", { name: "Close Manage Arun Patel" })
+      within(first.dialog).getByRole("button", { name: /Close manage arun patel/i })
     ).toBeDisabled();
     await first.user.keyboard("{Escape}");
     expect(first.dialog).toBeVisible();

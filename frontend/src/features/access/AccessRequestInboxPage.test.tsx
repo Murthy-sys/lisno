@@ -59,6 +59,26 @@ function reviewPage(items: ReviewAccessRequest[] = []) {
 }
 
 describe("AccessRequestInboxPage", () => {
+  it("uses the exact scoped request in its detail panel without resolving an unknown project", async () => {
+    installReviewer("super_admin");
+    server.use(http.get("/api/v1/access-requests/review", () => HttpResponse.json(reviewPage([
+      reviewRow,
+      { ...reviewRow, id: "request-unknown", reason: "Separate request reason", projectId: "project-hidden-valid", project: { id: "project-hidden-valid", resolved: false, name: null } }
+    ]))));
+    const user = userEvent.setup();
+    const { router } = renderApp(["/admin/access-requests"]);
+    const trigger = await screen.findByRole("button", { name: "Details request request-unknown" });
+    await user.click(trigger);
+    const panel = screen.getByRole("dialog", { name: "Access request details" });
+    expect(within(panel).getByText("project-hidden-valid")).toBeVisible();
+    expect(within(panel).getByText("Separate request reason")).toBeVisible();
+    expect(within(panel).queryByText("Aurora Villa")).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("link")).not.toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/admin/access-requests");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
   it("Admin inbox empty state is scoped", async () => {
     installReviewer("admin");
     server.use(http.get("/api/v1/access-requests/review", ({ request }) => {

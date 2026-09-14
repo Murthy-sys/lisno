@@ -16,13 +16,14 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { Button } from "../../components/ui/Button";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Dialog } from "../../components/ui/Dialog";
 import { Field, Input, Select, Textarea } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
@@ -669,12 +670,19 @@ function MainBasketManagementDialog({
   }
 
   return (
-    <Dialog
+    <ContextPanel
       title="Manage main baskets"
       eyebrow="Estimation configuration"
       description="Edit or permanently delete existing baskets. Deleting a basket also deletes the Main Lines inside it."
       onClose={onClose}
       contentInert={childDialogOpen}
+      width="wide"
+      className="knowledge-context-panel"
+      footer={<div className="knowledge-dialog-actions">
+        <Button type="button" variant="secondary" onClick={onClose}>
+          Done
+        </Button>
+      </div>}
     >
       <div className="knowledge-dialog-body knowledge-basket-manager">
         <div
@@ -776,12 +784,8 @@ function MainBasketManagementDialog({
           )}
         </div>
       </div>
-      <div className="knowledge-dialog-actions">
-        <Button type="button" variant="secondary" onClick={onClose}>
-          Done
-        </Button>
-      </div>
-    </Dialog>
+
+    </ContextPanel>
   );
 }
 
@@ -1055,6 +1059,7 @@ function BasketEditorDialog({ existing, onClose, onCreated }: {
   readonly onClose: () => void;
   readonly onCreated: () => Promise<void>;
 }) {
+  const formId = useId();
   const [name, setName] = useState(existing?.name ?? "");
   const [description, setDescription] = useState(existing?.description ?? "");
   const [displayOrder, setDisplayOrder] = useState(String(existing?.displayOrder ?? ""));
@@ -1071,8 +1076,12 @@ function BasketEditorDialog({ existing, onClose, onCreated }: {
     onSuccess: onCreated
   });
   return (
-    <Dialog title={existing ? "Edit main basket" : "Add main basket"} eyebrow="Estimation configuration" onClose={onClose} busy={mutation.isPending}>
-      <form className="knowledge-dialog-form" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
+    <ContextPanel title={existing ? "Edit main basket" : "Add main basket"} eyebrow="Estimation configuration" onClose={onClose} busy={mutation.isPending}
+      width="medium"
+      className="knowledge-context-panel"
+      dirty={name !== (existing?.name ?? "") || description !== (existing?.description ?? "") || displayOrder !== String(existing?.displayOrder ?? "") || status !== (existing?.status === "inactive" ? "inactive" : "active")}
+      footer={({ requestClose }) => (<div className="knowledge-dialog-actions"><Button type="button" variant="quiet" onClick={requestClose}>Cancel</Button><Button type="submit" form={formId} busy={mutation.isPending} disabled={!name.trim() || !displayOrderValid}>{existing ? "Save basket" : "Add main basket"}</Button></div>)}>
+      <form id={formId} className="knowledge-dialog-form" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
         <div className="knowledge-dialog-body">
           {mutation.error ? <InlineMessage tone="error" role="alert">{mutation.error.message}</InlineMessage> : null}
           <Field id="basket-name" label="Basket name" required>{(props) => <Input {...props} value={name} onChange={(event) => setName(event.target.value)} />}</Field>
@@ -1084,8 +1093,8 @@ function BasketEditorDialog({ existing, onClose, onCreated }: {
             </div>
           ) : null}
         </div>
-        <div className="knowledge-dialog-actions"><Button type="button" variant="quiet" onClick={onClose}>Cancel</Button><Button type="submit" busy={mutation.isPending} disabled={!name.trim() || !displayOrderValid}>{existing ? "Save basket" : "Add main basket"}</Button></div>
+
       </form>
-    </Dialog>
+    </ContextPanel>
   );
 }

@@ -12,7 +12,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { useFeedback } from "../../components/feedback/FeedbackProvider";
 import { Button } from "../../components/ui/Button";
-import { Dialog } from "../../components/ui/Dialog";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field, FileInput, Input, Textarea } from "../../components/ui/Field";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
@@ -42,6 +42,7 @@ import {
   rupeesToPaise,
   useProcurementProjects
 } from "./procurementPresentation";
+import "./procurementPanels.css";
 
 interface PurchaseSelection {
   project: ProcurementProject;
@@ -64,11 +65,18 @@ export function ProcurementProjectPage() {
     auth.authorization,
     "procurement.document.read"
   );
-  const [selection, setSelection] = useState<PurchaseSelection | null>(null);
+  const [selectedItem, setSelectedItem] = useState<{ projectId: string; itemKey: string } | null>(null);
   const { query, integrityError, projects } = useProcurementProjects(canRead);
   const project = projects?.find(
     (candidate) => candidate.projectId === projectId
   ) ?? null;
+  const selectedSection = project?.projectId === selectedItem?.projectId
+    ? project?.sections.find((section) => section.items.some((item) => item.key === selectedItem?.itemKey))
+    : undefined;
+  const item = selectedSection?.items.find((candidate) => candidate.key === selectedItem?.itemKey);
+  const selection = project && selectedSection && item && canRead && canCreate && !integrityError
+    ? { project, section: selectedSection, item }
+    : null;
 
   return (
     <section
@@ -112,7 +120,7 @@ export function ProcurementProjectPage() {
           project={project}
           canCreate={canCreate}
           canReadDocuments={canReadDocuments}
-          onRecord={(section, item) => setSelection({ project, section, item })}
+          onRecord={(_section, item) => setSelectedItem({ projectId: project.projectId, itemKey: item.key })}
         />
       )}
 
@@ -120,7 +128,7 @@ export function ProcurementProjectPage() {
         <PurchaseDialog
           key={`${selection.project.projectId}:${selection.item.key}`}
           selection={selection}
-          onClose={() => setSelection(null)}
+          onClose={() => setSelectedItem(null)}
         />
       ) : null}
     </section>
@@ -335,7 +343,8 @@ function PurchaseDialog({
   const idPrefix = useId();
   const idempotencyKey = useRef(procurementRequestKey());
   const [amount, setAmount] = useState("");
-  const [incurredAt, setIncurredAt] = useState(new Date().toISOString().slice(0, 10));
+  const initialDate = useRef(new Date().toISOString().slice(0, 10));
+  const [incurredAt, setIncurredAt] = useState(initialDate.current);
   const [description, setDescription] = useState("");
   const [vendor, setVendor] = useState("");
   const [reference, setReference] = useState("");
@@ -399,6 +408,7 @@ function PurchaseDialog({
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (mutation.isPending) return;
     const amountPaise = rupeesToPaise(amount);
     if (amountPaise === null) {
       setValidation("Enter a positive INR amount with no more than two decimal places.");
@@ -423,14 +433,24 @@ function PurchaseDialog({
   };
 
   return (
-    <Dialog
+    <ContextPanel
       title={`Record purchase for ${selection.item.specification}`}
       eyebrow={`${selection.project.projectName} · ${selection.section.label}`}
       description={`${selection.item.roomName} · ${quantity.format(selection.item.quantity)} ${selection.item.unit}`}
       onClose={onClose}
       busy={mutation.isPending}
+      width="wide"
+      dirty={Boolean(amount || description || vendor || reference || receipt || incurredAt !== initialDate.current)}
+      footer={({ requestClose }) => (
+        <div className="procurement-panel-actions">
+          <Button variant="secondary" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
+          <Button form={`${idPrefix}-purchase`} type="submit" busy={mutation.isPending} busyLabel="Recording purchase…" leadingIcon={<ShoppingCart />}>
+            {mutation.isError ? "Retry purchase" : "Record purchase"}
+          </Button>
+        </div>
+      )}
     >
-      <form className="modal-form procurement-purchase-form" onSubmit={submit} noValidate>
+      <form id={`${idPrefix}-purchase`} className="procurement-purchase-form" onSubmit={submit} noValidate>
         <div className="procurement-purchase-form__context" aria-label="Selected Estimate item">
           <FileText aria-hidden="true" />
           <span>
@@ -442,7 +462,7 @@ function PurchaseDialog({
             <strong>{formatPaise(selection.item.actualSpendPaise)}</strong>
           </span>
         </div>
-        <div className="procurement-purchase-form__grid">
+        <fieldset className="procurement-purchase-form__grid procurement-purchase-form__fields" disabled={mutation.isPending}>
           <Field id={`${idPrefix}-amount`} label="Actual price (INR)" required>
             {(props) => (
               <Input
@@ -514,7 +534,7 @@ function PurchaseDialog({
               />
             )}
           </Field>
-        </div>
+        </fieldset>
         {receipt ? (
           <p className="procurement-purchase-form__file">
             <ReceiptText aria-hidden="true" />
@@ -536,25 +556,7 @@ function PurchaseDialog({
             {validation || procurementError(mutation.error, "The purchase could not be recorded. Try again with the same details.")}
           </p>
         ) : null}
-        <div className="procurement-purchase-form__actions">
-          <Button
-            variant="destructive-outline"
-            onClick={onClose}
-            disabled={mutation.isPending}
-          >
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            variant="success"
-            busy={mutation.isPending}
-            busyLabel="Recording purchase…"
-            leadingIcon={<ShoppingCart />}
-          >
-            {mutation.isError ? "Retry purchase" : "Record purchase"}
-          </Button>
-        </div>
       </form>
-    </Dialog>
+    </ContextPanel>
   );
 }

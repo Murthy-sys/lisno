@@ -21,11 +21,13 @@ import { DesignUploadDialog } from "../../components/tasks/DesignUploadDialog";
 import { TaskRow } from "../../components/tasks/TaskRow";
 import { TaskUpdateDialog } from "../../components/tasks/TaskUpdateDialog";
 import { AsyncState } from "../../components/ui/AsyncState";
+import { PageHeader } from "../../components/ui/PageHeader";
 import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { designerKeys } from "./designerApi";
 import { DesignUploadsWorkspace } from "./DesignUploadsWorkspace";
 import { EstimatePlanChangeRequests } from "../leads/EstimatePlanChangeRequests";
+import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
 import {
   ProjectStructureDialog,
   type StructureAction
@@ -102,24 +104,14 @@ export function ProjectWorkspace() {
 
   return (
     <section className="designer-page project-workspace" aria-labelledby="project-title">
-      <Link to="/designer" className="back-link">
-        <ArrowLeft aria-hidden="true" /> Back to dashboard
-      </Link>
-
-      <header className="project-hero">
-        <div>
-          <p className="eyebrow">Project workspace</p>
-          <h1 id="project-title">{project.name}</h1>
-          <div className="project-hero__meta">
-            <span><MapPin aria-hidden="true" /> {project.location}</span>
-            <span><Building2 aria-hidden="true" /> {project.floors.length} floors</span>
-          </div>
-        </div>
-        <StatusBadge
-          label={projectStatuses[project.status]}
-          tone={projectTones[project.status]}
-        />
-      </header>
+      <PageHeader
+        id="project-title"
+        title={project.name}
+        eyebrow="Project workspace"
+        breadcrumb={<Link to="/designer" className="back-link"><ArrowLeft aria-hidden="true" /> Back to dashboard</Link>}
+        metadata={<div className="project-hero__meta"><span><MapPin aria-hidden="true" /> {project.location}</span><span><Building2 aria-hidden="true" /> {project.floors.length} floors</span></div>}
+        actions={<StatusBadge label={projectStatuses[project.status]} tone={projectTones[project.status]} />}
+      />
 
       {notice ? (
         <div className="workspace-notice" role="status" aria-label="Project updates">
@@ -144,6 +136,21 @@ export function ProjectWorkspace() {
           </strong>
         </div>
       </div>
+
+      <ProjectWorkflowPanel
+        projectId={project.id}
+        presentation="designer"
+        onOpenTask={(taskId) => {
+          const task = findTask(project, taskId);
+          if (!task) return;
+          setOpenFloors((current) => new Set([...current, task.floorId]));
+          setOpenStages((current) => new Set([...current, task.stageId]));
+          requestAnimationFrame(() => {
+            document.getElementById(`workflow-task-${taskId}`)?.scrollIntoView({ block: "center" });
+            document.getElementById(`workflow-task-${taskId}`)?.focus();
+          });
+        }}
+      />
 
       <details className="project-plan-requests" open={planRequestsOpen} onToggle={(event) => setPlanRequestsOpen(event.currentTarget.open)}>
         <summary>Client plan change requests</summary>

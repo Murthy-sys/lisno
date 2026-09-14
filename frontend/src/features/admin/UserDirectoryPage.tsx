@@ -9,6 +9,7 @@ import type {
   UserDirectoryFilters
 } from "../../api/types";
 import { Button } from "../../components/ui/Button";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field, Input, Select } from "../../components/ui/Field";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
@@ -44,6 +45,7 @@ export function UserDirectoryPage() {
     offset: 0
   });
   const [selectedUser, setSelectedUser] = useState<UserDirectoryItem | null>(null);
+  const [summaryUserId, setSummaryUserId] = useState<string | null>(null);
 
   const normalizedFilters = useMemo<UserDirectoryFilters>(
     () => ({
@@ -70,6 +72,9 @@ export function UserDirectoryPage() {
     (user) => user.id === selectedUser?.id
   );
   const pageData = usersQuery.data;
+  const summaryUser = !usersQuery.isError && !usersQuery.isPlaceholderData
+    ? pageData?.items.find((user) => user.id === summaryUserId)
+    : undefined;
 
   useEffect(() => {
     if (!currentPageUser) return;
@@ -191,7 +196,7 @@ export function UserDirectoryPage() {
           aria-label="User directory"
           aria-busy={usersQuery.isFetching || undefined}
         >
-          <div className="access-administration__table-scroll">
+          <div className="access-administration__table-scroll" role="region" aria-label="User directory records" tabIndex={0}>
             <table className="access-administration__table">
               <thead>
                 <tr>
@@ -231,6 +236,10 @@ export function UserDirectoryPage() {
                       </time>
                     </td>
                     <td>
+                      <div className="access-requests__row-actions">
+                      <Button size="compact" variant="quiet" disabled={usersQuery.isPlaceholderData} onClick={() => setSummaryUserId(user.id)}>
+                        Details <span className="sr-only">{user.name}</span>
+                      </Button>
                       {user.role === "super_admin" ? null : (
                         <Button
                           size="compact"
@@ -240,6 +249,7 @@ export function UserDirectoryPage() {
                           Manage <span className="sr-only">{user.name}</span>
                         </Button>
                       )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -304,6 +314,21 @@ export function UserDirectoryPage() {
           isCurrentPageUser={Boolean(currentPageUser)}
           onClose={() => setSelectedUser(null)}
         />
+      ) : null}
+      {summaryUserId ? (
+        <ContextPanel key={summaryUserId} title={summaryUser?.name ?? "User details"} eyebrow="Directory record" className="administration-context-panel" onClose={() => setSummaryUserId(null)}>
+          {summaryUser ? (
+            <dl className="administration-summary">
+              <div><dt>Email</dt><dd>{summaryUser.email}</dd></div>
+              <div><dt>Role</dt><dd>{ROLE_LABELS[summaryUser.role]}</dd></div>
+              {summaryUser.title ? <div><dt>Title</dt><dd>{summaryUser.title}</dd></div> : null}
+              <div><dt>Status</dt><dd>{summaryUser.active ? "Active" : "Inactive"}</dd></div>
+              <div><dt>Created</dt><dd>{dateTime.format(new Date(summaryUser.createdAt))}</dd></div>
+              <div><dt>Updated</dt><dd>{dateTime.format(new Date(summaryUser.updatedAt))}</dd></div>
+              <div><dt>User ID</dt><dd>{summaryUser.id}</dd></div>
+            </dl>
+          ) : <PageState state="empty" message="This user is no longer available in the current directory view." />}
+        </ContextPanel>
       ) : null}
     </section>
   );

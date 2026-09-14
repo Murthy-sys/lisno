@@ -31,7 +31,7 @@ export interface ClientSignupInput {
   name: string;
   email: string;
   mobile: string;
-  address: string;
+  address?: string;
   password: string;
   passwordConfirmation: string;
 }
@@ -113,6 +113,8 @@ export type DesignStageType =
   | "client_kickoff"
   | "key_collection"
   | "site_measurement"
+  | "existing_furniture_dimensions"
+  | "space_planning_tentative_look_feel"
   | "concept_mood_board"
   | "floor_plan"
   | "client_revisions"
@@ -146,6 +148,12 @@ export interface Project {
   createdAt: string;
   updatedAt: string;
   progress?: number;
+  designWorkflowStages?: Array<{
+    id: string;
+    name: string;
+    type: DesignStageType;
+    order: number;
+  }>;
 }
 
 export interface Floor {
@@ -167,6 +175,7 @@ export interface DesignStage {
   id: string;
   projectId: string;
   floorId: string;
+  workflowStageId?: string | null;
   name: string;
   type: DesignStageType;
   order: number;
@@ -410,6 +419,23 @@ export interface DesignPlanReviewTask {
   submittedAt: string;
   version: number;
   attachmentNames: string[];
+  canDecide?: boolean;
+  decision?: {
+    action: "approve" | "request_changes";
+    source: "client_portal" | "admin_proof" | null;
+    performedById: string | null;
+    performedByName: string | null;
+    performedByRole: Role | null;
+    performedAt: string;
+    note: string | null;
+    onBehalfOfClient: boolean;
+    proof: {
+      filename: string;
+      mimeType: string;
+      byteSize: number;
+      uploadedAt: string;
+    } | null;
+  } | null;
 }
 
 export interface ProjectWorkflowTask {

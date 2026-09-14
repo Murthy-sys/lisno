@@ -27,6 +27,7 @@ describe("PMC Margin", () => {
     expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveAttribute("type", "number");
     expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveAttribute("min", "10");
     expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveAttribute("max", "20");
+    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveAttribute("step", "5");
     expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveAccessibleDescription("Allowed: 10%–20%");
     expect(screen.queryByRole("textbox", { name: "PMC Margin (%)" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("checkbox", { name: "PMC" }));
@@ -95,6 +96,7 @@ describe("Sub-Vendor Margin", () => {
     render(<Harness initial={{ pmcMarginBps: 1_250 }} onChange={onChange} onValidationChange={onValidationChange} />);
     await userEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
     const input = screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" });
+    expect(input).toHaveAttribute("step", "0.01");
     expect(input).toHaveValue(null);
     for (const [value, bps] of [["10", 1000], ["18.75", 1875], ["20", 2000]] as const) {
       fireEvent.change(input, { target: { value } });

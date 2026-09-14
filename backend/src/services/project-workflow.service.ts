@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import mongoose from "mongoose";
 
+import type { Role } from "../contracts/domain.js";
+
 import {
   sha256Hex,
   type StoredEstimateClientResponseProof
@@ -35,6 +37,7 @@ import { ProjectAccessGrantModel } from "../models/ProjectAccessGrant.js";
 import { ProjectModel } from "../models/Project.js";
 import { ProjectWorkflowTaskModel } from "../models/ProjectWorkflowTask.js";
 import { UserModel } from "../models/User.js";
+import { createMongoRepository } from "../repositories/mongo.js";
 import type { Storage } from "../storage/storage.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
@@ -42,6 +45,7 @@ import type { DesignPlanMailer } from "./design-plan-mailer.js";
 import { synchronizeEstimateDesignReviewState } from "./estimate-design-review-state.js";
 import { approvePlanTargetsForDrawingRevision } from "./estimate-plan-review.service.js";
 import type { OpenFinanceBucketInput } from "./project-finance.service.js";
+import { assertDesignWorkflowSubmissionAllowed } from "./design-workflow-state.service.js";
 
 type Row = Record<string, any>;
 type AssignableExecutionRole = WorkerRole | "procurement";
@@ -78,6 +82,18 @@ export interface DesignPlanReviewTaskDto {
   submittedAt: string;
   version: number;
   attachmentNames: string[];
+  canDecide: boolean;
+  decision: {
+    action: "approve" | "request_changes";
+    source: "client_portal" | "admin_proof" | null;
+    performedById: string | null;
+    performedByName: string | null;
+    performedByRole: Role | null;
+    performedAt: string;
+    note: string | null;
+    onBehalfOfClient: boolean;
+    proof: { filename: string; mimeType: string; byteSize: number; uploadedAt: string } | null;
+  } | null;
 }
 
 export interface ProjectWorkflowTaskDto {
@@ -169,8 +185,11 @@ export interface ProjectWorkflowService {
   ): Promise<void>;
   listDesignReviewTasks(
     actor: PublicUser,
-    status?: "pending" | "approved" | "changes_requested"
+    status?: "pending" | "approved" | "changes_requested",
+    projectId?: string
   ): Promise<DesignPlanReviewTaskDto[]>;
+  requireDesignReviewDecisionScope(actor: PublicUser, roundId: string): Promise<void>;
+  readDesignReviewProof(actor: PublicUser, roundId: string): Promise<{ filename: string; mimeType: string; bytes: Buffer }>;
   readDesignReviewAttachment(
     actor: PublicUser,
     roundId: string,
@@ -494,6 +513,15 @@ export function createProjectWorkflowService(input: {
       ]);
       if (!lead || !project) notFound();
       const currentRevisions = await currentDrawingRevisions(estimateId, session);
+      const mappedRooms = currentRevisions.every(({ drawing }) =>
+        typeof drawing.roomId === "string" && drawing.roomId.trim().length > 0
+      )
+        ? [...new Set(currentRevisions.map(({ drawing }) => String(drawing.roomId)))]
+        : undefined;
+      await assertDesignWorkflowSubmissionAllowed(createMongoRepository(session), String(project._id), {
+        lock: true,
+        roomIds: mappedRooms
+      });
       const expectedRevisionIds = currentRevisions.map(({ revision }) => String(revision._id));
       if (
         expectedRevisionIds.length === 0 ||
@@ -760,6 +788,8 @@ export function createProjectWorkflowService(input: {
           decision: "request_changes",
           source: "client_portal",
           actorId: actor.id,
+          actorName: actor.name,
+          actorRole: actor.role,
           note,
           occurredAt,
           session
@@ -772,6 +802,8 @@ export function createProjectWorkflowService(input: {
         estimate,
         round,
         actorId: actor.id,
+        actorName: actor.name,
+        actorRole: actor.role,
         source: "client_portal",
         note,
         occurredAt,
@@ -781,29 +813,56 @@ export function createProjectWorkflowService(input: {
       });
     },
 
-    async listDesignReviewTasks(actor, status) {
-      if (!(["admin", "super_admin"] as string[]).includes(actor.role)) forbidden();
-      const filter: Row = status ? { status } : {};
+    async listDesignReviewTasks(actor, status, projectId) {
+      requireReviewReader(actor);
+      if ((actor.role === "client" || actor.role === "designer") && !projectId) {
+        throw new ApiError(400, "PROJECT_REQUIRED", "Choose a project to view its Design reviews.");
+      }
+      if (projectId) await requireReviewProjectScope(actor, projectId);
+      const filter: Row = { ...(status ? { status } : {}), ...(projectId ? { projectId } : {}) };
       if (actor.role === "admin") {
         const grants = await ProjectAccessGrantModel.find({
-          userId: actor.id,
-          module: "projects",
-          source: "admin_initiator",
-          active: true
+          userId: actor.id, module: "projects", source: "admin_initiator", active: true
         }).select({ projectId: 1 }).lean();
         if (grants.length === 0) return [];
         filter.assignedAdminId = actor.id;
-        filter.projectId = { $in: grants.map((grant) => String(grant.projectId)) };
+        filter.projectId = projectId ?? { $in: grants.map((grant) => String(grant.projectId)) };
       }
-      const rounds = await DesignPlanReviewRoundModel.find(filter)
-        .sort({ submittedAt: -1, _id: 1 })
-        .limit(100)
-        .lean();
-      return rounds.map(reviewTaskDto);
+      if (projectId) {
+        const estimates = await EstimateModel.find({ projectId, status: "client_approved" }).select({ _id: 1 }).lean();
+        filter.estimateId = { $in: estimates.map((estimate) => String(estimate._id)) };
+      }
+      const query = DesignPlanReviewRoundModel.find(filter).sort({ submittedAt: -1, _id: 1 });
+      // A project timeline must include its complete history, independent of the global inbox limit.
+      if (!projectId) query.limit(100);
+      const rounds = await query.lean();
+      return hydrateReviewTasks(rounds, actor);
+    },
+
+    async requireDesignReviewDecisionScope(actor, roundId) {
+      if (!(actor.role === "admin" || actor.role === "super_admin")) forbidden();
+      const round = await findScopedReviewRound(actor, roundId);
+      if (!(await reviewCanBeDecided(round, actor))) {
+        throw new ApiError(409, "DESIGN_PLAN_NOT_REVIEWABLE", "This Design plan is no longer awaiting review.");
+      }
+    },
+
+    async readDesignReviewProof(actor, roundId) {
+      const round = await findScopedReviewRound(actor, roundId);
+      const proof = await DesignPlanResponseProofModel.findOne({ reviewRoundId: roundId, estimateId: round.estimateId })
+        .select("+storageReference").lean();
+      if (!proof) notFound();
+      let bytes: Buffer;
+      try { bytes = await input.storage.read(String(proof.storageReference)); }
+      catch { throw new ApiError(409, "DESIGN_PLAN_PROOF_UNAVAILABLE", "The stored decision proof is unavailable."); }
+      if (bytes.byteLength !== Number(proof.byteSize) || sha256Hex(bytes) !== String(proof.sha256)) {
+        throw new ApiError(409, "DESIGN_PLAN_PROOF_UNAVAILABLE", "The stored decision proof could not be verified.");
+      }
+      return { filename: String(proof.originalFilename), mimeType: String(proof.mimeType), bytes };
     },
 
     async readDesignReviewAttachment(actor, roundId, attachmentIndex) {
-      if (!(["admin", "super_admin"] as string[]).includes(actor.role)) forbidden();
+      requireReviewReader(actor);
       if (!Number.isSafeInteger(attachmentIndex) || attachmentIndex < 0) notFound();
       const filter: Row = { _id: roundId };
       if (actor.role === "admin") filter.assignedAdminId = actor.id;
@@ -811,7 +870,8 @@ export function createProjectWorkflowService(input: {
         .select("+attachments.storageReference")
         .lean();
       if (!round) notFound();
-      await requireAdminProjectScope(actor, String(round.projectId));
+      await requireReviewProjectScope(actor, String(round.projectId));
+      await requireReviewEstimateLineage(round);
       const attachment = (round.attachments as Row[] | undefined)?.[attachmentIndex];
       if (!attachment) notFound();
       const storageReference = attachment.storageReference;
@@ -907,7 +967,7 @@ export function createProjectWorkflowService(input: {
       if (actor.role === "admin") refreshedFilter.assignedAdminId = actor.id;
       const refreshed = await DesignPlanReviewRoundModel.findOne(refreshedFilter).lean();
       if (!refreshed) notFound();
-      return reviewTaskDto(refreshed);
+      return (await hydrateReviewTasks([refreshed], actor))[0]!;
     },
 
     async decideDesignReviewAsAdmin(decisionInput) {
@@ -918,8 +978,11 @@ export function createProjectWorkflowService(input: {
         throw new ApiError(400, "DESIGN_PLAN_NOTE_REQUIRED", "Explain the Client's requested changes.");
       }
       const occurredAt = now();
-      let saved: Row | null = null;
+      const recoveryState: { saved: Row | null; proof: Row | null } = { saved: null, proof: null };
+      try {
       await withMongoTransaction(async (session) => {
+        recoveryState.saved = null;
+        recoveryState.proof = null;
         const roundFilter: Row = {
           _id: roundId,
           status: "pending",
@@ -1025,6 +1088,8 @@ export function createProjectWorkflowService(input: {
             estimate,
             round,
             actorId: actor.id,
+            actorName: actor.name,
+            actorRole: actor.role,
             source: "admin_proof",
             note,
             occurredAt,
@@ -1038,6 +1103,8 @@ export function createProjectWorkflowService(input: {
             decision: "request_changes",
             source: "admin_proof",
             actorId: actor.id,
+            actorName: actor.name,
+            actorRole: actor.role,
             note,
             occurredAt,
             session
@@ -1053,13 +1120,16 @@ export function createProjectWorkflowService(input: {
           oldValues: {},
           newValues: {
             reviewRoundId: roundId,
+            projectId: String(round.projectId),
             estimateId: String(estimate._id),
+            performedByRole: actor.role,
+            onBehalfOfClient: true,
             mimeType: proof.mimeType,
             byteSize: proof.byteSize,
             sha256: proof.sha256
           }
         }, session);
-        saved = {
+        recoveryState.saved = {
           ...round,
           status: decision === "approve" ? "approved" : "changes_requested",
           version: Number(round.version) + 1,
@@ -1067,11 +1137,49 @@ export function createProjectWorkflowService(input: {
           decisionSource: "admin_proof",
           decisionNote: note,
           decidedById: actor.id,
+          decidedByName: actor.name,
+          decidedByRole: actor.role,
           decidedAt: occurredAt
         };
+        recoveryState.proof = {
+          _id: proofId, reviewRoundId: roundId, estimateId: String(estimate._id),
+          storageReference: proof.storageReference, originalFilename: proof.originalFilename,
+          mimeType: proof.mimeType, byteSize: proof.byteSize, sha256: proof.sha256,
+          uploadedById: actor.id, uploadedAt: occurredAt
+        };
       });
-      if (!saved) throw new Error("Design plan decision did not complete.");
-      return reviewTaskDto(saved);
+      } catch (error) {
+        const saved = recoveryState.saved;
+        const completedProofIdentity = recoveryState.proof;
+        if (!saved || !completedProofIdentity) throw error;
+        try {
+          const [persistedRound, persistedProof] = await Promise.all([
+            DesignPlanReviewRoundModel.findOne({
+              _id: roundId, estimateId: saved.estimateId, projectId: saved.projectId,
+              version: saved.version, status: saved.status, decision,
+              decisionSource: "admin_proof", decidedById: actor.id, decidedAt: occurredAt
+            }).lean(),
+            DesignPlanResponseProofModel.findOne(completedProofIdentity).select("+storageReference").lean()
+          ]);
+          if (persistedRound && persistedProof) return reviewTaskDto(saved, persistedProof, false);
+          // A different terminal decision proves this attempt lost the CAS race.
+          const competingProof = await DesignPlanResponseProofModel.findOne({ reviewRoundId: roundId })
+            .select("+storageReference").lean();
+          if (competingProof && competingProof.storageReference !== proof.storageReference) throw error;
+          // A confirmed absence after a definite failure permits the route's normal
+          // upload compensation. Unknown commit results may still become durable.
+          if (!persistedRound && !persistedProof && !competingProof && !hasUnknownTransactionCommitResult(error)) {
+            throw error;
+          }
+        } catch (recoveryError) {
+          if (recoveryError === error) throw error;
+        }
+        throw new DesignDecisionProofRetentionError();
+      }
+      const saved = recoveryState.saved;
+      if (!saved) throw new DesignDecisionProofRetentionError();
+      // Avoid a post-commit read that could turn a stored decision into upload cleanup.
+      return reviewTaskDto(saved, { ...proof, uploadedAt: occurredAt }, false);
     },
 
     async listAssignableWorkers(actor) {
@@ -1678,6 +1786,8 @@ async function transitionReviewRound(
     decision: "approve" | "request_changes";
     source: "client_portal" | "admin_proof";
     actorId: string;
+    actorName: string;
+    actorRole: Role;
     note: string;
     occurredAt: Date;
     session: mongoose.ClientSession;
@@ -1692,6 +1802,8 @@ async function transitionReviewRound(
         decisionSource: input.source,
         decisionNote: input.note,
         decidedById: input.actorId,
+        decidedByName: input.actorName,
+        decidedByRole: input.actorRole,
         decidedAt: input.occurredAt
       },
       $inc: { version: 1 }
@@ -1739,6 +1851,8 @@ async function finalizeDesignApproval(input: {
   estimate: Row;
   round: Row;
   actorId: string;
+  actorName: string;
+  actorRole: Role;
   source: "client_portal" | "admin_proof";
   note: string;
   occurredAt: Date;
@@ -1756,6 +1870,8 @@ async function finalizeDesignApproval(input: {
     decision: "approve",
     source: input.source,
     actorId: input.actorId,
+    actorName: input.actorName,
+    actorRole: input.actorRole,
     note: input.note,
     occurredAt: input.occurredAt,
     session: input.session
@@ -2196,7 +2312,7 @@ function taskDto(estimate: Row, project: Row, lead: Row): DesignPlanTaskDto {
   };
 }
 
-function reviewTaskDto(round: Row): DesignPlanReviewTaskDto {
+function reviewTaskDto(round: Row, proof: Row | null = null, canDecide = false): DesignPlanReviewTaskDto {
   return {
     id: String(round._id),
     estimateId: String(round.estimateId),
@@ -2208,7 +2324,22 @@ function reviewTaskDto(round: Row): DesignPlanReviewTaskDto {
     deliveryStatus: round.deliveryStatus,
     submittedAt: new Date(round.submittedAt).toISOString(),
     version: Number(round.version),
-    attachmentNames: (round.attachments ?? []).map((attachment: Row) => String(attachment.filename))
+    attachmentNames: (round.attachments ?? []).map((attachment: Row) => String(attachment.filename)),
+    canDecide,
+    decision: round.decision && round.decidedAt ? {
+      action: round.decision,
+      source: round.decisionSource ?? null,
+      performedById: round.decidedById == null ? null : String(round.decidedById),
+      performedByName: round.decidedByName ?? null,
+      performedByRole: round.decidedByRole ?? null,
+      performedAt: new Date(round.decidedAt).toISOString(),
+      note: round.decisionNote ?? null,
+      onBehalfOfClient: round.decisionSource === "admin_proof",
+      proof: proof ? {
+        filename: String(proof.originalFilename), mimeType: String(proof.mimeType),
+        byteSize: Number(proof.byteSize), uploadedAt: new Date(proof.uploadedAt).toISOString()
+      } : null
+    } : null
   };
 }
 
@@ -2278,4 +2409,82 @@ async function withMongoTransaction<T>(
   } finally {
     await session.endSession().catch(() => undefined);
   }
+}
+
+export class DesignDecisionProofRetentionError extends ApiError {
+  constructor() {
+    super(500, "DESIGN_DECISION_RECOVERY_FAILED", "Design decision state could not be confirmed safely.");
+    this.name = "DesignDecisionProofRetentionError";
+  }
+}
+
+function requireReviewReader(actor: PublicUser) {
+  if (!(["admin", "super_admin", "client", "designer"] as string[]).includes(actor.role)) forbidden();
+}
+
+async function requireReviewProjectScope(actor: PublicUser, projectId: string) {
+  requireReviewReader(actor);
+  if (actor.role === "admin" || actor.role === "super_admin") {
+    await requireAdminProjectScope(actor, projectId);
+    if (!(await ProjectModel.exists({ _id: projectId }))) notFound();
+    return;
+  }
+  const project = await ProjectModel.findById(projectId).lean();
+  if (!project) notFound();
+  if (actor.role === "client") {
+    if (String(project.clientId) !== actor.id) notFound();
+    return;
+  }
+  if (String(project.initiatingDesignerId) === actor.id || (project.assignedDesignerIds ?? []).map(String).includes(actor.id)) return;
+  notFound();
+}
+
+async function findScopedReviewRound(actor: PublicUser, roundId: string) {
+  requireReviewReader(actor);
+  const filter: Row = { _id: roundId };
+  if (actor.role === "admin") filter.assignedAdminId = actor.id;
+  const round = await DesignPlanReviewRoundModel.findOne(filter).lean();
+  if (!round) notFound();
+  await requireReviewProjectScope(actor, String(round.projectId));
+  await requireReviewEstimateLineage(round);
+  return round;
+}
+
+async function reviewCanBeDecided(round: Row, actor: PublicUser) {
+  if (!(actor.role === "admin" || actor.role === "super_admin") || round.status !== "pending") return false;
+  if (actor.role === "admin" && String(round.assignedAdminId) !== actor.id) return false;
+  return Boolean(await EstimateModel.exists({
+    _id: round.estimateId, projectId: round.projectId, status: "client_approved",
+    designPlanStatus: "ready_for_client", designPlanVersion: round.designPlanVersion,
+    designFrozenAt: { $in: [null] }
+  }));
+}
+
+async function hydrateReviewTasks(rounds: Row[], actor: PublicUser) {
+  const proofs = await DesignPlanResponseProofModel.find({ reviewRoundId: { $in: rounds.map((round) => round._id) } })
+    .select({ reviewRoundId: 1, estimateId: 1, originalFilename: 1, mimeType: 1, byteSize: 1, uploadedAt: 1 }).lean();
+  const proofByRound = new Map(proofs.map((proof) => [String(proof.reviewRoundId), proof]));
+  return Promise.all(rounds.map(async (round) => {
+    const proof = proofByRound.get(String(round._id));
+    return reviewTaskDto(round, proof && String(proof.estimateId) === String(round.estimateId) ? proof : null, await reviewCanBeDecided(round, actor));
+  }));
+}
+
+async function requireReviewEstimateLineage(round: Row) {
+  if (!(await EstimateModel.exists({ _id: round.estimateId, projectId: round.projectId, status: "client_approved" }))) notFound();
+}
+
+function hasUnknownTransactionCommitResult(error: unknown): boolean {
+  const visited = new Set<object>();
+  let current = error;
+  while (current !== null && typeof current === "object" && !visited.has(current)) {
+    visited.add(current);
+    const value = current as { hasErrorLabel?: (label: string) => boolean; errorLabels?: unknown; cause?: unknown };
+    if (
+      (typeof value.hasErrorLabel === "function" && value.hasErrorLabel("UnknownTransactionCommitResult")) ||
+      (Array.isArray(value.errorLabels) && value.errorLabels.includes("UnknownTransactionCommitResult"))
+    ) return true;
+    current = value.cause;
+  }
+  return false;
 }

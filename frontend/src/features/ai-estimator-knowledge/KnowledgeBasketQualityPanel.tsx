@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { ApiError } from "../../api/client";
 import { Button } from "../../components/ui/Button";
-import { Dialog } from "../../components/ui/Dialog";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field, Textarea } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { PageState } from "../../components/ui/PageState";
@@ -167,10 +167,10 @@ const KnowledgeBasketQualityEditor = forwardRef<KnowledgeBasketQualityPanelHandl
       {showLegacy && (legacy.isPending ? <p role="status">Loading previous parameters…</p> : legacy.isError ? <InlineMessage tone="error">Previous parameters could not be loaded. <Button variant="quiet" onClick={() => void legacy.refetch()}>Retry</Button></InlineMessage> : legacy.data ? <LegacyQualityParameters payload={legacy.data.payload} /> : null)}
     </details> : null}
     {importing ? <KnowledgeQualityImportDialog basketName={saved.basketName} currentParameters={parameters} disabled={!editable || saving || conflict} onImport={append} onClose={() => setImporting(false)} /> : null}
-    {showPrompt ? <Dialog title="Create quality checks with AI" eyebrow={`Main Basket · ${saved.basketName}`} description="Copy this prompt into Claude, Codex, or another AI tool. Review its questions and acceptance criteria before importing the workbook." onClose={() => setShowPrompt(false)}>
+    {showPrompt ? <ContextPanel title="Create quality checks with AI" eyebrow={`Main Basket · ${saved.basketName}`} description="Copy this prompt into Claude, Codex, or another AI tool. Review its questions and acceptance criteria before importing the workbook." onClose={() => setShowPrompt(false)} width="wide" className="knowledge-context-panel" footer={<div className="knowledge-quality-actions"><Button variant="secondary" onClick={() => setShowPrompt(false)}>Close</Button><Button onClick={async () => { try { await navigator.clipboard.writeText(prompt); setCopied(true); } catch { setError("Select and copy the prompt text manually."); } }}>{copied ? "Copied" : "Copy prompt"}</Button></div>}>
       <Field id="quality-ai-prompt" label="Prompt">{(props) => <Textarea {...props} readOnly rows={14} value={prompt} />}</Field>
-      <div className="knowledge-quality-actions"><Button variant="secondary" onClick={() => setShowPrompt(false)}>Close</Button><Button onClick={async () => { try { await navigator.clipboard.writeText(prompt); setCopied(true); } catch { setError("Select and copy the prompt text manually."); } }}>{copied ? "Copied" : "Copy prompt"}</Button></div>
-    </Dialog> : null}
+
+    </ContextPanel> : null}
   </Surface>;
 });
 

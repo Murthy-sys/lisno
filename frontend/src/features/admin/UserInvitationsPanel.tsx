@@ -221,7 +221,7 @@ function AuthorizedUserInvitationsPanel({
         <PageState state="empty" message="No invitations match these filters." />
       ) : (
         <>
-          <div className="access-administration__table-scroll">
+          <div className="access-administration__table-scroll" role="region" aria-label="User invitation records" tabIndex={0}>
             <table className="access-administration__table user-invitations__table">
               <thead>
                 <tr>

@@ -150,7 +150,7 @@ describe("invitation dialogs", () => {
     });
     expect(queryClient.getQueryData(userInvitationKeys.page(filters, pagination))).toBe(cachedPage);
     expect(queryClient.getMutationCache().getAll().at(-1)?.options.retry).toBe(false);
-    expect(within(dialog).getByRole("button", { name: "Close Invite user" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: /Close invite user/i })).toBeDisabled();
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
     await user.keyboard("{Escape}");
     expect(dialog).toBeVisible();

@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#17213f" />
     <meta name="referrer" content="no-referrer" />
+    <!-- Declare the cascade before route styles can register a layer. -->
+    <style>@layer theme, base, components, shell, utilities;</style>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=2" />
     <link rel="stylesheet" href="/src/styles/brand-loader.css" />
     <link rel="preload" href="/src/assets/lisno-loader.svg" as="image" type="image/svg+xml" />

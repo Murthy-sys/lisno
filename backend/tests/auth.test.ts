@@ -523,6 +523,36 @@ describe("authentication API", () => {
 });
 
 describe("client signup API", () => {
+  it.each([
+    ["omitted", undefined, null],
+    ["empty", "", null],
+    ["whitespace only", "   ", null],
+    ["provided", "  12 Garden Road, Bengaluru  ", "12 Garden Road, Bengaluru"]
+  ])("accepts an %s address and persists the normalized value", async (_label, address, expected) => {
+    const repository = createMemoryRepository(structuredClone(demoSeedData));
+    const app = createApp({ repository, auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 } });
+    const response = await request(app)
+      .post("/api/v1/auth/client-signup")
+      .send({ ...signupBody(), address });
+
+    expect(response.status).toBe(201);
+    expect(response.body.data.user.role).toBe("client");
+    expect(response.body.data.token).toEqual(expect.any(String));
+    expect(await repository.findUserByEmail("priya@example.com")).toMatchObject({ address: expected });
+  });
+
+  it.each([null, 123, {}, []])("rejects a non-string address: %j", async (address) => {
+    const repository = createMemoryRepository(structuredClone(demoSeedData));
+    const app = createApp({ repository, auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 } });
+    const response = await request(app)
+      .post("/api/v1/auth/client-signup")
+      .send({ ...signupBody(), address });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatchObject({ code: "VALIDATION_ERROR", fields: { address: expect.any(String) } });
+    expect(await repository.findUserByEmail("priya@example.com")).toBeNull();
+  });
+
   it("issues a fixed 24-hour token for client signup", async () => {
     const response = await request(
       createApp({

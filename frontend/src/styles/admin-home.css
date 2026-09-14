@@ -66,18 +66,12 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
 
 /* --------------------------------------------------------------- buttons */
 
-/*
- * Every button — primary, secondary, quiet, destructive, icon buttons —
- * fully rounded. Set once here rather than per variant/page so anything
- * new automatically matches. .ui-tab-nav__item's own border-radius: 0
- * (declared later in this file) still wins for the text tabs, which are
- * deliberately flat/underlined, not pill buttons.
- */
+/* Administrative controls use the shared compact geometry. */
 .ui-app-shell[data-role="admin"] .ui-button,
 .ui-app-shell[data-role="admin"] .ui-icon-button,
 .ui-app-shell[data-role="super_admin"] .ui-button,
 .ui-app-shell[data-role="super_admin"] .ui-icon-button {
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-control);
 }
 
 /* ------------------------------------------------------------- responsive */
@@ -123,6 +117,16 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
       max(var(--space-4), env(safe-area-inset-left));
     position: fixed;
     z-index: var(--z-raised);
+  }
+
+  .ui-app-shell[data-role="admin"] .ui-mobile-header__trigger,
+  .ui-app-shell[data-role="super_admin"] .ui-mobile-header__trigger {
+    color: var(--color-primary);
+  }
+
+  .ui-app-shell[data-role="admin"] .ui-mobile-header .brand__logo,
+  .ui-app-shell[data-role="super_admin"] .ui-mobile-header .brand__logo {
+    filter: none;
   }
 
   .ui-app-shell[data-role="admin"] .ui-workspace,
@@ -213,26 +217,32 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
 
 /* ------------------------------------------------------------ page header */
 
+.ui-app-shell[data-role="admin"] .eyebrow,
+.ui-app-shell[data-role="super_admin"] .eyebrow {
+  color: var(--role-ink-muted);
+}
+
 .ui-app-shell[data-role="admin"] .ui-page-header__eyebrow,
 .ui-app-shell[data-role="super_admin"] .ui-page-header__eyebrow {
-  color: var(--role-accent);
-  font-size: 1rem;
-  font-weight: 400;
-  letter-spacing: 0.08em;
+  color: var(--role-ink-muted);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: .04em;
   text-transform: uppercase;
 }
 
 .ui-app-shell[data-role="admin"] .ui-page-header__title,
 .ui-app-shell[data-role="super_admin"] .ui-page-header__title {
   color: #07070d;
-  font-size: 2rem;
-  font-weight: 500;
+  font-size: var(--text-3xl);
+  font-weight: 600;
+  line-height: 1.25;
 }
 
 .ui-app-shell[data-role="admin"] .ui-page-header__description,
 .ui-app-shell[data-role="super_admin"] .ui-page-header__description {
   color: var(--role-ink-muted);
-  font-size: 1rem;
+  font-size: var(--text-md);
   font-weight: 400;
 }
 
@@ -250,7 +260,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
   background: var(--color-highlight);
   color: var(--color-primary);
   padding-inline: 1.5rem;
-  min-block-size: 2.75rem;
+  min-block-size: var(--control-height);
   box-shadow: 0 8px 18px -12px rgb(var(--role-shadow-tint) / 65%);
 }
 
@@ -336,21 +346,22 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
 .ui-app-shell[data-role="admin"] .admin-project-card__meta div,
 .ui-app-shell[data-role="super_admin"] .admin-project-card__meta div {
   border-inline-start-color: var(--role-line);
+  padding-inline-start: var(--space-2);
 }
 
 .ui-app-shell[data-role="admin"] .admin-project-card__view,
 .ui-app-shell[data-role="super_admin"] .admin-project-card__view {
-  min-block-size: 32px;
+  min-block-size: var(--control-height-compact);
   padding: var(--space-1) var(--space-2);
   border: 1px solid transparent;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-control);
   background: var(--color-primary);
   color: var(--color-bg);
   font-size: 0.75rem;
   font-weight: 400;
   justify-self: center;
 
-  margin-block-start: var(--space-1);
+  margin-block-start: 0;
 }
 
 .ui-app-shell[data-role="admin"] .admin-project-card__view svg,
@@ -371,372 +382,12 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
 
 .ui-app-shell[data-role="admin"] .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop),
 .ui-app-shell[data-role="super_admin"] .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop) {
-  color: var(--role-accent);
+  color: var(--color-primary);
 }
 
 .ui-app-shell[data-role="admin"] .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop):not(:disabled):hover,
 .ui-app-shell[data-role="super_admin"] .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop):not(:disabled):hover {
   background: color-mix(in srgb, var(--role-accent) 10%, transparent);
-}
-
-/* ----------------------------------------------- initiate project dialog */
-
-/*
- * Dialog renders through a portal to document.body, outside .ui-app-shell,
- * so none of the [data-role] rules above (or role-themes.css's) ever reach
- * it — it was falling all the way back to base index.css defaults. Scoped
- * from <body> instead, the same way the Configuration dialogs already do,
- * and narrowed with :has(.admin-project-form) so only this dialog changes.
- */
-
-body:has(.ui-app-shell[data-role="admin"]) .modal:has(.admin-project-form),
-body:has(.ui-app-shell[data-role="estimator_sales"]) .modal:has(.admin-project-form),
-body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.admin-project-form) {
-  background: var(--color-bg);
-  max-height: calc(100dvh - 2rem);
-  overflow: auto;
-  overscroll-behavior: contain;
-  width: min(100%, 44rem);
-  border-radius: var(--radius-card);
-  border: 1px solid var(--color-border-hover);
-  box-shadow: var(--shadow-card);
-  /* The native scrollbar track paints as a flat rectangle regardless of
-     border-radius, so it visibly squares off the top/bottom-right corners
-     even though the card itself is clipped and rounded. Hidden here, not
-     disabled — the panel still scrolls by wheel, touch, or keyboard. */
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-  font-family: var(--font-interface);
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .modal:has(.admin-project-form)::-webkit-scrollbar,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .modal:has(.admin-project-form)::-webkit-scrollbar,
-body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.admin-project-form)::-webkit-scrollbar {
-  display: none;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .modal:has(.admin-project-form) .eyebrow,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .modal:has(.admin-project-form) .eyebrow,
-body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.admin-project-form) .eyebrow {
-  color: var(--color-text-muted);
-  font-size: 0.6875rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .modal:has(.admin-project-form) .modal__header h2,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .modal:has(.admin-project-form) .modal__header h2,
-body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.admin-project-form) .modal__header h2 {
-  color: #24201a;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .modal:has(.admin-project-form) .modal__header p:last-child:not(.eyebrow),
-body:has(.ui-app-shell[data-role="estimator_sales"]) .modal:has(.admin-project-form) .modal__header p:last-child:not(.eyebrow),
-body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.admin-project-form) .modal__header p:last-child:not(.eyebrow) {
-  color: var(--role-ink-muted);
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .modal:has(.admin-project-form) .modal__header,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .modal:has(.admin-project-form) .modal__header,
-body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.admin-project-form) .modal__header {
-  padding: 1rem 1.5rem 0.85rem;
-  position: relative;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .modal:has(.admin-project-form) .admin-project-form,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .modal:has(.admin-project-form) .admin-project-form,
-body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.admin-project-form) .admin-project-form {
-  gap: var(--space-3);
-  padding: 0 1.5rem 1rem;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .modal:has(.admin-project-form) .ui-field,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .modal:has(.admin-project-form) .ui-field,
-body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.admin-project-form) .ui-field {
-  gap: var(--space-1);
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .modal:has(.admin-project-form) .admin-project-form__actions,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .modal:has(.admin-project-form) .admin-project-form__actions,
-body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.admin-project-form) .admin-project-form__actions {
-  margin-top: 0.5rem;
-  padding-top: 0.75rem;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .modal:has(.admin-project-form) .ui-dialog__close,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .modal:has(.admin-project-form) .ui-dialog__close,
-body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.admin-project-form) .ui-dialog__close {
-  position: absolute;
-  inset-block-start: 0.9rem;
-  inset-inline-end: 1rem;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .modal:has(.admin-project-form) .ui-dialog__close:hover,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .modal:has(.admin-project-form) .ui-dialog__close:hover,
-body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.admin-project-form) .ui-dialog__close:hover {
-  background: color-mix(in srgb, var(--role-accent) 10%, transparent);
-  color: var(--role-accent);
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form .ui-field__label,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form .ui-field__label,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form .ui-field__label {
-  color: #24201a;
-  font-family: var(--font-subheading-secondary);
-  font-weight: 700;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form .ui-control,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form .ui-control,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form .ui-control {
-  padding-inline-start: 2.75rem;
-  border: 1px solid var(--role-line-strong);
-  border-radius: var(--radius-control);
-  background-color: var(--role-deck);
-  box-shadow: none;
-  color: var(--color-text);
-  font-family: var(--font-interface);
-  transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
-}
-
-/*
- * The field icon lives on this wrapper's ::before, not on the <input>'s own
- * background-image. Chrome's autofill repaint clobbers an autofilled
- * input's own background-image no matter what (even with !important — it's
- * not a normal cascade override, verified via forced :-webkit-autofill
- * testing), so the icon has to sit on an element autofill never touches.
- */
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__control,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control {
-  position: relative;
-  display: block;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__control-icon,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon {
-  position: absolute;
-  inset-inline-start: 0.9rem;
-  top: 50%;
-  transform: translateY(-50%);
-  inline-size: 18px;
-  block-size: 18px;
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: 18px 18px;
-  pointer-events: none;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form .ui-control::placeholder,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form .ui-control::placeholder,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form .ui-control::placeholder {
-  color: var(--role-ink-muted);
-  opacity: 1;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form .ui-control:focus-visible,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form .ui-control:focus-visible,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form .ui-control:focus-visible {
-  border-color: color-mix(in srgb, var(--color-primary) 50%, transparent);
-  box-shadow: none;
-  outline: none;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form .ui-control:hover:not(:disabled),
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form .ui-control:hover:not(:disabled),
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form .ui-control:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--color-primary) 50%, transparent);
-  box-shadow: none;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form .ui-control:disabled,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form .ui-control:disabled,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form .ui-control:disabled {
-  background: var(--color-surface-subtle);
-  box-shadow: none;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="clientName"],
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__control-icon[data-field="clientName"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="clientName"] {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23978a6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3C/svg%3E");
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="clientEmail"],
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__control-icon[data-field="clientEmail"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="clientEmail"] {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23978a6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='4' width='20' height='16' rx='2'/%3E%3Cpath d='m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7'/%3E%3C/svg%3E");
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="clientMobile"],
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__control-icon[data-field="clientMobile"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="clientMobile"] {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23978a6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384'/%3E%3C/svg%3E");
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="projectName"],
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__control-icon[data-field="projectName"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="projectName"] {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23978a6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 22V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v18Z'/%3E%3Cpath d='M6 12H4a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h2'/%3E%3Cpath d='M18 9h2a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-2'/%3E%3Cpath d='M10 6h4M10 10h4M10 14h4M10 18h4'/%3E%3C/svg%3E");
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="location"],
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__control-icon[data-field="location"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="location"] {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23978a6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0'/%3E%3Ccircle cx='12' cy='10' r='3'/%3E%3C/svg%3E");
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="propertyType"],
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__control-icon[data-field="propertyType"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="propertyType"] {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23978a6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='7' height='7' rx='1'/%3E%3Crect x='14' y='3' width='7' height='7' rx='1'/%3E%3Crect x='14' y='14' width='7' height='7' rx='1'/%3E%3Crect x='3' y='14' width='7' height='7' rx='1'/%3E%3C/svg%3E");
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="budgetMin"],
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__control-icon[data-field="budgetMin"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="budgetMin"],
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="budgetMax"],
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__control-icon[data-field="budgetMax"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="budgetMax"] {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Ctext x='5' y='18' font-family='Arial, sans-serif' font-size='16' font-weight='700' fill='%23978a6c'%3E%E2%82%B9%3C/text%3E%3C/svg%3E");
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="nextAction"],
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__control-icon[data-field="nextAction"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="nextAction"] {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23978a6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='8' y='2' width='8' height='4' rx='1'/%3E%3Cpath d='M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2'/%3E%3Cpath d='M12 11h4M12 16h4M8 11h.01M8 16h.01'/%3E%3C/svg%3E");
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="nextActionAt"],
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__control-icon[data-field="nextActionAt"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="nextActionAt"] {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23978a6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2'/%3E%3Cpath d='M16 2v4M8 2v4M3 10h18'/%3E%3C/svg%3E");
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__estimator .search-combobox > label,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__estimator .search-combobox > label,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator .search-combobox > label {
-  color: #24201a;
-  font-weight: 700;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__estimator .search-combobox > input,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__estimator .search-combobox > input,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator .search-combobox > input {
-  padding-inline-start: 2.75rem;
-  border: 1px solid var(--role-line-strong);
-  border-radius: var(--radius-control);
-  background-color: var(--role-deck);
-  background-repeat: no-repeat;
-  background-position: 0.9rem center;
-  background-size: 16px 16px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23978a6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E");
-  box-shadow: none;
-  color: var(--color-text);
-  font-family: var(--font-interface);
-  transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__estimator .search-combobox > input:focus,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__estimator .search-combobox > input:focus,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator .search-combobox > input:focus {
-  border-color: color-mix(in srgb, var(--color-primary) 50%, transparent);
-  box-shadow: none;
-  outline: none;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__estimator .search-combobox > input:hover:not(:disabled),
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__estimator .search-combobox > input:hover:not(:disabled),
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator .search-combobox > input:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--color-primary) 50%, transparent);
-  box-shadow: none;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__estimator .search-combobox__popup,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__estimator .search-combobox__popup,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator .search-combobox__popup {
-  border: 1px solid var(--color-border);
-  border-radius: var(--card-radius);
-  box-shadow: var(--card-shadow);
-  font-family: var(--font-interface);
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__estimator .search-combobox__popup [role="option"].is-active,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__estimator .search-combobox__popup [role="option"].is-active,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator .search-combobox__popup [role="option"].is-active,
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__estimator .search-combobox__popup [role="option"]:hover,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__estimator .search-combobox__popup [role="option"]:hover,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator .search-combobox__popup [role="option"]:hover {
-  background: color-mix(in srgb, var(--role-accent) 10%, white);
-}
-
-/* Initiate project: primary navy blue, matching var(--color-primary) used for
-   Create request / View project / pagination elsewhere. */
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__actions .ui-button--primary,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__actions .ui-button--primary,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__actions .ui-button--primary {
-  border: 1px solid transparent;
-  background: var(--color-primary);
-  color: var(--color-bg);
-  box-shadow: none;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__actions .ui-button--primary:hover:not(:disabled),
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__actions .ui-button--primary:hover:not(:disabled),
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__actions .ui-button--primary:hover:not(:disabled) {
-  background: #2a2350;
-  box-shadow: none;
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__actions .ui-button--primary::after,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__actions .ui-button--primary::after,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__actions .ui-button--primary::after {
-  content: "\2192";
-  margin-inline-start: var(--space-2);
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__actions .ui-button--secondary,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__actions .ui-button--secondary,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__actions .ui-button--secondary {
-  border: 1px solid transparent;
-  background: var(--color-primary);
-  color: var(--color-bg);
-}
-
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__actions .ui-button,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__actions .ui-button,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__actions .ui-button {
-  padding-inline: var(--space-4);
-  min-block-size: 2.25rem;
-  border-radius: var(--radius-pill);
-  font-size: 0.875rem;
-}
-
-/*
- * Chrome autofill repaints the input's own background-color and text color;
- * the huge transition-delay is the standard trick to defeat that (autofill
- * applies its highlight via an internal CSS transition, and delaying it long
- * enough means it never visibly starts). Field icons live on a separate
- * sibling element (see .admin-project-form__control-icon below), not the
- * input's background-image, since autofill clobbers that regardless of
- * !important and this trick doesn't reach it.
- */
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form .ui-control:-webkit-autofill,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form .ui-control:-webkit-autofill,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form .ui-control:-webkit-autofill,
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form .ui-control:-webkit-autofill:hover,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form .ui-control:-webkit-autofill:hover,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form .ui-control:-webkit-autofill:hover,
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form .ui-control:-webkit-autofill:focus,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form .ui-control:-webkit-autofill:focus,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form .ui-control:-webkit-autofill:focus,
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__estimator .search-combobox > input:-webkit-autofill,
-body:has(.ui-app-shell[data-role="estimator_sales"]) .admin-project-form__estimator .search-combobox > input:-webkit-autofill,
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator .search-combobox > input:-webkit-autofill {
-  -webkit-text-fill-color: #24201a;
-  transition: background-color 600000s 0s, color 600000s 0s;
 }
 
 /* --------------------------------------------------------- projects list */
@@ -774,7 +425,9 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
 .ui-app-shell[data-role="super_admin"] .admin-project-card__link,
 .ui-app-shell[data-role="super_admin"] .admin-projects__header-row {
   align-items: center;
-  gap: clamp(var(--space-3), 2vw, var(--space-5));
+  gap: var(--space-3);
+  padding: 0;
+  box-shadow: none;
 }
 
 /*
@@ -786,24 +439,61 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
  * force the wide desktop grid into a narrow viewport.
  */
 @media (min-width: 1181px) {
+  .ui-app-shell[data-role="admin"] .admin-project-card,
+  .ui-app-shell[data-role="super_admin"] .admin-project-card {
+    grid-template-columns: minmax(0, 1fr) 8.5rem;
+    --admin-project-action-space: calc(var(--control-height-compact) + var(--space-2));
+  }
+
+  .ui-app-shell[data-role="admin"] .admin-project-card:has(.admin-project-card__actions a),
+  .ui-app-shell[data-role="super_admin"] .admin-project-card:has(.admin-project-card__actions a) {
+    --admin-project-action-space: calc(2 * var(--control-height-compact) + 2 * var(--space-2));
+  }
+
+  .ui-app-shell[data-role="admin"] .admin-project-card > .admin-project-card__link,
+  .ui-app-shell[data-role="super_admin"] .admin-project-card > .admin-project-card__link {
+    grid-column: 1 / -1;
+    grid-row: 1 / 3;
+  }
+
+  .ui-app-shell[data-role="admin"] .admin-project-card__view,
+  .ui-app-shell[data-role="super_admin"] .admin-project-card__view {
+    align-self: start;
+    margin-block-end: var(--admin-project-action-space);
+  }
+
+  .ui-app-shell[data-role="admin"] .admin-project-card__actions,
+  .ui-app-shell[data-role="super_admin"] .admin-project-card__actions {
+    grid-column: 2;
+    grid-row: 2;
+    z-index: 1;
+    align-self: end;
+    align-items: stretch;
+    flex-direction: column;
+    margin: 0;
+  }
+
   .ui-app-shell[data-role="admin"] .admin-project-card__link,
   .ui-app-shell[data-role="admin"] .admin-projects__header-row,
   .ui-app-shell[data-role="super_admin"] .admin-project-card__link,
   .ui-app-shell[data-role="super_admin"] .admin-projects__header-row {
-    grid-template-columns: 13rem minmax(0, 1fr) 10.5rem;
+    grid-template-columns: 11rem minmax(0, 1fr) 8.5rem;
+    padding: 0;
+    box-shadow: none;
+    gap: var(--space-3);
   }
 
   .ui-app-shell[data-role="admin"] .admin-project-card__meta,
   .ui-app-shell[data-role="admin"] .admin-projects__header-row .admin-project-card__meta,
   .ui-app-shell[data-role="super_admin"] .admin-project-card__meta,
   .ui-app-shell[data-role="super_admin"] .admin-projects__header-row .admin-project-card__meta {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: .9fr .9fr .8fr 1.5fr 1.1fr;
   }
 }
 
 .ui-app-shell[data-role="admin"] .admin-project-card__meta div,
 .ui-app-shell[data-role="super_admin"] .admin-project-card__meta div {
-  padding-inline-start: var(--space-4);
+  padding-inline-start: var(--space-2);
 }
 
 .ui-app-shell[data-role="admin"] .admin-projects__pagination,
@@ -823,7 +513,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
   border: 1px solid transparent !important;
   background: var(--color-primary) !important;
   color: var(--color-bg) !important;
-  min-block-size: 32px !important;
+  min-block-size: var(--control-height-compact) !important;
   padding-inline: var(--space-3) !important;
   font-size: 0.8125rem !important;
   font-weight: 400 !important;
@@ -867,11 +557,11 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
   margin-block-start: calc(-1 * var(--space-4));
   margin-inline: calc(-1 * var(--space-4));
   margin-block-end: 0;
-  padding: 1.25rem 1.75rem;
+  padding: var(--space-3) var(--space-4);
   border-block-end: 1px solid #d7e3f7;
   border-radius: var(--radius-surface) var(--radius-surface) 0 0;
   background: #eaf2ff;
-  box-shadow: 0 2px 8px rgb(17 26 57 / 10%);
+  box-shadow: none;
 }
 
 .ui-app-shell[data-role="admin"] .admin-projects__header-row .admin-project-card__meta div,
@@ -919,6 +609,8 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
   .ui-app-shell[data-role="admin"] .admin-projects__header-row,
   .ui-app-shell[data-role="super_admin"] .admin-projects__header-row {
     display: none;
+    padding: var(--space-3) var(--space-4);
+    box-shadow: none;
   }
 
   .ui-app-shell[data-role="admin"] .admin-project-card__meta dt,
@@ -941,9 +633,36 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
 }
 
 @media (max-width: 760px) {
+  .ui-app-shell[data-role="admin"] .admin-projects__workspace,
+  .ui-app-shell[data-role="super_admin"] .admin-projects__workspace {
+    padding: 0;
+  }
+
+  .ui-app-shell[data-role="admin"] .admin-projects__list,
+  .ui-app-shell[data-role="super_admin"] .admin-projects__list {
+    padding-block: 0;
+  }
+
   .ui-app-shell[data-role="admin"] .admin-project-card,
   .ui-app-shell[data-role="super_admin"] .admin-project-card {
     padding: var(--space-4);
+  }
+
+  .ui-app-shell[data-role="admin"] .admin-project-card__link,
+  .ui-app-shell[data-role="super_admin"] .admin-project-card__link {
+    padding: 0;
+  }
+}
+
+@media (min-width: 360px) and (max-width: 760px) {
+  .ui-app-shell[data-role="admin"] .admin-project-card__meta,
+  .ui-app-shell[data-role="super_admin"] .admin-project-card__meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ui-app-shell[data-role="admin"] .admin-project-card__meta > div:nth-child(n+3),
+  .ui-app-shell[data-role="super_admin"] .admin-project-card__meta > div:nth-child(n+3) {
+    grid-column: 1 / -1;
   }
 }
 
@@ -978,14 +697,14 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
   border: 1px solid var(--role-line);
   border-radius: var(--radius-field);
   background: var(--role-deck);
-  box-shadow: 0 2px 4px rgb(20 18 16 / 5%), 0 14px 28px -20px rgb(20 18 16 / 30%);
+  box-shadow: none;
   transition: box-shadow 160ms ease, border-color 160ms ease;
 }
 
 .ui-app-shell[data-role="admin"] .admin-project-detail__section--open,
 .ui-app-shell[data-role="super_admin"] .admin-project-detail__section--open {
   border-color: var(--role-line-strong);
-  box-shadow: 0 4px 8px rgb(20 18 16 / 7%), 0 20px 40px -20px rgb(20 18 16 / 35%);
+  box-shadow: none;
 }
 
 .ui-app-shell[data-role="admin"] .admin-project-detail__section h2,
@@ -997,10 +716,10 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
 .ui-app-shell[data-role="super_admin"] .admin-project-detail__section-trigger {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   inline-size: 100%;
-  min-block-size: 4.5rem;
-  padding: var(--space-3) var(--space-5);
+  min-block-size: 3.5rem;
+  padding: var(--space-3) var(--space-4);
   border: 0;
   background: transparent;
   text-align: start;
@@ -1023,9 +742,9 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  inline-size: 2.75rem;
-  block-size: 2.75rem;
-  border-radius: var(--radius-pill);
+  inline-size: 2rem;
+  block-size: 2rem;
+  border-radius: var(--radius-control);
 }
 
 .ui-app-shell[data-role="admin"] .admin-project-detail__section-icon svg,
@@ -1038,12 +757,18 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
 .ui-app-shell[data-role="super_admin"] .admin-project-detail__section--warm .admin-project-detail__section-icon {
   background: color-mix(in srgb, var(--role-accent) 16%, white);
   color: var(--role-accent);
+  inline-size: 2rem;
+  block-size: 2rem;
+  border-radius: var(--radius-control);
 }
 
 .ui-app-shell[data-role="admin"] .admin-project-detail__section--cool .admin-project-detail__section-icon,
 .ui-app-shell[data-role="super_admin"] .admin-project-detail__section--cool .admin-project-detail__section-icon {
   background: #e9edf6;
   color: #38507a;
+  inline-size: 2rem;
+  block-size: 2rem;
+  border-radius: var(--radius-control);
 }
 
 .ui-app-shell[data-role="admin"] .admin-project-detail__section-copy,
@@ -1056,8 +781,8 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
 .ui-app-shell[data-role="admin"] .admin-project-detail__section-title,
 .ui-app-shell[data-role="super_admin"] .admin-project-detail__section-title {
   color: var(--role-ink);
-  font-size: 1.05rem;
-  font-weight: 700;
+  font-size: var(--text-lg);
+  font-weight: 600;
 }
 
 .ui-app-shell[data-role="admin"] .admin-project-detail__section-subtitle,
@@ -1083,15 +808,15 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
 .ui-app-shell[data-role="super_admin"] .admin-project-detail__section-body {
   max-block-size: 0;
   overflow: hidden;
-  padding-inline: var(--space-5);
+  padding-inline: var(--space-4);
   opacity: 0;
   transition: max-block-size 220ms ease, opacity 160ms ease, padding-block 220ms ease;
 }
 
 .ui-app-shell[data-role="admin"] .admin-project-detail__section--open .admin-project-detail__section-body,
 .ui-app-shell[data-role="super_admin"] .admin-project-detail__section--open .admin-project-detail__section-body {
-  max-block-size: 60rem;
-  padding-block: 0 var(--space-5);
+  max-block-size: none;
+  padding-block: 0 var(--space-4);
   opacity: 1;
   border-block-start: 1px solid var(--role-line);
 }
@@ -1146,7 +871,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
 .ui-app-shell[data-role="super_admin"] .ui-page-header__breadcrumb {
   flex-basis: 100%;
   align-self: center;
-  font-size: 0.9375rem;
+  font-size: var(--text-sm);
   font-weight: 700;
 }
 
@@ -1155,7 +880,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  color: var(--role-accent);
+  color: var(--color-primary);
   text-decoration: none;
 }
 
@@ -1173,6 +898,15 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
 
 /* ------------------------------------------------------ data table cards */
 
+/* Zero amounts remain readable; the muted text and zero value communicate
+   their lower emphasis without fading the entire financial record. */
+.ui-app-shell[data-role="admin"] .finance-chart__breakdown li[data-empty="true"],
+.ui-app-shell[data-role="super_admin"] .finance-chart__breakdown li[data-empty="true"],
+.ui-app-shell[data-role="admin"] .finance-chart__alerts li[data-empty="true"],
+.ui-app-shell[data-role="super_admin"] .finance-chart__alerts li[data-empty="true"] {
+  opacity: 1;
+}
+
 /*
  * Any Surface that wraps a <table> — Client responses, Access requests,
  * User directory, and whatever list page comes next — picks up the same
@@ -1180,16 +914,14 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
  */
 .ui-app-shell[data-role="admin"] .ui-surface:has(table),
 .ui-app-shell[data-role="super_admin"] .ui-surface:has(table) {
-  padding: var(--space-6);
+  padding: var(--space-3);
   border-color: var(--role-line);
   /* The directional drop-shadow only casts downward, so the top edge had
      nothing separating it from the tab row sitting right above — the
      "0 0 0 1px" ring gives every side (top included) a visible boundary
      against the page background regardless of shadow direction. */
   box-shadow:
-    0 0 0 1px rgb(20 18 16 / 6%),
-    0 1px 2px rgb(20 18 16 / 5%),
-    0 10px 24px -18px rgb(20 18 16 / 25%);
+    var(--shadow-card);
 }
 
 .ui-app-shell[data-role="admin"] .ui-surface:has(table) th,
@@ -1237,7 +969,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
   border-radius: 0;
   border-block-end: 2px solid transparent;
   background: transparent;
-  color: var(--role-ink-muted);
+  color: var(--color-primary);
   font-weight: 700;
   margin-block-end: -1px;
 }
@@ -1245,7 +977,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
 .ui-app-shell[data-role="admin"] .ui-tab-nav__item:not(:disabled):hover,
 .ui-app-shell[data-role="super_admin"] .ui-tab-nav__item:not(:disabled):hover {
   background: transparent;
-  color: var(--role-accent);
+  color: var(--color-primary);
   box-shadow: none;
 }
 
@@ -1253,7 +985,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
 .ui-app-shell[data-role="super_admin"] .ui-tab-nav__item.ui-button--primary {
   border-block-end-color: var(--role-accent);
   background: transparent;
-  color: var(--role-accent);
+  color: var(--color-primary);
   box-shadow: none;
 }
 
@@ -1265,18 +997,17 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
   padding-inline: var(--space-4);
 }
 
-/* Reject sits next to bordered Review/Approve buttons but is variant="quiet"
-   (no border), which reads as unpadded floating text next to its boxed
-   siblings even though the padding is identical — give it the same visible
-   boundary so the row's three actions look consistent. */
+/* Summary and rejection entry points keep a neutral readable treatment;
+   the final decision surface communicates the destructive action. */
 .ui-app-shell[data-role="admin"] .client-responses__row-actions .ui-button--quiet,
 .ui-app-shell[data-role="super_admin"] .client-responses__row-actions .ui-button--quiet {
-  border: 1px solid color-mix(in srgb, var(--color-danger) 30%, var(--role-line));
-  color: var(--color-danger);
+  border: 1px solid var(--role-line);
+  color: var(--color-primary);
 }
 
 .ui-app-shell[data-role="admin"] .client-responses__row-actions .ui-button--quiet:not(:disabled):hover,
 .ui-app-shell[data-role="super_admin"] .client-responses__row-actions .ui-button--quiet:not(:disabled):hover {
-  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
-  border-color: var(--color-danger);
+  background: var(--color-surface-subtle);
+  border-color: var(--role-line-strong);
+  color: var(--color-primary);
 }

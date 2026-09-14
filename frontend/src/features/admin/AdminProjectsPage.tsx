@@ -29,6 +29,7 @@ import {
 } from "./adminProjectPresentation";
 import { adminProjectKeys, getAdminProjects } from "./adminProjectsApi";
 import { AdminProjectInitiationDialog } from "./AdminProjectInitiationDialog";
+import { AdminProjectQuickView } from "./AdminProjectQuickView";
 
 const PAGE_SIZE = 20;
 
@@ -62,10 +63,14 @@ function AdminProjectsHeaderRow() {
 
 function AdminProjectCard({
   project,
-  canAssignDesigner
+  canAssignDesigner,
+  onQuickView,
+  quickViewDisabled
 }: {
   project: AdminProjectSummary;
   canAssignDesigner: boolean;
+  onQuickView: () => void;
+  quickViewDisabled: boolean;
 }) {
   const nextAction = adminProjectNextAction(project);
   const assignmentPending = isDesignerAssignmentPending(project);
@@ -117,16 +122,19 @@ function AdminProjectCard({
           </dl>
           <span className="admin-project-card__view"><Eye aria-hidden="true" /> View project</span>
         </Link>
-        {assignmentPending && canAssignDesigner ? (
-          <div className="admin-project-card__actions">
+        <div className="admin-project-card__actions">
+          <Button size="compact" variant="quiet" disabled={quickViewDisabled} onClick={onQuickView} aria-label={`Quick view ${project.name}`}>
+            Quick view
+          </Button>
+          {assignmentPending && canAssignDesigner ? (
             <Link
               className="button button--primary"
               to={`${detailPath}#design-assignment-title`}
             >
               Assign Designer
             </Link>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
       </Surface>
     </li>
   );
@@ -136,6 +144,7 @@ export function AdminProjectsPage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [quickViewId, setQuickViewId] = useState<string | null>(null);
   const [pagination, setPagination] = useState<PaginationInput>({
     limit: PAGE_SIZE,
     offset: 0
@@ -189,6 +198,8 @@ export function AdminProjectsPage() {
                   key={project.id}
                   project={project}
                   canAssignDesigner={canAssignDesigner}
+                  onQuickView={() => setQuickViewId(project.id)}
+                  quickViewDisabled={projectsQuery.isPlaceholderData}
                 />
               ))}
             </ul>
@@ -208,6 +219,14 @@ export function AdminProjectsPage() {
         <AdminProjectInitiationDialog
           onClose={() => setDialogOpen(false)}
           onCreated={(project) => navigate(`/admin/projects/${encodeURIComponent(project.id)}`)}
+        />
+      ) : null}
+      {quickViewId ? (
+        <AdminProjectQuickView
+          key={quickViewId}
+          project={projectsQuery.isError || projectsQuery.isPlaceholderData ? undefined : page?.items.find((project) => project.id === quickViewId)}
+          canOpenWorkspace={hasFrontendPermission(auth.authorization, "projects.read")}
+          onClose={() => setQuickViewId(null)}
         />
       ) : null}
     </section>

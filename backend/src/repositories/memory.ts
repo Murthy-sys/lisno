@@ -97,6 +97,7 @@ interface MemorySnapshot {
 
 const snapshotReaders = new WeakMap<AppRepository, () => MemorySnapshot>();
 const mutationMethods = new Set<keyof AppRepository>([
+  "saveDesignWorkflowState",
   "coordinateClientEmail",
   "createUserInvitation",
   "supersedeUserInvitation",
@@ -173,6 +174,7 @@ export function createMemoryRepository(seed: SeedData = demoSeedData): AppReposi
         legacyApprovedEstimateBaseline(estimate),
       clientReview: estimate.clientReview ?? null,
       assignedAdminId: estimate.assignedAdminId ?? null,
+      rooms: estimate.rooms,
       designPlanStatus: estimate.designPlanStatus ?? null,
       designPlanVersion: estimate.designPlanVersion ?? 0,
       designPlanDesignerId: estimate.designPlanDesignerId ?? null,
@@ -251,6 +253,30 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
   };
 
   const implementation: AppRepository = {
+    async findDesignWorkflowRoomContext(projectId) {
+      const estimates = (state.estimateSummaries ?? []).filter((row) => row.projectId === projectId && row.status === "client_approved");
+      if (estimates.length > 1) throw new RepositoryConflictError("The project's approved estimate source is ambiguous.");
+      const estimate = estimates[0];
+      return estimate ? { estimateId: estimate.id, estimateVersion: estimate.approvedBaseline?.estimateVersion ?? Math.max(1, estimate.version - 1), rooms: (estimate.rooms ?? []).map((room) => ({ id: room.id, name: room.label })) } : null;
+    },
+    async findDesignWorkflowRoomOptions(projectId) {
+      return (await implementation.findDesignWorkflowRoomContext(projectId))?.rooms ?? [];
+    },
+    async findDesignWorkflowState(projectId) {
+      return clone(state.designWorkflowStates?.find((row) => row.projectId === projectId) ?? null);
+    },
+    async saveDesignWorkflowState(projectId, expectedVersion, next) {
+      const current = state.designWorkflowStates?.find((row) => row.projectId === projectId);
+      if ((current?.version ?? 0) !== expectedVersion) throw new RepositoryConflictError("Design workflow changed.");
+      const saved = clone({ ...next, projectId, version: expectedVersion + 1 });
+      state.designWorkflowStates ??= [];
+      state.designWorkflowStates = state.designWorkflowStates.filter((row) => row.projectId !== projectId);
+      state.designWorkflowStates.push(saved);
+      return clone(saved);
+    },
+    async listDesignWorkflowPaymentProjects() {
+      return clone(state.projects.filter((project) => project.designWorkflowStages?.length && !state.designWorkflowStates?.some((workflow) => workflow.projectId === project.id && workflow.initialPaymentAt)).sort(newestProjectFirst));
+    },
     async runInTransaction(operation) {
       if (transactionContext.getStore()) {
         throw new Error("Nested memory transactions are not supported.");

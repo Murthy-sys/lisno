@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { projectWorkflowKeys } from "../../features/workflow/projectWorkflowApi";
 
 import { ApiError, apiClient } from "../../api/client";
 import type {
@@ -11,7 +12,10 @@ import type {
 } from "../../api/types";
 import { designerKeys } from "../../features/designer/designerApi";
 import { dashboardKeys } from "../../features/admin/dashboard/superAdminDashboardApi";
-import { Dialog } from "../ui/Dialog";
+import { Button } from "../ui/Button";
+import { ContextPanel } from "../ui/ContextPanel";
+import { Field, Input, Select, Textarea } from "../ui/Field";
+import "./taskPanels.css";
 
 const statusLabels: Record<TaskStatus, string> = {
   not_started: "Not started",
@@ -107,6 +111,7 @@ export function TaskUpdateDialog({
     },
     onSuccess: async (updated) => {
       await Promise.all([
+        queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.designWorkflow(task.projectId) }),
         queryClient.invalidateQueries({
           queryKey: designerKeys.project(task.projectId),
           exact: true
@@ -125,7 +130,7 @@ export function TaskUpdateDialog({
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (conflictVersion !== null || needsReview) return;
+    if (mutation.isPending || conflictVersion !== null || needsReview) return;
     setValidationError(null);
     const numericProgress = Number(progress);
     if (
@@ -156,93 +161,76 @@ export function TaskUpdateDialog({
   };
 
   return (
-    <Dialog
+    <ContextPanel
       title="Update task"
       description={`${task.title} · version ${task.version}`}
+      width="medium"
+      dirty={status !== task.status || progress !== String(task.progress) || note !== ""}
       onClose={onClose}
       busy={mutation.isPending}
+      footer={({ requestClose }) => (
+        <div className="task-panel__actions">
+          <Button variant="secondary" onClick={requestClose} disabled={mutation.isPending || conflictVersion !== null}>
+            Cancel
+          </Button>
+          <Button type="submit" form={`task-update-form-${task.id}`} busy={mutation.isPending} busyLabel="Saving…" disabled={conflictVersion !== null || needsReview}>
+            Save update
+          </Button>
+        </div>
+      )}
     >
-      <form className="modal-form" onSubmit={submit}>
+      <form id={`task-update-form-${task.id}`} className="task-panel__form" onSubmit={submit}>
         {validationError ? (
           <div className="form-alert" role="alert">{validationError}</div>
         ) : null}
 
-        <div className="field">
-          <label htmlFor={`task-status-${task.id}`}>Status</label>
-          <select
-            id={`task-status-${task.id}`}
-            value={status}
-            disabled={conflictVersion !== null || needsReview}
-            onChange={(event) => setStatus(event.target.value as TaskStatus)}
-          >
-            {transitions[task.status].map((option) => (
-              <option value={option} key={option}>{statusLabels[option]}</option>
-            ))}
-          </select>
-        </div>
+        <div className="task-panel__fields">
+          <Field id={`task-status-${task.id}`} label="Status">
+            {(props) => <Select {...props}
+              value={status}
+              disabled={mutation.isPending || conflictVersion !== null || needsReview}
+              onChange={(event) => setStatus(event.target.value as TaskStatus)}
+            >
+              {transitions[task.status].map((option) => (
+                <option value={option} key={option}>{statusLabels[option]}</option>
+              ))}
+            </Select>}
+          </Field>
 
-        <div className="field">
-          <label htmlFor={`task-progress-${task.id}`}>Progress</label>
-          <div className="input-suffix">
-            <input
-              id={`task-progress-${task.id}`}
+          <Field id={`task-progress-${task.id}`} label="Progress" hint="Percentage, from 0 to 100.">
+            {(props) => <Input {...props}
               type="number"
               min="0"
               max="100"
               step="1"
               value={progress}
-              disabled={conflictVersion !== null || needsReview}
+              disabled={mutation.isPending || conflictVersion !== null || needsReview}
               onChange={(event) => setProgress(event.target.value)}
-            />
-            <span>%</span>
-          </div>
+            />}
+          </Field>
         </div>
 
-        <div className="field">
-          <label htmlFor={`task-note-${task.id}`}>
-            Note {status === "blocked" ? "(required when blocked)" : "(optional)"}
-          </label>
-          <textarea
-            id={`task-note-${task.id}`}
+        <Field id={`task-note-${task.id}`} label={`Note ${status === "blocked" ? "(required when blocked)" : "(optional)"}`}>
+          {(props) => <Textarea {...props}
             rows={4}
             value={note}
-            disabled={conflictVersion !== null || needsReview}
+            disabled={mutation.isPending || conflictVersion !== null || needsReview}
             onChange={(event) => setNote(event.target.value)}
             placeholder="Share what changed or what the team needs to know."
-          />
-        </div>
+          />}
+        </Field>
 
         {needsReview ? (
-          <button
+          <Button
             type="button"
-            className="button button--secondary"
+            variant="secondary"
             onClick={() => setNeedsReview(false)}
           >
             Review refreshed values
-          </button>
+          </Button>
         ) : null}
-
-        <div className="modal-form__actions">
-          <button
-            type="button"
-            className="button button--secondary"
-            onClick={onClose}
-            disabled={mutation.isPending || conflictVersion !== null}
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            className="button button--primary"
-            disabled={
-              mutation.isPending || conflictVersion !== null || needsReview
-            }
-          >
-            {mutation.isPending ? "Saving…" : "Save update"}
-          </button>
-        </div>
       </form>
-    </Dialog>
+    </ContextPanel>
   );
 }
 

@@ -33,16 +33,16 @@ export function RoomSidebar({
             key={room.id}
             aria-current={active ? "true" : undefined}
             onClick={() => onSelect(room.id)}
-            className={`flex shrink-0 items-center gap-3 rounded-xl border px-3 py-3 text-left shadow-none outline-none transition-colors focus:!shadow-none focus:outline-none focus:ring-0 focus-visible:!shadow-none focus-visible:outline-none lg:shrink ${
+            className={`flex shrink-0 items-center gap-3 rounded-xl border px-3 py-2 text-left shadow-none transition-colors lg:shrink ${
               active
                 ? "border-[var(--color-primary)] bg-[var(--color-primary)] text-[var(--color-bg)]"
                 : "border-[var(--color-primary)]/20 bg-[var(--color-bg)] text-[var(--color-primary)]"
             }`}
           >
-            <Icon size={18} className={`shrink-0 ${active ? "text-[var(--color-bg)]" : "text-[var(--color-primary)]/50"}`} aria-hidden="true" />
+            <Icon size={18} className={`shrink-0 ${active ? "text-[var(--color-bg)]" : "text-[var(--color-text-muted)]"}`} aria-hidden="true" />
             <span className="min-w-[7rem] flex-1 lg:min-w-0">
-              <span className="block truncate font-bold">{room.label}</span>
-              <span className={`block truncate text-xs ${active ? "text-[var(--color-bg)]/80" : "text-[var(--color-primary)]/50"}`}>
+              <span className="block truncate font-semibold">{room.label}</span>
+              <span className={`block truncate text-xs ${active ? "text-[var(--color-bg)]/80" : "text-[var(--color-text-muted)]"}`}>
                 {room.sqft} sqft · {money(room.total)}
               </span>
             </span>

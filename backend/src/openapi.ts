@@ -1,3 +1,4 @@
+import { DESIGN_WORKFLOW_ACTIONS } from "./domain/design-workflow-state.js";
 import {
   PERMISSION_CODES,
   REQUESTABLE_PROJECT_MODULES
@@ -109,6 +110,7 @@ const genericJsonRequestBody: OpenApiRequestBody = {
 };
 
 const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
+  "POST /projects/:projectId/design-workflow/actions": { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/DesignWorkflowActionRequest" } }, "multipart/form-data": { schema: { $ref: "#/components/schemas/DesignWorkflowActionRequest" } } } },
   "POST /auth/login": jsonRequest("LoginRequest"),
   "POST /auth/client-signup": jsonRequest("ClientSignupRequest"),
   "POST /auth/password-reset/request": jsonRequest("PasswordResetRequest"),
@@ -200,6 +202,9 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "GET /admin/designers": "DesignerOptionList",
   "POST /admin/projects/:projectId/design-assignment": "DesignPlanTask",
   "GET /designer/design-plan-tasks": "DesignPlanTaskList",
+  "GET /projects/:projectId/design-workflow": "DesignWorkflow",
+  "POST /projects/:projectId/design-workflow/actions": "DesignWorkflowActionResult",
+  "GET /design-workflow/payment-confirmations": "DesignWorkflowPaymentConfirmations",
   "GET /admin/design-plan-response-tasks": "DesignPlanReviewTaskList",
   "POST /admin/design-plan-response-tasks/:roundId/decision":
     "DesignPlanReviewTask",
@@ -246,6 +251,8 @@ const attachmentOperations = new Set<string>([
   "GET /design-versions/:versionId/download",
   "GET /admin/estimate-client-response-tasks/:roundId/proof",
   "GET /admin/design-plan-response-tasks/:roundId/attachments/:attachmentIndex",
+  "GET /admin/design-plan-response-tasks/:roundId/proof",
+  "GET /projects/:projectId/design-workflow/history/:eventId/proof",
   "GET /procurement/projects/:projectId/entries/:entryId/document",
   "GET /finance/projects/:projectId/entries/:entryId/document",
   "GET /internal/extraction-jobs/:jobId/source"
@@ -495,6 +502,9 @@ const queryParametersByOperation: Readonly<
       required: false,
       schema: { type: "integer", minimum: 0, default: 0 }
     }
+  ],
+  "GET /admin/design-plan-response-tasks": [
+    { name: "projectId", in: "query", required: false, schema: { type: "string", minLength: 1 }, description: "Required for Client and Designer readers. Filters to the scoped project before the global inbox limit." }
   ],
   "GET /organization/managers": [
     {
@@ -1502,12 +1512,12 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     ClientSignupRequest: {
       type: "object",
       additionalProperties: false,
-      required: ["name", "email", "mobile", "address", "password", "passwordConfirmation"],
+      required: ["name", "email", "mobile", "password", "passwordConfirmation"],
       properties: {
         name: { type: "string", minLength: 1 },
         email: { type: "string", format: "email" },
         mobile: { type: "string", minLength: 1 },
-        address: { type: "string", minLength: 1 },
+        address: { type: "string", description: "Optional. Omitted or blank addresses are stored as null." },
         password: { type: "string", format: "password", minLength: 12, maxLength: 128 },
         passwordConfirmation: {
           type: "string",
@@ -1878,9 +1888,515 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         revisions: { type: "array", items: { type: "object", additionalProperties: true } }
       }
     },
+    DesignWorkflowActionRequest: {
+      type: "object", additionalProperties: false, required: ["expectedVersion", "action", "idempotencyKey"],
+      description: "For internal_kickoff_complete, data must contain designHandoverAcknowledged: true and meetingAt. The assigned Designer acknowledges receiving the design flow after initial-payment confirmation. A signed checklist is required. The server records the acknowledging Designer and receipt time; manager handover and supplied acknowledgement identities are not accepted. After Internal Kick off is completed, its submitted document is available to the linked Client through the authenticated workflow proof endpoint. For client_kickoff_complete, data must contain reviewedDocumentEventId matching Client Kick off operational.submittedDocument.eventId to acknowledge reviewing that document, close Client Kick off and open Key Collection. Missing or mismatched document acknowledgements are rejected. An authorized Sales Manager or Super Admin acting on behalf of the Client must also attach representation proof. The existing Client Kick off countdown starts at Internal Kick off completion.",
+      properties: { expectedVersion: { type: "integer", minimum: 0 }, action: { type: "string", enum: DESIGN_WORKFLOW_ACTIONS }, stageId: id, idempotencyKey: { type: "string", minLength: 8, maxLength: 120 }, note: { type: "string", maxLength: 2000 }, data: { oneOf: [{ type: "object", additionalProperties: true }, { type: "string", description: "JSON encoded action fields for multipart requests." }] }, file: { type: "string", format: "binary", description: "Required checklist, sketch, dimensions evidence or Client representation proof, depending on the action." } }
+    },
+    DesignWorkflowActionResult: { type: "object", additionalProperties: false, required: ["version"], properties: { version: { type: "integer", minimum: 1 } } },
+    DesignWorkflowPaymentConfirmations: { type: "array", items: { type: "object", additionalProperties: false, required: ["projectId", "projectName", "confirmedAt", "version", "status", "canConfirm"], properties: { projectId: id, projectName: { type: "string" }, confirmedAt: { type: "string", format: "date-time", nullable: true }, version: { type: "integer", minimum: 0 }, status: { type: "string", enum: ["awaiting_estimate_approval", "awaiting_payment", "received"] }, canConfirm: { type: "boolean" }, issue: { type: "string" } } } },
+    DesignWorkflow: {
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "projectId",
+    "projectName",
+    "serverNow",
+    "floors"
+  ],
+  "properties": {
+    "projectId": {
+      "type": "string"
+    },
+    "projectName": {
+      "type": "string"
+    },
+    "serverNow": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "floors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "number",
+          "order",
+          "stages"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "number": {
+            "type": "string"
+          },
+          "order": {
+            "type": "integer"
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DesignWorkflowStage"
+            }
+          }
+        }
+      }
+    },
+    "projectStages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/components/schemas/DesignWorkflowStage"
+      }
+    },
+    "initialPayment": {
+      "type": "object",
+      "required": [
+        "confirmedAt",
+        "canConfirm",
+        "version",
+        "status"
+      ],
+      "properties": {
+        "confirmedAt": {
+          "type": "string",
+          "format": "date-time",
+          "nullable": true
+        },
+        "canConfirm": {
+          "type": "boolean"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "status": { "type": "string", "enum": ["awaiting_estimate_approval", "awaiting_payment", "received"] },
+        "issue": { "type": "string" }
+      }
+    },
+    "measurementDesigners": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "furnitureRooms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "notices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "stageId",
+          "message"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "stageId": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "furnitureScopeIssue": {
+      "type": "string"
+    }
+  }
+},
+    DesignWorkflowStage: {
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "name",
+    "type",
+    "order",
+    "dependencyStageIds",
+    "status",
+    "progress",
+    "deadlineAt",
+    "deadlineTaskId",
+    "tasks"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "internal_kickoff",
+        "client_kickoff",
+        "key_collection",
+        "site_measurement",
+        "concept_mood_board",
+        "floor_plan",
+        "client_revisions",
+        "final_approval",
+        "design_handoff",
+        "existing_furniture_dimensions",
+        "space_planning_tentative_look_feel"
+      ]
+    },
+    "order": {
+      "type": "integer"
+    },
+    "dependencyStageIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "not_started",
+        "in_progress",
+        "in_review",
+        "blocked",
+        "completed",
+        null
+      ],
+      "nullable": true
+    },
+    "progress": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "nullable": true
+    },
+    "deadlineAt": {
+      "type": "string",
+      "format": "date-time",
+      "nullable": true
+    },
+    "deadlineTaskId": {
+      "type": "string",
+      "nullable": true
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "description",
+          "status",
+          "progress",
+          "order",
+          "ownerName",
+          "plannedStartAt",
+          "originalDeadlineAt",
+          "currentDeadlineAt",
+          "completedAt",
+          "dependencyTaskIds",
+          "blockedByTaskIds",
+          "risk"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "description": "Empty for Client readers."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "not_started",
+              "in_progress",
+              "in_review",
+              "blocked",
+              "completed"
+            ]
+          },
+          "progress": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "order": {
+            "type": "integer"
+          },
+          "ownerName": {
+            "type": "string",
+            "nullable": true
+          },
+          "plannedStartAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "originalDeadlineAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "currentDeadlineAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "dependencyTaskIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "blockedByTaskIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "risk": {
+            "type": "object",
+            "required": [
+              "level",
+              "reason",
+              "elapsedRatio",
+              "progressRatio"
+            ],
+            "properties": {
+              "level": {
+                "type": "string",
+                "enum": [
+                  "gray",
+                  "green",
+                  "yellow",
+                  "red"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "elapsedRatio": {
+                "type": "number"
+              },
+              "progressRatio": {
+                "type": "number"
+              },
+              "forecastCompletion": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          "floorName": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "sourceStages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "floorName"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "floorName": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "instructions": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "operational": {
+      "type": "object",
+      "required": [
+        "status",
+        "version",
+        "availableActions",
+        "timing",
+        "blockingReasons",
+        "facts",
+        "history"
+      ],
+      "properties": {
+        "submittedDocument": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "On Client Kick off, the committed Internal Kick off document available for review. Download through the authenticated project workflow history proof endpoint using eventId. Internal notes and storage references are not exposed.",
+          "required": ["eventId", "filename", "mimeType", "uploadedAt"],
+          "properties": {
+            "eventId": { "type": "string" },
+            "filename": { "type": "string" },
+            "mimeType": { "type": "string", "enum": ["application/pdf", "image/jpeg", "image/png", "image/webp"] },
+            "uploadedAt": { "type": "string", "format": "date-time" }
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "not_started",
+            "in_progress",
+            "in_review",
+            "blocked",
+            "completed"
+          ]
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "availableActions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "label",
+              "actor",
+              "requiresProof"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "actor": {
+                "type": "string",
+                "enum": [
+                  "designer",
+                  "client",
+                  "sales",
+                  "finance"
+                ]
+              },
+              "requiresProof": {
+                "type": "boolean"
+              },
+              "disabledReason": {
+                "type": "string",
+                "description": "When present, keep this action visible but disabled and show this prerequisite explanation. Absence does not replace server-side authorization or validation."
+              }
+            }
+          }
+        },
+        "timing": {
+          "type": "object",
+          "description": "Stage timing from payment for Internal Kick off and from predecessor completion for later stages. Future stages have waiting state and null start, target, remaining, band and clock owner. Untimed stages have no invented SLA. Historical completed stages retain their recorded timing basis.",
+          "additionalProperties": true
+        },
+        "blockingReasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "rooms": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "reminders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  }
+},
     DesignPlanReviewTask: {
       type: "object",
-      required: ["id", "estimateId", "projectId", "projectName", "clientName", "designPlanVersion", "status", "deliveryStatus", "submittedAt", "version", "attachmentNames"],
+      required: ["id", "estimateId", "projectId", "projectName", "clientName", "designPlanVersion", "status", "deliveryStatus", "submittedAt", "version", "attachmentNames", "canDecide", "decision"],
       properties: {
         id,
         estimateId: id,
@@ -1898,10 +2414,92 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         },
         submittedAt: dateTime,
         version: { type: "integer", minimum: 1 },
-        attachmentNames: {
-          type: "array",
-          items: { type: "string" }
+        attachmentNames: { type: "array", items: { type: "string" } },
+        canDecide: { type: "boolean" },
+        decision: {
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action",
+    "source",
+    "performedById",
+    "performedByName",
+    "performedByRole",
+    "performedAt",
+    "note",
+    "onBehalfOfClient",
+    "proof"
+  ],
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "approve",
+        "request_changes"
+      ]
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "client_portal",
+        "admin_proof",
+        null
+      ],
+      "nullable": true
+    },
+    "performedById": {
+      "type": "string",
+      "nullable": true
+    },
+    "performedByName": {
+      "type": "string",
+      "nullable": true
+    },
+    "performedByRole": {
+      "type": "string",
+      "nullable": true
+    },
+    "performedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "note": {
+      "type": "string",
+      "nullable": true
+    },
+    "onBehalfOfClient": {
+      "type": "boolean"
+    },
+    "proof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "filename",
+        "mimeType",
+        "byteSize",
+        "uploadedAt"
+      ],
+      "properties": {
+        "filename": {
+          "type": "string"
+        },
+        "mimeType": {
+          "type": "string"
+        },
+        "byteSize": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "uploadedAt": {
+          "type": "string",
+          "format": "date-time"
         }
+      },
+      "nullable": true
+    }
+  },
+  "nullable": true
+}
       }
     },
     DesignPlanReviewTaskList: {
