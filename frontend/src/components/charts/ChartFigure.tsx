@@ -73,7 +73,7 @@ export function ChartFigure({
       <div className="chart-figure__head">
         <div className="chart-figure__title">
           {eyebrow ? <p className="chart-figure__eyebrow">{eyebrow}</p> : null}
-          <h4 id={headingId}>{title}</h4>
+          <h3 id={headingId}>{title}</h3>
           {subtitle ? <p className="chart-figure__subtitle">{subtitle}</p> : null}
         </div>
         <div className="chart-figure__actions">

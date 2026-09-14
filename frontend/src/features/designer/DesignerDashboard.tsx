@@ -6,7 +6,9 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { ContextPanel } from "../../components/ui/ContextPanel";
+import { Button } from "../../components/ui/Button";
 
 import type {
   DesignPlanStatus,
@@ -69,6 +71,7 @@ const priorityRank: Record<"red" | "yellow" | "none", number> = {
 };
 
 export function DesignerDashboard() {
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const auth = useAuth();
   const user = auth.user!;
   const period = reviewPeriod();
@@ -128,6 +131,7 @@ export function DesignerDashboard() {
         priorityRank[second.priority ?? "none"]
     );
   const priorityCount = rankedTasks.filter((entry) => entry.priority).length;
+  const selected = rankedTasks.find(({ task }) => task.id === selectedTaskId);
 
   return (
     <section className="designer-page designer-dashboard" aria-labelledby="designer-title">
@@ -191,6 +195,7 @@ export function DesignerDashboard() {
                 task={task}
                 aggregate={aggregate}
                 priority={priority}
+                onReview={() => setSelectedTaskId(task.id)}
               />
             ))}
           </div>
@@ -207,6 +212,17 @@ export function DesignerDashboard() {
         )}
       </Surface>
 
+      {selected ? (
+        <ContextPanel key={selected.task.id} title={selected.task.projectName} eyebrow="Project quick review" description={selected.task.clientName} onClose={() => setSelectedTaskId(null)}
+          footer={<Link className="ui-button ui-button--primary" to={`/designer/design-plans?estimate=${encodeURIComponent(selected.task.estimateId)}`}>Open design workspace</Link>}>
+          <dl className="designer-project-review">
+            <div><dt>Design status</dt><dd><StatusBadge label={designStatusLabels[selected.task.status]} tone={designStatusTones[selected.task.status]} /></dd></div>
+            <div><dt>Design plan</dt><dd>{selected.task.designPlanVersion > 0 ? `Version ${selected.task.designPlanVersion}` : "No design plan uploaded"}</dd></div>
+            <div><dt>Task completion</dt><dd>{selected.aggregate ? `${selected.aggregate.progress}%` : "Not available"}</dd></div>
+            <div><dt>Delivery risk</dt><dd>{selected.aggregate ? `${selected.aggregate.riskCounts.red} red · ${selected.aggregate.riskCounts.yellow} yellow` : "Not available"}</dd></div>
+          </dl>
+        </ContextPanel>
+      ) : null}
     </section>
   );
 }
@@ -237,13 +253,15 @@ function MetricChip({
 function DesignProjectRow({
   task,
   aggregate,
-  priority
+  priority,
+  onReview
 }: {
   task: DesignPlanTask;
   aggregate?: KpiProjectAggregate;
   priority: ProjectPriority;
+  onReview: () => void;
 }) {
-  const headingId = `designer-project-${task.projectId}`;
+  const headingId = `designer-project-${task.id}`;
   const action = designTaskAction(task.status);
 
   return (
@@ -290,6 +308,7 @@ function DesignProjectRow({
         )}
       </div>
       <div className="designer-project-row__actions" data-label="Actions">
+        <Button variant="secondary" size="compact" onClick={onReview} aria-label={`Quick review ${task.projectName}`}>Quick review</Button>
         <Link
           to={`/designer/design-plans?estimate=${encodeURIComponent(task.estimateId)}`}
           className="button button--primary designer-project-row__action"

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { Button } from "../../components/ui/Button";
+import { Input, Select } from "../../components/ui/Field";
 import type { CropRect, DesignSection } from "../../api/types";
 import { CropEditor, cropIsValid } from "../../components/design/CropEditor";
 import { SectionEditor } from "../../components/design/SectionEditor";
@@ -169,7 +171,7 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
     return (
       <div className="design-uploads-error">
         <p>We couldn't load design uploads.</p>
-        <button type="button" onClick={() => void versionsQuery.refetch()}>Try again</button>
+        <Button type="button" onClick={() => void versionsQuery.refetch()}>Try again</Button>
       </div>
     );
   }
@@ -184,9 +186,9 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
         {versions.length > 1 ? (
           <label>
             <span>Design version</span>
-            <select value={selected?.id} onChange={(event) => setSelectedVersionId(event.target.value)}>
+            <Select value={selected?.id} onChange={(event) => setSelectedVersionId(event.target.value)}>
               {versions.map((item) => <option key={item.id} value={item.id}>Version {item.versionNumber}</option>)}
-            </select>
+            </Select>
           </label>
         ) : null}
       </div>
@@ -200,16 +202,24 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
           <p>{extraction?.pages.length
             ? "We couldn't extract all sections. Retry OCR or add sections manually from the available pages."
             : "We couldn't extract this design and no source pages are available for manual sections. Retry OCR."}</p>
-          <button type="button" className="button button--secondary" disabled={retry.isPending} onClick={() => retry.mutate()}>
+          <Button type="button" variant="secondary" disabled={retry.isPending} onClick={() => retry.mutate()}>
             Retry extraction
-          </button>
+          </Button>
         </div>
       ) : null}
       {sectionsQuery.isPending && canReadSections ? <p role="status">Loading extracted sections…</p> : null}
+      {sectionsQuery.isError && canReadSections ? (
+        <div className="processing-failure" role="alert">
+          <p>{extraction ? "We couldn't refresh the extracted sections. The last loaded sections remain visible." : "We couldn't load the extracted sections."}</p>
+          <Button type="button" variant="secondary" busy={sectionsQuery.isFetching} busyLabel="Retrying…" onClick={() => void sectionsQuery.refetch()}>
+            Retry sections
+          </Button>
+        </div>
+      ) : null}
       {terminal ? (
         <p className="processing-status" role="status">Sections submitted to the client. This version is read-only.</p>
       ) : null}
-      {actionError ? <div role="alert">{actionError} <button type="button" onClick={() => setActionError("")}>Dismiss</button></div> : null}
+      {actionError ? <div role="alert">{actionError} <Button type="button" onClick={() => setActionError("")}>Dismiss</Button></div> : null}
 
       {showCorrections || terminal ? activeSections.map((section) => {
         const page = pagesById.get(section.revision.sourcePageId);
@@ -268,9 +278,9 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
       {showCorrections && extraction?.pages.length && !terminal ? (
         <div className="manual-section">
           {!adding ? (
-            <button type="button" className="button button--secondary" onClick={() => setAdding(true)}>
+            <Button type="button" variant="secondary" onClick={() => setAdding(true)}>
               Add missing section
-            </button>
+            </Button>
           ) : (
             <form onSubmit={(event) => {
               event.preventDefault();
@@ -283,24 +293,24 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
             }}>
               <label>
                 <span>Source page</span>
-                <select aria-label="Source page" value={manualPage?.id ?? ""} onChange={(event) => setManualPageId(event.target.value)}>
+                <Select aria-label="Source page" value={manualPage?.id ?? ""} onChange={(event) => setManualPageId(event.target.value)}>
                   {extraction.pages.map((page) => <option key={page.id} value={page.id}>Page {page.pageNumber}</option>)}
-                </select>
+                </Select>
               </label>
               <label>
                 <span>New section label</span>
-                <input aria-label="New section label" value={newLabel} onChange={(event) => setNewLabel(event.target.value)} />
+                <Input aria-label="New section label" value={newLabel} onChange={(event) => setNewLabel(event.target.value)} />
               </label>
               {manualPage ? <CropEditor label={newLabel || "New section"} crop={manualCrop} page={manualPage} onChange={setManualCrop} /> : null}
-              <button type="submit" className="button button--primary" disabled={!newLabel.trim() || !manualPage || !cropIsValid(manualCrop, manualPage)}>Create section</button>
+              <Button type="submit" variant="primary" disabled={!newLabel.trim() || !manualPage || !cropIsValid(manualCrop, manualPage)}>Create section</Button>
             </form>
           )}
         </div>
       ) : null}
 
-      {showCorrections || terminal ? <button
+      {showCorrections || terminal ? <Button
         type="button"
-        className="button button--primary submit-sections"
+        className="submit-sections"
         disabled={
           (status !== "designer_review" && status !== "changes_requested") ||
           activeSections.length === 0 ||
@@ -314,7 +324,7 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
         onClick={() => submit.mutate()}
       >
         Submit sections to client
-      </button> : null}
+      </Button> : null}
     </section>
   );
 }

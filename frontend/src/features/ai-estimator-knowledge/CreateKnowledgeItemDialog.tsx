@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useId, useEffect, useRef, useState } from "react";
 import { ApiError } from "../../api/client";
 import { Button } from "../../components/ui/Button";
-import { Dialog } from "../../components/ui/Dialog";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field, Input, Select } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { createKnowledgeMainLine, listKnowledgeBaskets } from "./knowledgeApi";
@@ -22,6 +22,7 @@ export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, 
   readonly onCreated: (mainLineId: string, detail?: KnowledgeItemDetail) => Promise<void>;
   readonly onRefreshError?: (message: string) => void;
 }) {
+  const formId = useId();
   const queryClient = useQueryClient();
   const temporary = itemType === "temporary";
   const related = context === "related-item";
@@ -138,8 +139,17 @@ export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, 
   }
 
   return (
-    <Dialog title={title} eyebrow="Estimation configuration" onClose={onClose} busy={busy && !confirmedItem}>
-      <form className="knowledge-dialog-form" onSubmit={(event) => {
+    <ContextPanel title={title} eyebrow="Estimation configuration" onClose={onClose} busy={busy && !confirmedItem}
+      width="medium"
+      className="knowledge-context-panel"
+      dirty={!confirmedItem && (basketId !== initialBasketId || subBasketName !== initialSubBasketName || name !== initialName)}
+      footer={({ requestClose }) => (
+        <div className="knowledge-dialog-actions">
+          <Button type="button" variant="quiet" disabled={busy && !confirmedItem} onClick={requestClose}>{confirmedItem ? "Close" : "Cancel"}</Button>
+          <Button type="submit" form={formId} busy={busy} disabled={!canCreate || !valid}>{title}</Button>
+        </div>
+      )}>
+      <form id={formId} className="knowledge-dialog-form" onSubmit={(event) => {
         event.preventDefault();
         if (!submissionLocked.current && canCreate && valid) {
           submissionLocked.current = true;
@@ -175,11 +185,8 @@ export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, 
             {(props) => <Input {...props} maxLength={240} value={name} disabled={locked} onChange={(event) => { setName(event.target.value); clearFailure(); }} />}
           </Field>
         </div>
-        <div className="knowledge-dialog-actions">
-          <Button type="button" variant="quiet" disabled={busy && !confirmedItem} onClick={onClose}>{confirmedItem ? "Close" : "Cancel"}</Button>
-          <Button type="submit" busy={busy} disabled={!canCreate || !valid}>{title}</Button>
-        </div>
+
       </form>
-    </Dialog>
+    </ContextPanel>
   );
 }

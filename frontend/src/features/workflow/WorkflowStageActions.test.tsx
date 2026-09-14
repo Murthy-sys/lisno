@@ -33,6 +33,22 @@ function setup(action?: DesignWorkflowAction, expandKickoff = false) {
 }
 
 describe("WorkflowStageActions", () => {
+  it("guards contextual action drafts while preserving the version and note", async () => {
+    const user = userEvent.setup();
+    setup({ id: "keys_received", label: "Mark keys received", actor: "designer", requiresProof: false });
+    await user.click(screen.getByRole("button", { name: "Mark keys received" }));
+    const panel = screen.getByRole("dialog", { name: "Mark keys received" });
+    expect(within(panel).getByText("Workflow version 4")).toBeVisible();
+    await user.type(within(panel).getByLabelText("Note"), "Keys collected from reception");
+    await user.click(within(panel).getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(within(panel).getByLabelText("Note")).toHaveValue("Keys collected from reception");
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark keys received" })).toBeEnabled();
+  });
+
   it("keeps the kickoff control visible with the backend payment prerequisite", async () => {
     const post = vi.spyOn(apiClient, "postMultipartWithProgress");
     setup({ id: "internal_kickoff_complete", label: "Complete Internal Kick off and save", actor: "designer", requiresProof: true, disabledReason: "Awaiting initial payment received confirmation." }, true);
@@ -54,6 +70,21 @@ describe("WorkflowStageActions", () => {
     expect(screen.queryByRole("form")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Complete Internal Kick off and save" }));
     expect(screen.getByRole("form", { name: "Complete Internal Kick off and save" })).toBeVisible();
+  });
+
+  it("retains unsaved inline kickoff evidence when cancellation is declined", async () => {
+    setup({ id: "internal_kickoff_complete", label: "Complete Internal Kick off and save", actor: "designer", requiresProof: true }, true);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("checkbox", { name: acknowledgementLabel }));
+    const file = new File(["signed"], "kickoff.pdf", { type: "application/pdf" });
+    const input = screen.getByLabelText(/Signed kick-off checklist/) as HTMLInputElement;
+    await user.upload(input, file);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("alertdialog", { name: "Discard unsaved changes?" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(input.files?.[0]).toBe(file);
+    expect(screen.getByRole("checkbox", { name: acknowledgementLabel })).toBeChecked();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("blocks an already open form when the backend disables its action without changing the workflow version", async () => {

@@ -29,7 +29,7 @@ export function KnowledgePmcMarginInput({ value, readOnly, error, onChange, scop
   return <Field id={`${id}-${scope}-margin`} className="knowledge-pmc-margin"
     label={scope === "pmc" ? "PMC Margin" : "Sub-Vendor Margin"} hint="Allowed: 10%–20%" error={error}>
     {(controlProps) => <div className="knowledge-pmc-margin__control">
-      <Input {...controlProps} type="number" inputMode="decimal" min={10} max={20} step="0.01"
+      <Input {...controlProps} type="number" inputMode="decimal" min={10} max={20} step={scope === "pmc" ? 5 : 0.01}
       value={text} disabled={readOnly} placeholder="10–20"
       onChange={(event) => {
         const nextText = event.target.value;

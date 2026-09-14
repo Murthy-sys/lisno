@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useState } from "react";
 import { Image, X } from "lucide-react";
 
 import { ApiError } from "../../api/client";
@@ -7,8 +7,12 @@ import type { DesignSectionReviewData, DesignSectionReviewItem } from "../../api
 import { ProtectedImage } from "../../components/design/ProtectedImage";
 import { SectionReviewCard } from "../../components/design/SectionReviewCard";
 import { Dialog } from "../../components/ui/Dialog";
+import { Button } from "../../components/ui/Button";
+import { ContextPanel } from "../../components/ui/ContextPanel";
+import { Field, Textarea } from "../../components/ui/Field";
 import { clientKeys, decideDesignSection, getDesignSectionReview } from "./clientApi";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
+import "./clientWorkflow.css";
 
 export function DesignSectionReview({ projectId, mode, hideWhenEmpty = false, collapsible = false }: { projectId: string; mode: "client" | "read-only"; hideWhenEmpty?: boolean; collapsible?: boolean }) {
   const queryClient = useQueryClient();
@@ -219,19 +223,23 @@ function RejectionDialog({ section, comment, error, requestError, busy, onCommen
   section: DesignSectionReviewItem; comment: string; error: string; requestError: string; busy: boolean;
   onComment: (value: string) => void; onSubmit: () => void; onClose: () => void;
 }) {
-  const errorId = useId();
-  return <Dialog title={`Request changes for ${section.label}`} description="Tell the designer exactly what needs modification." busy={busy} onClose={onClose}>
-    <div className="form-field">
-      <label htmlFor={`reject-${section.id}`}>Modification comment</label>
-      <textarea data-dialog-initial-focus id={`reject-${section.id}`} value={comment} onChange={(event) => onComment(event.target.value)} maxLength={1000} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} />
-      {error ? <p id={errorId} className="field-error">{error}</p> : null}
-    </div>
+  return <ContextPanel
+    title={`Request changes for ${section.label}`}
+    description="Tell the designer exactly what needs modification."
+    metadata={<span>Revision {section.revision.revisionNumber}</span>}
+    dirty={Boolean(comment)}
+    busy={busy}
+    onClose={onClose}
+    footer={({ requestClose }) => <>
+      <Button onClick={onSubmit} disabled={busy}>Send request</Button>
+      <Button variant="secondary" onClick={requestClose} disabled={busy}>Cancel</Button>
+    </>}
+  >
+    <Field id={`reject-${section.id}`} label="Modification comment" hint={`${comment.length}/1000 characters`} error={error} required>
+      {(controlProps) => <Textarea {...controlProps} data-dialog-initial-focus value={comment} onChange={(event) => onComment(event.target.value)} maxLength={1000} rows={6} disabled={busy} />}
+    </Field>
     {requestError ? <p role="alert">{requestError}</p> : null}
-    <div className="modal__actions">
-      <button type="button" onClick={onSubmit} disabled={busy}>Send request</button>
-      <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
-    </div>
-  </Dialog>;
+  </ContextPanel>;
 }
 
 function errorMessage(error: Error) {

@@ -1,8 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState, type FormEvent } from "react";
+import { useId, useMemo, useState, type FormEvent } from "react";
 
 import { Button } from "../../components/ui/Button";
-import { Dialog } from "../../components/ui/Dialog";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Checkbox, Field, Input, Select, Textarea } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import {
@@ -38,6 +38,7 @@ export function KnowledgeMasterEditorDialog({
   onClose,
   onSaved
 }: KnowledgeMasterEditorDialogProps) {
+  const formId = useId();
   const queryClient = useQueryClient();
   const [code, setCode] = useState(existing?.code ?? "");
   const [name, setName] = useState(existing?.name ?? "");
@@ -114,9 +115,22 @@ export function KnowledgeMasterEditorDialog({
     if (formValid) mutation.mutate();
   }
 
+  const dirty = code !== (existing?.code ?? "")
+    || name !== (existing?.name ?? "")
+    || description !== (existing?.description ?? "")
+    || displayOrder !== String(existing?.displayOrder ?? "")
+    || status !== (existing?.status === "inactive" ? "inactive" : "active")
+    || decimalScale !== String(existing?.decimalScale ?? 0)
+    || includeTaxVersion !== (!existing && masterType === "taxes")
+    || taxRateBps !== ""
+    || taxTreatment !== "exclusive"
+    || taxApplicability !== ""
+    || effectiveFrom !== ""
+    || effectiveTo !== ""
+    || taxStatus !== (quickAdd && !existing && masterType === "taxes" ? "active" : "draft");
   const itemLabel = MASTER_SINGULAR_LABELS[masterType];
   return (
-    <Dialog
+    <ContextPanel
       title={`${existing ? "Edit" : quickAdd ? "Quick add" : "Add"} ${itemLabel}`}
       eyebrow="Estimation configuration"
       description={
@@ -126,8 +140,16 @@ export function KnowledgeMasterEditorDialog({
       }
       onClose={onClose}
       busy={mutation.isPending}
-    >
-      <form className="knowledge-dialog-form knowledge-dialog-form--wide" onSubmit={submit}>
+      width="wide"
+      className="knowledge-context-panel"
+      dirty={dirty}
+      footer={({ requestClose }) => (
+        <div className="knowledge-dialog-actions">
+          <Button type="button" variant="quiet" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
+          <Button type="submit" form={formId} busy={mutation.isPending} disabled={!formValid}>{existing ? "Save changes" : `Add ${itemLabel}`}</Button>
+        </div>
+      )}>
+      <form id={formId} className="knowledge-dialog-form knowledge-dialog-form--wide" onSubmit={submit}>
         <div className="knowledge-dialog-body">
           {mutation.error ? (
             <InlineMessage tone="error" role="alert">{mutation.error.message}</InlineMessage>
@@ -197,12 +219,8 @@ export function KnowledgeMasterEditorDialog({
             </fieldset>
           ) : null}
         </div>
-        <div className="knowledge-dialog-actions">
-          <Button type="button" variant="quiet" onClick={onClose} disabled={mutation.isPending}>Cancel</Button>
-          <Button type="submit" busy={mutation.isPending} disabled={!formValid}>{existing ? "Save changes" : `Add ${itemLabel}`}</Button>
-        </div>
       </form>
-    </Dialog>
+    </ContextPanel>
   );
 }
 

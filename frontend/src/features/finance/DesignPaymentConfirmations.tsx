@@ -29,7 +29,7 @@ export function ProjectInitialPaymentStatus({ workflow }: { workflow: DesignWork
   const canConfirm = !received && canRecord && payment.canConfirm && status === "awaiting_payment";
   return <section className="workflow-payment-status" data-received={received || undefined} aria-label="Initial payment status">
     <div className="workflow-payment-status__summary">
-      <div><h3>Initial payment</h3><strong className="workflow-payment-status__label">{received ? "Initial payment received" : status === "awaiting_estimate_approval" ? "Awaiting estimate approval" : status === "awaiting_payment" ? "Awaiting initial payment" : "Payment status unavailable"}</strong></div>
+      <div><h2>Initial payment</h2><strong className="workflow-payment-status__label">{received ? "Initial payment received" : status === "awaiting_estimate_approval" ? "Awaiting estimate approval" : status === "awaiting_payment" ? "Awaiting initial payment" : "Payment status unavailable"}</strong></div>
       <div>{payment.confirmedAt ? <ReceiptTime confirmedAt={payment.confirmedAt} /> : received ? <p role="status">Initial payment received. The Designer’s Internal Kick off countdown has started. The recorded time will appear when the workflow refreshes.</p> : <p>{status === "awaiting_estimate_approval" ? "The estimate must be approved before the initial payment can be recorded." : "Super Admin or Finance verifies the actual receipt before recording payment."} The Designer’s Internal Kick off countdown starts when initial payment is marked received.</p>}
         {payment.issue ? <p>{payment.issue}</p> : null}</div>
     </div>

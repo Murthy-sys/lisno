@@ -52,7 +52,7 @@ function ApprovedDocuments({ versions }: { versions: ClientDesignVersion[] }) {
 }
 
 function VisibleVersion({ version }: { version: ClientDesignVersion }) {
-  return <article className="client-version"><div><strong>{version.originalFilename}</strong><p>Approved {version.approvedAt ? formatDate(version.approvedAt) : "recently"} · Version {version.versionNumber}</p></div><FilePreview version={version} /></article>;
+  return <article className="client-version"><div className="client-version__identity"><strong>{version.originalFilename}</strong><p>Approved{version.approvedAt ? ` ${formatDate(version.approvedAt)}` : " · Approval date unavailable"} · Version {version.versionNumber}</p></div><FilePreview version={version} /></article>;
 }
 
 const date = new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });

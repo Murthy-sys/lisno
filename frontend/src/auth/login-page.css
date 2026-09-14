@@ -127,8 +127,8 @@
   box-sizing: border-box;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
   align-items: center;
-  gap: clamp(30px, 5vw, 76px);
-  padding: clamp(24px, 4.5vw, 64px);
+  gap: clamp(24px, 4vw, 56px);
+  padding: clamp(16px, 3vw, 48px);
 }
 
 /* ------------------------------------------------------------- hero column */
@@ -239,8 +239,8 @@
   overflow: hidden;
   box-sizing: border-box;
   width: 100%;
-  border-radius: 22px;
-  padding: clamp(26px, 3.4vw, 44px);
+  border-radius: var(--radius-surface);
+  padding: var(--space-6);
   background: var(--color-bg);
   box-shadow:
     0 44px 96px -44px rgba(10, 8, 24, 0.8),
@@ -280,16 +280,17 @@
 
 .login-card__title {
   margin: 0 0 8px;
-  font-size: clamp(27px, 2.5vw, 35px);
+  font-size: var(--text-3xl);
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--color-primary);
-  font-size: 20px;
+  font-size: var(--text-3xl);
+  line-height: 1.25;
 }
 
 .login-card__subtitle {
-  margin: 0 0 18px;
-  font-size: 15px;
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-md);
   color: var(--login-primary-65);
 }
 
@@ -405,14 +406,14 @@
   display: block;
   box-sizing: border-box;
   width: 100%;
-  height: 42px;
+  height: var(--control-height);
   border: 1px solid var(--login-primary-22);
-  border-radius: 12px;
-  padding: 0 16px;
+  border-radius: var(--radius-control);
+  padding: 0 var(--space-3);
   background: var(--color-bg);
   color: var(--color-primary);
   font-family: "Poppins", sans-serif;
-  font-size: 15px;
+  font-size: var(--text-md);
   font-weight: 400;
   transition: border-color 140ms ease, box-shadow 140ms ease;
 }
@@ -430,6 +431,7 @@
   outline: none;
   border-color: var(--color-primary);
   /* box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-highlight) 30%, transparent); */
+  box-shadow: var(--focus-ring);
 }
 
 .login-input:disabled {
@@ -452,8 +454,8 @@
   width: 100%;
   height: 85px;
   border: 1px solid var(--login-primary-22);
-  border-radius: 12px;
-  padding: 14px 16px;
+  border-radius: var(--radius-control);
+  padding: var(--space-3);
   background: var(--color-bg);
   color: var(--color-primary);
   font-family: "Poppins", sans-serif;
@@ -497,17 +499,17 @@
 
 .login-password-toggle {
   position: absolute;
-  inset-inline-end: 6px;
-  top: 3px;
-  width: 36px;
-  height: 36px;
+  inset-inline-end: 0;
+  top: 0;
+  width: var(--control-height);
+  height: var(--control-height);
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 18px;
-  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
+  border-radius: var(--radius-control);
+  background: transparent;
   color: var(--color-primary);
   cursor: pointer;
   transition: background-color 140ms ease;
@@ -525,6 +527,7 @@
 .login-password-toggle:focus-visible {
   outline: none;
   /* box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-highlight) 30%, transparent); */
+  box-shadow: var(--focus-ring);
 }
 
 .login-password-toggle:disabled {
@@ -599,17 +602,17 @@
   position: relative;
   display: flex;
   width: 100%;
-  height: 45px;
+  height: var(--control-height);
   align-items: center;
   justify-content: center;
   gap: 8px;
-  margin-top: 25px;
+  margin-top: var(--space-5);
   border: 0;
-  border-radius: 12px;
+  border-radius: var(--radius-control);
   background: var(--color-highlight);
   color: var(--color-primary);
   font-family: "Poppins", sans-serif;
-  font-size: 15px;
+  font-size: var(--text-md);
   font-weight: 600;
   /* box-shadow: 0 12px 26px -14px color-mix(in srgb, var(--color-highlight) 95%, transparent); */
   cursor: pointer;
@@ -732,7 +735,7 @@
 .login-state h1,
 .login-state h2 {
   margin: 0;
-  font-size: clamp(22px, 2.4vw, 28px);
+  font-size: var(--text-xl);
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--color-primary);
@@ -832,6 +835,8 @@
   .login-grid {
     grid-template-columns: 1fr;
     justify-content: center;
+    gap: clamp(24px, 4vw, 56px);
+    padding: clamp(16px, 3vw, 48px);
   }
 
   .login-hero {
@@ -842,6 +847,13 @@
     order: 1;
     margin-inline: auto;
   }
+}
+
+@media (pointer: coarse), (max-width: 767px) {
+  .login-input, .login-textarea { font-size: 1rem; }
+  .login-card { padding: var(--space-5); }
+  .login-hero__title { font-size: clamp(2rem, 8vw, 3rem); }
+  .login-text-action, .login-forgot { min-height: 44px; display: inline-flex; align-items: center; }
 }
 
 @media (prefers-reduced-motion: reduce) {

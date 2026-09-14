@@ -496,7 +496,7 @@ describe("Super Admin knowledge item workspace layout", () => {
 
     const mobileStart = stylesheet.indexOf(
       "@media (max-width: 480px)",
-      professionalWorkspaceStart
+      stylesheet.indexOf("@media (max-width: 768px)", professionalWorkspaceStart)
     );
     expect(mobileStart).toBeGreaterThan(professionalWorkspaceStart);
     expect(declarations(selector, mobileStart).get("padding")).toBe(
@@ -550,7 +550,7 @@ describe("Super Admin knowledge item workspace layout", () => {
 
     const mobileStart = stylesheet.indexOf(
       "@media (max-width: 480px)",
-      professionalWorkspaceStart
+      stylesheet.indexOf("@media (max-width: 768px)", professionalWorkspaceStart)
     );
     expect(mobileStart).toBeGreaterThan(compactStart);
 
@@ -708,7 +708,7 @@ describe("Super Admin knowledge item workspace layout", () => {
 
     const mobileStart = stylesheet.indexOf(
       "@media (max-width: 480px)",
-      professionalWorkspaceStart
+      stylesheet.indexOf("@media (max-width: 768px)", professionalWorkspaceStart)
     );
     expect(mobileStart).toBeGreaterThan(tabletStart);
 
@@ -829,7 +829,7 @@ describe("Super Admin knowledge item workspace layout", () => {
     expect(status.get("grid-template-columns")).toBe(
       "minmax(14rem, 0.72fr) minmax(0, 2fr)"
     );
-    expect(status.get("padding")).toBe("var(--space-4) var(--space-5)");
+    expect(status.get("padding")).toBe("var(--space-3) var(--space-4)");
     expect(status.get("box-shadow")).toBe("none");
 
     const statusValues = declarations(

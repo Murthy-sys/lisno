@@ -1,11 +1,12 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { ApiError } from "../../api/client";
 import type { FinanceLedgerEntry, ProjectFinanceBucket } from "../../api/types";
 import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { Button } from "../../components/ui/Button";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field, Input, Select, Textarea } from "../../components/ui/Field";
 import { PageState } from "../../components/ui/PageState";
 import { StatusBadge } from "../../components/ui/StatusBadge";
@@ -21,6 +22,7 @@ import {
   postProjectFinanceEntry,
   projectFinanceKeys
 } from "./projectFinanceApi";
+import "./financePanels.css";
 
 /* Re-exported so the procurement views keep one money formatter. */
 export { formatBps, formatPaise } from "./financeFormat";
@@ -146,7 +148,7 @@ export function ProjectFinancePanel({
             </dl>
           </div>
           {canCreate && trustedBucket.status === "open" && entries.data && !ledgerIntegrityError ? (
-            <FinanceEntryForm key={projectId} projectId={projectId} />
+            <FinanceEntryWorkspace key={`entry-form-${projectId}`} projectId={projectId} projectName={trustedBucket.projectName} />
           ) : null}
           {entries.isPending ? (
             <PageState state="loading" message="Loading spending and overhead ledger…" />
@@ -164,6 +166,7 @@ export function ProjectFinancePanel({
             />
           ) : (
             <FinanceEntries
+              key={`ledger-${projectId}`}
               projectId={projectId}
               entries={entryItems}
               total={entryTotal}
@@ -266,14 +269,28 @@ function uniqueFinanceEntries(entries: FinanceLedgerEntry[]) {
   return [...unique.values()];
 }
 
-function FinanceEntryForm({ projectId }: { projectId: string }) {
+function FinanceEntryWorkspace({ projectId, projectName }: { projectId: string; projectName: string }) {
+  const [open, setOpen] = useState(false);
+  const [recorded, setRecorded] = useState(false);
+  return (
+    <div className="finance-entry-workspace">
+      <div><h3>Project costs</h3><p>Record employee payments, other expenses, and ledger overheads.</p></div>
+      <Button onClick={() => { setRecorded(false); setOpen(true); }}>Record project cost</Button>
+      {recorded ? <p role="status">Project cost recorded.</p> : null}
+      {open ? <FinanceEntryForm projectId={projectId} projectName={projectName} onClose={() => setOpen(false)} onRecorded={() => { setRecorded(true); setOpen(false); }} /> : null}
+    </div>
+  );
+}
+
+function FinanceEntryForm({ projectId, projectName, onClose, onRecorded }: { projectId: string; projectName: string; onClose: () => void; onRecorded: () => void }) {
   const client = useQueryClient();
   const idempotencyKey = useRef(financeRequestKey());
   const [type, setType] = useState<"direct_spend" | "overhead">("direct_spend");
   const [expenseClass, setExpenseClass] = useState<"employee_payment" | "other">("employee_payment");
   const [category, setCategory] = useState("");
   const [amount, setAmount] = useState("");
-  const [incurredAt, setIncurredAt] = useState(new Date().toISOString().slice(0, 10));
+  const initialDate = useRef(new Date().toISOString().slice(0, 10));
+  const [incurredAt, setIncurredAt] = useState(initialDate.current);
   const [description, setDescription] = useState("");
   const [vendor, setVendor] = useState("");
   const [reference, setReference] = useState("");
@@ -294,6 +311,7 @@ function FinanceEntryForm({ projectId }: { projectId: string }) {
         client.invalidateQueries({ queryKey: projectFinanceKeys.projects }),
         client.invalidateQueries({ queryKey: dashboardKeys.all })
       ]);
+      onRecorded();
     }
   });
   const updateDraft = (update: () => void) => {
@@ -305,6 +323,7 @@ function FinanceEntryForm({ projectId }: { projectId: string }) {
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (mutation.isPending) return;
     const rupees = Number(amount);
     if (!category.trim() || !description.trim() || !Number.isFinite(rupees) || rupees <= 0) {
       setValidation("Enter a category, description, and positive amount.");
@@ -331,42 +350,48 @@ function FinanceEntryForm({ projectId }: { projectId: string }) {
   };
 
   return (
-    <form className="finance-entry-form" onSubmit={submit} noValidate>
-      <div className="section-heading">
-        <div><h3>Record project cost</h3><p>Posted entries remain in the financial ledger.</p></div>
-      </div>
-      <div className="finance-entry-form__grid">
-        <Field id={`finance-entry-type-${projectId}`} label="Cost type" required>
-          {(props) => <Select {...props} value={type} onChange={(event) => updateDraft(() => setType(event.target.value as typeof type))}><option value="direct_spend">Direct spending</option><option value="overhead">Overhead</option></Select>}
-        </Field>
-        {type === "direct_spend" ? (
-          <Field id={`finance-entry-class-${projectId}`} label="Expense class" hint="Used for accurate portfolio reporting." required>
-            {(props) => <Select {...props} value={expenseClass} onChange={(event) => updateDraft(() => setExpenseClass(event.target.value as typeof expenseClass))}><option value="employee_payment">Employee payment</option><option value="other">Other project expense</option></Select>}
+    <ContextPanel
+      title="Record project cost"
+      eyebrow={projectName}
+      description="Posted entries remain in the financial ledger."
+      width="wide"
+      onClose={onClose}
+      busy={mutation.isPending}
+      dirty={Boolean(category || amount || description || vendor || reference || type !== "direct_spend" || expenseClass !== "employee_payment" || incurredAt !== initialDate.current)}
+      footer={({ requestClose }) => <div className="finance-panel-actions"><Button variant="secondary" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button><Button form={`finance-entry-form-${projectId}`} type="submit" busy={mutation.isPending} busyLabel="Recording…">Record cost</Button></div>}
+    >
+      <form id={`finance-entry-form-${projectId}`} className="finance-entry-form finance-entry-form--panel" onSubmit={submit} noValidate>
+        <fieldset className="finance-entry-form__grid" disabled={mutation.isPending}>
+          <Field id={`finance-entry-type-${projectId}`} label="Cost type" required>
+            {(props) => <Select {...props} value={type} onChange={(event) => updateDraft(() => setType(event.target.value as typeof type))}><option value="direct_spend">Direct spending</option><option value="overhead">Overhead</option></Select>}
           </Field>
-        ) : null}
-        <Field id={`finance-entry-category-${projectId}`} label="Category" required>
-          {(props) => <Input {...props} value={category} onChange={(event) => updateDraft(() => setCategory(event.target.value))} />}
-        </Field>
-        <Field id={`finance-entry-amount-${projectId}`} label="Amount (INR)" required>
-          {(props) => <Input {...props} type="number" min="0.01" step="0.01" value={amount} onChange={(event) => updateDraft(() => setAmount(event.target.value))} />}
-        </Field>
-        <Field id={`finance-entry-date-${projectId}`} label="Incurred date" required>
-          {(props) => <Input {...props} type="date" value={incurredAt} onChange={(event) => updateDraft(() => setIncurredAt(event.target.value))} />}
-        </Field>
-        <Field id={`finance-entry-vendor-${projectId}`} label="Vendor / payee">
-          {(props) => <Input {...props} value={vendor} onChange={(event) => updateDraft(() => setVendor(event.target.value))} />}
-        </Field>
-        <Field id={`finance-entry-reference-${projectId}`} label="Invoice / reference">
-          {(props) => <Input {...props} value={reference} onChange={(event) => updateDraft(() => setReference(event.target.value))} />}
-        </Field>
-        <Field id={`finance-entry-description-${projectId}`} className="finance-entry-form__description" label="Description" required>
-          {(props) => <Textarea {...props} rows={3} value={description} onChange={(event) => updateDraft(() => setDescription(event.target.value))} />}
-        </Field>
-      </div>
-      {validation || mutation.isError ? <p role="alert">{validation || financeError(mutation.error)}</p> : null}
-      {mutation.isSuccess ? <p role="status">Project cost recorded.</p> : null}
-      <Button type="submit" busy={mutation.isPending} busyLabel="Recording…">Record cost</Button>
-    </form>
+          {type === "direct_spend" ? (
+            <Field id={`finance-entry-class-${projectId}`} label="Expense class" hint="Used for accurate portfolio reporting." required>
+              {(props) => <Select {...props} value={expenseClass} onChange={(event) => updateDraft(() => setExpenseClass(event.target.value as typeof expenseClass))}><option value="employee_payment">Employee payment</option><option value="other">Other project expense</option></Select>}
+            </Field>
+          ) : null}
+          <Field id={`finance-entry-category-${projectId}`} label="Category" required>
+            {(props) => <Input {...props} value={category} onChange={(event) => updateDraft(() => setCategory(event.target.value))} />}
+          </Field>
+          <Field id={`finance-entry-amount-${projectId}`} label="Amount (INR)" required>
+            {(props) => <Input {...props} type="number" min="0.01" step="0.01" value={amount} onChange={(event) => updateDraft(() => setAmount(event.target.value))} />}
+          </Field>
+          <Field id={`finance-entry-date-${projectId}`} label="Incurred date" required>
+            {(props) => <Input {...props} type="date" value={incurredAt} onChange={(event) => updateDraft(() => setIncurredAt(event.target.value))} />}
+          </Field>
+          <Field id={`finance-entry-vendor-${projectId}`} label="Vendor / payee">
+            {(props) => <Input {...props} value={vendor} onChange={(event) => updateDraft(() => setVendor(event.target.value))} />}
+          </Field>
+          <Field id={`finance-entry-reference-${projectId}`} label="Invoice / reference">
+            {(props) => <Input {...props} value={reference} onChange={(event) => updateDraft(() => setReference(event.target.value))} />}
+          </Field>
+          <Field id={`finance-entry-description-${projectId}`} className="finance-entry-form__description" label="Description" required>
+            {(props) => <Textarea {...props} rows={3} value={description} onChange={(event) => updateDraft(() => setDescription(event.target.value))} />}
+          </Field>
+        </fieldset>
+        {validation || mutation.isError ? <p role="alert">{validation || financeError(mutation.error)}</p> : null}
+      </form>
+    </ContextPanel>
   );
 }
 
@@ -389,6 +414,12 @@ function FinanceEntries({
   loadMoreError: boolean;
   onLoadMore: () => void;
 }) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedEntry = entries.find((entry) => entry.id === selectedId) ?? null;
+  useEffect(() => {
+    if (selectedId && !selectedEntry) setSelectedId(null);
+  }, [selectedId, selectedEntry]);
+
   return (
     <section className="finance-entries" aria-labelledby="finance-entries-title">
       <div className="section-heading"><div><h3 id="finance-entries-title">Spending and overhead ledger</h3></div><span>{hasMore ? `${entries.length} of ${total} entries` : `${entries.length} entries`}</span></div>
@@ -401,31 +432,9 @@ function FinanceEntries({
                 <strong>{formatPaise(entry.amountPaise)}</strong>
                 <p>{entry.description}</p>
                 {entry.vendor || entry.reference ? <small>{[entry.vendor, entry.reference].filter(Boolean).join(" · ")}</small> : null}
-                {/*
-                  Lineage identifiers stay in the payload for reconciliation;
-                  only the approved names the server resolves are shown here.
-                */}
-                {entry.sourceSectionId || entry.sourceLineItemKey ? (
-                  <dl className="finance-entry__lineage" aria-label="Approved Estimate source">
-                    {entry.sourceSectionLabel ? <div><dt>Estimate section</dt><dd>{entry.sourceSectionLabel}</dd></div> : null}
-                    {entry.sourceLineItemKey ? (
-                      <div>
-                        <dt>Estimate item</dt>
-                        <dd>{entry.sourceLineItemLabel ?? "No longer in the approved Estimate"}</dd>
-                      </div>
-                    ) : null}
-                  </dl>
-                ) : null}
-                {canReadDocuments ? (
-                  <SupportingDocumentActions
-                    supportingDocument={entry.supportingDocument}
-                    getFile={() => getFinanceSupportingDocument(projectId, entry.id)}
-                  />
-                ) : entry.supportingDocument ? (
-                  <span className="supporting-document supporting-document--restricted">Supporting document access restricted</span>
-                ) : (
-                  <span className="supporting-document supporting-document--missing">No supporting document</span>
-                )}
+                <Button variant="quiet" size="compact" className="finance-entry__detail-action" aria-label={`View entry for ${entry.category}`} onClick={() => setSelectedId(entry.id)}>
+                  View entry
+                </Button>
               </article>
             ))}
           </div>
@@ -449,8 +458,56 @@ function FinanceEntries({
           )}
         </>
       )}
+      {selectedEntry ? <ContextPanel
+        key={`${projectId}:${selectedEntry.id}`}
+        title={selectedEntry.category}
+        eyebrow="Spending and overhead ledger"
+        description={`${financeEntryLabel(selectedEntry)} · ${date.format(new Date(selectedEntry.incurredAt))}`}
+        onClose={() => setSelectedId(null)}
+        metadata={<StatusBadge tone={selectedEntry.status === "posted" ? "success" : "neutral"} label={selectedEntry.status} />}
+      >
+        <FinanceEntryDetail entry={selectedEntry} projectId={projectId} canReadDocuments={canReadDocuments} />
+      </ContextPanel> : null}
     </section>
   );
+}
+
+function FinanceEntryDetail({ entry, projectId, canReadDocuments }: { entry: FinanceLedgerEntry; projectId: string; canReadDocuments: boolean }) {
+  return <div className="finance-entry-detail">
+    <dl className="finance-entry-detail__facts">
+      <div><dt>Recorded amount</dt><dd>{formatPaise(entry.amountPaise)}</dd></div>
+      <div><dt>Incurred date</dt><dd>{date.format(new Date(entry.incurredAt))}</dd></div>
+      {entry.vendor ? <div><dt>Vendor / payee</dt><dd>{entry.vendor}</dd></div> : null}
+      {entry.reference ? <div><dt>Invoice / reference</dt><dd>{entry.reference}</dd></div> : null}
+      <div><dt>Recorded on</dt><dd>{date.format(new Date(entry.createdAt))}</dd></div>
+    </dl>
+    <p>{entry.description}</p>
+    {/*
+      Lineage identifiers stay in the payload for reconciliation;
+      only the approved names the server resolves are shown here.
+    */}
+    {entry.sourceSectionId || entry.sourceLineItemKey ? (
+      <dl className="finance-entry__lineage" aria-label="Approved Estimate source">
+        {entry.sourceSectionLabel ? <div><dt>Estimate section</dt><dd>{entry.sourceSectionLabel}</dd></div> : null}
+        {entry.sourceLineItemKey ? (
+          <div>
+            <dt>Estimate item</dt>
+            <dd>{entry.sourceLineItemLabel ?? "No longer in the approved Estimate"}</dd>
+          </div>
+        ) : null}
+      </dl>
+    ) : null}
+    {canReadDocuments ? (
+      <SupportingDocumentActions
+        supportingDocument={entry.supportingDocument}
+        getFile={() => getFinanceSupportingDocument(projectId, entry.id)}
+      />
+    ) : entry.supportingDocument ? (
+      <span className="supporting-document supporting-document--restricted">Supporting document access restricted</span>
+    ) : (
+      <span className="supporting-document supporting-document--missing">No supporting document</span>
+    )}
+  </div>;
 }
 
 function financeEntryLabel(entry: { type: "direct_spend" | "overhead"; expenseClass: "procurement" | "employee_payment" | "other" | null }) {

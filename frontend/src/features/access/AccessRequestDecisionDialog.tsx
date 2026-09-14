@@ -5,6 +5,7 @@ import { ApiError } from "../../api/client";
 import type { ReviewAccessRequest } from "../../api/types";
 import { useFeedback } from "../../components/feedback/FeedbackProvider";
 import { Button } from "../../components/ui/Button";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Dialog } from "../../components/ui/Dialog";
 import { Field, Textarea } from "../../components/ui/Field";
 import { dashboardKeys } from "../admin/dashboard/superAdminDashboardApi";
@@ -76,15 +77,17 @@ export function AccessRequestDecisionDialog({
     mutation.mutate();
   };
 
-  return (
-    <Dialog
-      title={rejected ? "Reject access request" : "Approve access request"}
-      eyebrow="Access review"
-      description={`Request ${request.id} for ${request.project.id}.`}
-      busy={mutation.isPending}
-      onClose={onClose}
-    >
+  const actions = (requestClose: () => void) => (
+    <div className="access-request-dialog__actions">
+          <Button data-dialog-initial-focus={!rejected || undefined} variant="quiet" disabled={mutation.isPending} onClick={requestClose}>Cancel</Button>
+          <Button type="submit" form={`access-decision-${request.id}`} variant={rejected ? "destructive" : "primary"} busy={mutation.isPending} disabled={!isCurrentRow} busyLabel={rejected ? "Rejecting…" : "Approving…"}>
+            {rejected ? "Reject request" : "Approve request"}
+          </Button>
+        </div>
+  );
+  const content = (
       <form
+        id={`access-decision-${request.id}`}
         className="access-request-dialog"
         noValidate
         onSubmit={(event) => {
@@ -116,13 +119,32 @@ export function AccessRequestDecisionDialog({
             )}
           </Field>
         ) : null}
-        <div className="access-request-dialog__actions">
-          <Button data-dialog-initial-focus={!rejected || undefined} variant="quiet" disabled={mutation.isPending} onClick={onClose}>Cancel</Button>
-          <Button type="submit" variant={rejected ? "destructive" : "primary"} busy={mutation.isPending} disabled={!isCurrentRow} busyLabel={rejected ? "Rejecting…" : "Approving…"}>
-            {rejected ? "Reject request" : "Approve request"}
-          </Button>
-        </div>
+        {!rejected ? actions(onClose) : null}
       </form>
+  );
+
+  return rejected ? (
+    <ContextPanel
+      title="Reject access request"
+      eyebrow="Access review"
+      description={`Request ${request.id} for ${request.project.id}.`}
+      busy={mutation.isPending}
+      dirty={reason.length > 0}
+      className="administration-context-panel"
+      onClose={onClose}
+      footer={({ requestClose }) => actions(requestClose)}
+    >
+      {content}
+    </ContextPanel>
+  ) : (
+    <Dialog
+      title="Approve access request"
+      eyebrow="Access review"
+      description={`Request ${request.id} for ${request.project.id}.`}
+      busy={mutation.isPending}
+      onClose={onClose}
+    >
+      {content}
     </Dialog>
   );
 }

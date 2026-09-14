@@ -1,7 +1,7 @@
-import type { FormEvent, ReactNode } from "react";
+import { useId, useState, type FormEvent, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/Button";
-import { Dialog } from "../../components/ui/Dialog";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 
 export interface KnowledgeQuickAddDialogProps {
@@ -27,20 +27,34 @@ export function KnowledgeQuickAddDialog({
   busy = false,
   error
 }: KnowledgeQuickAddDialogProps) {
+  const formId = useId();
+  const [dirty, setDirty] = useState(false);
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     onSubmit();
   }
 
   return (
-    <Dialog
+    <ContextPanel
       title={title}
       eyebrow="Estimation configuration"
       description="Add this reusable value without leaving the item workspace."
       busy={busy}
       onClose={onClose}
-    >
-      <form className="knowledge-dialog-form" onSubmit={submit} noValidate>
+      width="medium"
+      className="knowledge-context-panel"
+      dirty={dirty}
+      footer={({ requestClose }) => (
+        <div className="knowledge-dialog-actions">
+          <Button type="button" variant="quiet" onClick={requestClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button type="submit" form={formId} busy={busy} busyLabel={busyLabel ?? `Adding ${submitLabel}…`}>
+            {submitLabel}
+          </Button>
+        </div>
+      )}>
+      <form id={formId} className="knowledge-dialog-form" onSubmit={submit} onChangeCapture={() => setDirty(true)} noValidate>
         <div className="knowledge-dialog-body">
           {error ? (
             <InlineMessage tone="error" role="alert">
@@ -49,15 +63,7 @@ export function KnowledgeQuickAddDialog({
           ) : null}
           {children}
         </div>
-        <div className="knowledge-dialog-actions">
-          <Button type="button" variant="quiet" onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <Button type="submit" busy={busy} busyLabel={busyLabel ?? `Adding ${submitLabel}…`}>
-            {submitLabel}
-          </Button>
-        </div>
       </form>
-    </Dialog>
+    </ContextPanel>
   );
 }

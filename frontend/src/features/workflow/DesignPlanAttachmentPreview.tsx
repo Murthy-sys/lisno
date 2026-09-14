@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Eye } from "lucide-react";
 
 import { Button } from "../../components/ui/Button";
-import { Dialog } from "../../components/ui/Dialog";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { downloadDesignPlanReviewAttachment } from "./projectWorkflowApi";
 
 const imageTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -58,13 +58,13 @@ function AttachmentPreview({ roundId, attachmentIndex, filename }: { roundId: st
 
   return <>
     <Button variant="secondary" size="compact" leadingIcon={<Eye />} aria-label={`View ${filename}`} onClick={() => void load()}>View</Button>
-    {open ? <Dialog title={filename} eyebrow="Shared design" onClose={close}>
+    {open ? <ContextPanel title={filename} eyebrow="Shared design" width="wide" onClose={close}>
       <div className="file-preview__modal">
         {busy ? <p role="status">Loading design attachment…</p> : null}
         {error ? <div role="alert"><p>{error}</p><Button variant="secondary" onClick={() => void load()}>Try again</Button></div> : null}
         {preview && imageTypes.has(preview.mimeType) ? <img className="file-preview__modal-image" src={preview.url} alt={`Designer upload: ${filename}`} /> : null}
         {preview?.mimeType === "application/pdf" ? <iframe className="file-preview__modal-document" src={preview.url} title={`Designer upload: ${filename}`} /> : null}
       </div>
-    </Dialog> : null}
+    </ContextPanel> : null}
   </>;
 }

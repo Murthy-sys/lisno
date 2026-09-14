@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  useId,
   useRef,
   useState,
   type FormEvent
@@ -7,7 +8,7 @@ import {
 
 import { ApiError } from "../../api/client";
 import { Button } from "../../components/ui/Button";
-import { Dialog } from "../../components/ui/Dialog";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field, Input, Textarea } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import {
@@ -35,6 +36,7 @@ export function KnowledgeSurfaceEditorDialog({
   onClose,
   onSaved
 }: KnowledgeSurfaceEditorDialogProps) {
+  const formId = useId();
   const queryClient = useQueryClient();
   const [expectedVersion, setExpectedVersion] = useState(existing?.version ?? null);
   const [name, setName] = useState(existing?.name ?? "");
@@ -126,7 +128,7 @@ export function KnowledgeSurfaceEditorDialog({
   }
 
   return (
-    <Dialog
+    <ContextPanel
       title={`${existing ? "Edit" : "Add"} Surface`}
       eyebrow="Estimation configuration"
       description={quickAdd
@@ -134,8 +136,18 @@ export function KnowledgeSurfaceEditorDialog({
         : "Create a reusable Surface for Main Lines and the estimator."}
       onClose={onClose}
       busy={mutation.isPending}
-    >
-      <form className="knowledge-dialog-form knowledge-dialog-form--wide" onSubmit={submit} noValidate>
+      width="medium"
+      className="knowledge-context-panel"
+      dirty={name !== (existing?.name ?? "") || description !== (existing?.description ?? "")}
+      footer={({ requestClose }) => (
+        <div className="knowledge-dialog-actions">
+          <Button type="button" variant="quiet" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
+          <Button type="submit" form={formId} busy={mutation.isPending}>
+            {existing ? "Save changes" : "Add Surface"}
+          </Button>
+        </div>
+      )}>
+      <form id={formId} className="knowledge-dialog-form knowledge-dialog-form--wide" onSubmit={submit} noValidate>
         <div className="knowledge-dialog-body">
           {versionConflict ? (
             <InlineMessage
@@ -195,14 +207,8 @@ export function KnowledgeSurfaceEditorDialog({
           </Field>
 
         </div>
-        <div className="knowledge-dialog-actions">
-          <Button type="button" variant="quiet" onClick={onClose} disabled={mutation.isPending}>Cancel</Button>
-          <Button type="submit" busy={mutation.isPending}>
-            {existing ? "Save changes" : "Add Surface"}
-          </Button>
-        </div>
       </form>
-    </Dialog>
+    </ContextPanel>
   );
 }
 

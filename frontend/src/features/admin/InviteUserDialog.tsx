@@ -10,7 +10,7 @@ import type {
 } from "../../api/types";
 import { useFeedback } from "../../components/feedback/FeedbackProvider";
 import { Button } from "../../components/ui/Button";
-import { Dialog } from "../../components/ui/Dialog";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field, Input, Select } from "../../components/ui/Field";
 import { createUserInvitation, userInvitationKeys } from "./userInvitationsApi";
 import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
@@ -159,14 +159,35 @@ export function InviteUserDialog({ roles, onClose }: InviteUserDialogProps) {
   };
 
   return (
-    <Dialog
+    <ContextPanel
       title="Invite user"
       eyebrow="User administration"
       description="Send a secure invitation to a staff member."
       busy={mutation.isPending}
+      width="medium"
+      dirty={Boolean(values.name || values.email || values.mobile || values.role !== (roles[0] ?? ""))}
+      className="administration-context-panel"
+      footer={({ requestClose }) => (
+        <div className="user-invitation-dialog__actions">
+          <Button
+            variant="quiet"
+            disabled={mutation.isPending}
+            onClick={requestClose}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit" form="admin-user-invitation-form"
+            busy={mutation.isPending}
+            busyLabel="Sending…"
+          >
+            Send invitation
+          </Button>
+        </div>
+      )}
       onClose={onClose}
     >
-      <form className="user-invitation-dialog" onSubmit={submit} noValidate>
+      <form id="admin-user-invitation-form" className="user-invitation-dialog" onSubmit={submit} noValidate>
         <p
           className="sr-only"
           role="status"
@@ -236,23 +257,8 @@ export function InviteUserDialog({ roles, onClose }: InviteUserDialogProps) {
           )}
         </Field>
 
-        <div className="user-invitation-dialog__actions">
-          <Button
-            variant="quiet"
-            disabled={mutation.isPending}
-            onClick={onClose}
-          >
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            busy={mutation.isPending}
-            busyLabel="Sending…"
-          >
-            Send invitation
-          </Button>
-        </div>
+
       </form>
-    </Dialog>
+    </ContextPanel>
   );
 }

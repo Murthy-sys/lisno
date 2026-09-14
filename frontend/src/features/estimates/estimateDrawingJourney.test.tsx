@@ -706,7 +706,7 @@ describe("estimate drawing review journey", () => {
       "Align the flooring boundary with the doorway.",
     )).toBeVisible();
     await user.click(within(history).getByRole("button", {
-      name: "Close Drawing history",
+      name: "Close drawing history",
     }));
     await user.click(within(replacementRow).getByRole("button", {
       name: "More actions for Bedroom Flooring",

@@ -89,7 +89,7 @@ describe("ClientProject", () => {
     const dialog = screen.getByRole("dialog", { name: "Kickoff brief.pdf" });
     expect(within(dialog).getByTitle("Designer’s Internal Kick off document: Kickoff brief.pdf")).toBeVisible();
     expect(documentCard.querySelector("img, iframe")).toBeNull();
-    await user.click(within(dialog).getByRole("button", { name: "Close Kickoff brief.pdf" }));
+    await user.click(within(dialog).getByRole("button", { name: /Close Kickoff brief\.pdf/i }));
     expect(screen.queryByTitle("Designer’s Internal Kick off document: Kickoff brief.pdf")).not.toBeInTheDocument();
     expect((await axe.run(document.body, { iframes: false, rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
     expect(screen.queryByLabelText(/Client action proof/)).not.toBeInTheDocument();

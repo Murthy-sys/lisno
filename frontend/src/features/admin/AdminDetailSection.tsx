@@ -21,6 +21,7 @@ export function AdminDetailSection({
   const [open, setOpen] = useState(defaultOpen);
   const titleId = useId();
   const subtitleId = useId();
+  const bodyId = useId();
 
   return (
     <div
@@ -34,6 +35,7 @@ export function AdminDetailSection({
         id={id}
         className="admin-project-detail__section-trigger"
         aria-expanded={open}
+        aria-controls={bodyId}
         aria-labelledby={titleId}
         aria-describedby={subtitleId}
         onClick={() => setOpen((current) => !current)}
@@ -45,7 +47,7 @@ export function AdminDetailSection({
         </span>
         <ChevronDown className="admin-project-detail__section-chevron" aria-hidden="true" />
       </button>
-      <div className="admin-project-detail__section-body">{children}</div>
+      <div id={bodyId} className="admin-project-detail__section-body" inert={!open} aria-hidden={!open}>{children}</div>
     </div>
   );
 }

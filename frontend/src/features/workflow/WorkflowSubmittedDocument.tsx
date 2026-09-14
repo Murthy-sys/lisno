@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/Button";
-import { Dialog } from "../../components/ui/Dialog";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { DownloadButton } from "../../components/ui/DownloadButton";
 import { downloadWorkflowActionProof, type DesignStageOperational } from "./projectWorkflowApi";
 
@@ -85,6 +85,6 @@ function SubmittedDocumentPreview({ projectId, document, onReady }: {
     </div>
     {busy ? <p role="status">Loading the Designer’s document…</p> : null}
     {error ? <div className="workflow-submitted-document__error"><p role="alert">{error}</p><Button variant="secondary" size="compact" onClick={() => setAttempt((value) => value + 1)}>Retry document</Button></div> : null}
-    {open && preview ? <Dialog title={document.filename} eyebrow="Internal Kick off document" onClose={() => setOpen(false)}>{documentContent()}</Dialog> : null}
+    {open && preview ? <ContextPanel title={document.filename} eyebrow="Internal Kick off document" width="wide" onClose={() => setOpen(false)}>{documentContent()}</ContextPanel> : null}
   </section>;
 }

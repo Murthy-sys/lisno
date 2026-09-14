@@ -3,13 +3,13 @@
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-surface);
-  box-shadow: var(--shadow-soft);
+  box-shadow: none;
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-4);
+  gap: var(--space-3);
   justify-content: space-between;
   min-inline-size: 0;
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-3) var(--space-4);
 }
 
 .estimate-delivery__state {

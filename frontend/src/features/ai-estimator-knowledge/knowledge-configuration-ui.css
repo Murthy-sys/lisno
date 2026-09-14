@@ -1,8 +1,8 @@
 /* Shared presentation for every Configuration route and its own dialogs. */
 .ui-app-shell[data-role] .knowledge-page,
-.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) {
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) {
   --knowledge-control-edge: color-mix(in srgb, var(--color-border-strong) 72%, var(--color-text));
-  --knowledge-card-padding: var(--space-5);
+  --knowledge-card-padding: var(--space-4);
 }
 
 .ui-app-shell[data-role] .knowledge-page {
@@ -17,8 +17,8 @@
 
 /* Keep action sizing independent of the length of a neighbouring field. */
 .ui-app-shell[data-role] .knowledge-page .ui-button,
-.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-button {
-  min-block-size: 44px;
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button {
+  min-block-size: var(--control-height);
   max-inline-size: 100%;
   padding: var(--space-2) var(--space-4);
   border-width: 1px;
@@ -32,19 +32,19 @@
 }
 
 .ui-app-shell[data-role] .knowledge-page .ui-button:not(.ui-button--full-width),
-.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-button:not(.ui-button--full-width) {
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button:not(.ui-button--full-width) {
   inline-size: fit-content;
 }
 
 .ui-app-shell[data-role] .knowledge-page .ui-button:is(.ui-button--secondary, .ui-button--quiet),
-.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-button:is(.ui-button--secondary, .ui-button--quiet) {
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button:is(.ui-button--secondary, .ui-button--quiet) {
   border-color: var(--knowledge-control-edge);
   background: var(--role-deck, var(--color-surface));
   color: var(--role-ink, var(--color-text));
 }
 
 .ui-app-shell[data-role] .knowledge-page .ui-button:is(.ui-button--secondary, .ui-button--quiet):not(:disabled):hover,
-.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-button:is(.ui-button--secondary, .ui-button--quiet):not(:disabled):hover {
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button:is(.ui-button--secondary, .ui-button--quiet):not(:disabled):hover {
   border-color: var(--role-ink-muted, var(--color-text-muted));
   background: var(--role-deck-tint, var(--color-surface-subtle));
   color: var(--role-ink, var(--color-text));
@@ -53,24 +53,24 @@
 }
 
 .ui-app-shell[data-role] .knowledge-page .ui-button--primary,
-.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-button--primary {
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button--primary {
   border-color: transparent;
 }
 
 .ui-app-shell[data-role] .knowledge-page :is(.ui-button, .ui-icon-button):focus-visible,
-.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) :is(.ui-button, .ui-icon-button):focus-visible {
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) :is(.ui-button, .ui-icon-button):focus-visible {
   outline: 2px solid var(--focus-ring-color);
   outline-offset: 3px;
 }
 
 .ui-app-shell[data-role] .knowledge-page .ui-icon-button,
 .ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__delete,
-.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-icon-button {
-  flex: 0 0 44px;
-  inline-size: 44px;
-  block-size: 44px;
-  min-inline-size: 44px;
-  min-block-size: 44px;
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-icon-button {
+  flex: 0 0 var(--control-height);
+  inline-size: var(--control-height);
+  block-size: var(--control-height);
+  min-inline-size: var(--control-height);
+  min-block-size: var(--control-height);
   padding: var(--space-2);
   border: 1px solid var(--role-line-strong, var(--color-border-strong));
   border-radius: var(--radius-control);
@@ -83,10 +83,10 @@
 
 /* Native checkbox, radio and switch dimensions remain independent of fields. */
 .ui-app-shell[data-role] .knowledge-page .ui-control,
-.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-control {
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-control {
   min-inline-size: 0;
   max-inline-size: 100%;
-  min-block-size: 44px;
+  min-block-size: var(--control-height);
   border-radius: var(--radius-field);
   font-size: var(--text-sm);
   line-height: 1.5;
@@ -95,14 +95,14 @@
 /* App styles can register the components layer before the base reset. Keep
    native dropdown edges and text/chevron spacing independent of that order. */
 .ui-app-shell[data-role] .knowledge-page .ui-select,
-.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-select {
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-select {
   border-width: 1px;
   border-style: solid;
   padding-inline: var(--space-3) var(--space-8);
 }
 
 .ui-app-shell[data-role] .knowledge-page .ui-select:is([multiple], [size]:not([size="1"])),
-.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-select:is([multiple], [size]:not([size="1"])) {
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-select:is([multiple], [size]:not([size="1"])) {
   padding: var(--space-2) var(--space-3);
 }
 
@@ -152,7 +152,7 @@
 .ui-app-shell[data-role] .knowledge-page :is(.knowledge-section-heading, .knowledge-repeater__header, .knowledge-budget-alterations__heading, .knowledge-basket-quality__intro, .knowledge-mode-calculation__header) :is(h2, h3) {
   margin: 0;
   font-size: 1.125rem;
-  font-weight: 650;
+  font-weight: 600;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -175,7 +175,7 @@
 }
 
 .ui-app-shell[data-role] .knowledge-page :is(.knowledge-repeater__list, .knowledge-budget-alterations__rules, .knowledge-mode-panel, .knowledge-section-editor) {
-  gap: var(--space-5);
+  gap: var(--space-4);
 }
 
 .ui-app-shell[data-role] .knowledge-page :is(.knowledge-row-actions, .knowledge-quality-actions, .knowledge-mode-calculation__actions, .knowledge-pmc-scope__actions, .knowledge-mode-description__actions, .knowledge-budget-rule__temporary) {
@@ -188,12 +188,12 @@
 .ui-app-shell[data-role] .knowledge-page :is(.knowledge-repeater__header, .knowledge-budget-alterations__heading, .knowledge-mode-calculation__actions, .knowledge-pmc-scope__actions, .knowledge-mode-description__actions, .knowledge-quality-actions) > .ui-button {
   flex: 0 1 auto;
   inline-size: fit-content;
-  min-block-size: 44px;
+  min-block-size: var(--control-height);
 }
 
 .ui-app-shell[data-role] .knowledge-page .knowledge-mode-configuration__mode-options label,
 .ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__items label {
-  min-block-size: 44px;
+  min-block-size: var(--control-height);
   gap: var(--space-2);
   font-size: var(--text-sm);
   line-height: 1.5;
@@ -226,13 +226,63 @@
 }
 
 .ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__add :is(.ui-control, .ui-button) {
-  min-block-size: 44px;
+  min-block-size: var(--control-height);
   padding: var(--space-2) var(--space-3);
 }
 
+.ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__list {
+  container: scope-checklist / inline-size;
+  padding: var(--space-2);
+}
+
+.knowledge-pmc-scope__items {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 6.5rem), 1fr));
+  gap: 4px 6px;
+}
+
+@container scope-checklist (min-width: 27.125rem) {
+  .knowledge-pmc-scope__items {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.knowledge-pmc-scope__item {
+  gap: 4px;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__items label {
+  min-block-size: 28px;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__items .ui-checkbox {
+  flex: 0 0 14px;
+  inline-size: 14px;
+  block-size: 14px;
+  min-inline-size: 14px;
+  min-block-size: 14px;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__delete {
+  flex: 0 0 24px;
+  inline-size: 24px;
+  block-size: 24px;
+  min-inline-size: 24px;
+  min-block-size: 24px;
+  padding: 4px;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__add .ui-button {
+  min-block-size: 28px;
+  padding: 4px var(--space-2);
+  font-size: 11px;
+}
+
 .ui-app-shell[data-role] .knowledge-page .knowledge-mode-calculation__control {
-  block-size: 44px;
-  min-block-size: 44px;
+  block-size: var(--control-height);
+  min-block-size: var(--control-height);
 }
 
 .ui-app-shell[data-role] .knowledge-page .knowledge-specification-field .knowledge-mode-field__definition {
@@ -268,7 +318,7 @@
 }
 
 /* Portalled dialogs are identified by Configuration content, not all modals. */
-.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) {
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) {
   --role-line: var(--color-border);
   --role-line-strong: var(--color-border-strong);
   --role-ink: var(--color-text);
@@ -277,18 +327,18 @@
   --role-deck-tint: var(--color-surface-subtle);
 }
 
-.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .modal__header .eyebrow {
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .modal__header .eyebrow {
   color: var(--color-text-muted);
 }
 
-.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-button.ui-button--primary {
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button.ui-button--primary {
   border-color: transparent;
   background: var(--color-primary);
   color: var(--color-surface);
   box-shadow: none;
 }
 
-.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-button.ui-button--primary:not(:disabled):hover {
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button.ui-button--primary:not(:disabled):hover {
   background: var(--color-brand-midnight-raised);
 }
 
@@ -316,7 +366,7 @@
 
 @media (max-width: 480px) {
   .ui-app-shell[data-role] .knowledge-page,
-  .ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) {
+  :is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) {
     --knowledge-card-padding: var(--space-4);
   }
 
@@ -361,9 +411,68 @@
 }
 
 .ui-app-shell[data-role] .knowledge-page :is(.knowledge-section-tab, .knowledge-master-tab) {
-  min-block-size: 44px;
+  min-block-size: var(--control-height);
 }
 
 .ui-app-shell[data-role] .knowledge-page :is(.knowledge-section-tab, .knowledge-master-tab)[aria-selected="true"] {
   color: var(--role-ink, var(--color-text));
+}
+
+/* The drawer owns scroll and chrome; feature forms only lay out their contents. */
+.knowledge-context-panel .knowledge-dialog-body,
+.knowledge-context-panel .knowledge-quality-import__body {
+  padding: 0;
+  gap: var(--space-4);
+  overflow: visible;
+}
+
+.knowledge-context-panel .knowledge-dialog-actions,
+.knowledge-context-panel .knowledge-quality-import__footer {
+  width: 100%;
+  padding: 0;
+  gap: var(--space-2);
+  border: 0;
+  background: transparent;
+}
+
+.knowledge-context-panel .knowledge-dialog-body > p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font: var(--type-body);
+}
+
+.knowledge-context-panel .knowledge-quality-import {
+  overflow: visible;
+}
+
+.knowledge-context-panel .knowledge-mode-simulator {
+  min-inline-size: 0;
+}
+
+.knowledge-context-panel .knowledge-dialog-actions > .ui-button {
+  flex: 0 1 auto;
+}
+
+@media (max-width: 767px) {
+  .ui-app-shell[data-role] .knowledge-page .ui-control,
+  .knowledge-context-panel .ui-control,
+  .knowledge-context-panel .knowledge-mode-calculation__control {
+    font-size: 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .knowledge-context-panel .knowledge-form-grid,
+  .knowledge-context-panel .knowledge-mode-simulator__fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .knowledge-context-panel .knowledge-dialog-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .knowledge-context-panel .knowledge-dialog-actions > .ui-button {
+    inline-size: 100%;
+  }
 }

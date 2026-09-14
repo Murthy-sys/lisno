@@ -1,4 +1,5 @@
 import { Calculator, Clock } from "lucide-react";
+import { Button } from "../../components/ui/Button";
 
 export function ContactAndEstimateCard({
   phone,
@@ -20,8 +21,8 @@ export function ContactAndEstimateCard({
   buttonDisabled?: boolean;
 }) {
   return (
-    <div className="flex w-full flex-col gap-3 rounded-2xl border border-[var(--color-primary)]/12 bg-[var(--color-bg)] p-5">
-      <h2 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-[var(--color-primary)]">
+    <div className="lead-contact-card">
+      <h2 className="lead-contact-card__heading">
         <Calculator size={14} aria-hidden="true" />
         Estimate
       </h2>
@@ -39,17 +40,16 @@ export function ContactAndEstimateCard({
       <div className="h-px w-full bg-[var(--color-primary)]/12" role="separator" aria-orientation="horizontal" />
 
       <div className="flex w-fit flex-col items-end gap-2">
-        <p className="pt-4 text-sm font-normal text-[var(--color-text-strong)]">
+        <p className="text-sm font-normal text-[var(--color-text-strong)]">
           Configure rooms, dimensions and scope. Follow-ups remain available independently.
         </p>
-        <button
+        <Button
           type="button"
           onClick={onContinue}
           disabled={buttonDisabled}
-          className="mt-2 w-fit rounded-xl bg-[var(--color-primary)] px-5 py-3 text-[length:var(--text-text2-size)] font-bold text-[var(--color-bg)] disabled:opacity-60"
         >
           {buttonLabel}
-        </button>
+        </Button>
       </div>
     </div>
   );

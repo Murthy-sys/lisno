@@ -163,7 +163,7 @@ export function DashboardProjectDrilldown({
 
       {noMatches ? <Surface as="section" className="dashboard-no-match"><p>No projects match these filters.</p><Button variant="secondary" onClick={() => { setSearch(""); onFiltersChange({ module: filters.module, sort: "risk_desc", limit: 20, offset: 0 }); }}>Clear filters</Button></Surface> : (
         <>
-          <div className="dashboard-table-wrap dashboard-project-table">
+          <div className="dashboard-table-wrap dashboard-project-table" role="region" aria-label={`${humanize(tab)} project records`} tabIndex={0}>
             <table><caption>{humanize(tab)} project drill-down</caption><thead><tr><th>Project</th><th>Status</th><th>{humanize(tab)} details</th><th>Planned deadline</th><th>Risk</th><th>Action</th></tr></thead><tbody>{page.items.map((row) => <ProjectRow key={row.projectId} tab={tab} row={row} dataQuality={page.dataQuality} />)}</tbody></table>
           </div>
           <ol className="dashboard-mobile-rows">{page.items.map((row) => <ProjectRow key={row.projectId} tab={tab} row={row} dataQuality={page.dataQuality} mobile />)}</ol>

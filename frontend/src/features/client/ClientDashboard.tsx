@@ -1,23 +1,40 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import type { ClientDesignVersion, ClientProjectSummary } from "../../api/types";
+import { ApiError } from "../../api/client";
 import { AsyncState } from "../../components/ui/AsyncState";
+import { Button } from "../../components/ui/Button";
 import "../../styles/client-dashboard.css";
 import { getClientLatestApprovedVersions, getClientProjectSummaries, clientKeys } from "./clientApi";
 import { EstimateReviewPanel } from "../estimates/EstimateReviewPanel";
 import { ClientWorkflowTaskSummary } from "./ClientWorkflowTaskSummary";
+import { ClientProjectQuickView } from "./ClientProjectQuickView";
 
 export function ClientDashboard() {
   const [searchParams] = useSearchParams();
+  const [selectedProjectId, setSelectedProjectId] = useState<string>();
+  const projectHeadingRef = useRef<HTMLHeadingElement>(null);
   const projectsQuery = useQuery({ queryKey: clientKeys.projects, queryFn: getClientProjectSummaries });
   const latestQuery = useQuery({ queryKey: clientKeys.latestVersions, queryFn: getClientLatestApprovedVersions });
-  const projects = projectsQuery.data ?? [];
+  // A denial retires this snapshot, including when a later retry fails transiently.
+  const [authorizedProjects, setAuthorizedProjects] = useState(() => projectsQuery.isSuccess ? projectsQuery.data : undefined);
+  const canRetainProjects = projectsQuery.isError && isTransientReadError(projectsQuery.error) &&
+    Boolean(authorizedProjects) && authorizedProjects === projectsQuery.data;
+
+  useEffect(() => {
+    if (projectsQuery.isSuccess) setAuthorizedProjects(projectsQuery.data);
+    else if (projectsQuery.isError && !isTransientReadError(projectsQuery.error)) setAuthorizedProjects(undefined);
+    if (projectsQuery.isError && !canRetainProjects) setSelectedProjectId(undefined);
+  }, [projectsQuery.isSuccess, projectsQuery.isError, projectsQuery.error, projectsQuery.data, canRetainProjects]);
+
+  const projects = projectsQuery.isSuccess || canRetainProjects ? projectsQuery.data ?? [] : [];
+  const latestVersions = latestQuery.isSuccess ? latestQuery.data : [];
   if (projectsQuery.isPending) return <AsyncState state="loading" message="Loading your project plans…" />;
-  if (projectsQuery.isError) return <AsyncState state="error" message="We couldn't load your project plans." actionLabel="Try again" onAction={() => void projectsQuery.refetch()} />;
-  const approvedPlans = (latestQuery.data ?? []).filter(
+  if (projectsQuery.isError && !canRetainProjects) return <AsyncState state="error" message="We couldn't load your project plans." actionLabel="Try again" onAction={() => void projectsQuery.refetch()} />;
+  const approvedPlans = latestVersions.filter(
     (version) => version.approvalStatus === "approved" && version.clientVisible
   ).length;
   const averageProgress = projects.length
@@ -36,12 +53,14 @@ export function ClientDashboard() {
         <span>{projects.length === 1 ? "project shared" : "projects shared"}</span>
       </span>
     </header>
+    {projectsQuery.isError ? <AsyncState state="error" message="Your project list could not be refreshed. Previously loaded projects are shown." actionLabel="Refresh projects" onAction={() => void projectsQuery.refetch()} /> : null}
     <section className="client-dashboard__overview" aria-label="Client overview">
       <dl>
         <div><dt>Shared projects</dt><dd>{projects.length}</dd></div>
         <div><dt>Average progress</dt><dd>{averageProgress}%</dd></div>
-        <div><dt>Approved plans</dt><dd>{latestQuery.isPending ? "—" : approvedPlans}</dd></div>
+        <div><dt>Approved plans</dt><dd aria-label={latestQuery.isError ? "Unavailable" : latestQuery.isPending ? "Loading" : undefined}>{latestQuery.isPending || latestQuery.isError ? "—" : approvedPlans}</dd></div>
       </dl>
+      {latestQuery.isError ? <div className="client-dashboard__notice" role="status"><span>Approved plan information is unavailable.</span><Button variant="quiet" size="compact" disabled={latestQuery.isFetching} onClick={() => void latestQuery.refetch()}>Retry approved plans</Button></div> : null}
     </section>
     <section className="client-dashboard__estimates" aria-label="Estimate review">
       <EstimateReviewPanel selectedEstimateId={searchParams.get("estimate") ?? undefined} />
@@ -54,15 +73,16 @@ export function ClientDashboard() {
     */}
     {projects.length ? <section className="client-dashboard__projects" aria-labelledby="client-projects-title">
       <header className="client-dashboard__section-heading">
-        <div><p className="eyebrow">Project workspace</p><h2 id="client-projects-title">Projects</h2></div>
+        <div><p className="eyebrow">Project workspace</p><h2 ref={projectHeadingRef} tabIndex={-1} id="client-projects-title">Projects</h2></div>
         <span>{projects.length} total</span>
       </header>
-      <div className="client-project-grid">{projects.map((project) => <ClientProjectCard key={project.id} project={project} latest={latestForProject(latestQuery.data ?? [], project.id)} loading={latestQuery.isPending} failed={latestQuery.isError} onRetry={() => void latestQuery.refetch()} />)}</div>
+      <div className="client-project-grid">{projects.map((project) => <ClientProjectCard key={project.id} project={project} latest={latestForProject(latestVersions, project.id)} loading={latestQuery.isPending} failed={latestQuery.isError} onRetry={() => void latestQuery.refetch()} onQuickView={() => setSelectedProjectId(project.id)} />)}</div>
     </section> : null}
+    {selectedProjectId ? <ClientProjectQuickView key={selectedProjectId} project={projects.find((project) => project.id === selectedProjectId)} stale={projectsQuery.isError} latest={latestForProject(latestVersions, selectedProjectId)} loading={latestQuery.isPending} failed={latestQuery.isError} onRetry={() => void latestQuery.refetch()} onClose={() => setSelectedProjectId(undefined)} fallbackFocusRef={projectHeadingRef} /> : null}
   </section>;
 }
 
-function ClientProjectCard({ project, latest, loading, failed, onRetry }: { project: ClientProjectSummary; latest: ClientDesignVersion | undefined; loading: boolean; failed: boolean; onRetry: () => void }) {
+function ClientProjectCard({ project, latest, loading, failed, onRetry, onQuickView }: { project: ClientProjectSummary; latest: ClientDesignVersion | undefined; loading: boolean; failed: boolean; onRetry: () => void; onQuickView: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const detailsId = `client-project-${project.id}-details`;
   const headingId = `client-project-${project.id}-heading`;
@@ -86,17 +106,24 @@ function ClientProjectCard({ project, latest, loading, failed, onRetry }: { proj
       </button>
     </div>
 
+    <div className="client-project-card__actions"><Button variant="secondary" size="compact" aria-label={`Project details: ${project.name}`} onClick={onQuickView}>Project details</Button></div>
     <ClientWorkflowTaskSummary projectId={project.id} projectName={project.name} />
     {expanded ? <div id={detailsId} className="client-project-card__details">
       <p>Expected completion: {formatDate(project.plannedEndAt)}</p>
       <div className="client-project-card__update"><span>Latest approved update</span>{loading ? <strong>Loading approved plans…</strong> : failed ? <><strong>Latest approved update unavailable.</strong><button type="button" className="button button--secondary" onClick={onRetry}>Retry approved updates</button></> : latest ? <strong>{latest.originalFilename}</strong> : <strong>No approved plan available yet.</strong>}</div>
-      <Link className="button button--primary" to={`/client/projects/${project.id}`}>Open project</Link>
+      <Link className="button button--primary" to={`/client/projects/${encodeURIComponent(project.id)}`}>Open project</Link>
     </div> : null}
   </article>;
 }
 
 function latestForProject(versions: ClientDesignVersion[], projectId: string) {
   return versions.find((version) => version.projectId === projectId && version.approvalStatus === "approved" && version.clientVisible);
+}
+
+function isTransientReadError(error: Error) {
+  return error instanceof ApiError
+    ? error.status >= 500 || error.status === 408 || error.status === 429
+    : error instanceof TypeError;
 }
 
 const date = new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });

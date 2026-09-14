@@ -5,6 +5,8 @@ import { useState } from "react";
 import { ApiError } from "../../api/client";
 import type { Role } from "../../api/types";
 import { useAuth } from "../../auth/AuthProvider";
+import { Button } from "../../components/ui/Button";
+import { Select, Textarea } from "../../components/ui/Field";
 import { DownloadButton } from "../../components/ui/DownloadButton";
 import {
   assignEstimateDesigner,
@@ -196,11 +198,11 @@ function EstimateReviewCard({
     label: estimateBuilderSections.find((section) => section.id === id)?.label ?? id
   }));
   const reviewControls = actionable ? <>
-    {role === "design_manager" ? <label>Assign approval to<select value={selectedDesignerId} onChange={(event) => onDesignerChange(event.target.value)}><option value="">Choose designer</option>{designers.map((designer) => <option value={designer.id} key={designer.id}>{designer.name}</option>)}</select></label> : <label>Review note<textarea value={note} onChange={(event) => onNoteChange(event.target.value)} placeholder={isClient ? "Optional note for the Lisno team" : "Add approval context or requested corrections"} /></label>}
+    {role === "design_manager" ? <label>Assign approval to<Select disabled={actionPending} value={selectedDesignerId} onChange={(event) => onDesignerChange(event.target.value)}><option value="">Choose designer</option>{designers.map((designer) => <option value={designer.id} key={designer.id}>{designer.name}</option>)}</Select></label> : <label>Review note<Textarea disabled={actionPending} value={note} onChange={(event) => onNoteChange(event.target.value)} placeholder={isClient ? "Optional note for the Lisno team" : "Add approval context or requested corrections"} /></label>}
     <div className="estimate-review-card__actions">
       {role === "design_manager"
-        ? <button className="button button--primary" type="button" disabled={!selectedDesignerId || actionPending} onClick={() => onAction("assign")}>Assign designer</button>
-        : <><button className="button button--secondary" type="button" disabled={actionPending} onClick={() => onAction("changes")}>Request changes</button><button className="button button--primary" type="button" disabled={actionPending} onClick={() => onAction("approve")}>{isClient ? "Approve estimate" : "Approve for client"}</button></>}
+        ? <Button type="button" disabled={!selectedDesignerId || actionPending} onClick={() => onAction("assign")}>Assign designer</Button>
+        : <><Button variant="secondary" type="button" disabled={actionPending} onClick={() => onAction("changes")}>Request changes</Button><Button type="button" disabled={actionPending} onClick={() => onAction("approve")}>{isClient ? "Approve estimate" : "Approve for client"}</Button></>}
     </div>
     {actionError ? <p role="alert">{actionError instanceof ApiError ? actionError.message : "That action could not be completed. Refresh and try again."}</p> : null}
   </> : null;

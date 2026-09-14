@@ -29,7 +29,7 @@ export function ScopeSection({
     <section
       ref={sectionRef as (el: HTMLElement | null) => void}
       data-section-id={id}
-      className="overflow-hidden rounded-2xl border border-[var(--color-primary)]/12 bg-[var(--color-bg)]"
+      className="estimate-scope-section overflow-hidden rounded-xl border border-[var(--color-primary)]/12 bg-[var(--color-bg)]"
     >
       <button
         type="button"
@@ -37,14 +37,14 @@ export function ScopeSection({
         aria-controls={panelId}
         aria-label={expanded ? `Collapse ${label}` : `Expand ${label}`}
         onClick={onToggleExpand}
-        className="flex w-full flex-col gap-2 bg-[var(--color-primary)]/6 px-4 py-3 text-left shadow-none outline-none focus:!shadow-none focus:outline-none focus:ring-0 focus-visible:!shadow-none focus-visible:outline-none sm:flex-row sm:items-center sm:gap-3"
+        className="flex w-full flex-col gap-2 bg-[var(--color-primary)]/6 px-4 py-2 text-left shadow-none sm:flex-row sm:items-center sm:gap-3"
       >
         <div className="flex min-w-0 items-center gap-2 sm:flex-1">
           <Icon size={18} className={expanded ? "shrink-0 text-[var(--color-primary)]" : "shrink-0 text-[var(--color-primary)]/70"} aria-hidden="true" />
-          <span className="truncate font-bold text-[var(--color-primary)]">{label}</span>
+          <span className="truncate font-semibold text-[var(--color-primary)]">{label}</span>
         </div>
         <div className="flex shrink-0 items-center justify-between gap-3 sm:justify-end">
-          <span className={`shrink-0 text-sm font-semibold ${subtotal > 0 ? "text-[var(--color-primary)]" : "text-[var(--color-primary)]/40"}`}>
+          <span className={`shrink-0 text-sm font-semibold ${subtotal > 0 ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>
             {money(subtotal)}
           </span>
           <ChevronDown size={18} className={`shrink-0 text-[var(--color-primary)] transition-transform ${expanded ? "rotate-180" : ""}`} aria-hidden="true" />
@@ -53,7 +53,7 @@ export function ScopeSection({
       <div
         className={`grid transition-[grid-template-rows] duration-300 ease-in-out ${expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
       >
-        <div id={panelId} aria-hidden={!expanded} className="overflow-hidden">
+        <div id={panelId} inert={!expanded} aria-hidden={!expanded} className="overflow-hidden">
           {children}
         </div>
       </div>

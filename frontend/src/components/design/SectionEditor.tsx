@@ -85,7 +85,7 @@ export function SectionEditor({
       ) : null}
       {section.history?.length ? (
         <section aria-label={`Revision history for ${section.label}`}>
-          <h4>Review history</h4>
+          <h3>Review history</h3>
           <ol>
             {section.history.slice().reverse().map((revision) => (
               <li key={revision.id}>

@@ -158,6 +158,27 @@ function CachedReview({ data }: { data: DesignSectionReviewData }) {
 }
 
 describe("DesignSectionReview", () => {
+  it("keeps a drafted change request through cancellation and restores its section trigger after discard", async () => {
+    const user = userEvent.setup();
+    const api = installApi();
+    renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" />);
+    const trigger = await screen.findByRole("button", { name: "Request changes for Front elevation" });
+    await user.click(trigger);
+    const panel = screen.getByRole("dialog", { name: "Request changes for Front elevation" });
+    expect(panel).toHaveClass("ui-drawer--contextual");
+    const comment = within(panel).getByRole("textbox", { name: "Modification comment" });
+    await user.type(comment, "Keep the entrance aligned with the shared site plan.");
+    await user.click(within(panel).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("alertdialog", { name: "Discard unsaved changes?" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(comment).toHaveValue("Keep the entrance aligned with the shared site plan.");
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(api.mock.calls.filter(([input]) => apiRequestPath(input).endsWith("/decision"))).toHaveLength(0);
+  });
+
   it("keeps populated client reviews collapsed until opened and preserves review actions", async () => {
     tokenStorage.set("client-token");
     vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:section-preview"), revokeObjectURL: vi.fn() });
@@ -389,7 +410,7 @@ describe("DesignSectionReview", () => {
 
     await user.click(await screen.findByRole("button", { name: "Request changes for Front elevation" }));
     const dialog = screen.getByRole("dialog", { name: "Request changes for Front elevation" });
-    await user.type(within(dialog).getByLabelText("Modification comment"), "Raise the roof line.");
+    await user.type(within(dialog).getByRole("textbox", { name: "Modification comment" }), "Raise the roof line.");
     await user.click(within(dialog).getByRole("button", { name: "Send request" }));
 
     expect(await screen.findByRole("status", { name: "Design review updates" })).toHaveTextContent("Review saved. Now showing Site plan, the next plan awaiting review.");
@@ -403,7 +424,7 @@ describe("DesignSectionReview", () => {
 
     await user.click(await screen.findByRole("button", { name: "Request changes for Front elevation" }));
     const dialog = screen.getByRole("dialog", { name: "Request changes for Front elevation" });
-    const comment = within(dialog).getByLabelText("Modification comment");
+    const comment = within(dialog).getByRole("textbox", { name: "Modification comment" });
     await user.type(comment, "Include the full roof line.");
     await user.click(within(dialog).getByRole("button", { name: "Send request" }));
 
@@ -526,11 +547,11 @@ describe("DesignSectionReview", () => {
     renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" />);
     await user.click(await screen.findByRole("button", { name: "Request changes for Front elevation" }));
     const dialog = screen.getByRole("dialog", { name: "Request changes for Front elevation" });
-    const comment = within(dialog).getByLabelText("Modification comment");
+    const comment = within(dialog).getByRole("textbox", { name: "Modification comment" });
     expect(comment).toHaveFocus();
     await user.click(within(dialog).getByRole("button", { name: "Send request" }));
     expect(comment).toHaveAttribute("aria-invalid", "true");
-    expect(comment).toHaveAccessibleDescription("Explain what the designer should modify.");
+    expect(comment).toHaveAccessibleDescription("0/1000 characters Explain what the designer should modify.");
     await user.type(comment, "Include the full roof line.");
     await user.click(within(dialog).getByRole("button", { name: "Send request" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Already reviewed.");

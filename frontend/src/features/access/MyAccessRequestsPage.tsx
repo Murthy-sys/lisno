@@ -13,6 +13,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { useFeedback } from "../../components/feedback/FeedbackProvider";
 import { Button } from "../../components/ui/Button";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
 import { StatusBadge } from "../../components/ui/StatusBadge";
@@ -51,6 +52,7 @@ export function MyAccessRequestsPage() {
   const [pagination, setPagination] = useState<PaginationInput>({ limit: PAGE_SIZE, offset: 0 });
   const [dialogModule, setDialogModule] = useState<RequestableProjectModule | null>(null);
   const [initialProjectId, setInitialProjectId] = useState("");
+  const [summaryId, setSummaryId] = useState<string | null>(null);
   const prefillHandled = useRef(false);
   const role = auth.user?.role;
   const eligibleModules = role ? REQUESTABLE_MODULES_BY_ROLE[role] : [];
@@ -100,6 +102,9 @@ export function MyAccessRequestsPage() {
   });
 
   const page = ownQuery.data;
+  const summary = !ownQuery.isError && !ownQuery.isPlaceholderData
+    ? page?.items.find((request) => request.id === summaryId)
+    : undefined;
   return (
     <section className="access-administration access-requests" aria-labelledby="my-access-requests-title">
       <PageHeader
@@ -120,7 +125,7 @@ export function MyAccessRequestsPage() {
         <PageState state="empty" message="You have no access requests." />
       ) : (
         <Surface as="section" padding="compact" className="access-administration__directory" aria-label="My access request history" aria-busy={ownQuery.isFetching || undefined}>
-          <div className="access-administration__table-scroll">
+          <div className="access-administration__table-scroll" role="region" aria-label="Own access request records" tabIndex={0}>
             <table className="access-administration__table access-requests__table">
               <thead><tr><th scope="col">Project ID</th><th scope="col">Module</th><th scope="col">Status</th><th scope="col">Reason</th><th scope="col">Created</th><th scope="col">Updated</th><th scope="col">Reviewed</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>
@@ -134,6 +139,8 @@ export function MyAccessRequestsPage() {
                     <td><time dateTime={request.updatedAt}>{date.format(new Date(request.updatedAt))}</time></td>
                     <td>{request.reviewedAt ? <time dateTime={request.reviewedAt}>{date.format(new Date(request.reviewedAt))}</time> : <span aria-label="Not reviewed">—</span>}</td>
                     <td>
+                      <div className="access-requests__row-actions">
+                      <Button size="compact" variant="quiet" disabled={ownQuery.isPlaceholderData} onClick={() => setSummaryId(request.id)}>Details <span className="sr-only">request {request.id}</span></Button>
                       {request.status === "pending" && role !== "super_admin" && hasFrontendPermission(auth.authorization, "access_request.self.cancel") ? (
                         <Button
                           size="compact"
@@ -144,6 +151,7 @@ export function MyAccessRequestsPage() {
                           onClick={() => cancelMutation.mutate({ id: request.id, version: request.version })}
                         >Cancel request</Button>
                       ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -162,6 +170,21 @@ export function MyAccessRequestsPage() {
 
       {dialogModule && role ? (
         <AccessRequestDialog role={role} module={dialogModule} initialProjectId={initialProjectId} onClose={() => { setDialogModule(null); setInitialProjectId(""); }} />
+      ) : null}
+      {summaryId ? (
+        <ContextPanel key={summaryId} title="My request details" eyebrow="Project access" className="administration-context-panel" onClose={() => setSummaryId(null)}>
+          {summary ? (
+            <dl className="administration-summary">
+              <div><dt>Project ID</dt><dd>{summary.projectId}</dd></div>
+              <div><dt>Module</dt><dd>{summary.module}</dd></div>
+              <div><dt>Status</dt><dd>{labelStatus(summary.status)}</dd></div>
+              <div><dt>Reason</dt><dd>{summary.reason}</dd></div>
+              {summary.decisionReason ? <div><dt>Decision reason</dt><dd>{summary.decisionReason}</dd></div> : null}
+              <div><dt>Request ID</dt><dd>{summary.id}</dd></div>
+              <div><dt>Updated</dt><dd>{date.format(new Date(summary.updatedAt))}</dd></div>
+            </dl>
+          ) : <PageState state="empty" message="This request is no longer available in your current history view." />}
+        </ContextPanel>
       ) : null}
     </section>
   );

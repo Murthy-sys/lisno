@@ -12,6 +12,8 @@ import type {
 import { CropEditor, cropIsValid } from "../../components/design/CropEditor";
 import { EstimateDrawingPreviewDialog } from "../../components/design/EstimateDrawingPreviewDialog";
 import { Button } from "../../components/ui/Button";
+import { ContextPanel } from "../../components/ui/ContextPanel";
+import { Input, Select, FileInput, Checkbox } from "../../components/ui/Field";
 import { Dialog } from "../../components/ui/Dialog";
 import { ProgressBar } from "../../components/ui/ProgressBar";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
@@ -610,10 +612,10 @@ export function EstimateDesignUploads({
         </Dialog>
       ) : null}
       {selection && mode === "preview" ? <PreviewDialog selection={selection} onClose={closeDialog} /> : null}
-      {!readOnly && selection && mode === "correct" ? <CorrectionDialog selection={selection} defaultVerified={verifyOnOpen} page={workspace.data?.pages.find((page) => page.id === selection.revision.sourcePageId) ?? workspace.data?.pages.find((page) => page.id === selection.drawing.sourcePageId)} busy={correct.isPending} error={correct.isError ? "The correction was not saved." : ""} onSubmit={(input) => correct.mutate({ ...selection, input })} onClose={closeDialog} /> : null}
-      {!readOnly && selection && mode === "assign" ? <EstimateItemAssignmentDialog selection={selection} rooms={rooms} items={items} busy={assign.isPending} error={assign.isError ? "The estimate item was not assigned." : ""} onSubmit={(input) => assign.mutate({ ...selection, input })} onClose={closeDialog} /> : null}
-      {selection && mode === "history" ? <HistoryDialog revisions={(workspace.data?.revisions ?? []).filter((revision) => revision.drawingId === selection.drawing.id)} onClose={closeDialog} /> : null}
-      {!readOnly && selection && mode === "replace" ? <ReplacementDialog file={replacement} busy={replace.isPending} error={replace.isError ? "The replacement was not uploaded." : ""} onChange={setReplacement} onSubmit={() => replacement && replace.mutate({ ...selection, file: replacement })} onClose={closeDialog} /> : null}
+      {!readOnly && selection && mode === "correct" ? <CorrectionDialog key={`${selection.drawing.id}:${selection.revision.id}`} selection={selection} defaultVerified={verifyOnOpen} page={workspace.data?.pages.find((page) => page.id === selection.revision.sourcePageId) ?? workspace.data?.pages.find((page) => page.id === selection.drawing.sourcePageId)} busy={correct.isPending} error={correct.isError ? "The correction was not saved." : ""} onSubmit={(input) => correct.mutate({ ...selection, input })} onClose={closeDialog} /> : null}
+      {!readOnly && selection && mode === "assign" ? <EstimateItemAssignmentDialog key={`${selection.drawing.id}:${selection.revision.id}`} selection={selection} rooms={rooms} items={items} busy={assign.isPending} error={assign.isError ? "The estimate item was not assigned." : ""} onSubmit={(input) => assign.mutate({ ...selection, input })} onClose={closeDialog} /> : null}
+      {selection && mode === "history" ? <HistoryDialog key={selection.drawing.id} revisions={(workspace.data?.revisions ?? []).filter((revision) => revision.drawingId === selection.drawing.id)} onClose={closeDialog} /> : null}
+      {!readOnly && selection && mode === "replace" ? <ReplacementDialog key={selection.drawing.id} file={replacement} busy={replace.isPending} error={replace.isError ? "The replacement was not uploaded." : ""} onChange={setReplacement} onSubmit={() => replacement && replace.mutate({ ...selection, file: replacement })} onClose={closeDialog} /> : null}
       {!readOnly && manualOpen && workspace.data?.pages.length ? <ManualDrawingDialog
         pages={workspace.data.pages}
         rooms={rooms}
@@ -646,27 +648,65 @@ function PreviewDialog({ selection, onClose }: { selection: DrawingSelection; on
 }
 
 function CorrectionDialog({ selection, defaultVerified, page, busy, error, onSubmit, onClose }: { selection: DrawingSelection; defaultVerified: boolean; page?: { width: number; height: number }; busy: boolean; error: string; onSubmit: (input: DrawingChange) => void; onClose: () => void }) {
+  const formId = useId();
   const [title, setTitle] = useState(selection.drawing.displayTitle);
   const [verified, setVerified] = useState(selection.drawing.verified || defaultVerified);
   const [crop, setCrop] = useState(selection.revision.crop);
   const [validation, setValidation] = useState("");
-  return <Dialog title={`${defaultVerified ? "Verify" : "Correct"} ${selection.drawing.displayTitle}`} eyebrow="Drawing correction" onClose={onClose} busy={busy}><form className="estimate-drawing-correction" onSubmit={(event) => { event.preventDefault(); if (!title.trim()) { setValidation("Provide a drawing title."); return; } if (!page || !cropIsWithinPage(crop, page)) { setValidation("Crop boundaries must remain inside the source page."); return; } onSubmit({ displayTitle: title, crop, verified }); }}><label>Drawing title<input value={title} onChange={(event) => setTitle(event.target.value)} /></label><fieldset><legend>Crop boundaries</legend><div className="estimate-drawing-correction__crop">{(["x", "y", "width", "height"] as const).map((key) => <label key={key}>{key}<input aria-label={`Crop ${key}`} type="number" min={key === "width" || key === "height" ? 1 : 0} value={crop[key]} onChange={(event) => setCrop((current) => ({ ...current, [key]: Number(event.target.value) || 0 }))} /></label>)}</div></fieldset><label className="estimate-drawing-correction__verify"><input type="checkbox" checked={verified} onChange={(event) => setVerified(event.target.checked)} /> Mark drawing verified</label>{validation || error ? <p role="alert">{validation || error}</p> : null}<div className="estimate-drawing-correction__actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button type="submit" className="button button--primary" disabled={busy}>{busy ? "Saving…" : defaultVerified ? "Verify drawing" : "Save drawing"}</button></div></form></Dialog>;
+  const dirty = title !== selection.drawing.displayTitle || verified !== (selection.drawing.verified || defaultVerified) || (["x", "y", "width", "height"] as const).some((key) => crop[key] !== selection.revision.crop[key]);
+  return <ContextPanel
+    title={`${defaultVerified ? "Verify" : "Correct"} ${selection.drawing.displayTitle}`}
+    eyebrow="Drawing correction" onClose={onClose} busy={busy} dirty={dirty}
+    footer={({ requestClose }) => <><Button variant="secondary" disabled={busy} onClick={requestClose}>Cancel</Button><Button type="submit" form={formId} disabled={busy}>{busy ? "Saving…" : defaultVerified ? "Verify drawing" : "Save drawing"}</Button></>}
+  >
+    <form id={formId} className="estimate-drawing-correction" onSubmit={(event) => {
+      event.preventDefault();
+      if (!title.trim()) { setValidation("Provide a drawing title."); return; }
+      if (!page || !cropIsWithinPage(crop, page)) { setValidation("Crop boundaries must remain inside the source page."); return; }
+      onSubmit({ displayTitle: title, crop, verified });
+    }}>
+      <label>Drawing title<Input disabled={busy} value={title} onChange={(event) => setTitle(event.target.value)} /></label>
+      <fieldset><legend>Crop boundaries</legend><div className="estimate-drawing-correction__crop">{(["x", "y", "width", "height"] as const).map((key) => <label key={key}>{key}<Input aria-label={`Crop ${key}`} type="number" disabled={busy} min={key === "width" || key === "height" ? 1 : 0} value={crop[key]} onChange={(event) => setCrop((current) => ({ ...current, [key]: Number(event.target.value) || 0 }))} /></label>)}</div></fieldset>
+      <label className="estimate-drawing-correction__verify"><Checkbox disabled={busy} checked={verified} onChange={(event) => setVerified(event.target.checked)} /> Mark drawing verified</label>
+      {validation || error ? <p role="alert">{validation || error}</p> : null}
+    </form>
+  </ContextPanel>;
 }
 
 function EstimateItemAssignmentDialog({ selection, rooms, items, busy, error, onSubmit, onClose }: { selection: DrawingSelection; rooms: EstimateDesignPlacementOption[]; items: EstimateDesignItemOption[]; busy: boolean; error: string; onSubmit: (input: { roomId: string; catalogueId: string }) => void; onClose: () => void }) {
+  const formId = useId();
   const [roomId, setRoomId] = useState(selection.drawing.roomId ?? "");
   const [catalogueId, setCatalogueId] = useState(selection.drawing.catalogueId ?? "");
+  const dirty = roomId !== (selection.drawing.roomId ?? "") || catalogueId !== (selection.drawing.catalogueId ?? "");
   const roomItems = items.filter((item) => item.roomId === roomId);
   const selected = roomItems.find((item) => item.catalogueId === catalogueId);
-  return <Dialog title={`Assign ${selection.drawing.displayTitle}`} eyebrow="Exact estimate item" onClose={onClose} busy={busy}><form className="estimate-drawing-assignment" onSubmit={(event) => { event.preventDefault(); if (roomId && selected) onSubmit({ roomId, catalogueId }); }}><label>Room<select value={roomId} onChange={(event) => { setRoomId(event.target.value); setCatalogueId(""); }}><option value="">Choose room</option>{rooms.map((room) => <option value={room.id} key={room.id}>{room.label}</option>)}</select></label><label>Exact estimate item<select value={catalogueId} disabled={!roomId} onChange={(event) => setCatalogueId(event.target.value)}><option value="">Choose included item</option>{roomItems.map((item) => <option value={item.catalogueId} key={`${item.roomId}:${item.catalogueId}`}>{item.label} · {item.scopeLabel}</option>)}</select></label>{error ? <p role="alert">{error}</p> : null}<div className="estimate-drawing-correction__actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button type="submit" className="button button--primary" disabled={!selected || busy}>{busy ? "Assigning…" : "Assign item"}</button></div></form></Dialog>;
+  return <ContextPanel title={`Assign ${selection.drawing.displayTitle}`} eyebrow="Exact estimate item" onClose={onClose} busy={busy} dirty={dirty}
+    footer={({ requestClose }) => <><Button variant="secondary" disabled={busy} onClick={requestClose}>Cancel</Button><Button type="submit" form={formId} disabled={!selected || busy}>{busy ? "Assigning…" : "Assign item"}</Button></>}
+  >
+    <form id={formId} className="estimate-drawing-assignment" onSubmit={(event) => { event.preventDefault(); if (roomId && selected) onSubmit({ roomId, catalogueId }); }}>
+      <label>Room<Select disabled={busy} value={roomId} onChange={(event) => { setRoomId(event.target.value); setCatalogueId(""); }}><option value="">Choose room</option>{rooms.map((room) => <option value={room.id} key={room.id}>{room.label}</option>)}</Select></label>
+      <label>Exact estimate item<Select value={catalogueId} disabled={!roomId || busy} onChange={(event) => setCatalogueId(event.target.value)}><option value="">Choose included item</option>{roomItems.map((item) => <option value={item.catalogueId} key={`${item.roomId}:${item.catalogueId}`}>{item.label} · {item.scopeLabel}</option>)}</Select></label>
+      {error ? <p role="alert">{error}</p> : null}
+    </form>
+  </ContextPanel>;
 }
 
 function HistoryDialog({ revisions, onClose }: { revisions: EstimateDesignRevision[]; onClose: () => void }) {
-  return <Dialog title="Drawing history" eyebrow="Immutable revisions" onClose={onClose}><ol className="estimate-drawing-history">{revisions.slice().reverse().map((revision) => <li key={revision.id}><strong>Revision {revision.revisionNumber} · {revision.reviewStatus.replaceAll("_", " ")}</strong>{revision.changeSummary ? <span>{revision.changeSummary}</span> : null}</li>)}</ol></Dialog>;
+  return <ContextPanel title="Drawing history" eyebrow="Immutable revisions" onClose={onClose}>
+    {revisions.length ? <ol className="estimate-drawing-history">{revisions.slice().reverse().map((revision) => <li key={revision.id}><strong>Revision {revision.revisionNumber} · {revision.reviewStatus.replaceAll("_", " ")}</strong>{revision.changeSummary ? <span>{revision.changeSummary}</span> : null}</li>)}</ol> : <p>No drawing revisions available.</p>}
+  </ContextPanel>;
 }
 
 function ReplacementDialog({ file, busy, error, onChange, onSubmit, onClose }: { file?: File; busy: boolean; error: string; onChange: (file: File | undefined) => void; onSubmit: () => void; onClose: () => void }) {
-  return <Dialog title="Upload replacement" eyebrow="Client-requested change" onClose={onClose} busy={busy}><form className="estimate-drawing-replacement" onSubmit={(event) => { event.preventDefault(); onSubmit(); }}><label>Replacement drawing file<input aria-label="Replacement drawing file" type="file" accept="application/pdf,image/png,image/jpeg,image/webp,image/tiff,image/heic,image/heif,.heif" onChange={(event) => onChange(event.target.files?.[0])} /></label>{error ? <p role="alert">{error}</p> : null}<div><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button type="submit" className="button button--primary" disabled={!file || busy}>{busy ? "Uploading…" : "Upload replacement"}</button></div></form></Dialog>;
+  const formId = useId();
+  return <ContextPanel title="Upload replacement" eyebrow="Client-requested change" onClose={onClose} busy={busy} dirty={Boolean(file)}
+    footer={({ requestClose }) => <><Button variant="secondary" disabled={busy} onClick={requestClose}>Cancel</Button><Button type="submit" form={formId} disabled={!file || busy}>{busy ? "Uploading…" : "Upload replacement"}</Button></>}
+  >
+    <form id={formId} className="estimate-drawing-replacement" onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
+      <label>Replacement drawing file<FileInput aria-label="Replacement drawing file" disabled={busy} accept="application/pdf,image/png,image/jpeg,image/webp,image/tiff,image/heic,image/heif,.heif" onChange={(event) => onChange(event.target.files?.[0])} /></label>
+      {error ? <p role="alert">{error}</p> : null}
+    </form>
+  </ContextPanel>;
 }
 
 function ManualDrawingDialog({

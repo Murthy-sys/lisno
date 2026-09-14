@@ -6,6 +6,7 @@ import { KpiBreakdown } from "./KpiBreakdown";
 import { KpiScore } from "./KpiScore";
 import { SelectMenu } from "../ui/SelectMenu";
 import { Surface } from "../ui/Surface";
+import { Button } from "../ui/Button";
 import { kpiQueryOptions, reviewPeriod } from "../../features/designer/designerApi";
 
 const periodOptions = [
@@ -25,7 +26,14 @@ export function KpiPanel({ userId }: { userId: string }) {
   const period = reviewPeriod(periodOffset);
   const kpiQuery = useQuery(kpiQueryOptions(userId, period));
 
-  if (kpiQuery.isPending || kpiQuery.isError) return null;
+  if (kpiQuery.isPending || kpiQuery.isError) return (
+    <Surface as="section" className="designer-kpi" aria-label="Personal performance">
+      <div className="designer-kpi__identity"><h2>KPI overview</h2></div>
+      {kpiQuery.isPending ? <p role="status">Loading performance…</p> : (
+        <div role="alert"><p>Performance could not be loaded.</p><Button variant="secondary" onClick={() => void kpiQuery.refetch()}>Retry performance</Button></div>
+      )}
+    </Surface>
+  );
   const kpi = kpiQuery.data;
 
   return (

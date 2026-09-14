@@ -127,6 +127,7 @@ function renderElement(
   isShared = false
 ) {
   const shared = {
+    role: "img" as const,
     "aria-label": annotationLabel(element),
     "data-annotation-id": element.id,
     "data-selected": selected ? "true" : "false",

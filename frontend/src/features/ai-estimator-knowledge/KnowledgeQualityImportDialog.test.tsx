@@ -61,7 +61,7 @@ describe("Main Basket quality Excel preview", () => {
     expect(choose.tagName).toBe("BUTTON");
     expect(input).toHaveAttribute("tabindex", "-1");
     const openPicker = vi.spyOn(input, "click").mockImplementation(() => {});
-    await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Close Import quality checks" })).toHaveFocus());
+    await waitFor(() => expect(choose).toHaveFocus());
     choose.focus();
     expect(choose).toHaveFocus();
     await user.keyboard("{Enter}");

@@ -412,6 +412,36 @@ describe("ProcurementProjectPage", () => {
     expect(screen.queryByRole("button", { name: /Carpentry/i })).not.toBeInTheDocument();
   });
 
+  it("preserves a purchase draft through close confirmation and resets it for a different selected item", async () => {
+    installProcurementSession();
+    const user = userEvent.setup();
+    renderApp(["/procurement/projects/project-one"]);
+    await user.click(await screen.findByRole("button", { name: /Carpentry/i }));
+    await user.click(screen.getByRole("button", { name: "Record purchase for Bedside table in Bedroom" }));
+    let panel = screen.getByRole("dialog", { name: "Record purchase for Bedside table" });
+    const receipt = new File(["image"], "bedside-receipt.png", { type: "image/png" });
+    await user.type(within(panel).getByLabelText(/Actual price/), "1400.50");
+    await user.type(within(panel).getByLabelText(/Description/), "Bedroom tables");
+    await user.upload(within(panel).getByLabelText(/Receipt or supporting document/), receipt);
+    await expectNoAxeViolations();
+    await user.click(within(panel).getByRole("button", { name: "Cancel" }));
+    let confirmation = screen.getByRole("alertdialog", { name: "Discard unsaved changes?" });
+    await user.click(within(confirmation).getByRole("button", { name: "Keep editing" }));
+    panel = screen.getByRole("dialog", { name: "Record purchase for Bedside table" });
+    expect(within(panel).getByLabelText(/Actual price/)).toHaveValue("1400.50");
+    expect((within(panel).getByLabelText(/Receipt or supporting document/) as HTMLInputElement).files?.[0]).toBe(receipt);
+    await user.keyboard("{Escape}");
+    confirmation = screen.getByRole("alertdialog", { name: "Discard unsaved changes?" });
+    await user.click(within(confirmation).getByRole("button", { name: "Discard changes" }));
+    expect(screen.getByRole("button", { name: "Record purchase for Bedside table in Bedroom" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Record purchase for Wardrobe plywood and laminate in Living Room" }));
+    panel = screen.getByRole("dialog", { name: "Record purchase for Wardrobe plywood and laminate" });
+    expect(within(panel).getByLabelText(/Actual price/)).toHaveValue("");
+    expect(within(panel).getByLabelText(/Description/)).toHaveValue("");
+    expect(within(panel).queryByText("bedside-receipt.png")).not.toBeInTheDocument();
+    expect(within(panel).getByText("₹2,500.00")).toBeVisible();
+  });
+
   it("validates the purchase, reuses idempotency on an unchanged network retry, and refreshes the workspace after success", async () => {
     installProcurementSession();
     FakeXMLHttpRequest.instances = [];
@@ -428,9 +458,9 @@ describe("ProcurementProjectPage", () => {
 
     const dialog = screen.getByRole("dialog", { name: "Record purchase for Bedside table" });
     expect(within(dialog).getByRole("button", { name: "Cancel" }))
-      .toHaveClass("ui-button--destructive-outline");
+      .toHaveClass("ui-button--secondary");
     expect(within(dialog).getByRole("button", { name: "Record purchase" }))
-      .toHaveClass("ui-button--success");
+      .toHaveClass("ui-button--primary");
     const amountField = within(dialog).getByLabelText(/Actual price/);
     expect(amountField).toHaveAttribute("type", "text");
     expect(amountField).toHaveAttribute("inputmode", "decimal");
@@ -453,6 +483,12 @@ describe("ProcurementProjectPage", () => {
     await user.click(within(dialog).getByRole("button", { name: "Record purchase" }));
 
     const first = FakeXMLHttpRequest.instances[0]!;
+    expect(amount).toBeDisabled();
+    expect(fileInput).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Record purchase for Bedside table" })).toBeVisible();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(first.method).toBe("POST");
     expect(first.url).toBe("/api/v1/procurement/projects/project-one/expenses");
     expect(first.sentBody).toBeInstanceOf(FormData);

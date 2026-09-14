@@ -7,6 +7,7 @@ import {
   getLatestTaskEvent
 } from "../../features/designer/designerApi";
 import { ProgressBar } from "../ui/ProgressBar";
+import { Button } from "../ui/Button";
 import { StatusBadge } from "../ui/StatusBadge";
 import { RiskBadge } from "./RiskBadge";
 
@@ -84,7 +85,7 @@ export function TaskRow({
           <strong>{task.progress}% complete</strong>
           <span>Version {task.version}</span>
         </div>
-        <ProgressBar value={task.progress} />
+        <ProgressBar value={task.progress} label={`${task.title}: ${task.progress}% complete`} />
       </div>
 
       <dl className="task-row__facts">
@@ -124,24 +125,24 @@ export function TaskRow({
         <p className="task-row__read-only">{readOnlyReason}</p>
       ) : (
         <div className="task-row__actions">
-          <button
-            type="button"
-            className="button button--secondary"
+          <Button
+            variant="secondary"
+            size="compact"
+            leadingIcon={<PencilLine />}
             onClick={onUpdate}
             aria-label={`Update ${task.title}`}
           >
-            <PencilLine aria-hidden="true" />
             Update task
-          </button>
-          <button
-            type="button"
-            className="button button--secondary"
+          </Button>
+          <Button
+            variant="secondary"
+            size="compact"
+            leadingIcon={<FileUp />}
             onClick={onUpload}
             aria-label={`Upload design for ${task.title}`}
           >
-            <FileUp aria-hidden="true" />
             Upload design
-          </button>
+          </Button>
         </div>
       )}
     </article>

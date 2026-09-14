@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Input } from "../../components/ui/Field";
 import { ChevronDown, ChevronUp, X, type LucideIcon } from "lucide-react";
 
 export type RoomDimensionItem = {
@@ -52,7 +53,7 @@ export function RoomDimensionsAccordion({
         </button>
       </div>
 
-      <div className="w-full divide-y divide-[var(--color-primary)]/8 rounded-2xl border border-[var(--color-primary)]/12">
+      <div className="w-full divide-y divide-[var(--color-primary)]/8 rounded-xl border border-[var(--color-primary)]/12">
         {rooms.map((room) => {
           const isOpen = expanded.has(room.id);
           const panelId = `room-dimensions-${room.id}`;
@@ -61,7 +62,7 @@ export function RoomDimensionsAccordion({
 
           return (
             <div key={room.id}>
-              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2">
                 <button
                   type="button"
                   aria-expanded={isOpen}
@@ -70,10 +71,10 @@ export function RoomDimensionsAccordion({
                   className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
                 >
                   <Icon size={16} className="shrink-0 text-[var(--color-primary)]/60" aria-hidden="true" />
-                  <span className="truncate font-bold text-[var(--color-primary)]">{room.label}</span>
+                  <span className="truncate font-semibold text-[var(--color-primary)]">{room.label}</span>
                 </button>
                 <div className="flex shrink-0 items-center gap-3">
-                  <span className={area !== null ? "text-[length:var(--text-text1-size)] [font-weight:var(--text-text2)] text-[var(--color-primary)]" : "text-[length:var(--text-text1-size)] [font-weight:var(--text-text2)] text-[var(--color-primary)]/40"}>
+                  <span className={area !== null ? "text-[length:var(--text-text1-size)] [font-weight:var(--text-text2)] text-[var(--color-primary)]" : "text-[length:var(--text-text1-size)] [font-weight:var(--text-text2)] text-[var(--color-text-muted)]"}>
                     {area !== null ? `${area} sqft` : "Not set"}
                   </span>
                   <button
@@ -95,25 +96,25 @@ export function RoomDimensionsAccordion({
                 <div id={panelId} className="flex flex-wrap items-end gap-3 px-4 pb-4">
                   <label className="flex min-w-[6rem] flex-1 flex-col gap-1">
                     <span className="text-xs text-[var(--color-primary)]/60">Length</span>
-                    <input
+                    <Input
                       type="number"
                       aria-label={`${room.label} length`}
                       value={room.length ?? ""}
                       onChange={(event) => onDimensionChange(room.id, { length: Number(event.target.value) || null })}
                       placeholder="L ft"
-                      className="w-full rounded-md border border-[var(--color-primary)]/20 bg-[var(--color-bg)] px-2.5 py-1.5 text-sm text-[var(--color-primary)] shadow-none outline-none focus:border-[var(--color-primary)] focus:!shadow-none focus:outline-none focus:ring-0 focus-visible:!shadow-none focus-visible:outline-none"
+                      className="w-full rounded-md border border-[var(--color-primary)]/20 bg-[var(--color-bg)] px-2.5 py-1.5 text-sm text-[var(--color-primary)] shadow-none focus:border-[var(--color-primary)]"
                     />
                   </label>
                   <span className="pb-1.5 text-[var(--color-primary)]/60">×</span>
                   <label className="flex min-w-[6rem] flex-1 flex-col gap-1">
                     <span className="text-xs text-[var(--color-primary)]/60">Width</span>
-                    <input
+                    <Input
                       type="number"
                       aria-label={`${room.label} width`}
                       value={room.width ?? ""}
                       onChange={(event) => onDimensionChange(room.id, { width: Number(event.target.value) || null })}
                       placeholder="W ft"
-                      className="w-full rounded-md border border-[var(--color-primary)]/20 bg-[var(--color-bg)] px-2.5 py-1.5 text-sm text-[var(--color-primary)] shadow-none outline-none focus:border-[var(--color-primary)] focus:!shadow-none focus:outline-none focus:ring-0 focus-visible:!shadow-none focus-visible:outline-none"
+                      className="w-full rounded-md border border-[var(--color-primary)]/20 bg-[var(--color-bg)] px-2.5 py-1.5 text-sm text-[var(--color-primary)] shadow-none focus:border-[var(--color-primary)]"
                     />
                   </label>
                 </div>

@@ -81,6 +81,22 @@ function renderDialog({
   };
 }
 
+it("guards an initiation draft on Cancel and keeps the entered values when editing resumes", async () => {
+  server.use(http.get("/api/v1/admin/estimators", () => HttpResponse.json(estimatorPage())));
+  const user = userEvent.setup();
+  const { onClose } = renderDialog();
+  const panel = screen.getByRole("dialog", { name: "Initiate project" });
+  await user.type(within(panel).getByLabelText(requiredLabel("Client name")), "Draft client");
+  await user.click(within(panel).getByRole("button", { name: "Cancel" }));
+  expect(screen.getByRole("alertdialog", { name: "Discard unsaved changes?" })).toBeVisible();
+  expect(onClose).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Keep editing" }));
+  expect(within(panel).getByLabelText(requiredLabel("Client name"))).toHaveValue("Draft client");
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  expect(onClose).toHaveBeenCalledOnce();
+});
+
 async function selectEstimator(user: ReturnType<typeof userEvent.setup>) {
   const combobox = screen.getByRole("combobox", { name: "Sales" });
   await user.click(combobox);

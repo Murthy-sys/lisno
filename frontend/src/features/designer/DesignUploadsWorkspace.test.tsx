@@ -1,10 +1,12 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { renderWithQuery } from "../../test/render";
 import type { DesignSection } from "../../api/types";
 import { DesignUploadsWorkspace } from "./DesignUploadsWorkspace";
+import { designerKeys } from "./designerApi";
 
 const version = {
   id: "version-1",
@@ -164,11 +166,41 @@ function installApi(status = "designer_review", mutation?: "network" | "conflict
 }
 
 describe("DesignUploadsWorkspace", () => {
+  it("shows a retryable sections error and preserves loaded sections after a failed refresh", async () => {
+    installApi();
+    const installedFetch = vi.mocked(fetch).getMockImplementation()!;
+    let failSections = true;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input) === "/api/v1/design-versions/version-1/sections" && (!init?.method || init.method === "GET") && failSections) {
+        return Response.json({ error: { code: "UNAVAILABLE", message: "Sections are temporarily unavailable." } }, { status: 503 });
+      }
+      return installedFetch(input, init);
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(<QueryClientProvider client={client}><DesignUploadsWorkspace projectId="project-1" /></QueryClientProvider>);
+    expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't load the extracted sections.");
+    expect(screen.queryByLabelText("Section label")).not.toBeInTheDocument();
+    failSections = false;
+    await userEvent.click(screen.getByRole("button", { name: "Retry sections" }));
+    expect(await screen.findByLabelText("Section label")).toHaveValue("Elevation");
+
+    failSections = true;
+    await act(() => client.refetchQueries({ queryKey: designerKeys.designSections("version-1") }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The last loaded sections remain visible.");
+    expect(screen.getByLabelText("Section label")).toHaveValue("Elevation");
+    failSections = false;
+    await userEvent.click(screen.getByRole("button", { name: "Retry sections" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    view.unmount();
+    client.clear();
+  });
+
   it("shows terminal review history to the designer as read-only", async () => {
     installApi("submitted");
     renderWithQuery(<DesignUploadsWorkspace projectId="project-1" />);
     expect(await screen.findByText(/Sections submitted to the client/i)).toBeVisible();
     expect(screen.getByText(/Show the full roof line/i)).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Review history", level: 3 })).toBeVisible();
     expect(screen.getByLabelText("Section label")).toBeDisabled();
   });
 

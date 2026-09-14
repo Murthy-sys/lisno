@@ -3,6 +3,31 @@
   min-width: 0;
 }
 
-.ui-dialog:has(.project-structure-form) .ui-dialog__header .eyebrow {
-  color: var(--color-text-muted);
+.project-panel-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  padding: 0;
+}
+
+.project-panel-form > .form-alert {
+  grid-column: 1 / -1;
+}
+
+.project-panel-form .field {
+  min-inline-size: 0;
+}
+
+.project-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  inline-size: 100%;
+}
+
+@media (max-width: 600px) {
+  .project-panel-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

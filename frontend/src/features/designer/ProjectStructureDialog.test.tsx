@@ -69,6 +69,20 @@ describe("ProjectStructureDialog stage choices", () => {
     expect(name).toHaveValue("Existing furniture at client's apartment");
   });
 
+  it("retains unsaved structure fields on cancel until discard is confirmed", async () => {
+    const user = userEvent.setup();
+    const { onClose } = renderStageDialog();
+    await user.type(screen.getByRole("textbox", { name: "Stage name" }), " review");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("alertdialog", { name: "Discard unsaved changes?" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(screen.getByRole("textbox", { name: "Stage name" })).toHaveValue("Internal Kick off review");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it.each(canonicalStages.slice(4))("submits %s with its exact stage name and refreshes the project workflow", async (type, name) => {
     let requestBody: unknown;
     server.use(http.post("/api/v1/floors/floor-ground/stages", async ({ request }) => {

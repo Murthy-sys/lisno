@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError, apiClient } from "../../api/client";
@@ -8,7 +8,10 @@ import type {
   Project,
   PublicUser
 } from "../../api/types";
-import { Dialog } from "../../components/ui/Dialog";
+import { ContextPanel } from "../../components/ui/ContextPanel";
+import { Button } from "../../components/ui/Button";
+import { Input } from "../../components/ui/Field";
+import "./projectStructureDialog.css";
 import { SearchCombobox } from "../../components/ui/SearchCombobox";
 import { designerKeys, searchManagers } from "./designerApi";
 
@@ -45,6 +48,7 @@ export function ProjectCreateDialog({
   onClose: () => void;
   onCreated: (project: Project) => void;
 }) {
+  const formId = useId();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<ProjectForm>(() => initialForm(user.id));
   const [error, setError] = useState<string | null>(null);
@@ -152,13 +156,21 @@ export function ProjectCreateDialog({
   };
 
   return (
-    <Dialog
+    <ContextPanel
+      width="wide"
+      dirty={JSON.stringify(form) !== JSON.stringify(initialForm(user.id)) || Boolean(selectedManager) || Boolean(managerQuery)}
+      footer={({ requestClose }) => (
+        <div className="project-panel-actions">
+          <Button variant="secondary" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
+          <Button type="submit" form={formId} busy={mutation.isPending} busyLabel="Creating…">Create project</Button>
+        </div>
+      )}
       title="Create project"
       description="Set the client, assigned team, location, and delivery window. The six-stage design workflow is included."
       onClose={onClose}
       busy={mutation.isPending}
     >
-      <form className="modal-form project-form" onSubmit={submit}>
+      <form id={formId} className="project-form project-panel-form" onSubmit={submit}>
         {error ? <div className="form-alert" role="alert">{error}</div> : null}
         <FormField
           label="Project name"
@@ -271,25 +283,8 @@ export function ProjectCreateDialog({
           inputRef={(element) => { controlRefs.current.plannedEndAt = element; }}
         />
 
-        <div className="modal-form__actions project-form__actions">
-          <button
-            type="button"
-            className="button button--secondary"
-            onClick={onClose}
-            disabled={mutation.isPending}
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            className="button button--primary"
-            disabled={mutation.isPending}
-          >
-            {mutation.isPending ? "Creating…" : "Create project"}
-          </button>
-        </div>
       </form>
-    </Dialog>
+    </ContextPanel>
   );
 }
 
@@ -318,7 +313,7 @@ function FormField({
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
-      <input
+      <Input
         id={id}
         type={type}
         name={label.replace(/\s+([a-z])/g, (_, letter: string) => letter.toUpperCase()).replace(/^./, (letter) => letter.toLowerCase())}

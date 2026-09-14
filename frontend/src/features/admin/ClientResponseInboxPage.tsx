@@ -10,6 +10,7 @@ import type {
 import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { Button } from "../../components/ui/Button";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
 import { StatusBadge, type StatusTone } from "../../components/ui/StatusBadge";
@@ -95,12 +96,16 @@ export function ClientResponseInboxPage() {
     number | null
   >(null);
   const [selected, setSelected] = useState<SelectedDecision | null>(null);
+  const [summaryId, setSummaryId] = useState<string | null>(null);
   const taskQuery = useQuery({
     queryKey: estimateClientResponseKeys.list(status, pagination),
     queryFn: () => getEstimateClientResponses(status, pagination),
     placeholderData: keepPreviousData
   });
   const page = taskQuery.data;
+  const summary = !taskQuery.isError && !taskQuery.isPlaceholderData
+    ? page?.items.find((task) => task.id === summaryId)
+    : undefined;
   const currentTask = page?.items.find(
     (item) => item.id === selected?.task.id
   );
@@ -288,6 +293,9 @@ export function ClientResponseInboxPage() {
                       </td>
                       <td>
                         <div className="client-responses__row-actions">
+                          <Button size="compact" variant="quiet" disabled={taskQuery.isPlaceholderData} onClick={() => setSummaryId(task.id)}>
+                            Summary <span className="sr-only">{task.client.name} response</span>
+                          </Button>
                           <Link
                             className="ui-button ui-button--secondary ui-button--compact"
                             to={`/admin/client-responses/${encodeURIComponent(task.id)}`}
@@ -375,6 +383,28 @@ export function ClientResponseInboxPage() {
           onClose={() => setSelected(null)}
           returnFocusRef={headingRef}
         />
+      ) : null}
+      {summaryId ? (
+        <ContextPanel
+          key={summaryId}
+          title="Client response summary"
+          eyebrow="Estimate review"
+          className="administration-context-panel"
+          onClose={() => setSummaryId(null)}
+          footer={summary ? <Link className="ui-button ui-button--primary" to={`/admin/client-responses/${encodeURIComponent(summary.id)}`}>Open full review</Link> : undefined}
+        >
+          {summary ? (
+            <dl className="administration-summary">
+              <div><dt>Client</dt><dd>{summary.client.name}</dd></div>
+              <div><dt>Project</dt><dd>{summary.project?.name ?? "Project unavailable"}</dd></div>
+              <div><dt>Estimate version</dt><dd>{summary.estimate.version}</dd></div>
+              <div><dt>Status</dt><dd>{statusPresentation[summary.status].label}</dd></div>
+              <div><dt>Delivery</dt><dd>{deliveryLabel(summary.deliveryStatus)}</dd></div>
+              <div><dt>Created</dt><dd>{dateTime.format(new Date(summary.createdAt))}</dd></div>
+              <div><dt>Response ID</dt><dd>{summary.id}</dd></div>
+            </dl>
+          ) : <PageState state="empty" message="This response is no longer available in the current inbox view." />}
+        </ContextPanel>
       ) : null}
     </section>
   );

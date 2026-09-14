@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 
 import { Button } from "../../components/ui/Button";
-import { Dialog } from "../../components/ui/Dialog";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field, Input, Radio } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import type { KnowledgeModeCalculationUom } from "./KnowledgeModeCalculationEditor";
@@ -150,9 +150,17 @@ function InHouseSimulator({ settings, uom, onClose, onResult }: {
     setDrafts((current) => ({ ...current, [cost]: { ...current[cost], [field]: value } }));
   }
 
-  return <Dialog title="Test In-house total" eyebrow="Labor + Material simulator"
-    description="Use one quantity and markup choice for both costs. All simulator changes are temporary." onClose={onClose}>
-    <form className="knowledge-mode-simulator knowledge-in-house-simulator" ref={formRef} onSubmit={(event) => void calculate(event)} noValidate>
+  return <ContextPanel title="Test In-house total" eyebrow="Labor + Material simulator"
+    description="Use one quantity and markup choice for both costs. All simulator changes are temporary." onClose={onClose}
+      width="wide"
+      className="knowledge-context-panel"
+      footer={({ requestClose }) => (
+        <div className="knowledge-dialog-actions">
+        <Button variant="quiet" onClick={requestClose}>Close</Button>
+        <Button type="submit" form={`${id}-form`} variant="primary" busy={calculating} busyLabel="Calculating…">Calculate total</Button>
+      </div>
+      )}>
+    <form id={`${id}-form`} className="knowledge-mode-simulator knowledge-in-house-simulator" ref={formRef} onSubmit={(event) => void calculate(event)} noValidate>
       <div className="knowledge-dialog-body">
         <div className="knowledge-mode-simulator__fields">
           <Field id={`${id}-uom`} label="UOM">{(props) => <Input {...props} value={uom.label} readOnly />}</Field>
@@ -175,10 +183,7 @@ function InHouseSimulator({ settings, uom, onClose, onResult }: {
         {error ? <InlineMessage tone="error" title="In-house total unavailable" role="alert">{error}</InlineMessage> : null}
         {result ? <InHouseResult result={result} uomLabel={uom.label} /> : null}
       </div>
-      <div className="knowledge-dialog-actions">
-        <Button variant="quiet" onClick={onClose}>Close</Button>
-        <Button type="submit" variant="primary" busy={calculating} busyLabel="Calculating…">Calculate total</Button>
-      </div>
+
     </form>
-  </Dialog>;
+  </ContextPanel>;
 }

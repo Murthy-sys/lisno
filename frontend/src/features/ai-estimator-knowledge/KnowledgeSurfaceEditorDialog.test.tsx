@@ -58,6 +58,31 @@ beforeEach(() => {
 });
 
 describe("KnowledgeSurfaceEditorDialog", () => {
+  it("keeps a failed edit through panel dismissal and only discards after an explicit decision", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.updateKnowledgeSurface).mockRejectedValueOnce(new Error("Save unavailable"));
+    const { onClose } = renderDialog({ existing: surface("surface-wall", "Wall surface", "Paint") });
+    const panel = screen.getByRole("dialog", { name: "Edit Surface" });
+    const examples = within(panel).getByRole("textbox", { name: "Examples / components" });
+    await user.clear(examples);
+    await user.type(examples, "Locally edited examples");
+    const save = within(panel).getByRole<HTMLButtonElement>("button", { name: "Save changes" });
+    expect(save.form).toBe(examples.closest("form"));
+    expect(save.closest(".ui-drawer__footer")).toBeInTheDocument();
+    await user.click(save);
+    expect(await within(panel).findByRole("alert")).toHaveTextContent("Save unavailable");
+    await user.click(within(panel).getByRole("button", { name: "Cancel" }));
+    const confirmation = screen.getByRole("alertdialog", { name: "Discard unsaved changes?" });
+    expect(onClose).not.toHaveBeenCalled();
+    await user.click(within(confirmation).getByRole("button", { name: "Keep editing" }));
+    expect(examples).toHaveValue("Locally edited examples");
+    expect(within(panel).getByRole("alert")).toHaveTextContent("Save unavailable");
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(knowledgeApi.updateKnowledgeSurface).toHaveBeenCalledTimes(1);
+  });
+
   it("creates a freeform Surface with no technical UI or payload fields", async () => {
     const user = userEvent.setup();
     const { onSaved, onClose, queryClient } = renderDialog();

@@ -1,0 +1,17 @@
+.procurement-purchase-form__fields {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.procurement-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+@media (max-width: 600px) {
+  .procurement-panel-actions > .ui-button { flex: 1 1 auto; }
+}

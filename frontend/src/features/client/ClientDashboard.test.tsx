@@ -59,6 +59,14 @@ describe("ClientDashboard", () => {
     expect(within(other).queryByRole("link", { name: "Open task" })).not.toBeInTheDocument();
     expect(screen.queryByRole("timer")).not.toBeInTheDocument();
     const toggle = screen.getByRole("button", { name: "Aurora Villa" });
+    const approvedMetric = within(screen.getByRole("region", { name: "Client overview" })).getByLabelText("Unavailable");
+    expect(approvedMetric).toHaveTextContent("—");
+    expect(screen.getByRole("button", { name: "Retry approved plans" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Project details: Aurora Villa" }));
+    const projectDetails = screen.getByRole("dialog", { name: "Aurora Villa" });
+    expect(within(projectDetails).getByText("Latest approved update unavailable.")).toBeVisible();
+    expect(within(projectDetails).queryByText("No approved plan available yet.")).not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(toggle);
     await userEvent.click(toggle);
@@ -157,8 +165,8 @@ describe("ClientDashboard", () => {
     expect(screen.getByText("Cedar Loft")).toBeVisible();
     expect(screen.getByText("64% complete")).toBeVisible();
     expect(screen.getByText("3 floors")).toBeVisible();
-    await userEvent.click(await screen.findByRole("button", { name: /Aurora Villa/ }));
-    await userEvent.click(screen.getByRole("button", { name: /Cedar Loft/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "Aurora Villa" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cedar Loft" }));
     expect(await screen.findByText("Villa floor plan.pdf")).toBeVisible();
     expect(screen.getByText(/No approved plan available yet/)).toBeVisible();
     expect(screen.queryByText("Internal draft.pdf")).not.toBeInTheDocument();
@@ -182,8 +190,8 @@ describe("ClientDashboard", () => {
     });
 
     renderApp(["/client"]);
-    await userEvent.click(await screen.findByRole("button", { name: /Aurora Villa/ }));
-    await userEvent.click(screen.getByRole("button", { name: /Cedar Loft/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "Aurora Villa" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cedar Loft" }));
     expect(await screen.findAllByText("Latest approved update unavailable.")).toHaveLength(2);
     expect(screen.queryByText("No approved plan available yet.")).not.toBeInTheDocument();
     await userEvent.click(screen.getAllByRole("button", { name: "Retry approved updates" })[0]!);

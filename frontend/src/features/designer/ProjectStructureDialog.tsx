@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useId, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 
@@ -9,7 +9,9 @@ import type {
   CreateTaskInput,
   DesignStageType
 } from "../../api/types";
-import { Dialog } from "../../components/ui/Dialog";
+import { ContextPanel } from "../../components/ui/ContextPanel";
+import { Button } from "../../components/ui/Button";
+import { Input, Select } from "../../components/ui/Field";
 import "./projectStructureDialog.css";
 import {
   createFloor,
@@ -86,6 +88,7 @@ export function ProjectStructureDialog({
   onClose: () => void;
   onCreated: (message: string) => void;
 }) {
+  const formId = useId();
   const queryClient = useQueryClient();
   const [form, setForm] = useState(() => initialForm(action));
   const [error, setError] = useState<string | null>(null);
@@ -164,7 +167,15 @@ export function ProjectStructureDialog({
   };
 
   return (
-    <Dialog
+    <ContextPanel
+      width={action.kind === "stage" ? "medium" : "wide"}
+      dirty={JSON.stringify(form) !== JSON.stringify(initialForm(action))}
+      footer={({ requestClose }) => (
+        <div className="project-panel-actions">
+          <Button variant="secondary" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
+          <Button type="submit" form={formId} busy={mutation.isPending} busyLabel="Creating…">Create {action.kind}</Button>
+        </div>
+      )}
       title={title}
       description={action.kind === "floor"
         ? "Add a floor with the project's design workflow stages."
@@ -172,7 +183,7 @@ export function ProjectStructureDialog({
       onClose={onClose}
       busy={mutation.isPending}
     >
-      <form className={`modal-form project-form project-structure-form${action.kind === "stage" ? " project-structure-form--stage" : ""}`} onSubmit={submit}>
+      <form id={formId} className={`project-form project-panel-form project-structure-form${action.kind === "stage" ? " project-structure-form--stage" : ""}`} onSubmit={submit}>
         {error ? <div className="form-alert" role="alert">{error}</div> : null}
         {action.kind === "floor" ? (
           <>
@@ -188,11 +199,11 @@ export function ProjectStructureDialog({
             <Field label="Stage name" value={form.name} onChange={(value) => update("name", value)} />
             <label className="field">
               <span>Stage type</span>
-              <select title={stageTypes.find((option) => option.value === form.type)?.label} value={form.type} onChange={(event) => updateStageType(event.target.value as DesignStageType)}>
+              <Select title={stageTypes.find((option) => option.value === form.type)?.label} value={form.type} onChange={(event) => updateStageType(event.target.value as DesignStageType)}>
                 {stageTypes.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
-              </select>
+              </Select>
             </label>
             <Field label="Stage order" type="number" value={form.order} onChange={(value) => update("order", value)} />
           </>
@@ -202,11 +213,11 @@ export function ProjectStructureDialog({
             <Field label="Task title" value={form.title} onChange={(value) => update("title", value)} />
             <label className="field">
               <span>Task owner</span>
-              <select value={form.ownerId} onChange={(event) => update("ownerId", event.target.value)}>
+              <Select value={form.ownerId} onChange={(event) => update("ownerId", event.target.value)}>
                 {action.assignedDesignerIds.map((designerId) => (
                   <option key={designerId} value={designerId}>{designerId}</option>
                 ))}
-              </select>
+              </Select>
             </label>
             <Field label="Task order" type="number" value={form.order} onChange={(value) => update("order", value)} />
             <Field label="Planned start" type="datetime-local" value={form.plannedStartAt} onChange={(value) => update("plannedStartAt", value)} />
@@ -214,16 +225,8 @@ export function ProjectStructureDialog({
             <Field label="Planned effort" type="number" value={form.plannedEffort} onChange={(value) => update("plannedEffort", value)} />
           </>
         ) : null}
-        <div className="modal-form__actions project-form__actions">
-          <button type="button" className="button button--secondary" onClick={onClose} disabled={mutation.isPending}>
-            Cancel
-          </button>
-          <button type="submit" className="button button--primary" disabled={mutation.isPending}>
-            {mutation.isPending ? "Creating…" : `Create ${action.kind}`}
-          </button>
-        </div>
       </form>
-    </Dialog>
+    </ContextPanel>
   );
 }
 
@@ -308,7 +311,7 @@ function Field({
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
-      <input
+      <Input
         id={id}
         type={type}
         min={type === "number" ? 0 : undefined}

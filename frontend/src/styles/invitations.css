@@ -13,8 +13,8 @@
   .invitation-card {
     display: grid;
     width: min(100%, 38rem);
-    gap: 1.35rem;
-    padding: clamp(1.25rem, 4vw, 2.5rem);
+    gap: var(--space-4);
+    padding: clamp(1rem, 4vw, 1.5rem);
     border: 1px solid #ded9ee;
     border-radius: var(--radius-surface);
     background: rgb(255 255 255 / 96%);
@@ -104,8 +104,8 @@
 
   .invitation-password-control input {
     width: 100%;
-    min-height: 2.9rem;
-    padding: .7rem 3.25rem .7rem .8rem;
+    min-height: var(--control-height);
+    padding: .4rem 3.25rem .4rem .8rem;
     border: 1px solid #918aa3;
     border-radius: var(--radius-control);
     background: #fff;
@@ -257,7 +257,7 @@
   }
 
   .password-reset-form .ui-control {
-    min-height: 3.15rem;
+    min-height: var(--control-height);
   }
 
   .password-reset-back-link {
@@ -306,6 +306,11 @@
 
   @keyframes invitation-spin {
     to { transform: rotate(360deg); }
+  }
+
+  @media (max-width: 767px) {
+    .invitation-password-control input,
+    .password-reset-form .ui-control { font-size: 1rem; }
   }
 
   @media (max-width: 520px) {

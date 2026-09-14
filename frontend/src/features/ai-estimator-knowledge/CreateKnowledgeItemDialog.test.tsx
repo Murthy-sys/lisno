@@ -86,6 +86,8 @@ describe("Main Line with a Sub Basket text field", () => {
     await waitFor(() => expect(api.createKnowledgeMainLine).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onClose).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
     expect(onClose).toHaveBeenCalledOnce();
   });
 
@@ -118,7 +120,12 @@ describe("Main Line with a Sub Basket text field", () => {
     await user.keyboard("Walls");
     await user.tab();
     expect(screen.getByRole("textbox", { name: "Main Line name" })).toHaveFocus();
-    await user.keyboard("Panelling{Enter}");
+    await user.keyboard("Panelling");
+    // External footer buttons remain associated with the form and keyboard reachable.
+    await user.tab();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Add estimation item" })).toHaveFocus();
+    await user.keyboard("{Enter}");
     expect(screen.getByRole("textbox", { name: "Sub basket" })).toBeDisabled();
     await user.keyboard("{Enter}");
     expect(api.createKnowledgeMainLine).toHaveBeenCalledOnce();
@@ -178,6 +185,8 @@ describe("related item creation", () => {
     await user.type(screen.getByRole("textbox", { name: "Related item name" }), "Fluted panelling");
     await user.selectOptions(screen.getByRole("combobox", { name: "Main basket" }), "basket-1");
     await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onClose).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
     expect(onClose).toHaveBeenCalledOnce();
     expect(onCreated).not.toHaveBeenCalled();
     expect(api.createKnowledgeMainLine).not.toHaveBeenCalled();
@@ -245,7 +254,7 @@ describe("related item creation", () => {
     vi.mocked(api.createKnowledgeMainLine).mockImplementation(() => new Promise((resolve) => { resolveSave = resolve; }));
     const { user, onCreated } = setup(relatedProps);
     await screen.findByRole("option", { name: "Carpentry" });
-    await user.click(screen.getByRole("textbox", { name: "Related item name" }));
+    screen.getByRole("button", { name: "Add related item" }).focus();
     await user.keyboard("{Enter}{Enter}");
     expect(screen.getByRole("textbox", { name: "Related item name" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();

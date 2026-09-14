@@ -93,3 +93,17 @@ svg {
   outline: 0;
   box-shadow: var(--focus-ring);
 }
+
+@media (pointer: coarse), (max-width: 767px) {
+  :root {
+    --control-height: 44px;
+    --control-height-compact: 44px;
+    --control-height-large: 48px;
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 1rem;
+  }
+}

@@ -6,6 +6,7 @@ import type { PaginationInput, ReviewAccessRequest } from "../../api/types";
 import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { Button } from "../../components/ui/Button";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
 import { StatusBadge } from "../../components/ui/StatusBadge";
@@ -38,12 +39,16 @@ export function AccessRequestInboxPage() {
   const auth = useAuth();
   const [pagination, setPagination] = useState<PaginationInput>({ limit: PAGE_SIZE, offset: 0 });
   const [selected, setSelected] = useState<SelectedAction | null>(null);
+  const [summaryId, setSummaryId] = useState<string | null>(null);
   const reviewQuery = useQuery({
     queryKey: reviewAccessRequestKeys.page({}, pagination),
     queryFn: () => getAccessRequestsForReview({}, pagination),
     placeholderData: keepPreviousData
   });
   const page = reviewQuery.data;
+  const summary = !reviewQuery.isError && !reviewQuery.isPlaceholderData
+    ? page?.items.find((request) => request.id === summaryId)
+    : undefined;
   const currentRow = page?.items.find((item) => item.id === selected?.request.id);
   const dialogRequest = selected?.request;
   const decisionRowIsCurrent = Boolean(
@@ -75,7 +80,7 @@ export function AccessRequestInboxPage() {
         <PageState state="empty" message={auth.user?.role === "admin" ? "There are no requests for projects you can review." : "There are no access requests to review."} />
       ) : (
         <Surface as="section" padding="compact" className="access-administration__directory" aria-label="Access request review inbox" aria-busy={reviewQuery.isFetching || undefined}>
-          <div className="access-administration__table-scroll">
+          <div className="access-administration__table-scroll" role="region" aria-label="Access review records" tabIndex={0}>
             <table className="access-administration__table access-requests__review-table">
               <thead><tr><th scope="col">Requester</th><th scope="col">Project</th><th scope="col">Module</th><th scope="col">Status</th><th scope="col">Request</th><th scope="col">Created</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>
@@ -89,6 +94,7 @@ export function AccessRequestInboxPage() {
                     <td><time dateTime={request.createdAt}>{dateTime.format(new Date(request.createdAt))}</time></td>
                     <td>
                       <div className="access-requests__row-actions">
+                        <Button size="compact" variant="quiet" disabled={reviewQuery.isPlaceholderData} onClick={() => setSummaryId(request.id)}>Details <span className="sr-only">request {request.id}</span></Button>
                         {request.status === "pending" && canDecide ? <>
                           <Button size="compact" variant="secondary" onClick={() => setSelected({ request, kind: "approved" })}>Approve <span className="sr-only">request {request.id}</span></Button>
                           <Button size="compact" variant="quiet" onClick={() => setSelected({ request, kind: "rejected" })}>Reject <span className="sr-only">request {request.id}</span></Button>
@@ -115,6 +121,22 @@ export function AccessRequestInboxPage() {
         <AccessRequestDecisionDialog request={dialogRequest} decision={selected.kind} isCurrentRow={decisionRowIsCurrent} onClose={() => setSelected(null)} />
       ) : dialogRequest && selected?.kind === "revoke" ? (
         <GrantRevocationDialog request={dialogRequest} isCurrentRow={grantRowIsCurrent} onClose={() => setSelected(null)} />
+      ) : null}
+      {summaryId ? (
+        <ContextPanel key={summaryId} title="Access request details" eyebrow="Access review" className="administration-context-panel" onClose={() => setSummaryId(null)}>
+          {summary ? (
+            <dl className="administration-summary">
+              <div><dt>Requester</dt><dd>{summary.requester.name} · {ROLE_LABELS[summary.requester.role]}</dd></div>
+              <div><dt>Project</dt><dd>{summary.project.resolved && summary.project.name ? summary.project.name : summary.project.id}</dd></div>
+              <div><dt>Module</dt><dd>{summary.module}</dd></div>
+              <div><dt>Status</dt><dd>{statusLabel(summary.status)}</dd></div>
+              <div><dt>Reason</dt><dd>{summary.reason}</dd></div>
+              {summary.decisionReason ? <div><dt>Decision reason</dt><dd>{summary.decisionReason}</dd></div> : null}
+              <div><dt>Request ID</dt><dd>{summary.id}</dd></div>
+              <div><dt>Version</dt><dd>{summary.version}</dd></div>
+            </dl>
+          ) : <PageState state="empty" message="This request is no longer available in the current review view." />}
+        </ContextPanel>
       ) : null}
     </section>
   );

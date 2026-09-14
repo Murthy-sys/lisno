@@ -556,9 +556,9 @@ describe("accessibility smoke coverage", () => {
     renderWithQuery(<DesignSectionReview projectId="project-review" mode="client" />);
     await user.click(await screen.findByRole("button", { name: "Request changes for North elevation" }));
     const dialog = screen.getByRole("dialog", { name: "Request changes for North elevation" });
-    await waitFor(() => expect(within(dialog).getByLabelText("Modification comment")).toHaveFocus());
+    await waitFor(() => expect(within(dialog).getByRole("textbox", { name: "Modification comment" })).toHaveFocus());
     await user.click(within(dialog).getByRole("button", { name: "Send request" }));
-    expect(within(dialog).getByLabelText("Modification comment")).toHaveAccessibleDescription("Explain what the designer should modify.");
+    expect(within(dialog).getByRole("textbox", { name: "Modification comment" })).toHaveAccessibleDescription(/Explain what the designer should modify\./);
     await expectNoAxeViolations();
   });
 
@@ -715,7 +715,7 @@ describe("accessibility smoke coverage", () => {
     await user.click(upload);
     const dialog = screen.getByRole("dialog", { name: "Upload design" });
     expect(dialog).toBeVisible();
-    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Close Upload design" })).toHaveFocus());
+    await waitFor(() => expect(within(dialog).getByLabelText("Design file")).toHaveFocus());
     await expectNoAxeViolations();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Upload design" })).not.toBeInTheDocument();
@@ -882,7 +882,7 @@ describe("accessibility smoke coverage", () => {
     );
     await expectNoAxeViolations();
     const createClose = within(dialog).getByRole("button", {
-      name: "Close Invite user"
+      name: "Close invite user"
     });
     createClose.focus();
     fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
@@ -1069,7 +1069,7 @@ describe("accessibility smoke coverage", () => {
     let dialog = screen.getByRole("dialog", { name: "Request project access" });
     await waitFor(() => expect(within(dialog).getByRole("textbox", { name: "Project ID" })).toHaveFocus());
     await user.tab({ shift: true });
-    expect(within(dialog).getByRole("button", { name: "Close Request project access" })).toHaveFocus();
+    expect(within(dialog).getByRole("button", { name: "Close request project access" })).toHaveFocus();
     await user.tab({ shift: true });
     expect(within(dialog).getByRole("button", { name: "Create request" })).toHaveFocus();
     await expectNoAxeViolations();

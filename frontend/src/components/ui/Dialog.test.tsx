@@ -250,6 +250,57 @@ describe("Dialog accessibility contract", () => {
     expect(trigger).toHaveFocus();
   });
 
+  it("falls back inside the parent when a nested dialog's trigger becomes disabled", async () => {
+    function Harness() {
+      const [confirm, setConfirm] = useState(false);
+      const [usedTrigger, setUsedTrigger] = useState(false);
+      return (
+        <>
+          <Dialog title="Editor" showCloseButton={false} onClose={vi.fn()}>
+            <button type="button" disabled={usedTrigger} onClick={() => { setUsedTrigger(true); setConfirm(true); }}>Review changes</button>
+            <button type="button">Continue editing</button>
+          </Dialog>
+          {confirm ? <Dialog title="Confirmation" onClose={() => setConfirm(false)}><p>Review</p></Dialog> : null}
+        </>
+      );
+    }
+    render(<Harness />);
+    await userEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("button", { name: "Continue editing" })).toHaveFocus();
+  });
+
+  it("restores the original page trigger when parent and confirmation unmount together", async () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      const [confirm, setConfirm] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>Open editor</button>
+          {open ? (
+            <>
+              <Dialog title="Editor" onClose={() => setOpen(false)}>
+                <button type="button" onClick={() => setConfirm(true)}>Review changes</button>
+              </Dialog>
+              {confirm ? (
+                <Dialog title="Confirmation" onClose={() => setConfirm(false)}>
+                  <button type="button" onClick={() => setOpen(false)}>Discard and close</button>
+                </Dialog>
+              ) : null}
+            </>
+          ) : null}
+        </>
+      );
+    }
+    render(<Harness />);
+    const trigger = screen.getByRole("button", { name: "Open editor" });
+    await userEvent.click(trigger);
+    await userEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Discard and close" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
   it("lets only the topmost overlay handle Tab and Shift+Tab", () => {
     render(
       <>
@@ -318,43 +369,65 @@ describe("Dialog accessibility contract", () => {
   });
 });
 
-describe("Dialog body scroll ownership", () => {
-  it("restores the original overflow after one dialog unmounts", () => {
-    document.body.style.overflow = "scroll";
-    const { unmount } = render(dialog("Single"));
-
-    expect(document.body.style.overflow).toBe("hidden");
-    unmount();
-    expect(document.body.style.overflow).toBe("scroll");
+describe("Dialog document scroll ownership", () => {
+  it("preserves the body's scroll-container behavior and restores each root overflow axis", () => {
+    const rootStyle = document.documentElement.style.cssText;
+    const bodyStyle = document.body.style.cssText;
+    document.documentElement.style.setProperty("overflow-x", "clip", "important");
+    document.documentElement.style.setProperty("overflow-y", "scroll");
+    document.body.style.overflow = "visible";
+    const { unmount } = render(dialog("Viewport lock"));
+    try {
+      expect(document.documentElement.style.overflow).toBe("hidden");
+      expect(document.body.style.overflow).toBe("visible");
+      unmount();
+      expect(document.documentElement.style.getPropertyValue("overflow-x")).toBe("clip");
+      expect(document.documentElement.style.getPropertyPriority("overflow-x")).toBe("important");
+      expect(document.documentElement.style.getPropertyValue("overflow-y")).toBe("scroll");
+      expect(document.body.style.overflow).toBe("visible");
+    } finally {
+      unmount();
+      document.documentElement.style.cssText = rootStyle;
+      document.body.style.cssText = bodyStyle;
+    }
   });
 
-  it("keeps the body locked after a nested confirmation continues editing", async () => {
-    document.body.style.overflow = "auto";
+  it("restores the original overflow after one dialog unmounts", () => {
+    document.documentElement.style.overflow = "scroll";
+    const { unmount } = render(dialog("Single"));
+
+    expect(document.documentElement.style.overflow).toBe("hidden");
+    unmount();
+    expect(document.documentElement.style.overflow).toBe("scroll");
+  });
+
+  it("keeps the document locked after a nested confirmation continues editing", async () => {
+    document.documentElement.style.overflow = "auto";
     const { unmount } = render(<NestedDialogHarness />);
     await userEvent.click(screen.getByRole("button", { name: "Open confirmation" }));
-    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.documentElement.style.overflow).toBe("hidden");
 
     await userEvent.click(screen.getByRole("button", { name: "Keep editing" }));
     expect(screen.queryByRole("alertdialog", { name: "Confirmation" })).not.toBeInTheDocument();
-    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.documentElement.style.overflow).toBe("hidden");
 
     unmount();
-    expect(document.body.style.overflow).toBe("auto");
+    expect(document.documentElement.style.overflow).toBe("auto");
   });
 
   it("restores the original overflow when Discard unmounts both dialogs together", async () => {
-    document.body.style.overflow = "visible";
+    document.documentElement.style.overflow = "visible";
     render(<NestedDialogHarness discardAll />);
     await userEvent.click(screen.getByRole("button", { name: "Open confirmation" }));
     await userEvent.click(screen.getByRole("button", { name: "Discard all" }));
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-    expect(document.body.style.overflow).toBe("visible");
+    expect(document.documentElement.style.overflow).toBe("visible");
   });
 
   it("stays locked until the final dialog unmounts regardless of unmount order", () => {
-    document.body.style.overflow = "clip";
+    document.documentElement.style.overflow = "clip";
     const { rerender } = render(
       <>
         <Dialog key="first" title="First" onClose={vi.fn()}><span>First content</span></Dialog>
@@ -365,10 +438,10 @@ describe("Dialog body scroll ownership", () => {
     rerender(
       <Dialog key="second" title="Second" onClose={vi.fn()}><span>Second content</span></Dialog>
     );
-    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.documentElement.style.overflow).toBe("hidden");
 
     rerender(<></>);
-    expect(document.body.style.overflow).toBe("clip");
+    expect(document.documentElement.style.overflow).toBe("clip");
   });
 
   it("installs one key listener for a stack and removes it after the final overlay", () => {
@@ -387,7 +460,7 @@ describe("Dialog body scroll ownership", () => {
   });
 
   it("balances the scroll lock and listener across StrictMode effect remounts", () => {
-    document.body.style.overflow = "overlay";
+    document.documentElement.style.overflow = "overlay";
     const onClose = vi.fn();
     const addListener = vi.spyOn(document, "addEventListener");
     const removeListener = vi.spyOn(document, "removeEventListener");
@@ -397,9 +470,9 @@ describe("Dialog body scroll ownership", () => {
       </StrictMode>
     );
 
-    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.documentElement.style.overflow).toBe("hidden");
     unmount();
-    expect(document.body.style.overflow).toBe("overlay");
+    expect(document.documentElement.style.overflow).toBe("overlay");
     expect(addListener.mock.calls.filter(([type]) => type === "keydown").length).toBe(
       removeListener.mock.calls.filter(([type]) => type === "keydown").length
     );

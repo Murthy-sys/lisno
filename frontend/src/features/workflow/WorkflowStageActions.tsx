@@ -4,6 +4,8 @@ import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { ApiError } from "../../api/client";
 import { ROLE_LABELS } from "../../api/authorization-contract";
 import { Button } from "../../components/ui/Button";
+import { ContextPanel } from "../../components/ui/ContextPanel";
+import { Dialog } from "../../components/ui/Dialog";
 import { DownloadButton } from "../../components/ui/DownloadButton";
 import { Checkbox, Field, FileInput, Input, Select, Textarea } from "../../components/ui/Field";
 import { ProgressBar } from "../../components/ui/ProgressBar";
@@ -126,6 +128,7 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
   const [file, setFile] = useState<File | null>(null);
   const [validation, setValidation] = useState("");
   const [progress, setProgress] = useState(0);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const inFlight = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -146,6 +149,9 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
   const stale = stage.operational?.version !== version || documentChanged || Boolean(blockedReason) || !stage.operational?.availableActions.some((candidate) => candidate.id === action.id);
   const needsFile = action.requiresProof || evidenceActions.has(action.id);
   const isInternalKickoff = action.id === "internal_kickoff_complete";
+  // Kick off acknowledgement stays beside its protected document and stage context.
+  const contextual = !isInternalKickoff && !isClientKickoff;
+  const dirty = Boolean(note || meetingAt || designerId || mediaFolderUrl || roomIds.length || noFurniture || file || designHandoverAcknowledged || documentReviewed);
   const FormHeading = presentation === "designer" ? "h5" : "h6";
   const needsRooms = action.id === "furniture_scope" || action.id === "furniture_upload" || action.id === "furniture_proceed";
   const rooms = action.id === "furniture_scope" ? workflow.furnitureRooms ?? [] : stage.operational?.rooms?.filter((room) => room.required && !room.hasDimensions && (action.id !== "furniture_proceed" || !room.canProceed)) ?? [];
@@ -183,8 +189,9 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
     setValidation(""); setProgress(0); inFlight.current = true; mutation.mutate(data);
   }
 
-  return <form className="workflow-stage-actions__form" onSubmit={submit} aria-label={action.label}>
-    <div className={`workflow-stage-actions__form-heading${(presentation === "designer" && isInternalKickoff) || (presentation === "client" && isClientKickoff) ? " sr-only" : ""}`}><FormHeading ref={heading} tabIndex={-1}>{action.label}</FormHeading>{action.requiresProof && presentation !== "designer" ? <p>Supporting evidence is required and will be retained with this action.</p> : null}</div>
+  const actions = (requestClose: () => void) => <div className="workflow-stage-actions__buttons"><Button type="submit" form={`${id}-action-form`} busy={mutation.isPending} busyLabel={file && progress < 100 ? "Uploading evidence…" : "Saving action…"} disabled={stale || (isInternalKickoff && !designHandoverAcknowledged) || (isClientKickoff && (!documentEventId || !documentReady || !documentReviewed))}>{isInternalKickoff ? "Complete and save Internal Kick off" : action.label}</Button><Button variant="secondary" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button></div>;
+  const form = <form id={`${id}-action-form`} className={`workflow-stage-actions__form${contextual ? " workflow-stage-actions__form--panel" : ""}`} onSubmit={submit} aria-label={action.label}>
+    {!contextual ? <div className={`workflow-stage-actions__form-heading${(presentation === "designer" && isInternalKickoff) || (presentation === "client" && isClientKickoff) ? " sr-only" : ""}`}><FormHeading ref={heading} tabIndex={-1}>{action.label}</FormHeading>{action.requiresProof && presentation !== "designer" ? <p>Supporting evidence is required and will be retained with this action.</p> : null}</div> : null}
     <fieldset disabled={mutation.isPending || stale}>
       {isClientKickoff ? <div className="workflow-stage-actions__handover">
         <label><Checkbox required checked={documentReviewed} disabled={!documentReady || !documentEventId} onChange={(event) => setDocumentReviewed(event.target.checked)} />I have reviewed the document submitted by the Designer</label>
@@ -210,6 +217,20 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
     {stale && !mutation.isPending ? <p role="alert">{blockedReason ?? "The workflow changed while this form was open. Close it and reopen the action to review the latest state."}</p> : null}
     {mutation.isError ? <p role="alert">{mutation.error instanceof Error ? mutation.error.message : "The action could not be saved. Please try again."}</p> : null}
     {mutation.isPending && file ? <div role="status"><p>{progress < 100 ? `Uploading evidence… ${progress}%` : "Saving action and evidence…"}</p><ProgressBar value={progress} label="Evidence upload progress" /></div> : null}
-    <div className="workflow-stage-actions__buttons"><Button type="submit" busy={mutation.isPending} busyLabel={file && progress < 100 ? "Uploading evidence…" : "Saving action…"} disabled={stale || (isInternalKickoff && !designHandoverAcknowledged) || (isClientKickoff && (!documentEventId || !documentReady || !documentReviewed))}>{isInternalKickoff ? "Complete and save Internal Kick off" : action.label}</Button><Button variant="secondary" onClick={onClose} disabled={mutation.isPending}>Cancel</Button></div>
+    {!contextual ? actions(() => { if (!mutation.isPending) { if (dirty) setConfirmDiscard(true); else onClose(); } }) : null}
   </form>;
+  return contextual ? <ContextPanel title={action.label} eyebrow={stage.name}
+    description={action.requiresProof ? "Supporting evidence is required and will be retained with this action." : undefined}
+    metadata={<span>Workflow version {version}</span>}
+    width={needsRooms || needsFile ? "wide" : "medium"}
+    busy={mutation.isPending}
+    dirty={dirty}
+    onClose={onClose} footer={({ requestClose }) => actions(requestClose)}>{form}</ContextPanel> : <>{form}{confirmDiscard ? <Dialog
+      title="Discard unsaved changes?" role="alertdialog" description="Your acknowledgement, notes, and selected evidence have not been saved."
+      busy={mutation.isPending} onClose={() => setConfirmDiscard(false)}>
+      <div className="modal__actions">
+        <Button variant="secondary" data-dialog-initial-focus disabled={mutation.isPending} onClick={() => setConfirmDiscard(false)}>Keep editing</Button>
+        <Button variant="destructive" disabled={mutation.isPending} onClick={() => { if (!mutation.isPending) onClose(); }}>Discard changes</Button>
+      </div>
+    </Dialog> : null}</>;
 }

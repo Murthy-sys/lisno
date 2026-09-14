@@ -28,10 +28,10 @@ export function ScopeSectionsToggleList({
         <button type="button" onClick={allEnabled ? onDeselectAll : onSelectAll} className="text-xs font-semibold text-[var(--color-primary)]">
           {allEnabled ? "Deselect all" : "Select all"}
         </button>
-        <span className="text-xs text-[var(--color-primary)]/50">{enabled.size} of {options.length} included</span>
+        <span className="text-xs text-[var(--color-text-muted)]">{enabled.size} of {options.length} included</span>
       </div>
 
-      <div className="w-full divide-y divide-[var(--color-primary)]/8 rounded-2xl border border-[var(--color-primary)]/12">
+      <div className="w-full divide-y divide-[var(--color-primary)]/8 rounded-xl border border-[var(--color-primary)]/12">
         {options.map((option) => {
           const checked = enabled.has(option.id);
           const Icon = option.icon;
@@ -42,14 +42,14 @@ export function ScopeSectionsToggleList({
               role="switch"
               aria-checked={checked}
               onClick={() => onToggle(option.id)}
-              className={`flex w-full items-center gap-3 px-4 py-3 text-left ${checked ? "" : "bg-[var(--color-primary)]/2"}`}
+              className={`flex w-full items-center gap-3 px-4 py-2 text-left ${checked ? "" : "bg-[var(--color-primary)]/2"}`}
             >
-              <Icon size={18} className={checked ? "shrink-0 text-[var(--color-primary)]" : "shrink-0 text-[var(--color-primary)]/35"} aria-hidden="true" />
+              <Icon size={18} className={checked ? "shrink-0 text-[var(--color-primary)]" : "shrink-0 text-[var(--color-text-muted)]"} aria-hidden="true" />
               <span className="min-w-0 flex-1">
-                <span className={`block font-bold ${checked ? "text-[var(--color-primary)]" : "text-[var(--color-primary)]/40"}`}>
+                <span className={`block font-semibold ${checked ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>
                   {option.label}
                 </span>
-                <span className={`block text-sm ${checked ? "text-[var(--color-primary)]/60" : "text-[var(--color-primary)]/35"}`}>
+                <span className={`block text-sm ${checked ? "text-[var(--color-primary)]/60" : "text-[var(--color-text-muted)]"}`}>
                   {option.description}{checked ? "" : " · excluded from scope"}
                 </span>
               </span>

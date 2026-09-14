@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 
 import { Button } from "../../components/ui/Button";
-import { Dialog } from "../../components/ui/Dialog";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field, Input, Radio } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import type { KnowledgeModeCalculationUom } from "./KnowledgeModeCalculationEditor";
@@ -166,10 +166,18 @@ export function KnowledgeModeCalculationSimulator({ initialDraft, uom, onClose, 
     </Field>;
   }
 
-  return <Dialog title="Test calculations" eyebrow={contextLabel ? `${contextLabel} calculation simulator` : "Calculation simulator"}
+  return <ContextPanel title="Test calculations" eyebrow={contextLabel ? `${contextLabel} calculation simulator` : "Calculation simulator"}
     description={usesMargin ? `Test Quantity and Discount using the current ${marginLabel} configuration. Simulator changes are temporary.` : "Try different values using the current configuration. Simulator changes are temporary."}
-    onClose={onClose}>
-    <form ref={formRef} className={`knowledge-mode-simulator${usesMargin ? " knowledge-mode-simulator--pmc" : ""}`} onSubmit={(event) => void calculate(event)} noValidate>
+    onClose={onClose}
+      width="wide"
+      className="knowledge-context-panel"
+      footer={({ requestClose }) => (
+        <div className="knowledge-dialog-actions">
+        <Button variant="quiet" onClick={requestClose}>Close</Button>
+        <Button type="submit" form={`${id}-form`} variant="primary" busy={calculating} busyLabel="Calculating…" disabled={!uomReady}>Calculate</Button>
+      </div>
+      )}>
+    <form id={`${id}-form`} ref={formRef} className={`knowledge-mode-simulator${usesMargin ? " knowledge-mode-simulator--pmc" : ""}`} onSubmit={(event) => void calculate(event)} noValidate>
       <div className="knowledge-dialog-body">
         <div className="knowledge-mode-simulator__fields">
           <Field id={`${id}-uom`} label="UOM">
@@ -233,10 +241,7 @@ export function KnowledgeModeCalculationSimulator({ initialDraft, uom, onClose, 
           <p className="knowledge-mode-calculation__hint">{result.value.appliedImpactBps > 0 ? `${formatKnowledgePercentage(result.value.appliedImpactBps)} low-quantity impact applied.` : "No low-quantity impact applied."}</p>
         </div> : null}
       </div>
-      <div className="knowledge-dialog-actions">
-        <Button variant="quiet" onClick={onClose}>Close</Button>
-        <Button type="submit" variant="primary" busy={calculating} busyLabel="Calculating…" disabled={!uomReady}>Calculate</Button>
-      </div>
+
     </form>
-  </Dialog>;
+  </ContextPanel>;
 }

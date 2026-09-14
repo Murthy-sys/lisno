@@ -12,7 +12,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { useFeedback } from "../../components/feedback/FeedbackProvider";
 import { Button } from "../../components/ui/Button";
-import { Dialog } from "../../components/ui/Dialog";
+import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field, Input, Select, Textarea } from "../../components/ui/Field";
 import { createAccessRequest, ownAccessRequestKeys } from "./accessRequestsApi";
 
@@ -99,14 +99,28 @@ export function AccessRequestDialog({
   };
 
   return (
-    <Dialog
+    <ContextPanel
       title="Request project access"
       eyebrow="Project access"
       description="Submit the opaque project identifier supplied to you."
       busy={mutation.isPending}
+      width="medium"
+      dirty={projectId !== initialProjectId || reason.length > 0}
+      className="administration-context-panel"
+      footer={({ requestClose }) => (
+        <div className="access-request-dialog__actions">
+          <Button variant="quiet" size="compact" disabled={mutation.isPending} onClick={requestClose}>
+            Cancel
+          </Button>
+          <Button type="submit" form="access-request-form" size="compact" busy={mutation.isPending} busyLabel="Submitting…">
+            Create request
+          </Button>
+        </div>
+      )}
       onClose={onClose}
     >
       <form
+        id="access-request-form"
         className="access-request-dialog"
         noValidate
         onSubmit={(event) => {
@@ -174,15 +188,8 @@ export function AccessRequestDialog({
             />
           )}
         </Field>
-        <div className="access-request-dialog__actions">
-          <Button variant="quiet" size="compact" disabled={mutation.isPending} onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" size="compact" busy={mutation.isPending} busyLabel="Submitting…">
-            Create request
-          </Button>
-        </div>
+
       </form>
-    </Dialog>
+    </ContextPanel>
   );
 }
