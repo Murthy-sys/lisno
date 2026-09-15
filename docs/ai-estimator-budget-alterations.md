@@ -2,6 +2,10 @@
 
 Super Admin can configure conditional scope guidance in a regular Main Line's **Recommendation & Exclusions** tab. Each rule records whether the source is added or removed, whether a related item must/can be added or removed, the selected Main Basket → optional Sub Basket → related item, and a required explanation.
 
+The tab presents compact tables for **Non-Negotiable Additions**, **Probable Additions** and **Exclusions**. **Other scope rules** retains rules triggered by removal. Use a group's add action, or open a related item to edit its rule in the side panel. **Done** closes the panel and retains the local draft; **Save Recommendation & Exclusions** persists it. The row actions also support enabling, disabling and removing a rule. All original rule IDs and trigger/action combinations remain intact.
+
+The tables show related item, relationship, action, applicability, status and row actions alongside the row number. Trigger and removal guidance are omitted from the tables; the side panel retains the trigger and scope-action controls. Conditions describe the existing target-present/target-missing applicability. The tables do not create new automatic estimate behavior. Existing editorial catalog starters remain available in the related-item picker. Older free-text notes remain editable below the tables, and saved details/history remain available in the context rail.
+
 For example, removing a POP false ceiling can require removal of recessed COB lights because their mounting support disappears. A separate optional addition can propose a surface-mounted alternative. These are authored design decisions; the application does not invent dependencies, costs or savings.
 
 ## Temporary items

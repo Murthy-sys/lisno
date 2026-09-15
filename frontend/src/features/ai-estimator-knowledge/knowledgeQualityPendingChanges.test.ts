@@ -12,7 +12,34 @@ const entries = (baseline: readonly KnowledgeJsonObject[], parameters: readonly 
 describe("quality pending changes", () => {
   it("omits a saved checklist and all untouched hidden metadata", () => {
     expect(entries([saved], [structuredClone(saved)])).toEqual([]);
-    expect(entries([{ ...saved, required: false, active: false, severity: "critical", instructions: "Saved instructions" }], [{ ...saved, severity: "minor", instructions: "Different legacy metadata" }])).toEqual([]);
+    expect(entries([{ ...saved, required: false, active: false, severity: "critical", instructions: "Saved instructions" }], [{ ...saved, severity: "minor", instructions: "Saved instructions" }])).toEqual([]);
+  });
+
+  it("publishes metadata-only edits and clears a complete revert without altering the raw baseline", () => {
+    const original: KnowledgeJsonObject = { ...saved, stage: "Before delivery", instructions: "Inspect original locations.", checkMethod: "visual", severity: "critical", evidence: { photos: true, documents: true, video: true, minPhotosPerSample: 2, instructions: "Original evidence." } };
+    const second: KnowledgeJsonObject = { ...saved, id: "check-2", label: "Second check", stage: "Material" };
+    const baseline = [original, second];
+    const baselineRows = qualityPendingRowState(baseline);
+    const changed = { ...original, stage: "Pre-Installation", instructions: "Inspect all corners.", checkMethod: "measurement", evidence: { photos: true, documents: true, video: true, minPhotosPerSample: 2, instructions: "Show the measurement scale." } };
+    const current = [changed, second];
+    const currentRows = qualityPendingRowState(current, baselineRows);
+    const pending = qualityPendingChanges({ sourceKey: "metadata", basketId: "electrical", basketName: "Electrical", baseline, parameters: current, baselineRows, parameterRows: currentRows });
+    expect(pending.groups[0]?.entries).toEqual([expect.objectContaining({ kind: "updated", key: "id:saved:check-1", fields: [
+      { key: "stage", label: "Stage", value: "Pre-Installation" },
+      { key: "instructions", label: "Instructions", value: "Inspect all corners." },
+      { key: "checkMethod", label: "Check method", value: "Measurement" },
+      { key: "evidenceInstructions", label: "Evidence instructions", value: "Show the measurement scale." }
+    ] })]);
+    expect(entries([changed], [{ ...changed, stage: null, instructions: null, checkMethod: null, evidence: { ...(changed.evidence as KnowledgeJsonObject), instructions: null } }])[0]?.fields).toEqual([
+      { key: "stage", label: "Stage", value: "", cleared: true },
+      { key: "instructions", label: "Instructions", value: "", cleared: true },
+      { key: "checkMethod", label: "Check method", value: "", cleared: true },
+      { key: "evidenceInstructions", label: "Evidence instructions", value: "", cleared: true }
+    ]);
+    const reverted = qualityPendingRowState(baseline, currentRows);
+    expect(qualityPendingChanges({ sourceKey: "metadata", basketId: "electrical", basketName: "Electrical", baseline, parameters: baseline, baselineRows, parameterRows: reverted }).groups).toEqual([]);
+    expect(original.stage).toBe("Before delivery");
+    expect(original.instructions).toBe("Inspect original locations.");
   });
 
   it("shows only a changed field and the existing question identity", () => {

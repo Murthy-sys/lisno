@@ -1,9 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { ApiError } from "../../api/client";
 import { Button } from "../../components/ui/Button";
-import { ContextPanel } from "../../components/ui/ContextPanel";
-import { Field, Textarea } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { PageState } from "../../components/ui/PageState";
 import { Surface } from "../../components/ui/Surface";
@@ -11,10 +9,11 @@ import { getKnowledgeBasketQuality, getKnowledgeSection, updateKnowledgeBasketQu
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import type { KnowledgePendingChangesCallback } from "./knowledgePendingChanges";
 import { qualityPendingChanges, qualityPendingRowState, type QualityPendingRowState } from "./knowledgeQualityPendingChanges";
-import { mandatoryQualityParameters, qualityImportIssues, validateQualityParameters } from "./knowledgeQuality";
-import { downloadQualityChecklist, downloadQualityTemplate, qualityAiPrompt } from "./knowledgeQualityWorkbook";
+import { mandatoryQualityParameters, qualityImportIssues, validateQualityParameters, QUALITY_MAX_PARAMETERS } from "./knowledgeQuality";
+import { downloadQualityChecklist, downloadQualityTemplate } from "./knowledgeQualityWorkbook";
 import { KnowledgeQualityImportDialog } from "./KnowledgeQualityImportDialog";
-import { KnowledgeSectionEditor } from "./KnowledgeSectionEditor";
+import { KnowledgeQualityChecklistEditor, type KnowledgeQualityChecklistEditorHandle } from "./KnowledgeQualityChecklistEditor";
+import { Plus } from "lucide-react";
 import { KnowledgeSectionCommandBar } from "./KnowledgeSectionCommandBar";
 import type { KnowledgeItemDetail, KnowledgeJsonObject } from "./knowledgeTypes";
 
@@ -51,14 +50,12 @@ const KnowledgeBasketQualityEditor = forwardRef<KnowledgeBasketQualityPanelHandl
   const [conflict, setConflict] = useState(false);
   const [validationAttempt, setValidationAttempt] = useState(0);
   const [importing, setImporting] = useState(false);
-  const [showPrompt, setShowPrompt] = useState(false);
   const [downloading, setDownloading] = useState<"template" | "saved" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [showLegacy, setShowLegacy] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const parameters = draft?.parameters ?? query.data?.parameters ?? [];
-  const payload = useMemo<KnowledgeJsonObject>(() => ({ parameters }), [parameters]);
+  const editorRef = useRef<KnowledgeQualityChecklistEditorHandle>(null);
   const editable = canUpdate && item.status !== "archived" && query.data?.basketStatus !== "archived";
   const legacy = useQuery({ queryKey: knowledgeQueryKeys.section(item.mainLineId, revisionId ?? "", "quality"), queryFn: () => getKnowledgeSection<KnowledgeJsonObject>(item.mainLineId, revisionId!, "quality"), enabled: showLegacy && Boolean(revisionId) });
   useEffect(() => onDirtyChange(Boolean(draft)), [draft, onDirtyChange]);
@@ -84,6 +81,7 @@ const KnowledgeBasketQualityEditor = forwardRef<KnowledgeBasketQualityPanelHandl
   }
   function discard() {
     if (saving) return;
+    editorRef.current?.close();
     setDraft(null); setError(null); setConflict(false); setValidationAttempt(0);
   }
   async function save(): Promise<boolean> {
@@ -139,38 +137,37 @@ const KnowledgeBasketQualityEditor = forwardRef<KnowledgeBasketQualityPanelHandl
   if (!query.data) return <PageState state="empty" message="The shared checklist is unavailable." />;
   const saved = query.data;
   const hasSavedParameters = Boolean(saved.revisionId && saved.parameters.length);
-  const prompt = qualityAiPrompt(saved.basketName);
-  return <Surface as="section" className="knowledge-workspace-section knowledge-basket-quality">
-    <div className="knowledge-basket-quality__intro">
-      <p className="knowledge-section-eyebrow">Main Basket · {saved.basketName}</p>
-      <h2>Shared quality checklist</h2>
-      <p>Used by every Main Line and temporary item in {saved.basketName}. Saving here updates the basket checklist for all of them.</p>
-      <p className="knowledge-help-text">Add the question, answer type, passing criteria and required photo count. Add options only for choice questions. Use Add Quality parameter for another question, or its trash icon to delete it.</p>
+  return <Surface as="section" className="knowledge-workspace-section knowledge-basket-quality knowledge-basket-quality--reference">
+    <div className="knowledge-quality-reference-header">
+      <div className="knowledge-basket-quality__intro">
+        <h2>Quality Parameters</h2>
+        <p>Define the quality checks, acceptance criteria and evidence for this checklist.</p>
+        <p className="knowledge-quality-scope">Shared with all items in {saved.basketName}</p>
+      </div>
+      <div className="knowledge-quality-actions">
+        {hasSavedParameters ? <Button variant="secondary" size="compact" busy={downloading === "saved"} disabled={saving || downloading !== null} onClick={() => void downloadSaved()}>Download Excel</Button> : null}
+        <Button variant="secondary" size="compact" busy={downloading === "template"} disabled={downloading !== null} onClick={() => void template()}>Download Excel template</Button>
+        {editable ? <>
+          <Button variant="secondary" size="compact" disabled={saving || conflict} onClick={() => setImporting(true)}>Import Excel</Button>
+          <Button variant="secondary" size="compact" leadingIcon={<Plus />} disabled={saving || conflict || parameters.length >= QUALITY_MAX_PARAMETERS} onClick={() => editorRef.current?.addParameter()}>Add Parameter</Button>
+        </> : null}
+      </div>
     </div>
     <KnowledgeSectionCommandBar sectionLabel="shared checklist" versionLabel={saved.revisionId ? `Checklist version ${saved.revisionNumber}` : "No shared checklist saved"} editable={editable && !conflict} dirty={Boolean(draft)} saving={saving} saveError={error} onSave={() => void save()} />
-    <div className="knowledge-quality-actions">
-      {hasSavedParameters ? <Button variant="secondary" size="compact" busy={downloading === "saved"} disabled={saving || downloading !== null} onClick={() => void downloadSaved()}>Download Excel</Button> : null}
-      <Button variant="secondary" size="compact" busy={downloading === "template"} disabled={downloading !== null} onClick={() => void template()}>Download Excel template</Button>
-      {/* <Button variant="secondary" size="compact" onClick={() => { setCopied(false); setShowPrompt(true); }}>AI prompt</Button> */}
-      {editable ? <Button variant="secondary" size="compact" disabled={saving || conflict} onClick={() => setImporting(true)}>Import Excel</Button> : null}
-    </div>
     {hasSavedParameters && draft ? <p className="knowledge-help-text">Download Excel uses the saved checklist. Save your changes to include them.</p> : null}
     {downloadError ? <InlineMessage tone="error" role="alert">{downloadError}</InlineMessage> : null}
     {query.isError ? <InlineMessage tone="warning">The latest shared checklist could not be refreshed. <Button variant="quiet" size="compact" onClick={() => void query.refetch()}>Retry refresh</Button></InlineMessage> : null}
     {error ? <InlineMessage tone="error" role="alert">{error}</InlineMessage> : null}
     {conflict ? <Button variant="secondary" onClick={() => { if (query.isError) void query.refetch(); else discard(); }} disabled={query.isFetching}>{query.isError ? "Retry loading saved checklist" : "Discard edits and reload saved checklist"}</Button> : null}
     {announcement ? <InlineMessage tone="success" role="status">{announcement}</InlineMessage> : null}
-    <KnowledgeSectionEditor sectionKey="quality" payload={payload} masters={{}} relationshipBaskets={[]} relationshipItems={[]} currentMainLineId={item.mainLineId} basketName={saved.basketName} readOnly={!editable || saving || conflict} readOnlyRevision={!editable} canQuickAdd={false} resetKey={`${item.basketId}-${draft?.version ?? saved.version}`} validationAttempt={validationAttempt} onChange={change} onDirty={() => undefined} onValidationChange={() => undefined} onQuickAdd={() => undefined} />
+    <KnowledgeQualityChecklistEditor ref={editorRef} parameters={parameters} savedParameters={saved.parameters} basketName={saved.basketName} disabled={!editable || saving || conflict} readOnly={!editable} validationAttempt={validationAttempt} onChange={next => change({ parameters: next })} />
     {revisionId ? <details className="knowledge-quality-details" onToggle={(event) => setShowLegacy(event.currentTarget.open)}>
       <summary>Previous item-specific quality parameters</summary>
       <p className="knowledge-help-text">Saved item history is retained. A saved basket checklist takes precedence for future AI analysis; these older rows do not change the shared checklist.</p>
       {showLegacy && (legacy.isPending ? <p role="status">Loading previous parameters…</p> : legacy.isError ? <InlineMessage tone="error">Previous parameters could not be loaded. <Button variant="quiet" onClick={() => void legacy.refetch()}>Retry</Button></InlineMessage> : legacy.data ? <LegacyQualityParameters payload={legacy.data.payload} /> : null)}
     </details> : null}
     {importing ? <KnowledgeQualityImportDialog basketName={saved.basketName} currentParameters={parameters} disabled={!editable || saving || conflict} onImport={append} onClose={() => setImporting(false)} /> : null}
-    {showPrompt ? <ContextPanel title="Create quality checks with AI" eyebrow={`Main Basket · ${saved.basketName}`} description="Copy this prompt into Claude, Codex, or another AI tool. Review its questions and acceptance criteria before importing the workbook." onClose={() => setShowPrompt(false)} width="wide" className="knowledge-context-panel" footer={<div className="knowledge-quality-actions"><Button variant="secondary" onClick={() => setShowPrompt(false)}>Close</Button><Button onClick={async () => { try { await navigator.clipboard.writeText(prompt); setCopied(true); } catch { setError("Select and copy the prompt text manually."); } }}>{copied ? "Copied" : "Copy prompt"}</Button></div>}>
-      <Field id="quality-ai-prompt" label="Prompt">{(props) => <Textarea {...props} readOnly rows={14} value={prompt} />}</Field>
 
-    </ContextPanel> : null}
   </Surface>;
 });
 

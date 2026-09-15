@@ -200,6 +200,29 @@ function mutationSection(
   };
 }
 
+async function openSavedDetails(user: ReturnType<typeof userEvent.setup>) {
+  if (screen.queryByRole("alertdialog")) return;
+  const disclosure = await screen.findByText("Saved details & revision history", { selector: "summary" });
+  if (!(disclosure.parentElement as HTMLDetailsElement).open) await user.click(disclosure);
+}
+
+async function doneFocusedEditing(user: ReturnType<typeof userEvent.setup>) {
+  const done = screen.queryByRole("button", { name: "Done" });
+  if (done) await user.click(done);
+}
+
+async function openRecommendationEditor(user: ReturnType<typeof userEvent.setup>, index = 1) {
+  if (screen.queryByRole("dialog", { name: new RegExp(`^(Edit|View) scope rule ${index}$`) })) return;
+  const other = await screen.findByText("Other scope rules", { selector: "summary" });
+  if (!(other.parentElement as HTMLDetailsElement).open) await user.click(other);
+  await user.click(await screen.findByRole("button", { name: new RegExp(`^(Edit|View) rule ${index}:`) }));
+}
+
+async function openQualityEditor(user: ReturnType<typeof userEvent.setup>, index = 1) {
+  if (screen.queryByRole("dialog", { name: /^(Edit|View) quality parameter$/ })) return;
+  await user.click(await screen.findByRole("button", { name: new RegExp(`^(Edit|View) parameter ${index}:`) }));
+}
+
 function renderRoute(element: React.ReactElement, path: string, route: string) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -376,7 +399,10 @@ describe("workspace hierarchy summary", () => {
     vi.mocked(knowledgeApi.getKnowledgeHistory).mockRejectedValue(new Error("History unavailable"));
     const user = userEvent.setup();
     renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await doneFocusedEditing(user);
     await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    await openSavedDetails(user);
+    await openRecommendationEditor(user);
     const reason = await screen.findByRole("textbox", { name: "Why is this change needed?" });
     expectSummary();
     await user.clear(reason); await user.type(reason, "Local mounting requirement");
@@ -389,11 +415,14 @@ describe("workspace hierarchy summary", () => {
     const history = screen.getByRole("region", { name: "Revision history" });
     expect(history.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(reason).toHaveFocus();
+    await doneFocusedEditing(user);
     await user.click(within(card).getByRole("button", { name: "Show Recommendation & Exclusions details" }));
     expect(card).toHaveTextContent("Saved support requirement");
     expect(card).toHaveTextContent("Saved exclusion sentinel");
     expect(card).not.toHaveTextContent("Local mounting requirement");
-    await user.clear(reason); await user.type(reason, rule.reason);
+    await openRecommendationEditor(user);
+    const restoredReason = screen.getByRole("textbox", { name: "Why is this change needed?" });
+    await user.clear(restoredReason); await user.type(restoredReason, rule.reason);
     expectSummary();
   });
 
@@ -401,7 +430,10 @@ describe("workspace hierarchy summary", () => {
     setupRecommendations();
     const user = userEvent.setup();
     const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await doneFocusedEditing(user);
     await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    await openSavedDetails(user);
+    await openRecommendationEditor(user);
     await user.type(await screen.findByRole("textbox", { name: "Why is this change needed?" }), " local edit");
     await act(async () => {
       queryClient.setQueryData(knowledgeQueryKeys.section("line-1", "revision-1", "recommendations"), section("recommendations", {
@@ -412,14 +444,20 @@ describe("workspace hierarchy summary", () => {
     expect(screen.getByRole("textbox", { name: "Why is this change needed?" })).toHaveValue("Saved support requirement local edit");
     expect(card).not.toHaveTextContent("Another editor's saved wording");
     expect(within(card).queryByText("Scope action")).not.toBeInTheDocument();
+    await doneFocusedEditing(user);
     await user.click(screen.getByRole("tab", { name: "Overview" }));
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Stay here" }));
+    await openRecommendationEditor(user);
     expectSummary();
     expect(screen.getByRole("textbox", { name: "Why is this change needed?" })).toHaveValue("Saved support requirement local edit");
+    await doneFocusedEditing(user);
     await user.click(screen.getByRole("tab", { name: "Overview" }));
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard changes" }));
     expectSummary();
+    await doneFocusedEditing(user);
     await user.click(screen.getByRole("tab", { name: "Recommendation & Exclusions" }));
+    await openSavedDetails(user);
+    await openRecommendationEditor(user);
     expect(await screen.findByRole("textbox", { name: "Why is this change needed?" })).toHaveValue("Another editor's saved wording");
     expectSummary();
   });
@@ -428,14 +466,19 @@ describe("workspace hierarchy summary", () => {
     setupRecommendations();
     const user = userEvent.setup();
     const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await doneFocusedEditing(user);
     await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    await openSavedDetails(user);
+    await openRecommendationEditor(user);
     await user.type(await screen.findByRole("textbox", { name: "Why is this change needed?" }), " confirmed");
     let releaseHistory!: () => void;
     vi.mocked(knowledgeApi.getKnowledgeHistory).mockImplementation(() => new Promise((resolve) => { releaseHistory = () => resolve({ items: [revision], pagination: page }); }));
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_id, _revision, key, input) => mutationSection(key, input.payload));
+    await doneFocusedEditing(user);
     await user.click(screen.getByRole("button", { name: "Save Recommendation & Exclusions" }));
     await waitFor(() => expect(releaseHistory).toBeTypeOf("function"));
     expectSummary();
+    await openRecommendationEditor(user);
     const reason = screen.getByRole("textbox", { name: "Why is this change needed?" });
     await user.type(reason, " later edit");
     expectSummary();
@@ -453,12 +496,18 @@ describe("workspace hierarchy summary", () => {
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => key === "recommendations" ? confirmed : section(key));
     const user = userEvent.setup();
     renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await doneFocusedEditing(user);
     await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    await openSavedDetails(user);
+    await doneFocusedEditing(user);
     await user.click(await screen.findByRole("button", { name: "Show Recommendation & Exclusions details" }));
+    await openRecommendationEditor(user);
     await user.type(await screen.findByRole("textbox", { name: "Why is this change needed?" }), " retry me");
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(new Error("Save interrupted"));
+    await doneFocusedEditing(user);
     await user.click(screen.getByRole("button", { name: "Save Recommendation & Exclusions" }));
     await screen.findAllByText("Save interrupted");
+    await openRecommendationEditor(user);
     expect(screen.getByRole("textbox", { name: "Why is this change needed?" })).toHaveValue(`${rule.reason} retry me`);
     expectSummary();
     expect(screen.getByRole("region", { name: "Recommendation & Exclusions saved summary" })).not.toHaveTextContent("retry me");
@@ -468,6 +517,7 @@ describe("workspace hierarchy summary", () => {
       return saved;
     });
     await waitFor(() => expect(screen.getByRole("button", { name: "Save Recommendation & Exclusions" })).toBeEnabled());
+    await doneFocusedEditing(user);
     await user.click(screen.getByRole("button", { name: "Save Recommendation & Exclusions" }));
     expect(await screen.findByText("Recommendation & Exclusions saved.")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: "Save Recommendation & Exclusions" })).toBeDisabled());
@@ -501,7 +551,10 @@ describe("workspace hierarchy summary", () => {
       parameters: [{ id: "q-one", label: "Ceiling alignment", type: "text", acceptanceCriteria: "Saved alignment criteria" }, { id: "q-two", label: "Untouched saved question", type: "boolean" }] });
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => section(key, key === "quality" ? { parameters: [{ label: "Historical item-only check", type: "text" }] } : {}));
     renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await doneFocusedEditing(user);
     await user.click(await screen.findByRole("tab", { name: "Quality Parameter" }));
+    await openSavedDetails(user);
+    await openQualityEditor(user);
     const criteria = (await screen.findAllByRole("textbox", { name: "Acceptance criteria" }))[0]!;
     expectSummary();
     await user.clear(criteria); await user.type(criteria, "Joints follow the approved layout");
@@ -510,12 +563,15 @@ describe("workspace hierarchy summary", () => {
     expect(card).not.toHaveTextContent("Joints follow the approved layout");
     for (const status of screen.getAllByText("Unsaved changes")) expect(status).toBeVisible();
     expect(card).toHaveTextContent("Untouched saved question");
+    await doneFocusedEditing(user);
     await user.click(within(card).getByRole("button", { name: "Show Quality Parameters details" }));
     expect(card).toHaveTextContent("Saved alignment criteria");
     expect(card).not.toHaveTextContent("Historical item-only check");
     expect(card).not.toHaveTextContent("Joints follow the approved layout");
-    await user.clear(criteria); await user.type(criteria, "Saved alignment criteria");
-    expect(criteria).toHaveValue("Saved alignment criteria");
+    await openQualityEditor(user);
+    const restoredCriteria = screen.getByRole("textbox", { name: "Acceptance criteria" });
+    await user.clear(restoredCriteria); await user.type(restoredCriteria, "Saved alignment criteria");
+    expect(restoredCriteria).toHaveValue("Saved alignment criteria");
     expectSummary();
   });
 
@@ -563,8 +619,11 @@ describe("temporary item workspace", () => {
     const route = "/admin/configuration/estimation/items/line-1";
     const pattern = "/admin/configuration/estimation/items/:itemId";
     const view = renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await doneFocusedEditing(user);
     await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
-    await user.click(await screen.findByRole("button", { name: "Add rule" }));
+    await openSavedDetails(user);
+    await user.click(await screen.findByText("Other scope rules", { selector: "summary" }));
+    await user.click(screen.getByRole("button", { name: "Add other scope rule" }));
     await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), electrical.id);
     const related = screen.getByRole("combobox", { name: "Related item" });
     await waitFor(() => expect(related).toBeEnabled());
@@ -577,13 +636,17 @@ describe("temporary item workspace", () => {
     await waitFor(() => expect(related).toHaveValue(created.mainLineId));
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
     await user.type(screen.getByRole("textbox", { name: "Why is this change needed?" }), "Review the mounting when the supporting ceiling is removed.");
+    await doneFocusedEditing(user);
     await user.click(screen.getByRole("button", { name: "Save Recommendation & Exclusions" }));
     await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledOnce());
     expect(savedPayload.budgetAlterations).toEqual([expect.objectContaining({ targetMainLineId: created.mainLineId, targetBasketId: electrical.id, targetSubBasketId: lighting.id, targetType: "catalog" })]);
     expect(JSON.stringify(savedPayload)).not.toContain("suggestion:");
     view.unmount();
     renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await doneFocusedEditing(user);
     await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    await openSavedDetails(user);
+    await openRecommendationEditor(user);
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Related item" })).toHaveDisplayValue(created.mainLineName));
     expect(knowledgeApi.createKnowledgeMainLine).toHaveBeenCalledOnce();
     expect(knowledgeApi.listKnowledgeItems).toHaveBeenCalledWith({ limit: 100, offset: 0, status: "archived" });
@@ -623,12 +686,16 @@ describe("temporary item workspace", () => {
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => section(key, key === "recommendations" ? { budgetAlterations: [budgetRule], exclusions: notes } : {}));
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_id, _revision, key, input) => mutationSection(key, input.payload, 3, 5));
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await doneFocusedEditing(user);
     await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    await openSavedDetails(user);
+    await openRecommendationEditor(user);
     expect(await screen.findByRole("option", { name: "Ceiling COB Lights" })).toBeInTheDocument();
     expect(knowledgeApi.listKnowledgeItems).toHaveBeenCalledWith({ limit: 100, offset: 1 });
     const reason = screen.getByRole("textbox", { name: "Why is this change needed?" });
     await user.clear(reason);
     await user.type(reason, "Recessed lights need the false ceiling.");
+    await doneFocusedEditing(user);
     await user.click(screen.getByRole("button", { name: "Save Recommendation & Exclusions" }));
     await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith("line-1", "revision-1", "recommendations", expect.objectContaining({ expectedVersion: 2, expectedAggregateVersion: 4, payload: { budgetAlterations: [{ ...budgetRule, reason: "Recessed lights need the false ceiling." }], exclusions: notes } })));
   });
@@ -640,10 +707,13 @@ describe("temporary item workspace", () => {
     await screen.findByRole("heading", { name: "Wall panelling" });
     expect(screen.queryByRole("tab", { name: "Recommendation & Exclusions" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("tab")).toHaveLength(3);
+    await doneFocusedEditing(user);
     await user.click(screen.getByRole("tab", { name: "Mode" }));
     expect(await screen.findByRole("checkbox", { name: "PMC" })).toBeVisible();
+    await doneFocusedEditing(user);
     await user.click(screen.getByRole("tab", { name: "Quality Parameter" }));
-    expect(await screen.findByRole("button", { name: "Add Quality parameter" })).toBeVisible();
+    await openSavedDetails(user);
+    expect(await screen.findByRole("button", { name: "Add Parameter" })).toBeVisible();
     await expectNoAutomatedAccessibilityViolations();
   });
 });
@@ -855,11 +925,14 @@ describe("AI estimator knowledge screens", () => {
     const user = userEvent.setup();
     vi.mocked(knowledgeApi.updateKnowledgeBasketQuality).mockImplementation(async (basketId, input) => ({ basketId, basketName: "Carpentry", basketStatus: "active", version: 2, revisionId: "shared-v1", revisionNumber: 1, contentDigest: "shared-digest", parameters: input.parameters, updatedAt: item.updatedAt }));
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await doneFocusedEditing(user);
     await user.click(await screen.findByRole("tab", { name: "Quality Parameter" }));
-    await user.click(await screen.findByRole("button", { name: "Add Quality parameter" }));
+    await openSavedDetails(user);
+    await user.click(await screen.findByRole("button", { name: "Add Parameter" }));
     await user.type(screen.getByRole("textbox", { name: "Question / check" }), "Check the completed finish");
     expect(screen.getByRole("region", { name: "Quality Parameters saved summary" })).not.toHaveTextContent("Check the completed finish");
     await user.selectOptions(screen.getByRole("combobox", { name: "Answer type" }), "boolean");
+    await doneFocusedEditing(user);
     await user.click(screen.getByRole("tab", { name: "Overview" }));
     const guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
     await user.click(within(guard).getByRole("button", { name: "Save changes" }));
@@ -875,7 +948,10 @@ describe("AI estimator knowledge screens", () => {
     const saved = { basketId: "basket-1", basketName: "Carpentry", basketStatus: "active" as const, version: 2, revisionId: "shared-v1", revisionNumber: 1, contentDigest: "shared-digest", parameters: [{ id: "shared-check", type: "text", label: "Saved finish check" }], updatedAt: item.updatedAt };
     vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockResolvedValue(saved);
     const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await doneFocusedEditing(user);
     await user.click(await screen.findByRole("tab", { name: "Quality Parameter" }));
+    await openSavedDetails(user);
+    await openQualityEditor(user);
     expect(await screen.findByRole("textbox", { name: "Question / check" })).toHaveValue("Saved finish check");
     vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockRejectedValue(new ApiError(503, "UPSTREAM_UNAVAILABLE", "Shared checklist refresh unavailable."));
     await act(async () => {
@@ -885,7 +961,9 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.getByRole("textbox", { name: "Question / check" })).toHaveValue("Saved finish check");
     expect(screen.getByRole("region", { name: "Quality Parameters saved summary" })).toHaveTextContent("Saved finish check");
     vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockResolvedValue({ ...saved, version: 3, parameters: [{ ...saved.parameters[0]!, label: "Current shared finish check" }] });
+    await doneFocusedEditing(user);
     await user.click(screen.getByRole("button", { name: "Retry refresh" }));
+    await openQualityEditor(user);
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Question / check" })).toHaveValue("Current shared finish check"));
     expect(screen.queryByText("The latest shared checklist could not be refreshed.")).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Quality Parameters saved summary" })).toHaveTextContent("Current shared finish check");
@@ -898,16 +976,21 @@ describe("AI estimator knowledge screens", () => {
       parameters: [{ id: "check", type: "text", label: "Saved finish check" }] });
     vi.mocked(knowledgeApi.updateKnowledgeBasketQuality).mockRejectedValue(new ApiError(503, "UNAVAILABLE", "Checklist save unavailable"));
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await doneFocusedEditing(user);
     await user.click(await screen.findByRole("tab", { name: "Quality Parameter" }));
+    await openSavedDetails(user);
+    await openQualityEditor(user);
     const question = await screen.findByRole("textbox", { name: "Question / check" });
     await user.clear(question);
     await user.type(question, "Unsaved finish check");
+    await doneFocusedEditing(user);
     await user.click(screen.getByRole("button", { name: "Save shared checklist" }));
     expect(await screen.findByText("Checklist save unavailable")).toBeVisible();
     const summary = screen.getByRole("region", { name: "Quality Parameters saved summary" });
     expect(summary).toHaveTextContent("Saved finish check");
     expect(summary).not.toHaveTextContent("Unsaved finish check");
-    expect(question).toHaveValue("Unsaved finish check");
+    await openQualityEditor(user);
+    expect(screen.getByRole("textbox", { name: "Question / check" })).toHaveValue("Unsaved finish check");
   });
 
   it("renders minimal item cards with only the linked heading and completeness", async () => {
@@ -989,8 +1072,9 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.queryByRole("combobox", { name: "Section state" })).not.toBeInTheDocument();
 
     for (const sectionName of ["Recommendation & Exclusions", "Quality Parameter"]) {
+      await doneFocusedEditing(user);
       await user.click(screen.getByRole("tab", { name: sectionName }));
-      await screen.findByRole("heading", { name: sectionName, level: 2 });
+      await screen.findByRole("heading", { name: sectionName === "Quality Parameter" ? "Quality Parameters" : sectionName, level: 2 });
       expect(screen.queryByRole("combobox", { name: "Section state" })).not.toBeInTheDocument();
     }
   });
@@ -1739,21 +1823,26 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.getByRole("region", { name: "Quality Parameters saved summary" })).toHaveTextContent("Thickness");
     const overview = document.querySelector(".knowledge-overview");
     expect(overview).not.toBeNull();
+    expect(document.querySelector(".knowledge-page--item-workspace")).not.toHaveAttribute("data-reference-section");
     expect(within(overview as HTMLElement).queryByRole("heading", { name: "All section summaries" })).not.toBeInTheDocument();
     expect(within(overview as HTMLElement).queryByRole("heading", { name: "Scope", level: 3 })).not.toBeInTheDocument();
     expect(within(overview as HTMLElement).queryByRole("heading", { name: "Execution", level: 3 })).not.toBeInTheDocument();
     expect(within(overview as HTMLElement).queryByRole("heading", { name: "Advanced", level: 3 })).not.toBeInTheDocument();
     expect(overview?.querySelectorAll("article.knowledge-overview-card")).toHaveLength(0);
     await user.selectOptions(screen.getByRole("combobox", { name: "Unit of measure (UOM)" }), squareMetre.id);
+    await doneFocusedEditing(user);
     await user.click(screen.getByRole("tab", { name: "Mode" }));
     expect(screen.getByRole("alertdialog", { name: "Save changes before leaving?" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Discard changes" }));
     const modePanel = await screen.findByRole("tabpanel", { name: "Mode" });
+    expect(document.querySelector(".knowledge-page--item-workspace")).not.toHaveAttribute("data-reference-section");
     expectModeRegionsInOrder(modePanel);
     expect(within(modePanel).getByRole("region", { name: "Specifications" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Add Specification" })).toBeVisible();
 
+    await doneFocusedEditing(user);
     await user.click(screen.getByRole("tab", { name: "Recommendation & Exclusions" }));
+    await openSavedDetails(user);
     /* Recommendation is free text now; the Basket is context above the section
        rather than anything selectable inside a row. */
     expect(await screen.findByRole("textbox", { name: "Recommendation" })).toHaveValue("Related panel");
@@ -1761,10 +1850,13 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.queryByRole("combobox", { name: "Target Basket" })).not.toBeInTheDocument();
     const recommendationSection = document.querySelector(".knowledge-section-editor");
     expect(recommendationSection).not.toBeNull();
-    expect(within(recommendationSection as HTMLElement).getByText(/Main Basket ·/u)).toBeVisible();
+    expect(screen.getByRole("region", { name: "Quick Info" })).toHaveTextContent("Carpentry");
     expect(screen.getByRole("textbox", { name: "Reason" })).toHaveValue("Use matching panel");
 
+    await doneFocusedEditing(user);
     await user.click(screen.getByRole("tab", { name: "Quality Parameter" }));
+    await openSavedDetails(user);
+    await openQualityEditor(user);
     expect(await screen.findByRole("combobox", { name: "Answer type" })).toHaveValue("number");
     expect(screen.getByRole("textbox", { name: "Question / check" })).toHaveValue("Thickness");
 
@@ -2382,7 +2474,7 @@ describe("AI estimator knowledge screens", () => {
       selector.focus();
       await user.selectOptions(selector, "quality");
       expect(selector).toHaveFocus();
-      expect(await screen.findByRole("heading", { name: "Quality Parameter" })).toBeVisible();
+      expect(await screen.findByRole("heading", { name: "Quality Parameters", level: 2 })).toBeVisible();
     } finally {
       vi.unstubAllGlobals();
     }

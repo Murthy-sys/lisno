@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/Button";
 import { Checkbox, Field, Input, Select, Textarea } from "../../components/ui/Field";
@@ -7,7 +7,7 @@ import {
   KnowledgeBudgetBuilder,
   type KnowledgeBudgetCatalogState
 } from "./KnowledgeBudgetBuilder";
-import { KnowledgeQualityInspectionFields } from "./KnowledgeQualityInspectionFields";
+import { KnowledgeQualityParameterFields as QualityRow } from "./KnowledgeQualityParameterFields";
 import { mandatoryQualityParameters } from "./knowledgeQuality";
 import { KnowledgeRepeater } from "./KnowledgeRepeater";
 import { KnowledgeBudgetAlterationBuilder } from "./KnowledgeBudgetAlterationBuilder";
@@ -88,6 +88,7 @@ const SECTION_MASTER_CATALOGS = {
 export interface KnowledgeSectionEditorProps {
   readonly sectionKey: KnowledgeSectionKey;
   readonly payload: KnowledgeJsonObject;
+  readonly savedPayload?: KnowledgeJsonObject;
   readonly masters: Readonly<Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>>;
   readonly relationshipBaskets: readonly KnowledgeBasket[];
   readonly relationshipItems: readonly KnowledgeItemListItem[];
@@ -178,6 +179,7 @@ export function KnowledgePrimaryUomEditor({
 export function KnowledgeSectionEditor({
   sectionKey,
   payload,
+  savedPayload,
   masters,
   relationshipBaskets,
   relationshipItems,
@@ -185,7 +187,6 @@ export function KnowledgeSectionEditor({
   mainLineName = "this item",
   relationshipCatalogState,
   onRelatedItemConfirmed,
-  basketName,
   readOnly,
   readOnlyRevision = readOnly,
   canQuickAdd,
@@ -255,12 +256,9 @@ export function KnowledgeSectionEditor({
 
   return (
     <div className="knowledge-section-editor">
-      {sectionKey !== "pricing" ? (
+      {sectionKey === "recommendations" ? <h2 className="sr-only">{KNOWLEDGE_SECTION_LABELS[sectionKey]}</h2> : sectionKey !== "pricing" ? (
         <div className="knowledge-section-heading">
           <div>
-            {sectionKey === "recommendations" && basketName
-              ? <p className="knowledge-section-eyebrow">Main Basket · {basketName}</p>
-              : null}
             <h2>{KNOWLEDGE_SECTION_LABELS[sectionKey]}</h2>
             <p>{sectionHelp(sectionKey)}</p>
           </div>
@@ -272,6 +270,7 @@ export function KnowledgeSectionEditor({
       {sectionKey !== "recommendations" || objectArray(payload.recommendations).length > 0 ? <MasterCatalogNotices sectionKey={sectionKey} masters={masters} states={masterCatalogStates} /> : null}
 
       {sectionKey === "recommendations" && <KnowledgeBudgetAlterationBuilder value={payload.budgetAlterations}
+        savedValue={savedPayload?.budgetAlterations} validationAttempt={validationAttempt} resetKey={resetKey}
         mainLineId={currentMainLineId} mainLineName={mainLineName} baskets={relationshipBaskets} items={relationshipItems}
         catalogState={relationshipCatalogState} readOnly={readOnly} canCreate={canQuickAdd} issues={issues}
         onItemConfirmed={onRelatedItemConfirmed}
@@ -544,65 +543,6 @@ function rowId(value: KnowledgeJsonValue, index: number): string {
   if (isJsonObject(value) && typeof value.id === "string") return value.id;
   if (isJsonObject(value) && typeof value.priceEntryId === "string") return value.priceEntryId;
   return `knowledge-row-${index}`;
-}
-
-/**
- * The payload stores a trimmed array, so echoing that back on every keystroke
- * would delete the comma or space the author is still typing. The typed text is
- * kept here and only re-synced when the payload changes for some other reason.
- */
-function AllowedValuesInput({ id, values, disabled, onChange }: { readonly id: string; readonly values: readonly string[]; readonly disabled: boolean; readonly onChange: (values: readonly string[]) => void }) {
-  const [text, setText] = useState(() => values.join(", "));
-  const ownValues = useRef(values);
-  useEffect(() => {
-    if (sameStrings(ownValues.current, values)) return;
-    ownValues.current = values;
-    setText(values.join(", "));
-  }, [values]);
-  return <RowInput id={id} label="Options" hint="Separate each option with a comma." value={text} disabled={disabled} onChange={(next) => {
-    setText(next);
-    const parsed = next.split(",").map((entry) => entry.trim()).filter(Boolean);
-    ownValues.current = parsed;
-    onChange(parsed);
-  }} />;
-}
-
-function sameStrings(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-function QualityRow({ prefix, value, disabled, onChange }: { readonly prefix: string; readonly value: KnowledgeJsonObject; readonly disabled: boolean; readonly onChange: (value: KnowledgeJsonObject) => void }) {
-  const set = (key: string, next: KnowledgeJsonValue | undefined) => onChange(setObjectValue(value, key, next));
-  const type = stringValue(value.type);
-  const choice = ["dropdown", "radio", "multi_select"].includes(type);
-  const changeType = (next: string) => {
-    const copy = { ...value } as Record<string, KnowledgeJsonValue>;
-    copy.type = next;
-    copy.defaultValue = null;
-    if (!["dropdown", "radio", "multi_select"].includes(next)) delete copy.allowedValues;
-    if (next !== "number") { delete copy.minimum; delete copy.maximum; delete copy.unit; }
-    onChange(copy);
-  };
-  const changeOptions = (allowedValues: readonly string[]) => {
-    const copy = { ...value, allowedValues } as Record<string, KnowledgeJsonValue>;
-    if (Array.isArray(copy.defaultValue)) copy.defaultValue = copy.defaultValue.filter((entry) => typeof entry === "string" && allowedValues.includes(entry));
-    else if (typeof copy.defaultValue === "string" && !allowedValues.includes(copy.defaultValue)) copy.defaultValue = null;
-    onChange(copy);
-  };
-  const typeLabels = { boolean: "Yes / No", text: "Text", number: "Number", dropdown: "Single choice", multi_select: "Multiple choice", radio: "Single choice (radio)", checkbox: "Checkbox" };
-  return <div className="knowledge-quality-check">
-    <RowInput id={`${prefix}-label`} label="Question / check" value={stringValue(value.label)} disabled={disabled} required multiline onChange={(next) => set("label", next || undefined)} />
-    <div className="knowledge-form-grid">
-      <Field id={`${prefix}-type`} label="Answer type" required>
-        {(props) => <Select {...props} value={type} disabled={disabled} onChange={(event) => changeType(event.target.value)}>
-          <option value="">Select</option>
-          {Object.entries(typeLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-        </Select>}
-      </Field>
-      {choice ? <AllowedValuesInput id={`${prefix}-values`} values={stringArray(value.allowedValues)} disabled={disabled} onChange={changeOptions} /> : null}
-    </div>
-    <KnowledgeQualityInspectionFields prefix={prefix} value={value} disabled={disabled} onChange={onChange} />
-  </div>;
 }
 
 function ExecutionStepRow({ prefix, value, steps, disabled, set }: { readonly prefix: string; readonly value: KnowledgeJsonObject; readonly steps: readonly KnowledgeJsonObject[]; readonly disabled: boolean; readonly set: (key: string, value: KnowledgeJsonValue | undefined) => void }) {

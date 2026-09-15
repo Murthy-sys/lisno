@@ -24,24 +24,36 @@ const items = [
 ].map((item) => ({ ...meta, itemType: "main_line", status: "draft", ...item })) as KnowledgeItemListItem[];
 const page = <T,>(entries: T[]) => ({ items: entries, pagination: { offset: 0, limit: 100, total: entries.length, hasMore: false } });
 const rule = { ...createBudgetAlteration(), id: "rule-1", targetBasketId: "basket-0", targetSubBasketId: sub.id, targetMainLineId: "lights", reason: "Recessed lights require the ceiling for fixing." };
-function setup(initial: KnowledgeJsonValue = [], options: { readOnly?: boolean; canCreate?: boolean; items?: KnowledgeItemListItem[]; catalogState?: KnowledgeBudgetCatalogState; onItemConfirmed?: (item: KnowledgeItemDetail) => void } = {}) {
+async function openRule(user: ReturnType<typeof userEvent.setup>, index = 1) {
+  const other = screen.getByText("Other scope rules", { selector: "summary" });
+  if (!(other.parentElement as HTMLDetailsElement).open) await user.click(other);
+  await user.click(screen.getByRole("button", { name: new RegExp(`^(Edit|View) rule ${index}:`) }));
+}
+function setup(initial: KnowledgeJsonValue = [], options: { savedValue?: KnowledgeJsonValue; readOnly?: boolean; canCreate?: boolean; items?: KnowledgeItemListItem[]; catalogState?: KnowledgeBudgetCatalogState; onItemConfirmed?: (item: KnowledgeItemDetail) => void } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const change = vi.fn();
   let updateItems!: (items: KnowledgeItemListItem[]) => void;
   let switchSource!: (sourceId: string) => void;
+  let validate!: () => void;
+  let updateBaselineKey!: (value: string) => void;
   function Harness() {
     const [value, setValue] = useState(initial);
     const [sourceId, setSourceId] = useState("source");
     switchSource = setSourceId;
+    const [validationAttempt, setValidationAttempt] = useState(0);
+    validate = () => setValidationAttempt((value) => value + 1);
+    const [resetKey, setResetKey] = useState("initial");
+    updateBaselineKey = setResetKey;
     const [catalogItems, setCatalogItems] = useState(options.items ?? items);
     updateItems = setCatalogItems;
     return <main><h1>POP False Ceiling</h1><h2>Recommendation &amp; Exclusions</h2><KnowledgeBudgetAlterationBuilder value={value} mainLineId={sourceId} mainLineName="POP False Ceiling" baskets={baskets} items={catalogItems} catalogState={options.catalogState}
       readOnly={options.readOnly ?? false} canCreate={options.canCreate ?? true} issues={budgetAlterationIssues(value, "source")}
+      savedValue={options.savedValue} validationAttempt={validationAttempt} resetKey={resetKey}
       onItemConfirmed={options.onItemConfirmed}
       onChange={(next) => { change(next); setValue(next); }} /></main>;
   }
   const view = render(<QueryClientProvider client={client}><MemoryRouter><Harness /></MemoryRouter></QueryClientProvider>);
-  return { ...view, change, user: userEvent.setup(), client, updateItems, switchSource };
+  return { ...view, change, user: userEvent.setup(), client, updateItems, switchSource, validate, updateBaselineKey };
 }
 beforeEach(() => {
   vi.resetAllMocks();
@@ -53,7 +65,8 @@ beforeEach(() => {
 describe("Budget Alterations", () => {
   it("authors the ceiling dependency, explains why, and resets the dependent catalog selections", async () => {
     const { user, change } = setup();
-    await user.click(screen.getByRole("button", { name: "Add rule" }));
+    await user.click(screen.getByText("Other scope rules", { selector: "summary" }));
+    await user.click(screen.getByRole("button", { name: "Add other scope rule" }));
     await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), "basket-0");
     await screen.findByRole("option", { name: sub.name });
     const line = screen.getByRole("combobox", { name: "Related item" });
@@ -72,6 +85,7 @@ describe("Budget Alterations", () => {
 
   it("supports optional additions and removals, independent triggers, disabling and deleting rules", async () => {
     const { user, change } = setup([rule]);
+    await openRule(user);
     await screen.findByRole("option", { name: sub.name });
     await user.selectOptions(screen.getByRole("combobox", { name: "What happens if?" }), "added");
     await user.selectOptions(screen.getByRole("combobox", { name: "Scope action" }), "can_add");
@@ -87,6 +101,7 @@ describe("Budget Alterations", () => {
   it("creates a reusable temporary item under the chosen Basket and links its identity", async () => {
     const onItemConfirmed = vi.fn();
     const { user, change, client } = setup([{ ...rule, targetSubBasketId: null, targetMainLineId: null }], { onItemConfirmed });
+    await openRule(user);
     await screen.findByRole("option", { name: sub.name });
     await user.click(screen.getByRole("button", { name: "Add temporary item" }));
     const dialog = screen.getByRole("dialog", { name: "Add related item" });
@@ -105,10 +120,11 @@ describe("Budget Alterations", () => {
   it("retains saved selections through catalog errors and prevents historical edits or unauthorized creation", async () => {
     vi.mocked(api.listKnowledgeSubBaskets).mockRejectedValue(new Error("Offline"));
     const { user, change } = setup([rule], { readOnly: true, canCreate: false });
+    await openRule(user);
     await screen.findByRole("button", { name: "Retry Sub Baskets" });
     expect(screen.getByRole("combobox", { name: "Related item" })).toHaveValue("lights");
     expect(screen.getByRole("textbox", { name: "Why is this change needed?" })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Add rule" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add Mandatory Item" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add temporary item" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "Enabled" }));
     expect(change).not.toHaveBeenCalled();
@@ -119,6 +135,7 @@ describe("Budget Alterations", () => {
       ? { items: [{ ...sub, id: "first-sub", name: "Wiring" }], pagination: { offset: 0, limit: 100, total: 2, hasMore: true } }
       : { items: [sub], pagination: { offset: 1, limit: 100, total: 2, hasMore: false } });
     const { user } = setup([{ ...rule, targetSubBasketId: null }]);
+    await openRule(user);
     await screen.findByRole("option", { name: sub.name });
     await user.selectOptions(screen.getByRole("combobox", { name: "Item type" }), "temporary");
     const temporary = screen.getByRole("combobox", { name: "Related item" });
@@ -129,6 +146,7 @@ describe("Budget Alterations", () => {
   it("opens a starter without mutating the rule and restores the previous selection on cancel", async () => {
     const onItemConfirmed = vi.fn();
     const { user, change } = setup([{ ...rule, targetSubBasketId: null }], { onItemConfirmed });
+    await openRule(user);
     await screen.findByRole("option", { name: sub.name });
     const select = screen.getByRole("combobox", { name: "Related item" });
     const suggestion = within(select).getByRole("option", { name: "Recessed LED downlight · Ceiling lighting" }) as HTMLOptionElement;
@@ -150,8 +168,9 @@ describe("Budget Alterations", () => {
     vi.mocked(api.createKnowledgeMainLine).mockResolvedValue(created);
     const onItemConfirmed = vi.fn();
     const { user, change } = setup([{ ...rule, targetSubBasketId: null }, { ...rule, id: "rule-2", targetSubBasketId: null, targetMainLineId: null }], { onItemConfirmed });
+    await openRule(user);
     await screen.findAllByRole("option", { name: sub.name });
-    const [first, second] = screen.getAllByRole("combobox", { name: "Related item" });
+    const first = screen.getByRole("combobox", { name: "Related item" });
     const option = within(first).getByRole("option", { name: "Recessed LED downlight · Ceiling lighting" }) as HTMLOptionElement;
     await user.selectOptions(first, option.value);
     const dialog = screen.getByRole("dialog", { name: "Add related item" });
@@ -164,6 +183,10 @@ describe("Budget Alterations", () => {
     expect(change.mock.lastCall![0][1]).toMatchObject({ id: "rule-2", targetMainLineId: null });
     expect(screen.getAllByLabelText("Scope change summary")[0]).toHaveTextContent(created.mainLineName);
     expect(screen.getByRole("status")).toHaveTextContent("Save this section");
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await openRule(user, 2);
+    const second = screen.getByRole("combobox", { name: "Related item" });
+    await screen.findByRole("option", { name: created.mainLineName + " · Ceiling lighting" });
     expect(within(second).queryByRole("option", { name: created.mainLineName + " · Ceiling lighting" })).toHaveValue(created.mainLineId);
     await user.selectOptions(second, created.mainLineId);
     expect(change.mock.lastCall![0][1]).toMatchObject({ targetMainLineId: created.mainLineId, targetSubBasketId: created.subBasketId });
@@ -174,6 +197,7 @@ describe("Budget Alterations", () => {
   it("adds a custom catalog item in an unrecognized basket and preserves the selected context", async () => {
     vi.mocked(api.createKnowledgeMainLine).mockResolvedValue({ ...items[3], mainLineId: "custom", mainLineName: "Custom panel", subBasketId: "custom-sub", subBasketName: "Joinery" } as KnowledgeItemDetail);
     const { user, change } = setup([{ ...rule, targetBasketId: "basket-1", targetSubBasketId: null, targetMainLineId: null }]);
+    await openRule(user);
     await waitFor(() => expect(screen.getByRole("button", { name: "Add related item" })).toBeEnabled());
     expect(screen.queryByRole("group", { name: "Suggested items — add to catalog" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Add related item" }));
@@ -181,7 +205,7 @@ describe("Budget Alterations", () => {
     await user.type(within(dialog).getByRole("textbox", { name: "Related item name" }), "Custom panel");
     await user.type(within(dialog).getByRole("textbox", { name: "Sub basket" }), "Joinery");
     await user.click(within(dialog).getByRole("button", { name: "Add related item" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add related item" })).not.toBeInTheDocument());
     expect(change.mock.lastCall![0][0]).toMatchObject({ targetMainLineId: "custom", targetBasketId: "basket-1", targetSubBasketId: "custom-sub", targetType: "catalog" });
     expect(screen.getByRole("combobox", { name: "Related item" })).toHaveDisplayValue("Custom panel");
   });
@@ -190,6 +214,7 @@ describe("Budget Alterations", () => {
     vi.mocked(api.createKnowledgeMainLine).mockRejectedValue(new ApiError(400, "VALIDATION_ERROR", "Review the related item name."));
     const onItemConfirmed = vi.fn();
     const { user, change } = setup([rule], { onItemConfirmed });
+    await openRule(user);
     await screen.findByRole("option", { name: sub.name });
     await user.click(screen.getByRole("button", { name: "Add related item" }));
     const dialog = screen.getByRole("dialog", { name: "Add related item" });
@@ -202,7 +227,8 @@ describe("Budget Alterations", () => {
   });
 
   it.each([{ canCreate: false }, { readOnly: true }])("hides custom and starter creation for restricted access: %j", async (options) => {
-    setup([{ ...rule, targetSubBasketId: null }], options);
+    const { user } = setup([{ ...rule, targetSubBasketId: null }], options);
+    await openRule(user);
     await screen.findByRole("option", { name: sub.name });
     expect(screen.queryByRole("button", { name: "Add related item" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Suggested items — add to catalog" })).not.toBeInTheDocument();
@@ -210,7 +236,8 @@ describe("Budget Alterations", () => {
   });
 
   it.each([{ status: "loading" as const }, { status: "error" as const }, { status: "ready" as const, refreshErrorMessage: "Offline" }])("retains saved targets and disables creation during incomplete catalogs: %j", async (catalogState) => {
-    const { change } = setup([{ ...rule, targetSubBasketId: null }], { catalogState });
+    const { user, change } = setup([{ ...rule, targetSubBasketId: null }], { catalogState });
+    await openRule(user);
     await screen.findByRole("option", { name: sub.name });
     expect(screen.getByRole("combobox", { name: "Related item" })).toHaveValue("lights");
     expect(screen.getByRole("combobox", { name: "Related item" })).toBeDisabled();
@@ -223,6 +250,7 @@ describe("Budget Alterations", () => {
     const created = { ...items[1], mainLineId: "created", mainLineName: "Created fitting" } as KnowledgeItemDetail;
     vi.mocked(api.createKnowledgeMainLine).mockResolvedValue(created);
     const { user, updateItems } = setup([rule]);
+    await openRule(user);
     await screen.findByRole("option", { name: sub.name });
     await user.click(screen.getByRole("button", { name: "Add related item" }));
     const dialog = screen.getByRole("dialog", { name: "Add related item" });
@@ -237,6 +265,7 @@ describe("Budget Alterations", () => {
   it("retains a successfully created target through refresh failure and retries only catalog reads", async () => {
     vi.mocked(api.createKnowledgeMainLine).mockResolvedValue({ ...items[1], mainLineId: "saved-fitting", mainLineName: "Saved fitting" } as KnowledgeItemDetail);
     const { user, client } = setup([rule]);
+    await openRule(user);
     await screen.findByRole("option", { name: sub.name });
     const invalidation = vi.spyOn(client, "invalidateQueries").mockRejectedValueOnce(new Error("Offline")).mockResolvedValue(undefined);
     await user.click(screen.getByRole("button", { name: "Add related item" }));
@@ -259,21 +288,25 @@ describe("Budget Alterations", () => {
     vi.mocked(api.getKnowledgeItem).mockResolvedValue(confirmed);
     const onItemConfirmed = vi.fn();
     const { user, updateItems } = setup([rule, { ...rule, id: "second", targetMainLineId: null }], { items: items.map((item) => item.mainLineId === "lights" ? stale : item), onItemConfirmed });
+    await openRule(user);
     await screen.findAllByRole("option", { name: sub.name });
     await user.click(screen.getAllByRole("button", { name: "Add related item" })[0]);
     const dialog = screen.getByRole("dialog", { name: "Add related item" });
     await user.type(within(dialog).getByRole("textbox", { name: "Related item name" }), confirmed.mainLineName);
     await user.click(within(dialog).getByRole("button", { name: "Add related item" }));
     await user.click(await within(dialog).findByRole("button", { name: "Use existing item" }));
-    const [first, second] = screen.getAllByRole("combobox", { name: "Related item" });
+    const first = screen.getByRole("combobox", { name: "Related item" });
     await waitFor(() => expect(first).toHaveDisplayValue(confirmed.mainLineName));
     expect(onItemConfirmed).toHaveBeenCalledExactlyOnceWith(confirmed);
     expect(within(first).getByRole("option", { name: confirmed.mainLineName })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await openRule(user, 2);
+    const second = screen.getByRole("combobox", { name: "Related item" });
     await user.selectOptions(second, "lights");
     expect(second).toHaveDisplayValue(confirmed.mainLineName);
     await act(async () => updateItems(items.map((item) => item.mainLineId === "lights" ? confirmed : item)));
     await act(async () => updateItems(items.map((item) => item.mainLineId === "lights" ? { ...confirmed, version: 3, status: "inactive" } : item)));
-    expect(within(first).getByRole("option", { name: confirmed.mainLineName })).toBeDisabled();
+    expect(within(second).getByRole("option", { name: confirmed.mainLineName })).toBeDisabled();
   });
 
   it("does not apply a delayed create response to a different source with the same rule ID", async () => {
@@ -281,6 +314,7 @@ describe("Budget Alterations", () => {
     vi.mocked(api.createKnowledgeMainLine).mockImplementation(() => new Promise((resolve) => { complete = resolve; }));
     const onItemConfirmed = vi.fn();
     const { user, change, switchSource, client } = setup([rule], { onItemConfirmed });
+    await openRule(user);
     await screen.findByRole("option", { name: sub.name });
     const invalidation = vi.spyOn(client, "invalidateQueries");
     await user.click(screen.getByRole("button", { name: "Add related item" }));
@@ -294,8 +328,106 @@ describe("Budget Alterations", () => {
     await waitFor(() => expect(invalidation).toHaveBeenCalled());
     expect(change).not.toHaveBeenCalled();
     expect(onItemConfirmed).not.toHaveBeenCalled();
+    await openRule(user);
     expect(screen.getByRole("combobox", { name: "Related item" })).toHaveValue("lights");
     expect(client.getQueryData(["ai-estimator-knowledge", "item", "late-fitting"])).toEqual(detail);
+  });
+
+  it("renders compact groups without editing or rewriting mixed rules", async () => {
+    const mixed = [
+      { ...rule, id: "mandatory", trigger: "added", action: "add" },
+      { ...rule, id: "probable", trigger: "added", action: "add", requirement: "can", targetMainLineId: "temp", targetType: "temporary" },
+      { ...rule, id: "excluded", trigger: "added", action: "remove", requirement: "can", targetMainLineId: "cabinet", targetBasketId: "basket-1" },
+      { ...rule, id: "removal", active: false }
+    ];
+    const { user, change } = setup(mixed, { savedValue: mixed });
+    expect(screen.queryByRole("textbox", { name: "Why is this change needed?" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("table", { name: "Non-Negotiable Additions" })).getByText("Required addition")).toBeInTheDocument();
+    expect(within(screen.getByRole("table", { name: "Probable Additions" })).getByText("Optional addition")).toBeInTheDocument();
+    expect(within(screen.getByRole("table", { name: "Exclusions" })).getByText("Optional removal")).toBeInTheDocument();
+    expect(change).not.toHaveBeenCalled();
+    await openRule(user, 4);
+    await user.click(screen.getByRole("checkbox", { name: "Enabled" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(change.mock.lastCall![0].map((row: { id: string }) => row.id)).toEqual(mixed.map((row) => row.id));
+    expect(change.mock.lastCall![0].slice(0, 3)).toEqual(mixed.slice(0, 3));
+    expect(screen.getByText("Unsaved")).toBeInTheDocument();
+    const result = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
+    expect(result.violations).toEqual([]);
+  });
+
+  it("uses the simpler exclusion columns while keeping required and optional removals editable", async () => {
+    const exclusions = [{ ...rule, trigger: "added" }, { ...rule, id: "optional-exclusion", trigger: "added", requirement: "can", targetMainLineId: "temp", targetSubBasketId: null, targetType: "temporary" }];
+    const { user, change } = setup(exclusions, { savedValue: exclusions });
+    const table = screen.getByRole("table", { name: "Exclusions" });
+    expect(within(table).getAllByRole("columnheader").map((header) => header.textContent)).toEqual(["#", "Related item", "Relationship", "Effect", "Condition", "Status", "Actions"]);
+    expect(within(table).getByText("Required removal").closest("td")).toHaveAttribute("data-label", "Effect");
+    expect(within(table).getByText("Optional removal")).toBeInTheDocument();
+    for (const condition of within(table).getAllByText("When present in scope")) expect(condition.closest("td")).toHaveAttribute("data-label", "Condition");
+    expect(change).not.toHaveBeenCalled();
+    await openRule(user, 2);
+    expect(screen.getByRole("combobox", { name: "What happens if?" })).toHaveValue("added");
+    expect(screen.getByRole("combobox", { name: "Scope action" })).toHaveValue("can_remove");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Scope action" }), "can_add");
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(change.mock.lastCall![0]).toEqual([exclusions[0], { ...exclusions[1], action: "add" }]);
+    expect(within(screen.getByRole("table", { name: "Probable Additions" })).getByText("Optional addition")).toBeInTheDocument();
+  });
+
+  it("retains an incomplete addition after Done and reveals its first invalid field on save", async () => {
+    const { user, change, validate } = setup([], { savedValue: [] });
+    await user.click(screen.getByRole("button", { name: "Add Mandatory Item" }));
+    expect(change.mock.lastCall![0][0]).toMatchObject({ trigger: "added", action: "add", requirement: "must" });
+    const rowId = change.mock.lastCall![0][0].id;
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText("Needs attention")).toBeInTheDocument();
+    expect(screen.getByText("Unsaved")).toBeInTheDocument();
+    await act(async () => validate());
+    expect(await screen.findByRole("dialog", { name: "Edit scope rule 1" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Main Basket" })).toHaveFocus());
+    expect(change.mock.lastCall![0][0].id).toBe(rowId);
+    expect(api.createKnowledgeMainLine).not.toHaveBeenCalled();
+  });
+
+  it("opens hidden invalid removal rules only for a new validation attempt and preserves focus while typing", async () => {
+    const { user, validate } = setup([{ ...rule, reason: "" }]);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await act(async () => validate());
+    const reason = await screen.findByRole("textbox", { name: "Why is this change needed?" });
+    await waitFor(() => expect(reason).toHaveFocus());
+    await user.type(reason, "Dependency");
+    expect(reason).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("keeps an open draft and field focus through a saved-version refresh", async () => {
+    const { user, updateBaselineKey } = setup([rule]);
+    await openRule(user);
+    const reason = screen.getByRole("textbox", { name: "Why is this change needed?" });
+    await user.type(reason, " Updated.");
+    await act(async () => updateBaselineKey("server-version-2"));
+    expect(screen.getByRole("textbox", { name: "Why is this change needed?" })).toBe(reason);
+    expect(reason).toHaveValue(String(rule.reason) + " Updated.");
+    expect(reason).toHaveFocus();
+  });
+
+  it("supports keyboard row actions and restores focus after closing the editor", async () => {
+    const { user, change } = setup([{ ...rule, trigger: "added", action: "add" }]);
+    const actions = screen.getByLabelText("Actions for rule 1");
+    actions.focus();
+    await user.keyboard("{Enter}");
+    await user.click(await screen.findByRole("button", { name: "Disable rule 1" }));
+    expect(change.mock.lastCall![0][0]).toMatchObject({ id: rule.id, active: false });
+    await waitFor(() => expect(actions).toHaveFocus());
+    await user.keyboard("{Enter}");
+    await user.click(await screen.findByRole("button", { name: "Edit rule 1" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(actions).toHaveFocus());
+    await user.keyboard("{Enter}{Escape}");
+    expect(actions.parentElement).not.toHaveAttribute("open");
+    expect(actions).toHaveFocus();
   });
 
   it("blocks empty explanations, self references and conflicting rules without changing legacy notes", () => {
