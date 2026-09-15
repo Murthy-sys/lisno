@@ -115,7 +115,13 @@ describe("Mode pending publication lifecycle", () => {
     expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
+  it.each<{
+    original: KnowledgeJsonObject;
+    server: KnowledgeJsonObject;
+    edited: string;
+    value: string;
+    valid: boolean;
+  }>([
     { original: { subVendorMarginBps: 1_500 }, server: { subVendorMarginBps: 2_000 }, edited: "Min. Lisno Margin (%)", value: "15", valid: true },
     { original: { subVendorMarginBps: 2_000 }, server: { subVendorMarginBps: 1_500 }, edited: "Min. Lisno Margin (%)", value: "20", valid: false },
     { original: { subVendorMinimumMarginBps: 2_000, subVendorMarginBps: 2_000 }, server: { subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 }, edited: "Max. Lisno Margin (%)", value: "15", valid: true },
