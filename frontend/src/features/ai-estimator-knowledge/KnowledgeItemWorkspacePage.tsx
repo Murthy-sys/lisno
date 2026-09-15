@@ -36,6 +36,7 @@ import { KnowledgeModePanel, type KnowledgeModePanelHandle } from "./KnowledgeMo
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 import { KnowledgeRevisionHistory } from "./KnowledgeRevisionHistory";
 import { KnowledgeSavedConfigurationSummary } from "./KnowledgeSavedConfigurationSummary";
+import { KnowledgeReferenceContextRail } from "./KnowledgeReferenceContextRail";
 import { pendingValuesEqual } from "./knowledgePendingChanges";
 import { KnowledgeSectionCommandBar } from "./KnowledgeSectionCommandBar";
 import { KnowledgeWorkspaceStatus } from "./KnowledgeWorkspaceStatus";
@@ -79,6 +80,7 @@ import type {
 import { useUnsavedKnowledgeGuard } from "./useUnsavedKnowledgeGuard";
 import "./ai-estimator-knowledge.css";
 import "./knowledge-configuration-ui.css";
+import "./knowledge-reference-workspace.css";
 
 const MASTER_TYPES = ["uoms", "vendors", "taxes", "priorities", "surfaces", "modes"] as const satisfies readonly KnowledgeMasterType[];
 
@@ -486,9 +488,28 @@ export function KnowledgeItemWorkspacePage() {
     : sectionQuery.data
       ? `Version ${sectionQuery.data.version}`
       : "Version unavailable";
+  const referenceSection = activeSection === "recommendations" || activeSection === "quality" ? activeSection : undefined;
+  const savedDetails = <>
+    <KnowledgeRevisionHistory
+      entries={historyQuery.data?.items}
+      loading={historyQuery.isPending}
+      refreshing={historyQuery.isFetching}
+      error={historyQuery.error instanceof Error ? historyQuery.error : null}
+      onRetry={() => void historyQuery.refetch()}
+    />
+    <KnowledgeSavedConfigurationSummary item={item} revisionId={revision?.id} masters={masters}
+      baskets={relationshipBasketsQuery.data?.items ?? []} items={relationshipItemsQuery.data?.allItems ?? []}
+      referenceStates={{
+        masters: Object.fromEntries(MASTER_TYPES.map((type, index) => [type, {
+          ...masterCatalogStates[type], denied: isAccessDenied(masterQueries[index]?.error)
+        }])),
+        relationships: { ...overviewRelationshipState,
+          denied: isAccessDenied(relationshipBasketsQuery.error) || isAccessDenied(relationshipItemsQuery.error) }
+      }} />
+  </>;
 
   return (
-    <div className="knowledge-page knowledge-page--item-workspace">
+    <div className="knowledge-page knowledge-page--item-workspace" data-reference-section={referenceSection}>
       <PageHeader
         id="knowledge-item-title"
         breadcrumb={<Button variant="quiet" size="compact" leadingIcon={<ArrowLeft />} onClick={() => guard.requestNavigation(() => navigate("/admin/configuration/estimation"))}>Back to Main Baskets</Button>}
@@ -575,7 +596,7 @@ export function KnowledgeItemWorkspacePage() {
                     surfacesDirty={overviewDirtyFields.has("surfaceIds")}
                   />
                 ) : (
-                  <KnowledgeSectionEditor key={`${pendingSession.sourceKey}:${sectionQuery.data.id}`} sectionKey={backendSection} payload={payload} masters={masters} relationshipBaskets={relationshipBasketsQuery.data?.items ?? []} relationshipItems={(backendSection === "recommendations" ? relationshipItemsQuery.data?.allItems : relationshipItemsQuery.data?.items) ?? []} currentMainLineId={mainLineId} mainLineName={item.mainLineName} basketName={item.basketName} relationshipCatalogState={overviewRelationshipState} readOnly={!editable} canQuickAdd={canCreate} uomCatalogState={uomCatalogState} vendorCatalogState={vendorCatalogState} masterCatalogStates={masterCatalogStates} resetKey={`${sectionQuery.data.id}-${sectionQuery.data.version}`} validationAttempt={validationAttempt} onChange={(next) => {
+                  <KnowledgeSectionEditor key={`${pendingSession.sourceKey}:${sectionQuery.data.id}`} sectionKey={backendSection} payload={payload} savedPayload={sectionQuery.data.payload} masters={masters} relationshipBaskets={relationshipBasketsQuery.data?.items ?? []} relationshipItems={(backendSection === "recommendations" ? relationshipItemsQuery.data?.allItems : relationshipItemsQuery.data?.items) ?? []} currentMainLineId={mainLineId} mainLineName={item.mainLineName} basketName={item.basketName} relationshipCatalogState={overviewRelationshipState} readOnly={!editable} canQuickAdd={canCreate} uomCatalogState={uomCatalogState} vendorCatalogState={vendorCatalogState} masterCatalogStates={masterCatalogStates} resetKey={`${sectionQuery.data.id}-${sectionQuery.data.version}`} validationAttempt={validationAttempt} onChange={(next) => {
                     currentPayload.current = next;
                     setPayload(next);
                   }} onDirty={() => setDirty(true)} onValidationChange={setEditorValid} onQuickAdd={(type, select) => setQuickAdd({ type, select })} />
@@ -585,24 +606,10 @@ export function KnowledgeItemWorkspacePage() {
             ) : <PageState state="empty" message="This revision has no section data." />}
           </KnowledgeSectionNavigation>
         </div>
-        <KnowledgeWorkspaceRail>
-          <KnowledgeRevisionHistory
-            entries={historyQuery.data?.items}
-            loading={historyQuery.isPending}
-            refreshing={historyQuery.isFetching}
-            error={historyQuery.error instanceof Error ? historyQuery.error : null}
-            onRetry={() => void historyQuery.refetch()}
-          />
-          <KnowledgeSavedConfigurationSummary item={item} revisionId={revision?.id} masters={masters}
-            baskets={relationshipBasketsQuery.data?.items ?? []} items={relationshipItemsQuery.data?.allItems ?? []}
-            referenceStates={{
-              masters: Object.fromEntries(MASTER_TYPES.map((type, index) => [type, {
-                ...masterCatalogStates[type], denied: isAccessDenied(masterQueries[index]?.error)
-              }])),
-              relationships: { ...overviewRelationshipState,
-                denied: isAccessDenied(relationshipBasketsQuery.error) || isAccessDenied(relationshipItemsQuery.error) }
-            }} />
-        </KnowledgeWorkspaceRail>
+        {referenceSection ? <KnowledgeReferenceContextRail key={pendingSession.sourceKey} section={referenceSection}
+          item={item} revisionId={revision?.id} uoms={masters.uoms ?? []} uomState={uomCatalogState}
+          dirty={activeDirty} saving={activeSaving}>{savedDetails}</KnowledgeReferenceContextRail>
+          : <KnowledgeWorkspaceRail>{savedDetails}</KnowledgeWorkspaceRail>}
       </div>
 
       {guard.dialogOpen ? <KnowledgeUnsavedChangesDialog onSave={() => void guard.saveAndContinue()} onDiscard={guard.discardAndContinue} onStay={guard.stayHere} busy={guard.busy} error={guard.error} /> : null}

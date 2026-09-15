@@ -86,7 +86,7 @@ function classAndAttributeSpecificity(selector: string) {
 describe("Super Admin knowledge item workspace layout", () => {
   it("connects the approved workspace hooks without changing shared primitives", () => {
     expect(workspaceSource).toContain(
-      '<div className="knowledge-page knowledge-page--item-workspace">'
+      '<div className="knowledge-page knowledge-page--item-workspace" data-reference-section={referenceSection}>'
     );
     expect(workspaceSource).toContain(
       '" knowledge-workspace-section--overview"'

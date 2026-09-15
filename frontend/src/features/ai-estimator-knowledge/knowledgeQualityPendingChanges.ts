@@ -2,6 +2,7 @@ import {
   pairPendingRows, pendingRowsReordered, pendingValuesEqual,
   type KnowledgePendingChangeEntry, type KnowledgePendingChangeField, type KnowledgePendingChangesSnapshot
 } from "./knowledgePendingChanges";
+import { QUALITY_METHOD_LABELS } from "./knowledgeQualityPresentation";
 import { QUALITY_PARAMETER_TYPES } from "./knowledgeQuality";
 import type { KnowledgeJsonObject } from "./knowledgeTypes";
 
@@ -11,7 +12,8 @@ const answerTypes: Readonly<Record<string, string>> = {
 };
 const fields = [
   ["label", "Question / check"], ["type", "Answer type"], ["allowedValues", "Answer options"],
-  ["acceptanceCriteria", "Acceptance criteria"], ["photos", "Photo evidence"], ["photoCount", "Required photos"]
+  ["acceptanceCriteria", "Acceptance criteria"], ["photos", "Photo evidence"], ["photoCount", "Required photos"],
+  ["stage", "Stage"], ["instructions", "Instructions"], ["checkMethod", "Check method"], ["evidenceInstructions", "Evidence instructions"]
 ] as const;
 const text = (value: unknown) => typeof value === "string" ? value : "";
 
@@ -24,7 +26,8 @@ function editableRow(row: KnowledgeJsonObject): KnowledgeJsonObject {
     label: text(row.label), type: text(row.type),
     allowedValues: Array.isArray(row.allowedValues) ? row.allowedValues : [],
     acceptanceCriteria: text(row.acceptanceCriteria), photos,
-    photoCount: photos ? evidence.minPhotosPerSample ?? null : null
+    photoCount: photos ? evidence.minPhotosPerSample ?? null : null,
+    stage: text(row.stage), instructions: text(row.instructions), checkMethod: text(row.checkMethod), evidenceInstructions: text(evidence.instructions)
   };
 }
 
@@ -71,6 +74,7 @@ function incomplete(row: KnowledgeJsonObject): boolean {
 }
 function displayField(key: typeof fields[number][0], value: unknown): string {
   if (key === "type") return answerTypes[text(value)] ?? text(value);
+  if (key === "checkMethod") return QUALITY_METHOD_LABELS[text(value)] ?? text(value);
   if (key === "photos") return value ? "Required" : "Not required";
   if (Array.isArray(value)) return value.map(text).join(", ");
   return value === null || value === undefined ? "" : String(value);

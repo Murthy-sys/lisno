@@ -1,0 +1,156 @@
+/* Only the tab strip changes across all item-workspace sections. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-section-tabs {
+  gap: 20px;
+  padding: 0 2px;
+  border: 0;
+  border-block-end: 1px solid var(--color-border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-section-tabs .knowledge-section-tab {
+  min-block-size: 44px;
+  padding: 8px 2px 10px;
+  border: 0;
+  border-block-end: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-section-tabs .knowledge-section-tab[aria-selected="true"] {
+  border-block-end-color: var(--color-text);
+  color: var(--color-text);
+  font-weight: 700;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-section-tabs .knowledge-section-tab:hover:not(:disabled) {
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-info) 4%, transparent);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-section-tabs .knowledge-section-tab:focus-visible {
+  outline: 2px solid var(--color-info);
+  outline-offset: -4px;
+}
+
+/* All remaining rules require a requested tab, never Overview or Mode. */
+.knowledge-page--item-workspace[data-reference-section] .knowledge-workspace-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(14rem, 16rem);
+  gap: 20px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace[data-reference-section] .ui-surface.knowledge-workspace-section {
+  padding: 16px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.knowledge-page--item-workspace[data-reference-section] .knowledge-section-command-bar {
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+.knowledge-page--item-workspace[data-reference-section] .knowledge-section-command-bar__context,
+.knowledge-page--item-workspace[data-reference-section] .knowledge-section-command-bar__status {
+  font-size: 12px;
+}
+
+.knowledge-page--item-workspace[data-reference-section] .knowledge-reference-rail {
+  display: grid;
+  align-self: start;
+  gap: 12px;
+  min-inline-size: 0;
+  margin-block-start: 60px;
+}
+
+.knowledge-reference-card {
+  min-inline-size: 0;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.knowledge-reference-card h2 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.knowledge-reference-card h2 svg,
+.knowledge-reference-status > svg {
+  flex: 0 0 16px;
+  inline-size: 16px;
+  block-size: 16px;
+}
+
+.knowledge-reference-card p,
+.knowledge-reference-card li {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.knowledge-reference-card p { margin: 10px 0 0; }
+.knowledge-reference-card .knowledge-reference-card__item { margin: 0; font-weight: 650; }
+.knowledge-reference-card .knowledge-reference-card__description { margin-block-start: 6px; color: var(--color-text-muted); }
+.knowledge-reference-card ul { padding-inline-start: 16px; margin: 0; }
+.knowledge-reference-card li + li { margin-block-start: 7px; }
+
+.knowledge-reference-facts { display: grid; gap: 0; margin: 10px 0 0; }
+.knowledge-reference-facts > div { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 8px; padding: 8px 0; border-block-end: 1px solid var(--color-border); font-size: 11px; line-height: 1.6; }
+.knowledge-reference-facts > div:last-child { border-block-end: 0; padding-block-end: 0; }
+.knowledge-reference-facts dt { color: var(--color-text-muted); }
+.knowledge-reference-facts dd { margin: 0; font-weight: 500; }
+.knowledge-reference-card__notice { color: var(--color-warning); }
+.knowledge-reference-card--tips { background: color-mix(in srgb, var(--color-success) 4%, var(--color-surface)); }
+.knowledge-reference-card--tips h2 { color: var(--color-success); }
+
+.knowledge-reference-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-subtle);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.knowledge-reference-status--saved { background: color-mix(in srgb, var(--color-success) 6%, var(--color-surface)); border-color: color-mix(in srgb, var(--color-success) 22%, var(--color-border)); color: var(--color-success); }
+.knowledge-reference-details { min-inline-size: 0; border-block-start: 1px solid var(--color-border); }
+.knowledge-reference-details > summary { padding: 12px 2px; color: var(--color-text-muted); font-size: 12px; line-height: 1.6; cursor: pointer; }
+.knowledge-reference-details > summary:focus-visible { outline: 2px solid var(--color-info); outline-offset: 2px; }
+.knowledge-reference-details__body { display: grid; gap: 12px; min-inline-size: 0; }
+.knowledge-reference-details__body .knowledge-workspace-history-rail { position: static; }
+
+@media (max-width: 1320px) {
+  .knowledge-page--item-workspace[data-reference-section] .knowledge-workspace-layout { grid-template-columns: minmax(0, 1fr); }
+  .knowledge-page--item-workspace[data-reference-section] .knowledge-reference-rail { margin-block-start: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .knowledge-reference-details { grid-column: 1 / -1; }
+}
+
+@media (max-width: 600px) {
+  .knowledge-page--item-workspace[data-reference-section] .knowledge-reference-rail { grid-template-columns: minmax(0, 1fr); }
+  .knowledge-page--item-workspace[data-reference-section] .knowledge-section-command-bar { grid-template-columns: minmax(0, 1fr); }
+  .knowledge-page--item-workspace[data-reference-section] .knowledge-section-command-bar__context { grid-column: 1; grid-row: 1; }
+  .knowledge-page--item-workspace[data-reference-section] .knowledge-section-command-bar__status { grid-column: 1; grid-row: 2; text-align: start; }
+  .knowledge-page--item-workspace[data-reference-section] .knowledge-section-command-bar__save { grid-column: 1; grid-row: 3; inline-size: 100%; min-inline-size: 0; }
+}

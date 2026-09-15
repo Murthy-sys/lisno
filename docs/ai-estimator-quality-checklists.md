@@ -2,6 +2,14 @@
 
 Open an item's **Quality Parameter** tab to manage the checklist for its Main Basket. All Main Lines and temporary items in that basket use the same saved checklist. Another basket has independent checks. Editing an active item can still edit this shared basket resource when the actor has configuration-update permission; it does not edit the active item's revision.
 
+## Inspecting and editing checks
+
+The **Quality Parameters** table shows question, stage, answer type/inspection method, acceptance criteria, evidence and status. Stage filters include Material, Pre-Installation, During Installation, Pre-Closure and Final Finish, plus existing custom or unassigned stages. Counts follow the local draft; the sidebar explicitly labels saved checklist counts and version. Filtering does not remove checks from a save.
+
+Choose **Add Parameter**, or edit an existing parameter, to open its focused side panel. Edits update the local checklist draft. **Done** closes the panel; **Save shared checklist** persists the checklist for its Main Basket. An incomplete question remains visible for correction or removal, and saving reveals the first invalid check. Reorder from All Stages so hidden checks are not moved accidentally. Each row's actions also support removal.
+
+The focused editor includes Stage, How to check and Inspection method using the existing quality fields. An answer type such as Yes/No remains separate from a method such as Measurement. Evidence instructions and previously populated document/video settings are retained. No hold-point policy, AI generation, named-template library or execution-mode setting is introduced.
+
 ## Essential checks
 
 The app and the Excel template focus on five fields:
@@ -12,7 +20,7 @@ The app and the Excel template focus on five fields:
 4. **Acceptance criteria** — what a passing result should look like, including any measurement and unit in plain language.
 5. **Photo evidence** — whether site photos are needed and the minimum required count.
 
-Super Admin can add, edit, reorder or remove checks. Choose **Add Quality parameter** for an additional question, or use the question's trash icon to delete it, then **Save shared checklist**. Adding or deleting a question preserves other questions and their photo settings. Every listed check is required and active. There are no Required, Active or Category controls. Extra controls for default answers, numeric bounds/units, inspection stages/methods, roles, severity, failure actions, sampling or document/video evidence are removed from the editor.
+Super Admin can add, edit, reorder or remove checks. Choose **Add Parameter** for an additional question, or use the row's actions to remove it, then **Save shared checklist**. Adding or deleting a question preserves other questions and their photo settings. Every listed check is required and active. There are no Required, Active or Category controls. Existing default answers, numeric bounds/units, roles, severity, failure actions, sampling and detailed evidence remain intact when editing unrelated fields.
 
 Turning on photo evidence shows **Required photos**: enter **1** for a single photo or **2–100** for multiple photos per checked unit. New checks start at one. Blank, fractional or out-of-range counts block saving. Turning photos off removes the requirement; toggling back on during the same edit restores the last valid count. These values specify minimum required evidence, not maximum upload limits. Existing saved photo counts and detailed settings remain intact; editing essential fields does not erase them. Changing an answer type clears incompatible settings, and removing an option clears an obsolete default that used that option.
 
