@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { Layers, Plus } from "lucide-react";
 import { useId } from "react";
 
 import { Button } from "../../components/ui/Button";
@@ -68,30 +68,33 @@ export function KnowledgeModeSurfacePanel({
         ) : null}
       </div>
 
-      <div className="knowledge-mode-surfaces__controls">
-        <KnowledgeSurfaceMultiSelect
-          selectedIds={selectedIds}
-          masters={surfaces}
-          label="Applicable surfaces"
-          placeholder="Select surfaces"
-          searchable
-          describedBy={error ? errorId : undefined}
-          invalid={Boolean(error)}
-          disabled={controlsDisabled}
-          readOnly={readOnly}
-          onChange={onChange}
-        />
-        {canQuickAdd && !readOnly ? (
-          <Button
-            type="button"
-            variant="secondary"
-            leadingIcon={<Plus />}
+      <div className="knowledge-mode-surfaces__controls-row">
+        <Layers className="knowledge-overview__field-icon" aria-hidden="true" />
+        <div className="knowledge-mode-surfaces__controls">
+          <KnowledgeSurfaceMultiSelect
+            selectedIds={selectedIds}
+            masters={surfaces}
+            label="Applicable surfaces"
+            placeholder="Select surfaces"
+            searchable
+            describedBy={error ? errorId : undefined}
+            invalid={Boolean(error)}
             disabled={controlsDisabled}
-            onClick={() => onQuickAdd((surface) => onChange(unique([...selectedIds, surface.id])))}
-          >
-            Add Surface
-          </Button>
-        ) : null}
+            readOnly={readOnly}
+            onChange={onChange}
+          />
+          {canQuickAdd && !readOnly ? (
+            <Button
+              type="button"
+              size="compact"
+              leadingIcon={<Plus />}
+              disabled={controlsDisabled}
+              onClick={() => onQuickAdd((surface) => onChange(unique([...selectedIds, surface.id])))}
+            >
+              Add Surface
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       {selectedIds.length && sectionState.status === "ready" && catalogState.status === "ready" ? (

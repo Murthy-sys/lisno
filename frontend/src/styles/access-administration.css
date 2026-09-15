@@ -11,6 +11,12 @@
   gap: var(--space-4);
 }
 
+.access-administration > .access-administration__filters {
+  align-items: end;
+  gap: clamp(var(--space-4), 3vw, var(--space-6));
+  padding: var(--space-4) var(--space-5);
+}
+
 .access-administration__directory {
   display: grid;
   gap: var(--space-4);
@@ -79,6 +85,19 @@
   font-variant-numeric: tabular-nums;
 }
 
+.access-administration__directory-layout {
+  display: grid;
+  gap: var(--space-4);
+  min-inline-size: 0;
+}
+
+.access-administration > .access-administration__directory .access-administration__table-scroll,
+.user-invitations .access-administration__table-scroll {
+  max-block-size: min(70vh, 42rem);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
 .access-administration__table {
   border-collapse: collapse;
   inline-size: 100%;
@@ -94,9 +113,33 @@
   font-size: var(--text-sm);
 }
 
-.access-administration__table th {
-  color: var(--color-text-muted);
+.access-administration > .access-administration__directory .access-administration__table th,
+.user-invitations .access-administration__table th {
+  background: #eaf2ff;
+  border-block-end-color: #d7e3f7;
+  color: #1e3a5f;
   font: var(--type-metadata);
+  font-weight: 700;
+  padding: 1.25rem 1.75rem;
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+}
+
+.access-administration > .access-administration__directory {
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-5) var(--space-5);
+}
+
+.user-invitations {
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-5) var(--space-5);
+}
+
+.user-invitations__layout {
+  display: grid;
+  gap: var(--space-4);
+  min-inline-size: 0;
 }
 
 .access-administration__table tbody tr:last-child td {
@@ -356,6 +399,21 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.admin-project-detail__grid .ui-status {
+  justify-self: start;
+  max-inline-size: 100%;
+  min-block-size: 1.1rem;
+  gap: 0.25rem;
+  padding: 0.1rem 0.45rem;
+  font-size: 0.68rem;
+  line-height: 1.2;
+}
+
+.admin-project-detail__grid .ui-status svg {
+  inline-size: 0.7rem;
+  block-size: 0.7rem;
+}
+
 .admin-project-detail__grid section {
   border-block-end: 1px solid var(--color-border);
   padding-block-end: var(--space-4);
@@ -422,10 +480,165 @@
   justify-content: flex-end;
 }
 
+.admin-user-dialog__details {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+
+.admin-user-dialog__details-label {
+  background: var(--color-surface-subtle);
+  border-block-end: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  font-weight: 750;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+}
+
+.admin-user-dialog__details-body {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.admin-user-dialog__avatar {
+  align-items: center;
+  background: #e8efff;
+  border-radius: var(--radius-pill);
+  color: #145bea;
+  display: flex;
+  flex: 0 0 auto;
+  block-size: 2.75rem;
+  font-weight: 750;
+  inline-size: 2.75rem;
+  justify-content: center;
+}
+
 .admin-user-dialog {
   display: grid;
-  gap: var(--space-5);
-  padding: 0 var(--space-5) var(--space-5);
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6) var(--space-6);
+}
+
+.modal:has(.admin-user-dialog) .modal__header {
+  align-items: center;
+  background: var(--color-surface);
+  border-block-end-color: #dce4f0;
+  padding: 1.4rem 1.5rem 1.25rem;
+}
+
+.modal:has(.admin-user-dialog) {
+  background: var(--color-surface);
+  border: 1px solid #dce4f0;
+  border-radius: 1.25rem;
+  box-shadow: 0 24px 70px rgb(16 31 61 / 28%);
+  width: min(100%, 38rem);
+}
+
+.modal:has(.admin-user-dialog) .modal__header h2 {
+  color: var(--color-brand-midnight);
+  font-family: inherit;
+  font-size: 2.15rem;
+  font-weight: 750;
+  letter-spacing: 0;
+  line-height: 1.1;
+}
+
+.modal:has(.admin-user-dialog) .modal__header .eyebrow {
+  color: var(--role-accent);
+  font-weight: 750;
+}
+
+.modal:has(.admin-user-dialog) .ui-dialog__header-icon {
+  align-items: center;
+  background: #e8efff;
+  border-radius: var(--radius-control);
+  color: #145bea;
+  display: flex;
+  flex: 0 0 auto;
+  inline-size: 3.25rem;
+  justify-content: center;
+  min-block-size: 3.25rem;
+}
+
+.modal:has(.admin-user-dialog) .ui-dialog__header-icon svg {
+  inline-size: 1.55rem;
+  block-size: 1.55rem;
+}
+
+.modal:has(.admin-user-dialog) .modal__header > div {
+  flex: 1;
+}
+
+.admin-user-dialog-modal {
+  background: var(--color-surface);
+  border: 1px solid #dce4f0;
+  border-radius: 1.25rem;
+  box-shadow: 0 24px 70px rgb(16 31 61 / 28%);
+  width: min(100%, 38rem);
+}
+
+.admin-user-dialog-modal > .modal__header {
+  align-items: center;
+  background: var(--color-surface);
+  border-block-end-color: #dce4f0;
+  padding: 1.4rem 1.5rem 1.25rem;
+}
+
+.admin-user-dialog-modal > .modal__header h2 {
+  color: var(--color-brand-midnight);
+  font-family: inherit;
+  font-size: 2.15rem;
+  font-weight: 750;
+  letter-spacing: 0;
+  line-height: 1.1;
+}
+
+.admin-user-dialog-modal > .modal__header .eyebrow {
+  color: var(--role-accent);
+  font-weight: 750;
+}
+
+.admin-user-dialog .ui-control {
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  min-block-size: 46px;
+}
+
+.admin-user-dialog .ui-field {
+  gap: var(--space-2);
+}
+
+.admin-user-dialog .ui-field__control,
+.admin-user-dialog .ui-control {
+  border-color: var(--color-border-strong);
+  box-shadow: 0 1px 2px rgb(20 18 16 / 8%);
+}
+
+.admin-user-dialog__role-control {
+  display: block;
+  position: relative;
+}
+
+.admin-user-dialog__role-control > svg {
+  background: #edf3ff;
+  border-radius: var(--radius-pill);
+  color: #145bea;
+  inline-size: 2rem;
+  block-size: 2rem;
+  inset-block-start: 50%;
+  inset-inline-start: var(--space-2);
+  padding: 0.4rem;
+  pointer-events: none;
+  position: absolute;
+  transform: translateY(-50%);
+  z-index: 1;
+}
+
+.admin-user-dialog__role-control .ui-control {
+  padding-inline-start: 3.25rem;
 }
 
 .admin-user-dialog__error,
@@ -456,6 +669,18 @@
   margin: 0;
 }
 
+.admin-user-dialog__account h3 {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+}
+
+.admin-user-dialog__account h3 svg {
+  color: var(--color-success);
+  inline-size: 1.1rem;
+  block-size: 1.1rem;
+}
+
 .admin-user-dialog__account p {
   color: var(--color-text-muted);
   margin-block-start: var(--space-1);
@@ -464,6 +689,65 @@
 .admin-user-dialog__actions,
 .admin-user-dialog__role-action {
   justify-content: flex-end;
+}
+
+.admin-user-dialog__role-action {
+  border-block-start: 1px solid var(--color-border);
+  padding-block-start: var(--space-4);
+}
+
+.admin-user-dialog__actions button,
+.admin-user-dialog__role-action button {
+  min-inline-size: 7rem;
+}
+
+.admin-user-dialog__actions .ui-button,
+.admin-user-dialog__account .ui-button,
+.admin-user-dialog__role-action .ui-button {
+  border-radius: var(--radius-pill);
+}
+
+.admin-user-dialog__actions .ui-button {
+  min-inline-size: auto;
+  padding-inline: var(--space-4);
+}
+
+.admin-user-dialog__actions .ui-button--quiet {
+  color: var(--color-text);
+}
+
+.ui-app-shell[data-role] .admin-user-dialog__actions .ui-button--secondary {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  color: #145bea;
+}
+
+.ui-app-shell[data-role] .admin-user-dialog__actions .ui-button--secondary:hover:not(:disabled) {
+  background: var(--color-surface-subtle);
+  color: #145bea;
+}
+
+.admin-user-dialog__actions .ui-button--primary {
+  background: #1e183b;
+  border: 1px solid transparent;
+  color: #ffffff;
+}
+
+.admin-user-dialog__actions .ui-button--primary:hover:not(:disabled) {
+  background: #2a2350;
+}
+
+.admin-user-dialog__account .ui-button--destructive {
+  background: color-mix(in srgb, var(--color-danger) 8%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, transparent);
+  color: var(--color-danger);
+  flex-shrink: 0;
+  padding-inline: var(--space-5);
+  white-space: nowrap;
+}
+
+.admin-user-dialog__account .ui-button--destructive:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger) 16%, var(--color-surface));
 }
 
 .user-invitations {
@@ -582,6 +866,12 @@
   .admin-user-dialog__account {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .access-administration > .access-administration__filters,
+  .access-administration > .access-administration__directory,
+  .user-invitations {
+    padding-inline: var(--space-4);
   }
 
   .admin-project-card__meta,

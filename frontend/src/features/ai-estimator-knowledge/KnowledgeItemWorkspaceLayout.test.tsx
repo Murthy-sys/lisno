@@ -599,12 +599,13 @@ describe("Super Admin knowledge item workspace layout", () => {
       professionalWorkspaceStart
     );
     expect(context.get("display")).toBe("flex");
-    expect(context.get("align-items")).toBe("baseline");
+    expect(context.get("align-items")).toBe("center");
     expect(context.get("flex-wrap")).toBe("wrap");
-    expect(context.get("gap")).toBe("var(--space-1)");
+    expect(context.get("gap")).toBe("var(--space-2)");
     expect(context.get("margin")).toBe("0");
-    expect(context.get("padding-block")).toBe("var(--space-2)");
-    expect(context.get("border-block-end")).toContain("var(--role-line");
+    expect(context.get("padding")).toBe("var(--space-3) var(--space-4)");
+    expect(context.get("border")).toBe("0");
+    expect(context.get("border-radius")).toBe("var(--radius-field)");
 
     const configuredSection = declarations(
       ".knowledge-page--item-workspace .knowledge-overview__section--configured",
@@ -771,13 +772,15 @@ describe("Super Admin knowledge item workspace layout", () => {
     const scope =
       '.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace';
     const control = declarations(`${scope} .ui-control`);
-    expect(control.get("border-color")).toContain("var(--role-line-strong");
+    expect(control.get("border")).toContain("var(--color-border-default)");
     expect(control.get("background-color")).toContain("var(--role-deck-tint");
 
     expect(declarations(`${scope} .ui-control:hover:not(:disabled):not([aria-invalid="true"])`).get("border-color")).toBe(
-      "var(--role-accent, var(--color-border-strong))"
+      "var(--color-primary)"
     );
-    expect(declarations(`${scope} .ui-control:focus-visible`).get("box-shadow")).toBe("var(--focus-ring)");
+    const focusVisible = declarations(`${scope} .ui-control:focus-visible`);
+    expect(focusVisible.get("border-color")).toBe("var(--color-primary)");
+    expect(focusVisible.get("box-shadow")).toBe("0 0 0 3px rgb(30 24 59 / 22%)");
     expect(declarations(`${scope} .ui-control[aria-invalid="true"]`).get("border-color")).toBe("var(--color-danger)");
 
     const disabled = declarations(`${scope} .ui-control:disabled`);

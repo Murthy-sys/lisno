@@ -26,6 +26,9 @@
 
 .knowledge-section-tab,
 .knowledge-master-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   flex: 0 0 auto;
   min-height: var(--control-height);
   padding: 0 var(--space-4);
@@ -43,18 +46,38 @@
     color var(--duration-fast) var(--ease-standard);
 }
 
-.knowledge-section-tab:hover:not(:disabled),
+.knowledge-section-tab__icon {
+  inline-size: 18px;
+  block-size: 18px;
+  flex: 0 0 auto;
+}
+
 .knowledge-master-tab:hover:not([aria-selected="true"]) {
   background: color-mix(in srgb, var(--role-accent, var(--color-brand-midnight)) 10%, transparent);
   color: var(--role-ink, var(--color-text));
 }
 
-.knowledge-section-tab[aria-selected="true"],
 .knowledge-master-tab[aria-selected="true"] {
   border-color: var(--role-line, var(--color-border));
   background: var(--role-deck, var(--color-surface));
   color: var(--role-accent, var(--color-brand-violet));
   box-shadow: var(--role-shadow-soft, var(--shadow-soft));
+}
+
+/* The item workspace's own section tabs (Overview/Mode/Recommendation &
+   Exclusions/Quality Parameter) use navy instead of the shared gold accent -
+   a light navy tint on the active tab, matching this page's blue convention
+   rather than the amber one the Reusable Values master tabs keep. */
+.knowledge-section-tab:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  color: var(--color-primary);
+}
+
+.knowledge-section-tab[aria-selected="true"] {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 12%, var(--color-surface));
+  color: var(--color-primary);
+  box-shadow: none;
 }
 
 .knowledge-section-tab:focus-visible,
@@ -116,23 +139,31 @@
   max-inline-size: none;
 }
 
-/* Warm-theme controls need a visible edge against the deck. Every state is
-   restated under the exact Super Admin item-workspace scope so the stronger
-   default does not flatten hover, focus, validation, or read-only feedback. */
+/* Controls need a visible edge against the deck. Every state is restated
+   under the exact Super Admin item-workspace scope so the stronger default
+   does not flatten hover, focus, validation, or read-only feedback. Full
+   `border` shorthand (not just border-color), and a single navy color for
+   both hover and focus instead of the previous gold-border/violet-ring pair
+   - the two together, triggerable at once, read as a double ring. Same
+   dev-server border-width issue and same navy convention as the note above
+   .knowledge-search-bar .knowledge-search-control .ui-control. */
 .ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-control {
-  border-color: color-mix(in srgb, var(--role-line-strong, var(--color-border-strong)) 72%, var(--role-ink, var(--color-text)));
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-field);
   background-color: color-mix(in srgb, var(--role-deck, var(--color-surface)) 78%, var(--role-deck-tint, var(--color-surface-subtle)));
+  padding-inline-start: var(--space-4);
 }
 
 .ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-control:hover:not(:disabled):not([aria-invalid="true"]) {
-  border-color: var(--role-accent, var(--color-border-strong));
+  border-color: var(--color-primary);
   background-color: var(--role-deck, var(--color-surface));
+  box-shadow: none;
 }
 
 .ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-control:focus-visible {
-  border-color: var(--role-focus, var(--role-accent, var(--color-border-strong)));
+  border-color: var(--color-primary);
   background-color: var(--role-deck, var(--color-surface));
-  box-shadow: var(--focus-ring);
+  box-shadow: 0 0 0 3px rgb(30 24 59 / 22%);
   outline: none;
 }
 
@@ -763,6 +794,32 @@
   padding-block-start: var(--space-1);
 }
 
+.knowledge-item-card__actions .ui-button {
+  font-size: 0.875rem;
+  min-block-size: 2.25rem;
+  padding-inline: var(--space-4);
+}
+
+/* This page's own convention already puts every action (Search, Open
+   workspace) in the role's navy, not the shared page-header gold "+" CTA
+   treatment admin-home.css gives primary header actions elsewhere — match
+   that here and drop the CTA's extra-wide padding down to the standard
+   button padding. 5 classes outranks admin-home.css's 4-class rule. */
+.ui-app-shell[data-role="admin"] .knowledge-page .ui-page-header__actions .ui-button--primary,
+.ui-app-shell[data-role="super_admin"] .knowledge-page .ui-page-header__actions .ui-button--primary {
+  background: var(--role-cta);
+  color: var(--role-cta-ink);
+  box-shadow: 0 12px 26px -14px rgb(var(--role-shadow-tint) / 90%);
+  padding-inline: var(--space-4);
+  min-block-size: 44px;
+}
+
+.ui-app-shell[data-role="admin"] .knowledge-page .ui-page-header__actions .ui-button--primary:hover:not(:disabled),
+.ui-app-shell[data-role="super_admin"] .knowledge-page .ui-page-header__actions .ui-button--primary:hover:not(:disabled) {
+  background: var(--role-cta-hover);
+  box-shadow: 0 16px 32px -14px rgb(var(--role-shadow-tint) / 95%);
+}
+
 .knowledge-item-card > p,
 .knowledge-item-card h3,
 .knowledge-basket-group h2,
@@ -1196,19 +1253,57 @@
 }
 
 .knowledge-history li {
-  display: grid;
-  gap: var(--space-2);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
   padding: var(--space-4);
   border: 1px solid var(--role-line, var(--color-border));
   border-radius: var(--radius-field);
   background: var(--role-deck-tint, var(--color-surface-subtle));
 }
 
-.knowledge-history li > div {
+.knowledge-history__row-icon {
+  flex: 0 0 auto;
+  inline-size: 20px;
+  block-size: 20px;
+  margin-block-start: 2px;
+  color: var(--color-primary);
+}
+
+.knowledge-history__row-body {
+  flex: 1 1 auto;
+  display: grid;
+  gap: var(--space-2);
+  min-inline-size: 0;
+}
+
+.knowledge-history__row-body > div {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
+}
+
+.knowledge-history__row-chevron {
+  flex: 0 0 auto;
+  inline-size: 18px;
+  block-size: 18px;
+  margin-block-start: 2px;
+  color: var(--role-ink-muted, var(--color-text-muted));
+}
+
+.knowledge-history__heading-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.knowledge-history__heading-icon {
+  flex: 0 0 auto;
+  inline-size: 20px;
+  block-size: 20px;
+  margin-block-start: 3px;
+  color: var(--color-primary);
 }
 
 .knowledge-preview-panel {
@@ -1406,7 +1501,7 @@
   .knowledge-item-card__heading,
   .knowledge-section-heading,
   .knowledge-summary-progress,
-  .knowledge-history li > div {
+  .knowledge-history__row-body > div {
     align-items: stretch;
     flex-direction: column;
   }
@@ -1851,6 +1946,41 @@
   gap: var(--space-2);
 }
 
+/* Edit/Delete read as plain icon+text with no box (the base
+   .ui-button--quiet/--destructive-outline rules only set border-color, and
+   this dev server doesn't reliably let their border-width come from
+   primitives.css's "components" layer over Tailwind's "base" layer reset -
+   see the note above .knowledge-search-bar .knowledge-search-control
+   .ui-control). Full `border` shorthand here instead: navy for Edit, red
+   for Delete, both always visible rather than the shared quiet/hover-only
+   treatment. */
+.knowledge-basket-manager__actions .ui-button {
+  padding-inline: var(--space-4);
+  border-radius: var(--radius-pill);
+}
+
+.knowledge-basket-manager__actions .ui-button--quiet {
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary) !important;
+}
+
+.knowledge-basket-manager__actions .ui-button--quiet:not(:disabled):hover {
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  border-color: var(--color-primary);
+  color: var(--color-primary) !important;
+}
+
+.knowledge-basket-manager__actions .ui-button--destructive-outline {
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
+}
+
+.knowledge-basket-manager__actions .ui-button--destructive-outline:not(:disabled):hover {
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  border-color: var(--color-danger-strong, var(--color-danger));
+  color: var(--color-danger-strong, var(--color-danger));
+}
+
 .knowledge-basket-delete__impact,
 .knowledge-basket-delete__impact > dl {
   display: grid;
@@ -1965,6 +2095,11 @@
 }
 
 .knowledge-search-control .ui-control {
+  /* type="search" carries its own native chrome (a WebKit "searchfield"
+     appearance) that renders over author border/radius styling — reset it
+     so the custom border and joined-pill corners actually show. */
+  appearance: none;
+  -webkit-appearance: none;
   padding-inline-start: var(--space-9);
 }
 
@@ -2004,13 +2139,77 @@
 .knowledge-advanced-filters {
   display: grid;
   gap: var(--space-4);
-  padding-block-start: var(--space-4);
+  padding-block: var(--space-4) var(--space-2);
   border-block-start: 1px solid var(--role-line, var(--color-border));
   animation: knowledge-panel-reveal var(--duration-fast) var(--ease-standard) both;
 }
 
+/* Same Tailwind Preflight base-layer reset that hid the search field's
+   border (see the note above .knowledge-search-bar .knowledge-search-control
+   .ui-control): it also zeroes every select's border/radius, and
+   .ui-control's own layered rule isn't reliably outranking it in this dev
+   server. Set both directly in this unlayered file instead. */
+.knowledge-filter-grid .ui-control {
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-field);
+  padding-inline-start: var(--space-4);
+}
+
+.knowledge-advanced-filters .knowledge-filter-actions .ui-button {
+  min-block-size: 48px;
+  padding-inline: var(--space-6);
+  font-size: 1rem;
+}
+
 .knowledge-advanced-filters[hidden] {
   display: none;
+}
+
+/* Reusable Values' search/status/Clear/Apply row - shared by all five tabs
+   (UOMs, Vendors, Taxes, Priorities, Surfaces render the same
+   .knowledge-inline-filter, just swapping the data), so one fix here covers
+   all of them. Same border/padding treatment as the other filter rows on
+   this page, plus the single-navy hover/focus convention (see the note above
+   .knowledge-dialog-body .ui-control) so nothing double-rings here either. */
+.ui-app-shell[data-role] .knowledge-page .knowledge-filter-panel:has(.knowledge-inline-filter) {
+  padding: var(--space-6);
+}
+
+/* !important on border-color: role-themes.css's
+   .ui-app-shell[data-role] .knowledge-page .ui-control is a 4-class
+   selector, outranking this 2-class one, so without it the navy-at-50%
+   resting border fell back to the theme's plain grey. */
+.knowledge-inline-filter .ui-control {
+  border: 1px solid var(--color-border-default) !important;
+  border-radius: var(--radius-field);
+  padding-inline-start: var(--space-4);
+}
+
+.knowledge-inline-filter .ui-control:hover:not(:disabled) {
+  border-color: var(--color-primary) !important;
+}
+
+.knowledge-inline-filter .ui-control:focus-visible {
+  border-color: var(--color-primary) !important;
+  box-shadow: 0 0 0 3px rgb(30 24 59 / 22%);
+  outline: none;
+}
+
+.knowledge-inline-filter .knowledge-filter-actions .ui-button {
+  min-block-size: 48px;
+  padding-inline: var(--space-6);
+  font-size: 1rem;
+}
+
+.knowledge-inline-filter .knowledge-filter-actions .ui-button--quiet {
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary) !important;
+}
+
+.knowledge-inline-filter .knowledge-filter-actions .ui-button--quiet:not(:disabled):hover {
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  border-color: var(--color-primary);
+  color: var(--color-primary) !important;
 }
 
 /* Applied filters stay legible as removable chips once the panel is closed. */
@@ -2532,7 +2731,19 @@
   flex-wrap: nowrap;
 }
 
+/* Tailwind's Preflight (a lower-priority "base" cascade layer) resets every
+   element's border to 0 and every input's radius to 0. Those SHOULD lose to
+   primitives.css's .ui-control (a higher-priority "components" layer,
+   1px solid + var(--radius-field)) — but in this dev server the two layers
+   don't resolve in that order in practice, so .ui-control's own border and
+   radius were losing to the reset. Set them directly here instead: this
+   rule lives in a plain, unlayered stylesheet, and unlayered rules always
+   outrank layered ones regardless of layer order, so it can't lose either
+   fight. */
 .knowledge-search-bar .knowledge-search-control .ui-control {
+  border: 1px solid var(--color-border-strong);
+  border-start-start-radius: var(--radius-field);
+  border-end-start-radius: var(--radius-field);
   border-start-end-radius: 0;
   border-end-end-radius: 0;
 }
@@ -2595,19 +2806,18 @@
 
 /* ----------------------------------------------------------- basket decks */
 
-/* Repeated row-level commands stay quiet until they are pointed at. A column
-   of permanently red "Archive" outlines makes a healthy list look alarming;
-   the destructive colour arrives on hover and focus, where the intent is.
+/* Row-level commands stay quiet until they are pointed at on the shared
+   knowledge table (a column of permanently red "Archive" outlines makes a
+   healthy list look alarming there). The basket masthead is a single row of
+   three commands rather than a repeated column, so it gets its own, always-
+   visible blue-bordered treatment for Edit/Delete instead - see below.
    Confirmation dialogs keep the loud treatment untouched. */
-.knowledge-basket-panel__meta .ui-button--destructive-outline,
 .knowledge-table .ui-button--destructive-outline {
   border-color: var(--role-line-strong, var(--color-border-strong));
   background: transparent;
   color: var(--role-ink-muted, var(--color-text-muted));
 }
 
-.knowledge-basket-panel__meta .ui-button--destructive-outline:not(:disabled):hover,
-.knowledge-basket-panel__meta .ui-button--destructive-outline:focus-visible,
 .knowledge-table .ui-button--destructive-outline:not(:disabled):hover,
 .knowledge-table .ui-button--destructive-outline:focus-visible {
   border-color: var(--color-danger);
@@ -2615,13 +2825,40 @@
   color: var(--color-danger-strong);
 }
 
-/* The basket's own "Add estimation item" keeps the role theme's own glass
-   secondary. An override was written here first, at two classes, which never
-   applied: role-themes.css styles `.ui-app-shell[data-role] .ui-button--
-   secondary` at three and is emitted after this file. The theme's treatment is
-   the right one for a row action anyway, so the rule is gone rather than
-   escalated - the masthead override stays because a four-command row genuinely
-   needs calming, and it reaches four classes honestly. */
+/* The masthead's three row commands (Add estimation item / Edit basket /
+   Delete): Add is the default primary navy. Edit and Delete get an explicit,
+   always-visible navy border instead of their usual quiet/red-on-hover
+   treatment - and the border is set as a full shorthand (not just
+   border-color) because this dev server doesn't reliably let primitives.css's
+   base .ui-button border (a "components" layer rule) outrank Tailwind's
+   Preflight reset (a "base" layer rule); see the note above
+   .knowledge-search-bar .knowledge-search-control .ui-control for the same
+   issue on the search field. */
+.knowledge-basket-panel__meta .knowledge-row-actions .ui-button {
+  padding-inline: var(--space-4);
+  min-block-size: 40px;
+}
+
+/* !important on color: admin-home.css's shared
+   .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop) rule has
+   two :not() clauses, putting it above this plain two-class selector, so
+   without it Edit basket rendered in the role's gold quiet-button text
+   instead of navy. */
+.knowledge-basket-panel__meta .ui-button--quiet,
+.knowledge-basket-panel__meta .ui-button--destructive-outline {
+  border: 1px solid var(--color-primary);
+  background: var(--color-surface);
+  color: var(--color-primary) !important;
+}
+
+.knowledge-basket-panel__meta .ui-button--quiet:not(:disabled):hover,
+.knowledge-basket-panel__meta .ui-button--destructive-outline:not(:disabled):hover,
+.knowledge-basket-panel__meta .ui-button--quiet:focus-visible,
+.knowledge-basket-panel__meta .ui-button--destructive-outline:focus-visible {
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  border-color: var(--color-primary);
+  color: var(--color-primary) !important;
+}
 
 /* auto-fill rather than auto-fit: one lonely item should stay a card, not
    stretch into a full-width banner beside three empty tracks. */
@@ -2700,20 +2937,41 @@
  * well behind it. Every state is restated so the stronger default does not
  * flatten hover, focus, validation or read-only feedback.
  */
+/* Full `border` shorthand (not just border-color) on every state: this dev
+   server doesn't reliably let primitives.css's base .ui-control border (a
+   "components" layer rule) outrank Tailwind's Preflight reset (a "base"
+   layer rule, border: 0 solid), so a color-only override left every field
+   across every dialog on this page - Add estimation item, Add main basket,
+   Manage reusable values, and the rest that share .knowledge-dialog-body -
+   with an invisible 0-width edge. Also drop the hover box-shadow: nothing
+   here sets one, but the shared .ui-button hover lift bled onto adjacent
+   controls, reading as an unwanted highlight while pointing at a field. */
+/* Hover used the role's gold accent for border-color while focus-visible
+   added a separate violet box-shadow ring - triggerable at once (hover a
+   field you've already focused), which is the "two shadows, one gold one
+   blue" the resting state never shows on its own. Both states now use the
+   same single navy color instead, the --color-border-default/--color-primary
+   pair the invite-user dialog already establishes as this app's "visible
+   resting border, solid navy on hover, navy focus ring" convention - so
+   there's only ever one ring, and it's always navy. */
 body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body .ui-control {
-  border-color: color-mix(in srgb, var(--role-line-strong, var(--color-border-strong)) 72%, var(--role-ink, var(--color-text)));
-  background-color: color-mix(in srgb, var(--role-deck, var(--color-surface)) 78%, var(--role-deck-tint, var(--color-surface-subtle)));
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-field);
+  background-color: var(--color-surface);
+  padding-inline-start: var(--space-4);
+  box-shadow: none;
 }
 
 body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body .ui-control:hover:not(:disabled):not([aria-invalid="true"]) {
-  border-color: var(--role-accent, var(--color-border-strong));
-  background-color: var(--role-deck, var(--color-surface));
+  border-color: var(--color-primary);
+  background-color: var(--color-surface);
+  box-shadow: none;
 }
 
 body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body .ui-control:focus-visible {
-  border-color: var(--role-focus, var(--role-accent, var(--color-border-strong)));
-  background-color: var(--role-deck, var(--color-surface));
-  box-shadow: var(--focus-ring);
+  border-color: var(--color-primary);
+  background-color: var(--color-surface);
+  box-shadow: 0 0 0 3px rgb(30 24 59 / 22%);
   outline: none;
 }
 
@@ -2755,11 +3013,19 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions {
   border-radius: var(--radius-field);
 }
 
+.knowledge-dialog-actions .ui-button {
+  min-block-size: 48px;
+  padding-inline: var(--space-6);
+  font-size: 1rem;
+}
+
 /* "Cancel" as a bare quiet button is unreadable as a control on the tinted
    band. It keeps the lighter weight - dismissing should never compete with
-   confirming - but gains an edge to sit on. */
+   confirming - but gains an edge to sit on. Full `border` shorthand for the
+   same reason as .knowledge-dialog-body .ui-control above: a color-only
+   override left it with no visible stroke, just a background tint. */
 body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--quiet {
-  border-color: var(--role-line-strong, var(--color-border-strong));
+  border: 1px solid var(--role-line-strong, var(--color-border-strong));
   background: var(--role-deck, var(--color-surface));
   color: var(--role-ink, var(--color-text));
 }
@@ -2768,6 +3034,12 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   border-color: var(--role-accent, var(--color-border-strong));
   background: color-mix(in srgb, var(--role-accent, var(--color-brand-violet)) 8%, var(--role-deck, var(--color-surface)));
   color: var(--role-accent, var(--color-text));
+}
+
+/* The shared .ui-button hover lift (box-shadow: var(--shadow-soft)) reads as
+   an odd highlight flash on this flat, tinted footer band - drop it here. */
+body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button:not(:disabled):hover {
+  box-shadow: none;
 }
 
 /* ------------------------------------------- segmented search row, stacked */
@@ -2900,6 +3172,11 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   justify-self: stretch;
 }
 
+/* Full card look by default - this is what Mode uses, since its command bar
+   isn't nested inside any of its own separate blocks (Configuration,
+   Pricing, Quantity & margin each stay their own card). Overview,
+   Recommendation & Exclusions and Quality Parameter override this below,
+   since they nest the command bar inside their own Surface instead. */
 .knowledge-page--item-workspace .knowledge-section-command-bar {
   position: sticky;
   inset-block-start: var(--space-2);
@@ -2930,6 +3207,16 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   font-weight: 750;
 }
 
+.knowledge-page--item-workspace .knowledge-section-command-bar__label,
+.knowledge-page--item-workspace .knowledge-section-heading h2 {
+  color: var(--color-primary);
+}
+
+.knowledge-page--item-workspace .knowledge-section-command-bar__label {
+  font: var(--type-section-title);
+  font-weight: 700;
+}
+
 .knowledge-section-command-bar__version,
 .knowledge-section-command-bar__status {
   color: var(--role-ink-muted, var(--color-text-muted));
@@ -2937,8 +3224,18 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 }
 
 .knowledge-section-command-bar__status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   min-inline-size: 0;
   text-align: end;
+}
+
+.knowledge-section-command-bar__status-icon {
+  inline-size: 16px;
+  block-size: 16px;
+  flex: 0 0 auto;
+  color: var(--color-success, #1a7f4b);
 }
 
 .knowledge-section-command-bar__save {
@@ -2974,6 +3271,32 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   box-shadow: none;
 }
 
+/* Overview, Recommendation & Exclusions and Quality Parameter render the
+   command bar as the first child INSIDE the same <Surface> as the rest of
+   the section content (not a separate element sitting next to it), so
+   there is exactly one bordered/shadowed card in the DOM and no seam to
+   accidentally leave a stray border or shadow line at. The command bar
+   itself stays flat here - it inherits the Surface's own padding,
+   background and border - and only draws a plain divider line under it,
+   the same kind separating Configured values from Surfaces further down. */
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-section > .knowledge-section-command-bar {
+  padding: 0 0 var(--space-3);
+  border: 0;
+  border-block-end: 1px solid var(--role-line, var(--color-border));
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+/* Overview is the one exception: its breadcrumb (hall - Main Basket: ...)
+   groups visually with the command bar as one header, no line between them
+   - the divider before Configured values (see .knowledge-overview__section
+   --configured) already separates the header block from the content. */
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-section:has(.knowledge-overview) > .knowledge-section-command-bar {
+  padding-block-end: var(--space-3);
+  border-block-end: 0;
+}
+
 .knowledge-page--item-workspace .knowledge-workspace-section--overview .knowledge-overview {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
   align-items: start;
@@ -2983,15 +3306,66 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 
 .knowledge-page--item-workspace .knowledge-overview__context {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   flex-wrap: wrap;
-  gap: var(--space-1);
+  gap: var(--space-2);
+  inline-size: 100%;
   min-inline-size: 0;
   margin: 0;
-  padding-block: var(--space-2);
-  border-block-end: 1px solid var(--role-line, var(--color-border));
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-field);
+  background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface));
   color: var(--role-ink-muted, var(--color-text-muted));
   font-size: var(--text-sm);
+}
+
+.knowledge-page--item-workspace .knowledge-overview__context-main-line {
+  color: var(--color-primary);
+}
+
+.knowledge-overview__context-icon {
+  inline-size: 16px;
+  block-size: 16px;
+  flex: 0 0 auto;
+  color: var(--color-primary);
+}
+
+.knowledge-overview__field-icon-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-inline-size: 0;
+}
+
+/* The field content (icon's sibling) needs to grow to fill the row, or the
+   grid/flex layout inside it (the select+Add button row) has no reliable
+   width to size against. */
+.knowledge-overview__field-icon-row > *:last-child {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+.knowledge-overview__field-icon {
+  flex: 0 0 auto;
+  inline-size: 32px;
+  block-size: 32px;
+  padding: 7px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-primary) 10%, var(--color-surface));
+  color: var(--color-primary);
+}
+
+.knowledge-mode-surfaces__controls-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-inline-size: 0;
+}
+
+.knowledge-mode-surfaces__controls-row .knowledge-mode-surfaces__controls {
+  flex: 1 1 auto;
+  min-inline-size: 0;
 }
 
 .knowledge-overview__context-main-line {
@@ -3013,6 +3387,25 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 .knowledge-page--item-workspace .knowledge-overview__section--configured {
   gap: var(--space-4);
   min-inline-size: 0;
+  padding-block-start: var(--space-4);
+  border-block-start: 1px solid var(--role-line, var(--color-border));
+}
+
+/* Surfaces used the plain Surface card look (its own border/shadow/padding),
+   nesting a second visible card inside the Overview card that already wraps
+   Configured values. Flatten it to a divided continuation of the same card
+   instead - Overview, Configured values and Surfaces read as one card.
+   role-themes.css's `.ui-app-shell[data-role] .knowledge-page .ui-surface`
+   (4 classes) sets its own box-shadow/background/border-color and is
+   emitted after this file, so this needs the same 4-class item-workspace
+   scope (not the plain 2-class one) to out-rank it. */
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .knowledge-overview__summary-panel--surfaces {
+  padding: var(--space-4) 0 0;
+  border: 0;
+  border-block-start: 1px solid var(--role-line, var(--color-border));
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
 }
 
 .knowledge-page--item-workspace .knowledge-overview__section--configured > .knowledge-section-heading {
@@ -3073,6 +3466,7 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 .knowledge-page--item-workspace .knowledge-overview__quick-add {
   justify-self: end;
   inline-size: max-content;
+  min-inline-size: 8.75rem;
   max-inline-size: 100%;
   margin: 0;
   white-space: nowrap;
@@ -3232,12 +3626,27 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   overflow-wrap: anywhere;
 }
 
+/* Same track shape as .knowledge-overview__uom-control-row (minmax(0, 1fr)
+   auto), so the Surfaces select stretches exactly as wide as the UOM select
+   above it instead of stopping short at a fixed 32rem cap. */
 .knowledge-page--item-workspace .knowledge-mode-surfaces__controls {
   display: grid;
-  grid-template-columns: minmax(0, 32rem) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   min-inline-size: 0;
   gap: var(--space-3);
+}
+
+/* The grid's "auto" button column has no fr unit anywhere in the track
+   list, so with no explicit width it stretches to fill the grid's leftover
+   inline space instead of sizing to its own content - the "+ Add Surface"
+   pill was spanning most of the row. Same fix as the Add Unit button
+   above: pin it to content width. */
+.knowledge-page--item-workspace .knowledge-mode-surfaces__controls > .ui-button {
+  justify-self: start;
+  inline-size: max-content;
+  min-inline-size: 8.75rem;
+  max-inline-size: 100%;
 }
 
 .knowledge-page--item-workspace .knowledge-mode-surfaces__state {

@@ -204,56 +204,71 @@ export function InviteUserDialog({ roles, onClose }: InviteUserDialogProps) {
 
         <Field id="invitation-name" label="Name" required error={errors.name}>
           {(controlProps) => (
-            <Input
-              {...controlProps}
-              data-dialog-initial-focus
-              autoComplete="name"
-              value={values.name}
-              disabled={mutation.isPending}
-              ref={(element) => { controls.current.name = element; }}
-              onChange={(event) => update("name", event.target.value)}
-            />
+            <div className="user-invitation-dialog__control">
+              <Input
+                {...controlProps}
+                data-dialog-initial-focus
+                autoComplete="name"
+                placeholder="Enter full name"
+                value={values.name}
+                disabled={mutation.isPending}
+                ref={(element) => { controls.current.name = element; }}
+                onChange={(event) => update("name", event.target.value)}
+              />
+              <span className="user-invitation-dialog__control-icon" data-field="name" aria-hidden="true" />
+            </div>
           )}
         </Field>
         <Field id="invitation-email" label="Email" required error={errors.email}>
           {(controlProps) => (
-            <Input
-              {...controlProps}
-              type="email"
-              autoComplete="email"
-              value={values.email}
-              disabled={mutation.isPending}
-              ref={(element) => { controls.current.email = element; }}
-              onChange={(event) => update("email", event.target.value)}
-            />
+            <div className="user-invitation-dialog__control">
+              <Input
+                {...controlProps}
+                type="email"
+                autoComplete="email"
+                placeholder="Enter email address"
+                value={values.email}
+                disabled={mutation.isPending}
+                ref={(element) => { controls.current.email = element; }}
+                onChange={(event) => update("email", event.target.value)}
+              />
+              <span className="user-invitation-dialog__control-icon" data-field="email" aria-hidden="true" />
+            </div>
           )}
         </Field>
         <Field id="invitation-role" label="Role" required error={errors.role}>
           {(controlProps) => (
-            <Select
-              {...controlProps}
-              value={values.role}
-              disabled={mutation.isPending}
-              ref={(element) => { controls.current.role = element; }}
-              onChange={(event) => update("role", event.target.value)}
-            >
-              {roles.map((role) => (
-                <option key={role} value={role}>{ROLE_LABELS[role]}</option>
-              ))}
-            </Select>
+            <div className="user-invitation-dialog__control">
+              <Select
+                {...controlProps}
+                value={values.role}
+                disabled={mutation.isPending}
+                ref={(element) => { controls.current.role = element; }}
+                onChange={(event) => update("role", event.target.value)}
+              >
+                {roles.map((role) => (
+                  <option key={role} value={role}>{ROLE_LABELS[role]}</option>
+                ))}
+              </Select>
+              <span className="user-invitation-dialog__control-icon" data-field="role" aria-hidden="true" />
+            </div>
           )}
         </Field>
         <Field id="invitation-mobile" label="Mobile" required error={errors.mobile}>
           {(controlProps) => (
-            <Input
-              {...controlProps}
-              type="tel"
-              autoComplete="tel"
-              value={values.mobile}
-              disabled={mutation.isPending}
-              ref={(element) => { controls.current.mobile = element; }}
-              onChange={(event) => update("mobile", event.target.value)}
-            />
+            <div className="user-invitation-dialog__control">
+              <Input
+                {...controlProps}
+                type="tel"
+                autoComplete="tel"
+                placeholder="Enter mobile number"
+                value={values.mobile}
+                disabled={mutation.isPending}
+                ref={(element) => { controls.current.mobile = element; }}
+                onChange={(event) => update("mobile", event.target.value)}
+              />
+              <span className="user-invitation-dialog__control-icon" data-field="mobile" aria-hidden="true" />
+            </div>
           )}
         </Field>
 

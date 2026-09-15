@@ -96,7 +96,7 @@ export function AccessRequestInboxPage() {
                       <div className="access-requests__row-actions">
                         <Button size="compact" variant="quiet" disabled={reviewQuery.isPlaceholderData} onClick={() => setSummaryId(request.id)}>Details <span className="sr-only">request {request.id}</span></Button>
                         {request.status === "pending" && canDecide ? <>
-                          <Button size="compact" variant="secondary" onClick={() => setSelected({ request, kind: "approved" })}>Approve <span className="sr-only">request {request.id}</span></Button>
+                          <Button size="compact" onClick={() => setSelected({ request, kind: "approved" })}>Approve <span className="sr-only">request {request.id}</span></Button>
                           <Button size="compact" variant="quiet" onClick={() => setSelected({ request, kind: "rejected" })}>Reject <span className="sr-only">request {request.id}</span></Button>
                         </> : null}
                         {request.activeGrant && canRevoke ? <Button size="compact" variant="destructive" onClick={() => setSelected({ request, kind: "revoke" })}>Revoke <span className="sr-only">grant {request.activeGrant.id}</span></Button> : null}

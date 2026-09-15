@@ -63,7 +63,7 @@ export function DesignPlanResponseInboxPage() {
         eyebrow="Client design response"
         title="Design approvals"
         description="Record a Client's approval or requested changes and retain the supplied proof."
-        metadata={<StatusBadge tone="warning" label={`${tasks.data.length} pending`} />}
+        metadata={<StatusBadge tone="info" label={`${tasks.data.length} pending`} />}
       />
       {!tasks.data.length ? (
         <PageState state="empty" message="No design plans are awaiting a Client response." />

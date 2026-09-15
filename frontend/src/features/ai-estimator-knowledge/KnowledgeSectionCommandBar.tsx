@@ -1,4 +1,4 @@
-import { Save } from "lucide-react";
+import { CheckCircle2, Save } from "lucide-react";
 
 import { Button } from "../../components/ui/Button";
 
@@ -38,6 +38,9 @@ export function KnowledgeSectionCommandBar({
         <span className="knowledge-section-command-bar__version">{versionLabel}</span>
       </div>
       <span className="knowledge-section-command-bar__status" role="status">
+        {!saving && !saveError && (editable ? !dirty : true) ? (
+          <CheckCircle2 className="knowledge-section-command-bar__status-icon" aria-hidden="true" />
+        ) : null}
         {status}
       </span>
       {editable ? (

@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Ban, BriefcaseBusiness, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { ROLE_LABELS, type Role } from "../../api/authorization-contract";
@@ -60,6 +61,13 @@ const responsibilityLabels: Readonly<
     "Sales Manager project grants remain recorded"
   ]
 };
+
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const first = parts[0]?.[0] ?? "";
+  const last = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : "";
+  return (first + last).toUpperCase();
+}
 
 function grantSummary(count: number) {
   return `${count} project access grant${count === 1 ? "" : "s"} revoked.`;
@@ -244,10 +252,18 @@ export function UserMutationDialog({
       onClose={onClose}
     >
       <div className="admin-user-dialog">
-        <div className="admin-user-dialog__identity">
-          <strong>{user.name}</strong>
-          <span>{user.email}</span>
-        </div>
+        <section className="admin-user-dialog__details">
+          <h3 className="admin-user-dialog__details-label">User Details</h3>
+          <div className="admin-user-dialog__details-body">
+            <span className="admin-user-dialog__avatar" aria-hidden="true">
+              {initials(user.name)}
+            </span>
+            <div className="admin-user-dialog__identity">
+              <strong>{user.name}</strong>
+              <span>{user.email}</span>
+            </div>
+          </div>
+        </section>
 
         {displayedError ? (
           <p className="admin-user-dialog__error" role="alert">
@@ -261,33 +277,37 @@ export function UserMutationDialog({
           hint="Only destinations currently allowed by the server are shown."
         >
           {(controlProps) => (
-            <Select
-              {...controlProps}
-              data-dialog-initial-focus
-              value={selectedRole}
-              disabled={interactionBlocked}
-              onChange={(event) => {
-                setError("");
-                setSelectedRole(event.target.value as ManageableRole);
-              }}
-            >
-              {manageableRoles.map((role) => (
-                <option key={role} value={role}>
-                  {ROLE_LABELS[role]}
-                </option>
-              ))}
-            </Select>
+            <span className="admin-user-dialog__role-control">
+              <BriefcaseBusiness aria-hidden="true" />
+              <Select
+                {...controlProps}
+                data-dialog-initial-focus
+                value={selectedRole}
+                disabled={interactionBlocked}
+                onChange={(event) => {
+                  setError("");
+                  setSelectedRole(event.target.value as ManageableRole);
+                }}
+              >
+                {manageableRoles.map((role) => (
+                  <option key={role} value={role}>
+                    {ROLE_LABELS[role]}
+                  </option>
+                ))}
+              </Select>
+            </span>
           )}
         </Field>
-
-
 
         <section
           className="admin-user-dialog__account"
           aria-labelledby={`account-status-${user.id}`}
         >
           <div>
-            <h3 id={`account-status-${user.id}`}>Account status</h3>
+            <h3 id={`account-status-${user.id}`}>
+              <UserRound aria-hidden="true" />
+              Account status
+            </h3>
             <p>
               {user.active
                 ? "Active users can sign in and use their current access."
@@ -297,6 +317,7 @@ export function UserMutationDialog({
           {user.active ? (
             <Button
               variant="destructive"
+              leadingIcon={<Ban aria-hidden="true" />}
               disabled={interactionBlocked}
               onClick={() => {
                 setError("");
@@ -317,8 +338,6 @@ export function UserMutationDialog({
             </Button>
           )}
         </section>
-
-
       </div>
     </ContextPanel>
   );

@@ -496,20 +496,27 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
   padding-inline-start: var(--space-2);
 }
 
+/* .admin-projects__workspace sets gap: 0, so its pagination (a real child
+   in the JSX, same as every other table's now) needs its own top margin
+   for separation from the list above; it already sits inside the card's
+   own uniform padding, so no extra inline padding is needed here. */
 .ui-app-shell[data-role="admin"] .admin-projects__pagination,
 .ui-app-shell[data-role="super_admin"] .admin-projects__pagination {
   margin-block-start: var(--space-4);
-  padding-inline: var(--space-2);
 }
 
 /* Previous/Next page: filled navy, matching "View project"/"Initiate
    project" elsewhere on this page, instead of the shared quiet/secondary
-   outline styles. !important because Previous page is variant="quiet" —
-   its own .ui-button--quiet rule (below) has higher specificity than this
+   outline styles — now shared by every access-administration pagination
+   nav (user directory, user invitations), not just the projects list.
+   !important because Previous page is variant="quiet" — its own
+   .ui-button--quiet rule (below) has higher specificity than this
    plain-class selector and would otherwise keep its transparent
    background while this rule's color still won, risking illegible text. */
 .ui-app-shell[data-role="admin"] .admin-projects__pagination .ui-button,
-.ui-app-shell[data-role="super_admin"] .admin-projects__pagination .ui-button {
+.ui-app-shell[data-role="super_admin"] .admin-projects__pagination .ui-button,
+.ui-app-shell[data-role="admin"] .access-administration__pagination .ui-button,
+.ui-app-shell[data-role="super_admin"] .access-administration__pagination .ui-button {
   border: 1px solid transparent !important;
   background: var(--color-primary) !important;
   color: var(--color-bg) !important;
@@ -524,7 +531,9 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
    which read as a second, offset border around "Next page" — flatten it
    so hover only changes the background, not the outline. */
 .ui-app-shell[data-role="admin"] .admin-projects__pagination .ui-button:hover,
-.ui-app-shell[data-role="super_admin"] .admin-projects__pagination .ui-button:hover {
+.ui-app-shell[data-role="super_admin"] .admin-projects__pagination .ui-button:hover,
+.ui-app-shell[data-role="admin"] .access-administration__pagination .ui-button:hover,
+.ui-app-shell[data-role="super_admin"] .access-administration__pagination .ui-button:hover {
   background: #2a2350 !important;
   box-shadow: none !important;
 }
@@ -534,7 +543,9 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
    reads as two offset outlines. Keep a visible focus indicator, just in
    the same navy family instead of the mismatched default violet. */
 .ui-app-shell[data-role="admin"] .admin-projects__pagination .ui-button:focus-visible,
-.ui-app-shell[data-role="super_admin"] .admin-projects__pagination .ui-button:focus-visible {
+.ui-app-shell[data-role="super_admin"] .admin-projects__pagination .ui-button:focus-visible,
+.ui-app-shell[data-role="admin"] .access-administration__pagination .ui-button:focus-visible,
+.ui-app-shell[data-role="super_admin"] .access-administration__pagination .ui-button:focus-visible {
   box-shadow: 0 0 0 3px rgb(30 24 59 / 35%) !important;
   outline: none !important;
 }
@@ -991,18 +1002,28 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
 
 /* Review is a <Link> and Approve/Reject are <button>s; give all three the
    same horizontal padding explicitly so none reads as more cramped than
-   its neighbors regardless of element type. */
+   its neighbors regardless of element type. min-inline-size on top of
+   that so all three render the same width instead of each shrinking to
+   fit its own label ("Review" vs "Approve" vs "Reject"). */
 .ui-app-shell[data-role="admin"] .client-responses__row-actions .ui-button,
 .ui-app-shell[data-role="super_admin"] .client-responses__row-actions .ui-button {
+  min-inline-size: 6.5rem;
   padding-inline: var(--space-4);
 }
 
-/* Summary and rejection entry points keep a neutral readable treatment;
-   the final decision surface communicates the destructive action. */
+/* Reject sits next to bordered Review/Approve buttons but is variant="quiet"
+   (no border), which reads as unpadded floating text next to its boxed
+   siblings even though the padding is identical — give it the same visible
+   boundary so the row's three actions look consistent. */
+/* !important on color: the shared .ui-button--quiet:not(.modal-backdrop)
+   :not(.ui-drawer-backdrop) rule earlier in this file has two :not()
+   clauses bumping its specificity above this plain two-class selector, so
+   without it Reject rendered in the role's gold quiet-button text instead
+   of red. */
 .ui-app-shell[data-role="admin"] .client-responses__row-actions .ui-button--quiet,
 .ui-app-shell[data-role="super_admin"] .client-responses__row-actions .ui-button--quiet {
-  border: 1px solid var(--role-line);
-  color: var(--color-primary);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 30%, var(--role-line));
+  color: var(--color-danger) !important;
 }
 
 .ui-app-shell[data-role="admin"] .client-responses__row-actions .ui-button--quiet:not(:disabled):hover,
@@ -1010,4 +1031,360 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
   background: var(--color-surface-subtle);
   border-color: var(--role-line-strong);
   color: var(--color-primary);
+}
+
+/* ------------------------------------------------------ user administration */
+
+/* Light-blue header row, matching the admin projects list table
+   (.admin-projects__header-row: background #eaf2ff, border #d7e3f7) and the
+   same treatment designer's role file already gives this table — admin/
+   super_admin never got it, so both the user directory and user invitations
+   tables (they share .access-administration__table) rendered a plain white
+   header instead of the established convention. */
+.ui-app-shell[data-role="admin"] .access-administration__table thead tr,
+.ui-app-shell[data-role="super_admin"] .access-administration__table thead tr {
+  background: #eaf2ff;
+  box-shadow: 0 2px 8px rgb(17 26 57 / 10%);
+}
+
+.ui-app-shell[data-role="admin"] .access-administration__table th,
+.ui-app-shell[data-role="super_admin"] .access-administration__table th {
+  border-block-end-color: #d7e3f7;
+  color: #1e3a5f;
+  font-weight: 700;
+  padding-block: 1.25rem;
+}
+
+.ui-app-shell[data-role="admin"] .access-administration__table thead th:first-child,
+.ui-app-shell[data-role="super_admin"] .access-administration__table thead th:first-child {
+  border-start-start-radius: var(--radius-surface);
+}
+
+.ui-app-shell[data-role="admin"] .access-administration__table thead th:last-child,
+.ui-app-shell[data-role="super_admin"] .access-administration__table thead th:last-child {
+  border-start-end-radius: var(--radius-surface);
+}
+
+/* The directory card had its own padding, so the blue header row above sat
+   inset from the card's rounded top edge instead of reaching it — the same
+   gap designer's role file already fixed for this table. Drop the card's
+   own padding and clip to its radius, then push the padding onto the
+   pieces that still need it (cells, pagination) instead. */
+.ui-app-shell[data-role="admin"] .access-administration__directory,
+.ui-app-shell[data-role="super_admin"] .access-administration__directory {
+  overflow: hidden;
+  padding: 0 !important;
+}
+
+.ui-app-shell[data-role="admin"] .access-administration__directory .access-administration__table-scroll,
+.ui-app-shell[data-role="super_admin"] .access-administration__directory .access-administration__table-scroll {
+  inline-size: 100%;
+  margin: 0 !important;
+  padding: 0;
+}
+
+/*
+ * The pagination nav (user directory, access requests) is now a genuine
+ * child of the table's Surface card — rendered right inside it in the
+ * JSX — rather than a separate element styled to merge with a seam, which
+ * is what actually created the double-card look. It just needs its own
+ * padding, since the card itself is zero-padding (overflow:hidden, for
+ * the blue header to reach the rounded corners).
+ */
+.ui-app-shell[data-role="admin"] .access-administration__directory > .access-administration__pagination,
+.ui-app-shell[data-role="super_admin"] .access-administration__directory > .access-administration__pagination {
+  padding-block: var(--space-3) var(--space-4);
+  padding-inline: var(--space-5) var(--space-6);
+}
+
+.ui-app-shell[data-role="admin"] .access-administration__table th:first-child,
+.ui-app-shell[data-role="super_admin"] .access-administration__table th:first-child,
+.ui-app-shell[data-role="admin"] .access-administration__table td:first-child,
+.ui-app-shell[data-role="super_admin"] .access-administration__table td:first-child {
+  padding-inline-start: var(--space-5);
+}
+
+.ui-app-shell[data-role="admin"] .access-administration__table th:last-child,
+.ui-app-shell[data-role="super_admin"] .access-administration__table th:last-child,
+.ui-app-shell[data-role="admin"] .access-administration__table td:last-child,
+.ui-app-shell[data-role="super_admin"] .access-administration__table td:last-child {
+  padding-inline-end: var(--space-5);
+}
+
+/*
+ * The search/filter fields on both the user directory and user invitations
+ * cards use the base .ui-control border, which is too close to the card's
+ * own white background to read as a field boundary — give them the same
+ * visible border used everywhere else in these dialogs, plus an explicit
+ * radius (matching --radius-field in global.css, the same token every other
+ * field in the app uses) since the "search" input type's native styling
+ * doesn't reliably honor the inherited one. background-color, not the
+ * background shorthand — the latter would blank out .ui-select's own
+ * background-image chevron.
+ */
+.ui-app-shell[data-role="admin"] .access-administration__filters .ui-control,
+.ui-app-shell[data-role="super_admin"] .access-administration__filters .ui-control,
+.ui-app-shell[data-role="admin"] .user-invitations__filters .ui-control,
+.ui-app-shell[data-role="super_admin"] .user-invitations__filters .ui-control {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-field);
+  padding-inline-start: var(--space-4);
+}
+
+/* "Invite user" sat pinned to the header's top edge (align-items:
+   flex-start) and used the base button's tight padding; center it against
+   the eyebrow/title/description stack and give it room to breathe. */
+.ui-app-shell[data-role="admin"] .user-invitations__header,
+.ui-app-shell[data-role="super_admin"] .user-invitations__header {
+  align-items: center;
+}
+
+.ui-app-shell[data-role="admin"] .user-invitations__header .ui-button,
+.ui-app-shell[data-role="super_admin"] .user-invitations__header .ui-button {
+  padding-inline: var(--space-5);
+}
+
+/* ------------------------------------------------------- access requests */
+
+/* The Action column is narrow enough that Approve/Reject wrap onto their
+   own line by default (flex-wrap), landing Reject's quiet text-link
+   directly under Approve's pill with barely any gap — stack them on
+   purpose instead, right-aligned with real breathing room between them. */
+.ui-app-shell[data-role="admin"] .access-requests__row-actions,
+.ui-app-shell[data-role="super_admin"] .access-requests__row-actions {
+  align-items: flex-end;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* The vertical scroll on tall result sets showed a bulky native scrollbar
+   in the middle of an otherwise chrome-free table card — still scrollable
+   by wheel/touch/keyboard, just without the visible track/thumb, matching
+   the scrollbar-hiding already used for the Initiate project modal. */
+.ui-app-shell[data-role="admin"] .access-administration__table-scroll,
+.ui-app-shell[data-role="super_admin"] .access-administration__table-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.ui-app-shell[data-role="admin"] .access-administration__table-scroll::-webkit-scrollbar,
+.ui-app-shell[data-role="super_admin"] .access-administration__table-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Same min-inline-size as client responses' Review/Approve/Reject, so
+   Approve and Reject render the same width here too instead of each
+   shrinking to fit "Approve" vs the shorter "Reject". !important on both
+   properties: Approve is size="compact", whose own .ui-button--compact
+   rule sets a smaller padding-inline at equal-or-higher specificity, and
+   could in principle also carry a competing min-inline-size. */
+.ui-app-shell[data-role="admin"] .access-requests__row-actions .ui-button,
+.ui-app-shell[data-role="super_admin"] .access-requests__row-actions .ui-button {
+  min-inline-size: 6.5rem !important;
+  padding-inline: var(--space-4) !important;
+}
+
+/* Reject sits next to bordered Approve (now navy, same as client
+   responses) but is variant="quiet" (no border), reading as unpadded
+   floating gold text — give it the same red-bordered pill treatment as
+   client responses' Reject so the two Approve/Reject conventions match.
+   !important on color for the same reason as client responses: the
+   shared .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop)
+   rule's two :not() clauses outrank this plain two-class selector. */
+.ui-app-shell[data-role="admin"] .access-requests__row-actions .ui-button--quiet,
+.ui-app-shell[data-role="super_admin"] .access-requests__row-actions .ui-button--quiet {
+  border: 1px solid color-mix(in srgb, var(--color-danger) 30%, var(--role-line));
+  color: var(--color-danger) !important;
+  padding-inline: var(--space-4);
+}
+
+.ui-app-shell[data-role="admin"] .access-requests__row-actions .ui-button--quiet:not(:disabled):hover,
+.ui-app-shell[data-role="super_admin"] .access-requests__row-actions .ui-button--quiet:not(:disabled):hover {
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  border-color: var(--color-danger);
+}
+
+/* --------------------------------------------------------- client responses */
+
+/* Previous/Next page: same filled-navy pill treatment as every other
+   pagination nav in admin (projects list, user directory, access
+   requests) — this one never got it, so it fell back to the shared
+   quiet/secondary outline styles (plain gold text / thin white pill). */
+.ui-app-shell[data-role="admin"] .client-responses__pagination .ui-button,
+.ui-app-shell[data-role="super_admin"] .client-responses__pagination .ui-button {
+  border: 1px solid transparent !important;
+  background: var(--color-primary) !important;
+  color: var(--color-bg) !important;
+  min-block-size: 32px !important;
+  padding-inline: var(--space-3) !important;
+  font-size: 0.8125rem !important;
+  font-weight: 400 !important;
+  box-shadow: none !important;
+}
+
+.ui-app-shell[data-role="admin"] .client-responses__pagination .ui-button:hover,
+.ui-app-shell[data-role="super_admin"] .client-responses__pagination .ui-button:hover {
+  background: #2a2350 !important;
+  box-shadow: none !important;
+}
+
+.ui-app-shell[data-role="admin"] .client-responses__pagination .ui-button:focus-visible,
+.ui-app-shell[data-role="super_admin"] .client-responses__pagination .ui-button:focus-visible {
+  box-shadow: 0 0 0 3px rgb(30 24 59 / 35%) !important;
+  outline: none !important;
+}
+
+/* The pagination nav is now a genuine child of .client-responses__directory
+   (rendered inside it in the JSX), same as the user directory and access
+   requests tables — it just needs its own padding, since the card itself
+   is zero-padding (overflow:hidden, for the blue header to reach the
+   rounded corners). */
+.ui-app-shell[data-role="admin"] .client-responses__directory > .client-responses__pagination,
+.ui-app-shell[data-role="super_admin"] .client-responses__directory > .client-responses__pagination {
+  padding-block: var(--space-3) var(--space-4);
+  padding-inline: var(--space-5) var(--space-6);
+}
+
+/* ------------------------------------------------------------ invite user */
+
+/* Same field recipe as the Initiate project form: a visible resting
+   border at 50% navy (--color-border-default, from the Design Tokens
+   Reference doc), solid navy on hover, and a navy focus ring instead of
+   the shared violet one — this form had no role override at all yet, so
+   it fell back to plain .ui-control (near-invisible border, default
+   violet focus shadow). */
+body:has(.ui-app-shell[data-role="admin"]) .user-invitation-dialog .ui-control,
+body:has(.ui-app-shell[data-role="super_admin"]) .user-invitation-dialog .ui-control {
+  background-color: var(--color-surface-subtle);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-control);
+  min-block-size: 46px;
+  padding-inline-start: 2.75rem;
+}
+
+body:has(.ui-app-shell[data-role="admin"]) .user-invitation-dialog .ui-control:hover:not(:disabled),
+body:has(.ui-app-shell[data-role="super_admin"]) .user-invitation-dialog .ui-control:hover:not(:disabled) {
+  border-color: var(--color-primary);
+}
+
+body:has(.ui-app-shell[data-role="admin"]) .user-invitation-dialog .ui-control:focus-visible,
+body:has(.ui-app-shell[data-role="super_admin"]) .user-invitation-dialog .ui-control:focus-visible {
+  background-color: var(--color-surface);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgb(30 24 59 / 22%);
+}
+
+/* Leading field icons — same sibling-span technique as the Initiate
+   project form: Name/Email/Mobile are real text inputs with autoComplete
+   set, and Chrome's autofill clobbers an input's own background-image
+   regardless of !important, so the icon has to live on an element
+   autofill never touches rather than the input itself. */
+body:has(.ui-app-shell[data-role="admin"]) .user-invitation-dialog__control,
+body:has(.ui-app-shell[data-role="super_admin"]) .user-invitation-dialog__control {
+  position: relative;
+  display: block;
+}
+
+body:has(.ui-app-shell[data-role="admin"]) .user-invitation-dialog__control-icon,
+body:has(.ui-app-shell[data-role="super_admin"]) .user-invitation-dialog__control-icon {
+  position: absolute;
+  inset-inline-start: 0.9rem;
+  top: 50%;
+  transform: translateY(-50%);
+  inline-size: 18px;
+  block-size: 18px;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 18px 18px;
+  pointer-events: none;
+}
+
+body:has(.ui-app-shell[data-role="admin"]) .user-invitation-dialog__control-icon[data-field="name"],
+body:has(.ui-app-shell[data-role="super_admin"]) .user-invitation-dialog__control-icon[data-field="name"] {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23626a7d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3C/svg%3E");
+}
+
+body:has(.ui-app-shell[data-role="admin"]) .user-invitation-dialog__control-icon[data-field="email"],
+body:has(.ui-app-shell[data-role="super_admin"]) .user-invitation-dialog__control-icon[data-field="email"] {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23626a7d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='4' width='20' height='16' rx='2'/%3E%3Cpath d='m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7'/%3E%3C/svg%3E");
+}
+
+body:has(.ui-app-shell[data-role="admin"]) .user-invitation-dialog__control-icon[data-field="role"],
+body:has(.ui-app-shell[data-role="super_admin"]) .user-invitation-dialog__control-icon[data-field="role"] {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23626a7d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='7' width='20' height='14' rx='2'/%3E%3Cpath d='M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2'/%3E%3C/svg%3E");
+}
+
+body:has(.ui-app-shell[data-role="admin"]) .user-invitation-dialog__control-icon[data-field="mobile"],
+body:has(.ui-app-shell[data-role="super_admin"]) .user-invitation-dialog__control-icon[data-field="mobile"] {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23626a7d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384'/%3E%3C/svg%3E");
+}
+
+/* Eyebrow: this dialog has no role override at all yet (unlike Manage
+   user's .modal:has(.admin-user-dialog) treatment), so it fell back to
+   the generic violet .eyebrow color instead of the established gold. */
+body:has(.ui-app-shell[data-role="admin"]) .modal:has(.user-invitation-dialog) .modal__header .eyebrow,
+body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.user-invitation-dialog) .modal__header .eyebrow {
+  color: var(--role-accent);
+}
+
+/* Cancel and Send invitation: both filled navy, matching the Initiate
+   project dialog's buttons (Cancel included, per that same correction),
+   including its pill radius and sizing — this rule never set those, so
+   the buttons fell back to the base .ui-button's own (non-pill) radius
+   and font-size, since the broad "every button is a pill for this role"
+   rule earlier in this file is .ui-app-shell[data-role="admin"] .ui-button
+   and can't reach a portalled dialog either.
+   !important on color: Cancel is variant="quiet", and the shared
+   .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop) rule's
+   two :not() clauses give it higher specificity than this plain
+   selector, so without it Cancel's label stayed the role's gold instead
+   of turning white against the new navy fill. */
+body:has(.ui-app-shell[data-role="admin"]) .user-invitation-dialog__actions .ui-button,
+body:has(.ui-app-shell[data-role="super_admin"]) .user-invitation-dialog__actions .ui-button {
+  border: 1px solid transparent;
+  background: var(--color-primary);
+  border-radius: var(--radius-pill);
+  color: var(--color-bg) !important;
+  font-size: 0.875rem;
+  min-block-size: 2.25rem;
+  padding-inline: var(--space-4);
+}
+
+body:has(.ui-app-shell[data-role="admin"]) .user-invitation-dialog__actions .ui-button:hover:not(:disabled),
+body:has(.ui-app-shell[data-role="super_admin"]) .user-invitation-dialog__actions .ui-button:hover:not(:disabled) {
+  background: #2a2350;
+}
+
+/* --------------------------------------------------- client response detail */
+
+/* Approve stays the same gold as every other page-header primary CTA —
+   only the "+" glyph (meant for "Initiate project"/"Invite user", not an
+   Approve/Reject decision) is dropped here. */
+.ui-app-shell[data-role="admin"] .client-response-detail .ui-page-header__actions .ui-button--primary::before,
+.ui-app-shell[data-role="super_admin"] .client-response-detail .ui-page-header__actions .ui-button--primary::before {
+  content: "";
+  margin-inline-end: 0;
+}
+
+/* Reject: same red-bordered pill as Approve/Reject everywhere else
+   (access requests, client responses table) — it had no box at all
+   here, reading as plain floating text next to Approve's solid pill. */
+.ui-app-shell[data-role="admin"] .client-response-detail .ui-page-header__actions .ui-button--destructive,
+.ui-app-shell[data-role="super_admin"] .client-response-detail .ui-page-header__actions .ui-button--destructive {
+  background: var(--color-surface);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 30%, var(--role-line));
+  border-radius: var(--radius-pill);
+  color: var(--color-danger);
+  font-size: 0.875rem;
+  min-block-size: 2.25rem;
+  padding-inline: var(--space-4);
+}
+
+.ui-app-shell[data-role="admin"] .client-response-detail .ui-page-header__actions .ui-button--destructive:not(:disabled):hover,
+.ui-app-shell[data-role="super_admin"] .client-response-detail .ui-page-header__actions .ui-button--destructive:not(:disabled):hover {
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  border-color: var(--color-danger);
 }

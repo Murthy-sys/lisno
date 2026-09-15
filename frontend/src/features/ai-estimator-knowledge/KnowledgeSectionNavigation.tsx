@@ -1,3 +1,4 @@
+import { BarChart3, FileText, ListChecks, Settings2 } from "lucide-react";
 import {
   useEffect,
   useId,
@@ -13,6 +14,13 @@ import {
   KNOWLEDGE_WORKSPACE_SECTION_KEYS,
   type KnowledgeWorkspaceSectionKey
 } from "./knowledgeWorkspaceSections";
+
+const KNOWLEDGE_WORKSPACE_SECTION_ICONS: Record<KnowledgeWorkspaceSectionKey, typeof FileText> = {
+  overview: FileText,
+  mode: Settings2,
+  recommendations: ListChecks,
+  quality: BarChart3
+};
 
 export interface KnowledgeSectionNavigationProps {
   readonly activeSection: KnowledgeWorkspaceSectionKey;
@@ -99,6 +107,7 @@ export function KnowledgeSectionNavigation({
           {sections.map((section) => {
             const selected = section === activeSection;
             const disabled = disabledSections.includes(section);
+            const SectionIcon = KNOWLEDGE_WORKSPACE_SECTION_ICONS[section];
             return (
               <button
                 key={section}
@@ -120,6 +129,7 @@ export function KnowledgeSectionNavigation({
                 onClick={() => requestSelection(section)}
                 onKeyDown={(event) => handleKeyDown(event, section)}
               >
+                <SectionIcon className="knowledge-section-tab__icon" aria-hidden="true" />
                 {KNOWLEDGE_WORKSPACE_SECTION_LABELS[section]}
               </button>
             );

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, FileEdit, MessageSquare, User } from "lucide-react";
+import { ArrowLeft, CircleDollarSign, FileEdit, MessageSquare, User } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
@@ -137,12 +137,20 @@ export function AdminProjectDetailPage() {
       </Surface>
       <ProjectWorkflowPanel projectId={project.id} />
       {canReadFinance ? (
-        <ProjectFinancePanel
-          projectId={project.id}
-          enabled={estimateApproved}
-          title={`${project.name} finance`}
-          expectedSource={approvedFinanceSource}
-        />
+        <AdminDetailSection
+          icon={<CircleDollarSign aria-hidden="true" />}
+          tone="warm"
+          title="Project finance"
+          subtitle="Approved baseline, budget, spend, and margin"
+        >
+          <ProjectFinancePanel
+            projectId={project.id}
+            enabled={estimateApproved}
+            title={`${project.name} finance`}
+            expectedSource={approvedFinanceSource}
+            embedded
+          />
+        </AdminDetailSection>
       ) : null}
       {canAssignWorkers ? <ProjectWorkflowSnapshot project={project} /> : null}
       <DesignAssignmentPanel project={project} />
@@ -153,7 +161,6 @@ export function AdminProjectDetailPage() {
           tone="cool"
           title="Client response"
           subtitle="Delivery status and client decision"
-          defaultOpen
         >
           <p>
             <StatusBadge
