@@ -502,6 +502,44 @@
   min-block-size: var(--control-height);
 }
 
+/* Keep saved-mode cards compact without resizing the calculation dialogs. */
+.ui-app-shell[data-role] .knowledge-page .knowledge-mode-calculation-slot .knowledge-mode-calculation__groups {
+  inline-size: 100%;
+  max-inline-size: 54rem;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-mode-calculation-slot .knowledge-mode-calculation__group {
+  padding: 12px;
+  gap: 8px;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-mode-calculation-slot :is(.knowledge-mode-calculation__rate-fields, .knowledge-mode-calculation__markup-fields) {
+  gap: 10px;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-mode-calculation-slot :is(.knowledge-mode-calculation__group .ui-field, .knowledge-mode-calculation__fixed) {
+  gap: 4px;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-mode-calculation-slot .knowledge-mode-calculation__discount {
+  padding: 6px 8px;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-mode-calculation-slot .knowledge-pmc-margin__control {
+  inline-size: 7.5rem;
+  max-inline-size: 100%;
+}
+
+@container (min-width: 761px) {
+  .ui-app-shell[data-role] .knowledge-page .knowledge-mode-calculation-slot .knowledge-mode-calculation__groups {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  }
+
+  .ui-app-shell[data-role] .knowledge-page .knowledge-mode-calculation-slot .knowledge-mode-calculation__rate-fields {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, .85fr);
+  }
+}
+
 .ui-app-shell[data-role] .knowledge-page .knowledge-specification-field .knowledge-mode-field__definition {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
 }
