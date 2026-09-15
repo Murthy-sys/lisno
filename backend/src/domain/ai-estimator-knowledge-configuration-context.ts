@@ -42,9 +42,12 @@ export function buildKnowledgeConfigurationContext(input: {
     const scopeRow = { id: pmc.id, modeKind: "pmc", fields: [],
       ...(Object.hasOwn(pmc, "inclusions") ? { inclusions: pmc.inclusions } : {}),
       ...(Object.hasOwn(pmc, "exclusions") ? { exclusions: pmc.exclusions } : {}) };
-    if (validateKnowledgeSectionPayload("advanced", { modeConfigurations: [scopeRow] }).length) {
+    const scopeIssues = validateKnowledgeSectionPayload("advanced", { modeConfigurations: [scopeRow] });
+    if (scopeIssues.some(({ code }) => code !== "CONFLICTING_SCOPE_SELECTION")) {
       context.issues.push({ code: "INVALID_SHARED_SCOPE", scope: null });
     } else {
+      // Retain readable legacy values, while marking conflicting selections invalid for analysis.
+      if (scopeIssues.length) context.issues.push({ code: "CONFLICTING_SCOPE_SELECTION", scope: null });
       context.shared.scopeConfigurationId = pmc.id as string;
       for (const list of ["inclusions", "exclusions"] as const) {
         context.shared[list] = Array.isArray(pmc[list]) ? pmc[list].map(asRow)

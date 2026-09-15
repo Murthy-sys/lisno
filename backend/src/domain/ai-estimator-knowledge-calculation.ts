@@ -417,7 +417,7 @@ export function calculateKnowledgePreview(
     throw new KnowledgeCalculationError("INVALID_AMOUNT", "Sub-Vendor calculations cannot be combined with other calculations.");
   }
   if (input.subVendorCalculation && input.modeCalculationMarkupBasis !== undefined) {
-    throw new KnowledgeCalculationError("INVALID_AMOUNT", "Sub-Vendor calculations use Sub-Vendor margin; a markup selection is not allowed.");
+    throw new KnowledgeCalculationError("INVALID_AMOUNT", "Sub-Vendor calculations use Lisno margin; a markup selection is not allowed.");
   }
   if (hasCalculation && input.quantity == null) {
     throw new KnowledgeCalculationError("INVALID_DECIMAL", "A test quantity is required for Mode calculations.");

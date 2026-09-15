@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { projectKnowledgeModePendingChanges } from "./knowledgeModePendingChanges";
-import { defaultPmcScopeItems } from "./knowledgePmcScope";
+import { withSubVendorMargin } from "./knowledgePmcMargin";
 import { modeCalculationDraft, modeCalculationsForStorage } from "./knowledgeModeCalculation";
 import type { KnowledgeJsonObject } from "./knowledgeTypes";
 
@@ -19,14 +19,22 @@ describe("Mode pending change projection", () => {
     expect(project({}, saved, { advancedBaseline: null })).toEqual([]);
   });
 
-  it("normalizes default PMC lists and calculation compatibility expansion", () => {
-    expect(project({ modeCalculation: calculation }, { modeCalculations: modeCalculationsForStorage({ modeCalculation: calculation }), modeConfigurations: [{ id: "new-container", modeKind: "pmc", fields: [], inclusions: defaultPmcScopeItems("inclusions").map((row) => ({ ...row })), exclusions: defaultPmcScopeItems("exclusions").map((row) => ({ ...row })) }] })).toEqual([]);
+  it("normalizes missing and empty PMC lists and calculation compatibility expansion", () => {
+    expect(project({ modeCalculation: calculation }, { modeCalculations: modeCalculationsForStorage({ modeCalculation: calculation }), modeConfigurations: [{ id: "new-container", modeKind: "pmc", fields: [], inclusions: [], exclusions: [] }] })).toEqual([]);
   });
 
-  it("shows only the selected PMC default and keeps derived paragraph content out", () => {
-    const after = { modeConfigurations: [{ id: "pmc-1", modeKind: "pmc", fields: [], inclusions: defaultPmcScopeItems("inclusions").map((row, index) => ({ ...row, selected: index === 0 })), exclusions: defaultPmcScopeItems("exclusions").map((row) => ({ ...row })) }] };
-    expect(project({}, after)).toEqual([{ key: "pmc:inclusions", label: "PMC · Inclusions", entries: [{ key: "pmc:inclusions:id:pmc-inclusions-transport", title: "Transport", kind: "updated", fields: [{ key: "selected", label: "State", value: "Selected" }] }] }]);
+  it("shows only changes to saved PMC entries and keeps derived paragraph content out", () => {
+    const after = { modeConfigurations: [{ id: "pmc-1", modeKind: "pmc", fields: [], inclusions: [{ id: "saved-transport", name: "Transport", selected: true }], exclusions: [] }] };
+    expect(project({ modeConfigurations: [{ id: "pmc-1", modeKind: "pmc", fields: [], inclusions: [{ id: "saved-transport", name: "Transport", selected: false }] }] }, after)).toEqual([{ key: "pmc:inclusions", label: "PMC · Inclusions", entries: [{ key: "pmc:inclusions:id:saved-transport", title: "Transport", kind: "updated", fields: [{ key: "selected", label: "State", value: "Selected" }] }] }]);
     expect(project(after, after)).toEqual([]);
+  });
+
+  it("reports real backend item additions and final removals without phantom defaults", () => {
+    const saved = { modeConfigurations: [{ id: "scope", modeKind: "pmc", fields: [], inclusions: [{ id: "permit", name: "Permit coordination", selected: false }], exclusions: [] }] };
+    expect(project({}, saved)).toEqual([{ key: "pmc:inclusions", label: "PMC · Inclusions", entries: [expect.objectContaining({ title: "Permit coordination", kind: "added" })] }]);
+    const empty = { modeConfigurations: [{ id: "scope", modeKind: "pmc", fields: [], inclusions: [], exclusions: [] }] };
+    expect(project(saved, empty)).toEqual([{ key: "pmc:inclusions", label: "PMC · Inclusions", entries: [{ key: "pmc:inclusions:id:permit", title: "Permit coordination", kind: "removed", fields: [] }] }]);
+    expect(project(empty, {})).toEqual([]);
   });
 
   it("shows current execution fields only, preserving zero and false", () => {
@@ -50,20 +58,53 @@ describe("Mode pending change projection", () => {
     expect(project({ modeConfigurations: [{ ...config, executionSource: undefined } as unknown as KnowledgeJsonObject] }, { modeConfigurations: [config] })[0]?.entries[0]?.fields[0]?.value).toBe("Execution · Sub-Vendor");
   });
 
-  it("shows only the independently edited Sub-Vendor margin and clears it after save or revert", () => {
-    const before = { pmcMarginBps: 1_250, subVendorMarginBps: 1_600 };
-    const after = { ...before, subVendorMarginBps: 1_875 };
+  it("compares effective Lisno ranges and lists only the changed margin", () => {
+    const before = { pmcMarginBps: 1_250, subVendorMarginBps: 1_500 };
+    const after = withSubVendorMargin(before, "maximum", 2_000);
+    expect(project(before, { ...before, subVendorMinimumMarginBps: 1_500 })).toEqual([]);
     expect(project(before, after)).toEqual([{ key: "sub_vendor:margin", label: "Execution · Sub-Vendor", entries: [{
-      key: "sub_vendor:margin", title: "Sub-Vendor margin", kind: "updated",
-      fields: [{ key: "margin", label: "Margin", value: "18.75%" }]
+      key: "sub_vendor:margin", title: "Lisno Margin", kind: "updated",
+      fields: [{ key: "maximum", label: "Max. Lisno Margin", value: "20.00%" }]
     }] }]);
     expect(project(after, after)).toEqual([]);
     expect(project(before, before)).toEqual([]);
-    expect(project(before, { ...before, subVendorMarginBps: null })[0]?.entries[0]?.fields).toEqual([
-      { key: "margin", label: "Margin", value: "", cleared: true }
+    const changedBoth = withSubVendorMargin(after, "minimum", 2_000);
+    expect(project(before, changedBoth)[0]?.entries[0]?.fields).toEqual([
+      { key: "minimum", label: "Min. Lisno Margin", value: "20.00%" },
+      { key: "maximum", label: "Max. Lisno Margin", value: "20.00%" }
     ]);
+  });
+
+  it("shows cleared and invalid Lisno values without concealing incomplete pairs", () => {
+    const before = { subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 };
+    expect(project(before, { ...before, subVendorMinimumMarginBps: null })[0]?.entries[0]).toMatchObject({
+      incomplete: true, fields: [{ key: "minimum", label: "Min. Lisno Margin", value: "", cleared: true }]
+    });
+    const cleared = project(before, { subVendorMinimumMarginBps: null, subVendorMarginBps: null })[0]?.entries[0];
+    expect(cleared?.fields).toHaveLength(2);
+    expect(cleared?.incomplete).toBeUndefined();
     expect(project(before, { ...before, subVendorMarginBps: 999 })[0]?.entries[0]).toMatchObject({ incomplete: true, fields: [{ value: "9.99%" }] });
     expect(project(before, { ...before, subVendorMarginBps: "12.345" })[0]?.entries[0]).toMatchObject({ incomplete: true, fields: [{ value: "12.345" }] });
+    expect(project(before, { ...before, subVendorMinimumMarginBps: 1_900 })[0]?.entries[0]).toMatchObject({ incomplete: true, fields: [{ value: "19.00%" }] });
+  });
+
+  it.each([1_000, 1_750])("keeps legacy Lisno value %i visible in pending edits without normalizing its baseline", (legacyMargin) => {
+    const legacy = { subVendorMarginBps: legacyMargin };
+    expect(project(legacy, legacy)).toEqual([]);
+    expect(project(legacy, { ...legacy, subVendorMinimumMarginBps: legacyMargin })).toEqual([]);
+    const partiallyRepaired = withSubVendorMargin(legacy, "maximum", 2_000);
+    expect(project(legacy, partiallyRepaired)[0]?.entries[0]).toMatchObject({
+      incomplete: true, fields: [{ key: "maximum", value: "20.00%" }]
+    });
+    const repaired = withSubVendorMargin(partiallyRepaired, "minimum", 1_500);
+    expect(project(legacy, repaired)[0]?.entries[0]?.incomplete).toBeUndefined();
+    expect(project(legacy, repaired)[0]?.entries[0]?.fields).toEqual([
+      { key: "minimum", label: "Min. Lisno Margin", value: "15.00%" },
+      { key: "maximum", label: "Max. Lisno Margin", value: "20.00%" }
+    ]);
+    expect(project(repaired, { ...repaired, subVendorMarginBps: legacyMargin })[0]?.entries[0]).toMatchObject({
+      incomplete: true, fields: [{ key: "maximum", value: `${(legacyMargin / 100).toFixed(2)}%` }]
+    });
   });
 
   it("shows blank user-added components as incomplete and removes add-then-delete", () => {

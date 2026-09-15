@@ -54,43 +54,91 @@ describe("Mode pending publication lifecycle", () => {
   it("publishes only the independent Sub-Vendor margin edit and clears it after confirmed save", async () => {
     const user = userEvent.setup();
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
-      ? { pmcMarginBps: 1_200, subVendorMarginBps: 1_700 } : key === "pricing" ? savedPricing : {}, 1, revision));
+      ? { pmcMarginBps: 1_200, subVendorMarginBps: 1_500 } : key === "pricing" ? savedPricing : {}, 1, revision));
     const panel = setup();
     await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
     expect(panel.latest()?.groups).toEqual([]);
-    fireEvent.change(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }), { target: { value: "18.25" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" }), { target: { value: "20" } });
     expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(12);
     expect(panel.latest()?.groups.map(({ key }) => key)).toEqual(["sub_vendor:margin"]);
-    expect(panel.latest()?.groups[0]?.entries[0]?.fields).toEqual([{ key: "margin", label: "Margin", value: "18.25%" }]);
+    expect(panel.latest()?.groups[0]?.entries[0]?.fields).toEqual([{ key: "maximum", label: "Max. Lisno Margin", value: "20.00%" }]);
     await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
     expect(api.updateKnowledgeSection).toHaveBeenCalledWith(item.mainLineId, "revision-1", "advanced", expect.objectContaining({
-      payload: { pmcMarginBps: 1_200, subVendorMarginBps: 1_825 }
+      payload: { pmcMarginBps: 1_200, subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 }
     }));
     expect(panel.latest()?.groups).toEqual([]);
-    expect(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" })).toHaveValue(18.25);
+    expect(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" })).toHaveValue(20);
   });
 
   it("keeps local Sub-Vendor margin across a conflict while accepting the remote PMC margin", async () => {
     const user = userEvent.setup();
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
-      ? { pmcMarginBps: 1_200, subVendorMarginBps: 1_700 } : key === "pricing" ? savedPricing : {}, 1, revision));
+      ? { pmcMarginBps: 1_200, subVendorMarginBps: 1_500 } : key === "pricing" ? savedPricing : {}, 1, revision));
     const panel = setup();
     await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
-    fireEvent.change(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }), { target: { value: "18.25" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" }), { target: { value: "20" } });
     vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Updated elsewhere."));
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
-      ? { pmcMarginBps: 1_450, subVendorMarginBps: 1_900 } : key === "pricing" ? savedPricing : {}, 2, revision));
+      ? { pmcMarginBps: 1_450, subVendorMarginBps: 1_500 } : key === "pricing" ? savedPricing : {}, 2, revision));
     await act(async () => { expect(await panel.ref.current?.save()).toBe(false); });
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
     expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(14.5);
-    expect(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" })).toHaveValue(18.25);
+    expect(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" })).toHaveValue(20);
     expect(panel.latest()?.groups.map(({ key }) => key)).toEqual(["sub_vendor:margin"]);
-    expect(panel.latest()?.groups[0]?.entries[0]?.fields).toEqual([{ key: "margin", label: "Margin", value: "18.25%" }]);
+    expect(panel.latest()?.groups[0]?.entries[0]?.fields).toEqual([{ key: "maximum", label: "Max. Lisno Margin", value: "20.00%" }]);
     await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
     expect(api.updateKnowledgeSection).toHaveBeenLastCalledWith(item.mainLineId, "revision-1", "advanced", expect.objectContaining({
-      expectedVersion: 2, payload: { pmcMarginBps: 1_450, subVendorMarginBps: 1_825 }
+      expectedVersion: 2, payload: { pmcMarginBps: 1_450, subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 }
     }));
     expect(panel.latest()?.groups).toEqual([]);
+  });
+
+  it.each([
+    { label: "Min. Lisno Margin (%)", value: "20", server: { subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 1_500 } },
+    { label: "Max. Lisno Margin (%)", value: "15", server: { subVendorMinimumMarginBps: 2_000, subVendorMarginBps: 2_000 } }
+  ])("marks a newly conflicting pair incomplete immediately after Keep editing ($label)", async ({ label, value, server }) => {
+    const user = userEvent.setup();
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
+      ? { subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 } : {}, 1, revision));
+    const panel = setup();
+    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
+    fireEvent.change(screen.getByRole("spinbutton", { name: label }), { target: { value } });
+    expect(panel.latest()?.groups[0]?.entries[0]?.incomplete).toBeUndefined();
+    vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Updated elsewhere."));
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced" ? server : {}, 2, revision));
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(false); });
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
+    const entry = panel.latest()?.groups.find((group) => group.key === "sub_vendor:margin")?.entries[0];
+    expect(entry?.incomplete).toBe(true);
+    expect(entry?.fields).toHaveLength(1);
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(false); });
+    expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { original: { subVendorMarginBps: 1_500 }, server: { subVendorMarginBps: 2_000 }, edited: "Min. Lisno Margin (%)", value: "15", valid: true },
+    { original: { subVendorMarginBps: 2_000 }, server: { subVendorMarginBps: 1_500 }, edited: "Min. Lisno Margin (%)", value: "20", valid: false },
+    { original: { subVendorMinimumMarginBps: 2_000, subVendorMarginBps: 2_000 }, server: { subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 }, edited: "Max. Lisno Margin (%)", value: "15", valid: true },
+    { original: { subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 }, server: { subVendorMinimumMarginBps: 2_000, subVendorMarginBps: 2_000 }, edited: "Max. Lisno Margin (%)", value: "15", valid: false }
+  ])("uses the accepted server counterpart when editing $edited after a conflict (valid=$valid)", async ({ original, server, edited, value, valid }) => {
+    const user = userEvent.setup();
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
+      ? { pmcMarginBps: 1_200, ...original } : {}, 1, revision));
+    const panel = setup();
+    fireEvent.change(await screen.findByRole("spinbutton", { name: "PMC Margin" }), { target: { value: "15" } });
+    vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Updated elsewhere."));
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
+      ? { pmcMarginBps: 1_400, ...server } : {}, 2, revision));
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(false); });
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    fireEvent.change(screen.getByRole("spinbutton", { name: edited }), { target: { value } });
+    const entry = panel.latest()?.groups.find((group) => group.key === "sub_vendor:margin")?.entries[0];
+    expect(entry?.fields).toEqual([{ key: edited.startsWith("Min.") ? "minimum" : "maximum",
+      label: edited.startsWith("Min.") ? "Min. Lisno Margin" : "Max. Lisno Margin", value: `${value}.00%` }]);
+    expect(Boolean(entry?.incomplete)).toBe(!valid);
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(valid); });
+    expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(valid ? 2 : 1);
   });
 
   it("keeps the frozen draft baseline through refetch and conflict keep-editing", async () => {

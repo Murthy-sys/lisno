@@ -1,6 +1,6 @@
 import { useState } from "react";
 import axe from "axe-core";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -10,8 +10,13 @@ import { parseKnowledgeModeConfigurations, withKnowledgeModeConfigurations } fro
 import { projectKnowledgeOverviewSummary } from "./knowledgeOverviewSummary";
 import type { KnowledgeJsonObject } from "./knowledgeTypes";
 
-function Harness({ initial = {}, readOnly = false, onChange = vi.fn() }: {
+const backendLists: KnowledgeJsonObject = { modeConfigurations: [{ id: "backend-pmc", modeKind: "pmc", fields: [],
+  ...Object.fromEntries(["inclusions", "exclusions"].map((list) => [list, ["Transport", "Shifting", "Unloading", "ESIC/ PF", "Mathadi", "Damage during"].map((name, index) => ({ id: `${list}-${index}`, name, selected: false }))]))
+}] };
+
+function Harness({ initial = backendLists, readOnly = false, onChange = vi.fn(), onValidationChange = vi.fn() }: {
   initial?: KnowledgeJsonObject;
+  onValidationChange?: (valid: boolean) => void;
   readOnly?: boolean;
   onChange?: (payload: KnowledgeJsonObject) => void;
 }) {
@@ -20,17 +25,119 @@ function Harness({ initial = {}, readOnly = false, onChange = vi.fn() }: {
     mainLineName="Wall panelling"
     payload={payload} modes={[]} readOnly={readOnly} validationAttempt={0}
     onChange={(next) => { setPayload(next); onChange(next); }}
-    onDirty={vi.fn()} onValidationChange={vi.fn()}
+    onDirty={vi.fn()} onValidationChange={onValidationChange}
   /></main>;
 }
 
 const saved: KnowledgeJsonObject = { modeConfigurations: [{
   id: "pmc-saved", modeKind: "pmc", fields: [],
   inclusions: [{ id: "transport-in", name: "Transport", selected: true }],
-  exclusions: [{ id: "transport-out", name: "Transport", selected: true }, { id: "custom", name: "Night unloading", selected: false }]
+  exclusions: [{ id: "transport-out", name: "Transport", selected: false }, { id: "custom", name: "Night unloading", selected: false }]
 }] };
 
 describe("Sub-Vendor Inclusions and Exclusions", () => {
+  it.each<KnowledgeJsonObject>([{}, { modeConfigurations: [{ id: "empty", modeKind: "pmc", fields: [], inclusions: [], exclusions: [] }] }])("renders missing or empty backend lists without writing starter entries", async (initial) => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness initial={initial} onChange={onChange} />);
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    expect(screen.getByText("No inclusions added.")).toBeVisible();
+    expect(screen.getByText("No exclusions added.")).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "Sub-Vendor scope" })).queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Add Inclusion" }));
+    await user.type(screen.getByRole("textbox", { name: "Inclusion name" }), "Permit coordination{Enter}");
+    const config = (onChange.mock.calls.at(-1)![0].modeConfigurations as KnowledgeJsonObject[])[0]!;
+    expect(config.inclusions).toEqual([{ id: expect.any(String), name: "Permit coordination", selected: false }]);
+    expect(config.exclusions ?? []).toEqual([]);
+    expect(screen.getByText("No exclusions added.")).toBeVisible();
+  });
+
+  it.each(["Inclusions", "Exclusions"])("prevents normalized counterpart selection from %s and restores it on uncheck or delete", async (chosen) => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness onChange={onChange} initial={{ modeConfigurations: [{ id: "scope", modeKind: "pmc", fields: [],
+      inclusions: [{ id: "original-in", name: "Transport service", selected: false }],
+      exclusions: [{ id: "different-out", name: "  ＴＲＡＮＳＰＯＲＴ   service  ", selected: false }]
+    }] }} />);
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    const source = within(screen.getByRole("group", { name: chosen }));
+    const opposite = within(screen.getByRole("group", { name: chosen === "Inclusions" ? "Exclusions" : "Inclusions" }));
+    const box = source.getByRole("checkbox");
+    const other = () => opposite.getByRole("checkbox");
+    box.focus();
+    await user.keyboard(" ");
+    expect(box).toBeChecked();
+    expect(other()).toBeDisabled();
+    expect(other()).toHaveAccessibleDescription(`Selected in ${chosen}.`);
+    const hoverTarget = other().closest("label")!;
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    await user.hover(hoverTarget);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(`Selected in ${chosen}.`);
+    await user.unhover(hoverTarget);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    act(() => hoverTarget.focus());
+    expect(screen.getByRole("tooltip")).toHaveTextContent(`Selected in ${chosen}.`);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    await user.click(other());
+    expect(other()).not.toBeChecked();
+    expect(onChange).toHaveBeenCalledTimes(1);
+    await user.click(box);
+    expect(other()).toBeEnabled();
+    await user.click(box);
+    await user.click(source.getByRole("button", { name: /^Delete / }));
+    expect(other()).toBeEnabled();
+    await user.click(other());
+    expect(other()).toBeChecked();
+  });
+
+  it("allows adding and deleting an unavailable unchecked counterpart", async () => {
+    const user = userEvent.setup();
+    render(<Harness initial={{ modeConfigurations: [{ id: "scope", modeKind: "pmc", fields: [],
+      inclusions: [{ id: "in", name: "Transport", selected: true }]
+    }] }} />);
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await user.click(screen.getByRole("button", { name: "Add Exclusion" }));
+    await user.type(screen.getByRole("textbox", { name: "Exclusion name" }), "transport{Enter}");
+    const other = within(screen.getByRole("group", { name: "Exclusions" }));
+    expect(other.getByRole("checkbox")).toBeDisabled();
+    expect(other.getByRole("checkbox")).not.toBeChecked();
+    other.getByRole("button", { name: "Delete exclusion transport" }).focus();
+    await user.keyboard("{Enter}");
+    expect(other.getByText("No exclusions added.")).toBeVisible();
+    expect(other.getByRole("button", { name: "Add Exclusion" })).toHaveFocus();
+    expect(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox")).toBeChecked();
+  });
+
+  it.each(["Inclusions", "Exclusions"])("keeps legacy conflicting %s enabled for repair and blocks validation until resolved", async (chosen) => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const onValidationChange = vi.fn();
+    render(<Harness onChange={onChange} onValidationChange={onValidationChange} initial={{ modeConfigurations: [{ id: "legacy", modeKind: "pmc", fields: [],
+      inclusions: [{ id: "in", name: "Transport", selected: true }],
+      exclusions: [{ id: "out", name: "transport", selected: true }]
+    }] }} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Transport is selected in both lists. Uncheck one before saving.");
+    expect(onValidationChange).toHaveBeenLastCalledWith(false);
+    expect(onChange).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    const region = within(screen.getByRole("region", { name: "Sub-Vendor scope" }));
+    for (const checkbox of region.getAllByRole("checkbox")) {
+      expect(checkbox).toBeChecked();
+      expect(checkbox).toBeEnabled();
+      expect(checkbox).toHaveAttribute("aria-invalid", "true");
+    }
+    const checkbox = () => within(screen.getByRole("group", { name: chosen })).getByRole("checkbox");
+    checkbox().focus();
+    await user.keyboard(" ");
+    expect(checkbox()).not.toBeChecked();
+    expect(checkbox()).toBeDisabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(onValidationChange).toHaveBeenLastCalledWith(true);
+    expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  });
+
   it("keeps the lists out of PMC and In-house while retaining Sub-Vendor selections across Mode switches", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
@@ -50,13 +157,13 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
       for (const name of ["Transport", "Shifting", "Unloading", "ESIC/ PF", "Mathadi", "Damage during"]) {
         expect(within(list).getByRole("checkbox", { name })).not.toBeChecked();
       }
-      await user.click(within(list).getByRole("checkbox", { name: "Transport" }));
+      await user.click(within(list).getByRole("checkbox", { name: title === "Inclusions" ? "Transport" : "Shifting" }));
     }
     expect(onChange).toHaveBeenCalledTimes(2);
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
     expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
     for (const title of ["Inclusions", "Exclusions"]) {
-      expect(within(screen.getByRole("group", { name: title })).getByRole("checkbox", { name: "Transport" })).toBeChecked();
+      expect(within(screen.getByRole("group", { name: title })).getByRole("checkbox", { name: title === "Inclusions" ? "Transport" : "Shifting" })).toBeChecked();
     }
     await user.click(screen.getByRole("checkbox", { name: "In-house" }));
     expect(screen.getByRole("region", { name: "Sub-Vendor scope" })).toBeVisible();
@@ -70,7 +177,7 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     expect(screen.getAllByRole("group", { name: "Inclusions" })).toHaveLength(1);
     expect(screen.getAllByRole("group", { name: "Exclusions" })).toHaveLength(1);
     for (const title of ["Inclusions", "Exclusions"]) {
-      expect(within(screen.getByRole("group", { name: title })).getByRole("checkbox", { name: "Transport" })).toBeChecked();
+      expect(within(screen.getByRole("group", { name: title })).getByRole("checkbox", { name: title === "Inclusions" ? "Transport" : "Shifting" })).toBeChecked();
     }
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     expect(screen.queryByRole("group", { name: "Inclusions" })).not.toBeInTheDocument();
@@ -133,7 +240,7 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
   it("reopens saved checklists and disables authoring for read-only revisions", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<Harness initial={saved} readOnly onChange={onChange} />);
+    render(<Harness initial={{ modeConfigurations: [{ ...(saved.modeConfigurations as KnowledgeJsonObject[])[0], exclusions: [{ id: "legacy-out", name: "Transport", selected: true }] }] }} readOnly onChange={onChange} />);
     expect(screen.queryByRole("group", { name: "Inclusions" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Exclusions" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
@@ -154,7 +261,7 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it.each(["inclusion", "exclusion"] as const)("deletes default %s entries independently and moves keyboard focus to another row", async (kind) => {
+  it.each(["inclusion", "exclusion"] as const)("deletes backend %s entries independently and moves keyboard focus to another row", async (kind) => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
@@ -189,7 +296,7 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     render(<Harness initial={next} readOnly />);
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     expect(within(screen.getByRole("group", { name: "Inclusions" })).queryByRole("checkbox")).not.toBeInTheDocument();
-    expect(within(screen.getByRole("group", { name: "Exclusions" })).getByRole("checkbox", { name: "Transport" })).toBeChecked();
+    expect(within(screen.getByRole("group", { name: "Exclusions" })).getByRole("checkbox", { name: "Transport" })).not.toBeChecked();
   });
 
   it.each(["Save", "Cancel"] as const)("clears deleted custom entries from an open paragraph and supports %s", async (action) => {
@@ -223,7 +330,7 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     const fields = [{ id: "legacy-field", type: "text", label: "Saved PMC input", options: [], value: "Retained value" }];
-    render(<Harness initial={{ modeConfigurations: [{ id: "pmc", modeKind: "pmc", fields }] }} onChange={onChange} />);
+    render(<Harness initial={{ modeConfigurations: [{ id: "pmc", modeKind: "pmc", fields, inclusions: [{ id: "saved-input", name: "Transport", selected: false }] }] }} onChange={onChange} />);
     expect(screen.queryByRole("region", { name: "PMC components" })).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Component label" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
@@ -239,7 +346,7 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     expect(summary.modeOptions).toEqual([expect.objectContaining({ id: "pmc", label: "PMC" })]);
     expect(summary.modeDetails[0]?.pmcScope).toEqual({
       inclusions: [{ id: "transport-in", name: "Transport", selected: true }],
-      exclusions: [{ id: "transport-out", name: "Transport", selected: true }, { id: "custom", name: "Night unloading", selected: false }]
+      exclusions: [{ id: "transport-out", name: "Transport", selected: false }, { id: "custom", name: "Night unloading", selected: false }]
     });
   });
 
@@ -249,7 +356,7 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
       masters={{}} relationshipBaskets={[]} relationshipItems={[]}
     />);
     expect(screen.getByText("PMC · Inclusion · Transport").nextElementSibling).toHaveTextContent("Selected");
-    expect(screen.getByText("PMC · Exclusion · Transport").nextElementSibling).toHaveTextContent("Selected");
+    expect(screen.getByText("PMC · Exclusion · Transport").nextElementSibling).toHaveTextContent("Not selected");
     expect(screen.getByText("PMC · Exclusion · Night unloading").nextElementSibling).toHaveTextContent("Not selected");
     expect(document.body).not.toHaveTextContent("transport-in");
   });

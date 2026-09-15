@@ -1,8 +1,8 @@
 import { modeCalculationDraft, modeCalculationsForPayload, parseModeQuantity, MODE_CALCULATION_SCOPES, type ModeCalculationScope } from "./knowledgeModeCalculation";
 import { generateModeDescription, syncModeDescription } from "./knowledgeModeDescription";
 import { knowledgeModeFieldTypeLabel, parseKnowledgeModeConfigurations, partitionKnowledgeModeConfigurations, type KnowledgeModeConfiguration } from "./knowledgeModeConfiguration";
-import { defaultPmcScopeItems, PMC_SCOPE_LISTS } from "./knowledgePmcScope";
-import { pmcMarginIssues, subVendorMarginIssues } from "./knowledgePmcMargin";
+import { PMC_SCOPE_LISTS } from "./knowledgePmcScope";
+import { pmcMarginIssues, subVendorMarginRange, subVendorMarginRangeIssues } from "./knowledgePmcMargin";
 import { formatKnowledgePercentage, parseRupeeInputToPaise } from "./knowledgePresentation";
 import { pairPendingRows, pendingObjectRows, pendingRowsReordered, pendingText, pendingValuesEqual, type KnowledgePendingChangeEntry, type KnowledgePendingChangeField, type KnowledgePendingChangeGroup } from "./knowledgePendingChanges";
 import type { KnowledgeModeCalculationDraft } from "./KnowledgeModeCalculationTable";
@@ -80,16 +80,23 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
     const pmc = partitionKnowledgeModeConfigurations(configs).primary.pmc;
     for (const list of PMC_SCOPE_LISTS) {
       add(`pmc:${list}`, `PMC · ${list === "inclusions" ? "Inclusions" : "Exclusions"}`, rows(
-        (oldPmc?.[list] ?? defaultPmcScopeItems(list)).map((row) => ({ ...row })),
-        (pmc?.[list] ?? defaultPmcScopeItems(list)).map((row) => ({ ...row })), `pmc:${list}`, "name", list === "inclusions" ? "Inclusion" : "Exclusion",
+        (oldPmc?.[list] ?? []).map((row) => ({ ...row })),
+        (pmc?.[list] ?? []).map((row) => ({ ...row })), `pmc:${list}`, "name", list === "inclusions" ? "Inclusion" : "Exclusion",
         { name: "Name", selected: "State" }, { required: ["name"], format: (name, value) => name === "selected" ? value ? "Selected" : "Not selected" : value }
       ));
     }
     if (!pendingValuesEqual(before.pmcMarginBps ?? null, after.pmcMarginBps ?? null)) {
       add("pmc:margin", "PMC", [{ key: "pmc:margin", title: "PMC margin", kind: "updated", fields: [field("margin", "Margin", typeof after.pmcMarginBps === "number" ? formatKnowledgePercentage(after.pmcMarginBps) : after.pmcMarginBps)], ...(pmcMarginIssues(after.pmcMarginBps).length ? { incomplete: true } : {}) }]);
     }
-    if (!pendingValuesEqual(before.subVendorMarginBps ?? null, after.subVendorMarginBps ?? null)) {
-      add("sub_vendor:margin", "Execution · Sub-Vendor", [{ key: "sub_vendor:margin", title: "Sub-Vendor margin", kind: "updated", fields: [field("margin", "Margin", typeof after.subVendorMarginBps === "number" ? formatKnowledgePercentage(after.subVendorMarginBps) : after.subVendorMarginBps)], ...(subVendorMarginIssues(after.subVendorMarginBps).length ? { incomplete: true } : {}) }]);
+    const oldMarginRange = subVendorMarginRange(before);
+    const marginRange = subVendorMarginRange(after);
+    const marginFields = (["minimum", "maximum"] as const).flatMap((name) => {
+      const value = marginRange[name];
+      if (pendingValuesEqual(oldMarginRange[name] ?? null, value ?? null)) return [];
+      return [field(name, name === "minimum" ? "Min. Lisno Margin" : "Max. Lisno Margin", typeof value === "number" ? formatKnowledgePercentage(value) : value)];
+    });
+    if (marginFields.length) {
+      add("sub_vendor:margin", "Execution · Sub-Vendor", [{ key: "sub_vendor:margin", title: "Lisno Margin", kind: "updated", fields: marginFields, ...(subVendorMarginRangeIssues(after).length ? { incomplete: true } : {}) }]);
     }
     // Configuration identities are retained, even when names or sources coincide.
     for (const pair of pairPendingRows(oldConfigs.map((row) => ({ id: row.id, modeKind: row.modeKind, executionSource: row.executionSource, fields: row.fields.map((value) => ({ ...value, options: [...value.options] })) })), configs.map((row) => ({ id: row.id, modeKind: row.modeKind, executionSource: row.executionSource, fields: row.fields.map((value) => ({ ...value, options: [...value.options] })) })))) {

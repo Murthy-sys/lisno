@@ -15,6 +15,13 @@ import {
 } from "../src/domain/ai-estimator-knowledge-calculation.js";
 
 describe("AI estimator knowledge calculation", () => {
+  it("calculates the supplied cost-price / (100% - rate) example and half-paise ties", () => {
+    expect(calculateMarginSellingPrice(10_000, 3_500)).toBe(15_385);
+    expect(calculateMarginSellingPrice(20_000, 1_500)).toBe(23_529);
+    expect(calculateMarginSellingPrice(20_000, 2_000)).toBe(25_000);
+    expect(calculateMarginSellingPrice(2, 2_000)).toBe(3);
+  });
+
   it("matches every approved ₹75 component example with integer paise", () => {
     expect(adjustMoneyByBasisPoints(7_500, 500)).toBe(7_875);
     expect(calculateMarginSellingPrice(7_500, 2_500)).toBe(10_000);

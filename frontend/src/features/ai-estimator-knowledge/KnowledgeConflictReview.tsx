@@ -1,5 +1,6 @@
 import { Surface } from "../../components/ui/Surface";
 import { BUDGET_ACTIONS, budgetAlterationRows } from "./knowledgeBudgetAlterations";
+import { subVendorMarginRange } from "./knowledgePmcMargin";
 import {
   KNOWLEDGE_SECTION_LABELS,
   formatKnowledgeDateTime,
@@ -151,7 +152,15 @@ function advancedValues(
     label: "Mode paragraph",
     value: typeof payload.modeDescription === "string" ? payload.modeDescription : "Generated from the main line and selected inclusions and exclusions."
   });
-  const { modeConfigurations: _privateModeConfigurations, modeDescription: _modeDescription, ...otherAdvanced } = payload;
+  if (Object.hasOwn(payload, "subVendorMinimumMarginBps") || Object.hasOwn(payload, "subVendorMarginBps")) {
+    const range = subVendorMarginRange(payload);
+    for (const [key, value] of [["subVendorMinimumMarginBps", range.minimum], ["subVendorMarginBps", range.maximum]] as const) {
+      values.push({ label: displayLabel(key), value: value == null ? "Not configured"
+        : typeof value === "object" ? "Invalid value" : formatPrimitive(key, value) });
+    }
+  }
+  const { modeConfigurations: _privateModeConfigurations, modeDescription: _modeDescription,
+    subVendorMinimumMarginBps: _minimumMargin, subVendorMarginBps: _maximumMargin, ...otherAdvanced } = payload;
   return [...values, ...projectValues(otherAdvanced, {
     ...context,
     rootPayload: otherAdvanced
@@ -480,7 +489,8 @@ function displayLabel(key: string): string {
     uomIds: "Units of measure (UOM)",
     pmcMarkupBps: "PMC markup",
     pmcMarginBps: "PMC Margin",
-    subVendorMarginBps: "Sub-Vendor Margin",
+    subVendorMinimumMarginBps: "Min. Lisno Margin",
+    subVendorMarginBps: "Max. Lisno Margin",
     taxRuleId: "Tax rule",
     taxVersionId: "Tax version",
     inputAmountPaise: "Input amount",

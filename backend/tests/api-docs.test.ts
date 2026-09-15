@@ -53,6 +53,47 @@ describe("OpenAPI and Swagger UI", () => {
     expect(Object.keys(item.properties as OpenApiObject)).toEqual(["id", "name", "email", "title"]);
   });
 
+  it("documents saved Lisno margin ranges and the unchanged single selected-rate preview", () => {
+    const schemas = componentSchemas();
+    const alternatives = schemas.KnowledgeSectionPayload!.anyOf as OpenApiObject[];
+    const advanced = alternatives.find((schema) => String(schema.description).startsWith("advanced section"))!;
+    const properties = advanced.properties as Record<string, OpenApiObject>;
+    expect(properties.subVendorMarginBps).toMatchObject({ type: "integer", minimum: 0, maximum: 9_500, multipleOf: 500, nullable: true,
+      description: expect.stringContaining("Maximum Lisno margin") });
+    expect(properties.subVendorMinimumMarginBps).toMatchObject({ type: "integer", minimum: 0, maximum: 9_500, multipleOf: 500, nullable: true,
+      description: expect.stringContaining("explicit null never inherits") });
+    expect(schemas.KnowledgeSubVendorCalculationSettings).toMatchObject({
+      additionalProperties: false, description: expect.stringContaining("one selected rate"),
+      required: ["baseRatePaise", "lowQuantityLimit", "subVendorMarginBps"],
+      properties: { subVendorMarginBps: { type: "integer", minimum: 0, maximum: 9_500, multipleOf: 500 } }
+    });
+    const previewProperties = schemas.KnowledgeSubVendorCalculationSettings!.properties as OpenApiObject;
+    expect(previewProperties).not.toHaveProperty("subVendorMinimumMarginBps");
+    for (const marginSchema of [properties.subVendorMarginBps, properties.subVendorMinimumMarginBps,
+      previewProperties.subVendorMarginBps,
+      (schemas.KnowledgeSubVendorCalculationPreview!.properties as OpenApiObject).subVendorMarginBps]) {
+      expect(marginSchema).not.toHaveProperty("enum");
+    }
+    expect(properties.subVendorMarginBps!.description).toContain("including 10%, are valid without rewriting data");
+    expect(schemas.KnowledgeSubVendorCalculationPreview!.description).toContain("signed balance");
+    expect(schemas.KnowledgeSubVendorCalculationSettings!.description).toContain("adjusted cost / (1 - Lisno margin / 100)");
+    expect(schemas.KnowledgeSubVendorCalculationPreview!.description).toContain("10000 / (10000 - subVendorMarginBps)");
+    expect(schemas.KnowledgeSubVendorCalculationPreview!.properties).toMatchObject({
+      subVendorMarginBps: { minimum: 0, maximum: 9_500, multipleOf: 500 },
+      totalBeforeDiscountPaise: { description: expect.stringContaining("rounded half-up to integer paise") },
+      subVendorMarginAmountPaise: { description: expect.stringContaining("selling price before discount minus revisedAmountPaise") }
+    });
+    expect(schemas.KnowledgePmcCalculationPreview!.description).toContain("10000 / (10000 - pmcMarginBps)");
+    expect(schemas.KnowledgePmcCalculationSettings!.description).toContain("the single PMC margin");
+    expect(schemas.KnowledgePmcCalculationPreview!.properties).toMatchObject({
+      totalBeforeDiscountPaise: { description: expect.stringContaining("rounded half-up to integer paise") },
+      pmcMarginAmountPaise: { description: expect.stringContaining("selling price before discount minus revisedAmountPaise") }
+    });
+    expect(properties).not.toHaveProperty("pmcMinimumMarginBps");
+    expect(properties.pmcMarginBps).toMatchObject({ minimum: 1_000, maximum: 2_000 });
+    expect(properties.pmcMarginBps).not.toHaveProperty("enum");
+  });
+
   it("serves a public OpenAPI document with local API and JWT configuration", async () => {
     const response = await request(app).get("/openapi.json");
 
@@ -375,7 +416,7 @@ describe("OpenAPI and Swagger UI", () => {
     expect(componentSchemas().KnowledgeSubVendorCalculationSettings).toMatchObject({
       additionalProperties: false,
       required: ["baseRatePaise", "lowQuantityLimit", "subVendorMarginBps"],
-      properties: { subVendorMarginBps: { type: "integer", minimum: 1_000, maximum: 2_000 } }
+      properties: { subVendorMarginBps: { type: "integer", minimum: 0, maximum: 9_500, multipleOf: 500 } }
     });
     expect(componentSchemas().KnowledgeSubVendorCalculationSettings).not.toHaveProperty("properties.pmcMarginBps");
     expect(componentSchemas().KnowledgeSubVendorCalculationPreview).toMatchObject({

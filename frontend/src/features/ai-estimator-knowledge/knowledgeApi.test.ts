@@ -10,6 +10,7 @@ import {
   listKnowledgeSurfaces,
   listKnowledgeItems,
   permanentlyDeleteKnowledgeBasket,
+  previewKnowledge,
   resolveKnowledgeContext,
   updateKnowledgeSurface,
   updateKnowledgeSection
@@ -18,6 +19,16 @@ import {
 afterEach(() => vi.restoreAllMocks());
 
 describe("knowledge API", () => {
+  it("preserves preview defaults and passes cancellation/local-loading options separately from the payload", async () => {
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue({});
+    const input = { quantity: "2", quantityScale: 0 };
+    await previewKnowledge(input);
+    expect(post).toHaveBeenLastCalledWith("/admin/ai-estimator-knowledge/preview", input);
+    const options = { signal: new AbortController().signal, showGlobalLoader: false };
+    await previewKnowledge(input, options);
+    expect(post).toHaveBeenLastCalledWith("/admin/ai-estimator-knowledge/preview", input, options);
+  });
+
   it("encodes the parent in Sub Basket endpoints and passes the child ID to Main Line creation", async () => {
     const get = vi.spyOn(apiClient, "get").mockResolvedValue({});
     const post = vi.spyOn(apiClient, "post").mockResolvedValue({});

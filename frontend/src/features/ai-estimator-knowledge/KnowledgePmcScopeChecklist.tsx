@@ -4,6 +4,7 @@ import { Trash2 } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { Checkbox, Field, Input } from "../../components/ui/Field";
 import { IconButton } from "../../components/ui/IconButton";
+import { Tooltip } from "../../components/ui/Tooltip";
 import {
   MAX_PMC_SCOPE_ITEMS,
   createPmcScopeItem,
@@ -15,11 +16,12 @@ import {
 interface Props {
   readonly list: KnowledgePmcScopeList;
   readonly items: readonly KnowledgePmcScopeItem[];
+  readonly oppositeItems: readonly KnowledgePmcScopeItem[];
   readonly readOnly: boolean;
   readonly onChange: (items: readonly KnowledgePmcScopeItem[]) => void;
 }
 
-export function KnowledgePmcScopeChecklist({ list, items, readOnly, onChange }: Props) {
+export function KnowledgePmcScopeChecklist({ list, items, oppositeItems, readOnly, onChange }: Props) {
   const id = useId();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
@@ -31,6 +33,8 @@ export function KnowledgePmcScopeChecklist({ list, items, readOnly, onChange }: 
   const restoreFocus = useRef(false);
   const singular = list === "inclusions" ? "Inclusion" : "Exclusion";
   const title = list === "inclusions" ? "Inclusions" : "Exclusions";
+  const oppositeTitle = list === "inclusions" ? "Exclusions" : "Inclusions";
+  const oppositeSelectedNames = new Set(oppositeItems.filter((item) => item.selected).map((item) => normalizePmcScopeName(item.name)));
   const atLimit = items.length >= MAX_PMC_SCOPE_ITEMS;
 
   useEffect(() => {
@@ -85,31 +89,47 @@ export function KnowledgePmcScopeChecklist({ list, items, readOnly, onChange }: 
     <fieldset className="knowledge-pmc-scope__list">
       <legend>{title}</legend>
       <div className="knowledge-pmc-scope__items">
-        {items.map((item) => (
-          <div className="knowledge-pmc-scope__item" key={item.id}>
-            <label>
-              <Checkbox
-                checked={item.selected}
-                disabled={readOnly}
-                onChange={(event) => onChange(items.map((entry) => entry.id === item.id
-                  ? { ...entry, selected: event.target.checked }
-                  : entry))}
-              />
-              <span>{item.name}</span>
-            </label>
-            {!readOnly ? <IconButton
-              ref={(node) => {
-                if (node) deleteButtonRefs.current.set(item.id, node);
-                else deleteButtonRefs.current.delete(item.id);
-              }}
-              className="knowledge-pmc-scope__delete"
-              label={`Delete ${singular.toLowerCase()} ${item.name}`}
-              title={`Delete ${singular.toLowerCase()} ${item.name}`}
-              icon={<Trash2 aria-hidden="true" />} variant="quiet"
-              onClick={() => deleteItem(item.id)}
-            /> : null}
-          </div>
-        ))}
+        {items.map((item, index) => {
+          const selectedOpposite = oppositeSelectedNames.has(normalizePmcScopeName(item.name));
+          const unavailable = selectedOpposite && !item.selected;
+          const conflict = selectedOpposite && item.selected;
+          const explanation = conflict ? "Selected in both lists. Uncheck one before saving." : `Selected in ${oppositeTitle}.`;
+          const explanationId = `${id}-selection-${index}`;
+          const option = (
+              <label className={unavailable ? "knowledge-pmc-scope__unavailable" : undefined} tabIndex={unavailable ? 0 : undefined}>
+                <Checkbox
+                  checked={item.selected}
+                  disabled={readOnly || unavailable}
+                  aria-label={item.name}
+                  aria-describedby={selectedOpposite ? explanationId : undefined}
+                  aria-invalid={conflict || undefined}
+                  onChange={(event) => {
+                    if (readOnly || (event.target.checked && selectedOpposite)) return;
+                    onChange(items.map((entry) => entry.id === item.id
+                      ? { ...entry, selected: event.target.checked }
+                      : entry));
+                  }}
+                />
+                <span>{item.name}{selectedOpposite ? <small className={unavailable ? "sr-only" : "knowledge-pmc-scope__status"} id={explanationId}>{explanation}</small> : null}</span>
+              </label>
+          );
+          return (
+            <div className="knowledge-pmc-scope__item" key={item.id}>
+              {unavailable ? <Tooltip label={explanation}>{option}</Tooltip> : option}
+              {!readOnly ? <IconButton
+                ref={(node) => {
+                  if (node) deleteButtonRefs.current.set(item.id, node);
+                  else deleteButtonRefs.current.delete(item.id);
+                }}
+                className="knowledge-pmc-scope__delete"
+                label={`Delete ${singular.toLowerCase()} ${item.name}`}
+                title={`Delete ${singular.toLowerCase()} ${item.name}`}
+                icon={<Trash2 aria-hidden="true" />} variant="quiet"
+                onClick={() => deleteItem(item.id)}
+              /> : null}
+            </div>
+          );
+        })}
         {items.length === 0 ? <p className="knowledge-pmc-scope__empty">No {list} added.</p> : null}
       </div>
       {!readOnly ? (

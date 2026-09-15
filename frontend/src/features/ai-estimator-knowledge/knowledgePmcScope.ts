@@ -10,25 +10,12 @@ export const PMC_SCOPE_LISTS = ["inclusions", "exclusions"] as const;
 export type KnowledgePmcScopeList = (typeof PMC_SCOPE_LISTS)[number];
 export const MAX_PMC_SCOPE_ITEMS = 200;
 
-const DEFAULT_SCOPE_ITEMS = [
-  ["transport", "Transport"],
-  ["shifting", "Shifting"],
-  ["unloading", "Unloading"],
-  ["esic-pf", "ESIC/ PF"],
-  ["mathadi", "Mathadi"],
-  ["damage-during", "Damage during"]
-] as const;
-
 let fallbackIdSequence = 0;
 
 export function createPmcScopeItem(list: KnowledgePmcScopeList, name: string): KnowledgePmcScopeItem {
   const uniqueId = globalThis.crypto?.randomUUID?.()
     ?? `${Date.now().toString(36)}-${++fallbackIdSequence}`;
   return { id: `pmc-${list}-${uniqueId}`, name: name.trim(), selected: false };
-}
-
-export function defaultPmcScopeItems(list: KnowledgePmcScopeList): readonly KnowledgePmcScopeItem[] {
-  return DEFAULT_SCOPE_ITEMS.map(([key, name]) => ({ id: `pmc-${list}-${key}`, name, selected: false }));
 }
 
 export function normalizePmcScopeName(name: string): string {

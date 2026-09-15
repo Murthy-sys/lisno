@@ -8,7 +8,12 @@ import { KnowledgeModeConfigurationBuilder } from "./KnowledgeModeConfigurationB
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 import type { KnowledgeJsonObject } from "./knowledgeTypes";
 
-function Harness({ initial = {}, readOnly = false, onChange = vi.fn() }: {
+const savedLists: KnowledgeJsonObject = { modeConfigurations: [{ id: "saved-scope", modeKind: "pmc", fields: [],
+  inclusions: [{ id: "transport-in", name: "Transport", selected: false }, { id: "shifting-in", name: "Shifting", selected: false }],
+  exclusions: [{ id: "unloading-out", name: "Unloading", selected: false }]
+}] };
+
+function Harness({ initial = savedLists, readOnly = false, onChange = vi.fn() }: {
   initial?: KnowledgeJsonObject;
   readOnly?: boolean;
   onChange?: (payload: KnowledgeJsonObject) => void;
@@ -29,9 +34,9 @@ describe("shared Mode paragraph", () => {
     expect(screen.getByText(generated)).toBeVisible();
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     for (const list of ["Inclusions", "Exclusions"]) {
-      await user.click(within(screen.getByRole("group", { name: list })).getByRole("checkbox", { name: "Transport" }));
+      await user.click(within(screen.getByRole("group", { name: list })).getByRole("checkbox", { name: list === "Inclusions" ? "Transport" : "Unloading" }));
     }
-    const expected = generated.replace("inclusions none and exclusions none", "inclusions Transport and exclusions Transport");
+    const expected = generated.replace("inclusions none and exclusions none", "inclusions Transport and exclusions Unloading");
     expect(screen.getByText(expected)).toBeVisible();
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     expect(screen.getByText(expected)).toBeVisible();
@@ -67,7 +72,7 @@ describe("shared Mode paragraph", () => {
     expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(screen.queryByRole("textbox", { name: "Mode paragraph" })).not.toBeInTheDocument();
-    expect(onChange).toHaveBeenLastCalledWith({ modeDescription: "Custom work for both Modes.\nKeep this wording." });
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ modeDescription: "Custom work for both Modes.\nKeep this wording." }));
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Shifting" }));
     expect(screen.getByText("Custom work for both Modes. Keep this wording. Inclusions: Shifting.")).toBeVisible();
@@ -84,22 +89,22 @@ describe("shared Mode paragraph", () => {
     render(<Harness onChange={onChange} />);
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     for (const list of ["Inclusions", "Exclusions"]) {
-      await user.click(within(screen.getByRole("group", { name: list })).getByRole("checkbox", { name: "Transport" }));
+      await user.click(within(screen.getByRole("group", { name: list })).getByRole("checkbox", { name: list === "Inclusions" ? "Transport" : "Unloading" }));
     }
     await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
     const text = screen.getByRole("textbox", { name: "Mode paragraph" });
     const preview = screen.getByRole("region", { name: "Paragraph preview" });
     await user.clear(text);
     expect(text).toHaveValue("");
-    expect(preview).toHaveTextContent("Inclusions: Transport. Exclusions: Transport.");
+    expect(preview).toHaveTextContent("Inclusions: Transport. Exclusions: Unloading.");
     await user.type(text, "Custom fixing. Inclusions: none. Exclusions: none.");
     expect(text).toHaveFocus();
-    expect(preview).toHaveTextContent("Custom fixing. Inclusions: Transport. Exclusions: Transport.");
+    expect(preview).toHaveTextContent("Custom fixing. Inclusions: Transport. Exclusions: Unloading.");
     await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
     await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Shifting" }));
-    expect(preview).toHaveTextContent("Custom fixing. Inclusions: Shifting. Exclusions: Transport.");
+    expect(preview).toHaveTextContent("Custom fixing. Inclusions: Shifting. Exclusions: Unloading.");
     await user.click(screen.getByRole("button", { name: "Save" }));
-    const expected = "Custom fixing. Inclusions: Shifting. Exclusions: Transport.";
+    const expected = "Custom fixing. Inclusions: Shifting. Exclusions: Unloading.";
     expect(screen.getByText(expected)).toBeVisible();
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ modeDescription: expected }));
     await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));

@@ -24,9 +24,9 @@ import { KnowledgePmcScopeChecklist } from "./KnowledgePmcScopeChecklist";
 import { KnowledgeModeDescriptionEditor } from "./KnowledgeModeDescriptionEditor";
 import { generateModeDescription, modeDescriptionIssues, syncModeDescription } from "./knowledgeModeDescription";
 import { calculationScopeForIssue, MODE_CALCULATION_SCOPES, modeCalculationsIssues, type ModeCalculationScope } from "./knowledgeModeCalculation";
-import { pmcMarginIssues, subVendorMarginIssues } from "./knowledgePmcMargin";
-import { KnowledgePmcMarginInput } from "./KnowledgePmcMarginInput";
-import { defaultPmcScopeItems, PMC_SCOPE_LISTS } from "./knowledgePmcScope";
+import { pmcMarginIssues, subVendorMarginRange, subVendorMarginRangeIssues, withSubVendorMargin } from "./knowledgePmcMargin";
+import { KnowledgePmcMarginInput, KnowledgeSubVendorMarginRange } from "./KnowledgePmcMarginInput";
+import { PMC_SCOPE_LISTS } from "./knowledgePmcScope";
 import type {
   KnowledgeJsonObject,
   KnowledgeMaster
@@ -88,7 +88,7 @@ export function KnowledgeModeConfigurationBuilder({
   const description = typeof payload.modeDescription === "string"
     ? syncModeDescription(payload.modeDescription, partitioned.primary.pmc) : generatedDescription;
   const issues = useMemo(
-    () => [...parsed.issues, ...modeDescriptionIssues(payload.modeDescription == null || typeof payload.modeDescription === "string" ? description : payload.modeDescription), ...modeCalculationsIssues(payload), ...pmcMarginIssues(payload.pmcMarginBps), ...subVendorMarginIssues(payload.subVendorMarginBps), ...serverIssues],
+    () => [...parsed.issues, ...modeDescriptionIssues(payload.modeDescription == null || typeof payload.modeDescription === "string" ? description : payload.modeDescription), ...modeCalculationsIssues(payload), ...pmcMarginIssues(payload.pmcMarginBps), ...subVendorMarginRangeIssues(payload), ...serverIssues],
     [parsed.issues, description, payload, serverIssues]
   );
   const recoveries = [
@@ -229,17 +229,18 @@ export function KnowledgeModeConfigurationBuilder({
       }} />
   </div>;
 
-  const subVendorMarginControl = <div ref={(node) => {
-    if (node) fieldRefs.current.set("subVendorMarginBps", node);
-    else fieldRefs.current.delete("subVendorMarginBps");
-  }}>
-    <KnowledgePmcMarginInput key={descriptionResetKey} scope="sub_vendor" value={payload.subVendorMarginBps}
-      readOnly={readOnly} error={issueFor("subVendorMarginBps")}
-      onChange={(subVendorMarginBps) => {
-        onDirty();
-        onChange({ ...payload, subVendorMarginBps });
-      }} />
-  </div>;
+  const subVendorMarginControl = <KnowledgeSubVendorMarginRange key={descriptionResetKey}
+    {...subVendorMarginRange(payload)} readOnly={readOnly}
+    errors={{ minimum: issueFor("subVendorMinimumMarginBps"), maximum: issueFor("subVendorMarginBps") }}
+    onFieldRef={(field, node) => {
+      const path = field === "minimum" ? "subVendorMinimumMarginBps" : "subVendorMarginBps";
+      if (node) fieldRefs.current.set(path, node);
+      else fieldRefs.current.delete(path);
+    }}
+    onChange={(field, value) => {
+      onDirty();
+      onChange(withSubVendorMargin(payload, field, value));
+    }} />;
 
   // Keep calculators mounted so changing visible modes preserves incomplete inputs.
   function calculationSlot(scope: ModeCalculationScope) {
@@ -294,16 +295,11 @@ export function KnowledgeModeConfigurationBuilder({
   return (
     <div
       className="knowledge-section-editor knowledge-mode-configuration"
+      role="group"
       aria-labelledby="knowledge-mode-configuration-title"
     >
-      <div className="knowledge-section-heading">
-        <div>
-          <h2 id="knowledge-mode-configuration-title">Mode configuration</h2>
-          <p>PMC, Sub-Vendor, Labor cost and Material cost each have separate calculation settings.</p>
-          <p>UOM and the paragraph are shared for this Main Line. Inclusions and Exclusions are available under Execution → Sub-Vendor.</p>
-        </div>
-        {readOnly ? <span className="knowledge-readonly-label">Read-only revision</span> : null}
-      </div>
+      <h2 id="knowledge-mode-configuration-title" className="sr-only">Mode configuration</h2>
+      {readOnly ? <span className="knowledge-readonly-label">Read-only revision</span> : null}
 
       {issues.length ? (
         <div
@@ -441,14 +437,13 @@ export function KnowledgeModeConfigurationBuilder({
                             <KnowledgePmcScopeChecklist
                               key={list}
                               list={list}
-                              items={partitioned.primary.pmc?.[list] ?? defaultPmcScopeItems(list)}
+                              items={partitioned.primary.pmc?.[list] ?? []}
+                              oppositeItems={partitioned.primary.pmc?.[list === "inclusions" ? "exclusions" : "inclusions"] ?? []}
                               readOnly={readOnly}
                               onChange={(items) => {
                                 const configuration = partitioned.primary.pmc ?? createKnowledgeModeConfiguration("pmc");
                                 updateConfiguration({
                                   ...configuration,
-                                  inclusions: configuration.inclusions ?? defaultPmcScopeItems("inclusions"),
-                                  exclusions: configuration.exclusions ?? defaultPmcScopeItems("exclusions"),
                                   [list]: items
                                 });
                               }}
@@ -635,7 +630,7 @@ function selectConfigurationForIssue(
   selectMode: (mode: KnowledgeModeKind) => void,
   selectExecutionSource: (source: KnowledgeExecutionSource) => void
 ) {
-  if (issue.path === "subVendorMarginBps") {
+  if (issue.path === "subVendorMarginBps" || issue.path === "subVendorMinimumMarginBps") {
     selectMode("execution");
     selectExecutionSource("sub_vendor");
     return;

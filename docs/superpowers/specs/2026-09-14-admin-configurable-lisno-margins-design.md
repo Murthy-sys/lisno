@@ -1,0 +1,62 @@
+# Configurable Lisno margins and compact Mode introduction
+
+Status: the user approved this revised specification and its separate task plan, then selected execution mode A. Implementation, independent review, focused command verification and desktop browser checks passed. Mobile browser verification remains incomplete due to automation timeouts. See the [task plan](../plans/2026-09-14-admin-configurable-lisno-margins.md) for final evidence and limits. Both margins use multiples of 5% as clarified by the user.
+
+## Goal and interpretation
+
+Remove the visible **Mode configuration** introduction shown in the user's screenshot, including its heading and both explanatory paragraphs. Let Super Admin define the Sub-Vendor **Min. and Max. Lisno Margin** percentages instead of enforcing the previously approved 15%/20% choices. Both values must remain multiples of 5%, as explicitly clarified by the user.
+
+The latest request supersedes the fixed 15%/20% choices in the earlier margin-range and selling-price specifications while retaining the five-percentage-point rule. Interpret “Lisno markup” as the existing Sub-Vendor Lisno Margin controls in this conversation; retain their labels and the approved selling-price formula. PMC and In-house are outside this change.
+
+## Current behavior and evidence
+
+- `frontend/src/features/ai-estimator-knowledge/KnowledgeModeConfigurationBuilder.tsx:302` renders the screenshot's heading and two paragraphs in `knowledge-section-heading`. The parent references that heading with `aria-labelledby`; the same wrapper also contains the read-only revision status.
+- `KnowledgePmcMarginInput.tsx:35` gives both Lisno fields `min=15`, `step=5`; the shared input additionally hardcodes `max=20` and a matching placeholder. Its hint displays `Allowed: 15%–20% · Steps of 5% · Min. ≤ Max.`.
+- `knowledgePmcMargin.ts` accepts only 1500 or 2000 basis points, validates paired/ordered values and reads a legacy missing minimum as the maximum without writing data.
+- Backend section validation in `ai-estimator-knowledge-validation.ts:1602`, preview request validation in `routes/ai-estimator-knowledge-admin.ts:291`, and calculation validation in `ai-estimator-knowledge-mode-calculation.ts:107` independently enforce the same restriction. OpenAPI describes an enum of 1500/2000.
+- Mongoose section validation calls the same payload validator. Model/service inheritance exemptions for `INVALID_LISNO_MARGIN_INCREMENT` currently let unchanged historical values be copied for repair. Multiples of 5% such as 10% must become valid, while historical off-step values such as 17.5% still require repair.
+- The existing `calculateMarginSellingPrice` helper already supports integer basis points from 0 through 9999, uses BigInt half-up rounding and rejects unsafe results. The frontend selling-price consistency check already supports this mathematical domain.
+- The canonical section-write operation requires `ai_estimator_knowledge.configuration.update` with Super Admin's operation-specific admin override; preview requires configuration read permission. The UI also requires an editable draft and the backend's `update_section` action. No role or permission change is needed to satisfy Super Admin configuration.
+- At specification time, the worktree contains 47 modified source/test files and six earlier task documents. These include completed work from the preceding requests and must be preserved. Capture fresh target diffs before implementation ownership is assigned.
+
+## Requirements and UX
+
+1. Remove the screenshot's visible heading, paragraphs, associated empty wrapper spacing and unnecessary separator. Keep an accessible Mode configuration name using the existing screen-reader-only utility or an equivalent semantic label. Preserve read-only revision status without reserving the removed introduction's height.
+2. Keep compact, editable Min./Max. percentage fields under **Lisno Margin**. Remove the fixed 15–20 placeholder and allowed-values hint; retain `step=5`. Accept 0%, 5%, 10%, 15%, 20%, 25%, 30%, 35% and subsequent multiples of 5% below 100%. Reject off-step values such as 12.5%, 17% or 18%, including typed and API-submitted values. Do not snap or silently clamp input. A concise `Multiples of 5%` hint may explain the rule.
+3. Preserve the formula/representation constraints: each configured margin is non-negative and below 100%, and Min. ≤ Max. Together with the user's increment rule, the supported stored domain is integer 0–9500 basis points in increments of 500 (0%, 5%, …, 95%). At 100% the approved formula's denominator is zero, and above 100% it produces a negative selling price. Reject invalid input with a concise field error rather than altering it. Numeric input equivalent to a valid step, such as 15.00%, remains valid.
+4. Preserve paired-value behavior: both values may be empty; an explicitly partial pair is invalid. An absent legacy minimum still reads as the effective maximum without a write. Zero is a valid configured value and must not be treated as missing.
+5. Preserve the current draft/save/activate workflow, validation summaries and field focus, pending edits, version conflicts, read-only states and query refresh behavior. Newly supported historical multiples of 5%, for example 10%, must no longer require repair solely because they differ from 15%/20%. Historical off-step values such as 17.5% remain invalid for save/activation/preview and must not be automatically rounded.
+6. Test calculations continue to use the configured Min./Max. values, default to Max., submit the exact selected rate and display those fields read-only. Both choices use the approved division formula. Preserve backend-source result validation, stale-result clearing, retry and close/reopen behavior.
+7. Keep PMC's existing input limits/step, In-house settings, all cost/quantity/impact controls and the prior inclusion/exclusion behavior unchanged. Parameterize the shared input where required so relaxing Lisno values cannot accidentally relax PMC.
+
+## Data, API and financial contract
+
+- Retain `advanced.payload.subVendorMinimumMarginBps` and `advanced.payload.subVendorMarginBps` as the minimum and maximum. No added field, index or stored-data rewrite is required. Preserve stable IDs, section/revision versions, audit ownership and Active history.
+- Accept 0–9500 integer basis points in multiples of 500 consistently in section validation, model validation, saving/activation and the Sub-Vendor preview request/domain. Update OpenAPI input/output bounds and explanatory text with `multipleOf: 500`; remove its 1500/2000 enum. Keep existing endpoint names and preview response fields/version. The generic money helper retains its existing domain for other consumers.
+- Preserve the existing narrow unchanged-copy repair path for historical off-step values. Do not broaden inheritance exemptions or bypass invalid types, range/pair validation, normal saves or activation. Preserve inclusion/exclusion conflict handling and current transaction semantics. Negative values, 100% or larger, non-multiples of 5%, unordered pairs and unsafe monetary results remain errors.
+- Preserve `selling price = adjusted cost / (1 − margin / 100)`, with half-up integer-paise rounding. Adjusted cost still includes existing quantity/low-quantity impact. Margin amount remains selling price minus adjusted cost; discounts apply afterward and signed vendor balances retain the existing policy.
+- Verification examples with no impact or discount: CP ₹100 and 35% → ₹153.85; CP ₹200 and 10% → ₹222.22; CP ₹200 and 35% → ₹307.69; CP ₹200 and 95% → ₹4,000.00; 0% → unchanged cost. Large percentages may still raise the established overflow error for large costs.
+- Permissions remain authoritative on the backend. Super Admin uses the existing configuration write operation; read-only users cannot modify values, and actors without read access cannot preview. This request does not restrict other already-authorized editors or broaden any actor's access.
+
+## Compatibility, constraints and risks
+
+Existing 15%/20% pairs continue to work. Previously stored multiples of 5% inside the supported domain become valid without a migration or implicit save. Historical off-step values and invalid shapes remain visibly invalid and retain the existing repair workflow. No new default or automatic rounding may replace an administrator's configured value.
+
+Frontend and backend must be released together: an older backend would reject newly configurable values. After new rates have been saved, reverting to the old validator would reject those rates; rollback would need to retain the broader validation or explicitly address affected configurations. Never silently overwrite them. Deployment, backfills and production configuration writes are outside this task.
+
+The main risks are leaving a fixed enum in one layer, enforcing the five-point rule only through the input spinner, treating zero as empty, float-based percentage conversion, accepting Min. greater than Max., changing PMC through its shared input, broadening legacy repair exemptions, or losing status/accessibility when removing the introduction. Existing architecture supports one direct approach: broaden the current Lisno range while enforcing multiples of 500 basis points, reusing the current exact money helper. No new library or alternative pricing formula is warranted.
+
+## Acceptance criteria and verification
+
+- **AC1 — Compact introduction:** the screenshot's heading and paragraphs are not visibly rendered, no empty introduction space remains, the Mode area retains an accessible name, and read-only revision status remains available. Check desktop and mobile rendering.
+- **AC2 — Administrator-defined values:** a permitted Super Admin draft accepts and saves an unequal pair such as 10%/35%; reopening preserves the exact values. Existing 15%/20%, a 0% minimum and a 95% maximum also work. The fixed 15/20 hint is absent, five-point stepping remains, and inputs are never silently rounded or clamped.
+- **AC3 — Consistent validation:** frontend, section/model validation, activation and preview agree on integer 0–9500 basis points divisible by 500 and paired/ordered values. Reject negative, 100%+, non-finite/non-numeric, off-step, excess-precision, partial and inverted pairs through the appropriate boundary, without writes on failure. Include 12.5%, 17%, 18% and 99% rejection cases and prove manual typing cannot bypass the step rule.
+- **AC4 — Formula and selection:** both configured choices produce independently calculated results above. CP ₹100 at 35% succeeds through the actual preview API. Verify zero, 95%, half-up ties, overflow, impact thresholds and discounts; stale, mismatched or obsolete additive results remain rejected.
+- **AC5 — Compatibility and authorization:** historical missing-minimum data retains its read-only interpretation; valid 10% values no longer demand repair. Historical 17.5% remains repairable through the existing narrow copy path but fails save/activation/preview until explicitly corrected. Save/activation keep version checks and immutable history. Exercise Super Admin and an asymmetric unauthorized/read-only identity. Existing PMC and In-house tests retain their original limits/formulas.
+- **AC6 — Integrated verification:** run focused frontend margin/builder/simulator/lifecycle tests and backend section/domain/preview/route/API-doc/service checks. Include replica-set integration coverage for affected draft-copy/save/activation persistence paths. Run both workspace typechecks/builds and `git diff --check`; capture rendered interaction/accessibility evidence at desktop/mobile sizes after writers finish. Report exact unrun checks or browser timeouts rather than inferring success from screenshots.
+
+## Open decisions and approval boundary
+
+No separate product choice blocks specification approval. The user explicitly requires multiples of 5%. Remaining assumptions are explicit above: Sub-Vendor scope, existing Lisno Margin label/formula, non-negative values below 100%, and unchanged permissions. The screenshot's entire visible introduction is removed.
+
+This gate creates only this specification, following repository `AGENTS.md`. The separate task plan and implementation follow their required approvals and execution-mode selection. No dependencies, lockfiles, seeds, migrations, commits, pushes or deployment are part of this specification stage.

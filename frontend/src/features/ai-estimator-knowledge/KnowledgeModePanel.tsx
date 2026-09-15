@@ -41,6 +41,7 @@ import {
 import type { KnowledgeModeConfigurationIssue } from "./knowledgeModeConfiguration";
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 import { KnowledgeVersionConflictDialog } from "./KnowledgeVersionConflictDialog";
+import { subVendorMarginRange } from "./knowledgePmcMargin";
 import { KnowledgeModeCalculationEditor, type KnowledgeModeCalculationUom } from "./KnowledgeModeCalculationEditor";
 import { KnowledgeInHouseTotal } from "./KnowledgeInHouseTotal";
 import { MODE_CALCULATION_LABELS, MODE_CALCULATION_SCOPES, modeCalculationsForPayload, modeCalculationsForStorage, withModeCalculation, type ModeCalculationScope } from "./knowledgeModeCalculation";
@@ -71,7 +72,7 @@ const MODE_SECTION_LABELS = {
 } as const satisfies Readonly<Record<ModeSectionKey, string>>;
 
 const PENDING_DESCRIPTION_MESSAGE = "Save or cancel the paragraph before saving Mode.";
-const ADVANCED_EDITABLE_FIELDS = ["modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps", "subVendorMarginBps"] as const;
+const ADVANCED_EDITABLE_FIELDS = ["modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"] as const;
 type AdvancedEditableField = (typeof ADVANCED_EDITABLE_FIELDS)[number];
 
 interface ModeDraft {
@@ -632,6 +633,7 @@ export const KnowledgeModePanel = forwardRef<
             scope={scope}
             pmcMarginBps={scope === "pmc" ? drafts.advanced.payload.pmcMarginBps : undefined}
             subVendorMarginBps={scope === "sub_vendor" ? drafts.advanced.payload.subVendorMarginBps : undefined}
+            subVendorMinimumMarginBps={scope === "sub_vendor" ? drafts.advanced.payload.subVendorMinimumMarginBps : undefined}
             marginControl={marginControl}
             contextLabel={MODE_CALCULATION_LABELS[scope]}
             issuePath={`modeCalculations.${scope}`}
@@ -800,20 +802,26 @@ function rebaseDraftAfterConflict(
   server: KnowledgeSectionEnvelope<KnowledgeJsonObject>,
   serverReview: ModeServerReview | null
 ): ModeDraft {
+  const payload = {
+    ...server.payload,
+    ...(server.sectionKey === "pricing"
+      ? { specifications: draft.payload.specifications ?? [] }
+      : {
+          ...Object.fromEntries(draft.editedAdvancedFields.map((field) => [field, draft.payload[field] ?? (field === "modeConfigurations" ? [] : null)])),
+          ...(draft.editedCalculationScopes.length ? { modeCalculations: {
+            ...modeCalculationsForStorage(server.payload),
+            ...Object.fromEntries(draft.editedCalculationScopes.map((scope) => [scope, modeCalculationsForPayload(draft.payload)[scope]]))
+          } } : {})
+        })
+  };
+  const pending = server.sectionKey === "advanced"
+    ? acceptPendingMarginCounterparts(draft.pendingBaseline ?? {}, draft.pendingPayload, payload)
+    : { baseline: draft.pendingBaseline, payload: draft.pendingPayload };
   return {
     ...draft,
-    payload: {
-      ...server.payload,
-      ...(server.sectionKey === "pricing"
-        ? { specifications: draft.payload.specifications ?? [] }
-        : {
-            ...Object.fromEntries(draft.editedAdvancedFields.map((field) => [field, draft.payload[field] ?? (field === "modeConfigurations" ? [] : null)])),
-            ...(draft.editedCalculationScopes.length ? { modeCalculations: {
-              ...modeCalculationsForStorage(server.payload),
-              ...Object.fromEntries(draft.editedCalculationScopes.map((scope) => [scope, modeCalculationsForPayload(draft.payload)[scope]]))
-            } } : {})
-          })
-    },
+    payload,
+    pendingBaseline: pending.baseline,
+    pendingPayload: pending.payload,
     specificationReferenceIds: server.referenceState?.specificationIds ?? [],
     applicability: server.sectionKey === "advanced" ? draft.applicability : server.applicability,
     envelopeVersion: server.version,
@@ -860,10 +868,25 @@ function ModeBlockToolbar({
   );
 }
 
+/** Refresh accepted counterparts without losing any locally edited margin. */
+function acceptPendingMarginCounterparts(baseline: KnowledgeJsonObject, local: KnowledgeJsonObject, accepted: KnowledgeJsonObject) {
+  const baselineRange = subVendorMarginRange(baseline);
+  const localRange = subVendorMarginRange(local);
+  const acceptedRange = subVendorMarginRange(accepted);
+  const nextBaseline = { ...baseline };
+  const nextLocal = { ...local };
+  for (const [basis, field] of [["minimum", "subVendorMinimumMarginBps"], ["maximum", "subVendorMarginBps"]] as const) {
+    const untouched = pendingValuesEqual(baselineRange[basis], localRange[basis]);
+    nextBaseline[field] = (untouched ? acceptedRange[basis] : baselineRange[basis]) ?? null;
+    nextLocal[field] = (untouched ? acceptedRange[basis] : localRange[basis]) ?? null;
+  }
+  return { baseline: nextBaseline, payload: nextLocal };
+}
+
 /** Apply only the latest local edit, excluding values incorporated by conflict rebase. */
 function pendingModeStateAfterEdit(draft: ModeDraft, after: KnowledgeJsonObject, sectionKey: ModeSectionKey): Pick<ModeDraft, "pendingBaseline" | "pendingPayload"> {
-  const baseline = { ...(draft.pendingBaseline ?? {}) };
-  const next = { ...draft.pendingPayload };
+  let baseline = { ...(draft.pendingBaseline ?? {}) };
+  let next = { ...draft.pendingPayload };
   const before = draft.payload;
   const apply = (localBaseline: KnowledgeJsonValue | undefined, local: KnowledgeJsonValue | undefined, saved: KnowledgeJsonValue | undefined, edited: KnowledgeJsonValue | undefined) => {
     const acceptedBaseline = pendingBaselineForNewEdit(localBaseline, local, saved, edited);
@@ -871,9 +894,21 @@ function pendingModeStateAfterEdit(draft: ModeDraft, after: KnowledgeJsonObject,
     return { baseline: acceptedBaseline, payload: applyPendingEdit(acceptedDraft, saved, edited) };
   };
   const fields = sectionKey === "pricing" ? ["specifications"] : ADVANCED_EDITABLE_FIELDS;
+  const marginEdited = sectionKey === "advanced" &&
+    (!pendingValuesEqual(before.subVendorMarginBps, after.subVendorMarginBps) ||
+      !pendingValuesEqual(before.subVendorMinimumMarginBps, after.subVendorMinimumMarginBps));
+  if (marginEdited) {
+    const accepted = acceptPendingMarginCounterparts(baseline, next, before);
+    baseline = accepted.baseline;
+    next = accepted.payload;
+  }
+  const valueForField = (payload: KnowledgeJsonObject, field: string) => field === "subVendorMinimumMarginBps"
+    ? subVendorMarginRange(payload).minimum : payload[field];
   for (const field of fields) {
-    if (pendingValuesEqual(before[field], after[field])) continue;
-    const updated = apply(baseline[field], next[field], before[field], after[field]);
+    const beforeValue = valueForField(before, field);
+    const afterValue = valueForField(after, field);
+    if (pendingValuesEqual(beforeValue, afterValue)) continue;
+    const updated = apply(valueForField(baseline, field), valueForField(next, field), beforeValue, afterValue);
     baseline[field] = updated.baseline ?? null;
     next[field] = updated.payload ?? null;
   }

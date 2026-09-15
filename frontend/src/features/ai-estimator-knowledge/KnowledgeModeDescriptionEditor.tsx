@@ -6,7 +6,7 @@ import { Field, Textarea } from "../../components/ui/Field";
 import { IconButton } from "../../components/ui/IconButton";
 import { MAX_MODE_DESCRIPTION_LENGTH, syncModeDescription } from "./knowledgeModeDescription";
 import type { KnowledgeModeConfiguration } from "./knowledgeModeConfiguration";
-import { defaultPmcScopeItems, PMC_SCOPE_LISTS } from "./knowledgePmcScope";
+import { PMC_SCOPE_LISTS } from "./knowledgePmcScope";
 
 interface Props {
   readonly description: string;
@@ -36,8 +36,8 @@ export function KnowledgeModeDescriptionEditor({ description, pmc, readOnly, val
     const previous = previousPmc.current;
     previousPmc.current = pmc;
     const removed = PMC_SCOPE_LISTS.some((list) => {
-      const remainingIds = new Set((pmc?.[list] ?? defaultPmcScopeItems(list)).map((item) => item.id));
-      return (previous?.[list] ?? defaultPmcScopeItems(list)).some((item) => !remainingIds.has(item.id));
+      const remainingIds = new Set((pmc?.[list] ?? []).map((item) => item.id));
+      return (previous?.[list] ?? []).some((item) => !remainingIds.has(item.id));
     });
     if (removed) setText((current) => current === null ? null : syncModeDescription(current, pmc, previous));
   }, [pmc]);

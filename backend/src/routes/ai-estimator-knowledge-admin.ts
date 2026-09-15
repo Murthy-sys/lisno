@@ -288,7 +288,9 @@ export const aiEstimatorKnowledgePreviewSchema = z
       baseRatePaise: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
       lowQuantityLimit: canonicalDecimalSchema,
       impactBps: z.number().int().min(0).max(KNOWLEDGE_PMC_MAX_IMPACT_BPS).optional(),
-      subVendorMarginBps: z.number().int().min(1_000).max(2_000)
+      subVendorMarginBps: z.number().int().min(0).max(9_500).refine((value) => value % 500 === 0, {
+        message: "Lisno margin must be between 0% and 95%, in multiples of 5%."
+      })
     }).strict().optional(),
     priceVersionId: stableIdSchema.nullable().optional(),
     taxVersionId: stableIdSchema.nullable().optional(),
@@ -327,7 +329,7 @@ export const aiEstimatorKnowledgePreviewSchema = z
   }).refine((value) => !value.subVendorCalculation || (!value.modeCalculation && !value.inHouseCalculation && !value.pmcCalculation), {
     path: ["subVendorCalculation"], message: "Sub-Vendor calculations cannot be combined with other calculations."
   }).refine((value) => !value.subVendorCalculation || value.modeCalculationMarkupBasis === undefined, {
-    path: ["modeCalculationMarkupBasis"], message: "Sub-Vendor calculations use Sub-Vendor margin; a markup selection is not allowed."
+    path: ["modeCalculationMarkupBasis"], message: "Sub-Vendor calculations use Lisno margin; a markup selection is not allowed."
   }).refine((value) => value.modeCalculationDiscountBps === undefined || Boolean(value.modeCalculation || value.inHouseCalculation || value.pmcCalculation || value.subVendorCalculation), {
     path: ["modeCalculationDiscountBps"], message: "Mode calculation settings are required when applying a discount."
   }).refine((value) => (!value.pmcCalculation && !value.subVendorCalculation) || (value.modeCalculationDiscountBps ?? 0) <= 10_000, {

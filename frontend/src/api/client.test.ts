@@ -56,6 +56,22 @@ afterEach(() => {
 });
 
 describe("apiClient", () => {
+  it("keeps automatic POST loading local and forwards cancellation to fetch", async () => {
+    const controller = new AbortController();
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementationOnce((_url, init) => new Promise((_resolve, reject) => {
+      expect(init?.signal).toBe(controller.signal);
+      expect(init?.body).toBe(JSON.stringify({ quantity: "2" }));
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    }));
+    const pending = apiClient.post("/example-options", { quantity: "2" }, { signal: controller.signal, showGlobalLoader: false });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(requestActivity.getSnapshot()).toBe(0);
+    const rejected = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    await rejected;
+    expect(requestActivity.getSnapshot()).toBe(0);
+  });
+
   it("passes authenticated POST request options without changing its JSON body", async () => {
     tokenStorage.set("post-options-token");
     server.use(

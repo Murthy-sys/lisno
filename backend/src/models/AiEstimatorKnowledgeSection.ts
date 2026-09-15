@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 import {
   AI_ESTIMATOR_KNOWLEDGE_SECTION_APPLICABILITY,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS,
@@ -23,7 +25,13 @@ const sectionSchema = new Schema(
 
 sectionSchema.pre("validate", function validatePayload() {
   const sectionKey = this.get("sectionKey") as KnowledgeSectionKey;
-  const issues = validateKnowledgeSectionPayload(sectionKey, this.get("payload"));
+  const unchangedInheritedLisnoPayload = this.isNew && sectionKey === "advanced" &&
+    Object.hasOwn(this.$locals, "inheritedLisnoMarginPayload") &&
+    isDeepStrictEqual(this.get("payload"), this.$locals.inheritedLisnoMarginPayload);
+  const issues = validateKnowledgeSectionPayload(sectionKey, this.get("payload"))
+    .filter(({ code }) => !(this.isNew && this.$locals.allowInheritedScopeSelectionConflict === true &&
+      code === "CONFLICTING_SCOPE_SELECTION"))
+    .filter(({ code }) => !(unchangedInheritedLisnoPayload && code === "INVALID_LISNO_MARGIN_INCREMENT"));
   if (issues.length > 0) {
     this.invalidate("payload", issues.map((issue) => issue.message).join(" "));
   }

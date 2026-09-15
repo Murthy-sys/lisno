@@ -413,7 +413,9 @@ export interface KnowledgePmcCalculationPreview {
   totalPaise: KnowledgePaise;
   appliedImpactBps: KnowledgeBasisPoints;
   pmcMarginBps: KnowledgeBasisPoints;
+  /** Rounded selling subtotal minus adjusted cost, preserved separately when discount is applied. */
   pmcMarginAmountPaise: KnowledgePaise;
+  /** Adjusted cost divided by (1 - PMC margin), rounded half-up to integer paise. */
   totalBeforeDiscountPaise: KnowledgePaise;
   /** Signed remainder after the configured margin; can be negative for a large custom discount. */
   finalVendorChargesPaise: KnowledgePaise;
@@ -424,7 +426,7 @@ export interface KnowledgePmcCalculationPreview {
   };
 }
 
-/** Independent Sub-Vendor margin settings; shares PMC's pricing arithmetic. */
+/** Lisno margin is 0–9500 bps in 500-bps steps; selling price is adjusted cost / (1 - marginBps / 10000). */
 export interface KnowledgeSubVendorCalculationSettings {
   baseRatePaise: KnowledgePaise;
   lowQuantityLimit: KnowledgeCanonicalDecimal;
@@ -432,8 +434,10 @@ export interface KnowledgeSubVendorCalculationSettings {
   subVendorMarginBps: KnowledgeBasisPoints;
 }
 
+/** Shares PMC's breakdown shape and rounded division selling-price arithmetic. */
 export interface KnowledgeSubVendorCalculationPreview extends Omit<KnowledgePmcCalculationPreview, "pmcMarginBps" | "pmcMarginAmountPaise"> {
   subVendorMarginBps: KnowledgeBasisPoints;
+  /** Rounded selling price minus adjusted cost, preserved separately when discount is applied. */
   subVendorMarginAmountPaise: KnowledgePaise;
 }
 
