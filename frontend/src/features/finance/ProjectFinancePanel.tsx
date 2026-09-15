@@ -36,12 +36,14 @@ export function ProjectFinancePanel({
   projectId,
   enabled = true,
   title = "Finance bucket",
-  expectedSource
+  expectedSource,
+  embedded = false
 }: {
   projectId: string;
   enabled?: boolean;
   title?: string;
   expectedSource?: ProjectFinanceExpectedSource | null;
+  embedded?: boolean;
 }) {
   const auth = useAuth();
   const canCreate = hasFrontendPermission(auth.authorization, "finance.entry.create");
@@ -85,12 +87,8 @@ export function ProjectFinancePanel({
       ? `${trustedBucket.projectName} finance`
       : title;
 
-  return (
-    <Surface
-      as="section"
-      className="project-finance-panel"
-      aria-labelledby={`project-finance-${projectId}`}
-    >
+  const panelContent = (
+    <>
       <div className="section-heading">
         <div>
           <p className="eyebrow">Project financial details</p>
@@ -179,6 +177,23 @@ export function ProjectFinancePanel({
           )}
         </>
       ) : null}
+    </>
+  );
+
+  return embedded ? (
+    <section
+      className="project-finance-panel project-finance-panel--embedded"
+      aria-labelledby={`project-finance-${projectId}`}
+    >
+      {panelContent}
+    </section>
+  ) : (
+    <Surface
+      as="section"
+      className="project-finance-panel"
+      aria-labelledby={`project-finance-${projectId}`}
+    >
+      {panelContent}
     </Surface>
   );
 }

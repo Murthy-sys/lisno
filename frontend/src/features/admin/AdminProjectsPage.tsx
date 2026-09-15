@@ -189,21 +189,19 @@ export function AdminProjectsPage() {
           message={isSuperAdmin ? "No projects available." : "No projects initiated yet."}
         />
       ) : (
-        <>
-          <Surface as="section" padding="compact" className="admin-projects__workspace">
-            <AdminProjectsHeaderRow />
-            <ul className="admin-projects__list" aria-label={projectCollectionLabel} aria-busy={projectsQuery.isFetching || undefined}>
-              {page.items.map((project) => (
-                <AdminProjectCard
-                  key={project.id}
-                  project={project}
-                  canAssignDesigner={canAssignDesigner}
-                  onQuickView={() => setQuickViewId(project.id)}
-                  quickViewDisabled={projectsQuery.isPlaceholderData}
-                />
-              ))}
-            </ul>
-          </Surface>
+        <Surface as="section" padding="compact" className="admin-projects__workspace">
+          <AdminProjectsHeaderRow />
+          <ul className="admin-projects__list" aria-label={projectCollectionLabel} aria-busy={projectsQuery.isFetching || undefined}>
+            {page.items.map((project) => (
+              <AdminProjectCard
+                key={project.id}
+                project={project}
+                canAssignDesigner={canAssignDesigner}
+                onQuickView={() => setQuickViewId(project.id)}
+                quickViewDisabled={projectsQuery.isPlaceholderData}
+              />
+            ))}
+          </ul>
           <nav className="access-administration__pagination admin-projects__pagination" aria-label={`${projectCollectionLabel} pages`}>
             <p aria-live="polite">
               Showing {page.pagination.offset + 1}–{Math.min(page.pagination.offset + page.items.length, page.pagination.total)} of {page.pagination.total}
@@ -213,7 +211,7 @@ export function AdminProjectsPage() {
               <Button size="compact" variant="secondary" disabled={!page.pagination.hasMore} onClick={() => setPagination((current) => ({ ...current, offset: current.offset + current.limit }))}>Next page</Button>
             </div>
           </nav>
-        </>
+        </Surface>
       )}
       {dialogOpen ? (
         <AdminProjectInitiationDialog

@@ -48,7 +48,6 @@ export function DesignAssignmentPanel({ project }: { project: AdminProjectSummar
         title="Design plan assignment"
         subtitle="Assign and track the Designer handoff"
         id="design-assignment-title"
-        defaultOpen
       >
         <p>This task opens after the Client—or a Sales Manager acting with proof—approves the estimate.</p>
       </AdminDetailSection>
@@ -63,7 +62,6 @@ export function DesignAssignmentPanel({ project }: { project: AdminProjectSummar
       title="Design plan assignment"
       subtitle="Assign and track the Designer handoff"
       id="design-assignment-title"
-      defaultOpen
     >
       <StatusBadge
         tone={workflowStatus === "approved" ? "success" : workflowStatus === "changes_requested" ? "warning" : "info"}

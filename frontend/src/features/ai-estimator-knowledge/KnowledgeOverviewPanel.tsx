@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { Plus, Ruler } from "lucide-react";
 import { useMemo } from "react";
 
 import { Button } from "../../components/ui/Button";
@@ -87,6 +87,8 @@ export function KnowledgeOverviewPanel({
           {!editable ? <span className="knowledge-readonly-label">Read-only revision</span> : null}
         </div>
         <div className="knowledge-overview__configured-grid">
+          <div className="knowledge-overview__field-icon-row">
+          <Ruler className="knowledge-overview__field-icon" aria-hidden="true" />
           <div className="knowledge-master-control knowledge-overview__configured-field knowledge-overview__configured-field--uom">
             <Field id="knowledge-overview-uom" label="Unit of measure (UOM)">
               {(props) => (
@@ -107,6 +109,7 @@ export function KnowledgeOverviewPanel({
                     <Button
                       className="knowledge-overview__quick-add"
                       variant="secondary"
+                      size="compact"
                       leadingIcon={<Plus />}
                       disabled={saving || referenceUnavailable(uomReferenceState)}
                       onClick={() => onQuickAddUom((master) => changeOverviewValue(master.id))}
@@ -124,6 +127,7 @@ export function KnowledgeOverviewPanel({
                 <Button size="compact" variant="quiet" onClick={uomReferenceState.onRetry}>Retry UOM</Button>
               </div>
             ) : null}
+          </div>
           </div>
         </div>
       </Surface>

@@ -526,43 +526,52 @@ export function KnowledgeItemWorkspacePage() {
       <div className="knowledge-workspace-layout">
         <div className="knowledge-workspace-main">
           <KnowledgeSectionNavigation sections={item.itemType === "temporary" ? ["overview", "mode", "quality"] : undefined} activeSection={activeSection} onSectionChange={selectWorkspaceSection} panelBusy={activeSection === "mode" ? modeBusy : sectionQuery.isFetching}>
-            {revision && activeSection !== "quality" ? (
-              <KnowledgeSectionCommandBar
-                sectionLabel={activeSectionLabel}
-                versionLabel={commandVersionLabel}
-                editable={editable}
-                dirty={activeDirty}
-                saving={activeSaving}
-                saveError={activeSaveError}
-                onSave={() => void saveActiveSection()}
-              />
-            ) : null}
             {activeSection === "quality" ? (
               <KnowledgeBasketQualityPanel key={pendingSession.sourceKey} ref={qualityPanelRef} item={item} revisionId={revision?.id} canUpdate={canUpdate} onDirtyChange={setQualityDirty} onSavingChange={setQualitySaving} pendingChangesSourceKey={pendingSession.sourceKey} onPendingChanges={receivePendingChanges} />
             ) : !revision ? (
               <PageState state="empty" message="This item has no revision to display." />
             ) : activeSection === "mode" ? (
-              <KnowledgeModePanel
-                key={pendingSession.sourceKey}
-                ref={modePanelRef}
-                item={item}
-                revisionId={revision.id}
-                masters={masters}
-                relationshipBaskets={relationshipBasketsQuery.data?.items ?? []}
-                relationshipItems={relationshipItemsQuery.data?.items ?? []}
-                editable={editable}
-                legacyModeCatalogState={legacyModeCatalogState}
-                uomCatalogState={uomCatalogState}
-                onDirtyChange={setModeDirty}
-                onSavingChange={setModeSaving}
-                onBusyChange={setModeBusy}
-                onSaveErrorChange={setModeSaveError}
-                onAnnouncement={setAnnouncement}
-                pendingChangesSourceKey={pendingSession.sourceKey}
-                onPendingChanges={receivePendingChanges}
-              />
+              <>
+                <KnowledgeSectionCommandBar
+                  sectionLabel={activeSectionLabel}
+                  versionLabel={commandVersionLabel}
+                  editable={editable}
+                  dirty={activeDirty}
+                  saving={activeSaving}
+                  saveError={activeSaveError}
+                  onSave={() => void saveActiveSection()}
+                />
+                <KnowledgeModePanel
+                  key={pendingSession.sourceKey}
+                  ref={modePanelRef}
+                  item={item}
+                  revisionId={revision.id}
+                  masters={masters}
+                  relationshipBaskets={relationshipBasketsQuery.data?.items ?? []}
+                  relationshipItems={relationshipItemsQuery.data?.items ?? []}
+                  editable={editable}
+                  legacyModeCatalogState={legacyModeCatalogState}
+                  uomCatalogState={uomCatalogState}
+                  onDirtyChange={setModeDirty}
+                  onSavingChange={setModeSaving}
+                  onBusyChange={setModeBusy}
+                  onSaveErrorChange={setModeSaveError}
+                  onAnnouncement={setAnnouncement}
+                  pendingChangesSourceKey={pendingSession.sourceKey}
+                  onPendingChanges={receivePendingChanges}
+                />
+              </>
             ) : sectionQuery.isPending ? <PageState state="loading" message={`Loading ${activeSectionLabel}…`} /> : sectionQuery.isError ? <PageState state="error" message={sectionQuery.error.message} action={{ label: "Try again", onAction: () => void sectionQuery.refetch() }} /> : sectionQuery.data && backendSection ? (
               <Surface as="section" className={`knowledge-workspace-section${backendSection === "overview" ? " knowledge-workspace-section--overview" : ""}`}>
+                <KnowledgeSectionCommandBar
+                  sectionLabel={activeSectionLabel}
+                  versionLabel={commandVersionLabel}
+                  editable={editable}
+                  dirty={activeDirty}
+                  saving={activeSaving}
+                  saveError={activeSaveError}
+                  onSave={() => void saveActiveSection()}
+                />
                 {serverReview ? (
                   <KnowledgeConflictReview
                     sectionKey={serverReview.server.sectionKey}

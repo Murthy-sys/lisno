@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Workflow } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { ApiError } from "../../api/client";
@@ -6,8 +7,8 @@ import type { AdminProjectSummary, ProjectWorkflowTask } from "../../api/types";
 import { PageState } from "../../components/ui/PageState";
 import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StatusBadge, type StatusTone } from "../../components/ui/StatusBadge";
-import { Surface } from "../../components/ui/Surface";
 import { WorkerAssignmentPanel } from "../admin/WorkerAssignmentPanel";
+import { AdminDetailSection } from "../admin/AdminDetailSection";
 import {
   formatWorkflowLabel,
   isDesignerAssignmentPending
@@ -121,15 +122,15 @@ function WorkflowSnapshot({
   const executionComplete = executionTasks.length > 0 && completedTasks === executionTasks.length;
 
   return (
-    <Surface
-      as="section"
-      className="admin-project-detail__surface"
-      aria-labelledby="finance-workflow-control-title"
+    <AdminDetailSection
+      icon={<Workflow aria-hidden="true" />}
+      tone="cool"
+      title="Entire project workflow"
+      subtitle="Commercial approval, design handoff, delivery queues, and trade staffing"
     >
       <div className="section-heading">
         <div>
           <p className="eyebrow">Super Admin delivery control</p>
-          <h2 id="finance-workflow-control-title">Entire project workflow</h2>
           <p>Commercial approval, design handoff, delivery queues, and trade staffing in one view.</p>
         </div>
         <StatusBadge
@@ -218,7 +219,7 @@ function WorkflowSnapshot({
           action={{ label: "Try again", onAction: onRetryTasks }}
         />
       ) : null}
-    </Surface>
+    </AdminDetailSection>
   );
 }
 

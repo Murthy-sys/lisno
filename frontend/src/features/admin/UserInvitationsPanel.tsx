@@ -147,13 +147,14 @@ function AuthorizedUserInvitationsPanel({
   };
 
   return (
-    <Surface
-      as="section"
-      padding="compact"
-      className="user-invitations"
-      aria-labelledby="user-invitations-title"
-      aria-busy={invitationsQuery.isFetching || undefined}
-    >
+    <div className="user-invitations__layout">
+      <Surface
+        as="section"
+        padding="compact"
+        className="user-invitations"
+        aria-labelledby="user-invitations-title"
+        aria-busy={invitationsQuery.isFetching || undefined}
+      >
       <header className="user-invitations__header">
         <div>
           <p className="eyebrow">Secure account setup</p>
@@ -300,38 +301,42 @@ function AuthorizedUserInvitationsPanel({
               </tbody>
             </table>
           </div>
-          <nav className="access-administration__pagination" aria-label="Invitation pages">
-            <p aria-live="polite">
-              Showing {page.pagination.offset + 1}–
-              {Math.min(page.pagination.offset + page.items.length, page.pagination.total)} of {page.pagination.total}
-            </p>
-            <div>
-              <Button
-                size="compact"
-                variant="quiet"
-                disabled={pagination.offset === 0}
-                onClick={() => setPagination((current) => ({
-                  ...current,
-                  offset: Math.max(0, current.offset - current.limit)
-                }))}
-              >
-                Previous page
-              </Button>
-              <Button
-                size="compact"
-                variant="secondary"
-                disabled={!page.pagination.hasMore}
-                onClick={() => setPagination((current) => ({
-                  ...current,
-                  offset: current.offset + current.limit
-                }))}
-              >
-                Next page
-              </Button>
-            </div>
-          </nav>
         </>
       )}
+
+      </Surface>
+      {page && page.items.length > 0 ? (
+        <nav className="access-administration__pagination" aria-label="Invitation pages">
+          <p aria-live="polite">
+            Showing {page.pagination.offset + 1}–
+            {Math.min(page.pagination.offset + page.items.length, page.pagination.total)} of {page.pagination.total}
+          </p>
+          <div>
+            <Button
+              size="compact"
+              variant="quiet"
+              disabled={pagination.offset === 0}
+              onClick={() => setPagination((current) => ({
+                ...current,
+                offset: Math.max(0, current.offset - current.limit)
+              }))}
+            >
+              Previous page
+            </Button>
+            <Button
+              size="compact"
+              variant="secondary"
+              disabled={!page.pagination.hasMore}
+              onClick={() => setPagination((current) => ({
+                ...current,
+                offset: current.offset + current.limit
+              }))}
+            >
+              Next page
+            </Button>
+          </div>
+        </nav>
+      ) : null}
 
       {inviteOpen && page ? (
         <InviteUserDialog roles={page.invitableRoles} onClose={() => setInviteOpen(false)} />
@@ -346,7 +351,7 @@ function AuthorizedUserInvitationsPanel({
           onClose={closeActionDialog}
         />
       ) : null}
-    </Surface>
+    </div>
   );
 }
 

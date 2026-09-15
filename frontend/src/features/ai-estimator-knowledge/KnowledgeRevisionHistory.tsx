@@ -1,3 +1,5 @@
+import { ChevronRight, Clock, FileText } from "lucide-react";
+
 import { Button } from "../../components/ui/Button";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { StateContent } from "../../components/ui/PageState";
@@ -31,9 +33,12 @@ export function KnowledgeRevisionHistory({
       aria-busy={refreshing || undefined}
     >
       <div className="knowledge-section-heading">
-        <div>
-          <h2 id="knowledge-history-title">Revision history</h2>
-          <p>Activated revisions remain immutable.</p>
+        <div className="knowledge-history__heading-row">
+          <Clock className="knowledge-history__heading-icon" aria-hidden="true" />
+          <div>
+            <h2 id="knowledge-history-title">Revision history</h2>
+            <p>Activated revisions remain immutable.</p>
+          </div>
         </div>
       </div>
       {loading && !entries ? (
@@ -63,17 +68,21 @@ export function KnowledgeRevisionHistory({
           {hasEntries ? (
             <ol>
               {entries!.map((entry) => (
-                <li key={entry.id}>
-                  <div>
-                    <strong>Revision {entry.revisionNumber}</strong>
-                    <StatusBadge
-                      label={entry.status}
-                      tone={entry.status === "active" ? "success" : entry.status === "draft" ? "warning" : "neutral"}
-                    />
+                <li key={entry.id} className="knowledge-history__row">
+                  <FileText className="knowledge-history__row-icon" aria-hidden="true" />
+                  <div className="knowledge-history__row-body">
+                    <div>
+                      <strong>Revision {entry.revisionNumber}</strong>
+                      <StatusBadge
+                        label={entry.status}
+                        tone={entry.status === "active" ? "success" : entry.status === "draft" ? "warning" : "neutral"}
+                      />
+                    </div>
+                    <span>
+                      Updated {formatKnowledgeDateTime(entry.updatedAt)} · {entry.completeness.percentage}% complete
+                    </span>
                   </div>
-                  <span>
-                    Updated {formatKnowledgeDateTime(entry.updatedAt)} · {entry.completeness.percentage}% complete
-                  </span>
+                  <ChevronRight className="knowledge-history__row-chevron" aria-hidden="true" />
                 </li>
               ))}
             </ol>

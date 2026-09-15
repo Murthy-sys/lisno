@@ -144,7 +144,7 @@ export function KnowledgeReusableValuesPage() {
         actions={
           <>
             <Button variant="secondary" leadingIcon={<ArrowLeft />} onClick={() => navigate("/admin/configuration/estimation")}>Back to knowledge base</Button>
-            {canCreate ? <Button leadingIcon={<Plus />} onClick={() => setEditor("create")}>Add {label.replace(/s$/u, "")}</Button> : null}
+            {canCreate ? <Button onClick={() => setEditor("create")}>Add {label.replace(/s$/u, "")}</Button> : null}
           </>
         }
       />

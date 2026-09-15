@@ -308,7 +308,7 @@ describe("Knowledge Mode toolbar layout", () => {
       ".knowledge-page--item-workspace .knowledge-mode-surfaces__controls",
       professionalWorkspaceStart
     );
-    expect(controls.get("grid-template-columns")).toBe("minmax(0, 32rem) auto");
+    expect(controls.get("grid-template-columns")).toBe("minmax(0, 1fr) auto");
     expect(controls.get("min-inline-size")).toBe("0");
 
     const mobileStart = stylesheet.indexOf(

@@ -14,6 +14,8 @@ export interface DialogProps {
   title: string;
   eyebrow?: string;
   description?: string;
+  icon?: ReactNode;
+  className?: string;
   onClose: () => void;
   children: ReactNode;
   busy?: boolean;
@@ -29,6 +31,8 @@ export function Dialog({
   title,
   eyebrow = "Designer workflow",
   description,
+  icon,
+  className,
   onClose,
   children,
   busy = false,
@@ -70,7 +74,7 @@ export function Dialog({
           </Button>
           <div
             ref={dialogRef}
-            className="ui-dialog modal"
+            className={`ui-dialog modal${className ? ` ${className}` : ""}`}
             role={role}
             aria-modal="true"
             aria-labelledby={titleId}
@@ -83,6 +87,7 @@ export function Dialog({
                 document.body, where a <header> would expose a second banner
                 landmark alongside the page header. */}
             <div className="ui-dialog__header modal__header">
+              {icon ? <span className="ui-dialog__header-icon" aria-hidden="true">{icon}</span> : null}
               <div>
                 <p className="eyebrow">{eyebrow}</p>
                 <h2 id={titleId}>{title}</h2>

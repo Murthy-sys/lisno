@@ -225,6 +225,14 @@ describe("AdminProjectDetailPage", () => {
       expect(within(detail).getByText(value)).toBeVisible();
     }
     expect(within(detail).getByText(/₹9,75,000/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Project information" })).toHaveAttribute(
+      "aria-expanded",
+      "false"
+    );
+    expect(screen.getByRole("button", { name: "Assignment & progress" })).toHaveAttribute(
+      "aria-expanded",
+      "false"
+    );
     expect(screen.getByRole("link", { name: "Back to My Projects" })).toHaveAttribute(
       "href",
       "/admin/projects"

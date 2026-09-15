@@ -290,7 +290,7 @@ export function KnowledgeBaseIndexPage() {
               </Button>
             ) : null}
             {canCreate ? (
-              <Button leadingIcon={<Plus />} onClick={() => setItemDialogOpen(true)}>
+              <Button onClick={() => setItemDialogOpen(true)}>
                 Add estimation item
               </Button>
             ) : null}
@@ -421,7 +421,7 @@ export function KnowledgeBaseIndexPage() {
             ))}
             </div>
             <div className="knowledge-filter-actions">
-              <Button type="button" variant="quiet" onClick={resetFilters}>
+              <Button type="button" variant="secondary" onClick={resetFilters}>
                 Clear filters
               </Button>
               <Button type="submit">Apply filters</Button>
@@ -493,7 +493,7 @@ export function KnowledgeBaseIndexPage() {
                         this is the only prompt the basket needs. The name is spoken
                         but not shown: several baskets each offer this command, and
                         "Add estimation item" alone would name them all alike. */}
-                    {canCreate ? <Button size="compact" variant="secondary" leadingIcon={<Plus />} onClick={() => setItemDialogOpen(true)}>Add estimation item<span className="sr-only"> to {group.basketName}</span></Button> : null}
+                    {canCreate ? <Button size="compact" leadingIcon={<Plus />} onClick={() => setItemDialogOpen(true)}>Add estimation item<span className="sr-only"> to {group.basketName}</span></Button> : null}
                     {canCreate ? <Button size="compact" variant="secondary" onClick={() => setTemporaryBasketId(basketId)}>Add temporary item<span className="sr-only"> to {group.basketName}</span></Button> : null}
                     {canUpdate ? <Button size="compact" variant="quiet" leadingIcon={<Pencil />} onClick={() => setBasketEditor((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}>Edit basket</Button> : null}
                     {canLifecycle ? <Button size="compact" variant="destructive-outline" leadingIcon={<Trash2 />} onClick={() => setBasketDelete((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}>Delete<span className="sr-only"> {group.basketName}</span></Button> : null}
@@ -679,7 +679,7 @@ function MainBasketManagementDialog({
       width="wide"
       className="knowledge-context-panel"
       footer={<div className="knowledge-dialog-actions">
-        <Button type="button" variant="secondary" onClick={onClose}>
+        <Button type="button" onClick={onClose}>
           Done
         </Button>
       </div>}
@@ -784,7 +784,6 @@ function MainBasketManagementDialog({
           )}
         </div>
       </div>
-
     </ContextPanel>
   );
 }

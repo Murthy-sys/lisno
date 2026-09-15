@@ -185,7 +185,6 @@ export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, 
             {(props) => <Input {...props} maxLength={240} value={name} disabled={locked} onChange={(event) => { setName(event.target.value); clearFailure(); }} />}
           </Field>
         </div>
-
       </form>
     </ContextPanel>
   );

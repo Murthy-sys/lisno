@@ -16,6 +16,7 @@ import { PageState } from "../../components/ui/PageState";
 import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
+import { AdminDetailSection } from "./AdminDetailSection";
 import { adminProjectKeys } from "./adminProjectsApi";
 import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 import {
@@ -76,15 +77,15 @@ function WorkerAssignmentPanelForProject({ project }: { project: AdminProjectSum
 
   if (!approved) {
     return (
-      <Surface as="section" className="admin-project-detail__surface worker-assignment" aria-labelledby="worker-assignment-title">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Approved design execution</p>
-            <h2 id="worker-assignment-title">Task assignment</h2>
-          </div>
-        </div>
+      <AdminDetailSection
+        icon={<ChevronDown aria-hidden="true" />}
+        tone="cool"
+        title="Task assignment"
+        subtitle="Approved design execution and trade staffing"
+      >
+        <p className="eyebrow">Approved design execution</p>
         <p>Worker assignment opens after the Client—or a Sales Manager acting with proof—approves the design plan.</p>
-      </Surface>
+      </AdminDetailSection>
     );
   }
 
