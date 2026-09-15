@@ -127,8 +127,12 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     expect(screen.queryByRole("group", { name: "Exclusions" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Execution source" }))
       .not.toBeInTheDocument();
-    expect(screen.getByText(/each have separate calculation settings/u)).toBeVisible();
-    expect(screen.getByText(/UOM and the paragraph are shared for this Main Line/u)).toBeVisible();
+    expect(screen.getByRole("group", { name: "Mode configuration" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Mode configuration", level: 2 })).toHaveClass("sr-only");
+    expect(screen.queryByText(/each have separate calculation settings/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/UOM and the paragraph are shared for this Main Line/u)).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Mode configuration" }).querySelector(":scope > .knowledge-section-heading"))
+      .toBeNull();
 
     const results = await axe.run(document.body, {
       rules: { "color-contrast": { enabled: false } }
@@ -171,6 +175,9 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     const onPayload = vi.fn();
     const onDirty = vi.fn();
     render(<Harness readOnly={readOnly} onPayload={onPayload} onDirty={onDirty} />);
+    expect(screen.getByRole("group", { name: "Mode configuration" })).toBeVisible();
+    if (readOnly) expect(screen.getByText("Read-only revision")).toBeVisible();
+    else expect(screen.queryByText("Read-only revision")).not.toBeInTheDocument();
     const pmcSelection = screen.getByRole("checkbox", { name: "PMC" });
     const executionSelection = screen.getByRole("checkbox", { name: "Execution" });
     await user.click(executionSelection);
@@ -256,12 +263,12 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     expect(onDirty).not.toHaveBeenCalled();
   });
 
-  it("reveals both collapsed Execution panels and focuses an invalid Sub-Vendor margin", async () => {
+  it.each(["Min.", "Max."])("reveals collapsed Execution panels and focuses an invalid %s Lisno margin", async (label) => {
     const user = userEvent.setup();
-    render(<Harness initialPayload={{ pmcMarginBps: 1_200, subVendorMarginBps: 1_700 }} />);
+    render(<Harness initialPayload={{ pmcMarginBps: 1_200, subVendorMarginBps: 2_000 }} />);
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     await user.click(screen.getByRole("checkbox", { name: "In-house" }));
-    const margin = screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" });
+    const margin = screen.getByRole("spinbutton", { name: `${label} Lisno Margin (%)` });
     fireEvent.change(margin, { target: { value: "21" } });
     await user.click(screen.getByRole("button", { name: "Collapse Sub-Vendor" }));
     await user.click(screen.getByRole("button", { name: "Collapse In-house" }));
@@ -279,7 +286,7 @@ describe("KnowledgeModeConfigurationBuilder", () => {
   it("preserves independent margins and Sub-Vendor scope while toggling sources", async () => {
     const user = userEvent.setup();
     const onPayload = vi.fn();
-    render(<Harness onPayload={onPayload} />);
+    render(<Harness onPayload={onPayload} initialPayload={{ modeConfigurations: [{ id: "saved-scope", modeKind: "pmc", fields: [], inclusions: [{ id: "transport-in", name: "Transport", selected: false }], exclusions: [{ id: "shifting-out", name: "Shifting", selected: false }] }] }} />);
 
     await user.type(screen.getByRole("spinbutton", { name: "PMC Margin" }), "15");
 
@@ -291,7 +298,8 @@ describe("KnowledgeModeConfigurationBuilder", () => {
       .toHaveAccessibleDescription("Execution (Sub-Vendor) for Wall panelling");
     expect(within(sourceGroup).getAllByRole("checkbox")).toHaveLength(2);
     expect(within(sourceGroup).queryByRole("radio")).not.toBeInTheDocument();
-    await user.type(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }), "17");
+    await user.type(screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" }), "10");
+    await user.type(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" }), "35");
     await user.click(within(screen.getByRole("group", { name: "Exclusions" })).getByRole("checkbox", { name: "Shifting" }));
 
     within(sourceGroup).getByRole("checkbox", { name: "In-house" }).focus();
@@ -304,7 +312,7 @@ describe("KnowledgeModeConfigurationBuilder", () => {
 
     expect(screen.getByRole("checkbox", { name: "Execution" }))
       .toHaveAccessibleDescription("Execution (Sub-Vendor + In-house) for Wall panelling");
-    expect(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" })).toHaveValue(17);
+    expect(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" })).toHaveValue(35);
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
@@ -319,7 +327,8 @@ describe("KnowledgeModeConfigurationBuilder", () => {
 
     const latest = onPayload.mock.calls.at(-1)?.[0] as KnowledgeJsonObject;
     expect(latest.pmcMarginBps).toBe(1_500);
-    expect(latest.subVendorMarginBps).toBe(1_700);
+    expect(latest.subVendorMinimumMarginBps).toBe(1_000);
+    expect(latest.subVendorMarginBps).toBe(3_500);
     expect(latest.modeConfigurations).toEqual(expect.arrayContaining([
       expect.objectContaining({
         modeKind: "pmc",
@@ -356,8 +365,9 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     render(<Harness initialPayload={definitionPayload} />);
     await user.type(screen.getByRole("spinbutton", { name: "PMC Margin" }), "15");
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
-    await user.type(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }), "17");
-    expect(payload()).toEqual({ ...definitionPayload, pmcMarginBps: 1_500, subVendorMarginBps: 1_700 });
+    await user.type(screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" }), "15");
+    await user.type(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" }), "20");
+    expect(payload()).toEqual({ ...definitionPayload, pmcMarginBps: 1_500, subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 });
   });
 
   it("announces authoritative errors for retained historical fields without dropping them", async () => {
@@ -380,7 +390,7 @@ describe("KnowledgeModeConfigurationBuilder", () => {
       id: "invalid-sub-vendor", modeKind: "execution", executionSource: "sub_vendor",
       fields: [{ id: "legacy-choice", type: "dropdown", label: "Historic finish", options: [], value: null }]
     };
-    const initialPayload = { pmcMarginBps: 1_200, subVendorMarginBps: 1_700,
+    const initialPayload = { pmcMarginBps: 1_200, subVendorMarginBps: 2_000,
       modeConfigurations: [invalidSubVendor, validInHouse] };
     render(<Harness initialPayload={initialPayload} readOnly={readOnly} onPayload={onPayload}
       onValidationChange={onValidationChange} />);

@@ -35,7 +35,7 @@ export function KnowledgeModeCalculationTable({
   const id = useId();
   const maximumDiscountBps = maximumModeDiscountBps(value);
   const usesMargin = scope === "pmc" || scope === "sub_vendor";
-  const marginLabel = scope === "sub_vendor" ? "Sub-Vendor" : "PMC";
+  const marginLabel = scope === "sub_vendor" ? "Lisno" : "PMC";
 
   function editableField(field: keyof KnowledgeModeCalculationDraft, label: ReactNode, affix?: string, leading = false) {
     return <Field id={`${id}-${field}`} label={label} error={errors[field]}>

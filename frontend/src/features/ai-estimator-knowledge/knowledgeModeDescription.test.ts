@@ -2,13 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { createKnowledgeModeConfiguration } from "./knowledgeModeConfiguration";
 import { generateModeDescription, syncModeDescription } from "./knowledgeModeDescription";
-import { defaultPmcScopeItems } from "./knowledgePmcScope";
 
 function scope(inclusions: string[] = [], exclusions: string[] = []) {
   return {
     ...createKnowledgeModeConfiguration("pmc"),
-    inclusions: defaultPmcScopeItems("inclusions").map((item) => ({ ...item, selected: inclusions.includes(item.name) })),
-    exclusions: defaultPmcScopeItems("exclusions").map((item) => ({ ...item, selected: exclusions.includes(item.name) }))
+    inclusions: ["Transport", "Shifting", "Unloading"].map((name, index) => ({ id: `saved-in-${index}`, name, selected: inclusions.includes(name) })),
+    exclusions: ["Transport", "Shifting", "Unloading"].map((name, index) => ({ id: `saved-out-${index}`, name, selected: exclusions.includes(name) }))
   };
 }
 
@@ -73,6 +72,12 @@ describe("Mode paragraph checklist synchronization", () => {
     expect(syncModeDescription("Custom work.\nKeep this wording.", undefined)).toBe("Custom work.\nKeep this wording.");
     expect(syncModeDescription("", scope())).toBe("");
     expect(syncModeDescription("Inclusions: custom work.", scope())).toBe("Inclusions: custom work.");
+  });
+
+  it("does not reinterpret text as a removed catalogue entry when the backend has no lists", () => {
+    const text = "Custom work. Inclusions: Transport. Exclusions: Night unloading.";
+    expect(syncModeDescription(text, undefined)).toBe(text);
+    expect(syncModeDescription(text, { ...scope(), inclusions: [], exclusions: [] })).toBe(text);
   });
 
   it("ignores invalid empty catalog names while the enclosing form reports validation", () => {

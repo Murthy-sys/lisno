@@ -13,8 +13,44 @@ const execution = { baseRatePaise: 50_000, lowQuantityLimit: "7", minimumMarkupB
 const actor: PublicUser = { id: "pmc-reader", name: "PMC reader", email: "pmc-reader@lisno.example", role: "super_admin" };
 
 describe("PMC simulator arithmetic", () => {
-  it.each([[1_000, 38_192], [1_525, 40_015], [2_000, 41_664]])(
-    "adds the %s-bps PMC margin to an independently rounded rate and quantity", (pmcMarginBps, totalPaise) => {
+  it.each([
+    [1_000, 2_000, 0, 22_000, 27_500, 5_500, 0, 27_500, 22_000],
+    [1_000, 1_500, 0, 22_000, 25_882, 3_882, 0, 25_882, 22_000],
+    [1_000, 2_000, 1_000, 22_000, 27_500, 5_500, 2_750, 24_750, 19_250],
+    [0, 1_000, 0, 20_000, 22_222, 2_222, 0, 22_222, 20_000],
+    [1_000, 2_000, 10_000, 22_000, 27_500, 5_500, 27_500, 0, -5_500]
+  ])("prices ₹200 with %s-bps Impact, %s-bps PMC margin and %s-bps discount", (
+    impactBps, pmcMarginBps, discountBps, revisedAmountPaise, subtotal, margin, discount, total, balance
+  ) => {
+    expect(calculateKnowledgePmcPrice({ baseRatePaise: 20_000, lowQuantityLimit: "15", quantity: "1", quantityScale: 0,
+      impactBps, pmcMarginBps, discountBps })).toEqual({
+      baseAmountPaise: 20_000, lowQuantityImpactAmountPaise: revisedAmountPaise - 20_000,
+      revisedUnitRatePaise: revisedAmountPaise, revisedAmountPaise, appliedImpactBps: impactBps,
+      pmcMarginBps, pmcMarginAmountPaise: margin, totalBeforeDiscountPaise: subtotal,
+      discount: { rateBps: discountBps, totalBeforeDiscountPaise: subtotal, amountPaise: discount },
+      totalPaise: total, finalVendorChargesPaise: balance
+    });
+  });
+
+  it("rounds half-paisa selling-price ties upward before deriving margin and discount", () => {
+    const tinyInput = { baseRatePaise: 2, lowQuantityLimit: "0", impactBps: 0, quantity: "1", quantityScale: 0, pmcMarginBps: 2_000 };
+    expect(calculateKnowledgePmcPrice(tinyInput)).toMatchObject({ revisedAmountPaise: 2,
+      totalBeforeDiscountPaise: 3, pmcMarginAmountPaise: 1, totalPaise: 3, finalVendorChargesPaise: 2 });
+    expect(calculateKnowledgePmcPrice({ ...tinyInput, discountBps: 5_000 })).toMatchObject({
+      totalBeforeDiscountPaise: 3, pmcMarginAmountPaise: 1, discount: { amountPaise: 2 }, totalPaise: 1, finalVendorChargesPaise: 0 });
+  });
+
+  it.each([[1_500, 7_656_119_366_529_842], [2_000, 7_205_759_403_792_793]])(
+    "preserves the exact selling-price safe-integer boundary at %s-bps PMC margin", (pmcMarginBps, baseRatePaise) => {
+      const boundary = { baseRatePaise, lowQuantityLimit: "0", impactBps: 0, quantity: "1", quantityScale: 0, pmcMarginBps };
+      expect(calculateKnowledgePmcPrice(boundary).totalBeforeDiscountPaise).toBe(Number.MAX_SAFE_INTEGER);
+      expect(() => calculateKnowledgePmcPrice({ ...boundary, baseRatePaise: baseRatePaise + 1 }))
+        .toThrow(/safe-integer boundary/u);
+    }
+  );
+
+  it.each([[1_000, 38_578], [1_525, 40_968], [2_000, 43_400]])(
+    "divides the independently rounded cost by the retained percentage for %s-bps PMC margin", (pmcMarginBps, totalPaise) => {
       expect(calculateKnowledgePmcPrice({ ...input, pmcMarginBps })).toEqual({
         baseAmountPaise: 30_863, lowQuantityImpactAmountPaise: 3_857,
         revisedUnitRatePaise: 13_888, revisedAmountPaise: 34_720, appliedImpactBps: 1_250,
@@ -27,16 +63,16 @@ describe("PMC simulator arithmetic", () => {
   it("applies configured Impact at the threshold and stops above it", () => {
     expect(calculateKnowledgePmcPrice({ ...input, quantity: "3" })).toMatchObject({
       baseAmountPaise: 37_035, lowQuantityImpactAmountPaise: 4_629, revisedUnitRatePaise: 13_888, revisedAmountPaise: 41_664,
-      appliedImpactBps: 1_250, pmcMarginAmountPaise: 6_354, totalPaise: 48_018, finalVendorChargesPaise: 41_664
+      appliedImpactBps: 1_250, pmcMarginAmountPaise: 7_497, totalPaise: 49_161, finalVendorChargesPaise: 41_664
     });
     expect(calculateKnowledgePmcPrice({ ...input, quantity: "4" })).toMatchObject({
       baseAmountPaise: 49_380, lowQuantityImpactAmountPaise: 0, revisedUnitRatePaise: 12_345, revisedAmountPaise: 49_380,
-      appliedImpactBps: 0, totalPaise: 56_910, finalVendorChargesPaise: 49_380
+      appliedImpactBps: 0, totalPaise: 58_265, finalVendorChargesPaise: 49_380
     });
   });
 
   it.each([
-    ["14", 154_000, 1_000, 170_016], ["15", 165_000, 1_000, 182_160], ["16", 160_000, 0, 176_640]
+    ["14", 154_000, 1_000, 173_929], ["15", 165_000, 1_000, 186_353], ["16", 160_000, 0, 180_706]
   ] as const)("uses the inclusive limit of 15 for quantity %s, including margin and discount", (quantity, revisedAmountPaise, appliedImpactBps, totalPaise) => {
     const result = calculateKnowledgePmcPrice({ baseRatePaise: 10_000, lowQuantityLimit: "15", quantity, quantityScale: 0, pmcMarginBps: 1_500, discountBps: 400 });
     expect(result).toMatchObject({ revisedAmountPaise, appliedImpactBps, totalPaise });
@@ -49,23 +85,24 @@ describe("PMC simulator arithmetic", () => {
     expect(calculateKnowledgePmcPrice({ ...fractional, quantity: "2.74" })).toMatchObject({ revisedAmountPaise: 3_074, appliedImpactBps: 1_250 });
     expect(calculateKnowledgePmcPrice({ ...fractional, quantity: "2.75" })).toMatchObject({
       baseAmountPaise: 2_742, lowQuantityImpactAmountPaise: 344, revisedAmountPaise: 3_086,
-      pmcMarginAmountPaise: 471, totalBeforeDiscountPaise: 3_557, discount: { amountPaise: 142 },
-      totalPaise: 3_415, finalVendorChargesPaise: 2_944
+      pmcMarginAmountPaise: 555, totalBeforeDiscountPaise: 3_641, discount: { amountPaise: 146 },
+      totalPaise: 3_495, finalVendorChargesPaise: 2_940
     });
     expect(calculateKnowledgePmcPrice({ ...fractional, quantity: "2.76" })).toMatchObject({ revisedAmountPaise: 2_752, appliedImpactBps: 0 });
   });
 
   it("keeps Execution and In-house equality outside their low-quantity range", () => {
     const rate = { ...execution, baseRatePaise: 10_000, lowQuantityLimit: "15", impactBps: 1_000 };
-    expect(calculateKnowledgeModePrice({ ...rate, quantity: "15", quantityScale: 0 })).toMatchObject({ revisedAmountPaise: 150_000, appliedImpactBps: 0 });
+    expect(calculateKnowledgeModePrice({ ...rate, quantity: "15", quantityScale: 0 })).toMatchObject({ revisedAmountPaise: 150_000, appliedImpactBps: 0, totalPaise: 202_500 });
     expect(calculateKnowledgeInHousePrice({ labor: rate, material: { ...rate, baseRatePaise: 7_000 }, quantity: "15", quantityScale: 0 }))
-      .toMatchObject({ labor: { revisedAmountPaise: 150_000, appliedImpactBps: 0 }, material: { revisedAmountPaise: 105_000, appliedImpactBps: 0 } });
+      .toMatchObject({ labor: { revisedAmountPaise: 150_000, appliedImpactBps: 0, totalPaise: 202_500 },
+        material: { revisedAmountPaise: 105_000, appliedImpactBps: 0, totalPaise: 141_750 }, totalPaise: 344_250 });
   });
 
   it("charges no Impact when configured zero, including at or below the limit", () => {
     expect(calculateKnowledgePmcPrice({ ...input, impactBps: 0 })).toMatchObject({
       baseAmountPaise: 30_863, lowQuantityImpactAmountPaise: 0, revisedUnitRatePaise: 12_345, revisedAmountPaise: 30_863,
-      appliedImpactBps: 0, totalPaise: 35_570, finalVendorChargesPaise: 30_863
+      appliedImpactBps: 0, totalPaise: 36_417, finalVendorChargesPaise: 30_863
     });
     expect(calculateKnowledgePmcPrice({ ...input, impactBps: 0, quantity: "3" })).toMatchObject({
       lowQuantityImpactAmountPaise: 0, revisedUnitRatePaise: 12_345, revisedAmountPaise: 37_035, appliedImpactBps: 0
@@ -80,21 +117,28 @@ describe("PMC simulator arithmetic", () => {
     });
   });
 
+  it("returns zero amounts for a zero base rate with nonzero quantity", () => {
+    expect(calculateKnowledgePmcPrice({ ...input, baseRatePaise: 0, discountBps: 10_000 })).toMatchObject({
+      baseAmountPaise: 0, lowQuantityImpactAmountPaise: 0, revisedUnitRatePaise: 0, revisedAmountPaise: 0,
+      pmcMarginAmountPaise: 0, totalBeforeDiscountPaise: 0, discount: { amountPaise: 0 }, totalPaise: 0, finalVendorChargesPaise: 0
+    });
+  });
+
   it("defaults old Impact to 10% and reconciles fractional-paise rounding", () => {
     expect(calculateKnowledgePmcPrice({ baseRatePaise: 997, lowQuantityLimit: "1", quantity: "0.25", quantityScale: 2, pmcMarginBps: 1_525, discountBps: 455 }))
       .toEqual({ baseAmountPaise: 249, lowQuantityImpactAmountPaise: 25,
         revisedUnitRatePaise: 1_097, revisedAmountPaise: 274, appliedImpactBps: 1_000,
-        totalPaise: 302, pmcMarginBps: 1_525, pmcMarginAmountPaise: 42, totalBeforeDiscountPaise: 316,
-        discount: { rateBps: 455, totalBeforeDiscountPaise: 316, amountPaise: 14 }, finalVendorChargesPaise: 260
+        totalPaise: 308, pmcMarginBps: 1_525, pmcMarginAmountPaise: 49, totalBeforeDiscountPaise: 323,
+        discount: { rateBps: 455, totalBeforeDiscountPaise: 323, amountPaise: 15 }, finalVendorChargesPaise: 259
       });
   });
 
-  it.each([[0, 40_015, 0], [125, 39_515, 500], [455, 38_194, 1_821]])(
-    "applies a %s-bps discount after adding PMC margin", (discountBps, totalPaise, amountPaise) => {
+  it.each([[0, 40_968, 0], [125, 40_456, 512], [455, 39_104, 1_864]])(
+    "applies a %s-bps discount to the rounded PMC selling subtotal", (discountBps, totalPaise, amountPaise) => {
       const result = calculateKnowledgePmcPrice({ ...input, discountBps });
       expect(result).toMatchObject({
-        pmcMarginBps: 1_525, pmcMarginAmountPaise: 5_295, totalBeforeDiscountPaise: 40_015, totalPaise,
-        discount: { rateBps: discountBps, totalBeforeDiscountPaise: 40_015, amountPaise }, finalVendorChargesPaise: totalPaise - 5_295
+        pmcMarginBps: 1_525, pmcMarginAmountPaise: 6_248, totalBeforeDiscountPaise: 40_968, totalPaise,
+        discount: { rateBps: discountBps, totalBeforeDiscountPaise: 40_968, amountPaise }, finalVendorChargesPaise: totalPaise - 6_248
       });
       expect(result).not.toHaveProperty("effectiveMarginBps");
       expect(result).not.toHaveProperty("additionalLowQuantityImpactBps");
@@ -109,36 +153,40 @@ describe("PMC simulator arithmetic", () => {
 
   it("uses each amount's own margin subtotal as the discount basis", () => {
     const result = calculateKnowledgePmcPrice({ baseRatePaise: 50_000, lowQuantityLimit: "1", impactBps: 0, quantity: "3.25", quantityScale: 2, pmcMarginBps: 2_000, discountBps: 500 });
-    expect(result).toMatchObject({ revisedAmountPaise: 162_500, pmcMarginAmountPaise: 32_500,
-      totalBeforeDiscountPaise: 195_000, totalPaise: 185_250,
-      discount: { rateBps: 500, totalBeforeDiscountPaise: 195_000, amountPaise: 9_750 }
+    expect(result).toMatchObject({ revisedAmountPaise: 162_500, pmcMarginAmountPaise: 40_625,
+      totalBeforeDiscountPaise: 203_125, totalPaise: 192_969,
+      discount: { rateBps: 500, totalBeforeDiscountPaise: 203_125, amountPaise: 10_156 }
     });
   });
 
   it("rounds a half-paisa discount before subtracting it from the margin subtotal", () => {
     expect(calculateKnowledgePmcPrice({ baseRatePaise: 1_042, lowQuantityLimit: "0", quantity: "1", quantityScale: 0, pmcMarginBps: 2_000, discountBps: 4 }))
-      .toMatchObject({ revisedAmountPaise: 1_042, pmcMarginAmountPaise: 208, totalBeforeDiscountPaise: 1_250,
+      .toMatchObject({ revisedAmountPaise: 1_042, pmcMarginAmountPaise: 261, totalBeforeDiscountPaise: 1_303,
+        discount: { amountPaise: 1 }, totalPaise: 1_302
+      });
+    expect(calculateKnowledgePmcPrice({ baseRatePaise: 1_000, lowQuantityLimit: "0", quantity: "1", quantityScale: 0, pmcMarginBps: 2_000, discountBps: 4 }))
+      .toMatchObject({ revisedAmountPaise: 1_000, pmcMarginAmountPaise: 250, totalBeforeDiscountPaise: 1_250,
         discount: { amountPaise: 1 }, totalPaise: 1_249
       });
   });
 
   it("retains the separate margin amount when no discount was requested", () => {
     const result = calculateKnowledgePmcPrice(input);
-    expect(result).toMatchObject({ pmcMarginAmountPaise: 5_295, totalBeforeDiscountPaise: 40_015, totalPaise: 40_015, finalVendorChargesPaise: 34_720 });
+    expect(result).toMatchObject({ pmcMarginAmountPaise: 6_248, totalBeforeDiscountPaise: 40_968, totalPaise: 40_968, finalVendorChargesPaise: 34_720 });
     expect(result).not.toHaveProperty("discount");
   });
 
-  it.each([[1_000, 1, 38_188], [1_525, 456, 38_190], [2_000, 834, 38_189]])(
+  it.each([[1_000, 1, 38_574], [1_525, 456, 39_100], [2_000, 834, 39_780]])(
     "accepts custom discount %s/%s that previously crossed the margin floor", (pmcMarginBps, discountBps, totalPaise) => {
       expect(calculateKnowledgePmcPrice({ ...input, pmcMarginBps, discountBps }).totalPaise).toBe(totalPaise);
     }
   );
 
-  it.each([[0, 0, 11_000, 10_000], [2_000, 2_200, 8_800, 7_800], [5_000, 5_500, 5_500, 4_500], [10_000, 11_000, 0, -1_000]])(
+  it.each([[0, 0, 11_111, 10_000], [2_000, 2_222, 8_889, 7_778], [5_000, 5_556, 5_555, 4_444], [10_000, 11_111, 0, -1_111]])(
     "allows a %s-bps custom discount at the lowest configured PMC margin", (discountBps, amountPaise, totalPaise, finalVendorChargesPaise) => {
       const result = calculateKnowledgePmcPrice({ baseRatePaise: 10_000, lowQuantityLimit: "0", impactBps: 0,
         quantity: "1", quantityScale: 0, pmcMarginBps: 1_000, discountBps });
-      expect(result).toMatchObject({ revisedAmountPaise: 10_000, pmcMarginAmountPaise: 1_000, totalBeforeDiscountPaise: 11_000,
+      expect(result).toMatchObject({ revisedAmountPaise: 10_000, pmcMarginAmountPaise: 1_111, totalBeforeDiscountPaise: 11_111,
         discount: { rateBps: discountBps, amountPaise }, totalPaise, finalVendorChargesPaise });
       expect(result.totalPaise + result.discount!.amountPaise).toBe(result.totalBeforeDiscountPaise);
       expect(result.finalVendorChargesPaise + result.pmcMarginAmountPaise).toBe(result.totalPaise);
@@ -153,9 +201,9 @@ describe("PMC simulator arithmetic", () => {
 
   it("rounds a custom discount without enforcing a minimum final margin", () => {
     const roundingInput = { baseRatePaise: 2_275, lowQuantityLimit: "0", quantity: "1", quantityScale: 0, pmcMarginBps: 1_003 };
-    expect(calculateKnowledgePmcPrice(roundingInput)).toMatchObject({ revisedAmountPaise: 2_275, pmcMarginAmountPaise: 228, totalBeforeDiscountPaise: 2_503, totalPaise: 2_503 });
-    expect(calculateKnowledgePmcPrice({ ...roundingInput, discountBps: 1 }).totalPaise).toBe(2_503);
-    expect(calculateKnowledgePmcPrice({ ...roundingInput, discountBps: 2 })).toMatchObject({ discount: { amountPaise: 1 }, totalPaise: 2_502, finalVendorChargesPaise: 2_274 });
+    expect(calculateKnowledgePmcPrice(roundingInput)).toMatchObject({ revisedAmountPaise: 2_275, pmcMarginAmountPaise: 254, totalBeforeDiscountPaise: 2_529, totalPaise: 2_529 });
+    expect(calculateKnowledgePmcPrice({ ...roundingInput, discountBps: 1 }).totalPaise).toBe(2_529);
+    expect(calculateKnowledgePmcPrice({ ...roundingInput, discountBps: 2 })).toMatchObject({ discount: { amountPaise: 1 }, totalPaise: 2_528, finalVendorChargesPaise: 2_274 });
   });
 
   it.each([999, 2_001, 1_525.5, NaN, Infinity])("rejects invalid PMC margin %s", (pmcMarginBps) => {
@@ -244,8 +292,8 @@ describe("PMC preview boundaries", () => {
     const result = await service.preview(actor, { ...legacyInput, ...previewInput, modeCalculationDiscountBps: 455 });
     expect(result).toEqual({ ...legacy, pmcCalculation: {
       baseAmountPaise: 30_863, lowQuantityImpactAmountPaise: 3_857, revisedUnitRatePaise: 13_888, revisedAmountPaise: 34_720, appliedImpactBps: 1_250,
-      pmcMarginBps: 1_525, pmcMarginAmountPaise: 5_295, totalBeforeDiscountPaise: 40_015, totalPaise: 38_194,
-      discount: { rateBps: 455, totalBeforeDiscountPaise: 40_015, amountPaise: 1_821 }, finalVendorChargesPaise: 32_899
+      pmcMarginBps: 1_525, pmcMarginAmountPaise: 6_248, totalBeforeDiscountPaise: 40_968, totalPaise: 39_104,
+      discount: { rateBps: 455, totalBeforeDiscountPaise: 40_968, amountPaise: 1_864 }, finalVendorChargesPaise: 32_856
     } });
     expect(result.startMargin?.amountPaise).toBe(12_500);
     expect(result).not.toHaveProperty("modeCalculation");
@@ -282,11 +330,11 @@ describe("PMC preview boundaries", () => {
       requireReadActor: vi.fn().mockResolvedValue({ id: actor.id, role: actor.role }), requireMutationActor: vi.fn()
     } });
     await expect(service.preview(actor, { ...previewInput, modeCalculationDiscountBps: 456 }))
-      .resolves.toMatchObject({ pmcCalculation: { totalPaise: 38_190 } });
+      .resolves.toMatchObject({ pmcCalculation: { totalPaise: 39_100 } });
     await expect(service.preview(actor, { ...previewInput, modeCalculationDiscountBps: 10_000 }))
-      .resolves.toMatchObject({ pmcCalculation: { totalPaise: 0, pmcMarginAmountPaise: 5_295, finalVendorChargesPaise: -5_295 } });
+      .resolves.toMatchObject({ pmcCalculation: { totalPaise: 0, pmcMarginAmountPaise: 6_248, finalVendorChargesPaise: -6_248 } });
     await expect(service.preview(actor, { quantity: "1", quantityScale: 0, pmcCalculation: {
       baseRatePaise: 2_275, lowQuantityLimit: "0", pmcMarginBps: 1_003
-    }, modeCalculationDiscountBps: 2 })).resolves.toMatchObject({ pmcCalculation: { totalPaise: 2_502 } });
+    }, modeCalculationDiscountBps: 2 })).resolves.toMatchObject({ pmcCalculation: { totalPaise: 2_528 } });
   });
 });

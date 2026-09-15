@@ -1,6 +1,6 @@
 import type { KnowledgeModeConfiguration } from "./knowledgeModeConfiguration";
 import type { KnowledgeJsonValue } from "./knowledgeTypes";
-import { defaultPmcScopeItems, PMC_SCOPE_LISTS, type KnowledgePmcScopeList } from "./knowledgePmcScope";
+import { PMC_SCOPE_LISTS, type KnowledgePmcScopeList } from "./knowledgePmcScope";
 
 export const MAX_MODE_DESCRIPTION_LENGTH = 4_000;
 
@@ -55,7 +55,7 @@ function syncScopeClause(
   let remaining = content.slice(prefix.length);
   // Removed entries still need recognition to clear their values from an existing paragraph.
   const knownNames = [
-    ...(pmc?.[list] ?? defaultPmcScopeItems(list)).map((item) => item.name),
+    ...(pmc?.[list] ?? []).map((item) => item.name),
     ...(previousPmc?.[list] ?? []).map((item) => item.name),
     "none"
   ]

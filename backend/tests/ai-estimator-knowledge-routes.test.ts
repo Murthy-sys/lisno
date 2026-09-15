@@ -9,7 +9,7 @@ import {
   type AiEstimatorKnowledgeAdminRouterServices
 } from "../src/routes/ai-estimator-knowledge-admin.js";
 import { createAiEstimatorKnowledgeContextRouter } from "../src/routes/ai-estimator-knowledge-context.js";
-import type { AiEstimatorKnowledgeContextService } from "../src/services/ai-estimator-knowledge-context.service.js";
+import { createAiEstimatorKnowledgeContextService, type AiEstimatorKnowledgeContextService } from "../src/services/ai-estimator-knowledge-context.service.js";
 import type { AiEstimatorKnowledgeItemService } from "../src/services/ai-estimator-knowledge-item.service.js";
 import type { AiEstimatorKnowledgeReferenceService } from "../src/services/ai-estimator-knowledge-reference.service.js";
 import type { AuthService, PublicUser } from "../src/services/auth.service.js";
@@ -822,24 +822,61 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     expect(testServices.item.updateSection).toHaveBeenCalledTimes(3);
   });
 
-  it("validates and passes through an independent Sub-Vendor margin", async () => {
+  it("validates and passes through an independent Lisno margin", async () => {
     const testServices = services();
     const send = (subVendorMarginBps: unknown) => request(appFor(testServices))
       .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/advanced")
       .set("Authorization", "Bearer super-admin-token")
       .send({ expectedVersion: 3, expectedAggregateVersion: 7, payload: { pmcMarginBps: 1_825, subVendorMarginBps } });
-    for (const subVendorMarginBps of [null, 1_000, 1_250, 2_000]) {
+    for (const subVendorMarginBps of [null, ...Array.from({ length: 20 }, (_, index) => index * 500)]) {
       expect((await send(subVendorMarginBps)).status).toBe(200);
       expect(testServices.item.updateSection).toHaveBeenLastCalledWith(superAdmin, "line-1", "revision-1", "advanced", {
         expectedVersion: 3, expectedAggregateVersion: 7, payload: { pmcMarginBps: 1_825, subVendorMarginBps }
       });
     }
-    for (const value of [999, 2_001, 1_000.5, "15"]) {
+    for (const value of [-1, 999, 1_250, 1_499, 1_600, 1_700, 1_750, 1_800, 2_001, 9_900, 10_000, 10_500, 1_000.5, "15", true, {}]) {
       const rejected = await send(value);
       expect(rejected.status).toBe(400);
       expect(rejected.body.error.fields).toMatchObject({ "payload.subVendorMarginBps": expect.any(String) });
     }
-    expect(testServices.item.updateSection).toHaveBeenCalledTimes(4);
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(21);
+  });
+
+  it("passes valid Lisno margin pairs unchanged and rejects partial or reversed pairs before service writes", async () => {
+    const testServices = services();
+    const send = (payload: unknown) => request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/advanced")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ expectedVersion: 3, expectedAggregateVersion: 7, payload });
+    for (const payload of [
+      { pmcMarginBps: 1_825, subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 },
+      { subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 1_500 },
+      { subVendorMinimumMarginBps: 1_000, subVendorMarginBps: 3_500 },
+      { subVendorMinimumMarginBps: 0, subVendorMarginBps: 9_500 },
+      { subVendorMinimumMarginBps: null, subVendorMarginBps: null }
+    ]) {
+      expect((await send(payload)).status).toBe(200);
+      expect(testServices.item.updateSection).toHaveBeenLastCalledWith(superAdmin, "line-1", "revision-1", "advanced", {
+        expectedVersion: 3, expectedAggregateVersion: 7, payload
+      });
+    }
+    for (const [payload, key] of [
+      [{ subVendorMinimumMarginBps: null, subVendorMarginBps: 1_500 }, "subVendorMinimumMarginBps"],
+      [{ subVendorMinimumMarginBps: 1_000, subVendorMarginBps: null }, "subVendorMarginBps"],
+      [{ subVendorMinimumMarginBps: 1_000 }, "subVendorMarginBps"],
+      [{ subVendorMinimumMarginBps: 2_000, subVendorMarginBps: 1_000 }, "subVendorMinimumMarginBps"],
+      [{ subVendorMinimumMarginBps: 999, subVendorMarginBps: 1_500 }, "subVendorMinimumMarginBps"],
+      [{ subVendorMinimumMarginBps: "12.5", subVendorMarginBps: 1_500 }, "subVendorMinimumMarginBps"],
+      [{ subVendorMinimumMarginBps: null, subVendorMarginBps: 0 }, "subVendorMinimumMarginBps"],
+      [{ subVendorMinimumMarginBps: 0, subVendorMarginBps: null }, "subVendorMarginBps"],
+      [{ subVendorMinimumMarginBps: 0 }, "subVendorMarginBps"],
+      [{ subVendorMinimumMarginBps: 9_500, subVendorMarginBps: 0 }, "subVendorMinimumMarginBps"]
+    ] as const) {
+      const response = await send(payload);
+      expect(response.status).toBe(400);
+      expect(response.body.error.fields).toMatchObject({ [`payload.${key}`]: expect.stringContaining("Lisno Margin") });
+    }
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(5);
   });
 
   it("accepts strict mode configurations and rejects malformed fields after authorization", async () => {
@@ -1012,6 +1049,79 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     expect((await send({ quantityScale: 0, modeCalculationDiscountBps: 0 })).status).toBe(400);
     expect((await send({ ...input, modeCalculation: { ...modeCalculation, discountBps: 500 } })).status).toBe(400);
     expect(testServices.context.preview).toHaveBeenCalledTimes(2);
+  });
+
+  it("passes the selected Lisno margin through the existing Sub-Vendor preview branch", async () => {
+    const testServices = services();
+    const send = (body: unknown) => request(appFor(testServices)).post("/api/v1/admin/ai-estimator-knowledge/preview")
+      .set("Authorization", "Bearer super-admin-token").send(body);
+    const settings = { baseRatePaise: 20_000, lowQuantityLimit: "15", impactBps: 1_000 };
+    for (const subVendorMarginBps of Array.from({ length: 20 }, (_, index) => index * 500)) {
+      const input = { subVendorCalculation: { ...settings, subVendorMarginBps }, quantity: "10", quantityScale: 0, modeCalculationDiscountBps: 0 };
+      expect((await send(input)).status).toBe(200);
+      expect(testServices.context.preview).toHaveBeenLastCalledWith(superAdmin, input);
+      const rejected = await send({ ...input, modeCalculationMarkupBasis: "minimum" });
+      expect(rejected.status).toBe(400);
+      expect(rejected.body.error.fields).toMatchObject({ modeCalculationMarkupBasis: "Sub-Vendor calculations use Lisno margin; a markup selection is not allowed." });
+    }
+    for (const subVendorMarginBps of [-1, 999, 1_250, 1_499, 1_600, 1_700, 1_750, 1_800, 2_001, 9_900, 10_000, 10_500, 1_500.5, "1500", null, true, {}]) {
+      const rejected = await send({ subVendorCalculation: { ...settings, subVendorMarginBps }, quantity: "10", quantityScale: 0 });
+      expect(rejected.status).toBe(400);
+      expect(rejected.body.error.fields).toMatchObject({ "subVendorCalculation.subVendorMarginBps": expect.any(String) });
+    }
+    expect(testServices.context.preview).toHaveBeenCalledTimes(20);
+  });
+
+  it("returns Sub-Vendor division selling prices through authenticated read-only preview", async () => {
+    const testServices = services();
+    const requireReadActor = vi.fn().mockResolvedValue({ id: superAdmin.id, role: superAdmin.role });
+    const requireMutationActor = vi.fn();
+    testServices.context = createAiEstimatorKnowledgeContextService({ actorGuard: { requireReadActor, requireMutationActor } });
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/preview";
+    const settings = { baseRatePaise: 20_000, lowQuantityLimit: "15", impactBps: 1_000 };
+    for (const [subVendorMarginBps, discountBps, sellingPrice, margin, total, vendorBalance] of [
+      [1_500, 0, 258_824, 38_824, 258_824, 220_000],
+      [2_000, 0, 275_000, 55_000, 275_000, 220_000],
+      [2_000, 1_000, 275_000, 55_000, 247_500, 192_500],
+      [2_000, 10_000, 275_000, 55_000, 0, -55_000]
+    ] as const) {
+      const input = { subVendorCalculation: { ...settings, subVendorMarginBps }, quantity: "10", quantityScale: 0, modeCalculationDiscountBps: discountBps };
+      const response = await request(app).post(path).set("Authorization", "Bearer super-admin-token").send(input);
+      expect(response.status).toBe(200);
+      expect(response.body.data).toMatchObject({ formulaVersion: "knowledge-preview-v1", subVendorCalculation: {
+        revisedAmountPaise: 220_000, subVendorMarginBps, totalBeforeDiscountPaise: sellingPrice,
+        subVendorMarginAmountPaise: margin, totalPaise: total, finalVendorChargesPaise: vendorBalance,
+        discount: { rateBps: discountBps, totalBeforeDiscountPaise: sellingPrice, amountPaise: sellingPrice - total }
+      } });
+      expect(response.body.data).not.toHaveProperty("pmcCalculation");
+    }
+    for (const [baseRatePaise, subVendorMarginBps, sellingPrice] of [
+      [10_000, 3_500, 15_385],
+      [20_000, 1_000, 22_222],
+      [20_000, 3_500, 30_769],
+      [20_000, 0, 20_000],
+      [20_000, 9_500, 400_000]
+    ] as const) {
+      const response = await request(app).post(path).set("Authorization", "Bearer super-admin-token").send({
+        subVendorCalculation: { baseRatePaise, lowQuantityLimit: "0", impactBps: 0, subVendorMarginBps },
+        quantity: "1", quantityScale: 0
+      });
+      expect(response.status).toBe(200);
+      expect(response.body.data).toMatchObject({ formulaVersion: "knowledge-preview-v1", subVendorCalculation: {
+        revisedAmountPaise: baseRatePaise, subVendorMarginBps, totalBeforeDiscountPaise: sellingPrice,
+        subVendorMarginAmountPaise: sellingPrice - baseRatePaise, totalPaise: sellingPrice,
+        finalVendorChargesPaise: baseRatePaise
+      } });
+    }
+    const input = { subVendorCalculation: { ...settings, subVendorMarginBps: 2_000 }, quantity: "10", quantityScale: 0 };
+    expect((await request(app).post(path).send(input)).status).toBe(401);
+    expect((await request(app).post(path).set("Authorization", "Bearer admin-token").send(input)).status).toBe(403);
+    expect(requireReadActor).toHaveBeenCalledTimes(9);
+    expect(requireReadActor).toHaveBeenLastCalledWith(superAdmin);
+    expect(requireMutationActor).not.toHaveBeenCalled();
+    for (const operation of Object.values(testServices.item)) expect(operation).not.toHaveBeenCalled();
+    for (const operation of Object.values(testServices.reference)) expect(operation).not.toHaveBeenCalled();
   });
 
   it("accepts only the deterministic preview contract", async () => {

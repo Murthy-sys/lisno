@@ -5,7 +5,7 @@ import type {
   KnowledgeMaster,
   KnowledgeModeKind
 } from "./knowledgeTypes";
-import { parsePmcScopeItems, PMC_SCOPE_LISTS, type KnowledgePmcScopeItem } from "./knowledgePmcScope";
+import { normalizePmcScopeName, parsePmcScopeItems, PMC_SCOPE_LISTS, type KnowledgePmcScopeItem } from "./knowledgePmcScope";
 
 export const KNOWLEDGE_MODE_FIELD_TYPES = [
   "text",
@@ -274,6 +274,18 @@ export function validateKnowledgeModeConfigurations(
 
   configurations.forEach((configuration, configurationIndex) => {
     const path = `modeConfigurations.${configurationIndex}`;
+    const selectedExclusions = new Map((configuration.exclusions ?? []).flatMap((item, index) =>
+      item.selected ? [[normalizePmcScopeName(item.name), index] as const] : []));
+    for (const [index, item] of (configuration.inclusions ?? []).entries()) {
+      if (!item.selected) continue;
+      const exclusionIndex = selectedExclusions.get(normalizePmcScopeName(item.name));
+      if (exclusionIndex === undefined) continue;
+      const message = `${item.name.trim()} is selected in both lists. Uncheck one before saving.`;
+      issues.push(
+        { path: `${path}.inclusions.${index}.selected`, message },
+        { path: `${path}.exclusions.${exclusionIndex}.selected`, message }
+      );
+    }
     validateStableId(configuration.id, `${path}.id`, "Configuration ID", issues);
     if (configurationIds.has(configuration.id)) {
       issues.push({ path: `${path}.id`, message: "Configuration IDs must be unique." });

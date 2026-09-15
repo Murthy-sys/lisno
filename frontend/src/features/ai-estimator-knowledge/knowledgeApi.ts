@@ -490,9 +490,12 @@ export function archiveKnowledgeMaster(
 }
 
 export function previewKnowledge(
-  input: KnowledgePreviewRequest
+  input: KnowledgePreviewRequest,
+  options?: { readonly signal?: AbortSignal; readonly showGlobalLoader?: boolean }
 ): Promise<KnowledgePreview> {
-  return apiClient.post<KnowledgePreview>(`${ADMIN_PREFIX}/preview`, input);
+  return options === undefined
+    ? apiClient.post<KnowledgePreview>(`${ADMIN_PREFIX}/preview`, input)
+    : apiClient.post<KnowledgePreview>(`${ADMIN_PREFIX}/preview`, input, options);
 }
 
 export function resolveKnowledgeContext(

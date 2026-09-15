@@ -283,7 +283,7 @@ const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   recommendations: new Set(["recommendations", "exclusions", "budgetAlterations"]),
   quality: new Set(["parameters"]),
   execution: new Set(["steps", "productivity"]),
-  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "pmcMarginBps", "subVendorMarginBps"])
+  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "pmcMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"])
 };
 
 function inspectBoundedValue(
@@ -374,7 +374,7 @@ export function validateKnowledgeSectionPayload(
       issues.push({ path: `payload.${key}`, code: "TEXT_TOO_LONG", message: `${key} exceeds the supported short-text length.` });
     }
     // Configuration margins have optional, strictly bounded validation below.
-    const separatelyValidatedMargin = sectionKey === "advanced" && ["pmcMarginBps", "subVendorMarginBps"].includes(key);
+    const separatelyValidatedMargin = sectionKey === "advanced" && ["pmcMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"].includes(key);
     if (key.endsWith("Bps") && !separatelyValidatedMargin && (
       !Number.isSafeInteger(value) ||
       (value as number) < 0 ||
@@ -1416,11 +1416,10 @@ function validateAdvancedPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
   const issues: KnowledgeValidationIssue[] = [];
-  for (const key of ["pmcMarginBps", "subVendorMarginBps"] as const) {
-    if (record[key] !== undefined && record[key] !== null) {
-      validateInteger(record[key], `payload.${key}`, issues, 1_000, 2_000);
-    }
+  if (record.pmcMarginBps !== undefined && record.pmcMarginBps !== null) {
+    validateInteger(record.pmcMarginBps, "payload.pmcMarginBps", issues, 1_000, 2_000);
   }
+  validateSubVendorLisnoMarginRange(record, issues);
   if (record.modeCalculation !== undefined) validateModeCalculationSettings(record.modeCalculation, "payload.modeCalculation", issues);
   if (Object.hasOwn(record, "modeCalculations")) {
     const scopes = ["pmc", "sub_vendor", "in_house", "in_house_labor", "in_house_material"];
@@ -1589,12 +1588,48 @@ function validateModeConfigurations(
       }
       validatePmcScopeItems(configuration[list], `${configurationPath}.${list}`, issues);
     }
+    if (configuration.modeKind === "pmc" && !hasModeId) {
+      validatePmcScopeSelections(configuration, configurationPath, issues);
+    }
     validateModeConfigurationFields(
       configuration.fields,
       `${configurationPath}.fields`,
       issues
     );
   });
+}
+
+function validateSubVendorLisnoMarginRange(record: Record<string, unknown>, issues: KnowledgeValidationIssue[]): void {
+  const minimumKey = "subVendorMinimumMarginBps";
+  const maximumKey = "subVendorMarginBps";
+  for (const [key, label] of [[minimumKey, "Min."], [maximumKey, "Max."]] as const) {
+    if (!Object.hasOwn(record, key) || record[key] === null) continue;
+    const value = record[key];
+    if (!Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > 9_500) {
+      issues.push({ path: `payload.${key}`, code: "INVALID_INTEGER",
+        message: `${label} Lisno Margin must be between 0% and 95%, in multiples of 5%.` });
+    } else if ((value as number) % 500 !== 0) {
+      // Only formerly valid off-step values may use the unchanged Active-copy repair path.
+      const repairableHistoricalValue = (value as number) >= 1_000 && (value as number) <= 2_000;
+      issues.push({ path: `payload.${key}`, code: repairableHistoricalValue ? "INVALID_LISNO_MARGIN_INCREMENT" : "INVALID_INTEGER",
+        message: `${label} Lisno Margin must be between 0% and 95%, in multiples of 5%.` });
+    }
+  }
+  // A missing minimum is legacy data: its effective value equals maximum, without rewriting the payload.
+  if (!Object.hasOwn(record, minimumKey)) return;
+  const minimum = record[minimumKey];
+  const maximum = record[maximumKey];
+  const minimumEmpty = minimum === null;
+  const maximumEmpty = !Object.hasOwn(record, maximumKey) || maximum === null;
+  if (minimumEmpty !== maximumEmpty) {
+    issues.push({ path: `payload.${minimumEmpty ? minimumKey : maximumKey}`, code: "INCOMPLETE_MARGIN_RANGE",
+      message: "Enter both Min. and Max. Lisno Margin, or clear both values." });
+  } else if (Number.isSafeInteger(minimum) && Number.isSafeInteger(maximum) && (minimum as number) > (maximum as number)) {
+    for (const key of [minimumKey, maximumKey]) {
+      issues.push({ path: `payload.${key}`, code: "INVALID_MARGIN_RANGE",
+        message: "Min. Lisno Margin must be less than or equal to Max. Lisno Margin." });
+    }
+  }
 }
 
 function validatePmcScopeItems(value: unknown, path: string, issues: KnowledgeValidationIssue[]): void {
@@ -1612,6 +1647,37 @@ function validatePmcScopeItems(value: unknown, path: string, issues: KnowledgeVa
       addUniqueString(normalizeKnowledgeIdentity(row.name), names, `${rowPath}.name`, "DUPLICATE_LABEL", issues);
     }
   });
+}
+
+function validatePmcScopeSelections(
+  configuration: Record<string, unknown>,
+  path: string,
+  issues: KnowledgeValidationIssue[]
+): void {
+  const selectedPaths = new Map<string, { inclusions: string[]; exclusions: string[] }>();
+  for (const list of ["inclusions", "exclusions"] as const) {
+    const rows = configuration[list];
+    if (!Array.isArray(rows)) continue;
+    rows.forEach((row, index) => {
+      if (!row || typeof row !== "object" || Array.isArray(row) ||
+        row.selected !== true || typeof row.name !== "string") return;
+      const name = normalizeKnowledgeIdentity(row.name);
+      if (!name) return;
+      const paths = selectedPaths.get(name) ?? { inclusions: [], exclusions: [] };
+      paths[list].push(`${path}.${list}.${index}.selected`);
+      selectedPaths.set(name, paths);
+    });
+  }
+  for (const { inclusions, exclusions } of selectedPaths.values()) {
+    if (inclusions.length === 0 || exclusions.length === 0) continue;
+    for (const selectionPath of [...inclusions, ...exclusions]) {
+      issues.push({
+        path: selectionPath,
+        code: "CONFLICTING_SCOPE_SELECTION",
+        message: "Select this value in either Inclusions or Exclusions. Uncheck or delete one of the selected items."
+      });
+    }
+  }
 }
 
 function validateModeConfigurationFields(

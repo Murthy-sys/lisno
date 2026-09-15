@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { Button } from "../../components/ui/Button";
 import { ContextPanel } from "../../components/ui/ContextPanel";
@@ -12,6 +12,7 @@ import { formatKnowledgeMoney, formatKnowledgePercentage } from "./knowledgePres
 import { KnowledgeSimulatorDiscountField } from "./KnowledgeSimulatorDiscountField";
 import { maximumSimulatorDiscountBps, parseSimulatorDiscount } from "./knowledgeSimulatorDiscount";
 import type { KnowledgeJsonValue, KnowledgePreview } from "./knowledgeTypes";
+import { useAutomaticKnowledgeCalculation } from "./useAutomaticKnowledgeCalculation";
 
 type Settings = NonNullable<KnowledgePreviewRequest["inHouseCalculation"]>;
 type MarkupBasis = NonNullable<KnowledgePreviewRequest["modeCalculationMarkupBasis"]>;
@@ -87,85 +88,63 @@ function InHouseSimulator({ settings, uom, onClose, onResult }: {
   readonly onResult: (result: TestResult | undefined) => void;
 }) {
   const id = useId();
-  const formRef = useRef<HTMLFormElement>(null);
-  const sequence = useRef(0);
   const [drafts, setDrafts] = useState(() => ({ labor: modeCalculationDraft(settings.labor), material: modeCalculationDraft(settings.material) }));
   const [quantity, setQuantity] = useState("1");
   const [discount, setDiscount] = useState("0");
   const [markupBasis, setMarkupBasis] = useState<MarkupBasis>("starting");
-  const [attempted, setAttempted] = useState(false);
-  const [calculating, setCalculating] = useState(false);
-  const [error, setError] = useState<string>();
-  const [result, setResult] = useState<TestResult>();
   const scale = uom.decimalScale!;
   const parsed = { labor: parseModeCalculationDraft(drafts.labor, scale), material: parseModeCalculationDraft(drafts.material, scale) };
   const testQuantity = parseModeQuantity(quantity, scale);
   const maximumDiscountBps = maximumSimulatorDiscountBps([drafts.labor, drafts.material], markupBasis);
   const parsedDiscount = parseSimulatorDiscount(discount, maximumDiscountBps);
-  useEffect(() => () => { sequence.current += 1; }, []);
+  const inputKey = JSON.stringify([drafts.labor, drafts.material, quantity, discount, markupBasis,
+    uom.scopeKey, uom.id, uom.decimalScale, uom.label]);
+  const { result, error, phase, settled: attempted, invalidate, retry, cancel } = useAutomaticKnowledgeCalculation<TestResult>({
+    inputKey,
+    enabled: Boolean(parsed.labor.settings && parsed.material.settings && testQuantity !== undefined && parsedDiscount.bps !== undefined),
+    calculate,
+    onResult
+  });
 
-  function clearResult() {
-    sequence.current += 1;
-    setCalculating(false);
-    setError(undefined);
-    setResult(undefined);
-    onResult(undefined);
-  }
-
-  async function calculate(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setAttempted(true);
-    clearResult();
+  async function calculate(signal: AbortSignal): Promise<TestResult> {
     if (!parsed.labor.settings || !parsed.material.settings || testQuantity === undefined || parsedDiscount.bps === undefined) {
-      globalThis.setTimeout(() => formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus(), 0);
-      return;
+      throw new Error("Complete both costs and enter a valid quantity and discount.");
     }
-    const request = sequence.current;
-    setCalculating(true);
-    try {
-      const preview = await previewKnowledge({
-        inHouseCalculation: { labor: parsed.labor.settings, material: parsed.material.settings },
-        quantity: testQuantity, quantityScale: scale, modeCalculationMarkupBasis: markupBasis,
-        ...(parsedDiscount.bps > 0 ? { modeCalculationDiscountBps: parsedDiscount.bps } : {})
-      });
-      if (request !== sequence.current) return;
-      if (!preview.inHouseCalculation?.labor || !preview.inHouseCalculation.material || !Number.isSafeInteger(preview.inHouseCalculation.totalPaise)) {
-        throw new Error("The server did not return both costs. Please try calculating again.");
-      }
-      if (parsedDiscount.bps > 0 && (preview.inHouseCalculation.labor.discount?.rateBps !== parsedDiscount.bps || preview.inHouseCalculation.material.discount?.rateBps !== parsedDiscount.bps)) {
-        throw new Error("The server did not return the discount for both costs. Please try again.");
-      }
-      const next = { preview: preview.inHouseCalculation, quantity: testQuantity, markupBasis };
-      setResult(next);
-      onResult(next);
-    } catch (failure) {
-      if (request === sequence.current) setError(failure instanceof Error ? failure.message : "Please try calculating again.");
-    } finally {
-      if (request === sequence.current) setCalculating(false);
+    const preview = await previewKnowledge({
+      inHouseCalculation: { labor: parsed.labor.settings, material: parsed.material.settings },
+      quantity: testQuantity, quantityScale: scale, modeCalculationMarkupBasis: markupBasis,
+      ...(parsedDiscount.bps > 0 ? { modeCalculationDiscountBps: parsedDiscount.bps } : {})
+    }, { signal, showGlobalLoader: false });
+    if (!preview.inHouseCalculation?.labor || !preview.inHouseCalculation.material || !Number.isSafeInteger(preview.inHouseCalculation.totalPaise)) {
+      throw new Error("The server did not return both costs. Please try calculating again.");
     }
+    if (parsedDiscount.bps > 0 && (preview.inHouseCalculation.labor.discount?.rateBps !== parsedDiscount.bps || preview.inHouseCalculation.material.discount?.rateBps !== parsedDiscount.bps)) {
+      throw new Error("The server did not return the discount for both costs. Please try again.");
+    }
+    return { preview: preview.inHouseCalculation, quantity: testQuantity, markupBasis };
   }
 
   function change(cost: keyof Settings, field: keyof KnowledgeModeCalculationDraft, value: string) {
-    clearResult();
+    invalidate();
     setDrafts((current) => ({ ...current, [cost]: { ...current[cost], [field]: value } }));
   }
 
   return <ContextPanel title="Test In-house total" eyebrow="Labor + Material simulator"
-    description="Use one quantity and markup choice for both costs. All simulator changes are temporary." onClose={onClose}
+    description="Calculations update automatically. Use one quantity and markup choice for both costs. All simulator changes are temporary."
+    onClose={() => { cancel(); onClose(); }}
       width="wide"
       className="knowledge-context-panel"
       footer={({ requestClose }) => (
         <div className="knowledge-dialog-actions">
         <Button variant="quiet" onClick={requestClose}>Close</Button>
-        <Button type="submit" form={`${id}-form`} variant="primary" busy={calculating} busyLabel="Calculating…">Calculate total</Button>
       </div>
       )}>
-    <form id={`${id}-form`} className="knowledge-mode-simulator knowledge-in-house-simulator" ref={formRef} onSubmit={(event) => void calculate(event)} noValidate>
+    <form id={`${id}-form`} className="knowledge-mode-simulator knowledge-in-house-simulator" onSubmit={(event) => event.preventDefault()} noValidate>
       <div className="knowledge-dialog-body">
         <div className="knowledge-mode-simulator__fields">
           <Field id={`${id}-uom`} label="UOM">{(props) => <Input {...props} value={uom.label} readOnly />}</Field>
           <Field id={`${id}-quantity`} label="Quantity" error={attempted && testQuantity === undefined ? `Enter a non-negative quantity with up to ${scale} decimal places.` : undefined}>
-            {(props) => <Input {...props} inputMode="decimal" autoComplete="off" maxLength={64} value={quantity} onChange={(event) => { clearResult(); setQuantity(event.target.value); }} />}
+            {(props) => <Input {...props} inputMode="decimal" autoComplete="off" maxLength={64} value={quantity} onChange={(event) => { invalidate(); setQuantity(event.target.value); }} />}
           </Field>
         </div>
         {(["labor", "material"] as const).map((cost) => <KnowledgeModeCalculationTable key={cost}
@@ -174,13 +153,16 @@ function InHouseSimulator({ settings, uom, onClose, onResult }: {
         />)}
         <fieldset className="knowledge-mode-simulator__markup">
           <legend>Calculate both costs with</legend>
-          <label><Radio name={`${id}-markup`} checked={markupBasis === "starting"} value="starting" onChange={() => { clearResult(); setMarkupBasis("starting"); }} />Starting Gross Margin Markup</label>
-          <label><Radio name={`${id}-markup`} checked={markupBasis === "minimum"} value="minimum" onChange={() => { clearResult(); setMarkupBasis("minimum"); }} />Min. Gross Margin Markup</label>
+          <label><Radio name={`${id}-markup`} checked={markupBasis === "starting"} value="starting" onChange={() => { invalidate(); setMarkupBasis("starting"); }} />Starting Gross Margin Markup</label>
+          <label><Radio name={`${id}-markup`} checked={markupBasis === "minimum"} value="minimum" onChange={() => { invalidate(); setMarkupBasis("minimum"); }} />Min. Gross Margin Markup</label>
         </fieldset>
-        <KnowledgeSimulatorDiscountField value={discount} onChange={(value) => { clearResult(); setDiscount(value); }}
+        <KnowledgeSimulatorDiscountField value={discount} onChange={(value) => { invalidate(); setDiscount(value); }}
           maximumBps={maximumDiscountBps} attempted={attempted} combined />
-        {calculating ? <p role="status">Calculating both costs…</p> : null}
-        {error ? <InlineMessage tone="error" title="In-house total unavailable" role="alert">{error}</InlineMessage> : null}
+        {phase !== "idle" ? <p role="status">{phase === "waiting" ? "Updating calculation…" : "Calculating both costs…"}</p> : null}
+        {error ? <InlineMessage tone="error" title="In-house total unavailable" role="alert">
+          {error}
+          <Button variant="secondary" onClick={retry}>Retry calculation</Button>
+        </InlineMessage> : null}
         {result ? <InHouseResult result={result} uomLabel={uom.label} /> : null}
       </div>
 

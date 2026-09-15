@@ -102,6 +102,199 @@ afterAll(async () => {
 });
 
 describe("AI estimator knowledge integrated replica-set invariants", { timeout: 30_000 }, () => {
+  it.each([[1_000, 3_500], [0, 9_500]])("persists the Super Admin's %s/%s-bps Lisno range with exact versions, audits and isolated Active history", async (minimum, maximum) => {
+    const services = createServices();
+    const { item } = services;
+    const source = await createConfiguredDraft(item, `Configurable Lisno ${minimum}/${maximum}`, { withPrice: true });
+    let other = await createConfiguredDraft(item, "Independent 5/25 Lisno range");
+    other = await updateDraftSection(item, other, "advanced", { subVendorMinimumMarginBps: 500, subVendorMarginBps: 2_500, pmcMarginBps: 1_050 });
+    const otherSections = await AiEstimatorKnowledgeSectionModel.find({ mainLineId: other.mainLineId }).sort({ _id: 1 }).lean();
+    const otherLine = await AiEstimatorKnowledgeMainLineModel.findById(other.mainLineId).lean();
+    const original = await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced");
+    const revisionBefore = await AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean();
+    const payload = { subVendorMinimumMarginBps: minimum, subVendorMarginBps: maximum, pmcMarginBps: 1_825 };
+    const command = { expectedVersion: original.version, expectedAggregateVersion: source.aggregateVersion, payload };
+    const sectionPath = `/api/v1/admin/ai-estimator-knowledge/main-lines/${source.mainLineId}/revisions/${source.revisionId}/sections/advanced`;
+    const app = express();
+    app.use(express.json());
+    app.use("/api/v1", createAiEstimatorKnowledgeAdminRouter(authFor(SUPER_ADMIN), services));
+    app.use(errorHandler);
+    await seedActor(ADMIN);
+    const forbiddenApp = express();
+    forbiddenApp.use(express.json());
+    forbiddenApp.use("/api/v1", createAiEstimatorKnowledgeAdminRouter(authFor(ADMIN), services));
+    forbiddenApp.use(errorHandler);
+    const beforeForbidden = await lisnoPersistenceSnapshot();
+    const forbidden = await request(forbiddenApp).put(sectionPath).set("Authorization", "Bearer admin-token").send(command);
+    expect(forbidden.status).toBe(403);
+    expect(forbidden.body.error.code).toBe("FORBIDDEN");
+    expect(await lisnoPersistenceSnapshot()).toEqual(beforeForbidden);
+
+    const savedResponse = await request(app).put(sectionPath).set("Authorization", "Bearer super-admin-token").send(command);
+    expect(savedResponse.status).toBe(200);
+    expect(savedResponse.body.data).toMatchObject({ payload, version: original.version + 1, aggregateVersion: source.aggregateVersion + 1 });
+    const saved = await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced");
+    expect(saved.payload).toEqual(payload);
+    expect(await AiEstimatorKnowledgeSectionModel.findById(saved.id).lean()).toMatchObject({ payload, version: original.version + 1 });
+    expect(await AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean()).toMatchObject({ version: revisionBefore!.version + 1 });
+    const saveAudits = await AuditEventModel.find({ entityId: saved.id, action: "ai_estimator_knowledge_section_updated" }).lean();
+    expect(saveAudits).toHaveLength(1);
+    expect(saveAudits[0]).toMatchObject({ actorId: SUPER_ADMIN.id,
+      oldValues: { sectionVersion: original.version, aggregateVersion: source.aggregateVersion },
+      newValues: { sectionVersion: original.version + 1, aggregateVersion: source.aggregateVersion + 1 } });
+    const beforeStale = await lisnoPersistenceSnapshot();
+    const stale = await request(app).put(sectionPath).set("Authorization", "Bearer super-admin-token").send(command);
+    expect(stale.status).toBe(409);
+    expect(stale.body.error.code).toBe("VERSION_CONFLICT");
+    expect(await lisnoPersistenceSnapshot()).toEqual(beforeStale);
+
+    const active = await item.activate(SUPER_ADMIN, source.mainLineId, source.revisionId, { expectedVersion: source.aggregateVersion + 1 });
+    expect(active).toMatchObject({ activeRevisionId: source.revisionId, version: source.aggregateVersion + 2 });
+    expect(active.activeRevision?.contentDigest).toMatch(/^[a-f0-9]{64}$/u);
+    expect(await AuditEventModel.find({ entityId: source.revisionId, action: "ai_estimator_knowledge_revision_activated" }).lean())
+      .toMatchObject([{ actorId: SUPER_ADMIN.id, newValues: { aggregateVersion: active.version } }]);
+    const historicalSection = await AiEstimatorKnowledgeSectionModel.findById(saved.id).lean();
+    const historicalRevision = await AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean();
+    const beforeReadOnly = await lisnoPersistenceSnapshot();
+    const readOnly = await request(app).put(sectionPath).set("Authorization", "Bearer super-admin-token")
+      .send({ expectedVersion: saved.version, expectedAggregateVersion: active.version, payload });
+    expect(readOnly.status).toBe(409);
+    expect(readOnly.body.error.code).toBe("KNOWLEDGE_REVISION_IMMUTABLE");
+    expect(await lisnoPersistenceSnapshot()).toEqual(beforeReadOnly);
+
+    const copied = await item.createRevision(SUPER_ADMIN, source.mainLineId, { expectedVersion: active.version });
+    const draft = await item.getSection(SUPER_ADMIN, source.mainLineId, copied.draftRevisionId!, "advanced");
+    expect(draft.payload).toEqual(payload);
+    await item.updateSection(SUPER_ADMIN, source.mainLineId, copied.draftRevisionId!, "advanced", {
+      expectedVersion: draft.version, expectedAggregateVersion: copied.version,
+      payload: { ...payload, subVendorMinimumMarginBps: 2_000, subVendorMarginBps: 4_000 }
+    });
+    expect(await AiEstimatorKnowledgeSectionModel.findById(saved.id).lean()).toEqual(historicalSection);
+    expect(await AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean()).toEqual(historicalRevision);
+    expect(await AiEstimatorKnowledgeSectionModel.find({ mainLineId: other.mainLineId }).sort({ _id: 1 }).lean()).toEqual(otherSections);
+    expect(await AiEstimatorKnowledgeMainLineModel.findById(other.mainLineId).lean()).toEqual(otherLine);
+  });
+
+  it("accepts historical 10% Lisno margins without repair or implicit minimum writes", async () => {
+    const { item } = createServices();
+    let source = await createConfiguredDraft(item, "Historical valid 10% Lisno", { withPrice: true });
+    const legacyPayload = { subVendorMarginBps: 1_000, pmcMarginBps: 1_825 };
+    source = await updateDraftSection(item, source, "advanced", legacyPayload);
+    const active = await item.activate(SUPER_ADMIN, source.mainLineId, source.revisionId, { expectedVersion: source.aggregateVersion });
+    const beforeRead = await lisnoPersistenceSnapshot();
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced")).payload).toEqual(legacyPayload);
+    await item.getItem(SUPER_ADMIN, source.mainLineId);
+    expect(await lisnoPersistenceSnapshot()).toEqual(beforeRead);
+    const duplicate = await item.duplicate(SUPER_ADMIN, source.mainLineId, { expectedVersion: active.version, name: "Valid 10% duplicate" });
+    expect((await item.getSection(SUPER_ADMIN, duplicate.mainLineId, duplicate.draftRevisionId!, "advanced")).payload).toMatchObject(legacyPayload);
+    const copied = await item.createRevision(SUPER_ADMIN, source.mainLineId, { expectedVersion: active.version });
+    const draft = await item.getSection(SUPER_ADMIN, source.mainLineId, copied.draftRevisionId!, "advanced");
+    expect(draft.payload).toEqual(legacyPayload);
+    const edited = await item.updateSection(SUPER_ADMIN, source.mainLineId, copied.draftRevisionId!, "advanced", {
+      expectedVersion: draft.version, expectedAggregateVersion: copied.version,
+      payload: { ...legacyPayload, modeDescription: "Advanced text edited without margin repair" }
+    });
+    expect(edited.payload).not.toHaveProperty("subVendorMinimumMarginBps");
+    await item.activate(SUPER_ADMIN, source.mainLineId, copied.draftRevisionId!, { expectedVersion: edited.aggregateVersion });
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced")).payload).toEqual(legacyPayload);
+  });
+
+  it("preserves and repairs historical 1750-bps Lisno margins without changing another line or Active history", async () => {
+    const legacyMargin = 1_750;
+    const { item } = createServices();
+    let source = await createConfiguredDraft(item, `Historical Lisno ${legacyMargin}`, { withPrice: true });
+    source = await updateDraftSection(item, source, "advanced", { subVendorMarginBps: 1_500, pmcMarginBps: 1_825 });
+    const active = await item.activate(SUPER_ADMIN, source.mainLineId, source.revisionId, { expectedVersion: source.aggregateVersion });
+    let other = await createConfiguredDraft(item, `Independent Lisno ${legacyMargin}`);
+    other = await updateDraftSection(item, other, "advanced", { subVendorMinimumMarginBps: 2_000, subVendorMarginBps: 2_000, pmcMarginBps: 1_050 });
+    const otherSections = await AiEstimatorKnowledgeSectionModel.find({ mainLineId: other.mainLineId }).sort({ _id: 1 }).lean();
+    const otherLine = await AiEstimatorKnowledgeMainLineModel.findById(other.mainLineId).lean();
+    const historyFilter = { mainLineId: source.mainLineId, revisionId: source.revisionId, sectionKey: "advanced" };
+    const legacyPayload = { subVendorMarginBps: legacyMargin, pmcMarginBps: 1_825, modeDescription: "Historical wording" };
+    // Isolated fixture setup represents data saved under the old contract, never an application write.
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne(historyFilter, { $set: { payload: legacyPayload } });
+    const historicalSection = await AiEstimatorKnowledgeSectionModel.findOne(historyFilter).lean();
+    const historicalRevision = await AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean();
+    const beforeRead = await lisnoPersistenceSnapshot();
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced")).payload).toEqual(legacyPayload);
+    await item.getItem(SUPER_ADMIN, source.mainLineId);
+    expect(await lisnoPersistenceSnapshot()).toEqual(beforeRead);
+    // General duplication must not gain the internal Active-to-Draft repair permission.
+    await expect(item.duplicate(SUPER_ADMIN, source.mainLineId, { expectedVersion: active.version, name: `Forbidden clone ${legacyMargin}` }))
+      .rejects.toMatchObject({ code: "VALIDATION_ERROR", fields: { "payload.subVendorMarginBps": expect.stringContaining("multiples of 5%") } });
+    expect(await lisnoPersistenceSnapshot()).toEqual(beforeRead);
+    const copied = await item.createRevision(SUPER_ADMIN, source.mainLineId, { expectedVersion: active.version });
+    const draftId = copied.draftRevisionId!;
+    const draft = await item.getSection(SUPER_ADMIN, source.mainLineId, draftId, "advanced");
+    expect(draft.payload).toEqual(legacyPayload);
+    expect(draft.payload).not.toHaveProperty("subVendorMinimumMarginBps");
+    const draftFilter = { mainLineId: source.mainLineId, revisionId: draftId, sectionKey: "advanced" };
+    const untouchedAdvanced = await AiEstimatorKnowledgeSectionModel.findOne(draftFilter).lean();
+    const beforeRejected = await lisnoPersistenceSnapshot();
+    await expect(item.updateSection(SUPER_ADMIN, source.mainLineId, draftId, "advanced", {
+      expectedVersion: draft.version, expectedAggregateVersion: copied.version, payload: { ...draft.payload, modeDescription: "Unrelated advanced edit" }
+    })).rejects.toMatchObject({ code: "VALIDATION_ERROR", fields: { "payload.subVendorMarginBps": expect.any(String) } });
+    expect(await lisnoPersistenceSnapshot()).toEqual(beforeRejected);
+    await expect(item.activate(SUPER_ADMIN, source.mainLineId, draftId, { expectedVersion: copied.version }))
+      .rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(await lisnoPersistenceSnapshot()).toEqual(beforeRejected);
+    const unrelated = await updateDraftSection(item, { mainLineId: source.mainLineId, revisionId: draftId, aggregateVersion: copied.version },
+      "overview", overviewPayload("Edited independently while Lisno awaits repair"));
+    expect(await AiEstimatorKnowledgeSectionModel.findOne(draftFilter).lean()).toEqual(untouchedAdvanced);
+    const repairedPayload = { ...legacyPayload, subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 };
+    const repaired = await item.updateSection(SUPER_ADMIN, source.mainLineId, draftId, "advanced", {
+      expectedVersion: draft.version, expectedAggregateVersion: unrelated.aggregateVersion, payload: repairedPayload
+    });
+    expect(repaired.version).toBe(draft.version + 1);
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, draftId, "advanced")).payload).toEqual(repairedPayload);
+    expect(await AiEstimatorKnowledgeSectionModel.findOne(historyFilter).lean()).toEqual(historicalSection);
+    expect(await AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean()).toEqual(historicalRevision);
+    expect(await AiEstimatorKnowledgeSectionModel.find({ mainLineId: other.mainLineId }).sort({ _id: 1 }).lean()).toEqual(otherSections);
+    expect(await AiEstimatorKnowledgeMainLineModel.findById(other.mainLineId).lean()).toEqual(otherLine);
+    const activated = await item.activate(SUPER_ADMIN, source.mainLineId, draftId, { expectedVersion: repaired.aggregateVersion });
+    expect(activated.activeRevisionId).toBe(draftId);
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced")).payload).toEqual(legacyPayload);
+  });
+
+  it.each([
+    { subVendorMarginBps: "1750" }, { subVendorMarginBps: 999 }, { subVendorMarginBps: 2_001 },
+    { subVendorMarginBps: 2_750 }, { subVendorMarginBps: 1_750.5 },
+    { subVendorMarginBps: -500 }, { subVendorMarginBps: 10_000 },
+    { subVendorMinimumMarginBps: 1_750, subVendorMarginBps: 1_000 },
+    { subVendorMinimumMarginBps: null, subVendorMarginBps: 1_750 },
+    { subVendorMinimumMarginBps: 1_000 }, { subVendorMinimumMarginBps: 0 },
+    { subVendorMinimumMarginBps: 0, subVendorMarginBps: null },
+    { subVendorMarginBps: 1_750, privateValue: true }
+  ])("rejects malformed historical Lisno copy %j without partial copies or persisted audits", async (payload) => {
+    const { item } = createServices();
+    const source = await createConfiguredDraft(item, "Malformed historical Lisno", { withPrice: true });
+    const active = await item.activate(SUPER_ADMIN, source.mainLineId, source.revisionId, { expectedVersion: source.aggregateVersion });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne(
+      { mainLineId: source.mainLineId, revisionId: source.revisionId, sectionKey: "advanced" }, { $set: { payload } }
+    );
+    const before = await lisnoPersistenceSnapshot();
+    await expect(item.createRevision(SUPER_ADMIN, source.mainLineId, { expectedVersion: active.version })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(await lisnoPersistenceSnapshot()).toEqual(before);
+  });
+
+  it.each([
+    { subVendorMarginBps: 999 }, { subVendorMarginBps: 2_001 }, { subVendorMarginBps: 2_750 },
+    { subVendorMinimumMarginBps: 0 },
+    { subVendorMinimumMarginBps: null, subVendorMarginBps: 1_750 },
+    { subVendorMinimumMarginBps: 1_750, subVendorMarginBps: 1_000 },
+    { subVendorMarginBps: "1750" }
+  ])("does not exempt malformed untouched Lisno payload %j during unrelated edits", async (payload) => {
+    const { item } = createServices();
+    const draft = await createConfiguredDraft(item, "Malformed untouched Lisno");
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne(
+      { mainLineId: draft.mainLineId, revisionId: draft.revisionId, sectionKey: "advanced" }, { $set: { payload } }
+    );
+    const before = await lisnoPersistenceSnapshot();
+    await expect(updateDraftSection(item, draft, "overview", overviewPayload("An unrelated change")))
+      .rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(await lisnoPersistenceSnapshot()).toEqual(before);
+  });
+
   it("resolves independent cost settings from each Main Line's active revision and Overview UOM", async () => {
     const services = createServices();
     const secondUom = await services.reference.createMaster(SUPER_ADMIN, "uoms", {
@@ -126,7 +319,7 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
       const advanced = { modeCalculations, modeDescription: `Custom ${name} wording`, modeConfigurations: [{
         id: `scope-${draft.mainLineId}`, modeKind: "pmc", fields: [],
         inclusions: [{ id: `in-${draft.mainLineId}`, name: "Transport", selected: true }, { id: "unchecked", name: "Unchecked label", selected: false }],
-        exclusions: [{ id: `out-${draft.mainLineId}`, name: "Transport", selected: true }]
+        exclusions: [{ id: `out-${draft.mainLineId}`, name: "Night unloading", selected: true }]
       }] };
       draft = await updateDraftSection(services.item, draft, "advanced", advanced);
       const active = await services.item.activate(SUPER_ADMIN, draft.mainLineId, draft.revisionId, { expectedVersion: draft.aggregateVersion });
@@ -151,7 +344,7 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
       expect(pmc.configuration.uom?.decimalScale).toBe(line === first ? 2 : 0);
       expect(inHouse.configuration.shared).toEqual(pmc.configuration.shared);
       expect(vendor.configuration.shared).toMatchObject({ paragraph: line.advanced.modeDescription,
-        inclusions: [{ id: `in-${line.mainLineId}`, name: "Transport" }], exclusions: [{ id: `out-${line.mainLineId}`, name: "Transport" }] });
+        inclusions: [{ id: `in-${line.mainLineId}`, name: "Transport" }], exclusions: [{ id: `out-${line.mainLineId}`, name: "Night unloading" }] });
       expect(JSON.stringify(pmc.configuration)).not.toContain("Unchecked label");
       // New Mode settings are usable independently of the legacy vendor-price system.
       expect(pmc.preview).toBeNull();
@@ -3676,6 +3869,19 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
       .toMatchObject({ status: "active", decimalScale: 2, dependencyEpoch: 2, version: 1 });
   });
 });
+
+async function lisnoPersistenceSnapshot() {
+  const [lines, revisions, sections, prices, audits, orders, baskets] = await Promise.all([
+    AiEstimatorKnowledgeMainLineModel.find().sort({ _id: 1 }).lean(),
+    AiEstimatorKnowledgeRevisionModel.find().sort({ _id: 1 }).lean(),
+    AiEstimatorKnowledgeSectionModel.find().sort({ _id: 1 }).lean(),
+    AiEstimatorKnowledgePriceVersionModel.find().sort({ _id: 1 }).lean(),
+    AuditEventModel.find().sort({ _id: 1 }).lean(),
+    AiEstimatorKnowledgeDisplayOrderSequenceModel.find().sort({ _id: 1 }).lean(),
+    AiEstimatorKnowledgeBasketModel.find().sort({ _id: 1 }).lean()
+  ]);
+  return { lines, revisions, sections, prices, audits, orders, baskets };
+}
 
 function createServices() {
   const audit = createAuditService(createMemoryRepository());

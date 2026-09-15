@@ -135,3 +135,38 @@ export function section(sectionKey: KnowledgeSectionKey, payload: KnowledgeJsonO
     updatedAt: "2026-08-28T08:00:00.000Z"
   };
 }
+
+// Opt-in backend-shaped data for the checklist interaction/legacy-repair checks.
+export function scopeSection(state: string): KnowledgeSectionEnvelope<KnowledgeJsonObject> {
+  const empty = state === "empty";
+  return section("advanced", {
+    modeConfigurations: [{
+      id: "scope-pmc", modeKind: "pmc", fields: [],
+      inclusions: empty ? [] : [
+        { id: "transport-in", name: "Transport", selected: true },
+        { id: "night-in", name: "Night unloading", selected: false },
+        { id: "lift-in", name: "Lift service", selected: false },
+        { id: "storage-in", name: "Temporary storage", selected: false }
+      ],
+      exclusions: empty ? [] : [
+        { id: "transport-out", name: "Transport", selected: state === "conflict" },
+        { id: "night-out", name: "Night unloading", selected: true },
+        { id: "lift-out", name: "Lift service", selected: false },
+        { id: "permit-out", name: "Permit handling", selected: false }
+      ]
+    }, { id: "scope-execution", modeKind: "execution", executionSource: "sub_vendor", fields: [] }]
+  });
+}
+
+// Opt-in saved values for Lisno margin range and legacy-compatibility visual QA.
+export function marginSection(state: string): KnowledgeSectionEnvelope<KnowledgeJsonObject> {
+  return section("advanced", {
+    modeConfigurations: [{ id: "margin-sub-vendor", modeKind: "execution", executionSource: "sub_vendor", fields: [] }],
+    modeCalculations: { pmc: null, sub_vendor: { baseRatePaise: 20_000, lowQuantityLimit: "15", impactBps: 1_000,
+      minimumMarkupBps: 2_500, startingMarkupBps: 3_500 }, in_house_labor: null, in_house_material: null },
+    ...(state === "empty" ? {} : state === "legacy" ? { subVendorMarginBps: 1_500 }
+      : state === "legacy-below-range" ? { subVendorMarginBps: 1_000 }
+      : state === "legacy-between-steps" ? { subVendorMarginBps: 1_750 }
+      : { subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 })
+  });
+}

@@ -2,6 +2,7 @@ import {
   KnowledgeCalculationError,
   KNOWLEDGE_CUSTOM_DISCOUNT_MESSAGE,
   applyBasisPoints,
+  calculateMarginSellingPrice,
   multiplyMoneyByQuantity,
   parseScaledDecimal
 } from "./ai-estimator-knowledge-calculation.js";
@@ -103,8 +104,12 @@ function calculateKnowledgeMarginPrice(input: KnowledgeModeBaseRateInput & {
   if (typeof input.quantity !== "string" || typeof input.lowQuantityLimit !== "string") {
     throw new KnowledgeCalculationError("INVALID_DECIMAL", `${label} quantity and low quantity limit must be non-negative decimal strings.`);
   }
-  if (!Number.isSafeInteger(input.marginBps) || input.marginBps < 1_000 || input.marginBps > 2_000) {
-    throw new KnowledgeCalculationError("INVALID_BASIS_POINTS", `${label} margin must be between 10% and 20%, with up to two decimal places.`);
+  if (label === "Sub-Vendor") {
+    if (!Number.isSafeInteger(input.marginBps) || input.marginBps < 0 || input.marginBps > 9_500 || input.marginBps % 500 !== 0) {
+      throw new KnowledgeCalculationError("INVALID_BASIS_POINTS", "Lisno margin must be between 0% and 95%, in multiples of 5%.");
+    }
+  } else if (!Number.isSafeInteger(input.marginBps) || input.marginBps < 1_000 || input.marginBps > 2_000) {
+    throw new KnowledgeCalculationError("INVALID_BASIS_POINTS", "PMC margin must be between 10% and 20%, with up to two decimal places.");
   }
   const impactBps = input.impactBps === undefined ? KNOWLEDGE_LOW_QUANTITY_IMPACT_BPS : input.impactBps;
   if (!Number.isSafeInteger(impactBps) || impactBps < 0 || impactBps > KNOWLEDGE_PMC_MAX_IMPACT_BPS) {
@@ -118,7 +123,7 @@ function calculateKnowledgeMarginPrice(input: KnowledgeModeBaseRateInput & {
   const revised = calculateKnowledgeModeBaseRate({ ...input, impactBps }, "inclusive");
   // Derive the charge from rounded amounts so the displayed stages reconcile.
   const lowQuantityImpactAmountPaise = revised.revisedAmountPaise - baseAmountPaise;
-  const totalBeforeDiscountPaise = applyBasisPoints(revised.revisedAmountPaise, 10_000 + input.marginBps);
+  const totalBeforeDiscountPaise = calculateMarginSellingPrice(revised.revisedAmountPaise, input.marginBps);
   const marginAmountPaise = totalBeforeDiscountPaise - revised.revisedAmountPaise;
   const discountAmountPaise = applyBasisPoints(totalBeforeDiscountPaise, discountBps);
   const totalPaise = totalBeforeDiscountPaise - discountAmountPaise;

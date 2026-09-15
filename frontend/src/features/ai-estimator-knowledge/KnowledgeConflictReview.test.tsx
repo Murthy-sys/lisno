@@ -395,3 +395,23 @@ describe("KnowledgeConflictReview Quantity slab projection", () => {
     expect(review).not.toHaveTextContent("private-slab-id");
   });
 });
+
+
+describe("Lisno margin conflict review", () => {
+  it("projects a legacy single value as equal Min. and Max. without changing the payload", () => {
+    const payload = { subVendorMarginBps: 1_750 };
+    render(<KnowledgeConflictReview sectionKey="advanced" payload={payload} localVersion={1} serverVersion={2}
+      masters={{}} relationshipBaskets={[]} relationshipItems={[]} />);
+    expect(screen.getByText("Min. Lisno Margin")).toBeVisible();
+    expect(screen.getByText("Max. Lisno Margin")).toBeVisible();
+    expect(screen.getAllByText("17.50%")).toHaveLength(2);
+    expect(payload).toEqual({ subVendorMarginBps: 1_750 });
+  });
+
+  it("shows an explicitly empty minimum instead of borrowing the maximum", () => {
+    render(<KnowledgeConflictReview sectionKey="advanced" payload={{ subVendorMinimumMarginBps: null, subVendorMarginBps: 1_950 }} localVersion={1} serverVersion={2}
+      masters={{}} relationshipBaskets={[]} relationshipItems={[]} />);
+    expect(screen.getByText("Min. Lisno Margin").nextElementSibling).toHaveTextContent("Not configured");
+    expect(screen.getByText("Max. Lisno Margin").nextElementSibling).toHaveTextContent("19.50%");
+  });
+});

@@ -49,6 +49,7 @@ import {
   findOverlappingEffectiveWindows,
   KnowledgeValidationError,
   validateAcyclicGraph,
+  validateKnowledgeSectionPayload,
   validateQuantitySlabs,
   type KnowledgeCompletenessSectionInput,
   type KnowledgeValidationIssue
@@ -604,6 +605,11 @@ export function createAiEstimatorKnowledgeItemService(
           revisionId: sourceRevisionId
         }).sort({ priceEntryId: 1, versionNumber: 1, _id: 1 }).session(session).lean().exec();
         const sourceSections = sourceSectionDocuments.map((row) => asRow(row)!);
+        // Reject malformed history before cloning child records or appending their audits.
+        const inheritedAdvanced = payloadFor(sourceSections.find((row) => row.sectionKey === "advanced"));
+        const inheritedIssues = validateKnowledgeSectionPayload("advanced", inheritedAdvanced)
+          .filter(({ code }) => code !== "INVALID_LISNO_MARGIN_INCREMENT" && code !== "CONFLICTING_SCOPE_SELECTION");
+        if (inheritedIssues.length > 0) invalidRevisionSectionRules(inheritedIssues);
         const priceReferences = await cloneRevisionPrices({
           sourcePrices: sourcePriceDocuments.map((row) => asRow(row)!),
           targetMainLineId: mainLineId,
@@ -636,7 +642,7 @@ export function createAiEstimatorKnowledgeItemService(
         await AiEstimatorKnowledgeSectionModel.insertMany(
           AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map((sectionKey) => {
             const source = copiedSections.find((row) => row.sectionKey === sectionKey);
-            return {
+            const copiedSection = new AiEstimatorKnowledgeSectionModel({
               _id: knowledgeId(`section-${sectionKey}`, uuid()),
               mainLineId,
               revisionId,
@@ -648,7 +654,14 @@ export function createAiEstimatorKnowledgeItemService(
               updatedById: storedActor.id,
               createdAt: occurredAt,
               updatedAt: occurredAt
-            };
+            });
+            // Only this unchanged Active-to-Draft copy may retain historical values for repair.
+            // Normal section saves, activation and duplication keep strict validation.
+            if (sectionKey === "advanced") {
+              copiedSection.$locals.allowInheritedScopeSelectionConflict = true;
+              copiedSection.$locals.inheritedLisnoMarginPayload = structuredClone(payloadFor(source));
+            }
+            return copiedSection;
           }),
           { session }
         );
@@ -969,6 +982,10 @@ export function createAiEstimatorKnowledgeItemService(
           mainLineId,
           revisionId: sourceRevisionId
         }).session(session).lean().exec();
+        // Duplication creates independent content and never inherits repair permissions.
+        validateSectionPayloadOrThrow("advanced", payloadFor(
+          asRow(sourceSectionDocuments.find((row) => row.sectionKey === "advanced"))
+        ));
         const sourcePriceDocuments = await AiEstimatorKnowledgePriceVersionModel.find({
           mainLineId,
           revisionId: sourceRevisionId
@@ -2615,7 +2632,7 @@ async function validateRevisionRelationships(
   session: ClientSession,
   context?: RevisionRelationshipValidationContext
 ): Promise<void> {
-  validateStoredRevisionPayloads(rows);
+  validateStoredRevisionPayloads(rows, context?.updatedSectionKey);
   await validateRevisionMasterReferences(rows, session, context);
   await validateRevisionSectionRules(rows, session, context);
   await validateScopeBasketReferences(rows, session);
@@ -2945,9 +2962,18 @@ async function slabRateRevisionIssues(
   return issues;
 }
 
-function validateStoredRevisionPayloads(rows: Row[]): void {
+function validateStoredRevisionPayloads(rows: Row[], updatedSectionKey?: KnowledgeSectionKey): void {
   for (const row of rows) {
-    validateSectionPayloadOrThrow(requiredString(row.sectionKey) as KnowledgeSectionKey, payloadFor(row));
+    const sectionKey = requiredString(row.sectionKey) as KnowledgeSectionKey;
+    if (sectionKey === "advanced" && updatedSectionKey && updatedSectionKey !== "advanced") {
+      // Editing another section must leave historical margins available for later repair.
+      // The advanced payload is unchanged here; activation has no updated-section context.
+      const issues = validateKnowledgeSectionPayload(sectionKey, payloadFor(row))
+        .filter(({ code }) => code !== "INVALID_LISNO_MARGIN_INCREMENT");
+      if (issues.length > 0) invalidRevisionSectionRules(issues);
+    } else {
+      validateSectionPayloadOrThrow(sectionKey, payloadFor(row));
+    }
   }
 }
 

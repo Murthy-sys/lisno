@@ -349,3 +349,25 @@ describe("Mode component definition contract", () => {
       .toEqual({});
   });
 });
+
+
+describe("scope selection compatibility", () => {
+  it.each(["Transport service", " transport   SERVICE ", "ＴＲＡＮＳＰＯＲＴ service"])("rejects conflicting selected values with both actionable paths: %s", (name) => {
+    const value = [{ id: "scope", modeKind: "pmc", fields: [],
+      inclusions: [{ id: "in", name: "Transport service", selected: true }],
+      exclusions: [{ id: "out", name, selected: true }]
+    }];
+    const parsed = parseKnowledgeModeConfigurations(value);
+    expect(parsed.issues).toEqual([
+      { path: "modeConfigurations.0.inclusions.0.selected", message: "Transport service is selected in both lists. Uncheck one before saving." },
+      { path: "modeConfigurations.0.exclusions.0.selected", message: "Transport service is selected in both lists. Uncheck one before saving." }
+    ]);
+    expect(validateKnowledgeModeConfigurations(parsed.configurations)).toEqual(parsed.issues);
+    expect(partitionKnowledgeModeConfigurations(parsed.configurations).recovery).toEqual([]);
+    expect(withKnowledgeModeConfigurations({}, parsed.configurations)).toEqual({ modeConfigurations: value });
+    for (const list of ["inclusions", "exclusions"] as const) {
+      const repaired = { ...value[0]!, [list]: [{ ...value[0]![list][0]!, selected: false }] };
+      expect(parseKnowledgeModeConfigurations([repaired]).issues).toEqual([]);
+    }
+  });
+});

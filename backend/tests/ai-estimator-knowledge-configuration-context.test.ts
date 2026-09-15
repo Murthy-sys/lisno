@@ -71,7 +71,7 @@ describe("selected configuration context", () => {
     expect(build({ advanced: payload, uom, modeKind: "pmc" }).calculations[0]?.settings?.baseRatePaise).toBe(150_000);
   });
 
-  it("projects only checked entries by stable ID, independently of paragraph text and list labels", () => {
+  it("preserves checked legacy conflicts by stable ID while marking the context invalid", () => {
     const advanced = {
       modeDescription: "Custom wording with no list labels.", modeCalculations: map,
       modeConfigurations: [{ id: "shared-scope", modeKind: "pmc", fields: [{ value: "private-answer" }],
@@ -79,11 +79,34 @@ describe("selected configuration context", () => {
         exclusions: [{ id: "out-transport", name: "Transport", selected: true }] }],
       internalVendorNotes: "private-notes"
     };
+    const before = structuredClone(advanced);
     const context = build({ advanced, uom, modeKind: "execution", executionSource: "sub_vendor" });
     expect(context.shared).toEqual({ paragraph: advanced.modeDescription, scopeConfigurationId: "shared-scope", inclusions: [{ id: "in-transport", name: "Transport" }], exclusions: [{ id: "out-transport", name: "Transport" }] });
+    expect(context.state).toBe("invalid");
+    expect(context.issues).toEqual([{ code: "CONFLICTING_SCOPE_SELECTION", scope: null }]);
     expect(JSON.stringify(context)).not.toMatch(/private-answer|private-notes|Unchecked private label/);
     const inHouse = build({ advanced, uom, modeKind: "execution", executionSource: "in_house" });
     expect(inHouse.shared).toEqual(context.shared);
+    expect(inHouse.state).toBe("invalid");
+    expect(advanced).toEqual(before);
+  });
+
+  it("projects checked scope entries independently and still rejects structurally invalid rows", () => {
+    const pmc = { id: "shared-scope", modeKind: "pmc", fields: [],
+      inclusions: [{ id: "in-transport", name: "Transport", selected: true }, { id: "hidden", name: "Unchecked label", selected: false }],
+      exclusions: [{ id: "out-transport", name: "Transport", selected: false }, { id: "night", name: "Night unloading", selected: true }]
+    };
+    const context = build({ advanced: { modeCalculations: map, modeConfigurations: [pmc] }, uom, modeKind: "pmc" });
+    expect(context.state).toBe("ready");
+    expect(context.shared).toEqual({ paragraph: null, scopeConfigurationId: "shared-scope",
+      inclusions: [{ id: "in-transport", name: "Transport" }], exclusions: [{ id: "night", name: "Night unloading" }]
+    });
+    const invalid = build({ advanced: { modeCalculations: map, modeConfigurations: [{
+      ...pmc, exclusions: [{ id: "out-transport", name: "Transport", selected: true, privateField: "not-allowed" }]
+    }] }, uom, modeKind: "pmc" });
+    expect(invalid.state).toBe("invalid");
+    expect(invalid.issues).toEqual([{ code: "INVALID_SHARED_SCOPE", scope: null }]);
+    expect(invalid.shared).toEqual({ paragraph: null, scopeConfigurationId: null, inclusions: [], exclusions: [] });
   });
 
   it("does not choose one of multiple shared scopes", () => {

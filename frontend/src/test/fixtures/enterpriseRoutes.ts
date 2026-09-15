@@ -109,7 +109,19 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (path === `${prefix}/baskets/basket-1/main-lines`) return page([{ ...knowledge.item, name: knowledge.item.mainLineName }]);
   if (path === `${prefix}/vendors`) return page([{ ...knowledge.squareFoot, id: "vendor-1", masterType: "vendors", code: "TIMBER", name: "Timber House" }]);
   if (path === `${prefix}/main-lines/line-1/history`) return page([]);
-  if (/^\/admin\/ai-estimator-knowledge\/main-lines\/line-1\/revisions\/revision-1\/sections\//.test(path)) return knowledge.section(path.split("/").at(-1) as KnowledgeSectionKey);
+  if (/^\/admin\/ai-estimator-knowledge\/main-lines\/line-1\/revisions\/revision-1\/sections\//.test(path)) {
+    const sectionKey = path.split("/").at(-1) as KnowledgeSectionKey;
+    const marginState = new URLSearchParams(scenario.route.split("?")[1]).get("qaMargin");
+    if (marginState && ["ready", "legacy", "legacy-below-range", "legacy-between-steps", "empty"].includes(marginState)) {
+      if (sectionKey === "advanced") return knowledge.marginSection(marginState);
+      if (sectionKey === "overview") return knowledge.section("overview", { uomId: knowledge.squareFoot.id });
+    }
+    const scopeState = new URLSearchParams(scenario.route.split("?")[1]).get("qaScope");
+    if (sectionKey === "advanced" && scopeState && ["ready", "conflict", "empty"].includes(scopeState)) {
+      return knowledge.scopeSection(scopeState);
+    }
+    return knowledge.section(sectionKey);
+  }
   if (path === `${prefix}/baskets/basket-1/sub-baskets`) return page([]);
   if (path === `${prefix}/baskets/basket-1/quality`) return { basketId: "basket-1", basketName: "Carpentry", basketStatus: "active", revisionId: null, revisionNumber: 0, contentDigest: null, parameters: [], updatedAt: null, version: 1 };
   return undefined;

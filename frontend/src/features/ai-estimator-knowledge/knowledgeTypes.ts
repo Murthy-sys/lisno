@@ -312,8 +312,10 @@ export interface KnowledgePreviewAmountComponent {
 }
 
 export interface KnowledgePreview {
+  /** Selling price is adjusted cost / (1 − Lisno margin); amounts retain the PMC-shaped breakdown, not its formula. */
   readonly subVendorCalculation?: Omit<NonNullable<KnowledgePreview["pmcCalculation"]>, "pmcMarginBps" | "pmcMarginAmountPaise"> & {
     readonly subVendorMarginBps: number;
+    /** Rounded selling price before discount minus adjusted cost, in paise. */
     readonly subVendorMarginAmountPaise: number;
   };
   readonly pmcCalculation?: {

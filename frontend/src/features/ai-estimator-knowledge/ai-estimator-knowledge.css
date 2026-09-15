@@ -4657,6 +4657,8 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 }
 
 .knowledge-workspace-rail {
+  --knowledge-rail-inset: var(--space-2);
+  --knowledge-rail-stacked: 0;
   display: grid;
   gap: var(--space-4);
   align-self: start;
@@ -4666,7 +4668,7 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   inset-block-start: var(--space-2);
 }
 
-/* Expanded pending values must remain reachable through normal page scrolling. */
+/* History that cannot fit beside a usable summary stays reachable on the page. */
 .knowledge-workspace-rail--long { position: static; }
 .knowledge-workspace-rail > .knowledge-workspace-history-rail {
   position: static;
@@ -4776,6 +4778,7 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 
 @media (max-width: 1180px) {
   .knowledge-workspace-rail {
+    --knowledge-rail-stacked: 1;
     max-inline-size: none;
     position: static;
     inset-block-start: auto;

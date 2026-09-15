@@ -189,7 +189,7 @@ describe("AI estimator knowledge item service", () => {
   it("isolates Sub-Vendor and PMC margins across lines, activation and later draft changes", async () => {
     const { service } = createService();
     const published: Array<{ mainLineId: string; revisionId: string; pmcMarginBps: number; subVendorMarginBps: number }> = [];
-    for (const [name, pmcMarginBps, subVendorMarginBps] of [["First Sub-Vendor margin", 1_900, 1_000], ["Second Sub-Vendor margin", 1_050, 2_000]] as const) {
+    for (const [name, pmcMarginBps, subVendorMarginBps] of [["First Sub-Vendor margin", 1_900, 1_500], ["Second Sub-Vendor margin", 1_050, 2_000]] as const) {
       const created = await service.createMainLine(ACTOR, "basket-carpentry", { name });
       const revisionId = created.draftRevisionId!;
       const overview = await service.updateSection(ACTOR, created.mainLineId, revisionId, "overview", {
@@ -226,6 +226,199 @@ describe("AI estimator knowledge item service", () => {
       expect((await service.getSection(ACTOR, mainLineId, revisionId, "advanced")).payload)
         .toMatchObject({ pmcMarginBps, subVendorMarginBps });
     }
+  });
+
+  it.each([0, 1_000, 1_500])("preserves legacy %s-bps Lisno minimum absence during reads, unrelated edits and active-to-draft copying", async (subVendorMarginBps) => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Legacy Lisno margin" });
+    const revisionId = created.draftRevisionId!;
+    const overview = await service.updateSection(ACTOR, created.mainLineId, revisionId, "overview", {
+      expectedVersion: 1, expectedAggregateVersion: created.version, payload: { uomId: "uom-sqft" }
+    });
+    const legacyPayload = { subVendorMarginBps, pmcMarginBps: 1_900, modeDescription: "Existing scope." };
+    const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: 1, expectedAggregateVersion: overview.aggregateVersion, payload: legacyPayload
+    });
+    const sectionFilter = { mainLineId: created.mainLineId, revisionId, sectionKey: "advanced" };
+    const beforeSection = await AiEstimatorKnowledgeSectionModel.findOne(sectionFilter).lean();
+    const beforeLine = await AiEstimatorKnowledgeMainLineModel.findById(created.mainLineId).lean();
+    const beforeRevision = await AiEstimatorKnowledgeRevisionModel.findById(revisionId).lean();
+    appendAudit.mockClear();
+    expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(legacyPayload);
+    await service.getItem(ACTOR, created.mainLineId);
+    expect(await AiEstimatorKnowledgeSectionModel.findOne(sectionFilter).lean()).toEqual(beforeSection);
+    expect(await AiEstimatorKnowledgeMainLineModel.findById(created.mainLineId).lean()).toEqual(beforeLine);
+    expect(await AiEstimatorKnowledgeRevisionModel.findById(revisionId).lean()).toEqual(beforeRevision);
+    expect(appendAudit).not.toHaveBeenCalled();
+    const unrelatedPayload = { ...legacyPayload, modeDescription: "Edited scope only." };
+    const unrelated = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: unrelatedPayload
+    });
+    expect(unrelated.payload).toEqual(unrelatedPayload);
+    expect(unrelated.payload).not.toHaveProperty("subVendorMinimumMarginBps");
+    const active = await service.activate(ACTOR, created.mainLineId, revisionId, { expectedVersion: unrelated.aggregateVersion });
+    const historicalSection = await AiEstimatorKnowledgeSectionModel.findOne(sectionFilter).lean();
+    const historicalRevision = await AiEstimatorKnowledgeRevisionModel.findById(revisionId).lean();
+    const next = await service.createRevision(ACTOR, created.mainLineId, { expectedVersion: active.version });
+    const draft = await service.getSection(ACTOR, created.mainLineId, next.draftRevisionId!, "advanced");
+    expect(draft.payload).toEqual(unrelatedPayload);
+    expect(draft.payload).not.toHaveProperty("subVendorMinimumMarginBps");
+    const editedPayload = { ...draft.payload, subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 };
+    await service.updateSection(ACTOR, created.mainLineId, next.draftRevisionId!, "advanced", {
+      expectedVersion: draft.version, expectedAggregateVersion: next.version, payload: editedPayload
+    });
+    expect((await service.getSection(ACTOR, created.mainLineId, next.draftRevisionId!, "advanced")).payload).toEqual(editedPayload);
+    expect(await AiEstimatorKnowledgeSectionModel.findOne(sectionFilter).lean()).toEqual(historicalSection);
+    expect(await AiEstimatorKnowledgeRevisionModel.findById(revisionId).lean()).toEqual(historicalRevision);
+  });
+
+  it("round-trips unequal Lisno margin ranges independently and preserves activated ranges in later drafts", async () => {
+    const { service } = createService();
+    const first = await service.createMainLine(ACTOR, "basket-carpentry", { name: "First Lisno range" });
+    const second = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Second Lisno range" });
+    const expected = new Map<string, Record<string, unknown>>();
+    for (const [created, minimum, maximum, pmcMarginBps] of [[first, 1_000, 3_500, 1_900], [second, 0, 9_500, 1_050]] as const) {
+      const revisionId = created.draftRevisionId!;
+      const overview = await service.updateSection(ACTOR, created.mainLineId, revisionId, "overview", {
+        expectedVersion: 1, expectedAggregateVersion: created.version, payload: { uomId: "uom-sqft" }
+      });
+      const payload = { subVendorMinimumMarginBps: minimum, subVendorMarginBps: maximum, pmcMarginBps,
+        modeDescription: `Scope for ${created.mainLineId}` };
+      const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: 1, expectedAggregateVersion: overview.aggregateVersion, payload
+      });
+      expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(payload);
+      const active = await service.activate(ACTOR, created.mainLineId, revisionId, { expectedVersion: saved.aggregateVersion });
+      const historyFilter = { mainLineId: created.mainLineId, revisionId, sectionKey: "advanced" };
+      const historicalSection = await AiEstimatorKnowledgeSectionModel.findOne(historyFilter).lean();
+      const historicalRevision = await AiEstimatorKnowledgeRevisionModel.findById(revisionId).lean();
+      const next = await service.createRevision(ACTOR, created.mainLineId, { expectedVersion: active.version });
+      const draft = await service.getSection(ACTOR, created.mainLineId, next.draftRevisionId!, "advanced");
+      expect(draft.payload).toEqual(payload);
+      await service.updateSection(ACTOR, created.mainLineId, next.draftRevisionId!, "advanced", {
+        expectedVersion: draft.version, expectedAggregateVersion: next.version,
+        payload: { ...draft.payload, subVendorMinimumMarginBps: null, subVendorMarginBps: null }
+      });
+      expect((await service.getSection(ACTOR, created.mainLineId, next.draftRevisionId!, "advanced")).payload)
+        .toEqual({ ...payload, subVendorMinimumMarginBps: null, subVendorMarginBps: null });
+      expect(await AiEstimatorKnowledgeSectionModel.findOne(historyFilter).lean()).toEqual(historicalSection);
+      expect(await AiEstimatorKnowledgeRevisionModel.findById(revisionId).lean()).toEqual(historicalRevision);
+      expected.set(created.mainLineId, payload);
+    }
+    for (const created of [first, second]) {
+      expect((await service.getSection(ACTOR, created.mainLineId, created.draftRevisionId!, "advanced")).payload)
+        .toEqual(expected.get(created.mainLineId));
+    }
+  });
+
+  it.each([
+    { subVendorMinimumMarginBps: 3_500, subVendorMarginBps: 1_000 },
+    { subVendorMinimumMarginBps: 0, subVendorMarginBps: 10_000 },
+    { subVendorMinimumMarginBps: -500, subVendorMarginBps: 9_500 },
+    { subVendorMinimumMarginBps: 0, subVendorMarginBps: 9_000.5 },
+    { subVendorMinimumMarginBps: "0", subVendorMarginBps: 9_500 },
+    { subVendorMinimumMarginBps: 0, subVendorMarginBps: null },
+    { subVendorMinimumMarginBps: null, subVendorMarginBps: 0 },
+    { subVendorMinimumMarginBps: 0 },
+    { subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 1_600 },
+    { subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 1_750 },
+    { subVendorMinimumMarginBps: null, subVendorMarginBps: 1_750 },
+    { subVendorMinimumMarginBps: 1_250, subVendorMarginBps: null },
+    { subVendorMinimumMarginBps: 1_250 },
+    { subVendorMinimumMarginBps: 1_751, subVendorMarginBps: 1_750 },
+    { subVendorMinimumMarginBps: 999, subVendorMarginBps: 1_750 },
+    { subVendorMinimumMarginBps: 1_250, subVendorMarginBps: 2_001 },
+    { subVendorMinimumMarginBps: 1_250.5, subVendorMarginBps: 1_750 }
+  ])("rejects invalid Lisno range %j before any payload, version or audit write", async (invalidRange) => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Rejected Lisno range" });
+    const revisionId = created.draftRevisionId!;
+    const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: 1, expectedAggregateVersion: created.version,
+      payload: { subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000, pmcMarginBps: 1_900 }
+    });
+    const sectionFilter = { mainLineId: created.mainLineId, revisionId, sectionKey: "advanced" };
+    const beforeSection = await AiEstimatorKnowledgeSectionModel.findOne(sectionFilter).lean();
+    const beforeLine = await AiEstimatorKnowledgeMainLineModel.findById(created.mainLineId).lean();
+    const beforeRevision = await AiEstimatorKnowledgeRevisionModel.findById(revisionId).lean();
+    appendAudit.mockClear();
+    const sectionWrite = vi.spyOn(AiEstimatorKnowledgeSectionModel, "findOneAndUpdate");
+    const lineWrite = vi.spyOn(AiEstimatorKnowledgeMainLineModel, "findOneAndUpdate");
+    const revisionWrite = vi.spyOn(AiEstimatorKnowledgeRevisionModel, "updateOne");
+    try {
+      await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion,
+        payload: { pmcMarginBps: 1_900, ...invalidRange }
+      })).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" });
+      expect(sectionWrite).not.toHaveBeenCalled();
+      expect(lineWrite).not.toHaveBeenCalled();
+      expect(revisionWrite).not.toHaveBeenCalled();
+      expect(appendAudit).not.toHaveBeenCalled();
+      expect(await AiEstimatorKnowledgeSectionModel.findOne(sectionFilter).lean()).toEqual(beforeSection);
+      expect(await AiEstimatorKnowledgeMainLineModel.findById(created.mainLineId).lean()).toEqual(beforeLine);
+      expect(await AiEstimatorKnowledgeRevisionModel.findById(revisionId).lean()).toEqual(beforeRevision);
+    } finally {
+      sectionWrite.mockRestore();
+      lineWrite.mockRestore();
+      revisionWrite.mockRestore();
+    }
+  });
+
+  it("limits inherited Lisno validation to new unchanged advanced copies and keeps scope repair independent", async () => {
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Inherited Lisno validation" });
+    const section = await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId: created.mainLineId, sectionKey: "advanced" }).lean();
+    const legacyPayload = { subVendorMinimumMarginBps: 1_000, subVendorMarginBps: 1_750 };
+    const copy = () => new AiEstimatorKnowledgeSectionModel({ ...section, payload: structuredClone(legacyPayload) });
+    await expect(copy().validate()).rejects.toThrow("multiples of 5%");
+    const inherited = copy();
+    inherited.$locals.inheritedLisnoMarginPayload = structuredClone(legacyPayload);
+    await expect(inherited.validate()).resolves.toBeUndefined();
+    expect(inherited.toObject()).not.toHaveProperty("$locals");
+    inherited.isNew = false;
+    await expect(inherited.validate()).rejects.toThrow("multiples of 5%");
+    const edited = copy();
+    edited.$locals.inheritedLisnoMarginPayload = structuredClone(legacyPayload);
+    edited.set("payload", { ...legacyPayload, modeDescription: "Changed after copy" });
+    await expect(edited.validate()).rejects.toThrow("multiples of 5%");
+    const wrongSection = copy();
+    wrongSection.set("sectionKey", "pricing");
+    wrongSection.$locals.inheritedLisnoMarginPayload = structuredClone(legacyPayload);
+    await expect(wrongSection.validate()).rejects.toThrow();
+    const scopeFlagOnly = copy();
+    scopeFlagOnly.$locals.allowInheritedScopeSelectionConflict = true;
+    await expect(scopeFlagOnly.validate()).rejects.toThrow("multiples of 5%");
+    const conflictingScope = { id: "pmc", modeKind: "pmc", fields: [],
+      inclusions: [{ id: "in", name: "Transport", selected: true }],
+      exclusions: [{ id: "out", name: "Transport", selected: true }] };
+    const bothPayload = { ...legacyPayload, modeConfigurations: [conflictingScope] };
+    const both = new AiEstimatorKnowledgeSectionModel({ ...section, payload: bothPayload });
+    both.$locals.inheritedLisnoMarginPayload = structuredClone(bothPayload);
+    await expect(both.validate()).rejects.toThrow("Uncheck or delete");
+    const bothAllowed = new AiEstimatorKnowledgeSectionModel({ ...section, payload: bothPayload });
+    bothAllowed.$locals.inheritedLisnoMarginPayload = structuredClone(bothPayload);
+    bothAllowed.$locals.allowInheritedScopeSelectionConflict = true;
+    await expect(bothAllowed.validate()).resolves.toBeUndefined();
+    for (const payload of [
+      { subVendorMarginBps: "1750" }, { subVendorMarginBps: 999 }, { subVendorMarginBps: 2_001 },
+      { subVendorMarginBps: 2_750 }, { subVendorMarginBps: -500 }, { subVendorMarginBps: 10_000 },
+      { subVendorMarginBps: 1_750.5 }, { subVendorMinimumMarginBps: 1_750, subVendorMarginBps: 1_000 },
+      { subVendorMinimumMarginBps: null, subVendorMarginBps: 1_750 },
+      { subVendorMinimumMarginBps: 1_000 }, { subVendorMinimumMarginBps: 0 },
+      { subVendorMinimumMarginBps: 0, subVendorMarginBps: null },
+      { subVendorMarginBps: 1_750, privateValue: true }
+    ]) {
+      const malformed = new AiEstimatorKnowledgeSectionModel({ ...section, payload });
+      malformed.$locals.inheritedLisnoMarginPayload = structuredClone(payload);
+      await expect(malformed.validate()).rejects.toThrow();
+    }
+    await expect(service.updateSection(ACTOR, created.mainLineId, created.draftRevisionId!, "advanced", {
+      expectedVersion: 1, expectedAggregateVersion: created.version,
+      payload: { ...legacyPayload, $locals: { inheritedLisnoMarginPayload: legacyPayload } }
+    })).rejects.toMatchObject({ code: "VALIDATION_ERROR", fields: {
+      "payload.$locals": expect.any(String),
+      "payload.subVendorMarginBps": expect.any(String)
+    } });
   });
 
   it("round-trips shared Mode calculation settings with version checks and isolated main lines", async () => {
@@ -333,14 +526,18 @@ describe("AI estimator knowledge item service", () => {
     const pmc = {
       id: "pmc", modeKind: "pmc", fields: [],
       inclusions: [{ id: "transport-in", name: "Transport", selected: true }],
-      exclusions: [{ id: "transport-out", name: "Transport", selected: true }, { id: "custom", name: "Night unloading", selected: false }]
+      exclusions: [{ id: "transport-out", name: "Transport", selected: false }, { id: "custom", name: "Night unloading", selected: false }]
     };
     const payload = { dependencies: [], modeConfigurations: [pmc, execution] };
     const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
       expectedVersion: advanced.version, expectedAggregateVersion: created.version, applicability: "configured", payload
     });
     expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(payload);
-    const updatedPayload = { ...payload, modeConfigurations: [{ ...pmc, inclusions: [{ ...pmc.inclusions[0]!, selected: false }] }, execution] };
+    const updatedPayload = { ...payload, modeConfigurations: [{
+      ...pmc,
+      inclusions: [{ ...pmc.inclusions[0]!, selected: false }],
+      exclusions: [{ ...pmc.exclusions[0]!, selected: true }, pmc.exclusions[1]!]
+    }, execution] };
     const updated = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
       expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: updatedPayload
     });
@@ -349,6 +546,198 @@ describe("AI estimator knowledge item service", () => {
     await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
       expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload
     })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+  });
+
+  it.each(["inclusions", "exclusions"] as const)("persists ordinary and final %s deletion without changing the other list or Main Line", async (list) => {
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: `Delete ${list} line` });
+    const other = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Independent scope line" });
+    const revisionId = created.draftRevisionId!;
+    const execution = { id: "sub-vendor", modeKind: "execution", executionSource: "sub_vendor", fields: [] };
+    const pmc = {
+      id: "pmc", modeKind: "pmc", fields: [],
+      inclusions: [
+        { id: "transport-in", name: "Transport", selected: true },
+        { id: "hoisting-in", name: "Custom hoisting", selected: false }
+      ],
+      exclusions: [
+        { id: "transport-out", name: "Transport", selected: false },
+        { id: "night-out", name: "Night unloading", selected: true },
+        { id: "cleanup-out", name: "Final cleanup", selected: false }
+      ]
+    };
+    const otherPayload = { modeConfigurations: [{
+      id: "other-pmc", modeKind: "pmc", fields: [],
+      inclusions: [{ id: "other-transport-in", name: "Transport", selected: false }],
+      exclusions: [{ id: "other-transport-out", name: "Transport", selected: true }]
+    }] };
+    const otherSaved = await service.updateSection(ACTOR, other.mainLineId, other.draftRevisionId!, "advanced", {
+      expectedVersion: 1, expectedAggregateVersion: other.version, payload: otherPayload
+    });
+    let payload = { modeConfigurations: [pmc, execution] };
+    let saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: 1, expectedAggregateVersion: created.version, payload
+    });
+    let remaining = pmc[list];
+    while (remaining.length > 0) {
+      remaining = remaining.slice(1);
+      payload = { modeConfigurations: [{ ...pmc, [list]: remaining }, execution] };
+      saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload
+      });
+      expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(payload);
+      expect(await service.getSection(ACTOR, other.mainLineId, other.draftRevisionId!, "advanced"))
+        .toMatchObject({ version: otherSaved.version, payload: otherPayload });
+      expect(await service.getItem(ACTOR, other.mainLineId)).toMatchObject({ version: otherSaved.aggregateVersion });
+    }
+    expect(saved.payload).toMatchObject({ modeConfigurations: [{ [list]: [] }, execution] });
+  });
+
+  it.each(["inclusions", "exclusions"] as const)("rejects an equivalent selection added to %s before payload, version or audit writes", async (list) => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: `Conflicting ${list} line` });
+    const revisionId = created.draftRevisionId!;
+    const pmc = {
+      id: "pmc", modeKind: "pmc", fields: [],
+      inclusions: [{ id: "transport-in", name: "Night unloading", selected: list !== "inclusions" }],
+      exclusions: [{ id: "transport-out", name: "　ＮＩＧＨＴ　 ＵＮＬＯＡＤＩＮＧ  ", selected: list !== "exclusions" }]
+    };
+    const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: 1, expectedAggregateVersion: created.version, payload: { modeConfigurations: [pmc] }
+    });
+    const beforeSection = await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId: created.mainLineId, revisionId, sectionKey: "advanced" }).lean();
+    const beforeLine = await AiEstimatorKnowledgeMainLineModel.findById(created.mainLineId).lean();
+    const beforeRevision = await AiEstimatorKnowledgeRevisionModel.findById(revisionId).lean();
+    appendAudit.mockClear();
+    const sectionWrite = vi.spyOn(AiEstimatorKnowledgeSectionModel, "findOneAndUpdate");
+    const lineWrite = vi.spyOn(AiEstimatorKnowledgeMainLineModel, "findOneAndUpdate");
+    const revisionWrite = vi.spyOn(AiEstimatorKnowledgeRevisionModel, "updateOne");
+    try {
+      await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion,
+        payload: { modeConfigurations: [{ ...pmc, [list]: [{ ...pmc[list][0]!, selected: true }] }] }
+      })).rejects.toMatchObject({
+        status: 400, code: "VALIDATION_ERROR", fields: {
+          "payload.modeConfigurations.0.inclusions.0.selected": expect.stringMatching(/Uncheck or delete/u),
+          "payload.modeConfigurations.0.exclusions.0.selected": expect.stringMatching(/Uncheck or delete/u)
+        }
+      });
+      expect(sectionWrite).not.toHaveBeenCalled();
+      expect(lineWrite).not.toHaveBeenCalled();
+      expect(revisionWrite).not.toHaveBeenCalled();
+      expect(appendAudit).not.toHaveBeenCalled();
+      expect(await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId: created.mainLineId, revisionId, sectionKey: "advanced" }).lean()).toEqual(beforeSection);
+      expect(await AiEstimatorKnowledgeMainLineModel.findById(created.mainLineId).lean()).toEqual(beforeLine);
+      expect(await AiEstimatorKnowledgeRevisionModel.findById(revisionId).lean()).toEqual(beforeRevision);
+      expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(saved.payload);
+    } finally {
+      sectionWrite.mockRestore();
+      lineWrite.mockRestore();
+      revisionWrite.mockRestore();
+    }
+  });
+
+  it.each([
+    ["inclusions", "uncheck"], ["inclusions", "delete"],
+    ["exclusions", "uncheck"], ["exclusions", "delete"]
+  ] as const)("reads legacy conflicting lists unchanged and repairs %s by %s", async (list, action) => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: `Legacy ${list} ${action}` });
+    const revisionId = created.draftRevisionId!;
+    const pmc = {
+      id: "pmc", modeKind: "pmc", fields: [],
+      inclusions: [{ id: "transport-in", name: "Transport", selected: true }],
+      exclusions: [{ id: "transport-out", name: " TRANSPORT ", selected: true }]
+    };
+    const legacyPayload = { modeConfigurations: [pmc] };
+    // Restore a pre-rule record directly in the isolated replica set; new writes must validate.
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne(
+      { mainLineId: created.mainLineId, revisionId, sectionKey: "advanced" },
+      { $set: { payload: legacyPayload } }
+    );
+    const before = await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId: created.mainLineId, revisionId, sectionKey: "advanced" }).lean();
+    appendAudit.mockClear();
+    const loaded = await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced");
+    expect(loaded.payload).toEqual(legacyPayload);
+    expect(await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId: created.mainLineId, revisionId, sectionKey: "advanced" }).lean()).toEqual(before);
+    expect(await service.getItem(ACTOR, created.mainLineId)).toMatchObject({ version: created.version });
+    expect(appendAudit).not.toHaveBeenCalled();
+    const repaired = { modeConfigurations: [{
+      ...pmc, [list]: action === "delete" ? [] : [{ ...pmc[list][0]!, selected: false }]
+    }] };
+    const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: loaded.version, expectedAggregateVersion: created.version, payload: repaired
+    });
+    expect(saved).toMatchObject({ version: loaded.version + 1, aggregateVersion: created.version + 1, payload: repaired });
+    expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(repaired);
+    expect(appendAudit).toHaveBeenCalledTimes(1);
+  });
+
+  it("copies a legacy active scope into a repairable Draft while preserving immutable history", async () => {
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Legacy active scope line" });
+    const revisionId = created.draftRevisionId!;
+    const overview = await service.updateSection(ACTOR, created.mainLineId, revisionId, "overview", {
+      expectedVersion: 1, expectedAggregateVersion: created.version, payload: { uomId: "uom-sqft" }
+    });
+    const pmc = { id: "pmc", modeKind: "pmc", fields: [],
+      inclusions: [{ id: "transport-in", name: "Transport", selected: true }],
+      exclusions: [{ id: "transport-out", name: "Transport", selected: false }]
+    };
+    const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: 1, expectedAggregateVersion: overview.aggregateVersion, payload: { modeConfigurations: [pmc] }
+    });
+    const active = await service.activate(ACTOR, created.mainLineId, revisionId, { expectedVersion: saved.aggregateVersion });
+    const legacyPayload = { modeConfigurations: [{ ...pmc, exclusions: [{ ...pmc.exclusions[0]!, selected: true }] }] };
+    // Simulate history created before the selection constraint, never an application write.
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne(
+      { mainLineId: created.mainLineId, revisionId, sectionKey: "advanced" }, { $set: { payload: legacyPayload } }
+    );
+    const historicalSection = await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId: created.mainLineId, revisionId, sectionKey: "advanced" }).lean();
+    const historicalRevision = await AiEstimatorKnowledgeRevisionModel.findById(revisionId).lean();
+    await expect(new AiEstimatorKnowledgeSectionModel(historicalSection).validate()).rejects.toThrow(/Uncheck or delete/u);
+    const draftLine = await service.createRevision(ACTOR, created.mainLineId, { expectedVersion: active.version });
+    const draft = await service.getSection(ACTOR, created.mainLineId, draftLine.draftRevisionId!, "advanced");
+    expect(draft.payload).toMatchObject(legacyPayload);
+    await expect(service.updateSection(ACTOR, created.mainLineId, draftLine.draftRevisionId!, "advanced", {
+      expectedVersion: draft.version, expectedAggregateVersion: draftLine.version, payload: draft.payload
+    })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    await expect(service.activate(ACTOR, created.mainLineId, draftLine.draftRevisionId!, {
+      expectedVersion: draftLine.version
+    })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    await service.updateSection(ACTOR, created.mainLineId, draftLine.draftRevisionId!, "advanced", {
+      expectedVersion: draft.version, expectedAggregateVersion: draftLine.version,
+      payload: { ...draft.payload, modeConfigurations: [pmc] }
+    });
+    expect(await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId: created.mainLineId, revisionId, sectionKey: "advanced" }).lean()).toEqual(historicalSection);
+    expect(await AiEstimatorKnowledgeRevisionModel.findById(revisionId).lean()).toEqual(historicalRevision);
+  });
+
+  it("keeps inherited-scope permission internal and preserves structural model validation", async () => {
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Inherited scope validation line" });
+    const section = await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId: created.mainLineId, sectionKey: "advanced" }).lean();
+    const pmc = { id: "pmc", modeKind: "pmc", fields: [],
+      inclusions: [{ id: "transport-in", name: "Transport", selected: true }],
+      exclusions: [{ id: "transport-out", name: "Transport", selected: true }]
+    };
+    const inherited = new AiEstimatorKnowledgeSectionModel({ ...section, payload: { modeConfigurations: [pmc] } });
+    inherited.$locals.allowInheritedScopeSelectionConflict = true;
+    await expect(inherited.validate()).resolves.toBeUndefined();
+    expect(inherited.toObject()).not.toHaveProperty("$locals");
+    const malformed = new AiEstimatorKnowledgeSectionModel({ ...section, payload: { modeConfigurations: [{
+      ...pmc, inclusions: [{ ...pmc.inclusions[0]!, id: "", privateValue: "not-allowed" }]
+    }] } });
+    malformed.$locals.allowInheritedScopeSelectionConflict = true;
+    await expect(malformed.validate()).rejects.toThrow();
+    await expect(service.updateSection(ACTOR, created.mainLineId, created.draftRevisionId!, "advanced", {
+      expectedVersion: 1, expectedAggregateVersion: created.version,
+      payload: { modeConfigurations: [pmc], $locals: { allowInheritedScopeSelectionConflict: true } }
+    })).rejects.toMatchObject({ code: "VALIDATION_ERROR", fields: {
+      "payload.$locals": expect.any(String),
+      "payload.modeConfigurations.0.inclusions.0.selected": expect.any(String),
+      "payload.modeConfigurations.0.exclusions.0.selected": expect.any(String)
+    } });
   });
 
   it("coordinates Overview Surface assignments, preserves Priority, and retains unavailable history", async () => {
