@@ -1,3 +1,4 @@
+import { ProjectChatNavigation } from "../messages";
 import { Link, useParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthProvider";
@@ -24,6 +25,7 @@ export function FinanceProjectPage() {
           : "Review the approved commercial baseline and record actual project costs."}
         breadcrumb={<Link to="/finance">Back to Project finance</Link>}
       />
+      <ProjectChatNavigation projectId={projectId} overviewTo={`/finance/projects/${projectId}`} overviewLabel="Finance" />
       <ProjectFinancePanel projectId={projectId} />
       {canControlWorkflow ? <FinanceProjectWorkflowControl projectId={projectId} /> : null}
     </section>

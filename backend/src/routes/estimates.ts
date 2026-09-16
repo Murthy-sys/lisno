@@ -1,3 +1,4 @@
+import { createMongoRepository } from "../repositories/mongo.js";
 import { randomUUID } from "node:crypto";
 import mongoose from "mongoose";
 import { Router } from "express";
@@ -73,51 +74,54 @@ export function createEstimatesRouter(
   } catch (error) { next(error); } });
   router.put("/leads/:leadId/estimate", protectedRoute, requireOperation("PUT /leads/:leadId/estimate"), validateBody(estimateSchema), async (req, res, next) => { try {
     const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string);
-    let estimate = await EstimateModel.findOne({ leadId: lead.id, ownerId: req.authenticatedUser!.id });
-    const previousLines = estimate?.lineItems ?? [];
-    const lineItems = req.body.lineItems.map((line: z.infer<typeof estimateLineSchema>, index: number) => ({
-      id: typeof previousLines[index]?.id === "string"
-        ? previousLines[index].id
-        : `estimate-line-${randomUUID()}`,
-      ...line,
-      amount: line.included ? Math.round(line.quantity * line.rate) : 0
-    }));
-    const subtotal = lineItems.reduce((sum: number, line: { amount: number }) => sum + line.amount, 0);
-    const gst = Math.round(subtotal * .18);
-    const leadProjectId = lead.projectId ?? null;
-    const estimateProjectId = estimate?.projectId ?? null;
-    if (
-      leadProjectId !== null &&
-      estimateProjectId !== null &&
-      leadProjectId !== estimateProjectId
-    ) {
-      throw new ApiError(
-        409,
-        "ESTIMATE_PROJECT_CONFLICT",
-        "The estimate and lead are linked to different projects."
-      );
-    }
-    if (estimate && !["draft", "designer_changes_requested", "client_changes_requested"].includes(estimate.status)) {
-      throw new ApiError(409, "ESTIMATE_LOCKED", "This estimate is locked while another person is reviewing it.");
-    }
-    if (!estimate) {
-      estimate = new EstimateModel({ _id: `estimate-${randomUUID()}`, leadId: lead.id, ownerId: req.authenticatedUser!.id, projectId: leadProjectId, version: 1, status: "draft" });
-    } else if (estimate.projectId == null && leadProjectId !== null) {
-      estimate.projectId = leadProjectId;
-    }
-    estimate.propertyType = req.body.propertyType;
-    estimate.rooms = req.body.rooms;
-    estimate.scopes = req.body.scopes;
-    estimate.lineItems = lineItems;
-    estimate.subtotal = subtotal;
-    estimate.gst = gst;
-    estimate.total = subtotal + gst;
-    if (estimate.status !== "draft") {
-      estimate.status = "draft";
-      estimate.version += 1;
-    }
-    await estimate.save();
-    res.json({ data: await estimatorEstimate(req.authenticatedUser!, estimate.toObject()) });
+    const savedEstimate = await withMongoTransaction(async (session) => {
+      let estimate = await EstimateModel.findOne({ leadId: lead.id, ownerId: req.authenticatedUser!.id }).session(session);
+      const previousLines = estimate?.lineItems ?? [];
+      const lineItems = req.body.lineItems.map((line: z.infer<typeof estimateLineSchema>, index: number) => ({
+        id: typeof previousLines[index]?.id === "string"
+          ? previousLines[index].id
+          : `estimate-line-${randomUUID()}`,
+        ...line,
+        amount: line.included ? Math.round(line.quantity * line.rate) : 0
+      }));
+      const subtotal = lineItems.reduce((sum: number, line: { amount: number }) => sum + line.amount, 0);
+      const gst = Math.round(subtotal * .18);
+      const leadProjectId = lead.projectId ?? null;
+      const estimateProjectId = estimate?.projectId ?? null;
+      if (
+        leadProjectId !== null &&
+        estimateProjectId !== null &&
+        leadProjectId !== estimateProjectId
+      ) {
+        throw new ApiError(
+          409,
+          "ESTIMATE_PROJECT_CONFLICT",
+          "The estimate and lead are linked to different projects."
+        );
+      }
+      if (estimate && !["draft", "designer_changes_requested", "client_changes_requested"].includes(estimate.status)) {
+        throw new ApiError(409, "ESTIMATE_LOCKED", "This estimate is locked while another person is reviewing it.");
+      }
+      if (!estimate) {
+        estimate = new EstimateModel({ _id: `estimate-${randomUUID()}`, leadId: lead.id, ownerId: req.authenticatedUser!.id, projectId: leadProjectId, version: 1, status: "draft" });
+      } else if (estimate.projectId == null && leadProjectId !== null) {
+        estimate.projectId = leadProjectId;
+      }
+      estimate.propertyType = req.body.propertyType;
+      estimate.rooms = req.body.rooms;
+      estimate.scopes = req.body.scopes;
+      estimate.lineItems = lineItems;
+      estimate.subtotal = subtotal;
+      estimate.gst = gst;
+      estimate.total = subtotal + gst;
+      if (estimate.status !== "draft") {
+        estimate.status = "draft";
+        estimate.version += 1;
+      }
+      await estimate.save({ session });
+      return estimate.toObject();
+    });
+    res.json({ data: await estimatorEstimate(req.authenticatedUser!, savedEstimate) });
   } catch (error) { next(error); } });
   router.post("/leads/:leadId/estimate/submit", protectedRoute, requireOperation("POST /leads/:leadId/estimate/submit"), async (req, res, next) => { try {
     const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string);
@@ -139,12 +143,20 @@ export function createEstimatesRouter(
       });
       return;
     }
-    estimate.approvalRequired = approvalRequired;
-    estimate.status = "pending_manager_assignment";
-    estimate.submittedAt = submittedAt;
-    estimate.reviews.push({ actorId: req.authenticatedUser!.id, action: "submitted", note: "", occurredAt: new Date() });
-    await estimate.save();
-    res.json({ data: await estimatorEstimate(req.authenticatedUser!, estimate.toObject()) });
+    const savedEstimate = await withMongoTransaction(async (session) => {
+      const current = await EstimateModel.findOne({
+        _id: estimate._id, ownerId: req.authenticatedUser!.id,
+        version: estimate.version, status: "draft", total: { $gt: 1_500_000 }
+      }).session(session);
+      if (!current) throw new ApiError(409, "ESTIMATE_LOCKED", "The estimate changed before it could be submitted.");
+      current.approvalRequired = true;
+      current.status = "pending_manager_assignment";
+      current.submittedAt = submittedAt;
+      current.reviews.push({ actorId: req.authenticatedUser!.id, action: "submitted", note: "", occurredAt: submittedAt });
+      await current.save({ session });
+      return current.toObject();
+    });
+    res.json({ data: await estimatorEstimate(req.authenticatedUser!, savedEstimate) });
   } catch (error) { next(error); } });
 
   router.get("/estimates/:estimateId/pdf", protectedRoute, requireOperation("GET /estimates/:estimateId/pdf"), async (req, res, next) => { try {
@@ -221,12 +233,15 @@ export function createEstimatesRouter(
   } catch (error) { next(error); } });
 
   router.post("/estimates/:estimateId/designer-decision", protectedRoute, requireOperation("POST /estimates/:estimateId/designer-decision"), validateBody(decisionSchema), async (req, res, next) => { try {
-    const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, status: "pending_designer_approval", assignedDesignerId: req.authenticatedUser!.id });
-    if (!estimate) throw new ApiError(409, "ESTIMATE_NOT_REVIEWABLE", "This estimate is not assigned to you for review.");
-    estimate.status = req.body.decision === "approve" ? "ready_for_client" : "designer_changes_requested";
-    estimate.reviews.push({ actorId: req.authenticatedUser!.id, action: req.body.decision === "approve" ? "designer_approved" : "designer_changes_requested", note: req.body.note, occurredAt: new Date() });
-    await estimate.save();
-    res.json({ data: mapEstimate(estimate.toObject()) });
+    const savedEstimate = await withMongoTransaction(async (session) => {
+      const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, status: "pending_designer_approval", assignedDesignerId: req.authenticatedUser!.id }).session(session);
+      if (!estimate) throw new ApiError(409, "ESTIMATE_NOT_REVIEWABLE", "This estimate is not assigned to you for review.");
+      estimate.status = req.body.decision === "approve" ? "ready_for_client" : "designer_changes_requested";
+      estimate.reviews.push({ actorId: req.authenticatedUser!.id, action: req.body.decision === "approve" ? "designer_approved" : "designer_changes_requested", note: req.body.note, occurredAt: new Date() });
+      await estimate.save({ session });
+      return estimate.toObject();
+    });
+    res.json({ data: mapEstimate(savedEstimate) });
   } catch (error) { next(error); } });
 
   router.post("/estimates/:estimateId/send-client", protectedRoute, requireOperation("POST /estimates/:estimateId/send-client"), async (req, res, next) => { try {
@@ -328,6 +343,7 @@ async function withMongoTransaction<T>(
   try {
     let result!: T;
     await session.withTransaction(async () => {
+      await createMongoRepository(session).coordinateAuthorizationMutation();
       result = await operation(session);
     });
     return result;

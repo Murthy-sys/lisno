@@ -25,6 +25,8 @@ class FakeXMLHttpRequest {
   method = "";
   url = "";
   sentBody: Document | XMLHttpRequestBodyInit | null = null;
+  timeout = 0;
+  abort = vi.fn(() => this.onabort?.());
 
   constructor() {
     FakeXMLHttpRequest.instances.push(this);
@@ -56,6 +58,22 @@ afterEach(() => {
 });
 
 describe("apiClient", () => {
+  it("opens chat streams with header authentication, cancellation, and no global loading indicator", async () => {
+    tokenStorage.set("synthetic-chat-stream-token");
+    const controller = new AbortController();
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(": heartbeat\n\n", { headers: { "Content-Type": "text/event-stream" } }));
+    const response = await apiClient.stream("/projects/a/chat/events?cursor=opaque", { signal: controller.signal });
+    const [url, options] = fetch.mock.calls[0]!;
+    expect(String(url)).toBe("/api/v1/projects/a/chat/events?cursor=opaque");
+    expect(new Headers(options?.headers).get("Authorization")).toBe("Bearer synthetic-chat-stream-token");
+    expect(new Headers(options?.headers).get("Accept")).toBe("text/event-stream");
+    expect(options?.signal).toBe(controller.signal);
+    expect(options?.cache).toBe("no-store");
+    expect(requestActivity.getSnapshot()).toBe(0);
+    expect(await response.text()).toBe(": heartbeat\n\n");
+    tokenStorage.clear();
+  });
+
   it("keeps automatic POST loading local and forwards cancellation to fetch", async () => {
     const controller = new AbortController();
     const fetch = vi.spyOn(globalThis, "fetch").mockImplementationOnce((_url, init) => new Promise((_resolve, reject) => {
@@ -351,7 +369,52 @@ describe("apiClient", () => {
     const upload = apiClient.postMultipartWithProgress("/design-versions", new FormData(), vi.fn());
     expect(requestActivity.getSnapshot()).toBe(1);
     XMLHttpRequest.instances[0][event]?.();
-    await expect(upload).rejects.toBeInstanceOf(ApiError);
+    if (event === "onabort") await expect(upload).rejects.toMatchObject({ name: "AbortError" });
+    else await expect(upload).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("cancels uploads and ignores captured late progress without affecting a new token", async () => {
+    const Xhr = installFakeXMLHttpRequest();
+    const controller = new AbortController();
+    const progress = vi.fn();
+    const upload = apiClient.postMultipartWithProgress("/upload", new FormData(), progress, { signal: controller.signal, timeoutMs: 30_000 });
+    const xhr = Xhr.instances[0];
+    const lateProgress = xhr.upload.onprogress;
+    expect(xhr.timeout).toBe(30_000);
+    controller.abort();
+    await expect(upload).rejects.toMatchObject({ name: "AbortError" });
+    lateProgress?.({ lengthComputable: true, loaded: 10, total: 10 } as ProgressEvent);
+    expect(progress).not.toHaveBeenCalled();
+    expect(xhr.abort).toHaveBeenCalledOnce();
+    expect(xhr.onload).toBeNull();
+    expect(requestActivity.getSnapshot()).toBe(0);
+  });
+
+  it("does not construct an upload when its signal was already aborted", async () => {
+    const Xhr = installFakeXMLHttpRequest();
+    const controller = new AbortController();
+    controller.abort();
+    await expect(apiClient.postMultipartWithProgress("/upload", new FormData(), vi.fn(), { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+    expect(Xhr.instances).toHaveLength(0);
+  });
+
+  it("streams bounded quiet downloads with real byte progress and safe filename fallback", async () => {
+    const progress = vi.fn();
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), { headers: {
+      "Content-Length": "3", "Content-Type": "application/zip", "Content-Disposition": "attachment; filename*=UTF-8''%bad%; filename=\"sample.zip\""
+    } }));
+    const download = await apiClient.getBlob("/download", { showGlobalLoader: false, maxBytes: 3, onProgress: progress });
+    expect(download.blob.size).toBe(3);
+    expect(download.filename).toBe("sample.zip");
+    expect(progress).toHaveBeenLastCalledWith({ loadedBytes: 3, totalBytes: 3 });
+    expect(requestActivity.getSnapshot()).toBe(0);
+  });
+
+  it.each([true, false])("rejects oversized downloads with a known content length: %s", async (known) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), {
+      headers: known ? { "Content-Length": "3" } : {}
+    }));
+    await expect(apiClient.getBlob("/download", { maxBytes: 2 })).rejects.toMatchObject({ code: "FILE_TOO_LARGE" });
   });
 
   it("clears multipart activity after an invalid response or synchronous send failure", async () => {

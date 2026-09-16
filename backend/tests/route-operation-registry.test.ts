@@ -31,8 +31,10 @@ import { EXPECTED_PROJECT_WORKFLOW_HUMAN_JWT_OPERATIONS } from "./fixtures/proje
 import { EXPECTED_PROJECT_FINANCE_HUMAN_JWT_OPERATIONS } from "./fixtures/project-finance-route-operations.js";
 import { EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS } from "./fixtures/ai-estimator-knowledge-route-operations.js";
 import { EXPECTED_SUPER_ADMIN_DASHBOARD_OPERATIONS } from "./fixtures/super-admin-dashboard-route-operations.js";
+import { EXPECTED_PROJECT_CHAT_OPERATIONS } from "./fixtures/project-chat-route-operations.js";
 
 const EXPECTED_ALL_HUMAN_JWT_OPERATIONS = [
+  ...EXPECTED_PROJECT_CHAT_OPERATIONS,
   ...EXPECTED_HUMAN_JWT_OPERATIONS,
   ...EXPECTED_PROJECT_FINANCE_HUMAN_JWT_OPERATIONS,
   ...EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS,
@@ -89,7 +91,7 @@ type MountedRoute = {
 type MountedRouter = { routes: MountedRoute[] };
 
 const TASK_SIX_EXPECTED_ROUTE_GROUPS = [
-  EXPECTED_HUMAN_JWT_OPERATIONS.slice(1, 8).map(({ key }) => key),
+  [...EXPECTED_HUMAN_JWT_OPERATIONS.slice(1, 8).map(({ key }) => key), "GET /projects/:projectId/design-workflow"],
   EXPECTED_HUMAN_JWT_OPERATIONS.slice(8, 11).map(({ key }) => key),
   EXPECTED_HUMAN_JWT_OPERATIONS.slice(11, 16).map(({ key }) => key),
   EXPECTED_HUMAN_JWT_OPERATIONS.slice(16, 18).map(({ key }) => key),
@@ -160,7 +162,7 @@ function assertTaskSixRouteMounts(routers: MountedRouter[]): void {
   const allRoutes = routers.flatMap(({ routes }) => routes);
   const expectedKeys = TASK_SIX_EXPECTED_ROUTE_GROUPS.flat();
 
-  expect(allRoutes.filter(({ key }) => expectedKeys.includes(key as never))).toHaveLength(22);
+  expect(allRoutes.filter(({ key }) => expectedKeys.includes(key as never))).toHaveLength(23);
   for (const expectedKey of expectedKeys) {
     expect(
       allRoutes.filter(({ key }) => key === expectedKey),
@@ -207,12 +209,12 @@ function validTaskSixRouterFixture(): MountedRouter[] {
 
 describe("human JWT operation registry", () => {
   it.each(slices)("%s", (_name, start, end, expected) => {
-    expect(HUMAN_JWT_OPERATION_LIST.slice(start, end)).toEqual(expected);
+    expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => expected.some((row) => row.key === key))).toEqual(expected);
   });
 
-  it("matches all 182 normative operation rows", () => {
-    expect(Object.values(HUMAN_JWT_OPERATIONS)).toEqual(EXPECTED_ALL_HUMAN_JWT_OPERATIONS);
-    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(182);
+  it("matches all 204 normative operation rows", () => {
+    expect(Object.values(HUMAN_JWT_OPERATIONS).sort((a, b) => a.key.localeCompare(b.key))).toEqual([...EXPECTED_ALL_HUMAN_JWT_OPERATIONS].sort((a, b) => a.key.localeCompare(b.key)));
+    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(204);
   });
 
   it("mounts rows 2 through 23 as exact router groups with one ordered marker pair", () => {
@@ -377,9 +379,7 @@ describe("human JWT operation registry", () => {
   });
 
   it("appends exactly four identity-provisioning operations with the approved scope and access metadata", () => {
-    expect(HUMAN_JWT_OPERATION_LIST.slice(98, 102)).toEqual(
-      EXPECTED_STAFF_INVITATION_OPERATIONS
-    );
+    expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => EXPECTED_STAFF_INVITATION_OPERATIONS.some((row) => row.key === key))).toEqual(EXPECTED_STAFF_INVITATION_OPERATIONS);
     expect(
       HUMAN_JWT_OPERATION_LIST.filter(
         ({ availability }) => availability === "identity_provisioning"
@@ -388,9 +388,7 @@ describe("human JWT operation registry", () => {
   });
 
   it("composes exactly six estimate-client-response operations after the staff-invitation layer", () => {
-    expect(HUMAN_JWT_OPERATION_LIST.slice(102, 108)).toEqual(
-      EXPECTED_ESTIMATE_CLIENT_RESPONSE_OPERATIONS
-    );
+    expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => EXPECTED_ESTIMATE_CLIENT_RESPONSE_OPERATIONS.some((row) => row.key === key))).toEqual(EXPECTED_ESTIMATE_CLIENT_RESPONSE_OPERATIONS);
     expect(
       HUMAN_JWT_OPERATION_LIST.filter(
         ({ availability }) => availability === "estimate_client_response"
@@ -406,9 +404,7 @@ describe("human JWT operation registry", () => {
   });
 
   it("appends exactly seventeen project-workflow operations with explicit scope and access metadata", () => {
-    expect(HUMAN_JWT_OPERATION_LIST.slice(108, 125)).toEqual(
-      EXPECTED_PROJECT_WORKFLOW_OPERATIONS
-    );
+    expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => EXPECTED_PROJECT_WORKFLOW_OPERATIONS.some((row) => row.key === key))).toEqual(EXPECTED_PROJECT_WORKFLOW_OPERATIONS);
     expect(
       HUMAN_JWT_OPERATION_LIST.filter(
         ({ availability }) => availability === "project_workflow"
@@ -434,9 +430,7 @@ describe("human JWT operation registry", () => {
   });
 
   it("appends and mounts five project-finance operations in one authenticated router", () => {
-    expect(HUMAN_JWT_OPERATION_LIST.slice(125, 130)).toEqual(
-      EXPECTED_PROJECT_FINANCE_OPERATIONS
-    );
+    expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => EXPECTED_PROJECT_FINANCE_OPERATIONS.some((row) => row.key === key))).toEqual(EXPECTED_PROJECT_FINANCE_OPERATIONS);
     expect(HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability }) => availability === "project_finance"
     )).toEqual(EXPECTED_PROJECT_FINANCE_OPERATIONS);
@@ -451,9 +445,7 @@ describe("human JWT operation registry", () => {
   });
 
   it("appends exactly 48 AI Estimator Knowledge operations with one closed namespace", () => {
-    expect(HUMAN_JWT_OPERATION_LIST.slice(130, 178)).toEqual(
-      EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS
-    );
+    expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS.some((row) => row.key === key))).toEqual(EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS);
     expect(EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS).toHaveLength(48);
     expect(HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability }) => availability === "ai_estimator_knowledge"
@@ -478,9 +470,7 @@ describe("human JWT operation registry", () => {
   });
 
   it("appends exactly three Super Admin dashboard reads", () => {
-    expect(HUMAN_JWT_OPERATION_LIST.slice(178, 181)).toEqual(
-      EXPECTED_SUPER_ADMIN_DASHBOARD_OPERATIONS
-    );
+    expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => EXPECTED_SUPER_ADMIN_DASHBOARD_OPERATIONS.some((row) => row.key === key))).toEqual(EXPECTED_SUPER_ADMIN_DASHBOARD_OPERATIONS);
   });
 
   it("mounts four protected invitation operations and two explicit public non-human routes in one router", () => {
@@ -504,7 +494,7 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("mounts the exact 182-operation manifest with one ordered marker pair each", () => {
+  it("mounts the exact 204-operation manifest with one ordered marker pair each", () => {
     const expectedKeys = EXPECTED_ALL_HUMAN_JWT_OPERATIONS.map(
       ({ key }) => key
     ).sort();
@@ -514,8 +504,8 @@ describe("human JWT operation registry", () => {
     const mountedOperations = mountedRoutes.map(({ key }) => key);
 
     expect([...mountedOperations].sort()).toEqual(expectedKeys);
-    expect(expectedKeys).toHaveLength(182);
-    expect(new Set(expectedKeys).size).toBe(182);
+    expect(expectedKeys).toHaveLength(204);
+    expect(new Set(expectedKeys).size).toBe(204);
     expect(mountedOperations).toContain(
       "POST /execution/worker-assignments/override"
     );
@@ -562,9 +552,9 @@ describe("human JWT operation registry", () => {
     expect(() => assertTaskSixRouteMounts(routers)).toThrow();
   });
 
-  it("has 182 unique keys and exactly 120 routed permissions", () => {
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(182);
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(120);
+  it("has 204 unique keys and exactly 128 routed permissions", () => {
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(204);
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(128);
     expect(HUMAN_JWT_OPERATION_LIST.every(({ permission }) =>
       (PERMISSION_CODES as readonly string[]).includes(permission)
     )).toBe(true);

@@ -1,6 +1,19 @@
 import { createDesignWorkflowStateService } from "./services/design-workflow-state.service.js";
 import { createDesignWorkflowStateRouter } from "./routes/design-workflow-state.js";
 import express, { type RequestHandler } from "express";
+import type { ProjectChatRepository } from "./repositories/project-chat.js";
+import { createMemoryProjectChatRepository } from "./repositories/project-chat-memory.js";
+import { createProjectChatService } from "./services/project-chat.service.js";
+import { createProjectChatEventsHub } from "./services/project-chat-events.service.js";
+import { createProjectChatStreamService } from "./services/project-chat-stream.service.js";
+import { createProjectChatTypingService } from "./services/project-chat-typing.service.js";
+import { createProjectChatRouter } from "./routes/project-chat.js";
+import { createProjectChatAttachmentsRouter } from "./routes/project-chat-attachments.js";
+import { createProjectChatAttachmentService } from "./services/project-chat-attachments.service.js";
+import { createProjectChatAttachmentPolicy } from "./domain/project-chat-attachment-policy.js";
+import type { ChatAttachmentPolicy } from "./contracts/project-chat.js";
+import { hasManagedStorage } from "./storage/managed-storage.js";
+import { createProjectChatEventsRouter } from "./routes/project-chat-events.js";
 import mongoose from "mongoose";
 import path from "node:path";
 
@@ -106,6 +119,9 @@ import { createLocalStorage } from "./storage/local-storage.js";
 import type { FileStorage } from "./storage/storage.js";
 
 export interface AppDependencies {
+  chatRepository?: ProjectChatRepository;
+  chatAttachmentPolicy?: ChatAttachmentPolicy;
+  chatEvents?: { watchChanges?: boolean; pollIntervalMs?: number; heartbeatMs?: number };
   repository?: AppRepository;
   auth: AuthConfig;
   clock?: Clock;
@@ -237,6 +253,22 @@ export function createApp(dependencies: AppDependencies) {
     clock
   );
   const projectActivityService = createProjectActivityService(repository);
+  const chatRepository = dependencies.chatRepository ?? createMemoryProjectChatRepository(repository);
+  const attachmentPolicy = dependencies.chatAttachmentPolicy ?? createProjectChatAttachmentPolicy();
+  const projectChatService = createProjectChatService({ repository, audit: auditService, clock, chatRepository, attachmentPolicy });
+  const projectChatTyping = createProjectChatTypingService({ chatRepository, clock });
+  const chatAttachments = createProjectChatAttachmentService({
+    repository, audit: auditService, clock, chatRepository, policy: attachmentPolicy,
+    storage: hasManagedStorage(storage) ? storage.managed : undefined
+  });
+  const projectChatHub = createProjectChatEventsHub({
+    watchChanges: chatRepository.kind === "mongo" && dependencies.chatEvents?.watchChanges !== false,
+    pollIntervalMs: dependencies.chatEvents?.pollIntervalMs
+  });
+  const projectChatStream = createProjectChatStreamService({
+    auth: authService, chat: projectChatService, typing: projectChatTyping, hub: projectChatHub,
+    heartbeatMs: dependencies.chatEvents?.heartbeatMs
+  });
   const projectService = createProjectService(repository, auditService, clock);
   const leadService = createLeadService(repository, auditService, clock);
   const estimatePdfService =
@@ -368,6 +400,9 @@ export function createApp(dependencies: AppDependencies) {
   app.use(express.json({ limit: "300kb" }));
   app.use("/api/v1", healthRouter);
   app.use("/api/v1", createAuthRouter(authService, authRateLimit));
+  app.use("/api/v1", createProjectChatRouter(authService, projectChatService, projectChatTyping));
+  app.use("/api/v1", createProjectChatAttachmentsRouter(authService, chatAttachments));
+  app.use("/api/v1", createProjectChatEventsRouter(authService, projectChatStream));
   app.use("/api/v1", createPasswordResetsRouter(passwordResetService));
   app.use(
     "/api/v1",
@@ -490,7 +525,10 @@ export function createApp(dependencies: AppDependencies) {
   app.use(notFoundHandler);
   app.use(errorHandler);
 
-  return app;
+  return Object.assign(app, {
+    closeProjectChat: () => projectChatStream.close(),
+    cleanupProjectChatAttachments: () => chatAttachments.cleanup()
+  });
 }
 
 const publicInvitationPaths = [

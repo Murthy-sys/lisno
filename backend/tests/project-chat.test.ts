@@ -1,0 +1,151 @@
+import { describe, it, expect } from "vitest";
+import { createChatFixture, chatSend } from "./helpers/project-chat.js";
+import { chatCursor, parseChatCursor } from "../src/domain/project-chat.js";
+describe("project chat messages and issues", () => {
+    it("saves Unicode text, ID mentions and same-project quotes without leaking private participant metadata", async () => {
+        const f = createChatFixture();
+        const client = f.actor("client-a");
+        const electric = f.actor("electric-a");
+        const first = await f.service.send(client, "a", chatSend("नमस्ते 👋 @Electric A", { mentions: [{ userId: "electric-a", start: 10, end: 21 }], priority: "critical", responsibleUserId: "electric-a" }));
+        const reply = await f.service.send(electric, "a", chatSend("On my way", { replyToId: first.id }));
+        expect(reply.replyTo).toEqual({ id: first.id, author: first.author, body: first.body });
+        expect(first).toMatchObject({ author: { id: "client-a" }, priority: "critical", issueStatus: "open", responsible: { id: "electric-a", available: true }, version: 1 });
+        const participants = await f.service.participants(client, "a");
+        expect(participants.items.every((row) => row.sources.length === 0 && row.selection === null)).toBe(true);
+        expect(JSON.stringify(participants)).not.toContain("chat.test");
+        await expect(f.service.summary(f.actor("client-b"), "a")).rejects.toMatchObject({ status: 404 });
+        await expect(f.service.send(client, "b", chatSend())).rejects.toMatchObject({ status: 404 });
+        await expect(f.service.send(client, "a", chatSend("@Electric A", { mentions: [{ userId: "electric-b", start: 0, end: 11 }] }))).rejects.toMatchObject({ status: 400 });
+    });
+    it("counts all open issues, applies lifecycle permissions/CAS, and isolates projects", async () => {
+        const f = createChatFixture();
+        const client = f.actor("client-a"), worker = f.actor("electric-a"), manager = f.actor("manager-a");
+        const issue = await f.service.send(client, "a", chatSend("Urgent", { priority: "critical" }));
+        await f.service.send(client, "a", chatSend("Important", { priority: "important" }));
+        await f.service.send(f.actor("client-b"), "b", chatSend("Other project", { priority: "critical" }));
+        expect((await f.service.summary(client, "a")).counts).toMatchObject({ openCritical: 1, openImportant: 1 });
+        await expect(f.service.issue(worker, "a", issue.id, { action: "resolve", expectedVersion: 1, idempotencyKey: "worker-resolve", note: "Done" })).rejects.toMatchObject({ status: 403 });
+        await expect(f.service.issue(manager, "a", issue.id, { action: "resolve", expectedVersion: 1, idempotencyKey: "no-note-attempt" })).rejects.toMatchObject({ status: 400 });
+        const resolved = await f.service.issue(manager, "a", issue.id, { action: "resolve", expectedVersion: 1, idempotencyKey: "resolve-attempt", note: "Inspected and fixed" });
+        expect(resolved.issueStatus).toBe("resolved");
+        const retried = await f.service.issue(manager, "a", issue.id, { action: "resolve", expectedVersion: 1, idempotencyKey: "resolve-attempt", note: "Inspected and fixed" });
+        expect(retried.version).toBe(2);
+        expect(retried.issueHistory).toHaveLength(2);
+        await expect(f.service.issue(client, "a", issue.id, { action: "clear", expectedVersion: 1, idempotencyKey: "stale-change", note: "Clear" })).rejects.toMatchObject({ status: 409 });
+        const reopened = await f.service.issue(worker, "a", issue.id, { action: "reopen", expectedVersion: 2, idempotencyKey: "reopen-attempt", note: "Still happening" });
+        expect(reopened.priority).toBe("critical");
+        const lower = await f.service.issue(client, "a", issue.id, { action: "lower", expectedVersion: 3, idempotencyKey: "lower-attempt", note: "No longer urgent" });
+        expect(lower).toMatchObject({ priority: "important", issueStatus: "open" });
+        expect((await f.service.summary(client, "a")).counts).toMatchObject({ openCritical: 0, openImportant: 2 });
+        expect((await f.service.summary(f.actor("client-b"), "b")).counts.openCritical).toBe(1);
+    });
+    it("lets participants raise/escalate/self-assign and requires ownership to assign others", async () => {
+        const f = createChatFixture();
+        const client = f.actor("client-a"), worker = f.actor("electric-a");
+        const message = await f.service.send(client, "a", chatSend());
+        const raised = await f.service.issue(worker, "a", message.id, { action: "raise", priority: "important", expectedVersion: 1, idempotencyKey: "raise-attempt" });
+        expect(raised.raisedBy?.id).toBe(worker.id);
+        const assigned = await f.service.issue(client, "a", message.id, { action: "assign", responsibleUserId: client.id, expectedVersion: 2, idempotencyKey: "self-assign-attempt" });
+        expect(assigned.responsible?.id).toBe(client.id);
+        await expect(f.service.issue(client, "a", message.id, { action: "assign", responsibleUserId: "designer-a", expectedVersion: 3, idempotencyKey: "other-assign-attempt" })).rejects.toMatchObject({ status: 403 });
+        const critical = await f.service.issue(client, "a", message.id, { action: "escalate", expectedVersion: 3, idempotencyKey: "escalate-attempt" });
+        expect(critical.priority).toBe("critical");
+    });
+    it("deduplicates simultaneous first sends and rejects key reuse with a changed payload", async () => {
+        const f = createChatFixture();
+        const actor = f.actor("client-a"), input = chatSend("One save", { priority: "critical", clientMessageId: "concurrent-first" });
+        const replies = await Promise.all(Array.from({ length: 5 }, () => f.service.send(actor, "a", input)));
+        expect(new Set(replies.map((reply) => reply.id)).size).toBe(1);
+        expect((await f.service.messages(actor, "a", {})).items).toHaveLength(1);
+        expect((await f.service.summary(actor, "a")).counts.openCritical).toBe(1);
+        const audits = await f.repository.pageAuditEvents({ entityId: replies[0]!.id }, { limit: 50, offset: 0 });
+        expect(audits.items).toHaveLength(1);
+        await expect(f.service.send(actor, "a", { ...input, body: "Changed" })).rejects.toMatchObject({ code: "CHAT_IDEMPOTENCY_CONFLICT" });
+    });
+    it("returns bounded ordered older/newer/around/filter pages with whole-project counts", async () => {
+        const f = createChatFixture();
+        const actor = f.actor("client-a");
+        const saved = [];
+        for (let index = 0; index < 12; index++)
+            saved.push(await f.service.send(actor, "a", chatSend(`Message ${index}`, { priority: index % 3 === 0 ? "critical" : "normal" })));
+        const latest = await f.service.messages(actor, "a", { limit: 4 });
+        expect(latest.items.map((row) => row.body)).toEqual(["Message 8", "Message 9", "Message 10", "Message 11"]);
+        const older = await f.service.messages(actor, "a", { limit: 4, before: latest.olderCursor! });
+        expect(older.items.map((row) => row.body)).toEqual(["Message 4", "Message 5", "Message 6", "Message 7"]);
+        const newer = await f.service.messages(actor, "a", { limit: 4, after: older.newerCursor! });
+        expect(newer.items.map((row) => row.id)).toEqual(latest.items.map((row) => row.id));
+        const around = await f.service.messages(actor, "a", { limit: 5, around: saved[4]!.id });
+        expect(around.items.map((row) => row.body)).toEqual(["Message 2", "Message 3", "Message 4", "Message 5", "Message 6"]);
+        expect((await f.service.messages(actor, "a", { limit: 2, filter: "critical" })).items).toHaveLength(2);
+        expect((await f.service.summary(actor, "a")).counts.openCritical).toBe(4);
+        await expect(f.service.messages(actor, "a", { before: chatCursor("b", 1) })).rejects.toMatchObject({ status: 400 });
+        const foreign = await f.service.send(f.actor("client-b"), "b", chatSend());
+        await expect(f.service.messages(actor, "a", { around: foreign.id })).rejects.toMatchObject({ status: 404 });
+    });
+    it("tracks personal monotonic unread positions and filters private events while advancing raw cursors", async () => {
+        const f = createChatFixture();
+        const client = f.actor("client-a"), worker = f.actor("electric-a");
+        const baseline = await f.service.summary(client, "a");
+        const first = await f.service.send(client, "a", chatSend("@Electric A please check", { mentions: [{ userId: worker.id, start: 0, end: 11 }] }));
+        const second = await f.service.send(worker, "a", chatSend("Received"));
+        expect((await f.service.summary(worker, "a")).counts).toMatchObject({ unread: 1, unreadMentions: 1 });
+        await f.service.read(worker, "a", { messageId: second.id, sequence: second.sequence });
+        const oldRead = await f.service.read(worker, "a", { messageId: first.id, sequence: first.sequence });
+        expect(oldRead.lastReadSequence).toBe(second.sequence);
+        expect(oldRead.counts.unread).toBe(0);
+        const firstBatch = await f.service.events(client, "a", baseline.cursor, 2);
+        expect(firstBatch.events).toHaveLength(2);
+        expect(firstBatch.hasMore).toBe(true);
+        const privateBatch = await f.service.events(client, "a", firstBatch.cursor, 1);
+        expect(privateBatch.events).toEqual([]);
+        expect(parseChatCursor("a", privateBatch.cursor)).toBe(3);
+        expect(privateBatch.hasMore).toBe(false);
+        const own = await f.service.events(worker, "a", firstBatch.cursor);
+        expect(own.events[0]?.type).toBe("read.changed");
+        await expect(f.service.read(client, "a", { messageId: first.id, sequence: 999 })).rejects.toMatchObject({ status: 400 });
+        expect((await f.service.events(client, "a", chatCursor("b", 0))).resync).toBe(true);
+    });
+    it("enforces selection administration scope and removes access only after the last source disappears", async () => {
+        const f = createChatFixture();
+        const admin = f.actor("admin-a"), worker = f.actor("electric-b");
+        await expect(f.service.addParticipant(f.actor("admin-b"), "a", { userId: worker.id, reason: "Help", idempotencyKey: "outsider-add" })).rejects.toMatchObject({ status: 404 });
+        await expect(f.service.addParticipant(admin, "a", { userId: "plumber", reason: "Help", idempotencyKey: "excluded-trade" })).rejects.toMatchObject({ status: 400 });
+        const added = await f.service.addParticipant(admin, "a", { userId: worker.id, reason: "Selected trade support", idempotencyKey: "worker-add" });
+        const selection = added.items.find((row) => row.id === worker.id)!.selection!;
+        const saved = await f.service.send(worker, "a", chatSend("Joined"));
+        await f.service.revokeParticipant(admin, "a", selection.id, { expectedVersion: selection.version, reason: "Support complete", idempotencyKey: "worker-revoke" });
+        await expect(f.service.summary(worker, "a")).rejects.toMatchObject({ status: 404 });
+        await expect(f.service.send(worker, "a", chatSend("Joined", { clientMessageId: saved.clientMessageId }))).rejects.toMatchObject({ status: 404 });
+        expect((await f.service.messages(admin, "a", {})).items[0]!.author.id).toBe(worker.id);
+        const derived = await f.service.addParticipant(admin, "a", { userId: "electric-a", reason: "Support", idempotencyKey: "derived-add" });
+        const selected = derived.items.find((row) => row.id === "electric-a")!.selection!;
+        await f.service.revokeParticipant(admin, "a", selected.id, { expectedVersion: 1, reason: "Keep automatic assignment", idempotencyKey: "derived-remove" });
+        await expect(f.service.summary(f.actor("electric-a"), "a")).resolves.toBeDefined();
+    });
+    it("rechecks current role, deactivation, JWT expiry and session version on every read and retry", async () => {
+        const f = createChatFixture();
+        const worker = f.actor("electric-a");
+        const input = chatSend("Initial");
+        await f.service.send(worker, "a", input);
+        const user = await f.repository.findUserById(worker.id);
+        await f.repository.updateUserCredentials(worker.id, user!.version, user!.sessionVersion, { passwordHash: "new-unused", updatedAt: f.clock().toISOString() });
+        await expect(f.service.send(worker, "a", input)).rejects.toMatchObject({ status: 401 });
+        await expect(f.service.events(worker, "a", undefined)).rejects.toMatchObject({ status: 401 });
+        await expect(f.service.summary({ ...f.actor("client-a"), expiresAt: 1 }, "a")).rejects.toMatchObject({ code: "TOKEN_EXPIRED" });
+    });
+    it("rejects lone UTF-16 surrogates before persistence while preserving non-BMP Unicode", async () => {
+        const f = createChatFixture();
+        const actor = f.actor("client-a");
+        for (const body of [0xD800, 0xDC00].map((code) => `Broken ${String.fromCharCode(code)}`)) {
+            await expect(f.service.send(actor, "a", chatSend(body))).rejects.toMatchObject({status:400,code:"CHAT_INVALID_INPUT"});
+        }
+        expect((await f.service.summary(actor,"a")).latestMessageSequence).toBe(0);
+        const body = "Valid emoji 👩🏽‍💻 and non-BMP text 𐍈";
+        const input = chatSend(body);
+        const saved = await f.service.send(actor, "a", input);
+        expect(saved.body).toBe(body);
+        expect((await f.service.send(actor,"a",input)).id).toBe(saved.id);
+        expect((await f.service.messages(actor,"a",{})).items[0]!.body).toBe(body);
+    });
+
+});

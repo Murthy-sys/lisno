@@ -87,13 +87,13 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-09-09.designer-upload-delete.v1"
+      "2026-09-16.project-chat.v1"
     );
   });
 
-  it("publishes all 120 unique permissions with designer upload deletion in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(120);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(120);
+  it("publishes all 128 unique permissions with project chat in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(128);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(128);
     expect(PERMISSION_CODES).toContain("estimation.design_upload.delete");
     expect(PERMISSION_CODES).toContain("projects.initiate");
     expect(PERMISSION_CODES).toContain("organization.estimators.read");
@@ -107,7 +107,7 @@ describe("frontend authorization contract", () => {
       ...invitationPermissions,
       "access_request.create"
     ]);
-    expect(PERMISSION_CODES.slice(-15)).toEqual([
+    expect(PERMISSION_CODES.slice(-20)).toEqual([
       "execution.worker_assignment.override",
       ...procurementPermissions,
       ...projectFinancePermissions,
@@ -118,7 +118,8 @@ describe("frontend authorization contract", () => {
       "ai_estimator_knowledge.configuration.update",
       "ai_estimator_knowledge.configuration.lifecycle",
       "ai_estimator_knowledge.context.read",
-      "admin.dashboard.read"
+      "admin.dashboard.read",
+      "chat.read", "chat.send", "chat.issue", "chat.read_state", "chat.participants.manage"
     ]);
     expect(
       PERMISSION_CODES.filter((permission) =>
@@ -142,10 +143,11 @@ describe("frontend authorization contract", () => {
     ).toEqual(projectFinancePermissions);
   });
 
-  it("keeps the protected frontend registry at exactly 31 routes", () => {
-    expect(ROUTE_REGISTRY).toHaveLength(31);
+  it("keeps the protected frontend registry at exactly 33 routes", () => {
+    expect(ROUTE_REGISTRY).toHaveLength(33);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).toEqual(
       expect.arrayContaining([
+        "/project-messages", "/projects/:projectId/messages",
         "/designer/design-plans",
         "/admin/dashboard",
         "/admin/design-approvals",

@@ -223,13 +223,18 @@ export const PERMISSION_CODES = [
   "ai_estimator_knowledge.configuration.update",
   "ai_estimator_knowledge.configuration.lifecycle",
   "ai_estimator_knowledge.context.read",
-  "admin.dashboard.read"
+  "admin.dashboard.read",
+  "chat.read",
+  "chat.send",
+  "chat.issue",
+  "chat.read_state",
+  "chat.participants.manage"
 ] as const;
 
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-09-12.design-workflow-actions.v1" as const;
+  "2026-09-16.project-chat.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

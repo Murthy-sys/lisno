@@ -2,6 +2,8 @@ import { prepareEstimateClientReviewIndexes } from "./EstimateClientReviewRound.
 import { DesignPlanResponseProofModel } from "./DesignPlanResponseProof.js";
 import { DesignPlanReviewRoundModel } from "./DesignPlanReviewRound.js";
 import { ProjectWorkflowTaskModel } from "./ProjectWorkflowTask.js";
+import { ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel } from "./ProjectChat.js";
+import { ProjectChatAttachmentModel } from "./ProjectChatAttachment.js";
 import { ProjectFinanceBucketModel } from "./ProjectFinanceBucket.js";
 import { FinanceLedgerEntryModel } from "./FinanceLedgerEntry.js";
 import { FinanceEntryDocumentModel } from "./FinanceEntryDocument.js";
@@ -25,6 +27,8 @@ import { AiEstimatorKnowledgeUomModel } from "./AiEstimatorKnowledgeUom.js";
 import { AiEstimatorKnowledgeVendorModel } from "./AiEstimatorKnowledgeVendor.js";
 
 export async function initializeApplicationIndexes(): Promise<void> {
+  await ProjectChatAttachmentModel.init();
+  for (const model of [ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel]) await model.init();
   await UserModel.init();
   await UserInvitationModel.init();
   await PasswordResetRequestModel.init();

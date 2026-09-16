@@ -83,6 +83,15 @@ const environmentSchema = z.object({
     .pipe(z.array(z.string().url()).min(1)),
   UPLOADS_DIR: z.string().default("uploads"),
   MAX_UPLOAD_MB: z.coerce.number().positive().default(25),
+  CHAT_ATTACHMENTS_ENABLED: z.enum(["true", "false"]).default("true"),
+  CHAT_ATTACHMENT_MAX_FILE_MB: z.coerce.number().int().min(1).max(50).default(50),
+  CHAT_ATTACHMENT_MAX_MESSAGE_MB: z.coerce.number().int().min(1).max(100).default(100),
+  CHAT_ATTACHMENT_MAX_COUNT: z.coerce.number().int().min(1).max(10).default(10),
+  CHAT_ATTACHMENT_MAX_TRANSFERS: z.coerce.number().int().min(1).max(2).default(2),
+  CHAT_ATTACHMENT_MAX_STAGED_COUNT: z.coerce.number().int().min(1).max(20).default(20),
+  CHAT_ATTACHMENT_MAX_STAGED_MB: z.coerce.number().int().min(1).max(200).default(200),
+  CHAT_ATTACHMENT_TTL_SECONDS: z.coerce.number().int().min(60).max(86_400).default(86_400),
+  CHAT_RECORDING_MAX_SECONDS: z.coerce.number().int().min(1).max(300).default(300),
   OCR_LEASE_SECONDS: z.coerce.number().int().positive().default(300),
   OCR_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
   OCR_RETRY_INITIAL_SECONDS: z.coerce.number().positive().default(30),
@@ -104,6 +113,11 @@ const environmentSchema = z.object({
   SENDGRID_DELIVERY_TIMEOUT_SECONDS: z.coerce.number().int().min(30).max(600).optional(),
   ALLOW_DEMO_ACCOUNT_EXTERNAL_EMAIL: z.string().optional()
 }).superRefine((environment, context) => {
+  if (environment.CHAT_ATTACHMENT_MAX_MESSAGE_MB < environment.CHAT_ATTACHMENT_MAX_FILE_MB ||
+      environment.CHAT_ATTACHMENT_MAX_STAGED_MB < environment.CHAT_ATTACHMENT_MAX_MESSAGE_MB ||
+      environment.CHAT_ATTACHMENT_MAX_STAGED_COUNT < environment.CHAT_ATTACHMENT_MAX_COUNT) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["CHAT_ATTACHMENT_MAX_STAGED_MB"], message: "Chat staged limits must cover a complete message, and a message must allow the file limit." });
+  }
   if (environment.OCR_RETRY_MAX_SECONDS < environment.OCR_RETRY_INITIAL_SECONDS) {
     context.addIssue({
       code: z.ZodIssueCode.custom,

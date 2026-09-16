@@ -22,7 +22,8 @@ export interface HumanJwtOperation {
           | "project_finance"
           | "access_administration"
           | "ai_estimator_knowledge"
-          | "super_admin_dashboard";
+          | "super_admin_dashboard"
+          | "project_chat";
         projectReviewScope?: boolean;
       };
   operationClass: "read" | "admin" | "personal";
@@ -40,7 +41,8 @@ export interface HumanJwtOperation {
       | "project_workflow"
       | "project_finance"
       | "ai_estimator_knowledge"
-      | "super_admin_dashboard";
+      | "super_admin_dashboard"
+      | "project_chat";
 }
 
 export const HUMAN_JWT_OPERATION_LIST = [
@@ -231,6 +233,23 @@ export const HUMAN_JWT_OPERATION_LIST = [
   { key: "GET /admin/dashboard/projects", permission: "admin.dashboard.read", scope: { kind: "non_project", namespace: "super_admin_dashboard" }, operationClass: "read", superAdminBehavior: "global_read", availability: "super_admin_dashboard" },
   { key: "GET /admin/dashboard/workforce", permission: "admin.dashboard.read", scope: { kind: "non_project", namespace: "super_admin_dashboard" }, operationClass: "read", superAdminBehavior: "global_read", availability: "super_admin_dashboard" },
   { key: "DELETE /estimate-design-uploads/:uploadId", permission: "estimation.design_upload.delete", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "baseline" },
+  { key: "GET /project-messages", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_chat" },
+  { key: "GET /projects/:projectId/chat/attachment-policy", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_chat" },
+  { key: "POST /projects/:projectId/chat/attachments", permission: "chat.send", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
+  { key: "DELETE /projects/:projectId/chat/attachments/:attachmentId", permission: "chat.send", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
+  { key: "GET /projects/:projectId/chat/attachments/:attachmentId/content", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_chat" },
+  { key: "GET /projects/:projectId/chat/attachments/:attachmentId/preview", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_chat" },
+  { key: "GET /projects/:projectId/chat", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_chat" },
+  { key: "GET /projects/:projectId/chat/participants", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_chat" },
+  { key: "GET /projects/:projectId/chat/participant-options", permission: "chat.participants.manage", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_chat" },
+  { key: "POST /projects/:projectId/chat/participants", permission: "chat.participants.manage", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "project_chat" },
+  { key: "POST /projects/:projectId/chat/participants/:selectionId/revoke", permission: "chat.participants.manage", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "project_chat" },
+  { key: "GET /projects/:projectId/chat/messages", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_chat" },
+  { key: "POST /projects/:projectId/chat/messages", permission: "chat.send", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
+  { key: "PATCH /projects/:projectId/chat/messages/:messageId/issue", permission: "chat.issue", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "project_chat" },
+  { key: "PUT /projects/:projectId/chat/read", permission: "chat.read_state", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
+  { key: "PUT /projects/:projectId/chat/typing", permission: "chat.send", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
+  { key: "GET /projects/:projectId/chat/events", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_chat" },
 ] as const satisfies readonly HumanJwtOperation[];
 
 export type HumanJwtOperationKey =

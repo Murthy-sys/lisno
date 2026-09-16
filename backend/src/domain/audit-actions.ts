@@ -142,7 +142,21 @@ export const AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS = [
   "ai_estimator_knowledge_lifecycle_blocked"
 ] as const;
 
+export const PROJECT_CHAT_AUDIT_ACTIONS = [
+  "project_chat.attachment_reserved",
+  "project_chat.attachment_ready",
+  "project_chat.attachment_discarded",
+  "project_chat.attachment_deleted",
+  "project_chat.attachment_cleanup_failed",
+  "project_chat.message_created",
+  "project_chat.issue_changed",
+  "project_chat.participant_added",
+  "project_chat.read_changed",
+  "project_chat.participant_revoked"
+] as const;
+
 export const AUDIT_ACTIONS = [
+  ...PROJECT_CHAT_AUDIT_ACTIONS,
   ...EXISTING_AUDIT_ACTIONS,
   ...PROMPT_1_AUDIT_ACTIONS,
   ...USER_INVITATION_AUDIT_ACTIONS,

@@ -2403,6 +2403,7 @@ async function withMongoTransaction<T>(
   try {
     let result!: T;
     await session.withTransaction(async () => {
+      await createMongoRepository(session).coordinateAuthorizationMutation();
       result = await operation(session);
     });
     return result;

@@ -1,4 +1,5 @@
 import { DESIGN_WORKFLOW_ACTIONS } from "./domain/design-workflow-state.js";
+import { CHAT_COMPONENT_SCHEMAS, CHAT_REQUEST_BODIES, CHAT_RESPONSE_SCHEMAS, CHAT_QUERY_PARAMETERS } from "./openapi/project-chat.js";
 import {
   PERMISSION_CODES,
   REQUESTABLE_PROJECT_MODULES
@@ -110,6 +111,7 @@ const genericJsonRequestBody: OpenApiRequestBody = {
 };
 
 const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
+  ...CHAT_REQUEST_BODIES,
   "POST /projects/:projectId/design-workflow/actions": { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/DesignWorkflowActionRequest" } }, "multipart/form-data": { schema: { $ref: "#/components/schemas/DesignWorkflowActionRequest" } } } },
   "POST /auth/login": jsonRequest("LoginRequest"),
   "POST /auth/client-signup": jsonRequest("ClientSignupRequest"),
@@ -187,6 +189,7 @@ const operationsWithoutBodies = new Set<string>([
 ]);
 
 const responseSchemaByOperation: Readonly<Record<string, string>> = {
+  ...CHAT_RESPONSE_SCHEMAS,
   "POST /auth/login": "AuthPayload",
   "POST /auth/client-signup": "AuthPayload",
   "POST /auth/password-reset/request": "PasswordResetAccepted",
@@ -259,6 +262,7 @@ const attachmentOperations = new Set<string>([
 ]);
 
 const multipartOperations = new Set<string>([
+  "POST /projects/:projectId/chat/attachments",
   "POST /estimates/:estimateId/design-uploads",
   "POST /tasks/:taskId/design-versions",
   "POST /estimate-design-drawings/:drawingId/replacement",
@@ -441,6 +445,7 @@ function dashboardPaginationParameters(): readonly OpenApiParameter[] {
 const queryParametersByOperation: Readonly<
   Record<string, readonly OpenApiParameter[]>
 > = {
+  ...CHAT_QUERY_PARAMETERS,
   "GET /admin/dashboard/overview": [dashboardPeriodParameter()],
   "GET /admin/dashboard/projects": [
     dashboardPeriodParameter(),
@@ -798,6 +803,7 @@ export const openApiDocument: LisnoOpenApiDocument = Object.freeze({
   },
   servers: [{ url: "/api/v1", description: "Current Lisno API host" }],
   tags: [
+    tag("Project messages", "Shared project conversations, selected participants, mentions, and live discussion priorities."),
     tag("Health", "API liveness."),
     tag("Authentication", "Sign-in, Client signup, and current-session identity."),
     tag("Invitations", "Staff invitation administration and public acceptance."),
@@ -981,6 +987,19 @@ function requestBodyFor(
 }
 
 function responsesFor(key: HumanJwtOperationKeyShape): Readonly<Record<string, OpenApiResponse>> {
+  if (key === "GET /projects/:projectId/chat/attachments/:attachmentId/content") {
+    return binaryResponses("application/octet-stream", "Original attachment with its validated media type; current project membership required. Private, no-store and nosniff.");
+  }
+  if (key === "GET /projects/:projectId/chat/attachments/:attachmentId/preview") {
+    return binaryResponses("image/webp", "Bounded image preview; private, current-membership-gated.");
+  }
+  if (key === "GET /projects/:projectId/chat/events") {
+    return {
+      "200": { description: "Authenticated SSE. Event chat carries ChatEventBatch JSON; event state carries connection status. Event typing carries a transient ChatTypingSnapshot with authorized participant names and lease expiries; it has no event ID and never advances the replay cursor. Heartbeat comments and cursor-only batches are valid. Reconnect with the last acknowledged chat cursor; typing starts with a fresh snapshot.", content: { "text/event-stream": { schema: { type: "string" } } } },
+      ...standardProtectedErrors,
+      "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    };
+  }
   if (pdfOperations.has(key)) {
     return binaryResponses("application/pdf", "PDF attachment.");
   }
@@ -1169,6 +1188,7 @@ function protectedDescription(operation: HumanJwtOperation): string {
 }
 
 function tagFor(operation: HumanJwtOperation): string {
+  if (operation.availability === "project_chat") return "Project messages";
   const { path } = splitHumanOperationKey(operation.key);
   if (operation.availability === "ai_estimator_knowledge") return "AI Estimator Knowledge";
   if (operation.availability === "project_workflow") return "Project workflow";
@@ -1238,6 +1258,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
   const dateTime = { type: "string", format: "date-time" } as const;
   return {
     ...AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS,
+    ...CHAT_COMPONENT_SCHEMAS,
     DashboardRatio: {
       type: "object",
       additionalProperties: false,

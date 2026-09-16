@@ -23,6 +23,14 @@ const expectedRoleHomes: Record<Role, string> = {
 };
 
 describe("roleHomePath", () => {
+  it.each(ROLE_CODES)("keeps only the exact project chat return boundaries for %s", (role) => {
+    expect(safeReturnPath(role, "/project-messages")).toBe("/project-messages");
+    expect(safeReturnPath(role, "/projects/project-a/messages?filter=critical")).toBe("/projects/project-a/messages?filter=critical");
+    for (const path of ["/project-messages-archive", "/projects/project-a/messages/private", "/projects/%2e%2e/messages", "//evil.example/projects/a/messages", "/projects/a%2fb/messages"]) {
+      expect(safeReturnPath(role, path)).toBe(roleHomePath(role));
+    }
+  });
+
   it.each(ROLE_CODES)("maps %s to a defined safe staged home", (role) => {
     expect(roleHomePath(role)).toBe(expectedRoleHomes[role]);
   });

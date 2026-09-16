@@ -84,15 +84,15 @@ describe("frontend authorization contract parity", () => {
     expect(FRONTEND_POLICY_VERSION).toBe(AUTHORIZATION_POLICY_VERSION);
   });
 
-  it("publishes the 123-code Design workflow policy on both sides", () => {
-    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-09-12.design-workflow-actions.v1");
-    expect(FRONTEND_POLICY_VERSION).toBe("2026-09-12.design-workflow-actions.v1");
-    expect(PERMISSION_CODES).toHaveLength(123);
-    expect(FRONTEND_PERMISSION_CODES).toHaveLength(123);
-    expect(new Set(PERMISSION_CODES).size).toBe(123);
-    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(123);
-    expect(PERMISSION_CODES.at(-1)).toBe("admin.dashboard.read");
-    expect(FRONTEND_PERMISSION_CODES.at(-1)).toBe("admin.dashboard.read");
+  it("publishes the 128-code project chat policy on both sides", () => {
+    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-09-16.project-chat.v1");
+    expect(FRONTEND_POLICY_VERSION).toBe("2026-09-16.project-chat.v1");
+    expect(PERMISSION_CODES).toHaveLength(128);
+    expect(FRONTEND_PERMISSION_CODES).toHaveLength(128);
+    expect(new Set(PERMISSION_CODES).size).toBe(128);
+    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(128);
+    expect(PERMISSION_CODES.at(-1)).toBe("chat.participants.manage");
+    expect(FRONTEND_PERMISSION_CODES.at(-1)).toBe("chat.participants.manage");
     for (const permission of STAFF_INVITATION_PERMISSIONS) {
       expect(PERMISSION_CODES).toContain(permission);
       expect(FRONTEND_PERMISSION_CODES).toContain(permission);

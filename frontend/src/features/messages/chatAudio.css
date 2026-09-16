@@ -1,0 +1,42 @@
+.project-chat-audio { min-width: 0; width: 100%; color: var(--chat-muted, #54656f); padding: 3px 0 1px; }
+.project-chat-audio__main { display: grid; grid-template-columns: 44px minmax(28px, 1fr) 42px; gap: 8px; align-items: center; min-width: 0; }
+.project-chat-audio__play { position: relative; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; }
+.project-chat-audio__play:hover { background: rgb(11 20 26 / 7%); }
+.project-chat-audio__play:focus-visible, .project-chat-audio__download:focus-visible { outline: 2px solid var(--chat-focus, #007b83); outline-offset: 2px; }
+.project-chat-audio__cancel { position: absolute; }
+.project-chat-audio__loading { animation: chat-audio-spin 1s linear infinite; }
+@keyframes chat-audio-spin { to { transform: rotate(360deg); } }
+.project-chat-audio__track { position: relative; height: 44px; min-width: 0; }
+.project-chat-audio__track svg { position: absolute; inset: 2px 0; width: 100%; height: 40px; overflow: visible; }
+.project-chat-audio__baseline { stroke: #89979b; stroke-width: 2; stroke-dasharray: 1 3; stroke-linecap: round; }
+.project-chat-audio__wave { stroke: #82928d; stroke-width: 2; stroke-linecap: round; }
+.project-chat-audio__wave--played { stroke: #168c9b; }
+.project-chat-audio__track input { position: absolute; inset: 0; width: 100%; height: 44px; margin: 0; padding: 0; cursor: pointer; appearance: none; -webkit-appearance: none; background: transparent; border: 0; accent-color: #168c9b; }
+.project-chat-audio__track input::-webkit-slider-runnable-track { height: 2px; background: transparent; }
+.project-chat-audio__track input::-moz-range-track { height: 2px; background: transparent; }
+.project-chat-audio__track input::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 12px; height: 12px; margin-top: -5px; border-radius: 50%; background: #168c9b; border: 0; }
+.project-chat-audio__track input::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #168c9b; border: 0; }
+.project-chat-audio__track input:disabled { cursor: default; opacity: .55; }
+.project-chat-audio__track input:focus-visible { outline: 2px solid var(--chat-focus, #007b83); outline-offset: 1px; border-radius: 3px; }
+.project-chat-audio__sender { position: relative; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: #e1e9e4; color: var(--audio-sender, #326d66); font-size: 13px; font-weight: 650; }
+.project-chat-audio__mic { position: absolute; bottom: -2px; left: -5px; padding: 1px; box-sizing: content-box; border-radius: 8px; color: #168c9b; background: var(--chat-outgoing, #d9fdd3); }
+.project-chat-audio__details { display: flex; align-items: center; gap: 5px; padding-left: 52px; min-width: 0; min-height: 22px; font-size: 10px; font-variant-numeric: tabular-nums; }
+.project-chat-audio__duration { white-space: nowrap; }
+.project-chat-audio__transfer { font-size: 10px; }
+.project-chat-audio__download { display: grid; place-items: center; margin-left: auto; padding: 3px; min-width: 28px; min-height: 28px; border: 0; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
+.project-chat-audio__time { margin-right: 1px; }
+.project-chat-audio__time .project-chat-message__time { float: none; margin: 0; padding: 0; }
+.project-chat-audio__filename { display: block; max-width: 100%; padding-left: 52px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.project-chat-audio__status, .project-chat-audio__error { display: block; padding: 2px 4px 0; margin: 0; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.project-chat-audio__error { color: #a82c3c; }
+.project-chat-file-tray li.project-chat-file-tray__audio { flex: 0 1 320px; min-width: 0; border: 0; border-radius: 0; padding: 0; background: transparent; align-items: flex-start; }
+.project-chat-file-tray li.project-chat-file-tray__audio > .project-chat-audio { flex: 1; }
+.project-chat-file-tray li.project-chat-file-tray__audio > .project-chat-icon { flex: 0 0 28px; margin-top: 8px; }
+.project-chat-file-tray--audio { width: min(320px, 100%); flex-direction: column; overflow: visible; max-height: none; }
+.project-chat-file-tray--audio li.project-chat-file-tray__audio { flex: none; width: 100%; max-width: 100%; }
+@media (max-width: 380px) {
+  .project-chat-audio__main { grid-template-columns: 44px minmax(24px, 1fr) 34px; gap: 5px; }
+  .project-chat-audio__sender { width: 32px; height: 32px; font-size: 11px; }
+  .project-chat-audio__details, .project-chat-audio__filename { padding-left: 49px; }
+}
+@media (prefers-reduced-motion: reduce) { .project-chat-audio__loading { animation: none; } }
