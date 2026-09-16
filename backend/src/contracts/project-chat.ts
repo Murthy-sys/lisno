@@ -195,12 +195,34 @@ export interface ChatStreamState {
   status: "connecting" | "live" | "reconnecting" | "unavailable" | "denied";
 }
 
+/** Transient composer activity; never contains draft text or client-asserted identity. */
+export interface ChatTypingInput {
+  composerId: string;
+  sequence: number;
+  typing: boolean;
+}
+export interface ChatTypingResult {
+  sequence: number;
+  typing: boolean;
+  expiresAt: string | null;
+}
+export interface ChatTypingSnapshot {
+  projectId: string;
+  serverTime: string;
+  participants: Array<{ userId: string; name: string; expiresAt: string }>;
+}
+
 /** Construct only after JWT authentication; recheck these claims inside writes. */
 export interface ChatActor {
   id: string;
   role: Role;
   sessionVersion: number;
   expiresAt: number;
+}
+export interface ProjectChatTypingService {
+  update(actor: ChatActor, projectId: string, input: ChatTypingInput, receivedAt?: number): Promise<ChatTypingResult>;
+  /** Resolve and enqueue the current, authorized names under the delivery fence. */
+  deliver(actor: ChatActor, projectId: string, enqueue: (snapshot: ChatTypingSnapshot) => void): Promise<void>;
 }
 export interface ProjectChatService {
   list(actor: ChatActor, input: { limit: number; offset: number }): Promise<ChatConversationPage>;

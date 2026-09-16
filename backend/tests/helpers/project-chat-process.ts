@@ -10,6 +10,7 @@ import { createAuditService } from "../../src/services/audit.service.js";
 import { createProjectChatService } from "../../src/services/project-chat.service.js";
 import { createProjectChatEventsHub } from "../../src/services/project-chat-events.service.js";
 import { createProjectChatStreamService } from "../../src/services/project-chat-stream.service.js";
+import { createProjectChatTypingService } from "../../src/services/project-chat-typing.service.js";
 import { createProjectChatRouter } from "../../src/routes/project-chat.js";
 import { createProjectChatEventsRouter } from "../../src/routes/project-chat-events.js";
 import { createProjectChatAttachmentsRouter } from "../../src/routes/project-chat-attachments.js";
@@ -20,13 +21,14 @@ import { errorHandler } from "../../src/middleware/errors.js";
 const uri = process.argv[2]!;
 if (!uri.startsWith("mongodb://127.0.0.1:")) throw new Error("Only disposable loopback Mongo is allowed");
 await mongoose.connect(uri, { autoIndex: false });
-const clock = () => new Date("2026-09-16T10:00:00.000Z");
+const clock = () => process.argv[5] === "advancing" ? new Date() : new Date("2026-09-16T10:00:00.000Z");
 const repository = createMongoRepository();
 const auth = createAuthService(repository, { jwtSecret: "chat-process-fixture-secret-at-least-32-characters", jwtExpiresInSeconds: 3600 }, { clock });
 const audit = createAuditService(repository);
 const chatRepository = createMongoProjectChatRepository(repository);
 const chat = createProjectChatService({ repository, audit, clock, chatRepository });
-const stream = createProjectChatStreamService({ auth, chat, hub: createProjectChatEventsHub({ watchChanges: process.argv[3] !== "poll", pollIntervalMs: 250 }) });
+const typing = createProjectChatTypingService({ chatRepository, clock });
+const stream = createProjectChatStreamService({ auth, chat, typing, hub: createProjectChatEventsHub({ watchChanges: process.argv[3] !== "poll", pollIntervalMs: 250 }) });
 const app = express();
 app.use(express.json());
 if (process.argv[4]) {
@@ -45,7 +47,7 @@ app.use("/api/v1", createProjectChatRouter(auth, { ...chat, async send(...args) 
     await new Promise<void>(() => {});
   }
   return result;
-} }));
+} }, typing));
 app.use("/api/v1", createProjectChatEventsRouter(auth, stream));
 app.use(errorHandler);
 const server = app.listen(0, "127.0.0.1", () => {

@@ -11,11 +11,16 @@ const secret = "project-chat-route-test-secret-long-enough";
 function fixture() {
     const f = createChatFixture();
     const app = express();
-    const auth = createAuthService(f.repository, { jwtSecret: secret, jwtExpiresInSeconds: 3600 }, f.clock);
+    const auth = createAuthService(f.repository, { jwtSecret: secret, jwtExpiresInSeconds: 3600 }, { clock: f.clock });
     app.use(express.json());
     app.use("/api/v1", createProjectChatRouter(auth, f.service));
     app.use(errorHandler);
-    const token = (id: string, sessionVersion = 1) => { const actor = f.actor(id); return jwt.sign({ id, role: actor.role, sessionVersion, iat: Math.floor(f.clock().getTime() / 1000) }, secret, { expiresIn: 3600 }); };
+    const token = (id: string, sessionVersion = 1) => {
+        const actor = f.actor(id), issuedAt = Math.floor(Date.now() / 1000);
+        // JWT verification uses wall time; chat authorization uses fixture time.
+        const expiresAt = Math.max(issuedAt, Math.floor(f.clock().getTime() / 1000)) + 3600;
+        return jwt.sign({ id, role: actor.role, sessionVersion, iat: issuedAt, exp: expiresAt }, secret);
+    };
     return { ...f, app, token };
 }
 describe("project chat REST authorization and strict validation", () => {
@@ -57,7 +62,10 @@ describe("project chat REST authorization and strict validation", () => {
         const user = f.seed.users.find((row) => row.id === "client-a")!;
         const actor = chatActorFromAuthenticatedUser(user, token);
         expect(actor).toMatchObject({ id: "client-a", sessionVersion: 1 });
+        expect(actor.expiresAt).toBe((jwt.decode(token) as jwt.JwtPayload).exp);
         expect((await request(f.app).get("/api/v1/projects/a/chat").auth(f.token("client-a", 2), { type: "bearer" })).status).toBe(401);
+        const expired = jwt.sign({ id: user.id, role: user.role, sessionVersion: 1, exp: Math.floor(Math.min(Date.now(), f.clock().getTime()) / 1000) - 1 }, secret);
+        expect((await request(f.app).get("/api/v1/projects/a/chat").auth(expired, { type: "bearer" })).status).toBe(401);
         expect(() => chatActorFromAuthenticatedUser(user, f.token("client-b"))).toThrow();
     });
 });

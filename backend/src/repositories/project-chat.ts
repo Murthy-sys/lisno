@@ -146,7 +146,35 @@ export interface ChatAttachmentTransactions {
     claimAttachmentCleanup(input: {now: string; leaseUntil: string; limit: number; workerId: string}): Promise<ChatAttachmentRecord[]>;
     settleAttachmentCleanup(input: ChatAttachmentLease & {expectedVersion: number; now: string; outcome: "deleted" | "retry"; nextAttemptAt?: string; errorCode?: string}): Promise<boolean>;
 }
+export interface ChatTypingRecord {
+    id: string;
+    projectId: string;
+    userId: string;
+    sessionScope: string;
+    composerId: string;
+    role: Role;
+    sessionVersion: number;
+    sessionExpiresAt: number;
+    sequence: number;
+    expiresAt: string | null;
+    updatedAt: string;
+    cleanupAt: string;
+}
+export interface ChatTypingRateRecord {
+    id: string;
+    projectId: string;
+    userId: string;
+    windowStartedAt: string;
+    activeUpdates: number;
+    cleanupAt: string;
+}
 export interface ChatTransaction extends ChatAttachmentTransactions {
+    typingByComposer(projectId: string, userId: string, sessionScope: string, composerId: string): Promise<ChatTypingRecord | null>;
+    typingByUser(projectId: string, userId: string, now: string, limit: number): Promise<ChatTypingRecord[]>;
+    activeTyping(projectId: string, now: string, limit: number): Promise<ChatTypingRecord[]>;
+    saveTyping(record: ChatTypingRecord): Promise<void>;
+    typingRate(projectId: string, userId: string): Promise<ChatTypingRateRecord | null>;
+    saveTypingRate(record: ChatTypingRateRecord): Promise<void>;
     app: AppRepository;
     session?: ClientSession;
     sources(projectId: string): Promise<ChatSources | null>;

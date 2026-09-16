@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatTimeline } from "./ChatTimeline";
+import { ChatMediaProvider } from "./ChatMessageAttachments";
 import { chatTestMessage, chatTestPeople } from "./projectChatFixtures";
 
 const access = { userId: "client-a", scope: "session-a", isCurrent: () => () => true, verifyAccess: vi.fn() };
@@ -10,7 +11,7 @@ vi.mock("./ProjectChatProvider", () => ({ useProjectChat: () => access }));
 const first = chatTestMessage({ author: chatTestPeople[1] });
 const second = chatTestMessage({ id: "message-b", sequence: 7, body: "Another update", author: chatTestPeople[1], createdAt: "2026-09-16T08:01:00Z" });
 const props = () => ({ projectId: "project-a", messages: [first], attempts: [], lastRead: 3, hasOlder: false, hasNewer: false, filtered: false, latestSequence: 3, loadingOlder: false, loadingNewer: false, canSend: true, onOlder: vi.fn(), onNewer: vi.fn(), onLatest: vi.fn(), onReply: vi.fn(), onContext: vi.fn(), onIssue: vi.fn(), onRetry: vi.fn(), onEditAttempt: vi.fn() });
-function wrapper({ children }: { children: React.ReactNode }) { return <QueryClientProvider client={new QueryClient()}>{children}</QueryClientProvider>; }
+function wrapper({ children }: { children: React.ReactNode }) { return <QueryClientProvider client={new QueryClient()}><ChatMediaProvider projectId="project-a">{children}</ChatMediaProvider></QueryClientProvider>; }
 beforeEach(() => { vi.clearAllMocks(); });
 
 describe("chat transcript presentation", () => {
@@ -94,5 +95,24 @@ describe("chat transcript presentation", () => {
     scroll.scrollTop = 123;
     fireEvent(window, new Event("resize"));
     expect(scroll.scrollTop).toBe(123);
+  });
+  it("renders one timestamp for multiple audio rows and keeps caption time outside the player", () => {
+    const attachment = { id: "audio-one", kind: "audio" as const, filename: "voice.webm", mimeType: "audio/webm", byteSize: 1024, preview: null };
+    const message = chatTestMessage({ body: "", attachments: [attachment, { ...attachment, id: "audio-two", filename: "second.webm" }] });
+    const view = render(<ChatTimeline {...props()} messages={[message]} />, { wrapper });
+    expect(screen.getAllByRole("group", { name: /^Audio:/ })).toHaveLength(2);
+    expect(document.querySelectorAll("time")).toHaveLength(1);
+    expect(document.querySelector("time")?.closest(".project-chat-audio")).not.toBeNull();
+    view.rerender(<ChatTimeline {...props()} messages={[{ ...message, body: "Please review this recording" }]} />);
+    expect(document.querySelectorAll("time")).toHaveLength(1);
+    expect(document.querySelector("time")?.closest(".project-chat-message__body")).not.toBeNull();
+  });
+  it("shows an audio-send failure once while keeping retry, edit and discard", () => {
+    const error = "The file contents do not match a supported format.";
+    render(<ChatTimeline {...props()} messages={[]} onDiscard={vi.fn()} attempts={[{ input: { clientMessageId: "failed-audio", body: "", mentions: [], priority: "normal", replyToId: null, responsibleUserId: null }, status: "failed", error, files: [{ localId: "local", clientUploadId: "upload", kind: "audio", file: new File(["audio"], "voice.webm"), progress: 100, error }] }]} />, { wrapper });
+    expect(screen.getAllByText(error)).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Edit message" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Discard" })).toBeEnabled();
   });
 });

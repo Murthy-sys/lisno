@@ -1,7 +1,7 @@
 import { Readable } from "node:stream";
 import { extname } from "node:path";
 import { fileTypeFromTokenizer } from "file-type";
-import { parseFromTokenizer } from "music-metadata";
+import { parseBuffer, parseFromTokenizer } from "music-metadata";
 import { AbstractTokenizer, EndOfStreamError, type IReadChunkOptions, type IGetToken } from "strtok3";
 import yauzl from "yauzl";
 import type { ChatAttachment, ChatAttachmentKind } from "../contracts/project-chat.js";
@@ -9,6 +9,7 @@ import { ApiError } from "../middleware/errors.js";
 import { isValidPdfDocument } from "../middleware/upload.js";
 import type { ManagedFileStorage } from "../storage/managed-storage.js";
 import { createProjectChatAttachmentPolicy } from "./project-chat-attachment-policy.js";
+import { webmInspectionMetadata } from "./project-chat-webm-inspection.js";
 
 function invalid(message = "The file contents do not match a supported format."): never { throw new ApiError(400, "CHAT_ATTACHMENT_INVALID", message); }
 const MAX_READ = 1024 * 1024;
@@ -74,7 +75,10 @@ class ManagedTokenizer extends AbstractTokenizer {
   async abort() {this.ended = true;}
 }
 const aliases: Record<string, string> = {"image/jpg": "image/jpeg", "image/x-tiff": "image/tiff", "application/x-zip-compressed": "application/zip", "audio/x-wav": "audio/wav", "audio/wave": "audio/wav", "audio/x-m4a": "audio/mp4", "application/ogg": "audio/ogg"};
-const normalizedMime = (mime: string) => aliases[mime] ?? mime;
+const normalizedMime = (mime: string) => {
+  const essence = mime.split(";", 1)[0]!.trim().toLowerCase();
+  return aliases[essence] ?? essence;
+};
 const formatExtensions: Readonly<Record<string, readonly string[]>> = {
   "image/jpeg": [".jpg", ".jpeg"], "image/png": [".png"], "image/webp": [".webp"], "image/gif": [".gif"],
   "image/heic": [".heic", ".heif"], "image/heif": [".heic", ".heif"], "image/tiff": [".tif", ".tiff"],
@@ -218,7 +222,10 @@ export async function inspectChatAttachment(storage: ManagedFileStorage, referen
     else if (mimeType === "application/pdf") {kind = "document"; await inspectPdf(reader);}
     else if (mimeType.startsWith("audio/") || mimeType.startsWith("video/")) {
       if (["video/mp4", "audio/mp4", "video/quicktime"].includes(mimeType)) await checkIsoBoxes(reader, true);
-      const parsed = await parseFromTokenizer(new ManagedTokenizer(reader), {skipCovers: true, skipPostHeaders: true, duration: false});
+      const options = {skipCovers: true, skipPostHeaders: true, duration: false};
+      const parsed = mimeType === "video/webm" || mimeType === "audio/webm"
+        ? await parseBuffer(await webmInspectionMetadata(reader), {mimeType: "video/webm"}, options)
+        : await parseFromTokenizer(new ManagedTokenizer(reader), options);
       const video = parsed.format.hasVideo || parsed.format.trackInfo?.some(track => Boolean(track.video));
       const audio = parsed.format.hasAudio || Boolean(parsed.format.numberOfChannels) || parsed.format.trackInfo?.some(track => Boolean(track.audio));
       if (!video && !audio) invalid();

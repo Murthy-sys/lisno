@@ -995,7 +995,7 @@ function responsesFor(key: HumanJwtOperationKeyShape): Readonly<Record<string, O
   }
   if (key === "GET /projects/:projectId/chat/events") {
     return {
-      "200": { description: "Authenticated SSE. Event chat carries ChatEventBatch JSON; event state carries connection status. Heartbeat comments and cursor-only batches are valid. Reconnect with the last acknowledged cursor.", content: { "text/event-stream": { schema: { type: "string" } } } },
+      "200": { description: "Authenticated SSE. Event chat carries ChatEventBatch JSON; event state carries connection status. Event typing carries a transient ChatTypingSnapshot with authorized participant names and lease expiries; it has no event ID and never advances the replay cursor. Heartbeat comments and cursor-only batches are valid. Reconnect with the last acknowledged chat cursor; typing starts with a fresh snapshot.", content: { "text/event-stream": { schema: { type: "string" } } } },
       ...standardProtectedErrors,
       "503": { $ref: "#/components/responses/ServiceUnavailable" }
     };

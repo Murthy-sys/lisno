@@ -43,11 +43,55 @@ beforeEach(() => {
   vi.spyOn(projectChatApi, "participants").mockResolvedValue({ items: chatTestPeople, setupWarnings: [] });
   vi.spyOn(projectChatApi, "messages").mockResolvedValue(chatTestPage());
   vi.spyOn(projectChatApi, "read").mockResolvedValue({ lastReadSequence: 3, counts: chatTestSummary().counts });
+  vi.spyOn(projectChatApi, "typing").mockImplementation(async (_projectId, input) => ({ sequence: input.sequence, typing: input.typing, expiresAt: input.typing ? new Date(Date.now() + 8000).toISOString() : null }));
   vi.spyOn(projectChatApi, "options").mockResolvedValue({ items: [{ id: "site-a", name: "Lee Site", role: "site_manager" }], hasMore: false });
   vi.spyOn(projectChatApi, "conversations").mockResolvedValue({ items: [{ ...chatTestSummary(), lastMessageAt: null }], pagination: { limit: 30, offset: 0, total: 1, hasMore: false } });
 });
 
 describe("shared project messages", () => {
+  it("shows only other users typing without refetching messages and clears when disconnected", async () => {
+    app(); await screen.findByText("Critical 3");
+    await waitFor(() => expect(mocks.streams.length).toBeGreaterThan(0));
+    await waitFor(() => expect(projectChatApi.messages).toHaveBeenCalled());
+    const before = vi.mocked(projectChatApi.messages).mock.calls.length;
+    act(() => mocks.streams.at(-1)!.onTyping!({ projectId: "project-a", serverTime: "2026-09-16T10:00:00Z", participants: [
+      { userId: "designer-a", name: "Priya", expiresAt: "2026-09-16T10:00:08Z" },
+      { userId: "client-a", name: "Maya Client", expiresAt: "2026-09-16T10:00:08Z" }
+    ] }));
+    expect(screen.getByText("Priya is typing…", { selector: ".project-chat-typing__label" })).toBeVisible();
+    expect(screen.queryByText(/Maya Client.*typing/)).not.toBeInTheDocument();
+    expect(projectChatApi.messages).toHaveBeenCalledTimes(before);
+    act(() => mocks.streams.at(-1)!.onStatus("reconnecting"));
+    expect(screen.queryByText("Priya is typing…")).not.toBeInTheDocument();
+  });
+  it("publishes actual edits, stops on blur and does not publish restored drafts", async () => {
+    app(); await screen.findByText("Critical 3");
+    await screen.findByText("Live");
+    const input = screen.getByRole("textbox", { name: "Message the project team" });
+    fireEvent.focus(input);
+    expect(projectChatApi.typing).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "Hello team" } });
+    await waitFor(() => expect(projectChatApi.typing).toHaveBeenCalledWith("project-a", expect.objectContaining({ typing: true, sequence: 1 }), expect.any(AbortSignal)));
+    fireEvent.blur(input);
+    await waitFor(() => expect(projectChatApi.typing).toHaveBeenLastCalledWith("project-a", expect.objectContaining({ typing: false, sequence: 2 }), expect.any(AbortSignal)));
+    await userEvent.click(screen.getByRole("link", { name: "Project overview" }));
+    await userEvent.click(screen.getByRole("link", { name: "Open conversation" }));
+    expect(await screen.findByRole("textbox", { name: "Message the project team" })).toHaveValue("Hello team");
+    expect(projectChatApi.typing).toHaveBeenCalledTimes(2);
+  });
+  it("expires a lost typing stop using server-relative time and clears on project changes", async () => {
+    app(); await screen.findByText("Live");
+    act(() => mocks.streams.at(-1)!.onTyping!({ projectId: "project-a", serverTime: "2020-01-01T00:00:00.000Z", participants: [{ userId: "designer-a", name: "Priya", expiresAt: "2020-01-01T00:00:00.100Z" }] }));
+    expect(screen.getByText("Priya is typing…", { selector: ".project-chat-typing__label" })).toBeVisible();
+    await waitFor(() => expect(screen.queryByText("Priya is typing…")).not.toBeInTheDocument());
+    const oldStream = mocks.streams.at(-1)!;
+    const snapshot = { projectId: "project-a", serverTime: "2020-01-01T00:00:00.000Z", participants: [{ userId: "designer-a", name: "Priya", expiresAt: "2020-01-01T00:00:08.000Z" }] };
+    act(() => oldStream.onTyping!(snapshot));
+    await userEvent.click(screen.getByRole("link", { name: "Other conversation" }));
+    await screen.findByRole("heading", { name: "Garden residence" });
+    act(() => oldStream.onTyping!(snapshot));
+    expect(screen.queryByText("Priya is typing…")).not.toBeInTheDocument();
+  });
   it("renders server counts, safe text and member roles, with one project subscription", async () => {
     vi.mocked(projectChatApi.messages).mockResolvedValue(chatTestPage([chatTestMessage({ body: "<script>alert('x')</script> नमस्ते" })]));
     app();

@@ -11,12 +11,17 @@ import { errorHandler } from "../src/middleware/errors.js";
 const secret = "chat-attachment-route-test-secret-at-least-32-characters";
 function fixture() {
   const f = createAttachmentFixture(), app = express();
-  const auth = createAuthService(f.repository, {jwtSecret: secret, jwtExpiresInSeconds: 3600}, f.clock);
+  const auth = createAuthService(f.repository, {jwtSecret: secret, jwtExpiresInSeconds: 3600}, {clock: f.clock});
   app.use(express.json());
   app.use("/api/v1", createProjectChatAttachmentsRouter(auth, f.attachments));
   app.use("/api/v1", createProjectChatRouter(auth, f.service));
   app.use(errorHandler);
-  const token = (id: string) => jwt.sign({id, role: f.actor(id).role, sessionVersion: 1, iat: Math.floor(f.clock().getTime() / 1000)}, secret, {expiresIn: 3600});
+  const token = (id: string) => {
+    const issuedAt = Math.floor(Date.now() / 1000);
+    // JWT verification uses wall time; attachment authorization uses fixture time.
+    const expiresAt = Math.max(issuedAt, Math.floor(f.clock().getTime() / 1000)) + 3600;
+    return jwt.sign({id, role: f.actor(id).role, sessionVersion: 1, iat: issuedAt, exp: expiresAt}, secret);
+  };
   const upload = (id: string, key: string, body = "File note", size = Buffer.byteLength(body), field = "file") => request(app).post(`/api/v1/projects/a/chat/attachments?uploadId=${key}&sizeBytes=${size}`).auth(token(id), {type: "bearer"}).attach(field, Buffer.from(body), {filename: "note.txt", contentType: "text/plain"});
   return {...f, app, token, upload};
 }

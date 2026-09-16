@@ -1,5 +1,5 @@
 import { apiClient, ApiError } from "../../api/client";
-import type { ChatAttachmentPolicy, ChatStagedAttachment, ChatConversationPage, ChatIssueInput, ChatMessage, ChatMessagePage, ChatMessageQuery, ChatParticipantInput, ChatParticipantOptions, ChatParticipantPage, ChatParticipantRevokeInput, ChatReadInput, ChatReadResult, ChatSendInput, ChatSummary } from "./projectChatTypes";
+import type { ChatAttachmentPolicy, ChatStagedAttachment, ChatConversationPage, ChatIssueInput, ChatMessage, ChatMessagePage, ChatMessageQuery, ChatParticipantInput, ChatParticipantOptions, ChatParticipantPage, ChatParticipantRevokeInput, ChatReadInput, ChatReadResult, ChatSendInput, ChatSummary, ChatTypingInput, ChatTypingResult } from "./projectChatTypes";
 
 export const chatPath = (projectId: string) => `/projects/${encodeURIComponent(projectId)}/chat`;
 export const chatKeys = {
@@ -25,6 +25,7 @@ export function chatErrorMessage(error: unknown) {
   return error instanceof ApiError ? error.message : "Unable to connect. Please try again.";
 }
 export const projectChatApi = {
+  typing: (id: string, input: ChatTypingInput, signal?: AbortSignal) => apiClient.put<ChatTypingResult>(`${chatPath(id)}/typing`, input, { ...quiet, signal }),
   attachmentPolicy: (id: string, signal?: AbortSignal) => apiClient.get<ChatAttachmentPolicy>(`${chatPath(id)}/attachment-policy`, { ...quiet, signal }),
   uploadAttachment: (id: string, uploadId: string, file: File, onProgress: (percent: number) => void, signal: AbortSignal) => {
     const body = new FormData(); body.append("file", file);

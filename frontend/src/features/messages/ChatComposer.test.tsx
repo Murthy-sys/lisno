@@ -7,11 +7,28 @@ import { chatTestPeople, chatTestPolicy } from "./projectChatFixtures";
 import { emptyChatDraft, type ChatDraft } from "./projectChatState";
 
 beforeEach(() => { window.matchMedia = vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }); });
-function ComposerHarness({ onSend = vi.fn(), initial = emptyChatDraft() }: { onSend?: (draft: ChatDraft) => void; initial?: ChatDraft }) {
+function ComposerHarness({ onSend = vi.fn(), initial = emptyChatDraft(), onTypingEdit, onTypingStop }: { onSend?: (draft: ChatDraft) => void; initial?: ChatDraft; onTypingEdit?: (body: string) => void; onTypingStop?: () => void }) {
   const [draft, setDraft] = useState(initial);
-  return <ChatComposer draft={draft} onChange={setDraft} onSend={() => onSend(draft)} disabled={false} participants={chatTestPeople} policy={chatTestPolicy()} />;
+  return <ChatComposer draft={draft} onChange={setDraft} onSend={() => onSend(draft)} disabled={false} participants={chatTestPeople} policy={chatTestPolicy()} onTypingEdit={onTypingEdit} onTypingStop={onTypingStop} />;
 }
 describe("project message composer", () => {
+  it("reports composed text and mentions as typing but stops before a real send", async () => {
+    const events: string[] = [];
+    const edited = vi.fn((body: string) => { events.push(`edit:${body}`); });
+    render(<ComposerHarness onTypingEdit={edited} onTypingStop={() => events.push("stop")} onSend={() => events.push("send")} />);
+    const input = screen.getByRole("textbox", { name: "Message the project team" });
+    fireEvent.compositionStart(input);
+    fireEvent.change(input, { target: { value: "こんにちは" } });
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(events).not.toContain("send");
+    fireEvent.compositionEnd(input);
+    expect(edited).toHaveBeenCalledWith("こんにちは");
+    await userEvent.clear(input); await userEvent.type(input, "@Alex");
+    await userEvent.keyboard("{Enter}");
+    expect(edited).toHaveBeenLastCalledWith("@Alex Team ");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(events.slice(-2)).toEqual(["stop", "send"]);
+  });
   it("keeps the shared-client audience visible and associated with the input", () => {
     render(<ComposerHarness />);
     const audience = screen.getByText("Shared with the client and project team");

@@ -9,10 +9,11 @@ import { ProjectWorkflowTaskModel } from "../models/ProjectWorkflowTask.js";
 import { ProjectAccessGrantModel } from "../models/ProjectAccessGrant.js";
 import { ProjectChatEventModel, ProjectChatIssueHistoryModel, ProjectChatMessageModel, ProjectChatOperationModel, ProjectChatParticipantAssignmentModel, ProjectChatReadStateModel, ProjectChatStateModel } from "../models/ProjectChat.js";
 import { ProjectChatAttachmentModel } from "../models/ProjectChatAttachment.js";
+import { ProjectChatTypingModel, ProjectChatTypingRateModel } from "../models/ProjectChatTyping.js";
 import { createChatAttachmentOperations } from "./project-chat-attachment-operations.js";
 import { createMongoRepository } from "./mongo.js";
 import type { AppRepository, ProjectRecord, UserRecord } from "./types.js";
-import type { ChatAttachmentRecord, ChatMessageScan, ChatSources, ChatStoredMessage, ChatTransaction, ProjectChatRepository } from "./project-chat.js";
+import type { ChatAttachmentRecord, ChatMessageScan, ChatSources, ChatStoredMessage, ChatTransaction, ChatTypingRecord, ChatTypingRateRecord, ProjectChatRepository } from "./project-chat.js";
 import { ApiError } from "../middleware/errors.js";
 export function createMongoProjectChatRepository(_repository?: AppRepository): ProjectChatRepository {
     const run = async <T>(write: boolean, operation: (tx: ChatTransaction) => Promise<T>): Promise<T> => {
@@ -52,8 +53,21 @@ function document<T extends {
 }>(value: T) { const { id, ...fields } = value; return { _id: id, ...fields }; }
 function mongoTransaction(app: AppRepository, session: ClientSession): ChatTransaction {
     const find = async <T>(model: Model<any>, query: Record<string, unknown>): Promise<T[]> => (await model.find(query).session(session).lean()).map((row) => record<T>(row));
+    const typingRecord = <T>(row: any): T => row ? record<T>({ ...row, cleanupAt: new Date(row.cleanupAt).toISOString() }) : row;
     return {
         app, session,
+        async typingByComposer(projectId, userId, sessionScope, composerId) { return typingRecord<ChatTypingRecord>(await ProjectChatTypingModel.findOne({ projectId, userId, sessionScope, composerId }).session(session).lean()); },
+        async typingByUser(projectId, userId, now, limit) { return (await ProjectChatTypingModel.find({ projectId, userId, cleanupAt: { $gt: new Date(now) } }).sort({ _id: 1 }).limit(limit).session(session).lean()).map(row => typingRecord<ChatTypingRecord>(row)); },
+        async activeTyping(projectId, now, limit) { return (await ProjectChatTypingModel.find({ projectId, expiresAt: { $gt: now } }).sort({ userId: 1, _id: 1 }).limit(limit).session(session).lean()).map(row => typingRecord<ChatTypingRecord>(row)); },
+        async saveTyping(row) {
+            const { _id, projectId, userId, sessionScope, composerId, role, sessionVersion, sessionExpiresAt, ...mutable } = document(row);
+            await ProjectChatTypingModel.updateOne({ _id }, { $set: mutable, $setOnInsert: { projectId, userId, sessionScope, composerId, role, sessionVersion, sessionExpiresAt } }, { upsert: true, session, runValidators: true });
+        },
+        async typingRate(projectId, userId) { return typingRecord<ChatTypingRateRecord>(await ProjectChatTypingRateModel.findOne({ projectId, userId }).session(session).lean()); },
+        async saveTypingRate(row) {
+            const { _id, projectId, userId, ...mutable } = document(row);
+            await ProjectChatTypingRateModel.updateOne({ _id }, { $set: mutable, $setOnInsert: { projectId, userId } }, { upsert: true, session, runValidators: true });
+        },
         ...createChatAttachmentOperations({
             async get(projectId, id) { return record(await ProjectChatAttachmentModel.findOne({_id: id, projectId}).session(session).lean()); },
             async byKey(projectId, uploaderId, key) { return record(await ProjectChatAttachmentModel.findOne({projectId, uploaderId, clientUploadId: key}).session(session).lean()); },

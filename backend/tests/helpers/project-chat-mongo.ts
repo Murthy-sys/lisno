@@ -7,6 +7,7 @@ import { ProjectAccessGrantModel } from "../../src/models/ProjectAccessGrant.js"
 import { AuditEventModel } from "../../src/models/AuditEvent.js";
 import { AuthorizationCoordinationModel } from "../../src/models/AuthorizationCoordination.js";
 import { ProjectChatAttachmentModel } from "../../src/models/ProjectChatAttachment.js";
+import { ProjectChatTypingModel, ProjectChatTypingRateModel } from "../../src/models/ProjectChatTyping.js";
 import { ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel } from "../../src/models/ProjectChat.js";
 import { createMongoRepository } from "../../src/repositories/mongo.js";
 import { createMongoProjectChatRepository } from "../../src/repositories/project-chat-mongo.js";
@@ -14,7 +15,7 @@ import { createAuditService } from "../../src/services/audit.service.js";
 import { createProjectChatService } from "../../src/services/project-chat.service.js";
 import { chatFixtureData, CHAT_NOW } from "./project-chat.js";
 import type { ChatActor } from "../../src/contracts/project-chat.js";
-export const chatModels = [UserModel, ProjectModel, LeadModel, EstimateModel, ProjectWorkflowTaskModel, ProjectAccessGrantModel, AuditEventModel, AuthorizationCoordinationModel, ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel, ProjectChatAttachmentModel];
+export const chatModels = [UserModel, ProjectModel, LeadModel, EstimateModel, ProjectWorkflowTaskModel, ProjectAccessGrantModel, AuditEventModel, AuthorizationCoordinationModel, ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel, ProjectChatAttachmentModel, ProjectChatTypingModel, ProjectChatTypingRateModel];
 export async function insertChatMongoFixture() {
     const { seed, estimates, workflowTasks } = chatFixtureData();
     const doc = ({ id, ...fields }: {

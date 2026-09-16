@@ -221,3 +221,11 @@
   .project-chat-file-tray { max-height: 22dvh; }
   .project-chat-attachments { width: min(290px, 67vw); }
 }
+.project-chat-typing { display: flex; align-items: center; gap: 7px; min-height: max(24px, calc(1.5em + 4px)); padding: 2px 16px; color: #146d60; font-size: 12px; line-height: 1.5; background: var(--chat-header); }
+.project-chat-typing__label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.project-chat-typing__dots { display: inline-flex; flex: 0 0 auto; gap: 3px; }
+.project-chat-typing__dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: chat-typing-dot 1.2s ease-in-out infinite; }
+.project-chat-typing__dots i:nth-child(2) { animation-delay: .15s; }
+.project-chat-typing__dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes chat-typing-dot { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-2px); } }
+@media (prefers-reduced-motion: reduce) { .project-chat-typing__dots i { animation: none; } }

@@ -5,6 +5,7 @@ import { ChatMediaProvider, ChatMessageAttachments } from "./ChatMessageAttachme
 import { projectChatApi } from "./projectChatApi";
 import { ChatTransferPool } from "./chatTransfers";
 import type { ChatAttachment } from "./projectChatTypes";
+import { ApiError } from "../../api/client";
 
 const identity = vi.hoisted(() => ({ current: true }));
 vi.mock("./ProjectChatProvider", () => ({ useProjectChat: () => access }));
@@ -60,8 +61,19 @@ describe("authenticated media rendering", () => {
   it("does not fetch documents or audio before an explicit user action", () => {
     render(<Media files={[{ ...file("document"), kind: "document", filename: "notes.pdf", mimeType: "application/pdf", preview: null }, { ...file("voice"), kind: "audio", filename: "voice.webm", mimeType: "audio/webm", preview: null }]} />);
     expect(screen.getByRole("button", { name: "Download notes.pdf" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Load audio" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Play voice.webm" })).toBeVisible();
+    expect(screen.getByRole("slider", { name: "Seek voice.webm" })).toBeDisabled();
     expect(projectChatApi.attachmentBlob).not.toHaveBeenCalled();
     expect(document.querySelector("audio[autoplay]")).toBeNull();
+  });
+  it("reconciles denied audio access and keeps the failure inline without a modal", async () => {
+    vi.mocked(projectChatApi.attachmentBlob).mockRejectedValue(new ApiError(403, "FORBIDDEN", "Denied"));
+    render(<Media files={[{ ...file("voice"), kind: "audio", filename: "voice.webm", mimeType: "audio/webm", preview: null }]} />);
+    await userEvent.click(screen.getByRole("button", { name: "Play voice.webm" }));
+    expect(await screen.findByText("This item is unavailable or your access has changed.")).toBeVisible();
+    expect(access.verifyAccess).toHaveBeenCalledWith("project-a");
+    expect(screen.getByRole("button", { name: "Retry audio voice.webm" })).toBeVisible();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
   });
 });

@@ -45,6 +45,21 @@ export interface ChatPerson {
   name: string;
   role: Role;
 }
+export interface ChatTypingInput {
+  composerId: string;
+  sequence: number;
+  typing: boolean;
+}
+export interface ChatTypingResult {
+  sequence: number;
+  typing: boolean;
+  expiresAt: string | null;
+}
+export interface ChatTypingSnapshot {
+  projectId: string;
+  serverTime: string;
+  participants: Array<{ userId: string; name: string; expiresAt: string }>;
+}
 export interface ChatMembershipSource {
   kind: "client" | "super_admin" | "project_assignment" | "estimate_assignment" | "workflow_assignment" | "access_grant" | "selection";
   id: string;

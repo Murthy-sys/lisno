@@ -1,6 +1,6 @@
 import { apiClient } from "../../api/client";
 import { chatPath, isChatDenied } from "./projectChatApi";
-import type { ChatEventBatch, ChatStreamState } from "./projectChatTypes";
+import type { ChatEventBatch, ChatStreamState, ChatTypingSnapshot } from "./projectChatTypes";
 
 export interface SseFrame { event: string; data: string; id?: string }
 /** Incremental UTF-8 decoding and line parsing, including CRLF split across reads. */
@@ -50,6 +50,19 @@ function batchFromFrame(frame: SseFrame): ChatEventBatch {
   return batch;
 }
 
+function typingFromFrame(frame: SseFrame, projectId: string): ChatTypingSnapshot {
+  const value = JSON.parse(frame.data) as ChatTypingSnapshot;
+  const text = (input: unknown, maximum: number) => typeof input === "string" && input.length > 0 && input.length <= maximum;
+  const date = (input: unknown) => typeof input === "string" && input.length <= 40 && Number.isFinite(Date.parse(input));
+  if (!value || frame.id !== undefined || value.projectId !== projectId || !date(value.serverTime) || !Array.isArray(value.participants) || value.participants.length > 100) throw new Error("Invalid chat typing snapshot");
+  const ids = new Set<string>();
+  for (const person of value.participants) {
+    if (!person || !text(person.userId, 200) || !text(person.name, 300) || !date(person.expiresAt) || ids.has(person.userId)) throw new Error("Invalid chat typing participant");
+    ids.add(person.userId);
+  }
+  return value;
+}
+
 function retryDelay(signal: AbortSignal, milliseconds: number) {
   return new Promise<void>(resolve => {
     const finish = () => {
@@ -68,6 +81,7 @@ function retryDelay(signal: AbortSignal, milliseconds: number) {
 export async function runProjectChatStream(options: {
   projectId: string; cursor: string; signal: AbortSignal;
   onBatch: (batch: ChatEventBatch) => void;
+  onTyping?: (snapshot: ChatTypingSnapshot) => void;
   onStatus: (status: ChatStreamState["status"]) => void;
   onDenied: () => void;
   connect?: typeof apiClient.stream;
@@ -102,6 +116,8 @@ export async function runProjectChatStream(options: {
           // Empty private-event batches also advance the durable replay position.
           cursor = batch.cursor;
           failures = 0;
+        } else if (frame.event === "typing") {
+          options.onTyping?.(typingFromFrame(frame, projectId));
         }
       });
       onStatus("live");

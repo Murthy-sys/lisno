@@ -5,7 +5,8 @@ export interface ProjectChatEventsHub {
   close(): Promise<void>;
 }
 
-/** Change streams accelerate delivery; every wake reads the durable log again. */
+/** Change streams accelerate messages; the bounded active-project poll also
+ * refreshes transient typing across processes and clears expired leases. */
 export function createProjectChatEventsHub(options: {
   watchChanges?: boolean;
   pollIntervalMs?: number;

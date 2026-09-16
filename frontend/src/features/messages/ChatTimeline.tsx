@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Check, ChevronDown } from "lucide-react";
-import { ChatMediaProvider, ChatMessageAttachments } from "./ChatMessageAttachments";
+import { ChatMessageAttachments } from "./ChatMessageAttachments";
 import { ChatFileTray } from "./ChatFileTray";
 import { attachmentSummaryText } from "./chatAttachments";
 import { ChatActionMenu, chatSenderColor } from "./ChatActionMenu";
@@ -16,6 +16,9 @@ import type { ChatMessage } from "./projectChatTypes";
 export function chatTime(value: string) {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value));
 }
+function MessageTime({ message, own }: { message: ChatMessage; own: boolean }) {
+  return <span className="project-chat-message__time"><time dateTime={message.createdAt} title={chatTime(message.createdAt)}>{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(message.createdAt))}</time>{own ? <span role="img" aria-label="Sent" title="Sent"><Check size={14} aria-hidden="true" /></span> : null}</span>;
+}
 function MessageBody({ message, own }: { message: ChatMessage; own: boolean }) {
   const parts = [];
   let start = 0;
@@ -26,7 +29,7 @@ function MessageBody({ message, own }: { message: ChatMessage; own: boolean }) {
     start = mention.end;
   }
   parts.push(message.body.slice(start));
-  return <p className="project-chat-message__body">{parts}<span className="project-chat-message__time"><time dateTime={message.createdAt} title={chatTime(message.createdAt)}>{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(message.createdAt))}</time>{own ? <span role="img" aria-label="Sent" title="Sent"><Check size={14} aria-hidden="true" /></span> : null}</span></p>;
+  return <p className="project-chat-message__body">{parts}<MessageTime message={message} own={own} /></p>;
 }
 
 function useVisibleChatRead({ projectId, messages, lastRead, hasOlder, filtered, container }: { projectId: string; messages: ChatMessage[]; lastRead: number; hasOlder: boolean; filtered: boolean; container: RefObject<HTMLDivElement | null> }) {
@@ -163,7 +166,8 @@ export function ChatTimeline({ projectId, messages, attempts, lastRead, hasOlder
   }
   const missingUnreadHistory = !filtered && hasOlder && Boolean(messages[0]) && messages[0].sequence > lastRead;
   const firstUnreadId = filtered ? undefined : messages.find(message => message.sequence > unreadBoundary && message.author.id !== userId)?.id;
-  return <ChatMediaProvider projectId={projectId}><div className="project-chat-timeline-wrap">
+  const ownSender = messages.find(message => message.author.id === userId)?.author ?? { id: userId, name: "You" };
+  return <div className="project-chat-timeline-wrap">
     {readError ? <p className="project-chat-warning" role="status">Read position has not synced. Retrying automatically.</p> : null}
     {missingUnreadHistory ? <p className="project-chat-muted">Earlier unread messages remain. Load earlier messages to read them in order.</p> : null}
     <div className="project-chat-timeline" ref={container} role="region" aria-label={filtered ? "Filtered project messages" : "Project conversation"} tabIndex={0} onScroll={rememberScroll}>
@@ -173,6 +177,7 @@ export function ChatTimeline({ projectId, messages, attempts, lastRead, hasOlder
         const day = new Date(message.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
         const previousDay = index ? new Date(messages[index - 1].createdAt).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" }) : "";
         const own = message.author.id === userId;
+        const audioOnly = !message.body && Boolean(message.attachments?.length) && message.attachments.every(attachment => attachment.kind === "audio");
         const previousMessage = messages[index - 1];
         const grouped = previousMessage?.author.id === message.author.id && day === previousDay && new Date(message.createdAt).getTime() - new Date(previousMessage.createdAt).getTime() < 300_000 && firstUnreadId !== message.id;
         const issueActions = chatIssueActions(message);
@@ -188,20 +193,20 @@ export function ChatTimeline({ projectId, messages, attempts, lastRead, hasOlder
             {items.length ? <div className="project-chat-message__menu"><ChatActionMenu label={`Message options from ${message.author.name}`} items={items} icon={<ChevronDown size={16} aria-hidden="true" />} /></div> : null}
             {message.replyTo ? <button type="button" className="project-chat-quote" onClick={() => onContext(message.replyTo!.id)} aria-label={`View original message from ${message.replyTo.author.name}`}><strong style={{ color: chatSenderColor(message.replyTo.author.id) }}>{message.replyTo.author.name}</strong><span>{message.replyTo.body || attachmentSummaryText(message.replyTo.attachmentSummary)}</span></button> : null}
             {message.priority !== "normal" ? <button type="button" className={`project-chat-priority project-chat-priority--${message.priority} project-chat-message__issue`} onClick={() => onIssue(message)} aria-label={`View ${message.priority} issue details`}>{message.priority === "critical" ? "Critical" : "Important"} · {message.issueStatus === "resolved" ? "Resolved" : "Open"}</button> : null}
-            <ChatMessageAttachments attachments={message.attachments ?? []} />
-            <MessageBody message={message} own={own} />
+            <ChatMessageAttachments attachments={message.attachments ?? []} sender={message.author} audioTimestamp={audioOnly ? <MessageTime message={message} own={own} /> : undefined} />
+            {!audioOnly ? <MessageBody message={message} own={own} /> : null}
           </article>
         </div>;
       })}
       {hasNewer ? <Button variant="quiet" className="project-chat-timeline__pagination" busy={loadingNewer} onClick={onNewer}>Load newer messages</Button> : null}
       {attempts.map(attempt => <article className="project-chat-message project-chat-message--pending" key={attempt.input.clientMessageId} aria-label="Your outgoing message">
-        {attempt.files?.length ? <ChatFileTray files={attempt.files} /> : null}
+        {attempt.files?.length ? <ChatFileTray files={attempt.files} sender={ownSender} /> : null}
         {attempt.input.body ? <p className="project-chat-message__body">{attempt.input.body}</p> : null}
         <div role="status">{attempt.status === "sending" ? attempt.phase === "uploading" ? "Uploading attachments…" : attempt.phase === "cancelling" ? "Stopping transfer…" : "Sending…" : attempt.commitStarted ? "Delivery unconfirmed" : "Not sent"}</div>
-        {attempt.status === "failed" ? <><p className="project-chat-error">{attempt.error}</p><div className="project-chat-message__actions"><Button variant="secondary" size="compact" disabled={!canSend} onClick={() => onRetry(attempt)}>Retry</Button>{!attempt.commitStarted ? <><Button variant="quiet" size="compact" disabled={!canSend} onClick={() => onEditAttempt(attempt)}>Edit message</Button>{onDiscard ? <Button variant="quiet" size="compact" onClick={() => onDiscard(attempt)}>Discard</Button> : null}</> : null}</div></> : onCancel ? <Button variant="quiet" size="compact" disabled={attempt.phase === "cancelling"} onClick={() => onCancel(attempt)}>Cancel transfer</Button> : null}
+        {attempt.status === "failed" ? <>{attempt.error && !attempt.files?.some(file => file.error === attempt.error) ? <p className="project-chat-error">{attempt.error}</p> : null}<div className="project-chat-message__actions"><Button variant="secondary" size="compact" disabled={!canSend} onClick={() => onRetry(attempt)}>Retry</Button>{!attempt.commitStarted ? <><Button variant="quiet" size="compact" disabled={!canSend} onClick={() => onEditAttempt(attempt)}>Edit message</Button>{onDiscard ? <Button variant="quiet" size="compact" onClick={() => onDiscard(attempt)}>Discard</Button> : null}</> : null}</div></> : onCancel ? <Button variant="quiet" size="compact" disabled={attempt.phase === "cancelling"} onClick={() => onCancel(attempt)}>Cancel transfer</Button> : null}
       </article>)}
     </div>
     <p className="sr-only" role="status" aria-live="polite">{arrivals ? "New project messages are available." : ""}</p>
     {arrivals || (!filtered && latestSequence > newest) || hasNewer ? <Button className="project-chat-new" variant="secondary" onClick={() => { if (hasNewer || latestSequence > newest) onLatest(); else scrollToBottom(); }}>New messages · Go to latest</Button> : null}
-  </div></ChatMediaProvider>;
+  </div>;
 }

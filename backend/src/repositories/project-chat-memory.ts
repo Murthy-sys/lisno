@@ -1,5 +1,5 @@
 import { chatConflict } from "../domain/project-chat.js";
-import type { ChatAttachmentRecord, ChatEstimateSource, ChatHistoryRow, ChatMessageScan, ChatOperation, ChatReadState, ChatSelection, ChatSources, ChatState, ChatStoredEvent, ChatStoredMessage, ChatTransaction, ChatWorkflowSource, ProjectChatRepository } from "./project-chat.js";
+import type { ChatAttachmentRecord, ChatEstimateSource, ChatHistoryRow, ChatMessageScan, ChatOperation, ChatReadState, ChatSelection, ChatSources, ChatState, ChatStoredEvent, ChatStoredMessage, ChatTransaction, ChatTypingRecord, ChatTypingRateRecord, ChatWorkflowSource, ProjectChatRepository } from "./project-chat.js";
 import { createChatAttachmentOperations } from "./project-chat-attachment-operations.js";
 import type { AppRepository, ProjectRecord, UserRecord } from "./types.js";
 import type { ProjectModule } from "../domain/authorization.js";
@@ -18,11 +18,13 @@ interface MemoryChatState {
     events: ChatStoredEvent[];
     histories: ChatHistoryRow[];
     attachments: ChatAttachmentRecord[];
+    typing: ChatTypingRecord[];
+    typingRates: ChatTypingRateRecord[];
 }
 const modules: ProjectModule[] = ["projects", "design", "procurement", "finance", "execution"];
 const copy = <T>(value: T): T => structuredClone(value);
 export function createMemoryProjectChatRepository(repository: AppRepository, supplemental: MemoryChatSources = {}): ProjectChatRepository {
-    let state: MemoryChatState = { selections: [], messages: [], states: {}, reads: [], operations: [], events: [], histories: [], attachments: [] };
+    let state: MemoryChatState = { selections: [], messages: [], states: {}, reads: [], operations: [], events: [], histories: [], attachments: [], typing: [], typingRates: [] };
     let tail: Promise<void> = Promise.resolve();
     const run = async <T>(write: boolean, operation: (tx: ChatTransaction) => Promise<T>): Promise<T> => {
         const previous = tail;
@@ -65,6 +67,12 @@ function memoryTransaction(app: AppRepository, state: MemoryChatState, supplemen
     };
     return {
         app,
+        async typingByComposer(projectId, userId, sessionScope, composerId) { return copy(state.typing.find(row => row.projectId === projectId && row.userId === userId && row.sessionScope === sessionScope && row.composerId === composerId) ?? null); },
+        async typingByUser(projectId, userId, now, limit) { return copy(state.typing.filter(row => row.projectId === projectId && row.userId === userId && row.cleanupAt > now).sort((a, b) => a.id.localeCompare(b.id)).slice(0, limit)); },
+        async activeTyping(projectId, now, limit) { return copy(state.typing.filter(row => row.projectId === projectId && row.expiresAt !== null && row.expiresAt > now).sort((a, b) => a.userId.localeCompare(b.userId) || a.id.localeCompare(b.id)).slice(0, limit)); },
+        async saveTyping(row) { state.typing = state.typing.filter(item => item.cleanupAt > row.updatedAt); upsert(state.typing, row); },
+        async typingRate(projectId, userId) { return copy(state.typingRates.find(row => row.projectId === projectId && row.userId === userId) ?? null); },
+        async saveTypingRate(row) { state.typingRates = state.typingRates.filter(item => item.cleanupAt > row.windowStartedAt); upsert(state.typingRates, row); },
         ...createChatAttachmentOperations({
             async get(projectId, id) { return copy(state.attachments.find(row => row.projectId === projectId && row.id === id) ?? null); },
             async byKey(projectId, uploaderId, key) { return copy(state.attachments.find(row => row.projectId === projectId && row.uploaderId === uploaderId && row.clientUploadId === key) ?? null); },

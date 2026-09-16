@@ -57,6 +57,9 @@ export const CHAT_COMPONENT_SCHEMAS: Record<string, Record<string, unknown>> = {
   ChatParticipantRevokeRequest: object({ expectedVersion: version, reason: { type: "string", minLength: 1, maxLength: 1000 }, idempotencyKey: { ...id, minLength: 8 } }),
   ChatReadRequest: object({ messageId: id, sequence: version }),
   ChatReadResult: object({ lastReadSequence: integer, counts: ref("ChatCounts") }),
+  ChatTypingRequest: { ...object({ composerId: { type: "string", minLength: 16, maxLength: 100, pattern: "^[A-Za-z0-9_-]+$" }, sequence: { ...integer, maximum: Number.MAX_SAFE_INTEGER }, typing: { type: "boolean" } }), additionalProperties: false },
+  ChatTypingResult: object({ sequence: integer, typing: { type: "boolean" }, expiresAt: { ...timestamp, nullable: true } }),
+  ChatTypingSnapshot: object({ projectId: id, serverTime: timestamp, participants: { type: "array", maxItems: 100, items: object({ userId: id, name: { type: "string", minLength: 1, maxLength: 300 }, expiresAt: timestamp }) } }),
   ChatEvent: object({ id, projectId: id, sequence: version, type: { type: "string", enum: ["message.created", "issue.changed", "participants.changed", "read.changed"] }, recordId: id, version, occurredAt: timestamp }),
   ChatEventBatch: object({ events: array("ChatEvent"), cursor: { type: "string" }, hasMore: { type: "boolean" }, resync: { type: "boolean" }, membershipVersion: { type: "string" } }, ["events", "cursor", "hasMore", "resync"])
 };
@@ -67,7 +70,8 @@ export const CHAT_REQUEST_BODIES = {
   "PATCH /projects/:projectId/chat/messages/:messageId/issue": json("ChatIssueRequest"),
   "POST /projects/:projectId/chat/participants": json("ChatParticipantRequest"),
   "POST /projects/:projectId/chat/participants/:selectionId/revoke": json("ChatParticipantRevokeRequest"),
-  "PUT /projects/:projectId/chat/read": json("ChatReadRequest")
+  "PUT /projects/:projectId/chat/read": json("ChatReadRequest"),
+  "PUT /projects/:projectId/chat/typing": json("ChatTypingRequest")
 };
 export const CHAT_RESPONSE_SCHEMAS = {
   "GET /projects/:projectId/chat/attachment-policy": "ChatAttachmentPolicy",
@@ -82,7 +86,8 @@ export const CHAT_RESPONSE_SCHEMAS = {
   "GET /projects/:projectId/chat/messages": "ChatMessagePage",
   "POST /projects/:projectId/chat/messages": "ChatMessage",
   "PATCH /projects/:projectId/chat/messages/:messageId/issue": "ChatMessage",
-  "PUT /projects/:projectId/chat/read": "ChatReadResult"
+  "PUT /projects/:projectId/chat/read": "ChatReadResult",
+  "PUT /projects/:projectId/chat/typing": "ChatTypingResult"
 };
 export const CHAT_QUERY_PARAMETERS = {
   "POST /projects/:projectId/chat/attachments": [

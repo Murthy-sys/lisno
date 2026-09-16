@@ -248,6 +248,7 @@ export const HUMAN_JWT_OPERATION_LIST = [
   { key: "POST /projects/:projectId/chat/messages", permission: "chat.send", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
   { key: "PATCH /projects/:projectId/chat/messages/:messageId/issue", permission: "chat.issue", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "project_chat" },
   { key: "PUT /projects/:projectId/chat/read", permission: "chat.read_state", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
+  { key: "PUT /projects/:projectId/chat/typing", permission: "chat.send", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
   { key: "GET /projects/:projectId/chat/events", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_chat" },
 ] as const satisfies readonly HumanJwtOperation[];
 

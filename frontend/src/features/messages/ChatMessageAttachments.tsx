@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Download, FileText, Play } from "lucide-react";
 import { Dialog } from "../../components/ui/Dialog";
 import { Button } from "../../components/ui/Button";
@@ -7,6 +7,8 @@ import { ChatTransferPool } from "./chatTransfers";
 import { projectChatApi, chatErrorMessage, isChatDenied } from "./projectChatApi";
 import { useProjectChat } from "./ProjectChatProvider";
 import type { ChatAttachment } from "./projectChatTypes";
+import { ChatAudioBubble, ChatAudioContext, type ChatAudioSender } from "./ChatAudioBubble";
+import { ChatAudioController } from "./chatAudioController";
 
 interface MediaContextValue {
   preview: (attachment: ChatAttachment, signal: AbortSignal, ready: (url: string) => void) => Promise<void>;
@@ -21,6 +23,19 @@ export function ChatMediaProvider({ projectId, children }: { projectId: string; 
   const { transfer, isCurrent, verifyAccess } = chat;
   const release = useCallback(() => { original.current?.controller.abort(); if (original.current?.url) URL.revokeObjectURL(original.current.url); original.current = null; }, []);
   useEffect(() => release, [release]);
+  const audio = useMemo(() => new ChatAudioController({
+    current: () => isCurrent(projectId),
+    beforeStart: () => { release(); setViewer(null); },
+    errorMessage: chatErrorMessage,
+    load: async (attachment, signal, progress) => {
+      const current = isCurrent(projectId);
+      try {
+        const result = await transfer(() => projectChatApi.attachmentBlob(projectId, attachment.id, "content", signal, attachment.byteSize, value => progress(value.totalBytes ? Math.round(value.loadedBytes / value.totalBytes * 100) : undefined)), signal);
+        return result.blob;
+      } catch (error) { if (!signal.aborted && current() && isChatDenied(error)) void verifyAccess(projectId); throw error; }
+    }
+  }), [isCurrent, projectId, release, transfer, verifyAccess]);
+  useEffect(() => () => audio.release(), [audio]);
   const preview = useCallback(async (attachment: ChatAttachment, signal: AbortSignal, ready: (url: string) => void) => {
     const current = isCurrent(projectId);
     await previewSlots.run(async () => {
@@ -36,6 +51,7 @@ export function ChatMediaProvider({ projectId, children }: { projectId: string; 
   }, [isCurrent, previewSlots, projectId, transfer, verifyAccess]);
   function save(url: string, filename: string) { const link = document.createElement("a"); link.href = url; link.download = filename; link.click(); }
   const open = useCallback((attachment: ChatAttachment, downloading = false) => {
+    audio.release();
     release();
     const run = { controller: new AbortController(), url: undefined as string | undefined };
     original.current = run;
@@ -50,14 +66,14 @@ export function ChatMediaProvider({ projectId, children }: { projectId: string; 
       setViewer({ attachment, url: run.url, downloading });
       if (downloading) save(run.url, attachment.filename);
     }).catch(error => { if (valid()) { if (isChatDenied(error)) void verifyAccess(projectId); setViewer({ attachment, downloading, error: chatErrorMessage(error) }); } });
-  }, [isCurrent, projectId, release, transfer, verifyAccess]);
-  return <MediaContext.Provider value={{ preview, open }}>{children}{viewer ? <Dialog title={viewer.attachment.filename} eyebrow="Shared attachment" onClose={() => { release(); setViewer(null); }}><div className="project-chat-form project-chat-media-viewer">
+  }, [audio, isCurrent, projectId, release, transfer, verifyAccess]);
+  return <ChatAudioContext.Provider value={audio}><MediaContext.Provider value={{ preview, open }}>{children}{viewer ? <Dialog title={viewer.attachment.filename} eyebrow="Shared attachment" onClose={() => { release(); setViewer(null); }}><div className="project-chat-form project-chat-media-viewer">
     {!viewer.url && !viewer.error ? <p role="status">Loading attachment{viewer.progress === undefined ? "…" : ` · ${viewer.progress}%`}</p> : null}
     {viewer.error ? <p role="alert">{viewer.error}</p> : null}
-    {viewer.url && !viewer.downloading && !viewer.error ? viewer.attachment.kind === "image" ? <img src={viewer.url} alt={viewer.attachment.filename} onError={() => setViewer(value => value ? { ...value, error: "This browser cannot preview this image. Download the original file." } : value)} /> : viewer.attachment.kind === "video" ? <video src={viewer.url} controls preload="metadata" onError={() => setViewer(value => value ? { ...value, error: "This browser cannot play this video. Download the original file." } : value)} /> : viewer.attachment.kind === "audio" ? <audio src={viewer.url} controls preload="metadata" onError={() => setViewer(value => value ? { ...value, error: "This browser cannot play this audio. Download the original file." } : value)} /> : null : null}
+    {viewer.url && !viewer.downloading && !viewer.error ? viewer.attachment.kind === "image" ? <img src={viewer.url} alt={viewer.attachment.filename} onError={() => setViewer(value => value ? { ...value, error: "This browser cannot preview this image. Download the original file." } : value)} /> : viewer.attachment.kind === "video" ? <video src={viewer.url} controls preload="metadata" onError={() => setViewer(value => value ? { ...value, error: "This browser cannot play this video. Download the original file." } : value)} /> : null : null}
     <p>{chatFileSize(viewer.attachment.byteSize)} · {viewer.attachment.mimeType}</p>
     <div className="project-chat-form__actions">{viewer.url ? <a className="project-chat-download" href={viewer.url} download={viewer.attachment.filename}>Download original</a> : viewer.error ? <Button onClick={() => open(viewer.attachment, viewer.downloading)}>Retry attachment</Button> : null}<Button variant="secondary" onClick={() => { release(); setViewer(null); }}>Close</Button></div>
-  </div></Dialog> : null}</MediaContext.Provider>;
+  </div></Dialog> : null}</MediaContext.Provider></ChatAudioContext.Provider>;
 }
 
 function AttachmentTile({ attachment }: { attachment: ChatAttachment }) {
@@ -87,7 +103,8 @@ function AttachmentTile({ attachment }: { attachment: ChatAttachment }) {
     <div className="project-chat-attachment__actions">{media && attachment.kind !== "image" ? <button type="button" onClick={() => context.open(attachment)}><Play size={14} aria-hidden="true" /> Load {attachment.kind}</button> : null}<button type="button" aria-label={`Download ${attachment.filename}`} onClick={() => context.open(attachment, true)}><Download size={14} aria-hidden="true" /> Download</button></div>
   </div>;
 }
-export function ChatMessageAttachments({ attachments }: { attachments: ChatAttachment[] }) {
+export function ChatMessageAttachments({ attachments, sender, audioTimestamp }: { attachments: ChatAttachment[]; sender?: ChatAudioSender; audioTimestamp?: ReactNode }) {
   if (!attachments.length) return null;
-  return <div className="project-chat-attachments" aria-label="Message attachments">{attachments.map(attachment => <AttachmentTile key={attachment.id} attachment={attachment} />)}</div>;
+  const lastAudio = attachments.reduce((last, attachment, index) => attachment.kind === "audio" ? index : last, -1);
+  return <div className="project-chat-attachments" role="group" aria-label="Message attachments">{attachments.map((attachment, index) => attachment.kind === "audio" ? <ChatAudioBubble key={attachment.id} source={{ key: `sent:${attachment.id}`, filename: attachment.filename, attachment }} sender={sender} timestamp={index === lastAudio ? audioTimestamp : undefined} /> : <AttachmentTile key={attachment.id} attachment={attachment} />)}</div>;
 }

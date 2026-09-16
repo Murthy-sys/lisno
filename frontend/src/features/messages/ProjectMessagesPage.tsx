@@ -10,6 +10,9 @@ import { ChatComposer } from "./ChatComposer";
 import { ChatIssueDialog } from "./ChatIssueDialog";
 import { ChatParticipants } from "./ChatParticipants";
 import { ChatTimeline } from "./ChatTimeline";
+import { ChatMediaProvider } from "./ChatMessageAttachments";
+import { ChatTypingIndicator } from "./ChatTypingIndicator";
+import { useChatTypingActivity } from "./useChatTypingActivity";
 import { useProjectChat, useChatProjectRegistration, type ChatSendAttempt } from "./ProjectChatProvider";
 import { chatErrorMessage, chatKeys } from "./projectChatApi";
 import { useChatMessages, useChatParticipants, useChatSummary, useChatAttachmentPolicy } from "./projectChatQueries";
@@ -47,6 +50,7 @@ function ProjectConversation({ projectId }: { projectId: string }) {
   const committedKeys = new Set(messages.filter(message => message.author.id === chat.userId).map(message => message.clientMessageId));
   const visibleAttempts = attempts.filter(attempt => !committedKeys.has(attempt.input.clientMessageId));
   const unavailable = !chat.enabled || chat.denied.has(projectId);
+  const typingActivity = useChatTypingActivity(projectId, !unavailable && chat.connection === "live" && Boolean(summary.data?.capabilities.canSend && participants.data && !participants.isError));
   async function checkAccess() {
     setCheckingAccess(true);
     try { await chat.verifyAccess(projectId); }
@@ -97,16 +101,17 @@ function ProjectConversation({ projectId }: { projectId: string }) {
       <div role="status" className={`project-chat-connection${chat.connection === "live" ? " sr-only" : ""}`}><span aria-hidden="true" />{connectionLabels[chat.connection]}</div>
       {summary.isError ? <p role="status" className="project-chat-warning">Project counts may be out of date. Retrying when the connection recovers.</p> : null}
       {around || filter !== "all" ? <div className="project-chat-context-note"><span>{around ? "Viewing an earlier message in context" : currentFilter.label}</span><button type="button" className="project-chat-icon" aria-label="Return to latest messages" onClick={latest}><X size={17} aria-hidden="true" /></button></div> : null}
-      <div className="project-chat-conversation">
+      <ChatMediaProvider key={`${chat.scope}:${projectId}`} projectId={projectId}><div className="project-chat-conversation">
           {history.isError ? <p role="alert" className="project-chat-warning">{history.data ? "Messages may be out of date. " : ""}{chatErrorMessage(history.error)} <Button variant="quiet" onClick={() => void history.refetch()}>Retry messages</Button></p> : null}
           {history.isPending ? <p role="status" className="project-chat-empty">Loading messages…</p> : history.data ? <ChatTimeline key={`${projectId}:${filter}:${around ?? "latest"}`} projectId={projectId} messages={messages} attempts={visibleAttempts} lastRead={summary.data.lastReadSequence} hasOlder={Boolean(history.hasNextPage)} hasNewer={Boolean(history.hasPreviousPage)} filtered={filter !== "all" || Boolean(around)} around={around} latestSequence={summary.data.latestMessageSequence} loadingOlder={history.isFetchingNextPage} loadingNewer={history.isFetchingPreviousPage} canSend={summary.data.capabilities.canSend} onOlder={() => void history.fetchNextPage()} onNewer={() => void history.fetchPreviousPage()} onLatest={latest} onReply={reply} onContext={context} onIssue={setSelectedIssue} onRetry={attempt => void chat.send(projectId, attempt.input)} onEditAttempt={editAttempt} onCancel={attempt => void chat.cancelAttempt(projectId, attempt.input.clientMessageId)} onDiscard={attempt => void chat.cancelAttempt(projectId, attempt.input.clientMessageId, true)} /> : null}
           <div ref={composerRegion} className="project-chat-composer-region">
             {participants.isError ? <p className="project-chat-warning" role="status">Participants are unavailable. Retry before sending a message. <Button variant="quiet" onClick={() => void participants.refetch()}>Retry participants</Button></p> : null}
             {(draft.body || draft.files.length || draft.reply || draft.priority !== "normal") && attempts.some(attempt => attempt.status === "failed") ? <p className="project-chat-muted">Finish or clear your current draft before editing a failed message.</p> : null}
-            <ChatComposer draft={draft} participants={participants.data?.items ?? []} disabled={!summary.data.capabilities.canSend || !participants.data || participants.isError} onChange={next => chat.setDraft(projectId, next)} onSend={send} policy={attachmentPolicy.data} policyError={attachmentPolicy.isError && !attachmentPolicy.unsupported ? "Attachments are temporarily unavailable." : undefined} onRetryPolicy={() => void attachmentPolicy.refetch()} />
+            <ChatTypingIndicator people={chat.currentProjectId === projectId ? chat.typing : []} />
+            <ChatComposer draft={draft} participants={participants.data?.items ?? []} sender={participants.data?.items.find(person => person.id === chat.userId)} onTypingEdit={typingActivity.edit} onTypingStop={typingActivity.stop} disabled={!summary.data.capabilities.canSend || !participants.data || participants.isError} onChange={next => chat.setDraft(projectId, next)} onSend={send} policy={attachmentPolicy.data} policyError={attachmentPolicy.isError && !attachmentPolicy.unsupported ? "Attachments are temporarily unavailable." : undefined} onRetryPolicy={() => void attachmentPolicy.refetch()} />
             {!summary.data.capabilities.canSend ? <p role="status">Sending is not available for your current access.</p> : null}
           </div>
-      </div>
+      </div></ChatMediaProvider>
       {panel ? <Drawer id="project-chat-group-info" open title="Project participants" eyebrow="Group information" variant="contextual" className="project-chat-details" onClose={() => setPanel(null)}>
         {participants.isPending ? <p role="status">Loading participants…</p> : participants.isError ? <p role="alert">{chatErrorMessage(participants.error)} <Button variant="quiet" onClick={() => void participants.refetch()}>Retry</Button></p> : <ChatParticipants projectId={projectId} participants={participants.data?.items ?? []} warnings={participants.data?.setupWarnings ?? []} canManage={summary.data.capabilities.canManageParticipants} />}
       </Drawer> : null}

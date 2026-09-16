@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
-import type { ChatEventBatch, ProjectChatService } from "../contracts/project-chat.js";
+import type { ChatEventBatch, ProjectChatService, ProjectChatTypingService } from "../contracts/project-chat.js";
+import { CHAT_TYPING } from "../domain/project-chat-typing.js";
 import { ApiError } from "../middleware/errors.js";
 import { ExpiredTokenError, InvalidTokenError, type AuthService } from "./auth.service.js";
 import { chatActorFromAuthenticatedUser } from "./project-chat-authentication.js";
@@ -14,6 +15,7 @@ export function createProjectChatStreamService(options: {
   auth: AuthService;
   chat: ProjectChatService;
   hub: ProjectChatEventsHub;
+  typing?: ProjectChatTypingService;
   heartbeatMs?: number;
   drainTimeoutMs?: number;
   maxStreams?: number;
@@ -36,6 +38,7 @@ export function createProjectChatStreamService(options: {
       const token = request.header("Authorization")!.slice("Bearer ".length);
       let cursor = initialCursor;
       let membershipVersion: string | undefined;
+      let typingSignature: string | undefined;
       let pumping = false;
       let dirty = false;
       let ended = false;
@@ -63,19 +66,7 @@ export function createProjectChatStreamService(options: {
       connections.set(stop, userId);
       response.once("close", stop);
 
-      const write = async (frame: string, protect = false): Promise<boolean> => {
-        if (ended || response.destroyed || response.writableLength > 128 * 1024) { stop(); return false; }
-        lastFrameAt = Date.now();
-        let accepted = false;
-        const enqueue = () => {
-          if (!ended && !response.destroyed) accepted = response.write(frame);
-        };
-        if (protect) {
-          const user = await options.auth.authenticate(token, { remoteAddress: request.socket.remoteAddress });
-          // Enqueue synchronously under the same fence as assignment/session changes.
-          // Network drain happens only after the coordinator transaction releases.
-          await options.chat.authorizeDelivery(chatActorFromAuthenticatedUser(user, token), projectId, enqueue);
-        } else enqueue();
+      const waitForDrain = async (accepted: boolean): Promise<boolean> => {
         if (ended || response.destroyed) return false;
         // The buffer may have drained while the authorization transaction committed.
         if (accepted || !response.writableNeedDrain) return true;
@@ -94,6 +85,46 @@ export function createProjectChatStreamService(options: {
           timer = setTimeout(() => { finish(false); stop(); response.destroy(); }, drainTimeoutMs);
           timer.unref();
         });
+      };
+      const write = async (frame: string, protect = false): Promise<boolean> => {
+        if (ended || response.destroyed || response.writableLength > 128 * 1024) { stop(); return false; }
+        lastFrameAt = Date.now();
+        let accepted = false;
+        const enqueue = () => {
+          if (!ended && !response.destroyed) accepted = response.write(frame);
+        };
+        if (protect) {
+          const user = await options.auth.authenticate(token, { remoteAddress: request.socket.remoteAddress });
+          // Enqueue synchronously under the same fence as assignment/session changes.
+          // Network drain happens only after the coordinator transaction releases.
+          await options.chat.authorizeDelivery(chatActorFromAuthenticatedUser(user, token), projectId, enqueue);
+        } else enqueue();
+        return waitForDrain(accepted);
+      };
+      const sendTyping = async () => {
+        if (!options.typing || ended) return;
+        try {
+          const user = await options.auth.authenticate(token, { remoteAddress: request.socket.remoteAddress });
+          let accepted = true;
+          await options.typing.deliver(chatActorFromAuthenticatedUser(user, token), projectId, snapshot => {
+            const signature = JSON.stringify(snapshot.participants);
+            if (signature === typingSignature || ended || response.destroyed) return;
+            // There is no presence queue: after drain the next pump obtains a fresh
+            // snapshot, coalescing intervening changes instead of replaying them.
+            if (response.writableNeedDrain || response.writableLength > CHAT_TYPING.maxFrameBytes) return;
+            const frame = `event: typing\ndata: ${JSON.stringify(snapshot)}\n\n`;
+            if (Buffer.byteLength(frame) > CHAT_TYPING.maxFrameBytes) return;
+            accepted = response.write(frame);
+            typingSignature = signature;
+            lastFrameAt = Date.now();
+          });
+          await waitForDrain(accepted);
+        } catch (error) {
+          if (error instanceof InvalidTokenError || error instanceof ExpiredTokenError ||
+            (error instanceof ApiError && [401, 403, 404].includes(error.status))) throw error;
+          // Presence is best effort; a transient presence failure must not stop
+          // delivery of committed messages. The next hub poll retries current state.
+        }
       };
       const nextBatch = async (): Promise<ChatEventBatch> => {
         const user = await options.auth.authenticate(token, { remoteAddress: request.socket.remoteAddress });
@@ -128,6 +159,7 @@ export function createProjectChatStreamService(options: {
             const batch = await nextBatch();
             if (ended) return;
             await sendBatch(batch);
+            if (!batch.hasMore) await sendTyping();
             if (batch.hasMore) dirty = true;
             pages += 1;
           } while (dirty && !ended && pages < 10);
@@ -152,6 +184,7 @@ export function createProjectChatStreamService(options: {
         response.flushHeaders();
         await write('event: state\ndata: {"status":"live"}\n\n');
         await sendBatch(initial, true);
+        if (!initial.hasMore) await sendTyping();
         initialized = true;
         if (initial.hasMore || dirty) void pump();
       } catch (error) {

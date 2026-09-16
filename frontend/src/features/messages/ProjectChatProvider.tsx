@@ -7,6 +7,8 @@ import { chatErrorMessage, chatKeys, isChatDenied, projectChatApi } from "./proj
 import { emptyChatDraft, type ChatDraft, type ChatLocalAttachment } from "./projectChatState";
 import { ChatTransferPool } from "./chatTransfers";
 import { runProjectChatStream } from "./projectChatStream";
+import { CHAT_TYPING_LEASE_MS } from "./chatTypingActivity";
+import type { ChatTypingPerson } from "./ChatTypingIndicator";
 import type { ChatMessage, ChatMessagePage, ChatSendInput, ChatStreamState } from "./projectChatTypes";
 
 export interface ChatSendAttempt {
@@ -19,6 +21,7 @@ interface ProjectMemory { draft: ChatDraft; attempts: ChatSendAttempt[] }
 interface ChatContextValue {
   scope: string; enabled: boolean; userId: string; currentProjectId: string | null;
   connection: ChatStreamState["status"]; denied: ReadonlySet<string>;
+  typing: readonly ChatTypingPerson[];
   register: (projectId: string) => () => void;
   revoke: (projectId: string) => void;
   verifyAccess: (projectId: string) => Promise<void>;
@@ -59,6 +62,13 @@ function ChatSession({ children, userId, enabled }: { children: ReactNode; userI
   const transfer = useCallback(<T,>(operation: () => Promise<T>, signal: AbortSignal) => pool.run(operation, signal), [pool]);
   const [overview, setOverview] = useState<Record<string, { to: string; label: string }>>({});
   const [connection, setConnection] = useState<ChatStreamState["status"]>("connecting");
+  const [typingSnapshot, setTypingSnapshot] = useState<{ projectId: string; people: Array<ChatTypingPerson & { until: number }> } | null>(null);
+  const typing = useMemo(() => connection === "live" && typingSnapshot?.projectId === currentProjectId && !denied.has(currentProjectId!) ? typingSnapshot.people : [], [connection, currentProjectId, denied, typingSnapshot]);
+  useEffect(() => {
+    if (!typingSnapshot?.people.length) return;
+    const timeout = setTimeout(() => setTypingSnapshot(current => current ? { ...current, people: current.people.filter(person => person.until > performance.now()) } : null), Math.max(0, Math.min(...typingSnapshot.people.map(person => person.until)) - performance.now()) + 1);
+    return () => clearTimeout(timeout);
+  }, [typingSnapshot]);
   const leases = useRef(new Map<symbol, string>());
   const mounted = useRef(true);
   const activeProject = useRef(currentProjectId);
@@ -269,13 +279,22 @@ function ChatSession({ children, userId, enabled }: { children: ReactNode; userI
     const cachedHistory = queryClient.getQueryData<{ pages: ChatMessagePage[] }>(chatKeys.messages(scope, projectId, "all"));
     void runProjectChatStream({ projectId, cursor: cachedHistory?.pages[0]?.snapshotCursor ?? cursor.current, signal: controller.signal,
       onBatch: batch => { if (batch.resync || batch.events.length) refresh(); if (batch.resync || batch.events.some(event => event.type === "participants.changed")) void queryClient.invalidateQueries({ queryKey: [...chatKeys.project(scope, projectId), "attachment-policy"] }); },
-      onStatus: state => { if (valid() && !controller.signal.aborted) { setConnection(state); if (state === "live") refresh(); } },
+      onTyping: snapshot => {
+        if (!valid() || controller.signal.aborted || snapshot.projectId !== projectId) return;
+        const serverTime = Date.parse(snapshot.serverTime);
+        const now = performance.now();
+        const people = snapshot.participants.filter(person => person.userId !== userId && Date.parse(person.expiresAt) > serverTime)
+          .map(person => ({ userId: person.userId, name: person.name, until: now + Math.min(CHAT_TYPING_LEASE_MS, Date.parse(person.expiresAt) - serverTime) }))
+          .sort((a, b) => a.name.localeCompare(b.name) || a.userId.localeCompare(b.userId));
+        setTypingSnapshot({ projectId, people });
+      },
+      onStatus: state => { if (valid() && !controller.signal.aborted) { setConnection(state); if (state !== "live") setTypingSnapshot(null); if (state === "live") refresh(); } },
       onDenied: () => { if (valid()) revoke(projectId); }
     });
     const recover = () => { if (document.visibilityState === "visible") refresh(); };
     document.addEventListener("visibilitychange", recover); window.addEventListener("online", refresh);
-    return () => { controller.abort(); document.removeEventListener("visibilitychange", recover); window.removeEventListener("online", refresh); };
-  }, [currentProjectId, enabled, denied, ready, invalidate, isCurrent, queryClient, revoke, scope]);
+    return () => { controller.abort(); setTypingSnapshot(null); document.removeEventListener("visibilitychange", recover); window.removeEventListener("online", refresh); };
+  }, [currentProjectId, enabled, denied, ready, invalidate, isCurrent, queryClient, revoke, scope, userId]);
   useEffect(() => {
     if (!currentProjectId || !enabled || denied.has(currentProjectId) || connection === "live") return;
     const timer = setInterval(() => { if (document.visibilityState === "visible") void invalidate(currentProjectId); }, 10_000);
@@ -298,7 +317,7 @@ function ChatSession({ children, userId, enabled }: { children: ReactNode; userI
     };
   }, [queryClient, scope]);
 
-  const value = useMemo(() => ({ scope, enabled, userId, currentProjectId, connection, denied, register, revoke, verifyAccess, invalidate, isCurrent, memory, overview, rememberOverview, setDraft, send, removeAttempt, cancelAttempt, reconcileMessages, transfer, configureTransfers }), [scope, enabled, userId, currentProjectId, connection, denied, register, revoke, verifyAccess, invalidate, isCurrent, memory, overview, rememberOverview, setDraft, send, removeAttempt, cancelAttempt, reconcileMessages, transfer, configureTransfers]);
+  const value = useMemo(() => ({ scope, enabled, userId, currentProjectId, connection, typing, denied, register, revoke, verifyAccess, invalidate, isCurrent, memory, overview, rememberOverview, setDraft, send, removeAttempt, cancelAttempt, reconcileMessages, transfer, configureTransfers }), [scope, enabled, userId, currentProjectId, connection, typing, denied, register, revoke, verifyAccess, invalidate, isCurrent, memory, overview, rememberOverview, setDraft, send, removeAttempt, cancelAttempt, reconcileMessages, transfer, configureTransfers]);
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
 }
 
