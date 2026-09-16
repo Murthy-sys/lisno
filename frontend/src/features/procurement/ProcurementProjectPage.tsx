@@ -1,3 +1,4 @@
+import { ProjectChatNavigation } from "../messages";
 import { useId, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, FileText, ReceiptText, ShoppingCart } from "lucide-react";
@@ -91,6 +92,7 @@ export function ProcurementProjectPage() {
         breadcrumb={<Link to="/home">Back to approved projects</Link>}
       />
 
+      <ProjectChatNavigation projectId={projectId} overviewTo={`/procurement/projects/${projectId}`} overviewLabel="Procurement" />
       {!canRead ? (
         <PageState
           state="error"

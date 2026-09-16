@@ -57,6 +57,8 @@ export function safeReturnPath(
     if (hasEncodedTraversal(rawPathname)) return home;
 
     const parsed = new URL(candidate, returnPathOrigin);
+    const canReturnToProjectMessages = parsed.pathname === "/project-messages" ||
+      /^\/projects\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\/messages$/u.test(parsed.pathname);
     const canReturnToRoleHome =
       parsed.pathname === home || parsed.pathname.startsWith(`${home}/`);
     const canReturnToClientResponses =
@@ -85,6 +87,7 @@ export function safeReturnPath(
       parsed.origin !== returnPathOrigin ||
       hasEncodedTraversal(parsed.pathname) ||
       (!canReturnToRoleHome &&
+        !canReturnToProjectMessages &&
         !canReturnToClientResponses &&
         !canReturnToDesignApprovals &&
         !canReturnToSuperAdminProjects &&

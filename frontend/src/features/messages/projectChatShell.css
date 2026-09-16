@@ -1,0 +1,90 @@
+/* Messaging has its own viewport and palette; role dashboards keep their own shell. */
+html:has(.project-messaging-app), body:has(.project-messaging-app), body:has(.project-messaging-app) #root {
+  min-height: 0;
+  height: 100%;
+}
+body:has(.project-messaging-app) { background: #f0f2f5; }
+.project-messaging-app {
+  --focus-ring: 0 0 0 3px rgb(0 128 105 / 20%);
+  height: 100vh;
+  height: 100dvh;
+  min-width: 0;
+  color: #111b21;
+  background: #f0f2f5;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.project-messaging-main, .project-messaging-layout, .project-messaging-content { height: 100%; min-height: 0; min-width: 0; }
+.project-messaging-main { margin: 0; padding: 0; outline: none; }
+.project-messaging-layout { display: grid; grid-template-columns: clamp(320px, 27vw, 360px) minmax(0, 1fr); max-width: 1920px; margin-inline: auto; background: #fff; }
+.project-messaging-content { display: flex; flex-direction: column; overflow: hidden; }
+.project-messaging-content > * { flex: 1; min-height: 0; min-width: 0; }
+.project-messaging-list-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: #fff; border-right: 1px solid #dfe4e7; padding-top: env(safe-area-inset-top, 0px); }
+.project-messaging-list-header { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 8px; min-height: 72px; padding: 12px 16px 10px; }
+.project-messaging-list-header h1, .project-messaging-list-header h2 { margin: 0; font-family: inherit; font-size: 23px; line-height: 1.25; font-weight: 650; letter-spacing: -.55px; color: #111b21; }
+.project-messaging-list-header p { margin: 4px 0 0; color: #667781; font-size: 12px; line-height: 1.4; }
+.project-messaging-list-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; }
+.project-messaging-icon.ui-icon-button { width: 40px; height: 40px; min-width: 40px; min-height: 40px; padding: 0; border: 0; border-radius: 50%; color: #54656f; background: transparent; box-shadow: none; }
+.project-messaging-icon.ui-icon-button:hover { color: #111b21; background: #f0f2f5; }
+.project-messaging-list-context { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex: 0 0 auto; padding: 8px 18px 13px; color: #54656f; font-size: 12px; border-bottom: 1px solid #f0f2f5; }
+.project-messaging-list-context > span:last-child:not(:first-child) { display: grid; place-items: center; min-width: 24px; padding: 2px 6px; border-radius: 12px; background: #f0f2f5; font-size: 11px; }
+.project-messaging-list-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #ccd3d6 transparent; }
+.project-messaging-conversations { margin: 0; padding: 0; list-style: none; }
+.project-messaging-conversations li { margin: 0; padding: 0; }
+.project-messaging-conversations li > a { display: flex; align-items: center; gap: 12px; min-height: 82px; padding: 11px 15px; color: #111b21; text-decoration: none; }
+.project-messaging-conversations li > a:hover { background: #f5f6f6; }
+.project-messaging-conversations li > a[aria-current="page"] { background: #e9edef; }
+.project-messaging-avatar { display: grid; place-items: center; flex: 0 0 46px; width: 46px; height: 46px; border-radius: 50%; background: #e5ece9; color: #4d6860; font-size: 16px; font-weight: 500; letter-spacing: .2px; }
+.project-messaging-row-content { flex: 1; display: grid; gap: 5px; min-width: 0; }
+.project-messaging-row-top, .project-messaging-row-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.project-messaging-row-top strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 500; line-height: 1.4; }
+.project-messaging-row-top time { flex: 0 0 auto; color: #667781; font-size: 11px; }
+.project-messaging-row-top .project-messaging-time--unread { color: #086652; font-weight: 600; }
+.project-messaging-row-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #52636d; font-size: 12px; line-height: 1.4; }
+.project-messaging-row-counts { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.project-messaging-unread { min-width: 20px; height: 20px; padding: 1px 5px; display: grid; place-items: center; border-radius: 12px; background: #00855f; color: #fff; font-size: 11px; font-weight: 600; }
+.project-messaging-mention { font-size: 15px; color: #00855f; font-weight: 600; }
+.project-messaging-critical { width: fit-content; color: #a82936; font-size: 11px; font-weight: 600; }
+.project-messaging-critical::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: currentColor; vertical-align: 2px; }
+.project-messaging-pagination { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 5px; padding: 7px 8px; border-top: 1px solid #e9edef; font-size: 11px; color: #667781; }
+.project-messaging-pagination button { display: inline-flex; align-items: center; gap: 2px; min-height: 40px; padding: 6px 4px; border: 0; border-radius: 5px; background: none; color: #067d60; font: inherit; cursor: pointer; }
+.project-messaging-pagination button:disabled { color: #6c7b83; opacity: .6; cursor: default; }
+.project-messaging-list-footer { flex: 0 0 auto; padding: 10px 16px max(10px, env(safe-area-inset-bottom, 0px)); border-top: 1px solid #e9edef; }
+.project-messaging-list-footer a { display: flex; align-items: center; gap: 8px; width: fit-content; min-height: 28px; font-size: 12px; color: #54656f; text-decoration: none; }
+.project-messaging-list-footer a:hover { color: #067d60; }
+.project-messaging-notice { padding: 16px; margin: 0; font-size: 13px; line-height: 1.6; color: #54656f; overflow-wrap: anywhere; }
+.project-messaging-notice--error { background: #fff5e8; color: #755012; }
+.project-messaging-notice button { border: 0; background: none; color: #067d60; font: inherit; text-decoration: underline; padding: 8px; cursor: pointer; }
+.project-messaging-list-empty { display: grid; justify-items: center; gap: 12px; padding: 45px 22px; text-align: center; color: #667781; }
+.project-messaging-list-empty h2 { margin: 0; font-size: 17px; font-weight: 500; color: #111b21; }
+.project-messaging-list-empty p { margin: 0; font-size: 13px; line-height: 1.65; }
+.project-messaging-welcome { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: #f7f9fa; border-bottom: 5px solid #25a982; padding: 32px; text-align: center; }
+.project-messaging-welcome__illustration { position: relative; margin: 0 0 18px; padding: 28px; border-radius: 50%; color: #86a69a; background: #e7efeb; }
+.project-messaging-welcome__illustration > span { position: absolute; bottom: 12px; right: 9px; display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: #fff; color: #39866c; }
+.project-messaging-welcome h2 { margin: 0; color: #41525d; font-family: inherit; font-size: clamp(22px, 2.5vw, 30px); line-height: 1.3; font-weight: 400; letter-spacing: -.5px; }
+.project-messaging-welcome p { margin: 0; color: #667781; font-size: 14px; line-height: 1.8; }
+.project-messaging-welcome .project-messaging-welcome__note { margin-top: 32px; color: #6a7a83; font-size: 12px; }
+.project-messaging-skeleton > div { display: flex; align-items: center; gap: 12px; height: 83px; padding: 12px 16px; }
+.project-messaging-skeleton > div > span { width: 46px; height: 46px; flex: 0 0 46px; border-radius: 50%; background: #edf1f2; }
+.project-messaging-skeleton > div > div { display: grid; gap: 10px; flex: 1; }
+.project-messaging-skeleton i { height: 9px; width: 65%; border-radius: 5px; background: #edf1f2; }
+.project-messaging-skeleton i + i { width: 90%; height: 7px; }
+.project-messaging-app :is(a, button):focus-visible { outline: 2px solid #008069; outline-offset: -2px; }
+.project-messaging-app .ui-skip-link:focus-visible { outline-offset: 3px; }
+.project-messaging-navigation.ui-drawer { font-family: var(--font-sans, sans-serif); }
+@media (max-width: 1023px) {
+  .project-messaging-layout { display: flex; }
+  .project-messaging-list-pane { width: 100%; border-right: 0; padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
+  .project-messaging-content { display: none; width: 100%; }
+  .project-messaging-layout--selected .project-messaging-list-pane { display: none; }
+  .project-messaging-layout--selected .project-messaging-content { display: flex; }
+  .project-messaging-conversations li > a { min-height: 84px; padding-inline: 16px; }
+  .project-messaging-list-header { padding-inline: 16px; }
+}
+@media (pointer: coarse) {
+  .project-messaging-icon.ui-icon-button { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+  .project-messaging-list-footer a { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .project-messaging-app * { scroll-behavior: auto !important; }
+}

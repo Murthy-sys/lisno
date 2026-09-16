@@ -1,3 +1,4 @@
+import { ProjectChatNavigation } from "../messages";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, FileEdit, MessageSquare, User } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
@@ -107,6 +108,7 @@ export function AdminProjectDetailPage() {
           </a>
         ) : undefined}
       />
+      <ProjectChatNavigation projectId={projectId} overviewTo={`/admin/projects/${projectId}`} />
       <Surface as="section" className="admin-project-detail__surface" aria-label="Project details">
         <div className="admin-project-detail__sections">
           <AdminDetailSection

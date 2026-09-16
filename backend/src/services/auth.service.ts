@@ -66,7 +66,7 @@ export interface AuthPayload {
 }
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-09-12.design-workflow-actions.v1" as const;
+  "2026-09-16.project-chat.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;
@@ -209,6 +209,7 @@ export function createAuthService(
       let user: UserRecord;
       try {
         user = await repository.runInTransaction(async (transaction) => {
+          await transaction.coordinateAuthorizationMutation();
           await transaction.coordinateClientEmail(emailNormalized);
           if (await transaction.findUserByEmail(emailNormalized)) {
             throw new AccountExistsError();

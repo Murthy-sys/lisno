@@ -7,6 +7,7 @@ import {
   KeyRound,
   LayoutDashboard,
   MailCheck,
+  MessagesSquare,
   Palette,
   Settings2,
   UsersRound,
@@ -40,6 +41,8 @@ export interface RegisteredFrontendRoute {
 }
 
 export const ROUTE_REGISTRY = [
+  { path: "/project-messages", permission: "chat.read", presentationRoles: ROLE_CODES, navigation: { roles: ROLE_CODES, item: { label: "Project messages", to: "/project-messages", end: true, icon: MessagesSquare } } },
+  { path: "/projects/:projectId/messages", permission: "chat.read", presentationRoles: ROLE_CODES, navigation: null },
   { path: "/designer", permission: "projects.list", presentationRoles: ["designer"], navigation: { roles: ["designer"], item: { label: "Workspace", to: "/designer", end: true, icon: LayoutDashboard } } },
   { path: "/designer/design-plans", permission: "design.plan_task.read", presentationRoles: ["designer"], navigation: { roles: ["designer"], item: { label: "Design plans", to: "/designer/design-plans", end: true, icon: Palette } } },
   { path: "/designer/projects/:projectId", permission: "projects.read", presentationRoles: ["designer"], navigation: null },

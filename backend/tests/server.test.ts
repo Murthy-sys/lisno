@@ -1,3 +1,5 @@
+import { ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel } from "../src/models/ProjectChat.js";
+import { ProjectChatAttachmentModel } from "../src/models/ProjectChatAttachment.js";
 import { EventEmitter } from "node:events";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -87,6 +89,15 @@ const env = {
   CORS_ORIGIN: ["http://localhost:5173"],
   UPLOADS_DIR: "uploads",
   MAX_UPLOAD_MB: 25,
+  CHAT_ATTACHMENTS_ENABLED: "true" as const,
+  CHAT_ATTACHMENT_MAX_FILE_MB: 50,
+  CHAT_ATTACHMENT_MAX_MESSAGE_MB: 100,
+  CHAT_ATTACHMENT_MAX_COUNT: 10,
+  CHAT_ATTACHMENT_MAX_TRANSFERS: 2,
+  CHAT_ATTACHMENT_MAX_STAGED_COUNT: 20,
+  CHAT_ATTACHMENT_MAX_STAGED_MB: 200,
+  CHAT_ATTACHMENT_TTL_SECONDS: 86_400,
+  CHAT_RECORDING_MAX_SECONDS: 300,
   OCR_LEASE_SECONDS: 300,
   OCR_MAX_ATTEMPTS: 5,
   OCR_RETRY_INITIAL_SECONDS: 30,
@@ -316,6 +327,7 @@ describe("production server bootstrap", () => {
     const writeOutput = vi.fn();
     const repositoryFactory = vi.fn(() => repository);
     const appFactory = vi.fn(() => ({
+      closeProjectChat: async () => { shutdownOrder.push("chat"); },
       listen: vi.fn((_port: number, callback: () => void) => {
         callback();
         return server;
@@ -344,7 +356,7 @@ describe("production server bootstrap", () => {
     );
     await runtime.stop();
     expect(disconnect).toHaveBeenCalledOnce();
-    expect(shutdownOrder).toEqual(["http", "mongo"]);
+    expect(shutdownOrder).toEqual(["chat", "http", "mongo"]);
   });
 
   it("fails before listening when Mongo cannot connect", async () => {
@@ -404,6 +416,8 @@ describe("production server bootstrap", () => {
 
   it("initializes every application index before repository creation and listen", async () => {
     const events: string[] = [];
+    const chatModels = [ProjectChatAttachmentModel, ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel];
+    for (const model of chatModels) vi.spyOn(model, "init").mockImplementation(async () => { events.push(model.modelName + "-index"); return model as never; });
     const server = fakeServer();
     vi.spyOn(UserModel, "init").mockImplementation(async () => {
       events.push("user-index");
@@ -531,6 +545,7 @@ describe("production server bootstrap", () => {
 
     expect(events).toEqual([
       "connect",
+      ...chatModels.map((model) => model.modelName + "-index"),
       "user-index",
       "invitation-index",
       "password-reset-index",
@@ -981,10 +996,12 @@ describe("production server bootstrap", () => {
     expect(connect).not.toHaveBeenCalled();
   });
 
-  it("runs receipt maintenance out of band without overlap and clears the unref timer on shutdown", async () => {
+  it("runs receipt and chat cleanup without overlap and waits for both during shutdown", async () => {
     const server = fakeServer();
     let tick: (() => void) | undefined;
     let releaseRun: (() => void) | undefined;
+    let releaseChat: (() => void) | undefined;
+    const cleanupChat = vi.fn(() => new Promise<void>(resolve => { releaseChat = resolve; }));
     const maintenanceRunner = vi.fn(
       () => new Promise<void>((resolve) => {
         releaseRun = resolve;
@@ -1008,7 +1025,8 @@ describe("production server bootstrap", () => {
         listen: vi.fn((_port: number, callback: () => void) => {
           callback();
           return server;
-        })
+        }),
+        cleanupProjectChatAttachments: cleanupChat
       }),
       receiptMaintenanceIntervalMs: 30_000,
       receiptMaintenanceRunner: maintenanceRunner,
@@ -1022,7 +1040,9 @@ describe("production server bootstrap", () => {
     expect(intervalHandle.unref).toHaveBeenCalledOnce();
     tick?.();
     tick?.();
+    await Promise.resolve();
     expect(maintenanceRunner).toHaveBeenCalledOnce();
+    expect(cleanupChat).toHaveBeenCalledOnce();
 
     let stopped = false;
     const stopping = runtime.stop().then(() => {
@@ -1032,6 +1052,9 @@ describe("production server bootstrap", () => {
     expect(clear).toHaveBeenCalledOnce();
     expect(stopped).toBe(false);
     releaseRun?.();
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    releaseChat?.();
     await stopping;
     expect(disconnect).toHaveBeenCalledOnce();
     tick?.();

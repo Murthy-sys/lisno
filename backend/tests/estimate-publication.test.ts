@@ -1,3 +1,4 @@
+import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoordination.js";
 import mongoose from "mongoose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -251,6 +252,7 @@ function setupHarness(options: HarnessOptions = {}) {
     endSession: vi.fn(async () => undefined)
   };
   vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
+  mockAuthorizationFence(session);
 
   let estimateReadCount = 0;
   const defaultCommittedEstimate = estimate({
@@ -1142,3 +1144,25 @@ describe("publication cleanup and idempotency", () => {
     expect(harness.deliverInitial).not.toHaveBeenCalled();
   });
 });
+
+// Model-level mock keeps the real repository coordinator and session-binding contract in the path.
+function mockAuthorizationFence(session: unknown) {
+  vi.spyOn(AuthorizationCoordinationModel, "updateOne").mockImplementation((filter, update, options) => {
+    expect(filter).toEqual({ _id: "authorization" });
+    expect(update).toEqual({ $inc: { revision: 1 }, $set: { updatedAt: expect.any(Date) } });
+    expect(options).toEqual({ upsert: true });
+    let bound = false;
+    const query = {
+      session: vi.fn((actual: unknown) => {
+        expect(actual).toBe(session);
+        bound = true;
+        return query;
+      }),
+      exec: vi.fn(async () => {
+        expect(bound).toBe(true);
+        return { acknowledged: true, matchedCount: 1, modifiedCount: 1 };
+      })
+    };
+    return query as never;
+  });
+}

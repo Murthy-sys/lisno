@@ -5,6 +5,23 @@ import { loadEnvironment } from "../src/config/env.js";
 const OCR_WORKER_TOKEN = "config-worker-token-with-at-least-32-characters";
 
 describe("environment authentication configuration", () => {
+  it("keeps bounded chat policy separate from older upload limits", () => {
+    const env = loadEnvironment({ JWT_SECRET: "runtime-secret-with-at-least-32-characters", OCR_WORKER_TOKEN, MAX_UPLOAD_MB: "3" });
+    expect(env.MAX_UPLOAD_MB).toBe(3);
+    expect(env.CHAT_ATTACHMENT_MAX_FILE_MB).toBe(50);
+    expect(env.CHAT_ATTACHMENT_MAX_MESSAGE_MB).toBe(100);
+    expect(env.CHAT_RECORDING_MAX_SECONDS).toBe(300);
+  });
+  it.each([
+    { CHAT_ATTACHMENT_MAX_FILE_MB: "51" },
+    { CHAT_ATTACHMENT_MAX_TRANSFERS: "3" },
+    { CHAT_ATTACHMENT_MAX_MESSAGE_MB: "20" },
+    { CHAT_ATTACHMENT_MAX_STAGED_MB: "70" },
+    { CHAT_ATTACHMENT_MAX_STAGED_COUNT: "5" },
+    { CHAT_RECORDING_MAX_SECONDS: "301" }
+  ])("rejects unsafe chat limits %j", limits => {
+    expect(() => loadEnvironment({ JWT_SECRET: "runtime-secret-with-at-least-32-characters", OCR_WORKER_TOKEN, ...limits })).toThrow();
+  });
   it("fails closed when JWT_SECRET is missing", () => {
     expect(() => loadEnvironment({})).toThrow();
   });

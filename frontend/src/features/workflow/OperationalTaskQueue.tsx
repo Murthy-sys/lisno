@@ -1,3 +1,4 @@
+import { ProjectChatLink } from "../messages";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -171,6 +172,8 @@ function TaskSection({
   onUpdate: (task: ProjectWorkflowTask) => void;
 }) {
   const content = (
+    <>
+    <nav aria-label="Project conversations">{groupByProject(tasks).map(({projectId,projectName}) => <ProjectChatLink key={projectId} projectId={projectId}>{projectName} messages</ProjectChatLink>)}</nav>
     <div className="workflow-task-grid">
       {tasks.map((task) => (
         <WorkflowTaskCard
@@ -181,6 +184,7 @@ function TaskSection({
         />
       ))}
     </div>
+    </>
   );
 
   if (!title) return content;
@@ -215,6 +219,7 @@ function WorkerProgressByProject({ tasks }: { tasks: ProjectWorkflowTask[] }) {
           >
             <div className="workflow-project-group__heading">
               <h4 id={`workflow-project-${projectId}`}>{projectName}</h4>
+              <ProjectChatLink projectId={projectId}>Messages</ProjectChatLink>
               <span>{completedLabel(projectTasks)}</span>
             </div>
             <div className="workflow-task-grid">

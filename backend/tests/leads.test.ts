@@ -1,3 +1,4 @@
+import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoordination.js";
 import express from "express";
 import request from "supertest";
 import jwt from "jsonwebtoken";
@@ -397,6 +398,7 @@ describe("lead and owner-estimate route characterizations", () => {
       endSession: vi.fn(async () => undefined)
     };
     vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
+    mockAuthorizationFence(session);
     vi.spyOn(EstimateModel, "findOne").mockReturnValue(query({
       _id: "estimate-client-visible",
       leadId: "lead-aurora",
@@ -607,6 +609,7 @@ describe("lead and owner-estimate route characterizations", () => {
   });
 
   it("copies, backfills, and protects a linked Lead project on draft save", async () => {
+    const mongoSession = mockAuthorizationTransaction();
     mockNoClientReviewSummary();
     const { app, authorization } = setupLeadCharacterization({
       projectId: "project-admin-1"
@@ -645,6 +648,7 @@ describe("lead and owner-estimate route characterizations", () => {
     expect(conflictingDraft.save).not.toHaveBeenCalled();
     expect(plainEstimateRecord(conflictingDraft)).toEqual(conflictingBefore);
     expect(modelSave).toHaveBeenCalledOnce();
+    expect(modelSave).toHaveBeenCalledWith({ session: mongoSession });
   });
 
   it("allows Super Admin global Lead reads and denies personal mutations before service entry", async () => {
@@ -948,6 +952,7 @@ describe("lead and owner-estimate route characterizations", () => {
       endSession: vi.fn(async () => undefined)
     };
     vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
+    mockAuthorizationFence(session);
     const auditCreate = vi.spyOn(AuditEventModel, "create").mockImplementation(async (input) =>
       (input as Array<Record<string, unknown>>).map((event) => ({
         toObject: () => ({ ...event })
@@ -1055,6 +1060,7 @@ describe("lead and owner-estimate route characterizations", () => {
   });
 
   it("row 74 saves one exact calculated draft estimate", async () => {
+    const mongoSession = mockAuthorizationTransaction();
     mockNoClientReviewSummary();
     const { app, authorization, runInTransaction } = setupLeadCharacterization();
     const estimate = estimateDocument();
@@ -1091,11 +1097,14 @@ describe("lead and owner-estimate route characterizations", () => {
     expect(before).toEqual(estimateFixture());
     expect(findEstimate).toHaveBeenCalledOnce();
     expect(estimate.save).toHaveBeenCalledOnce();
+    expect(estimate.save).toHaveBeenCalledWith({ session: mongoSession });
+    expect(AuthorizationCoordinationModel.updateOne).toHaveBeenCalledOnce();
     expect(updateLead).not.toHaveBeenCalled();
     expect(runInTransaction).not.toHaveBeenCalled();
   });
 
   it("row 75 keeps a high-value initial submit in pre-publication review", async () => {
+    const mongoSession = mockAuthorizationTransaction();
     mockNoClientReviewSummary();
     const { app, authorization, runInTransaction } = setupLeadCharacterization();
     const estimate = estimateDocument({
@@ -1145,8 +1154,14 @@ describe("lead and owner-estimate route characterizations", () => {
     expect(response.body.data.reviews[0].occurredAt).toBe(
       estimate.reviews[0].occurredAt.toISOString()
     );
-    expect(findEstimate).toHaveBeenCalledOnce();
+    expect(findEstimate).toHaveBeenCalledTimes(2);
+    expect(findEstimate).toHaveBeenLastCalledWith({
+      _id: estimate._id, ownerId: "user-estimator-sales", version: before.version,
+      status: "draft", total: { $gt: 1_500_000 }
+    });
     expect(estimate.save).toHaveBeenCalledOnce();
+    expect(estimate.save).toHaveBeenCalledWith({ session: mongoSession });
+    expect(AuthorizationCoordinationModel.updateOne).toHaveBeenCalledOnce();
     expect(updateLead).not.toHaveBeenCalled();
     expect(runInTransaction).not.toHaveBeenCalled();
   });
@@ -1483,6 +1498,7 @@ describe("commercial estimate approval handoff", () => {
       endSession: vi.fn(async () => undefined)
     };
     vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
+    mockAuthorizationFence(session);
     vi.spyOn(EstimateModel, "findOne").mockReturnValue(query(estimate) as never);
     vi.spyOn(EstimateModel, "findById").mockReturnValue(query(estimate) as never);
     vi.spyOn(LeadModel, "findById").mockReturnValue(query(lead) as never);
@@ -1597,6 +1613,7 @@ describe("commercial estimate approval handoff", () => {
       endSession: vi.fn(async () => undefined)
     };
     vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
+    mockAuthorizationFence(session);
     vi.spyOn(EstimateModel, "findOne").mockReturnValue(query(estimate) as never);
     vi.spyOn(EstimateModel, "findById").mockReturnValue(query(estimate) as never);
     vi.spyOn(LeadModel, "findById").mockReturnValue(query(lead) as never);
@@ -1695,6 +1712,7 @@ describe("commercial estimate approval handoff", () => {
       endSession: vi.fn(async () => undefined)
     };
     vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
+    mockAuthorizationFence(session);
     vi.spyOn(EstimateModel, "findOne").mockReturnValue(query(estimate) as never);
     vi.spyOn(LeadModel, "findById").mockReturnValue(query(lead) as never);
 
@@ -1707,3 +1725,35 @@ describe("commercial estimate approval handoff", () => {
     expect(response.body.error.code).toBe("ESTIMATE_NOT_FOUND");
   });
 });
+
+// Model-level mock keeps the real repository coordinator and session-binding contract in the path.
+function mockAuthorizationFence(session: unknown) {
+  vi.spyOn(AuthorizationCoordinationModel, "updateOne").mockImplementation((filter, update, options) => {
+    expect(filter).toEqual({ _id: "authorization" });
+    expect(update).toEqual({ $inc: { revision: 1 }, $set: { updatedAt: expect.any(Date) } });
+    expect(options).toEqual({ upsert: true });
+    let bound = false;
+    const query = {
+      session: vi.fn((actual: unknown) => {
+        expect(actual).toBe(session);
+        bound = true;
+        return query;
+      }),
+      exec: vi.fn(async () => {
+        expect(bound).toBe(true);
+        return { acknowledged: true, matchedCount: 1, modifiedCount: 1 };
+      })
+    };
+    return query as never;
+  });
+}
+
+function mockAuthorizationTransaction() {
+  const session = {
+    withTransaction: vi.fn(async (operation: () => Promise<unknown>) => operation()),
+    endSession: vi.fn(async () => undefined)
+  };
+  vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
+  mockAuthorizationFence(session);
+  return session;
+}

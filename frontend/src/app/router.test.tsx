@@ -631,7 +631,7 @@ describe("role landing staging contract", () => {
 
 describe("public invitation route", () => {
   it("mounts directly while staying outside the protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(31);
+    expect(ROUTE_REGISTRY).toHaveLength(33);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -725,8 +725,9 @@ describe("registered permission routes", () => {
       (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
     );
 
-    expect(paths).toHaveLength(historicalProtectedPaths.length + 10);
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 12);
     expect(additions).toEqual([
+      "/project-messages", "/projects/:projectId/messages",
       "/designer/design-plans",
       ...knowledgeConfigurationPaths,
       ...clientResponsePaths,
@@ -736,6 +737,7 @@ describe("registered permission routes", () => {
     ]);
     expect(paths.filter(
       (path) => ![
+        "/project-messages", "/projects/:projectId/messages",
         "/designer/design-plans",
         ...knowledgeConfigurationPaths,
         ...clientResponsePaths,

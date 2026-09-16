@@ -1,3 +1,4 @@
+import { ProjectChatNavigation } from "../messages";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
@@ -26,6 +27,7 @@ export function ClientProject() {
       <h1 id="client-project-title">{project.name}</h1>
       <p>{project.location}</p>
     </header>
+    <ProjectChatNavigation projectId={projectId} overviewTo={`/client/projects/${projectId}`} />
     {projectQuery.isError ? <AsyncState state="error" message="The project overview could not be refreshed. Previously saved information is shown." actionLabel="Refresh overview" onAction={() => void projectQuery.refetch()} /> : null}
     <div className="client-project-workflow" ref={setTimelineContainer} />
     <ProjectWorkflowPanel key={projectId} projectId={projectId} timelineContainer={timelineContainer} presentation="client" />

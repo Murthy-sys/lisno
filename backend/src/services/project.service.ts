@@ -427,6 +427,7 @@ export function createProjectService(
       const timestamp = clock().toISOString();
       const emailNormalized = normalizeEmail(input.clientEmail);
       return repository.runInTransaction(async (transaction) => {
+        await transaction.coordinateAuthorizationMutation();
         await transaction.coordinateClientEmail(emailNormalized);
         const existingClient = await transaction.findUserByEmail(emailNormalized);
         if (existingClient && existingClient.role !== "client") {

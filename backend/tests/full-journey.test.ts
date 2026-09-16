@@ -1,3 +1,4 @@
+import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoordination.js";
 import { Readable } from "node:stream";
 import mongoose from "mongoose";
 import { PDFDocument } from "pdf-lib";
@@ -212,6 +213,7 @@ function setupEstimateDrawingJourneyModels() {
     endSession: vi.fn(async () => undefined)
   };
   vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
+  mockAuthorizationFence(session);
   vi.spyOn(AuditEventModel, "create").mockImplementation(async (input) => {
     const events = structuredClone(input as Array<Record<string, any>>);
     auditEvents.push(...events);
@@ -2123,3 +2125,25 @@ describe("complete cross-role journey", () => {
     );
   });
 });
+
+// Model-level mock keeps the real repository coordinator and session-binding contract in the path.
+function mockAuthorizationFence(session: unknown) {
+  vi.spyOn(AuthorizationCoordinationModel, "updateOne").mockImplementation((filter, update, options) => {
+    expect(filter).toEqual({ _id: "authorization" });
+    expect(update).toEqual({ $inc: { revision: 1 }, $set: { updatedAt: expect.any(Date) } });
+    expect(options).toEqual({ upsert: true });
+    let bound = false;
+    const query = {
+      session: vi.fn((actual: unknown) => {
+        expect(actual).toBe(session);
+        bound = true;
+        return query;
+      }),
+      exec: vi.fn(async () => {
+        expect(bound).toBe(true);
+        return { acknowledged: true, matchedCount: 1, modifiedCount: 1 };
+      })
+    };
+    return query as never;
+  });
+}

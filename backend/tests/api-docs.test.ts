@@ -26,6 +26,18 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents staged attachment upload, private media and attachment-only messages", () => {
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const upload = paths["/projects/{projectId}/chat/attachments"]!.post!;
+    expect(upload.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "uploadId", in: "query", required: true }),
+      expect.objectContaining({ name: "sizeBytes", in: "query", required: true })
+    ]));
+    expect(upload.requestBody).toHaveProperty("content.multipart/form-data");
+    expect(paths["/projects/{projectId}/chat/attachments/{attachmentId}/preview"]!.get!.responses).toHaveProperty("200");
+    expect(componentSchemas().ChatSendRequest!.properties).toMatchObject({ body: { maxLength: 4000 }, attachmentIds: { uniqueItems: true, maxItems: 10 } });
+    expect(componentSchemas().ChatAttachment!.properties).not.toHaveProperty("storageRef");
+  });
   it("is a structurally valid OpenAPI document with resolvable references", async () => {
     await expect(
       SwaggerParser.validate(structuredClone(openApiDocument) as never)
@@ -271,7 +283,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 200 routes without versioning paths twice", () => {
+  it("contains all 216 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -280,7 +292,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 13);
-    expect(operationCount).toBe(200);
+    expect(operationCount).toBe(216);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);

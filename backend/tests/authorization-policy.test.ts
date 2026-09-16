@@ -201,6 +201,7 @@ describe("authorization policy", () => {
       if (role === "super_admin") continue;
       const historicalPermissions = ROLE_PERMISSIONS[role].filter(
         (permission) =>
+          !permission.startsWith("chat.") &&
           permission !== "projects.design_workflow.read" &&
           permission !== "estimation.design_upload.delete" &&
           permission !== "projects.design_workflow.act" &&
@@ -229,9 +230,18 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(123);
-    expect(new Set(PERMISSION_CODES).size).toBe(123);
+    expect(PERMISSION_CODES).toHaveLength(128);
+    expect(new Set(PERMISSION_CODES).size).toBe(128);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
+  });
+
+  it("gives every role scoped chat operations and restricts participant management", () => {
+    for (const role of ROLE_CODES) {
+      for (const permission of ["chat.read", "chat.send", "chat.issue", "chat.read_state"] as const) {
+        expect(hasPermission(role, permission), `${role} ${permission}`).toBe(true);
+      }
+      expect(hasPermission(role, "chat.participants.manage"), role).toBe(["admin", "super_admin"].includes(role));
+    }
   });
 
   it("allows project initiation only for Sales, Sales Manager, and Super Admin without giving Sales client decisions", () => {
@@ -316,6 +326,7 @@ describe("authorization policy", () => {
   it("gives all worker trades identical identity and workflow-task permissions", () => {
     for (const role of WORKER_ROLES) {
       expect(ROLE_PERMISSIONS[role]).toEqual([
+        "chat.read", "chat.send", "chat.issue", "chat.read_state",
         "identity.self.read",
         // Workers share the Designer KPI over their own record.
         "organization.user_tasks.read",
@@ -396,7 +407,7 @@ describe("authorization policy", () => {
   });
 
   it("grants the dashboard read only to Super Admin", () => {
-    expect(PERMISSION_CODES.at(-1)).toBe("admin.dashboard.read");
+    expect(PERMISSION_CODES).toContain("admin.dashboard.read");
     for (const role of ROLE_CODES) {
       expect(hasPermission(role, "admin.dashboard.read")).toBe(role === "super_admin");
     }

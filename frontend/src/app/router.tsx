@@ -26,6 +26,7 @@ import { PermissionRoute } from "../auth/PermissionRoute";
 import { SignupPage } from "../auth/SignupPage";
 import { ProtectedRoute } from "../auth/ProtectedRoute";
 import { AppShell } from "../components/layout/AppShell";
+import { ProjectChatLayout, ProjectMessagesListPage, ProjectMessagesPage } from "../features/messages";
 import { RouteFocusManager } from "../components/layout/RouteFocusManager";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { DesignerDashboard } from "../features/designer/DesignerDashboard";
@@ -356,6 +357,10 @@ export function AppRoutes() {
           path="/home"
           element={registeredElement("/home", <CurrentRoleLanding />)}
         />
+        <Route element={<ProjectChatLayout />}>
+          <Route path="/project-messages" element={registeredElement("/project-messages", <ProjectMessagesListPage />)} />
+          <Route path="/projects/:projectId/messages" element={registeredElement("/projects/:projectId/messages", <ProjectMessagesPage />)} />
+        </Route>
         <Route
           path="/designer"
           element={registeredElement("/designer", <DesignerDashboard />)}

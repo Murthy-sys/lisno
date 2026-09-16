@@ -1,3 +1,4 @@
+import { ProjectChatNavigation } from "../messages";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
@@ -91,6 +92,7 @@ export function ManagementProjectWorkspace() {
     >
       <PageHeader id="management-project-title" title={data.name} eyebrow="Project inspection" description={`${data.location} · ${data.status}`} breadcrumb={<Link className="back-link" to={base}>Back to workspace</Link>} />
 
+      <ProjectChatNavigation projectId={projectId} overviewTo={`${base}/projects/${projectId}`} />
       <ProjectWorkflowPanel projectId={projectId} />
 
       <section aria-labelledby="delivery-structure-title">

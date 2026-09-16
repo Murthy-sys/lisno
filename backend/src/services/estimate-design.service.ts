@@ -595,6 +595,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       }
       let saved: Record<string, any> | null = null;
       await withMongoTransaction(async (session) => {
+        await createMongoRepository(session).coordinateAuthorizationMutation();
         const current = await requireClientRevision(user, revisionId, session);
         if (Number(current.revision.revisionNumber) !== decision.version) staleDrawing();
         if (decision.decision === "request_changes") {

@@ -9,6 +9,8 @@ import { loadEnvironment } from "./config/env.js";
 import type { DevelopmentDemoAuthorization } from "./development/demo-account-authorization.js";
 import { initializeApplicationIndexes } from "./models/application-indexes.js";
 import { createMongoRepository } from "./repositories/mongo.js";
+import { createMongoProjectChatRepository } from "./repositories/project-chat-mongo.js";
+import { createProjectChatAttachmentPolicy } from "./domain/project-chat-attachment-policy.js";
 import type { AppRepository } from "./repositories/types.js";
 import { createSendGridDesignPlanMailer } from "./services/sendgrid-design-plan-mailer.js";
 import { createSendGridEstimateMailer } from "./services/sendgrid-estimate-mailer.js";
@@ -26,6 +28,8 @@ import { createLocalStorage } from "./storage/local-storage.js";
 import type { FileStorage } from "./storage/storage.js";
 
 type ServerApp = {
+  closeProjectChat?: () => Promise<void>;
+  cleanupProjectChatAttachments?: () => Promise<unknown>;
   listen(port: number, callback: (error?: Error) => void): Server;
   listen(port: number, host: string, callback: (error?: Error) => void): Server;
 };
@@ -75,6 +79,7 @@ export async function startServer(
     initializeApplicationIndexes;
 
   let connected = false;
+  let app: ServerApp | undefined;
   let server: Server | undefined;
   let receiptMaintenance: ReceiptMaintenanceScheduler | undefined;
   try {
@@ -107,8 +112,9 @@ export async function startServer(
       ? new URL("/client", mailDelivery.publicFrontendUrl).toString()
       : "http://localhost:5173/client";
     const storage = createLocalStorage(env.UPLOADS_DIR);
-    const app = appFactory({
+    app = appFactory({
       repository: repositoryFactory(),
+      chatRepository: createMongoProjectChatRepository(),
       auth: {
         jwtSecret: env.JWT_SECRET,
         jwtExpiresInSeconds: env.JWT_EXPIRES_IN_SECONDS
@@ -116,6 +122,17 @@ export async function startServer(
       corsOrigins: env.CORS_ORIGIN,
       storage,
       maxUploadBytes: Math.floor(env.MAX_UPLOAD_MB * 1024 * 1024),
+      chatAttachmentPolicy: createProjectChatAttachmentPolicy({
+        enabled: env.CHAT_ATTACHMENTS_ENABLED === "true",
+        maxFileBytes: env.CHAT_ATTACHMENT_MAX_FILE_MB * 1024 * 1024,
+        maxMessageBytes: env.CHAT_ATTACHMENT_MAX_MESSAGE_MB * 1024 * 1024,
+        maxAttachments: env.CHAT_ATTACHMENT_MAX_COUNT,
+        maxConcurrentTransfers: env.CHAT_ATTACHMENT_MAX_TRANSFERS,
+        maxStagedAttachments: env.CHAT_ATTACHMENT_MAX_STAGED_COUNT,
+        maxStagedBytes: env.CHAT_ATTACHMENT_MAX_STAGED_MB * 1024 * 1024,
+        stagedTtlSeconds: env.CHAT_ATTACHMENT_TTL_SECONDS,
+        maxRecordingSeconds: env.CHAT_RECORDING_MAX_SECONDS
+      }),
       ocrLeaseSeconds: env.OCR_LEASE_SECONDS,
       ocrRetryPolicy: {
         maxAttempts: env.OCR_MAX_ATTEMPTS,
@@ -136,12 +153,14 @@ export async function startServer(
     server = await listen(app, env.PORT, dependencies.bindHost);
     receiptMaintenance = startReceiptMaintenanceScheduler(
       storage,
-      dependencies
+      dependencies,
+      async () => { await app?.cleanupProjectChatAttachments?.(); }
     );
     (dependencies.writeOutput ?? ((message) => process.stdout.write(message)))(
       `Backend ready at http://${dependencies.bindHost ?? "localhost"}:${env.PORT}\n`
     );
   } catch (error) {
+    await app?.closeProjectChat?.();
     await receiptMaintenance?.stop();
     if (server) await close(server).catch(() => undefined);
     if (connected) await disconnect();
@@ -154,6 +173,7 @@ export async function startServer(
   const stop = () => {
     stopping ??= (async () => {
       const maintenanceStop = receiptMaintenance?.stop();
+      await app?.closeProjectChat?.();
       await close(runningServer);
       await maintenanceStop;
       await disconnect();
@@ -184,7 +204,8 @@ interface ReceiptMaintenanceScheduler {
 
 function startReceiptMaintenanceScheduler(
   storage: FileStorage,
-  dependencies: ServerDependencies
+  dependencies: ServerDependencies,
+  cleanupChat: () => Promise<void>
 ): ReceiptMaintenanceScheduler {
   const intervalMs = dependencies.receiptMaintenanceIntervalMs ?? 60_000;
   if (!Number.isSafeInteger(intervalMs) || intervalMs < 1) {
@@ -202,7 +223,8 @@ function startReceiptMaintenanceScheduler(
   let running: Promise<void> | null = null;
   const tick = () => {
     if (stopped || running) return;
-    running = Promise.resolve(runner(storage))
+    running = Promise.allSettled([Promise.resolve().then(() => runner(storage)), Promise.resolve().then(cleanupChat)])
+      .then(() => undefined)
       .catch(() => undefined)
       .finally(() => {
         running = null;

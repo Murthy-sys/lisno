@@ -640,7 +640,8 @@ describe("user invitation Mongo replica-set races", () => {
 
     const gate = gateTransactionMethod(
       createMongoRepository(),
-      "coordinateClientEmail",
+      // Both callers now serialize on the authorization fence before the email lock.
+      "coordinateAuthorizationMutation",
       2
     );
     const audit = createAuditService(gate.repository);
@@ -781,7 +782,8 @@ describe("user invitation Mongo replica-set races", () => {
     const projectFixture = await insertProjectActors();
     const gate = gateTransactionMethod(
       createMongoRepository(),
-      "coordinateClientEmail",
+      // Both callers now serialize on the authorization fence before the email lock.
+      "coordinateAuthorizationMutation",
       2
     );
     const audit = createAuditService(gate.repository);
@@ -869,7 +871,8 @@ describe("user invitation Mongo replica-set races", () => {
     const projectFixture = await insertProjectActors();
     const gate = gateTransactionMethod(
       createMongoRepository(),
-      "coordinateClientEmail",
+      // Both callers now serialize on the authorization fence before the email lock.
+      "coordinateAuthorizationMutation",
       2
     );
     const audit = createAuditService(gate.repository);
@@ -948,7 +951,8 @@ describe("user invitation Mongo replica-set races", () => {
     const projectFixture = await insertProjectActors();
     const gate = gateTransactionMethod(
       createMongoRepository(),
-      "coordinateClientEmail",
+      // Both callers now serialize on the authorization fence before the email lock.
+      "coordinateAuthorizationMutation",
       2
     );
     const audit = createAuditService(gate.repository);
@@ -2290,8 +2294,8 @@ describe("user invitation Mongo replica-set races", () => {
     }
   );
 
-  it("R1: two signup callers collide on first EmailCoordination use without duplicate effects", async () => {
-    const gate = gateFirstCoordinationByCaller("coordinateClientEmail", 2);
+  it("R1: two signup callers retry first authorization coordination and write one email identity", async () => {
+    const gate = gateFirstCoordinationByCaller("coordinateAuthorizationMutation", 2);
     const services = gate.repositories.map((repository, index) =>
       createAuthService(
         repository,
@@ -2322,7 +2326,7 @@ describe("user invitation Mongo replica-set races", () => {
         errorCode: 11000,
         errorExtraInfo: {
           keyPattern: { _id: 1 },
-          keyValue: { _id: INVITEE_EMAIL }
+          keyValue: { _id: "authorization" }
         }
       }
     });

@@ -1,3 +1,4 @@
+import { createMongoRepository } from "../repositories/mongo.js";
 import { randomUUID } from "node:crypto";
 import mongoose from "mongoose";
 
@@ -765,6 +766,7 @@ async function withMongoTransaction<T>(
     let result!: T;
     let completed = false;
     await session.withTransaction(async () => {
+      await createMongoRepository(session).coordinateAuthorizationMutation();
       result = await operation(session);
       completed = true;
     });

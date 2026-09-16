@@ -1,3 +1,4 @@
+import { ProjectChatNavigation } from "../messages";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -112,6 +113,8 @@ export function ProjectWorkspace() {
         metadata={<div className="project-hero__meta"><span><MapPin aria-hidden="true" /> {project.location}</span><span><Building2 aria-hidden="true" /> {project.floors.length} floors</span></div>}
         actions={<StatusBadge label={projectStatuses[project.status]} tone={projectTones[project.status]} />}
       />
+
+      <ProjectChatNavigation projectId={projectId} overviewTo={`/designer/projects/${projectId}`} />
 
       {notice ? (
         <div className="workspace-notice" role="status" aria-label="Project updates">

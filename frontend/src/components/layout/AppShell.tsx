@@ -1,19 +1,24 @@
-import { Outlet } from "react-router-dom";
+import { matchPath, Outlet, useLocation } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthProvider";
 import { AskLisnoLauncher } from "../../features/estimates/AskLisnoLauncher";
 import { MobileHeader } from "./MobileHeader";
 import { Sidebar } from "./Sidebar";
 import { SkipLink } from "./SkipLink";
+import { ProjectChatProvider } from "../../features/messages";
+import "../../features/messages/projectChatShell.css";
 
 export function AppShell() {
   const auth = useAuth();
+  const { pathname } = useLocation();
+  const messaging = Boolean(matchPath("/project-messages", pathname) || matchPath("/projects/:projectId/messages", pathname));
   if (!auth.user || !auth.authorization) return null;
 
   return (
-    <div className="ui-app-shell" data-role={auth.user.role}>
+    <ProjectChatProvider>
+    <div className={messaging ? "project-messaging-app" : "ui-app-shell"} data-role={messaging ? undefined : auth.user.role}>
       <SkipLink />
-      <aside className="ui-sidebar-rail" aria-label="Application sidebar">
+      {!messaging ? <><aside className="ui-sidebar-rail" aria-label="Application sidebar">
         <Sidebar
           user={auth.user}
           authorization={auth.authorization}
@@ -25,10 +30,11 @@ export function AppShell() {
         authorization={auth.authorization}
         onLogout={auth.logout}
       />
+      </> : null}
       <main
         id="main-content"
-        className="ui-workspace"
-        data-role={auth.user.role}
+        className={messaging ? "project-messaging-main" : "ui-workspace"}
+        data-role={messaging ? undefined : auth.user.role}
         tabIndex={-1}
       >
         <Outlet />
@@ -39,7 +45,8 @@ export function AppShell() {
         containing block for fixed descendants — rendering it in the estimates
         panel pinned it to that card instead of the viewport.
       */}
-      {auth.user.role === "client" ? <AskLisnoLauncher /> : null}
+      {!messaging && auth.user.role === "client" ? <AskLisnoLauncher /> : null}
     </div>
+    </ProjectChatProvider>
   );
 }

@@ -67,6 +67,15 @@ interface LoadingOptions {
   /** Disable the page indicator when the caller owns local or background feedback. */
   showGlobalLoader?: boolean;
 }
+interface UploadOptions extends LoadingOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+interface BlobOptions extends LoadingOptions {
+  signal?: AbortSignal;
+  maxBytes?: number;
+  onProgress?: (progress: { loadedBytes: number; totalBytes: number | null }) => void;
+}
 type JsonRequestOptions = Omit<RequestInit, "body"> & LoadingOptions & { body?: unknown };
 type RequestOptions = Omit<RequestInit, "body" | "method"> & LoadingOptions;
 
@@ -190,12 +199,27 @@ function filenameFromDisposition(disposition: string | null): string | undefined
   if (!disposition) return undefined;
 
   const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
-  if (encoded) return decodeURIComponent(encoded);
+  if (encoded) {
+    try { return decodeURIComponent(encoded); } catch { /* Use the plain filename when malformed. */ }
+  }
 
   return disposition.match(/filename="?([^";]+)"?/i)?.[1];
 }
 
 export const apiClient = {
+  /** Authenticated long-lived response; the caller owns stream parsing and cleanup. */
+  async stream(path: string, options: RequestOptions = {}): Promise<Response> {
+    const { headers, showGlobalLoader: _showGlobalLoader, ...requestOptions } = options;
+    const requestToken = tokenStorage.get();
+    const streamHeaders = buildHeaders(headers, false, requestToken);
+    streamHeaders.set("Accept", "text/event-stream");
+    return fetchApi(path, {
+      ...requestOptions,
+      method: "GET",
+      headers: streamHeaders,
+      cache: "no-store"
+    }, requestToken);
+  },
   get<T>(path: string, options?: RequestOptions): Promise<T> {
     return request<T>(path, { ...options, method: "GET" });
   },
@@ -205,11 +229,11 @@ export const apiClient = {
   postPublic<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> {
     return publicRequest<T>(path, { ...options, method: "POST", body });
   },
-  patch<T>(path: string, body?: unknown): Promise<T> {
-    return request<T>(path, { method: "PATCH", body });
+  patch<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> {
+    return request<T>(path, { ...options, method: "PATCH", body });
   },
-  put<T>(path: string, body?: unknown): Promise<T> {
-    return request<T>(path, { method: "PUT", body });
+  put<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> {
+    return request<T>(path, { ...options, method: "PUT", body });
   },
   delete<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> {
     return request<T>(path, { ...options, method: "DELETE", body });
@@ -233,29 +257,53 @@ export const apiClient = {
     path: string,
     body: FormData,
     onProgress: (percent: number) => void,
-    { showGlobalLoader = true }: LoadingOptions = {}
+    { showGlobalLoader = true, signal, timeoutMs }: UploadOptions = {}
   ): Promise<T> {
     const requestToken = tokenStorage.get();
     const url = resolveApiUrl(API_BASE_URL, path);
     const finish = showGlobalLoader ? beginApiRequest() : () => {};
     return new Promise<T>((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new DOMException("Upload cancelled.", "AbortError"));
+        return;
+      }
       const xhr = new XMLHttpRequest();
+      let settled = false;
+      const cleanup = () => {
+        settled = true;
+        signal?.removeEventListener("abort", abort);
+        xhr.upload.onprogress = null;
+        xhr.onload = xhr.onerror = xhr.onabort = xhr.ontimeout = null;
+      };
+      const fail = (error: unknown) => {
+        if (settled) return;
+        cleanup();
+        reject(error);
+      };
+      const abort = () => {
+        fail(new DOMException("Upload cancelled.", "AbortError"));
+        xhr.abort();
+      };
       xhr.open("POST", url);
+      if (timeoutMs !== undefined) xhr.timeout = timeoutMs;
 
       const headers = buildHeaders(undefined, false, requestToken);
       headers.forEach((value, name) => xhr.setRequestHeader(name, value));
 
       xhr.upload.onprogress = (event) => {
-        if (!event.lengthComputable || event.total <= 0) return;
+        if (settled || signal?.aborted || !event.lengthComputable || event.total <= 0) return;
         onProgress(Math.min(100, Math.max(0, Math.round((event.loaded / event.total) * 100))));
       };
 
       xhr.onload = () => {
+        if (settled) return;
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
-            resolve((JSON.parse(xhr.responseText) as ApiResponse<T>).data);
+            const data = (JSON.parse(xhr.responseText) as ApiResponse<T>).data;
+            cleanup();
+            resolve(data);
           } catch {
-            reject(new ApiError(xhr.status, "REQUEST_FAILED", "The request could not be completed."));
+            fail(new ApiError(xhr.status, "REQUEST_FAILED", "The request could not be completed."));
           }
           return;
         }
@@ -273,27 +321,65 @@ export const apiClient = {
             })
           );
         }
-        reject(error);
+        fail(error);
       };
 
-      xhr.onerror = xhr.onabort = xhr.ontimeout = () => {
-        reject(new ApiError(0, "REQUEST_FAILED", "The request could not be completed."));
-      };
-      xhr.send(body);
+      xhr.onerror = () => fail(new ApiError(0, "REQUEST_FAILED", "The request could not be completed."));
+      xhr.onabort = () => fail(new DOMException("Upload cancelled.", "AbortError"));
+      xhr.ontimeout = () => fail(new ApiError(0, "REQUEST_TIMEOUT", "The upload timed out. Please retry."));
+      signal?.addEventListener("abort", abort, { once: true });
+      try { xhr.send(body); } catch (error) { fail(error); }
     }).finally(finish);
   },
   async getBlob(
-    path: string
+    path: string,
+    { signal, showGlobalLoader = true, onProgress, maxBytes }: BlobOptions = {}
   ): Promise<{ blob: Blob; filename: string | undefined }> {
-    const finish = beginApiRequest();
+    const finish = showGlobalLoader ? beginApiRequest() : () => {};
     try {
       const requestToken = tokenStorage.get();
       const response = await fetchApi(path, {
         method: "GET",
-        headers: buildHeaders(undefined, false, requestToken)
+        headers: buildHeaders(undefined, false, requestToken),
+        signal
       }, requestToken);
+      const sizeHeader = response.headers.get("Content-Length");
+      const declaredSize = sizeHeader === null ? NaN : Number(sizeHeader);
+      const totalBytes = Number.isSafeInteger(declaredSize) && declaredSize >= 0 ? declaredSize : null;
+      const tooLarge = () => new ApiError(413, "FILE_TOO_LARGE", "This file exceeds the download size limit.");
+      if (maxBytes !== undefined && totalBytes !== null && totalBytes > maxBytes) {
+        await response.body?.cancel();
+        throw tooLarge();
+      }
+      let blob: Blob;
+      if (response.body && (onProgress || maxBytes !== undefined)) {
+        const reader = response.body.getReader();
+        const chunks: BlobPart[] = [];
+        let loadedBytes = 0;
+        try {
+          while (true) {
+            signal?.throwIfAborted();
+            const { done, value } = await reader.read();
+            signal?.throwIfAborted();
+            if (done) break;
+            loadedBytes += value.byteLength;
+            if (maxBytes !== undefined && loadedBytes > maxBytes) throw tooLarge();
+            chunks.push(value);
+            onProgress?.({ loadedBytes, totalBytes });
+          }
+          blob = new Blob(chunks, { type: response.headers.get("Content-Type") ?? "application/octet-stream" });
+        } catch (error) {
+          await reader.cancel().catch(() => {});
+          throw error;
+        } finally { reader.releaseLock(); }
+      } else {
+        blob = await response.blob();
+        signal?.throwIfAborted();
+        if (maxBytes !== undefined && blob.size > maxBytes) throw tooLarge();
+        onProgress?.({ loadedBytes: blob.size, totalBytes });
+      }
       return {
-        blob: await response.blob(),
+        blob,
         filename: filenameFromDisposition(response.headers.get("Content-Disposition"))
       };
     } finally {
