@@ -1,4 +1,8 @@
 export const EXPECTED_PROJECT_CHAT_OPERATIONS = [
+  { key: "GET /notifications", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
+  { key: "PUT /notifications/:notificationId/read", permission: "chat.read_state", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
+  { key: "GET /notifications/events", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
+
   { key: "GET /projects/:projectId/chat/attachment-policy", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_chat" },
   { key: "POST /projects/:projectId/chat/attachments", permission: "chat.send", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
   { key: "DELETE /projects/:projectId/chat/attachments/:attachmentId", permission: "chat.send", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },

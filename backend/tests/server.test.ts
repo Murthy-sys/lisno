@@ -1,9 +1,12 @@
+import { ChatNotificationModel } from "../src/models/ChatNotification.js";
 import { ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel } from "../src/models/ProjectChat.js";
 import { ProjectChatAttachmentModel } from "../src/models/ProjectChatAttachment.js";
 import { EventEmitter } from "node:events";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const createSmtpChatMentionMailer = vi.hoisted(() => vi.fn());
+const createSendGridChatMentionMailer = vi.hoisted(() => vi.fn());
 const createMongoRepository = vi.hoisted(() => vi.fn());
 const createSendGridDesignPlanMailer = vi.hoisted(() => vi.fn());
 const createSendGridEstimateMailer = vi.hoisted(() => vi.fn());
@@ -15,6 +18,8 @@ const createSmtpEstimateMailer = vi.hoisted(() => vi.fn());
 const createSmtpPasswordResetMailer = vi.hoisted(() => vi.fn());
 const prepareEstimateClientReviewIndexes = vi.hoisted(() => vi.fn());
 
+vi.mock("../src/services/smtp-chat-mention-mailer.js", () => ({createSmtpChatMentionMailer}));
+vi.mock("../src/services/sendgrid-chat-mention-mailer.js", () => ({createSendGridChatMentionMailer}));
 vi.mock("../src/repositories/mongo.js", () => ({ createMongoRepository }));
 vi.mock("../src/services/sendgrid-design-plan-mailer.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("../src/services/sendgrid-design-plan-mailer.js")>(),
@@ -108,6 +113,8 @@ const env = {
 };
 
 afterEach(() => {
+  createSmtpChatMentionMailer.mockReset();
+  createSendGridChatMentionMailer.mockReset();
   createMongoRepository.mockReset();
   createSendGridDesignPlanMailer.mockReset();
   createSendGridEstimateMailer.mockReset();
@@ -416,7 +423,7 @@ describe("production server bootstrap", () => {
 
   it("initializes every application index before repository creation and listen", async () => {
     const events: string[] = [];
-    const chatModels = [ProjectChatAttachmentModel, ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel];
+    const chatModels = [ChatNotificationModel, ProjectChatAttachmentModel, ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel];
     for (const model of chatModels) vi.spyOn(model, "init").mockImplementation(async () => { events.push(model.modelName + "-index"); return model as never; });
     const server = fakeServer();
     vi.spyOn(UserModel, "init").mockImplementation(async () => {
@@ -739,6 +746,7 @@ describe("production server bootstrap", () => {
     expect(createSendGridPasswordResetMailer).not.toHaveBeenCalled();
     expect(createSendGridDesignPlanMailer).not.toHaveBeenCalled();
     expect(appFactory).toHaveBeenCalledWith(expect.objectContaining({
+      chatMentionMailer: {deliveryKind: "disabled"},
       invitationMailer: { deliveryKind: "disabled" },
       passwordResetMailer: { deliveryKind: "disabled" },
       estimateMailer: { deliveryKind: "disabled" },
@@ -777,6 +785,8 @@ describe("production server bootstrap", () => {
       deliveryKind: "external" as const,
       sendDesignPlan: vi.fn(async () => ({ kind: "sent" as const }))
     };
+    const externalChatMailer = {deliveryKind: "external" as const, sendMention: vi.fn(async () => undefined)};
+    createSmtpChatMentionMailer.mockReturnValue(externalChatMailer);
     createSmtpInvitationMailer.mockReturnValue(externalMailer);
     createSmtpEstimateMailer.mockReturnValue(externalEstimateMailer);
     createSmtpPasswordResetMailer.mockReturnValue(externalPasswordResetMailer);
@@ -802,6 +812,7 @@ describe("production server bootstrap", () => {
 
     expect(createSmtpInvitationMailer).toHaveBeenCalledOnce();
     expect(createSmtpInvitationMailer).toHaveBeenCalledWith(smtp);
+    expect(createSmtpChatMentionMailer).toHaveBeenCalledWith(smtp);
     expect(createSmtpEstimateMailer).toHaveBeenCalledOnce();
     expect(createSmtpEstimateMailer).toHaveBeenCalledWith(smtp);
     expect(createSmtpPasswordResetMailer).toHaveBeenCalledOnce();
@@ -813,6 +824,7 @@ describe("production server bootstrap", () => {
     expect(createSendGridPasswordResetMailer).not.toHaveBeenCalled();
     expect(createSendGridDesignPlanMailer).not.toHaveBeenCalled();
     expect(appFactory).toHaveBeenCalledWith(expect.objectContaining({
+      chatMentionMailer: externalChatMailer,
       invitationMailer: externalMailer,
       passwordResetMailer: externalPasswordResetMailer,
       estimateMailer: externalEstimateMailer,
@@ -866,6 +878,8 @@ describe("production server bootstrap", () => {
       deliveryKind: "external" as const,
       sendDesignPlan: vi.fn(async () => ({ kind: "sent" as const }))
     };
+    const chatMentionMailer = {deliveryKind: "external" as const, sendMention: vi.fn(async () => undefined)};
+    createSendGridChatMentionMailer.mockReturnValue(chatMentionMailer);
     createSendGridInvitationMailer.mockReturnValue(invitationMailer);
     createSendGridEstimateMailer.mockReturnValue(estimateMailer);
     createSendGridPasswordResetMailer.mockReturnValue(passwordResetMailer);
@@ -891,6 +905,7 @@ describe("production server bootstrap", () => {
 
     expect(createSendGridInvitationMailer).toHaveBeenCalledOnce();
     expect(createSendGridInvitationMailer).toHaveBeenCalledWith(sendGrid);
+    expect(createSendGridChatMentionMailer).toHaveBeenCalledWith(sendGrid);
     expect(createSendGridEstimateMailer).toHaveBeenCalledOnce();
     expect(createSendGridEstimateMailer).toHaveBeenCalledWith(sendGrid);
     expect(createSendGridPasswordResetMailer).toHaveBeenCalledOnce();
@@ -902,6 +917,7 @@ describe("production server bootstrap", () => {
     expect(createSmtpPasswordResetMailer).not.toHaveBeenCalled();
     expect(createSmtpDesignPlanMailer).not.toHaveBeenCalled();
     expect(appFactory).toHaveBeenCalledWith(expect.objectContaining({
+      chatMentionMailer,
       invitationMailer,
       passwordResetMailer,
       estimateMailer,

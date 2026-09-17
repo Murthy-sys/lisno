@@ -54,7 +54,7 @@ function app(path = "/project-messages") {
 beforeEach(() => {
   fixture.streams = []; fixture.role = "client"; fixture.logout.mockReset();
   tokenStorage.set("layout-synthetic-session");
-  window.matchMedia = vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() });
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({ matches: query === "(min-width: 1024px)", addEventListener: vi.fn(), removeEventListener: vi.fn() }));
   vi.spyOn(projectChatApi, "summary").mockImplementation(async id => chatTestSummary({ project: { id, name: id === "project-b" ? "Garden residence" : "Courtyard residence", status: "active" } }));
   vi.spyOn(projectChatApi, "conversations").mockResolvedValue({ items: [
     { ...chatTestSummary(), lastMessageAt: "2026-09-16T08:00:00Z" },

@@ -87,13 +87,17 @@ function ChatSession({ children, userId, enabled }: { children: ReactNode; userI
       });
     };
   }, []);
+  const invalidateProject = useCallback(async (projectId: string) => {
+    if (!mounted.current || deniedRef.current.has(projectId)) return;
+    await queryClient.invalidateQueries({ queryKey: chatKeys.project(scope, projectId), predicate: query => query.queryKey.at(-1) !== "attachment-policy" });
+  }, [queryClient, scope]);
   const invalidate = useCallback(async (projectId: string) => {
     if (!mounted.current || deniedRef.current.has(projectId)) return;
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: chatKeys.project(scope, projectId), predicate: query => query.queryKey.at(-1) !== "attachment-policy" }),
+      invalidateProject(projectId),
       queryClient.invalidateQueries({ queryKey: chatKeys.list(scope) })
     ]);
-  }, [queryClient, scope]);
+  }, [invalidateProject, queryClient, scope]);
   const revoke = useCallback((projectId: string) => {
     if (!mounted.current || deniedRef.current.has(projectId)) return;
     deniedRef.current = new Set([...deniedRef.current, projectId]);
@@ -265,6 +269,7 @@ function ChatSession({ children, userId, enabled }: { children: ReactNode; userI
     const valid = isCurrent(projectId);
     let queued = false;
     let dirty = false;
+    let lastStatus: ChatStreamState["status"] | undefined;
     const refresh = () => {
       if (!valid() || controller.signal.aborted) return;
       if (queued) { dirty = true; return; }
@@ -288,7 +293,14 @@ function ChatSession({ children, userId, enabled }: { children: ReactNode; userI
           .sort((a, b) => a.name.localeCompare(b.name) || a.userId.localeCompare(b.userId));
         setTypingSnapshot({ projectId, people });
       },
-      onStatus: state => { if (valid() && !controller.signal.aborted) { setConnection(state); if (state !== "live") setTypingSnapshot(null); if (state === "live") refresh(); } },
+      onStatus: state => {
+        if (!valid() || controller.signal.aborted || state === lastStatus) return;
+        lastStatus = state;
+        setConnection(state);
+        if (state !== "live") setTypingSnapshot(null);
+        // The transport and its initial control frame both report live.
+        if (state === "live") refresh();
+      },
       onDenied: () => { if (valid()) revoke(projectId); }
     });
     const recover = () => { if (document.visibilityState === "visible") refresh(); };
@@ -297,9 +309,9 @@ function ChatSession({ children, userId, enabled }: { children: ReactNode; userI
   }, [currentProjectId, enabled, denied, ready, invalidate, isCurrent, queryClient, revoke, scope, userId]);
   useEffect(() => {
     if (!currentProjectId || !enabled || denied.has(currentProjectId) || connection === "live") return;
-    const timer = setInterval(() => { if (document.visibilityState === "visible") void invalidate(currentProjectId); }, 10_000);
+    const timer = setInterval(() => { if (document.visibilityState === "visible") void invalidateProject(currentProjectId); }, 10_000);
     return () => clearInterval(timer);
-  }, [connection, currentProjectId, denied, enabled, invalidate]);
+  }, [connection, currentProjectId, denied, enabled, invalidateProject]);
   useEffect(() => () => {
     for (const [key, request] of controllers.current) if (request.projectId === currentProjectId) {
       request.controller.abort(); controllers.current.delete(key);

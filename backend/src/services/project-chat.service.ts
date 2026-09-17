@@ -23,6 +23,7 @@ export interface ProjectChatServiceOptions {
     clock?: Clock;
     chatRepository?: ProjectChatRepository;
     attachmentPolicy?: ChatAttachmentPolicy;
+    onNotificationsCommitted?: (recipientIds: string[]) => void;
 }
 export function createProjectChatService(options: ProjectChatServiceOptions): ProjectChatService {
     const store = options.chatRepository ?? createMemoryProjectChatRepository(options.repository);
@@ -218,7 +219,9 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
             const {attachmentIds = [], ...parsed} = parseChatInput(chatSendSchema, input);
             // Preserve the exact legacy fingerprint when attachments are omitted or empty.
             const value = { ...parsed, mentions: [...parsed.mentions].sort((a, b) => a.start - b.start || a.end - b.end), replyToId: parsed.replyToId ?? null, responsibleUserId: parsed.responsibleUserId ?? null, ...(attachmentIds.length ? {attachmentIds} : {}) };
-            return store.mutate(async (tx) => {
+            let notificationRecipients: string[] = [];
+            const result = await store.mutate(async (tx) => {
+                notificationRecipients = [];
                 const ctx = await context(tx, actor, projectId, "chat.send");
                 const existing = await replay(tx, actor, projectId, "message.send", value.clientMessageId, value);
                 if (existing)
@@ -246,6 +249,20 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
                 const replyTo = reply ? {id: reply.id, author: reply.author, body: reply.body, ...(firstReplyAttachment ? {attachmentSummary: {count: reply.attachments.length, kind: firstReplyAttachment.kind, filename: firstReplyAttachment.filename}} : {})} : null;
                 const message: ChatStoredMessage = { id: messageId, projectId, author: chatPerson(ctx.user), body: value.body, attachments, mentions: value.mentions, createdAt: at, sequence, clientMessageId: value.clientMessageId, replyTo, priority: value.priority, issueStatus: value.priority === "normal" ? null : "open", raisedBy: value.priority === "normal" ? null : chatPerson(ctx.user), responsible: responsible ? { ...responsible, available: true } : null, version: 1 };
                 await tx.saveMessage(message);
+                if (value.mentions.length) {
+                    const recipients = new Map(value.mentions.map(mention => [mention.userId, "chat.mention" as "chat.mention" | "chat.mention.oversight"]));
+                    const superAdmins = ctx.sources.users.filter(user => user.active && user.role === "super_admin");
+                    if (superAdmins.length === 1 && !recipients.has(superAdmins[0]!.id)) recipients.set(superAdmins[0]!.id, "chat.mention.oversight");
+                    const excerpt = value.body.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 240);
+                    for (const [recipientId, type] of recipients) {
+                        await tx.insertNotification({
+                            id: `notification-${randomUUID()}`, recipientId, type, projectId, projectName: ctx.sources.project.name,
+                            messageId, actor: {id: ctx.user.id, name: ctx.user.name}, excerpt, createdAt: at, readAt: null,
+                            email: {status: "pending", attempts: 0, nextAttemptAt: at, leaseToken: null, leaseExpiresAt: null, deliveredAt: null, failureCode: null}
+                        });
+                    }
+                    notificationRecipients = [...recipients.keys()];
+                }
                 await remember(tx, actor, projectId, "message.send", value.clientMessageId, value, message.id);
                 if (message.priority !== "normal")
                     await recordIssue(tx, actor, ctx, message, "raise", "", at);
@@ -253,6 +270,11 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
                 await event(tx, actor, projectId, "message.created", message.id, 1, at, sequence);
                 return present(tx, actor, ctx, message);
             });
+            // Durable records are committed before best-effort process-local wakeups.
+            if (notificationRecipients.length) {
+                try { options.onNotificationsCommitted?.(notificationRecipients); } catch { /* Recovery reads committed rows. */ }
+            }
+            return result;
         },
         async issue(actor, projectId, messageId, input) {
             const value = parseChatInput(chatIssueSchema, input);

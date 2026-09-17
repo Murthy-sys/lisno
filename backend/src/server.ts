@@ -1,3 +1,5 @@
+import { createSmtpChatMentionMailer } from "./services/smtp-chat-mention-mailer.js";
+import { createSendGridChatMentionMailer } from "./services/sendgrid-chat-mention-mailer.js";
 import "dotenv/config";
 
 import { pathToFileURL } from "node:url";
@@ -28,6 +30,7 @@ import { createLocalStorage } from "./storage/local-storage.js";
 import type { FileStorage } from "./storage/storage.js";
 
 type ServerApp = {
+  startNotificationDelivery?: () => void;
   closeProjectChat?: () => Promise<void>;
   cleanupProjectChatAttachments?: () => Promise<unknown>;
   listen(port: number, callback: (error?: Error) => void): Server;
@@ -88,6 +91,11 @@ export async function startServer(
     await dependencies.prepareDatabase?.({ mongodbUri: env.MONGODB_URI });
     await prepareApplicationIndexes();
     const mailDelivery = env.mailDelivery;
+    const chatMentionMailer = mailDelivery.kind === "smtp"
+      ? createSmtpChatMentionMailer(mailDelivery)
+      : mailDelivery.kind === "sendgrid_web_api"
+        ? createSendGridChatMentionMailer(mailDelivery)
+      : {deliveryKind: "disabled" as const};
     const invitationMailer = mailDelivery.kind === "smtp"
       ? createSmtpInvitationMailer(mailDelivery)
       : mailDelivery.kind === "sendgrid_web_api"
@@ -141,6 +149,7 @@ export async function startServer(
       },
       ocrConfidenceFloor: env.OCR_CONFIDENCE_FLOOR,
       ocrWorkerToken: env.OCR_WORKER_TOKEN,
+      chatMentionMailer,
       invitationMailer,
       passwordResetMailer,
       allowDemoAccountExternalEmail: env.allowDemoAccountExternalEmail,
@@ -151,6 +160,7 @@ export async function startServer(
       apiDocsEnabled: env.apiDocsEnabled
     });
     server = await listen(app, env.PORT, dependencies.bindHost);
+    app.startNotificationDelivery?.();
     receiptMaintenance = startReceiptMaintenanceScheduler(
       storage,
       dependencies,

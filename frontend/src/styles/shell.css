@@ -113,21 +113,25 @@
   color: color-mix(in srgb, var(--color-surface) 72%, transparent);
   display: grid;
   font: var(--type-metadata);
-  font-weight: 700;
-  gap: var(--space-3);
+  font-weight: 500;
+  gap: 10px;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  padding: var(--space-3);
+  min-block-size: 44px;
+  padding: var(--space-2) 10px;
   text-decoration: none;
   transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
 }
 
 .ui-sidebar__link span {
   color: var(--color-bg);
-  font-family: "Poppins", sans-serif;
-  font-weight: var(--text-navlinklabel);
-  font-size: var(--text-navlinklabel-size);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-family: var(--font-interface);
+  font-weight: 500;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  letter-spacing: normal;
+  text-transform: none;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
 }
 
 .ui-sidebar__link:hover {
@@ -149,10 +153,13 @@
 
 .ui-sidebar__link > svg {
   color: var(--color-brand-violet-bright);
-  inline-size: var(--space-5);
+  inline-size: 18px;
+  block-size: 18px;
 }
 
-.ui-sidebar__link-arrow {
+.ui-sidebar__link > .ui-sidebar__link-arrow {
+  inline-size: 14px;
+  block-size: 14px;
   opacity: 0.48;
 }
 
