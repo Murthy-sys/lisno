@@ -115,7 +115,9 @@ export const DESIGN_PLAN_WORKFLOW_AUDIT_ACTIONS = [
 ] as const;
 
 export const PROCUREMENT_AUDIT_ACTIONS = [
-  "procurement_expense_recorded"
+  "procurement_expense_recorded",
+  "project_procurement_item_created",
+  "project_procurement_item_updated"
 ] as const;
 
 export const AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS = [

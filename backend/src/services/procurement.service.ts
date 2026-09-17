@@ -1626,7 +1626,8 @@ function isMatchingProcurementDocumentLineage(
   );
 }
 
-async function requireProcurementActor(
+/** Reuse the procurement identity boundary for narrow reference-data operations. */
+export async function requireProcurementActor(
   actor: PublicUser,
   session: ClientSession
 ): Promise<{ id: string }> {
@@ -1640,6 +1641,17 @@ async function requireProcurementActor(
   }
   if (stored.role !== "procurement") forbidden();
   return { id: String(stored._id) };
+}
+
+/** Check the canonical approved-project lineage inside the caller's transaction. */
+export async function assertProcurementProjectAccess(
+  actor: PublicUser,
+  projectId: string,
+  session: ClientSession
+): Promise<void> {
+  if (!session.inTransaction()) throw new Error("Procurement project access requires an active transaction.");
+  await requireProcurementActor(actor, session);
+  await resolveProcurementProject(projectId, session);
 }
 
 function normalizeExpenseInput(

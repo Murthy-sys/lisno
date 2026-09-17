@@ -228,13 +228,17 @@ export const PERMISSION_CODES = [
   "chat.send",
   "chat.issue",
   "chat.read_state",
-  "chat.participants.manage"
+  "chat.participants.manage",
+  "procurement.items.read",
+  "procurement.items.manage",
+  "procurement.vendors.read",
+  "procurement.vendors.create"
 ] as const;
 
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-09-16.project-chat.v1" as const;
+  "2026-09-17.project-procurement.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

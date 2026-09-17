@@ -26,6 +26,26 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents project items, saved vendors, unit prices, bounded search and CAS updates", () => {
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    expect(paths["/procurement/projects/{projectId}/items"]!.get!.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "q", schema: { type: "string", maxLength: 100 } }),
+      expect.objectContaining({ name: "limit", schema: { type: "integer", minimum: 1, maximum: 100, default: 20 } }),
+      expect.objectContaining({ name: "offset" })
+    ]));
+    expect(paths["/procurement/projects/{projectId}/items"]!.post!.requestBody).toHaveProperty("content.application/json.schema.$ref", "#/components/schemas/ProjectProcurementCreate");
+    expect(paths["/procurement/projects/{projectId}/items/{itemId}"]!.patch!.requestBody).toHaveProperty("content.application/json.schema.$ref", "#/components/schemas/ProjectProcurementUpdate");
+    expect(componentSchemas().ProjectProcurementCreate).toMatchObject({ additionalProperties: false, required: ["itemName", "brand", "uomId", "pricePaise"] });
+    expect(componentSchemas().ProjectProcurementUpdate!.required).toContain("expectedVersion");
+    expect(componentSchemas().ProjectProcurementItem!.required).toEqual(expect.arrayContaining(["projectId", "uom", "vendor"]));
+    expect(componentSchemas().ProjectProcurementCreate!.properties).toHaveProperty("vendorId", expect.objectContaining({ nullable: true, default: null }));
+    expect(paths["/procurement/vendors"]!.post!.requestBody).toHaveProperty("content.application/json.schema.$ref", "#/components/schemas/ProcurementVendorCreate");
+    expect(paths["/procurement/vendors"]!.get!.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "q" }), expect.objectContaining({ name: "limit" }), expect.objectContaining({ name: "offset" })
+    ]));
+    expect(componentSchemas().ProjectProcurementItem!.properties).not.toHaveProperty("createdById");
+    expect(componentSchemas().ProjectProcurementItem!.properties).toHaveProperty("pricePaise", expect.objectContaining({ type: "integer", minimum: 1, maximum: 9_000_000_000_000 }));
+  });
   it("documents bounded typing updates separately from durable message events", () => {
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
     expect(paths["/projects/{projectId}/chat/typing"]!.put!.requestBody).toHaveProperty("content.application/json.schema.$ref", "#/components/schemas/ChatTypingRequest");
@@ -293,7 +313,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 220 routes without versioning paths twice", () => {
+  it("contains all 227 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -302,7 +322,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 13);
-    expect(operationCount).toBe(220);
+    expect(operationCount).toBe(227);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);

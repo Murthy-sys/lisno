@@ -84,15 +84,15 @@ describe("frontend authorization contract parity", () => {
     expect(FRONTEND_POLICY_VERSION).toBe(AUTHORIZATION_POLICY_VERSION);
   });
 
-  it("publishes the 128-code project chat policy on both sides", () => {
-    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-09-16.project-chat.v1");
-    expect(FRONTEND_POLICY_VERSION).toBe("2026-09-16.project-chat.v1");
-    expect(PERMISSION_CODES).toHaveLength(128);
-    expect(FRONTEND_PERMISSION_CODES).toHaveLength(128);
-    expect(new Set(PERMISSION_CODES).size).toBe(128);
-    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(128);
-    expect(PERMISSION_CODES.at(-1)).toBe("chat.participants.manage");
-    expect(FRONTEND_PERMISSION_CODES.at(-1)).toBe("chat.participants.manage");
+  it("publishes the 132-code project procurement policy on both sides", () => {
+    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-09-17.project-procurement.v1");
+    expect(FRONTEND_POLICY_VERSION).toBe("2026-09-17.project-procurement.v1");
+    expect(PERMISSION_CODES).toHaveLength(132);
+    expect(FRONTEND_PERMISSION_CODES).toHaveLength(132);
+    expect(new Set(PERMISSION_CODES).size).toBe(132);
+    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(132);
+    expect(PERMISSION_CODES.at(-1)).toBe("procurement.vendors.create");
+    expect(FRONTEND_PERMISSION_CODES.at(-1)).toBe("procurement.vendors.create");
     for (const permission of STAFF_INVITATION_PERMISSIONS) {
       expect(PERMISSION_CODES).toContain(permission);
       expect(FRONTEND_PERMISSION_CODES).toContain(permission);

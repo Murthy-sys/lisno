@@ -1,3 +1,5 @@
+import { createProjectProcurementRouter } from "./routes/project-procurement.js";
+import { createProjectProcurementService } from "./services/project-procurement.service.js";
 import type { ChatMentionMailer } from "./services/chat-mention-mailer.js";
 import { createNotificationService } from "./services/notifications.service.js";
 import { createNotificationEventsHub } from "./services/notification-events.service.js";
@@ -309,6 +311,7 @@ export function createApp(dependencies: AppDependencies) {
     now: clock,
     storage
   });
+  const projectProcurementService = createProjectProcurementService({ audit: auditService, now: clock });
   const procurementService = createProcurementService({
     storage,
     audit: auditService,
@@ -474,6 +477,10 @@ export function createApp(dependencies: AppDependencies) {
   app.use(
     "/api/v1",
     createProcurementRouter(authService, procurementService, maxUploadBytes)
+  );
+  app.use(
+    "/api/v1",
+    createProjectProcurementRouter(authService, projectProcurementService)
   );
   app.use(
     "/api/v1",

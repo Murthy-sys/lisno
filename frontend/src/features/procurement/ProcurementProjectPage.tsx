@@ -25,6 +25,7 @@ import { formatPaise } from "../finance/ProjectFinancePanel";
 import { projectFinanceKeys } from "../finance/projectFinanceApi";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import { SupportingDocumentActions } from "./SupportingDocumentActions";
+import { ProjectProcurementItems } from "./ProjectProcurementItems";
 import {
   getProcurementSupportingDocument,
   postProcurementExpense,
@@ -86,9 +87,9 @@ export function ProcurementProjectPage() {
     >
       <PageHeader
         id="procurement-project-page-title"
-        eyebrow="Approved Estimate purchasing"
+        eyebrow="Project procurement"
         title={project?.projectName ?? "Procurement purchases"}
-        description="Record actual costs and receipts against each approved Estimate item."
+        description="Manage project items and vendors, and record purchases against the approved Estimate."
         breadcrumb={<Link to="/home">Back to approved projects</Link>}
       />
 
@@ -118,12 +119,15 @@ export function ProcurementProjectPage() {
           message="This project is not available for procurement. It may not be Design approved yet."
         />
       ) : (
-        <ProcurementProjectDetail
-          project={project}
-          canCreate={canCreate}
-          canReadDocuments={canReadDocuments}
-          onRecord={(_section, item) => setSelectedItem({ projectId: project.projectId, itemKey: item.key })}
-        />
+        <>
+          <ProjectProcurementItems key={project.projectId} projectId={project.projectId} projectName={project.projectName} />
+          <ProcurementProjectDetail
+            project={project}
+            canCreate={canCreate}
+            canReadDocuments={canReadDocuments}
+            onRecord={(_section, item) => setSelectedItem({ projectId: project.projectId, itemKey: item.key })}
+          />
+        </>
       )}
 
       {selection ? (
@@ -168,6 +172,7 @@ function ProcurementProjectDetail({
       className="procurement-project"
       aria-label={`${project.projectName} procurement detail`}
     >
+      <h2 className="procurement-project__purchases-title">Approved-estimate purchases</h2>
       <header className="procurement-project__header">
         <div>
           <p className="eyebrow">Estimate v{project.estimateVersion}</p>

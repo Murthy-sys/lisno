@@ -87,13 +87,13 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-09-16.project-chat.v1"
+      "2026-09-17.project-procurement.v1"
     );
   });
 
-  it("publishes all 128 unique permissions with project chat in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(128);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(128);
+  it("publishes all 132 unique permissions with project procurement in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(132);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(132);
     expect(PERMISSION_CODES).toContain("estimation.design_upload.delete");
     expect(PERMISSION_CODES).toContain("projects.initiate");
     expect(PERMISSION_CODES).toContain("organization.estimators.read");
@@ -107,7 +107,7 @@ describe("frontend authorization contract", () => {
       ...invitationPermissions,
       "access_request.create"
     ]);
-    expect(PERMISSION_CODES.slice(-20)).toEqual([
+    expect(PERMISSION_CODES.slice(-24)).toEqual([
       "execution.worker_assignment.override",
       ...procurementPermissions,
       ...projectFinancePermissions,
@@ -119,7 +119,9 @@ describe("frontend authorization contract", () => {
       "ai_estimator_knowledge.configuration.lifecycle",
       "ai_estimator_knowledge.context.read",
       "admin.dashboard.read",
-      "chat.read", "chat.send", "chat.issue", "chat.read_state", "chat.participants.manage"
+      "chat.read", "chat.send", "chat.issue", "chat.read_state", "chat.participants.manage",
+      "procurement.items.read", "procurement.items.manage",
+      "procurement.vendors.read", "procurement.vendors.create"
     ]);
     expect(
       PERMISSION_CODES.filter((permission) =>

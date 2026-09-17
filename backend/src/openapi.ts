@@ -1,3 +1,4 @@
+import { PROJECT_PROCUREMENT_SCHEMAS, PROJECT_PROCUREMENT_REQUESTS, PROJECT_PROCUREMENT_RESPONSES } from "./openapi/project-procurement.js";
 import { DESIGN_WORKFLOW_ACTIONS } from "./domain/design-workflow-state.js";
 import { CHAT_COMPONENT_SCHEMAS, CHAT_REQUEST_BODIES, CHAT_RESPONSE_SCHEMAS, CHAT_QUERY_PARAMETERS } from "./openapi/project-chat.js";
 import {
@@ -112,6 +113,7 @@ const genericJsonRequestBody: OpenApiRequestBody = {
 
 const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   ...CHAT_REQUEST_BODIES,
+  ...PROJECT_PROCUREMENT_REQUESTS,
   "POST /projects/:projectId/design-workflow/actions": { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/DesignWorkflowActionRequest" } }, "multipart/form-data": { schema: { $ref: "#/components/schemas/DesignWorkflowActionRequest" } } } },
   "POST /auth/login": jsonRequest("LoginRequest"),
   "POST /auth/client-signup": jsonRequest("ClientSignupRequest"),
@@ -191,6 +193,7 @@ const operationsWithoutBodies = new Set<string>([
 
 const responseSchemaByOperation: Readonly<Record<string, string>> = {
   ...CHAT_RESPONSE_SCHEMAS,
+  ...PROJECT_PROCUREMENT_RESPONSES,
   "POST /auth/login": "AuthPayload",
   "POST /auth/client-signup": "AuthPayload",
   "POST /auth/password-reset/request": "PasswordResetAccepted",
@@ -320,6 +323,13 @@ const operationSummaries: Readonly<Record<string, string>> = {
   "GET /finance/projects/:projectId": "Read project budget and margin position",
   "GET /finance/projects/:projectId/entries": "List project spending and overheads",
   "POST /finance/projects/:projectId/entries": "Record project spending or overhead",
+  "GET /procurement/projects/:projectId/items": "List project procurement items",
+  "GET /procurement/uoms": "List active procurement UOM options",
+  "GET /procurement/vendors": "List active saved Configuration vendors",
+  "POST /procurement/vendors": "Create or reuse a saved Configuration vendor",
+  "GET /procurement/projects/:projectId/items/:itemId": "Read a project procurement item",
+  "POST /procurement/projects/:projectId/items": "Create a project procurement item",
+  "PATCH /procurement/projects/:projectId/items/:itemId": "Update a project procurement item with version checking",
   "GET /procurement/projects": "List approved Estimate items for Procurement",
   "POST /procurement/projects/:projectId/expenses":
     "Record Procurement spending with a supporting receipt",
@@ -349,6 +359,8 @@ const operationSummaries: Readonly<Record<string, string>> = {
 };
 
 const paginationOperationKeys = new Set<string>([
+  "GET /procurement/vendors",
+  "GET /procurement/projects/:projectId/items",
   "GET /projects",
   "GET /client/project-summaries",
   "GET /admin/projects",
@@ -447,6 +459,8 @@ const queryParametersByOperation: Readonly<
   Record<string, readonly OpenApiParameter[]>
 > = {
   ...CHAT_QUERY_PARAMETERS,
+  "GET /procurement/vendors": [{ name: "q", in: "query", required: false, schema: { type: "string", maxLength: 100 }, description: "Literal normalized search across active Configuration vendor codes and names." }],
+  "GET /procurement/projects/:projectId/items": [{ name: "q", in: "query", required: false, schema: { type: "string", maxLength: 100 }, description: "Literal normalized search across item name, brand and stored UOM/vendor labels." }],
   "GET /admin/dashboard/overview": [dashboardPeriodParameter()],
   "GET /admin/dashboard/projects": [
     dashboardPeriodParameter(),
@@ -1267,6 +1281,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
   return {
     ...AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS,
     ...CHAT_COMPONENT_SCHEMAS,
+    ...PROJECT_PROCUREMENT_SCHEMAS,
     DashboardRatio: {
       type: "object",
       additionalProperties: false,

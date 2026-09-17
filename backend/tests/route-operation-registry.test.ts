@@ -1,3 +1,4 @@
+import { EXPECTED_PROJECT_PROCUREMENT_OPERATIONS } from "./fixtures/project-procurement-route-operations.js";
 import express, { type RequestHandler } from "express";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
@@ -34,6 +35,7 @@ import { EXPECTED_SUPER_ADMIN_DASHBOARD_OPERATIONS } from "./fixtures/super-admi
 import { EXPECTED_PROJECT_CHAT_OPERATIONS } from "./fixtures/project-chat-route-operations.js";
 
 const EXPECTED_ALL_HUMAN_JWT_OPERATIONS = [
+  ...EXPECTED_PROJECT_PROCUREMENT_OPERATIONS,
   ...EXPECTED_PROJECT_CHAT_OPERATIONS,
   ...EXPECTED_HUMAN_JWT_OPERATIONS,
   ...EXPECTED_PROJECT_FINANCE_HUMAN_JWT_OPERATIONS,
@@ -212,9 +214,9 @@ describe("human JWT operation registry", () => {
     expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => expected.some((row) => row.key === key))).toEqual(expected);
   });
 
-  it("matches all 207 normative operation rows", () => {
+  it("matches all 214 normative operation rows", () => {
     expect(Object.values(HUMAN_JWT_OPERATIONS).sort((a, b) => a.key.localeCompare(b.key))).toEqual([...EXPECTED_ALL_HUMAN_JWT_OPERATIONS].sort((a, b) => a.key.localeCompare(b.key)));
-    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(207);
+    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(214);
   });
 
   it("mounts rows 2 through 23 as exact router groups with one ordered marker pair", () => {
@@ -407,9 +409,17 @@ describe("human JWT operation registry", () => {
     expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => EXPECTED_PROJECT_WORKFLOW_OPERATIONS.some((row) => row.key === key))).toEqual(EXPECTED_PROJECT_WORKFLOW_OPERATIONS);
     expect(
       HUMAN_JWT_OPERATION_LIST.filter(
-        ({ availability }) => availability === "project_workflow"
+        ({ availability, permission }) => availability === "project_workflow" && !permission.startsWith("procurement.items.") && !permission.startsWith("procurement.vendors.")
       )
     ).toEqual(EXPECTED_PROJECT_WORKFLOW_OPERATIONS);
+  });
+
+  it("classifies and mounts project item and saved vendor operations with personal access", () => {
+    const expectedKeys = EXPECTED_PROJECT_PROCUREMENT_OPERATIONS.map(({ key }) => key);
+    expect(HUMAN_JWT_OPERATION_LIST.filter(({ permission }) => (permission.startsWith("procurement.items.") || permission.startsWith("procurement.vendors.")))).toEqual(EXPECTED_PROJECT_PROCUREMENT_OPERATIONS);
+    const matches = mountedHumanRouters().filter((router) => router.routes.some(({ key }) => expectedKeys.includes(key as never)));
+    expect(matches).toHaveLength(1);
+    expect(matches[0]!.routes.map(({ key }) => key).sort()).toEqual([...expectedKeys].sort());
   });
 
   it("mounts all seventeen project-workflow operations across authenticated workflow routers", () => {
@@ -494,7 +504,7 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("mounts the exact 207-operation manifest with one ordered marker pair each", () => {
+  it("mounts the exact 214-operation manifest with one ordered marker pair each", () => {
     const expectedKeys = EXPECTED_ALL_HUMAN_JWT_OPERATIONS.map(
       ({ key }) => key
     ).sort();
@@ -504,8 +514,8 @@ describe("human JWT operation registry", () => {
     const mountedOperations = mountedRoutes.map(({ key }) => key);
 
     expect([...mountedOperations].sort()).toEqual(expectedKeys);
-    expect(expectedKeys).toHaveLength(207);
-    expect(new Set(expectedKeys).size).toBe(207);
+    expect(expectedKeys).toHaveLength(214);
+    expect(new Set(expectedKeys).size).toBe(214);
     expect(mountedOperations).toContain(
       "POST /execution/worker-assignments/override"
     );
@@ -552,9 +562,9 @@ describe("human JWT operation registry", () => {
     expect(() => assertTaskSixRouteMounts(routers)).toThrow();
   });
 
-  it("has 207 unique keys and exactly 128 routed permissions", () => {
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(207);
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(128);
+  it("has 214 unique keys and exactly 132 routed permissions", () => {
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(214);
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(132);
     expect(HUMAN_JWT_OPERATION_LIST.every(({ permission }) =>
       (PERMISSION_CODES as readonly string[]).includes(permission)
     )).toBe(true);

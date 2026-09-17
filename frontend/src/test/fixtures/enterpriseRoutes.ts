@@ -90,6 +90,8 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
     return path.endsWith("/entries") ? page(financeLedgerFor(bucket)) : bucket;
   }
   if (path === "/procurement/projects") return list([procurement.procurementProject]);
+  if (/^\/procurement\/projects\/[^/]+\/items$/.test(path)) return { items: [], total: 0, limit: Number(params.get("limit") ?? 20), offset: Number(params.get("offset") ?? 0) };
+  if (path === "/procurement/uoms") return [];
   if (path === "/workflow-tasks") return list([workflowTask(scenario.role)]);
   if (/^\/design-section-revisions\/(revision-1|revision-2|revision-3)\/image$/.test(path)) return drawing.syntheticDrawingResponse(drawing.revision.crop);
   if (/^\/design-source-pages\/(page-1|page-2)\/image$/.test(path)) return drawing.syntheticDrawingResponse();

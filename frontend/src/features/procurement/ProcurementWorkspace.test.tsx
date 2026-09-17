@@ -198,12 +198,17 @@ function installProcurementSession(projects: ProcurementProject[] = [procurement
           "workflow.tasks.read",
           "workflow.tasks.update",
           "procurement.workspace.read",
+          "procurement.items.read",
+          "procurement.items.manage",
+          "procurement.vendors.read",
+          "procurement.vendors.create",
           "procurement.expense.create",
           "procurement.document.read"
         ]
       }
     })),
     http.get("/api/v1/procurement/projects", () => HttpResponse.json({ data: projects })),
+    http.get("/api/v1/procurement/projects/:projectId/items", () => HttpResponse.json({ data: { items: [], total: 0, limit: 20, offset: 0 } })),
     http.get("/api/v1/workflow-tasks", () => HttpResponse.json({ data: [] })),
     http.get("/api/v1/kpis/users/:userId", () => HttpResponse.json({
       error: { code: "KPI_UNAVAILABLE", message: "KPI unavailable" }
@@ -286,6 +291,8 @@ describe("ProcurementWorkspace", () => {
     installProcurementSession([]);
     const { unmount } = renderApp(["/home"]);
     expect(await screen.findByText(/automatically after their Design plan is approved/i)).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Procurement items" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add item" })).not.toBeInTheDocument();
     unmount();
 
     installProcurementSession();

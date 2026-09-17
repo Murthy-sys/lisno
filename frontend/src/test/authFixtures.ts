@@ -68,6 +68,10 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "workflow.tasks.read",
     "workflow.tasks.update",
     "procurement.workspace.read",
+    "procurement.items.read",
+    "procurement.items.manage",
+    "procurement.vendors.read",
+    "procurement.vendors.create",
     "procurement.expense.create",
     "procurement.document.read",
     "access_request.self.read"

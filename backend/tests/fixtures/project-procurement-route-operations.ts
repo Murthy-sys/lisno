@@ -1,0 +1,9 @@
+export const EXPECTED_PROJECT_PROCUREMENT_OPERATIONS = [
+  { key: "GET /procurement/projects/:projectId/items", permission: "procurement.items.read", scope: { kind: "non_project", namespace: "project_workflow" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "project_workflow" },
+  { key: "GET /procurement/uoms", permission: "procurement.items.read", scope: { kind: "non_project", namespace: "project_workflow" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "project_workflow" },
+  { key: "GET /procurement/projects/:projectId/items/:itemId", permission: "procurement.items.read", scope: { kind: "non_project", namespace: "project_workflow" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "project_workflow" },
+  { key: "POST /procurement/projects/:projectId/items", permission: "procurement.items.manage", scope: { kind: "non_project", namespace: "project_workflow" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "project_workflow" },
+  { key: "PATCH /procurement/projects/:projectId/items/:itemId", permission: "procurement.items.manage", scope: { kind: "non_project", namespace: "project_workflow" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "project_workflow" },
+  { key: "GET /procurement/vendors", permission: "procurement.vendors.read", scope: { kind: "non_project", namespace: "project_workflow" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "project_workflow" },
+  { key: "POST /procurement/vendors", permission: "procurement.vendors.create", scope: { kind: "non_project", namespace: "project_workflow" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "project_workflow" },
+] as const;

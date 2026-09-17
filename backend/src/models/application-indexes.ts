@@ -1,3 +1,4 @@
+import { ProjectProcurementItemModel } from "./ProjectProcurementItem.js";
 import { ChatNotificationModel } from "./ChatNotification.js";
 import { prepareEstimateClientReviewIndexes } from "./EstimateClientReviewRound.js";
 import { DesignPlanResponseProofModel } from "./DesignPlanResponseProof.js";
@@ -28,6 +29,7 @@ import { AiEstimatorKnowledgeUomModel } from "./AiEstimatorKnowledgeUom.js";
 import { AiEstimatorKnowledgeVendorModel } from "./AiEstimatorKnowledgeVendor.js";
 
 export async function initializeApplicationIndexes(): Promise<void> {
+  await ProjectProcurementItemModel.init();
   await ChatNotificationModel.init();
   await ProjectChatAttachmentModel.init();
   for (const model of [ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel]) await model.init();

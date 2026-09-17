@@ -1,0 +1,79 @@
+/* Match the role shell specificity so the shared table keeps its compact density. */
+:is(.ui-app-shell[data-role], body) .project-procurement-items {
+  container-type: inline-size;
+  display: grid;
+  gap: 16px;
+  min-inline-size: 0;
+  margin-block-end: 0;
+}
+:is(.ui-app-shell[data-role], body) .project-procurement-items__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+:is(.ui-app-shell[data-role], body) .project-procurement-items__heading > div { flex: 1 1 240px; min-width: 0; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__heading h2 { margin: 4px 0; font-size: 20px; font-weight: 600; line-height: 1.35; letter-spacing: -.025em; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__heading p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--color-text-muted); }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__heading .project-procurement-items__eyebrow { color: var(--color-primary); font-weight: 600; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items .ui-button { min-block-size: 34px; padding: 6px 10px; font-size: 12px; font-weight: 500; border-radius: 5px; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__search { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 0; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__search .ui-input { flex: 1 1 180px; width: auto; min-inline-size: 0; max-inline-size: 420px; min-block-size: 36px; padding: 7px 10px; font-size: 12px; border-radius: 5px; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__summary,
+:is(.ui-app-shell[data-role], body) .project-procurement-items__pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; line-height: 1.5; color: var(--color-text-muted); }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table-region { min-width: 0; max-width: 100%; overflow-x: auto; border: 1px solid var(--color-border); border-radius: 6px; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table { width: 100%; min-width: 0; table-layout: fixed; border-collapse: collapse; margin: 0; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table th,
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table td { padding: 12px 14px; border: 0; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: middle; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th { background: var(--color-table-header); font-size: 11px; font-weight: 600; color: var(--color-text-muted); letter-spacing: normal; text-transform: none; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:first-child { width: 26%; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(2) { width: 17%; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(3) { width: 21%; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(4) { width: 10%; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(5) { width: 18%; text-align: right; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(6) { width: 66px; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table tbody tr:last-child > * { border-bottom: 0; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__name { color: var(--color-text-strong); font-weight: 600; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table small { display: block; margin-top: 3px; color: var(--color-text-muted); font-size: 10px; line-height: 1.4; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table .project-procurement-items__price { font-variant-numeric: tabular-nums; text-align: right; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__actions .ui-icon-button { padding: 6px; inline-size: 32px; block-size: 32px; min-inline-size: 32px; min-block-size: 32px; border-radius: 4px; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__actions .ui-icon-button svg { width: 15px; height: 15px; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__muted { color: var(--color-text-muted); }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__pagination > div { display: flex; gap: 8px; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items :is(button, [tabindex]):focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }
+.project-procurement-items-editor__form,
+.project-procurement-items-editor__form > fieldset { display: grid; gap: 20px; min-inline-size: 0; border: 0; padding: 0; margin: 0; }
+.project-procurement-items-editor__actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; width: 100%; }
+.project-procurement-items-editor__form .ui-control { min-inline-size: 0; width: 100%; }
+.project-procurement-vendor { display: grid; gap: 8px; min-width: 0; }
+.project-procurement-vendor .ui-field__hint { margin: 0; }
+.project-procurement-vendor__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.project-procurement-vendor__create { display: grid; gap: 10px; padding: 14px; background: var(--color-surface-subtle); border: 1px solid var(--color-border); border-radius: 6px; }
+.project-procurement-vendor .search-combobox { min-width: 0; }
+.project-procurement-vendor .search-combobox input { width: 100%; min-width: 0; }
+.project-procurement-vendor .search-combobox__popup [role="listbox"] { max-height: 230px; overflow-y: auto; }
+.project-procurement-vendor .search-combobox__popup [role="option"] { overflow-wrap: anywhere; }
+.procurement-project .procurement-project__purchases-title { margin: 0 0 16px; font-size: 18px; font-weight: 600; line-height: 1.4; }
+@container (max-width: 620px) {
+  :is(.ui-app-shell[data-role], body) .project-procurement-items__table,
+  :is(.ui-app-shell[data-role], body) .project-procurement-items__table tbody { display: block; }
+  :is(.ui-app-shell[data-role], body) .project-procurement-items__table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  :is(.ui-app-shell[data-role], body) .project-procurement-items__table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 14px; padding: 14px; border-bottom: 1px solid var(--color-border); }
+  :is(.ui-app-shell[data-role], body) .project-procurement-items__table tbody tr:last-child { border-bottom: 0; }
+  :is(.ui-app-shell[data-role], body) .project-procurement-items__table tbody th,
+  :is(.ui-app-shell[data-role], body) .project-procurement-items__table tbody td { display: block; border: 0; padding: 0; }
+  :is(.ui-app-shell[data-role], body) .project-procurement-items__name { grid-row: 1; grid-column: 1; align-self: center; font-size: 13px; }
+  :is(.ui-app-shell[data-role], body) .project-procurement-items__table tbody td[data-label] { grid-column: 1 / -1; display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 8px; }
+  :is(.ui-app-shell[data-role], body) .project-procurement-items__table td[data-label]::before { content: attr(data-label); color: var(--color-text-muted); font-size: 11px; font-weight: 500; }
+  :is(.ui-app-shell[data-role], body) .project-procurement-items__table td small { grid-column: 2; margin: 0; }
+  :is(.ui-app-shell[data-role], body) .project-procurement-items__actions { grid-row: 1; grid-column: 2; }
+  :is(.ui-app-shell[data-role], body) .project-procurement-items__table .project-procurement-items__price { text-align: left; }
+  :is(.ui-app-shell[data-role], body) .project-procurement-items__actions .ui-icon-button { min-inline-size: 44px; min-block-size: 44px; }
+  :is(.ui-app-shell[data-role], body) .project-procurement-items .ui-button { min-block-size: 44px; }
+  :is(.ui-app-shell[data-role], body) .project-procurement-items__search .ui-input { min-block-size: 44px; }
+}
+@media (max-width: 640px) {
+  .project-procurement-items-editor__actions > .ui-button { flex: 1 1 auto; min-block-size: 44px; }
+  .project-procurement-vendor .ui-button { min-block-size: 44px; }
+}

@@ -584,6 +584,7 @@ describe("role landing staging contract", () => {
       if (path === "/api/v1/auth/authorization") {
         return Response.json({ data: authorizationFor("procurement") });
       }
+      if (path === "/api/v1/procurement/projects") return Response.json({ data: [] });
       if (path.startsWith("/api/v1/kpis/users/user-procurement")) {
         return Response.json({
           data: {

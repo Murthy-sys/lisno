@@ -34,7 +34,7 @@ export function ProcurementWorkspace() {
         <div>
           <p className="eyebrow">Approved Estimate purchasing</p>
           <h2 id="procurement-workspace-title">Procurement purchases</h2>
-          <p>Record actual costs and receipts against each approved Estimate item.</p>
+          <p>Open a project to manage procurement items, vendors and approved Estimate purchases.</p>
         </div>
         {query.data && !integrityError ? (
           <span>{projects?.length ?? 0} {projects?.length === 1 ? "project" : "projects"}</span>
