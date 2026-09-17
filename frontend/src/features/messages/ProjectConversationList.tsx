@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronLeft, ChevronRight, Menu, RefreshCw, UsersRound } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthProvider";
@@ -10,6 +10,21 @@ import { IconButton } from "../../components/ui/IconButton";
 import { chatErrorMessage, chatKeys, isChatDenied, projectChatApi } from "./projectChatApi";
 import { useProjectChat } from "./ProjectChatProvider";
 import { projectMessagesPath } from "./ProjectChatHeader";
+
+// Keep this breakpoint aligned with projectChatShell.css. The sidebar stays
+// mounted on mobile to retain its scroll position and current page.
+const desktopQuery = "(min-width: 1024px)";
+const isDesktop = () => window.matchMedia(desktopQuery).matches;
+const isDocumentVisible = () => document.visibilityState === "visible";
+function subscribeDesktop(listener: () => void) {
+  const media = window.matchMedia(desktopQuery);
+  media.addEventListener("change", listener);
+  return () => media.removeEventListener("change", listener);
+}
+function subscribeDocumentVisibility(listener: () => void) {
+  document.addEventListener("visibilitychange", listener);
+  return () => document.removeEventListener("visibilitychange", listener);
+}
 
 function messageTime(value: string) {
   const date = new Date(value);
@@ -22,21 +37,30 @@ function messageTime(value: string) {
 export function ProjectConversationList({ selectedProjectId }: { selectedProjectId?: string }) {
   const chat = useProjectChat();
   const auth = useAuth();
+  const queryClient = useQueryClient();
   const [offset, setOffset] = useState(0);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationTrigger = useRef<HTMLButtonElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
+  const desktop = useSyncExternalStore(subscribeDesktop, isDesktop);
+  const documentVisible = useSyncExternalStore(subscribeDocumentVisibility, isDocumentVisible);
+  const listVisible = documentVisible && (!selectedProjectId || desktop);
+  const listEnabled = chat.enabled && listVisible;
   const list = useQuery({
     queryKey: [...chatKeys.list(chat.scope), offset],
     queryFn: ({ signal }) => projectChatApi.conversations(offset, signal),
-    enabled: chat.enabled,
+    enabled: listEnabled,
     retry: (count, error) => !isChatDenied(error) && count < 1,
     staleTime: 10_000,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
-    refetchInterval: 15_000,
+    refetchInterval: query => isChatDenied(query.state.error) ? false : 60_000,
     refetchIntervalInBackground: false
   });
+  useEffect(() => {
+    // Disabling an observer stops new refetches but not an already queued retry.
+    if (!listEnabled) void queryClient.cancelQueries({ queryKey: [...chatKeys.list(chat.scope), offset], exact: true });
+  }, [chat.scope, listEnabled, offset, queryClient]);
   useEffect(() => { if (scroller.current) scroller.current.scrollTop = 0; }, [offset]);
   const items = list.data?.items.filter(item => !chat.denied.has(item.project.id)) ?? [];
   const Heading = selectedProjectId ? "h2" : "h1";

@@ -1,3 +1,4 @@
+import type { NotificationTransactions } from "./notifications.js";
 import type { ChatAttachment, ChatAttachmentPolicy, ChatEvent, ChatFilter, ChatMessage, ChatPerson } from "../contracts/project-chat.js";
 import type { Role } from "../domain/roles.js";
 import type { EstimateWorkflowLine, ProjectWorkflowTaskKind } from "../domain/project-workflow.js";
@@ -168,7 +169,7 @@ export interface ChatTypingRateRecord {
     activeUpdates: number;
     cleanupAt: string;
 }
-export interface ChatTransaction extends ChatAttachmentTransactions {
+export interface ChatTransaction extends ChatAttachmentTransactions, NotificationTransactions {
     typingByComposer(projectId: string, userId: string, sessionScope: string, composerId: string): Promise<ChatTypingRecord | null>;
     typingByUser(projectId: string, userId: string, now: string, limit: number): Promise<ChatTypingRecord[]>;
     activeTyping(projectId: string, now: string, limit: number): Promise<ChatTypingRecord[]>;

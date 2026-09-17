@@ -178,6 +178,7 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
 };
 
 const operationsWithoutBodies = new Set<string>([
+  "PUT /notifications/:notificationId/read",
   "POST /leads/:leadId/estimate/submit",
   "POST /estimates/:estimateId/send-client",
   "POST /estimate-design-uploads/:uploadId/retry",
@@ -992,6 +993,13 @@ function responsesFor(key: HumanJwtOperationKeyShape): Readonly<Record<string, O
   }
   if (key === "GET /projects/:projectId/chat/attachments/:attachmentId/preview") {
     return binaryResponses("image/webp", "Bounded image preview; private, current-membership-gated.");
+  }
+  if (key === "GET /notifications/events") {
+    return {
+      "200": {description: "Recipient-only authenticated SSE. Event notifications carries the authorized first-page NotificationPage snapshot; event state reports denied or unavailable. Heartbeat comments carry no content. No credentials in the URL.", content: {"text/event-stream": {schema: {type: "string"}}}},
+      ...standardProtectedErrors,
+      "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    };
   }
   if (key === "GET /projects/:projectId/chat/events") {
     return {

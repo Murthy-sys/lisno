@@ -7,6 +7,7 @@ import { BrandLogo } from "../ui/BrandLogo";
 import { Drawer } from "../ui/Drawer";
 import { IconButton } from "../ui/IconButton";
 import { Sidebar } from "./Sidebar";
+import { NotificationBell } from "../../features/notifications/NotificationBell";
 
 export function MobileHeader({
   user,
@@ -26,6 +27,8 @@ export function MobileHeader({
         <div className="ui-mobile-header__brand">
           <BrandLogo light />
         </div>
+        <div className="ui-mobile-header__actions">
+        <NotificationBell />
         <IconButton
           ref={triggerRef}
           className="ui-mobile-header__trigger"
@@ -36,6 +39,7 @@ export function MobileHeader({
           aria-controls="mobile-navigation"
           onClick={() => setOpen(true)}
         />
+        </div>
       </header>
 
       <Drawer

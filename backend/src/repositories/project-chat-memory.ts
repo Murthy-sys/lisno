@@ -1,3 +1,4 @@
+import type { NotificationRecord } from "./notifications.js";
 import { chatConflict } from "../domain/project-chat.js";
 import type { ChatAttachmentRecord, ChatEstimateSource, ChatHistoryRow, ChatMessageScan, ChatOperation, ChatReadState, ChatSelection, ChatSources, ChatState, ChatStoredEvent, ChatStoredMessage, ChatTransaction, ChatTypingRecord, ChatTypingRateRecord, ChatWorkflowSource, ProjectChatRepository } from "./project-chat.js";
 import { createChatAttachmentOperations } from "./project-chat-attachment-operations.js";
@@ -10,6 +11,7 @@ export interface MemoryChatSources {
     projectIds?: string[];
 }
 interface MemoryChatState {
+    notifications: NotificationRecord[];
     selections: ChatSelection[];
     messages: ChatStoredMessage[];
     states: Record<string, ChatState>;
@@ -24,7 +26,7 @@ interface MemoryChatState {
 const modules: ProjectModule[] = ["projects", "design", "procurement", "finance", "execution"];
 const copy = <T>(value: T): T => structuredClone(value);
 export function createMemoryProjectChatRepository(repository: AppRepository, supplemental: MemoryChatSources = {}): ProjectChatRepository {
-    let state: MemoryChatState = { selections: [], messages: [], states: {}, reads: [], operations: [], events: [], histories: [], attachments: [], typing: [], typingRates: [] };
+    let state: MemoryChatState = { notifications: [], selections: [], messages: [], states: {}, reads: [], operations: [], events: [], histories: [], attachments: [], typing: [], typingRates: [] };
     let tail: Promise<void> = Promise.resolve();
     const run = async <T>(write: boolean, operation: (tx: ChatTransaction) => Promise<T>): Promise<T> => {
         const previous = tail;
@@ -67,6 +69,28 @@ function memoryTransaction(app: AppRepository, state: MemoryChatState, supplemen
     };
     return {
         app,
+        async insertNotification(row) {
+            if (state.notifications.some(item => item.recipientId === row.recipientId && item.messageId === row.messageId)) chatConflict();
+            state.notifications.push(copy(row));
+        },
+        async notification(id, recipientId) { return copy(state.notifications.find(row => row.id === id && row.recipientId === recipientId) ?? null); },
+        async notificationProjectIds(recipientId) { return [...new Set(state.notifications.filter(row => row.recipientId === recipientId).map(row => row.projectId))]; },
+        async notificationPage(recipientId, projectIds, limit, offset) {
+            const rows = state.notifications.filter(row => row.recipientId === recipientId && projectIds.includes(row.projectId)).sort((a,b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+            return copy({items: rows.slice(offset, offset + limit), total: rows.length, unreadCount: rows.filter(row => row.readAt === null).length});
+        },
+        async readNotification(id, recipientId, now) { const row = state.notifications.find(row => row.id === id && row.recipientId === recipientId); if (row && !row.readAt) row.readAt = now; },
+        async claimNotificationEmail(now, leaseExpiresAt, token) {
+            const row = state.notifications.filter(row => (row.email.status === "pending" && row.email.nextAttemptAt! <= now) || (row.email.status === "leased" && row.email.leaseExpiresAt! <= now)).sort((a,b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))[0];
+            if (!row) return null;
+            row.email = {...row.email, status: "leased", attempts: row.email.attempts + 1, leaseToken: token, leaseExpiresAt};
+            return copy(row);
+        },
+        async settleNotificationEmail(id, token, now, email) {
+            const row = state.notifications.find(row => row.id === id && row.email.status === "leased" && row.email.leaseToken === token && row.email.leaseExpiresAt! > now);
+            if (!row) return false;
+            row.email = copy(email); return true;
+        },
         async typingByComposer(projectId, userId, sessionScope, composerId) { return copy(state.typing.find(row => row.projectId === projectId && row.userId === userId && row.sessionScope === sessionScope && row.composerId === composerId) ?? null); },
         async typingByUser(projectId, userId, now, limit) { return copy(state.typing.filter(row => row.projectId === projectId && row.userId === userId && row.cleanupAt > now).sort((a, b) => a.id.localeCompare(b.id)).slice(0, limit)); },
         async activeTyping(projectId, now, limit) { return copy(state.typing.filter(row => row.projectId === projectId && row.expiresAt !== null && row.expiresAt > now).sort((a, b) => a.userId.localeCompare(b.userId) || a.id.localeCompare(b.id)).slice(0, limit)); },

@@ -1,3 +1,9 @@
+import type { ChatMentionMailer } from "./services/chat-mention-mailer.js";
+import { createNotificationService } from "./services/notifications.service.js";
+import { createNotificationEventsHub } from "./services/notification-events.service.js";
+import { createNotificationStreamService } from "./services/notification-stream.service.js";
+import { createNotificationEmailDispatcher } from "./services/notification-email-dispatcher.js";
+import { createNotificationsRouter } from "./routes/notifications.js";
 import { createDesignWorkflowStateService } from "./services/design-workflow-state.service.js";
 import { createDesignWorkflowStateRouter } from "./routes/design-workflow-state.js";
 import express, { type RequestHandler } from "express";
@@ -120,6 +126,7 @@ import type { FileStorage } from "./storage/storage.js";
 
 export interface AppDependencies {
   chatRepository?: ProjectChatRepository;
+  chatMentionMailer?: ChatMentionMailer;
   chatAttachmentPolicy?: ChatAttachmentPolicy;
   chatEvents?: { watchChanges?: boolean; pollIntervalMs?: number; heartbeatMs?: number };
   repository?: AppRepository;
@@ -255,7 +262,13 @@ export function createApp(dependencies: AppDependencies) {
   const projectActivityService = createProjectActivityService(repository);
   const chatRepository = dependencies.chatRepository ?? createMemoryProjectChatRepository(repository);
   const attachmentPolicy = dependencies.chatAttachmentPolicy ?? createProjectChatAttachmentPolicy();
-  const projectChatService = createProjectChatService({ repository, audit: auditService, clock, chatRepository, attachmentPolicy });
+  const notificationHub = createNotificationEventsHub({watchChanges: chatRepository.kind === "mongo" && dependencies.chatEvents?.watchChanges !== false});
+  const notifications = createNotificationService({repository: chatRepository, clock, onChange: id => notificationHub.wake(id)});
+  const notificationStream = createNotificationStreamService({auth: authService, service: notifications, hub: notificationHub});
+  const notificationEmail = createNotificationEmailDispatcher({repository: chatRepository, clock, mailer: dependencies.chatMentionMailer ?? {deliveryKind: "disabled"}, allowDemoAccountExternalEmail: dependencies.allowDemoAccountExternalEmail});
+  const projectChatService = createProjectChatService({ repository, audit: auditService, clock, chatRepository, attachmentPolicy,
+    onNotificationsCommitted: ids => { for (const id of ids) notificationHub.wake(id); notificationEmail.wake(); }
+  });
   const projectChatTyping = createProjectChatTypingService({ chatRepository, clock });
   const chatAttachments = createProjectChatAttachmentService({
     repository, audit: auditService, clock, chatRepository, policy: attachmentPolicy,
@@ -400,6 +413,7 @@ export function createApp(dependencies: AppDependencies) {
   app.use(express.json({ limit: "300kb" }));
   app.use("/api/v1", healthRouter);
   app.use("/api/v1", createAuthRouter(authService, authRateLimit));
+  app.use("/api/v1", createNotificationsRouter(authService, notifications, notificationStream));
   app.use("/api/v1", createProjectChatRouter(authService, projectChatService, projectChatTyping));
   app.use("/api/v1", createProjectChatAttachmentsRouter(authService, chatAttachments));
   app.use("/api/v1", createProjectChatEventsRouter(authService, projectChatStream));
@@ -526,7 +540,8 @@ export function createApp(dependencies: AppDependencies) {
   app.use(errorHandler);
 
   return Object.assign(app, {
-    closeProjectChat: () => projectChatStream.close(),
+    startNotificationDelivery: () => notificationEmail.start(),
+    closeProjectChat: async () => { await Promise.all([projectChatStream.close(), notificationStream.close(), notificationEmail.stop()]); },
     cleanupProjectChatAttachments: () => chatAttachments.cleanup()
   });
 }

@@ -1,3 +1,5 @@
+import { ChatNotificationModel } from "../models/ChatNotification.js";
+import type { NotificationRecord } from "./notifications.js";
 import mongoose, { type ClientSession, type Model } from "mongoose";
 import { randomUUID } from "node:crypto";
 import { ProjectModel } from "../models/Project.js";
@@ -56,6 +58,24 @@ function mongoTransaction(app: AppRepository, session: ClientSession): ChatTrans
     const typingRecord = <T>(row: any): T => row ? record<T>({ ...row, cleanupAt: new Date(row.cleanupAt).toISOString() }) : row;
     return {
         app, session,
+        async insertNotification(row) { await ChatNotificationModel.create([document(row)], {session}); },
+        async notification(id, recipientId) { return record(await ChatNotificationModel.findOne({_id: id, recipientId}).session(session).lean()); },
+        async notificationProjectIds(recipientId) { return ChatNotificationModel.distinct("projectId", {recipientId}).session(session).exec(); },
+        async notificationPage(recipientId, projectIds, limit, offset) {
+            const filter = {recipientId, projectId: {$in: projectIds}};
+            const total = await ChatNotificationModel.countDocuments(filter).session(session);
+            const unreadCount = await ChatNotificationModel.countDocuments({...filter, readAt: null}).session(session);
+            const items = (await ChatNotificationModel.find(filter).sort({createdAt: -1, _id: -1}).skip(offset).limit(limit).session(session).lean()).map(row => record<NotificationRecord>(row));
+            return {items, total, unreadCount};
+        },
+        async readNotification(id, recipientId, now) { await ChatNotificationModel.updateOne({_id: id, recipientId, readAt: null}, {$set: {readAt: now}}, {session}); },
+        async claimNotificationEmail(now, leaseExpiresAt, token) {
+            return record(await ChatNotificationModel.findOneAndUpdate({$or: [{"email.status": "pending", "email.nextAttemptAt": {$lte: now}}, {"email.status": "leased", "email.leaseExpiresAt": {$lte: now}}]}, {$set: {"email.status": "leased", "email.leaseToken": token, "email.leaseExpiresAt": leaseExpiresAt}, $inc: {"email.attempts": 1}}, {sort: {createdAt: 1, _id: 1}, returnDocument: "after", session}).lean());
+        },
+        async settleNotificationEmail(id, token, now, email) {
+            const result = await ChatNotificationModel.updateOne({_id: id, "email.status": "leased", "email.leaseToken": token, "email.leaseExpiresAt": {$gt: now}}, {$set: {email}}, {session, runValidators: true});
+            return result.matchedCount === 1;
+        },
         async typingByComposer(projectId, userId, sessionScope, composerId) { return typingRecord<ChatTypingRecord>(await ProjectChatTypingModel.findOne({ projectId, userId, sessionScope, composerId }).session(session).lean()); },
         async typingByUser(projectId, userId, now, limit) { return (await ProjectChatTypingModel.find({ projectId, userId, cleanupAt: { $gt: new Date(now) } }).sort({ _id: 1 }).limit(limit).session(session).lean()).map(row => typingRecord<ChatTypingRecord>(row)); },
         async activeTyping(projectId, now, limit) { return (await ProjectChatTypingModel.find({ projectId, expiresAt: { $gt: now } }).sort({ userId: 1, _id: 1 }).limit(limit).session(session).lean()).map(row => typingRecord<ChatTypingRecord>(row)); },

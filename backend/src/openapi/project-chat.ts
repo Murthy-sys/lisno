@@ -19,6 +19,8 @@ const query = (name: string, schema: unknown) => ({ name, in: "query", required:
 const summaryProperties = { project: object({ id, name: { type: "string" }, status: { type: "string" } }), counts: ref("ChatCounts"), participantCount: integer, cursor: { type: "string" }, lastReadSequence: integer, latestMessageSequence: integer, capabilities: ref("ChatCapabilities"), setupWarnings: { type: "array", items: { type: "string" } } };
 
 export const CHAT_COMPONENT_SCHEMAS: Record<string, Record<string, unknown>> = {
+  ChatNotification: object({id, type: {type: "string", enum: ["chat.mention", "chat.mention.oversight"]}, projectId: id, projectName: {type: "string"}, messageId: id, actor: object({id, name: {type: "string"}}), excerpt: {type: "string", maxLength: 240}, createdAt: timestamp, readAt: {...timestamp, nullable: true}}),
+  NotificationPage: object({items: array("ChatNotification"), unreadCount: integer, pagination: ref("Pagination")}),
   ChatAttachment: object({ id, kind: attachmentKind, filename: { type: "string" }, mimeType: { type: "string" }, byteSize: version,
     preview: { ...object({ mimeType: { type: "string" }, byteSize: version, width: version, height: version }), nullable: true } }),
   ChatAttachmentSummary: object({ count: version, kind: attachmentKind, filename: { type: "string" } }),
@@ -74,6 +76,8 @@ export const CHAT_REQUEST_BODIES = {
   "PUT /projects/:projectId/chat/typing": json("ChatTypingRequest")
 };
 export const CHAT_RESPONSE_SCHEMAS = {
+  "GET /notifications": "NotificationPage",
+  "PUT /notifications/:notificationId/read": "ChatNotification",
   "GET /projects/:projectId/chat/attachment-policy": "ChatAttachmentPolicy",
   "POST /projects/:projectId/chat/attachments": "ChatStagedAttachment",
   "DELETE /projects/:projectId/chat/attachments/:attachmentId": "ChatAttachmentDiscardResult",
@@ -90,6 +94,7 @@ export const CHAT_RESPONSE_SCHEMAS = {
   "PUT /projects/:projectId/chat/typing": "ChatTypingResult"
 };
 export const CHAT_QUERY_PARAMETERS = {
+  "GET /notifications": [query("limit", {type: "integer", minimum: 1, maximum: 50, default: 20}), query("offset", {...integer, maximum: 100000, default: 0})],
   "POST /projects/:projectId/chat/attachments": [
     { ...query("uploadId", { type: "string", minLength: 8, maxLength: 200, pattern: "^[A-Za-z0-9_-]+$", description: "Stable per-file retry identity; changed bytes conflict." }), required: true },
     { ...query("sizeBytes", { type: "integer", minimum: 1, maximum: 52428800, description: "Reservation size; must equal measured file bytes. Policy may impose a smaller limit." }), required: true }
