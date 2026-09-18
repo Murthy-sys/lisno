@@ -19,9 +19,11 @@ vi.mock("../../auth/AuthProvider", () => ({
 }));
 
 const uom = { id: "uom-one", code: "sq ft", name: "Square feet" };
+const sourceFor = (projectId = "project-one") => ({ estimateId: projectId === "project-one" ? "estimate-one" : "estimate-two", estimateVersion: 3, sourceLineItemKey: "line-one" });
+const storedSourceFor = (projectId = "project-one") => ({ ...sourceFor(projectId), estimateReviewRoundId: "round-one", sourceSectionId: "CA" });
 const item: ProjectProcurementItem = {
   id: "item-one", projectId: "project-one", vendor: null, itemName: "Plywood", brand: "Greenply", uom: { ...uom, status: "active" },
-  pricePaise: 12005, version: 3, createdAt: "2026-09-17T00:00:00.000Z", updatedAt: "2026-09-17T00:00:00.000Z"
+  pricePaise: 12005, estimateSource: storedSourceFor(), version: 3, createdAt: "2026-09-17T00:00:00.000Z", updatedAt: "2026-09-17T00:00:00.000Z"
 };
 
 function page(items: ProjectProcurementItem[], total = items.length, offset = 0) {
@@ -35,7 +37,7 @@ function start(projectId = "project-one", projectName = "Aurora Villa") {
     queryClient = useQueryClient();
     const [props, setProject] = useState({ projectId, projectName });
     switchProject = setProject;
-    return <ProjectProcurementItems {...props} />;
+    return <ProjectProcurementItems {...props} source={sourceFor(props.projectId)} />;
   }
   const view = renderWithQuery(<TestProjectItems />);
   return { ...view, queryClient, showProject: (id: string, name: string) => act(() => switchProject({ projectId: id, projectName: name })) };
@@ -99,7 +101,7 @@ describe("ProjectProcurementItems", () => {
     await user.type(screen.getByRole("textbox", { name: "Price (INR)" }), "120.05");
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add item" }));
     await screen.findByText("Plywood board added in this project.");
-    expect(post).toHaveBeenCalledWith({ itemName: "Plywood board", brand: "Greenply", uomId: uom.id, vendorId: null, pricePaise: 12005 });
+    expect(post).toHaveBeenCalledWith({ itemName: "Plywood board", brand: "Greenply", uomId: uom.id, vendorId: null, pricePaise: 12005, ...sourceFor() });
     expect(screen.getByRole("rowheader", { name: "Plywood board" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Add item" })).toHaveFocus();
     view.unmount();
@@ -172,8 +174,8 @@ describe("ProjectProcurementItems", () => {
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(writes).toHaveLength(2));
     expect(writes).toEqual([
-      { itemName: "Plywood", brand: "Greenply", uomId: uom.id, vendorId: null, pricePaise: 14501, expectedVersion: 3 },
-      { itemName: "Renamed panel", brand: "Greenply", uomId: uom.id, vendorId: null, pricePaise: 18999, expectedVersion: 4 }
+      { itemName: "Plywood", brand: "Greenply", uomId: uom.id, vendorId: null, pricePaise: 14501, expectedVersion: 3, ...sourceFor() },
+      { itemName: "Renamed panel", brand: "Greenply", uomId: uom.id, vendorId: null, pricePaise: 18999, expectedVersion: 4, ...sourceFor() }
     ]);
   });
 
@@ -316,7 +318,7 @@ describe("ProjectProcurementItems", () => {
   });
 
   it("keeps unequal project prices isolated and resets editor/search when switching projects", async () => {
-    const secondItem = { ...item, id: "item-two", projectId: "project-two", pricePaise: 76543 };
+    const secondItem = { ...item, id: "item-two", projectId: "project-two", pricePaise: 76543, estimateSource: storedSourceFor("project-two") };
     server.use(http.get("/api/v1/procurement/projects/project-two/items", () => page([secondItem])));
     const view = start();
     const user = userEvent.setup();
@@ -334,7 +336,7 @@ describe("ProjectProcurementItems", () => {
     expect(await screen.findByText("₹120.05")).toBeVisible();
     expect(screen.queryByText("₹765.43")).not.toBeInTheDocument();
     expect(screen.getByRole("searchbox")).toHaveValue("");
-    expect(view.queryClient.getQueryData(projectProcurementKeys.list("project-two", "", 0))).toEqual(expect.objectContaining({ items: [secondItem] }));
+    expect(view.queryClient.getQueryData(projectProcurementKeys.list("project-two", "", 0, sourceFor("project-two")))).toEqual(expect.objectContaining({ items: [secondItem] }));
   });
 
   it("rejects a mismatched project DTO instead of showing another project's rows", async () => {
@@ -363,7 +365,7 @@ describe("ProjectProcurementItems", () => {
       http.get("/api/v1/procurement/projects/project-two/items", () => page([])),
       http.post("/api/v1/procurement/projects/project-two/items", async ({ request }) => {
         itemPosts(await request.json());
-        return HttpResponse.json({ data: { ...item, id: "second-item", projectId: "project-two", vendor: savedVendor } }, { status: 201 });
+        return HttpResponse.json({ data: { ...item, id: "second-item", projectId: "project-two", vendor: savedVendor, estimateSource: storedSourceFor("project-two") } }, { status: 201 });
       })
     );
     const view = start();
@@ -392,8 +394,8 @@ describe("ProjectProcurementItems", () => {
     await user.selectOptions(screen.getByRole("combobox", { name: "UOM" }), uom.id);
     await user.type(screen.getByRole("textbox", { name: "Price (INR)" }), "88.01");
     await user.click(within(panel).getByRole("button", { name: "Add item" }));
-    await waitFor(() => expect(itemPosts).toHaveBeenCalledWith({ itemName: "Plywood", brand: "Greenply", uomId: uom.id, vendorId: savedVendor.id, pricePaise: 8801 }));
-    expect(view.queryClient.getQueryState(projectProcurementKeys.list("project-one", "", 0))?.isInvalidated).toBe(false);
+    await waitFor(() => expect(itemPosts).toHaveBeenCalledWith({ itemName: "Plywood", brand: "Greenply", uomId: uom.id, vendorId: savedVendor.id, pricePaise: 8801, ...sourceFor("project-two") }));
+    expect(view.queryClient.getQueryState(projectProcurementKeys.list("project-one", "", 0, sourceFor()))?.isInvalidated).toBe(false);
   });
 
   it("requires typed vendor text to be selected, saved or cleared and protects unsaved quick-add input", async () => {

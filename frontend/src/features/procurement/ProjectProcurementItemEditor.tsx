@@ -14,10 +14,14 @@ import {
   MAX_PROCUREMENT_ITEM_PRICE_PAISE,
   projectProcurementKeys,
   updateProjectProcurementItem,
-  type ProjectProcurementItemInput
+  type ProjectProcurementItemInput,
+  type ProcurementParentSource,
+  type ProcurementParentOption,
+  sameProcurementParent
 } from "./projectProcurementApi";
 import { procurementError, rupeesToPaise } from "./procurementPresentation";
 import { ProcurementVendorField } from "./ProcurementVendorField";
+import { procurementKeys } from "./procurementApi";
 
 interface Props {
   projectId: string;
@@ -27,6 +31,10 @@ interface Props {
   onSaved: (item: ProjectProcurementItem) => void;
   returnFocusRef: RefObject<HTMLElement | null>;
   fallbackFocusRef: RefObject<HTMLElement | null>;
+  source?: ProcurementParentSource;
+  assignmentOptions?: ProcurementParentOption[];
+  parentLabel?: string;
+  sourceStale?: boolean;
 }
 
 function draftFor(item: ProjectProcurementItem | null) {
@@ -38,7 +46,7 @@ function draftFor(item: ProjectProcurementItem | null) {
   };
 }
 
-export function ProjectProcurementItemEditor({ projectId, projectName, item, onClose, onSaved, returnFocusRef, fallbackFocusRef }: Props) {
+export function ProjectProcurementItemEditor({ projectId, projectName, item, onClose, onSaved, returnFocusRef, fallbackFocusRef, source, assignmentOptions, parentLabel, sourceStale = false }: Props) {
   const queryClient = useQueryClient();
   const [baseItem, setBaseItem] = useState(item);
   const [draft, setDraft] = useState(() => draftFor(item));
@@ -47,10 +55,11 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
   const [vendorBusy, setVendorBusy] = useState(false);
   const [vendorUnresolved, setVendorUnresolved] = useState(false);
   const [vendorFieldRevision, setVendorFieldRevision] = useState(0);
+  const [assignment, setAssignment] = useState<ProcurementParentSource | null>(null);
   const firstField = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const initialDraft = draftFor(baseItem);
-  const dirty = vendorUnresolved || (vendor?.id ?? null) !== (baseItem?.vendor?.id ?? null)
+  const dirty = Boolean(assignment) || vendorUnresolved || (vendor?.id ?? null) !== (baseItem?.vendor?.id ?? null)
     || Object.keys(draft).some((key) => draft[key as keyof typeof draft] !== initialDraft[key as keyof typeof draft]);
   const uoms = useQuery({
     queryKey: projectProcurementKeys.uoms,
@@ -58,14 +67,18 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
     staleTime: 60_000
   });
   const save = useMutation({
-    mutationFn: (input: ProjectProcurementItemInput) => baseItem
+    mutationFn: (input: ProjectProcurementItemInput & Partial<ProcurementParentSource>) => baseItem
       ? updateProjectProcurementItem(projectId, baseItem.id, { ...input, expectedVersion: baseItem.version })
-      : createProjectProcurementItem(projectId, input),
+      : createProjectProcurementItem(projectId, input as ProjectProcurementItemInput & ProcurementParentSource),
     onSuccess: async (saved) => {
       await queryClient.invalidateQueries({ queryKey: projectProcurementKeys.lists(projectId) });
       onSaved(saved);
     },
     onError: (error) => {
+      if (error instanceof ApiError && ["PROCUREMENT_ITEM_SOURCE_CONFLICT", "PROCUREMENT_APPROVAL_SOURCE_CONFLICT"].includes(error.code)) {
+        void queryClient.invalidateQueries({ queryKey: procurementKeys.projects });
+        void queryClient.invalidateQueries({ queryKey: projectProcurementKeys.lists(projectId) });
+      }
       if (error instanceof ApiError && error.fields) {
         setErrors(error.fields);
         if (error.fields.uomId) void queryClient.invalidateQueries({ queryKey: projectProcurementKeys.uoms });
@@ -74,12 +87,13 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
     }
   });
   const reload = useMutation({
-    mutationFn: () => getProjectProcurementItem(projectId, baseItem!.id),
+    mutationFn: () => getProjectProcurementItem(projectId, baseItem!.id, source),
     onSuccess: (latest) => {
       setBaseItem(latest);
       setDraft(draftFor(latest));
       setVendor(latest.vendor);
       setVendorUnresolved(false);
+      setAssignment(null);
       setVendorFieldRevision((previous) => previous + 1);
       setErrors({});
       save.reset();
@@ -90,6 +104,7 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
   });
   const busy = save.isPending || reload.isPending || vendorBusy;
   const conflict = save.error instanceof ApiError && save.error.code === "PROCUREMENT_ITEM_VERSION_CONFLICT";
+  const sourceConflict = sourceStale || Boolean(assignment && !assignmentOptions?.some((option) => sameProcurementParent(assignment, option))) || (save.error instanceof ApiError && ["PROCUREMENT_ITEM_SOURCE_CONFLICT", "PROCUREMENT_APPROVAL_SOURCE_CONFLICT"].includes(save.error.code));
   const unchangedUom = Boolean(baseItem && draft.uomId === baseItem.uom.id);
   const hasSelectedActiveUom = Boolean(uoms.data?.some((uom) => uom.id === draft.uomId));
   const historicalUom = baseItem && !uoms.data?.some((uom) => uom.id === baseItem.uom.id)
@@ -99,16 +114,18 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
     setDraft((previous) => ({ ...previous, [key]: value }));
     setErrors((previous) => ({ ...previous, [key]: "", ...(key === "price" ? { pricePaise: "" } : {}) }));
     // A version conflict must be resolved explicitly before another write.
-    if (!conflict) save.reset();
+    if (!conflict && !sourceConflict) save.reset();
   }
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (busy || conflict) return;
+    if (busy || conflict || sourceConflict) return;
     const itemName = draft.itemName.normalize("NFKC").trim().replace(/\s+/gu, " ");
     const brand = draft.brand.normalize("NFKC").trim().replace(/\s+/gu, " ");
     const pricePaise = rupeesToPaise(draft.price);
     const nextErrors: Record<string, string> = {};
+    const selectedSource = source ?? baseItem?.estimateSource ?? assignment;
+    if ((!baseItem || assignment) && !selectedSource) nextErrors.estimateSource = "Choose a current approved estimate item.";
     if (!itemName || itemName.length > 200) nextErrors.itemName = "Enter an item name of up to 200 characters.";
     if (!brand || brand.length > 200) nextErrors.brand = "Enter a brand of up to 200 characters.";
     if (!draft.uomId || (!unchangedUom && !hasSelectedActiveUom)) nextErrors.uomId = "Choose an available unit of measure.";
@@ -121,14 +138,15 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
       requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
       return;
     }
-    save.mutate({ itemName, brand, uomId: draft.uomId, vendorId: vendor?.id ?? null, pricePaise: pricePaise! });
+    save.mutate({ itemName, brand, uomId: draft.uomId, vendorId: vendor?.id ?? null, pricePaise: pricePaise!,
+      ...(selectedSource ? { estimateId: selectedSource.estimateId, estimateVersion: selectedSource.estimateVersion, sourceLineItemKey: selectedSource.sourceLineItemKey } : {}) });
   }
 
   return (
     <ContextPanel
       title={baseItem ? "Edit procurement item" : "Add procurement item"}
       eyebrow={projectName}
-      description="Item details and unit price are saved for this project."
+      description={parentLabel ? `For ${parentLabel}. Enter the price per unit.` : "Item details and unit price are saved for this project."}
       className="project-procurement-items-editor"
       width="medium"
       dirty={dirty}
@@ -141,14 +159,15 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
         <div className="project-procurement-items-editor__actions">
           <Button variant="secondary" onClick={requestClose} disabled={busy}>Cancel</Button>
           <Button type="submit" form="project-procurement-items-form" busy={save.isPending}
-            busyLabel="Saving…" disabled={busy || conflict || (!unchangedUom && (!uoms.data?.length || uoms.isError))}>
+            busyLabel="Saving…" disabled={busy || conflict || sourceConflict || (!unchangedUom && (!uoms.data?.length || uoms.isError))}>
             {baseItem ? "Save changes" : "Add item"}
           </Button>
         </div>
       )}
     >
       <form id="project-procurement-items-form" ref={formRef} onSubmit={submit} noValidate className="project-procurement-items-editor__form">
-        {save.isError ? (
+        {sourceConflict ? <InlineMessage tone="error">The approved estimate changed or this assignment is no longer available. Your entries are preserved. Close this form and refresh the project to review the current estimate before saving.</InlineMessage> : null}
+        {save.isError && !sourceConflict ? (
           <InlineMessage tone="error">
             {conflict ? "Someone updated this item. Your entries are preserved. Reload the latest record to replace these entries and edit the current version." : procurementError(save.error, "The item could not be saved. Try again.")}
           </InlineMessage>
@@ -160,6 +179,13 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
         ) : null}
         {reload.isError ? <InlineMessage tone="error">{procurementError(reload.error, "The latest item could not be loaded. Your entries are still available.")}</InlineMessage> : null}
         <fieldset disabled={busy}>
+          {baseItem && !baseItem.estimateSource && !source && assignmentOptions ? <Field id="procurement-item-assignment" label="Estimate item" error={errors.estimateSource}
+            hint="Select an approved estimate item to assign this saved item. Its assignment cannot be changed after saving.">
+            {(props) => <Select {...props} value={assignment?.sourceLineItemKey ?? ""} onChange={(event) => setAssignment(assignmentOptions.find((option) => option.sourceLineItemKey === event.target.value) ?? null)}>
+              <option value="">Keep unassigned</option>
+              {assignmentOptions.map((option) => <option key={option.sourceLineItemKey} value={option.sourceLineItemKey}>{option.label}</option>)}
+            </Select>}
+          </Field> : null}
           <Field id="procurement-item-name" label="Item name" required error={errors.itemName}>
             {(props) => <Input {...props} ref={firstField} value={draft.itemName} maxLength={200} onChange={(event) => change("itemName", event.target.value)} autoComplete="off" />}
           </Field>
@@ -170,7 +196,7 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
             onChange={(selected) => {
               setVendor(selected);
               setErrors((previous) => ({ ...previous, vendorId: "" }));
-              if (!conflict) save.reset();
+              if (!conflict && !sourceConflict) save.reset();
             }} onBusyChange={setVendorBusy} onUnresolvedChange={setVendorUnresolved} />
           <Field id="procurement-item-uom" label="UOM" required error={errors.uomId}
             hint="Active units from Configuration.">

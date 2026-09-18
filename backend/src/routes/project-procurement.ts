@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { projectProcurementItemSchema, projectProcurementQuerySchema, projectProcurementUpdateSchema, procurementVendorSchema } from "../domain/project-procurement.js";
+import { projectProcurementItemSchema, projectProcurementItemQuerySchema, projectProcurementQuerySchema, projectProcurementUpdateSchema, procurementVendorSchema } from "../domain/project-procurement.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
 import { validateBody, validateQuery } from "../middleware/validate.js";
@@ -9,7 +9,7 @@ import type { ProjectProcurementService } from "../services/project-procurement.
 export function createProjectProcurementRouter(auth: AuthService, service: ProjectProcurementService): Router {
   const router = Router();
   const protectedRoute = authenticate(auth);
-  router.get("/procurement/projects/:projectId/items", protectedRoute, requireOperation("GET /procurement/projects/:projectId/items"), validateQuery(projectProcurementQuerySchema), async (request, response, next) => {
+  router.get("/procurement/projects/:projectId/items", protectedRoute, requireOperation("GET /procurement/projects/:projectId/items"), validateQuery(projectProcurementItemQuerySchema), async (request, response, next) => {
     try { response.json({ data: await service.list(request.authenticatedUser!, String(request.params.projectId), response.locals.validatedQuery) }); } catch (error) { next(error); }
   });
   router.get("/procurement/uoms", protectedRoute, requireOperation("GET /procurement/uoms"), async (request, response, next) => {

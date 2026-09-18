@@ -3,10 +3,10 @@ import mongoose, { type ClientSession, type Model } from "mongoose";
 import type { ZodType } from "zod";
 import { normalizeKnowledgeIdentity } from "../domain/ai-estimator-knowledge.js";
 import {
-  procurementItemIdentity, projectProcurementItemSchema, projectProcurementQuerySchema,
+  procurementItemIdentity, projectProcurementItemSchema, projectProcurementItemQuerySchema, projectProcurementQuerySchema, storedProcurementSource,
   projectProcurementUpdateSchema, procurementVendorSchema,
   type ProjectProcurementItemDto, type ProjectProcurementItemInput,
-  type ProjectProcurementPage, type ProjectProcurementQuery,
+  type ProjectProcurementPage, type ProjectProcurementQuery, type ProjectProcurementItemQuery, type ProcurementEstimateSource,
   type ProjectProcurementUomOption, type ProjectProcurementUpdateInput,
   type ProcurementReferenceStatus, type ProcurementVendorInput,
   type ProcurementVendorOption, type ProcurementVendorPage
@@ -18,12 +18,12 @@ import { ProjectProcurementItemModel } from "../models/ProjectProcurementItem.js
 import { allocateAiEstimatorKnowledgeDisplayOrder, createAiEstimatorKnowledgeMasterDisplayOrderScope } from "./ai-estimator-knowledge-display-order.service.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
-import { assertProcurementProjectAccess, requireProcurementActor } from "./procurement.service.js";
+import { assertProcurementProjectAccess, requireProcurementActor, procurementItemSourceSnapshot } from "./procurement.service.js";
 
 type Row = Record<string, any>;
 type Statuses = Map<string, ProcurementReferenceStatus>;
 export interface ProjectProcurementService {
-  list(actor: PublicUser, projectId: string, query: ProjectProcurementQuery): Promise<ProjectProcurementPage>;
+  list(actor: PublicUser, projectId: string, query: ProjectProcurementItemQuery): Promise<ProjectProcurementPage>;
   get(actor: PublicUser, projectId: string, itemId: string): Promise<ProjectProcurementItemDto>;
   listUoms(actor: PublicUser): Promise<ProjectProcurementUomOption[]>;
   create(actor: PublicUser, projectId: string, input: ProjectProcurementItemInput): Promise<ProjectProcurementItemDto>;
@@ -47,7 +47,7 @@ export function createProjectProcurementService(input: { audit: AuditService; no
     try {
       return await transaction(actor, operation, projectId);
     } catch (error) {
-      if (isDuplicate(error)) throw new ApiError(409, "PROCUREMENT_ITEM_DUPLICATE", "An item with this name, brand, UOM and vendor already exists in this project.");
+      if (isDuplicate(error)) throw new ApiError(409, "PROCUREMENT_ITEM_DUPLICATE", "An item with this name, brand, UOM and vendor already exists under this estimate item.");
       throw error;
     }
   }
@@ -55,8 +55,20 @@ export function createProjectProcurementService(input: { audit: AuditService; no
   return {
     async list(actor, projectId, query) {
       return itemTransaction(actor, projectId, async (session) => {
-        const { q, limit, offset } = validate(projectProcurementQuerySchema, query);
-        const filter = { projectId, ...searchFilter(q, ["itemNameNormalized", "brandNormalized", "uomSearch", "vendorSearch"]) };
+        const parsed = validate(projectProcurementItemQuerySchema, query);
+        const { q, limit, offset } = parsed;
+        let sourceFilter: Row = {};
+        if (parsed.estimateId !== undefined || parsed.unassigned) {
+          const snapshot = await procurementItemSourceSnapshot(projectId, session);
+          if (parsed.unassigned) {
+            sourceFilter = { $nor: [{ estimateId: snapshot.estimateId, estimateVersion: snapshot.estimateVersion,
+              estimateReviewRoundId: snapshot.estimateReviewRoundId,
+              $or: snapshot.lineItems.map((line) => ({ sourceLineItemKey: line.key, sourceSectionId: line.sectionId }))
+            }] };
+            if (snapshot.lineItems.length === 0) sourceFilter = {};
+          } else sourceFilter = sourceForInput(snapshot, parsed as SourceInput);
+        }
+        const filter = { $and: [{ projectId }, sourceFilter, searchFilter(q, ["itemNameNormalized", "brandNormalized", "uomSearch", "vendorSearch"])] };
         const total = await ProjectProcurementItemModel.countDocuments(filter).session(session);
         const rows = await ProjectProcurementItemModel.find(filter)
           .sort({ itemNameNormalized: 1, brandNormalized: 1, _id: 1 }).skip(offset).limit(limit).session(session).lean();
@@ -80,11 +92,12 @@ export function createProjectProcurementService(input: { audit: AuditService; no
     async create(actor, projectId, value) {
       return itemTransaction(actor, projectId, async (session) => {
         const fields = validate(projectProcurementItemSchema, value);
+        const source = sourceForInput(await procurementItemSourceSnapshot(projectId, session, true), fields);
         const uom = await activeReference(AiEstimatorKnowledgeUomModel, fields.uomId, "uomId", session);
         const vendor = fields.vendorId ? await activeReference(AiEstimatorKnowledgeVendorModel, fields.vendorId, "vendorId", session) : null;
         const timestamp = now();
         const [document] = await ProjectProcurementItemModel.create([{
-          _id: `procurement-item-${randomUUID()}`, projectId, ...storedFields(fields),
+          _id: `procurement-item-${randomUUID()}`, projectId, ...storedFields(fields), ...source,
           ...referenceSnapshot("uom", uom), ...referenceSnapshot("vendor", vendor),
           version: 1, createdById: actor.id, updatedById: actor.id,
           createdAt: timestamp, updatedAt: timestamp
@@ -106,13 +119,21 @@ export function createProjectProcurementService(input: { audit: AuditService; no
         const fields = validate(projectProcurementUpdateSchema, value);
         const current = await requireItem(projectId, itemId, session);
         if (current.version !== fields.expectedVersion) conflict();
+        const existingSource = itemSource(current);
+        let source = existingSource;
+        if (existingSource || fields.estimateId !== undefined) {
+          const requestedSource = fields.estimateId === undefined ? existingSource! : fields as SourceInput;
+          if (existingSource && (requestedSource.estimateId !== existingSource.estimateId || requestedSource.estimateVersion !== existingSource.estimateVersion || requestedSource.sourceLineItemKey !== existingSource.sourceLineItemKey)) sourceConflict();
+          source = sourceForInput(await procurementItemSourceSnapshot(projectId, session, true), requestedSource);
+          if (existingSource && (source.estimateReviewRoundId !== existingSource.estimateReviewRoundId || source.sourceSectionId !== existingSource.sourceSectionId)) sourceConflict();
+        }
         const uom = fields.uomId === current.uomId ? null : await activeReference(AiEstimatorKnowledgeUomModel, fields.uomId, "uomId", session);
         const vendorChanged = fields.vendorId !== current.vendorId;
         const vendor = vendorChanged && fields.vendorId ? await activeReference(AiEstimatorKnowledgeVendorModel, fields.vendorId, "vendorId", session) : null;
         const timestamp = now();
         const updated = await ProjectProcurementItemModel.findOneAndUpdate({ _id: itemId, projectId, version: fields.expectedVersion }, {
           $set: {
-            ...storedFields(fields), ...(uom ? referenceSnapshot("uom", uom) : {}),
+            ...storedFields(fields), ...(source ?? {}), ...(uom ? referenceSnapshot("uom", uom) : {}),
             ...(vendorChanged ? referenceSnapshot("vendor", vendor) : {}),
             updatedById: actor.id, updatedAt: timestamp
           },
@@ -186,7 +207,7 @@ function searchFilter(query: string, fields: string[]): Record<string, unknown> 
   const literal = procurementItemIdentity(query).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return literal ? { $or: fields.map((key) => ({ [key]: { $regex: literal } })) } : {};
 }
-function storedFields(fields: ProjectProcurementItemInput) {
+function storedFields(fields: Pick<ProjectProcurementItemInput, "itemName" | "brand" | "uomId" | "vendorId" | "pricePaise">) {
   return {
     itemName: fields.itemName, brand: fields.brand, uomId: fields.uomId, vendorId: fields.vendorId, pricePaise: fields.pricePaise,
     itemNameNormalized: procurementItemIdentity(fields.itemName), brandNormalized: procurementItemIdentity(fields.brand)
@@ -227,12 +248,24 @@ function option(row: Row): ProjectProcurementUomOption {
 function vendorOption(row: Row): ProcurementVendorOption { return { ...option(row), status: "active" }; }
 function dto(row: Row, referenceStatus: { uoms: Statuses; vendors: Statuses }): ProjectProcurementItemDto {
   return {
-    id: String(row._id), projectId: row.projectId, itemName: row.itemName, brand: row.brand,
+    id: String(row._id), projectId: row.projectId, estimateSource: itemSource(row), itemName: row.itemName, brand: row.brand,
     uom: { id: row.uomId, code: row.uomCode, name: row.uomName, status: referenceStatus.uoms.get(row.uomId) ?? "unavailable" },
     vendor: row.vendorId ? { id: row.vendorId, code: row.vendorCode, name: row.vendorName, status: referenceStatus.vendors.get(row.vendorId) ?? "unavailable" } : null,
     pricePaise: row.pricePaise, version: row.version,
     createdAt: new Date(row.createdAt).toISOString(), updatedAt: new Date(row.updatedAt).toISOString()
   };
+}
+type SourceInput = Pick<ProcurementEstimateSource, "estimateId" | "estimateVersion" | "sourceLineItemKey">;
+function sourceForInput(snapshot: Awaited<ReturnType<typeof procurementItemSourceSnapshot>>, input: SourceInput): ProcurementEstimateSource {
+  const line = snapshot.lineItems.find((item) => item.key === input.sourceLineItemKey);
+  if (input.estimateId !== snapshot.estimateId || input.estimateVersion !== snapshot.estimateVersion || !line) sourceConflict();
+  return { estimateId: snapshot.estimateId, estimateVersion: snapshot.estimateVersion, estimateReviewRoundId: snapshot.estimateReviewRoundId, sourceSectionId: line.sectionId, sourceLineItemKey: line.key };
+}
+function itemSource(row: Row): ProcurementEstimateSource | null {
+  try { return storedProcurementSource(row); } catch { sourceConflict(); }
+}
+function sourceConflict(): never {
+  throw new ApiError(409, "PROCUREMENT_ITEM_SOURCE_CONFLICT", "This item does not match the current approved estimate. Refresh and review its estimate item before saving.");
 }
 function conflict(): never {
   throw new ApiError(409, "PROCUREMENT_ITEM_VERSION_CONFLICT", "This item has changed. Reload the latest item before saving again.");

@@ -18,11 +18,12 @@ import { createAuditService } from "../src/services/audit.service.js";
 import { createAiEstimatorKnowledgeReferenceService } from "../src/services/ai-estimator-knowledge-reference.service.js";
 import type { PublicUser } from "../src/services/auth.service.js";
 import { createProjectProcurementService } from "../src/services/project-procurement.service.js";
+import { procurementItemSourceSnapshot } from "../src/services/procurement.service.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
 const actor: PublicUser = { id: "buyer", name: "Buyer", email: "buyer@example.test", role: "procurement" };
 const other: PublicUser = { ...actor, id: "other-buyer", email: "other@example.test" };
-const fields = { itemName: "Plywood Sheet", brand: "Timber Brand", uomId: "sheet", vendorId: null, pricePaise: 12345 };
+const fields = { estimateId: "estimate-project-a", estimateVersion: 1, sourceLineItemKey: "line-first", itemName: "Plywood Sheet", brand: "Timber Brand", uomId: "sheet", vendorId: null, pricePaise: 12345 };
 const now = new Date("2026-09-17T10:00:00.000Z");
 const audit = createAuditService(createMemoryRepository());
 const service = createProjectProcurementService({ audit, now: () => now });
@@ -49,7 +50,11 @@ afterAll(async () => { await replica?.stop(); });
 
 async function createProject(projectId: string, assigneeId: string, subtotal: number) {
   const estimateId = `estimate-${projectId}`;
-  const lineItems = [{ catalogueId: "CA01", roomName: "Living Room", specification: "Approved plywood", unit: "sqft", rate: subtotal, quantity: 1, included: true, amount: subtotal }];
+  const lineItems = [
+    { id: "line-first", catalogueId: "CA01", roomName: "Living Room", specification: "Approved plywood", unit: "sqft", rate: subtotal, quantity: 1, included: true, amount: subtotal },
+    { id: "line-zero", catalogueId: "CA02", roomName: "Bedroom", specification: "Selected zero quantity", unit: "nos", rate: 50, quantity: 0, included: true, amount: 0 },
+    { id: "line-excluded", catalogueId: "CA03", roomName: "Kitchen", specification: "Excluded", unit: "nos", rate: 50, quantity: 1, included: false, amount: 0 }
+  ];
   await ProjectModel.create({
     _id: projectId, name: projectId, clientName: "Client", clientEmail: "client@example.test", clientEmailNormalized: "client@example.test",
     clientMobile: "9000000000", clientAddress: "Bengaluru", status: "active", location: "Bengaluru", plannedStartAt: now,
@@ -77,10 +82,90 @@ async function createProject(projectId: string, assigneeId: string, subtotal: nu
 }
 
 describe("project procurement item Mongo transactions", () => {
+  it("uses each unequal project's immutable approved line budgets without financial or workflow writes", async () => {
+    const rounds = await EstimateClientReviewRoundModel.find().sort({ _id: 1 }).lean();
+    const tasks = await ProjectWorkflowTaskModel.find().sort({ _id: 1 }).lean();
+    // The mutable estimate is deliberately asymmetric to prove source lineage.
+    await EstimateModel.updateOne({ _id: fields.estimateId }, { $set: { "lineItems.0.amount": 1, "lineItems.0.roomName": "Mutable wrong room" } });
+    const first = await mongoose.connection.transaction((session) => procurementItemSourceSnapshot("project-a", session));
+    const second = await mongoose.connection.transaction((session) => procurementItemSourceSnapshot("project-b", session));
+    expect(first.lineItems.map((line) => [line.key, line.roomName, line.amountPaise])).toEqual([["line-first", "Living Room", 1_000_000], ["line-zero", "Bedroom", 0]]);
+    expect(second.lineItems.map((line) => line.amountPaise)).toEqual([2_350_000, 0]);
+    await service.create(actor, "project-a", fields);
+    await service.create(actor, "project-b", { ...fields, estimateId: "estimate-project-b" });
+    expect(await EstimateClientReviewRoundModel.find().sort({ _id: 1 }).lean()).toEqual(rounds);
+    expect(await ProjectWorkflowTaskModel.find().sort({ _id: 1 }).lean()).toEqual(tasks);
+    expect(await FinanceLedgerEntryModel.countDocuments()).toBe(0);
+    expect(await ProjectFinanceBucketModel.countDocuments()).toBe(0);
+  });
+  it("supports a canonical historical approval with no review-round document", async () => {
+    await EstimateClientReviewRoundModel.deleteOne({ _id: "round-project-a" });
+    const item = await service.create(actor, "project-a", fields);
+    expect(item.estimateSource).toMatchObject({ estimateId: fields.estimateId, estimateVersion: 1, estimateReviewRoundId: null, sourceLineItemKey: "line-first" });
+  });
+  it("links identical materials to distinct selected parents, including a zero-budget line", async () => {
+    const first = await service.create(actor, "project-a", fields);
+    const zero = await service.create(actor, "project-a", { ...fields, sourceLineItemKey: "line-zero" });
+    expect(first.estimateSource).toEqual({ estimateId: fields.estimateId, estimateVersion: 1, estimateReviewRoundId: "round-project-a", sourceSectionId: "CA", sourceLineItemKey: "line-first" });
+    expect(zero.estimateSource?.sourceLineItemKey).toBe("line-zero");
+    await expect(service.create(other, "project-a", { ...fields, sourceLineItemKey: "line-zero" })).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_DUPLICATE" });
+    expect((await service.list(actor, "project-a", { q: "", limit: 20, offset: 0, estimateId: fields.estimateId, estimateVersion: 1, sourceLineItemKey: "line-zero" })).items).toEqual([zero]);
+  });
+  it.each([{ estimateId: "estimate-project-b" }, { estimateVersion: 2 }, { sourceLineItemKey: "line-excluded" }, { sourceLineItemKey: "missing" }])("rejects a noncanonical source without writes %o", async (source) => {
+    await expect(service.create(actor, "project-a", { ...fields, ...source })).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_SOURCE_CONFLICT" });
+    await expect(service.list(actor, "project-a", { q: "", limit: 20, offset: 0, estimateId: fields.estimateId, estimateVersion: 1, sourceLineItemKey: fields.sourceLineItemKey, ...source })).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_SOURCE_CONFLICT" });
+    expect(await ProjectProcurementItemModel.countDocuments()).toBe(0);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+    expect(await EstimateModel.findById(fields.estimateId).lean()).toMatchObject({ procurementSourceEpoch: 0 });
+  });
+  it("pages and searches independently per parent beyond the project first page", async () => {
+    for (let index = 0; index < 25; index += 1) await service.create(actor, "project-a", { ...fields, itemName: `Material ${String(index).padStart(2, "0")}` });
+    const otherParent = await service.create(actor, "project-a", { ...fields, itemName: "Material 24", sourceLineItemKey: "line-zero" });
+    const query = { q: "", limit: 20, offset: 20, estimateId: fields.estimateId, estimateVersion: 1, sourceLineItemKey: "line-first" };
+    const page = await service.list(actor, "project-a", query);
+    expect(page.total).toBe(25); expect(page.items).toHaveLength(5);
+    expect(page.items.every((item) => item.estimateSource?.sourceLineItemKey === "line-first")).toBe(true);
+    expect((await service.list(actor, "project-a", { ...query, offset: 0, q: "24", sourceLineItemKey: "line-zero" })).items).toEqual([otherParent]);
+  });
+  it("keeps legacy rows visible and explicitly assigns only once without moving linked rows", async () => {
+    const created = await service.create(actor, "project-a", fields);
+    await ProjectProcurementItemModel.collection.updateOne({ _id: created.id }, { $unset: { estimateId: "", estimateVersion: "", estimateReviewRoundId: "", sourceSectionId: "", sourceLineItemKey: "" } });
+    const query = { q: "", limit: 20, offset: 0, unassigned: true as const };
+    expect((await service.list(actor, "project-a", query)).items[0]?.estimateSource).toBeNull();
+    const { estimateId: _id, estimateVersion: _version, sourceLineItemKey: _line, ...legacy } = fields;
+    const edited = await service.update(actor, "project-a", created.id, { ...legacy, pricePaise: 900, expectedVersion: 1 });
+    expect(edited.estimateSource).toBeNull();
+    const assigned = await service.update(actor, "project-a", created.id, { ...fields, expectedVersion: 2 });
+    expect(assigned.estimateSource?.sourceLineItemKey).toBe("line-first");
+    expect((await service.list(actor, "project-a", query)).total).toBe(0);
+    await expect(service.update(actor, "project-a", created.id, { ...fields, sourceLineItemKey: "line-zero", expectedVersion: 3 })).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_SOURCE_CONFLICT" });
+    expect((await service.update(actor, "project-a", created.id, { ...legacy, expectedVersion: 3 })).estimateSource).toEqual(assigned.estimateSource);
+  });
+  it("retains noncurrent rows for review and blocks mutation without rewriting their lineage", async () => {
+    const created = await service.create(actor, "project-a", fields);
+    await ProjectProcurementItemModel.collection.updateOne({ _id: created.id }, { $set: { estimateVersion: 99 } });
+    expect((await service.list(actor, "project-a", { q: "", limit: 20, offset: 0, unassigned: true })).items[0]?.estimateSource?.estimateVersion).toBe(99);
+    const { estimateId: _id, estimateVersion: _version, sourceLineItemKey: _line, ...legacy } = fields;
+    await expect(service.update(actor, "project-a", created.id, { ...legacy, expectedVersion: 1 })).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_SOURCE_CONFLICT" });
+    await ProjectProcurementItemModel.collection.updateOne({ _id: created.id }, { $unset: { sourceSectionId: "" } });
+    await expect(service.get(actor, "project-a", created.id)).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_SOURCE_CONFLICT" });
+    await expect(service.update(actor, "project-a", created.id, { ...fields, expectedVersion: 1 })).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_SOURCE_CONFLICT" });
+  });
+  it("retries a concurrent source change before the coordination write and refuses the stale create", async () => {
+    const update = EstimateModel.updateOne.bind(EstimateModel);
+    vi.spyOn(EstimateModel, "updateOne").mockImplementationOnce((...args) => (async () => {
+      await EstimateModel.collection.updateOne({ _id: fields.estimateId }, { $set: { designPlanStatus: "draft" } });
+      return update(...args);
+    })() as any);
+    await expect(service.create(actor, "project-a", fields)).rejects.toMatchObject({ status: 404 });
+    expect(await ProjectProcurementItemModel.countDocuments()).toBe(0);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+    expect(await EstimateModel.findById(fields.estimateId).lean()).toMatchObject({ procurementSourceEpoch: 0 });
+  });
   it("isolates identical products and prices across two unequal projects regardless of task assignment", async () => {
     const estimatesBefore = await EstimateModel.find().sort({ _id: 1 }).lean();
     const first = await service.create(other, "project-a", fields);
-    const second = await service.create(actor, "project-b", { ...fields, pricePaise: 98765 });
+    const second = await service.create(actor, "project-b", { ...fields, estimateId: "estimate-project-b", pricePaise: 98765 });
     expect(first.projectId).toBe("project-a");
     expect(second.projectId).toBe("project-b");
     expect((await service.list(actor, "project-a", { q: "", limit: 20, offset: 0 })).items).toEqual([first]);
@@ -88,7 +173,7 @@ describe("project procurement item Mongo transactions", () => {
     await expect(service.get(actor, "project-a", second.id)).rejects.toMatchObject({ status: 404, code: "PROCUREMENT_ITEM_NOT_FOUND" });
     await expect(service.update(actor, "project-b", first.id, { ...fields, expectedVersion: 1 })).rejects.toMatchObject({ status: 404, code: "PROCUREMENT_ITEM_NOT_FOUND" });
     expect(await service.get(actor, "project-a", first.id)).toEqual(first);
-    expect(await EstimateModel.find().sort({ _id: 1 }).lean()).toEqual(estimatesBefore);
+    expect((await EstimateModel.find().sort({ _id: 1 }).lean()).map(({ procurementSourceEpoch: _epoch, ...row }) => row)).toEqual(estimatesBefore.map(({ procurementSourceEpoch: _epoch, ...row }) => row));
     expect(await FinanceLedgerEntryModel.countDocuments()).toBe(0);
     expect(await ProjectFinanceBucketModel.countDocuments()).toBe(0);
     expect(await AuditEventModel.countDocuments()).toBe(2);
@@ -104,7 +189,7 @@ describe("project procurement item Mongo transactions", () => {
     ]) await expect(attempt()).rejects.toMatchObject({ status: 404 });
     await expect(service.create(actor, "missing-project", fields)).rejects.toMatchObject({ status: 404 });
     await ProjectWorkflowTaskModel.collection.updateOne({ _id: "task-project-b" }, { $set: { designPlanVersion: 99 } });
-    await expect(service.create(actor, "project-b", fields)).rejects.toMatchObject({ code: "PROCUREMENT_APPROVAL_SOURCE_CONFLICT" });
+    await expect(service.create(actor, "project-b", { ...fields, estimateId: "estimate-project-b" })).rejects.toMatchObject({ code: "PROCUREMENT_APPROVAL_SOURCE_CONFLICT" });
     expect(await ProjectProcurementItemModel.countDocuments()).toBe(1);
     expect(await AuditEventModel.countDocuments()).toBe(1);
   });
@@ -242,7 +327,7 @@ describe("saved Configuration vendors for project procurement", () => {
     expect(reused).toEqual({ ...created, created: false });
     expect(await ProjectProcurementItemModel.countDocuments()).toBe(0);
     const first = await service.create(actor, "project-a", { ...fields, vendorId: created.vendor.id });
-    const second = await service.create(other, "project-b", { ...fields, vendorId: created.vendor.id, pricePaise: 30001 });
+    const second = await service.create(other, "project-b", { ...fields, estimateId: "estimate-project-b", vendorId: created.vendor.id, pricePaise: 30001 });
     expect(first.vendor).toEqual(created.vendor);
     expect(second.vendor).toEqual(created.vendor);
     expect((await service.listVendors(other, { q: "SUPPLY", limit: 20, offset: 0 })).items).toEqual([created.vendor]);
@@ -325,7 +410,7 @@ describe("saved Configuration vendors for project procurement", () => {
     else await AiEstimatorKnowledgeVendorModel.updateOne({ _id: saved.id }, { $set: { status, name: "Renamed Vendor", code: "RENAMED", ...(status === "archived" ? { archivedAt: now, archivedById: actor.id } : {}) } });
     const updated = await service.update(actor, "project-a", item.id, { ...fields, vendorId: saved.id, pricePaise: 56001, expectedVersion: 1 });
     expect(updated.vendor).toEqual({ ...saved, status });
-    await expect(service.create(actor, "project-b", { ...fields, vendorId: saved.id })).rejects.toMatchObject({ code: "VALIDATION_ERROR", fields: { vendorId: expect.any(String) } });
+    await expect(service.create(actor, "project-b", { ...fields, estimateId: "estimate-project-b", vendorId: saved.id })).rejects.toMatchObject({ code: "VALIDATION_ERROR", fields: { vendorId: expect.any(String) } });
     const cleared = await service.update(actor, "project-a", item.id, { ...fields, expectedVersion: 2 });
     expect(cleared.vendor).toBeNull();
   });
@@ -347,6 +432,6 @@ describe("saved Configuration vendors for project procurement", () => {
     await archive;
     expect((await service.get(actor, "project-a", created.id)).vendor).toEqual({ ...saved, status: "archived" });
     expect(await AiEstimatorKnowledgeVendorModel.findById(saved.id).lean()).toMatchObject({ dependencyEpoch: 1 });
-    await expect(service.create(actor, "project-b", { ...fields, vendorId: saved.id })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    await expect(service.create(actor, "project-b", { ...fields, estimateId: "estimate-project-b", vendorId: saved.id })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 });

@@ -1,3 +1,13 @@
+import { workflowSpacePlanningSource, type WorkflowDesignPlanData } from "../domain/workflow-space-planning.js";
+import { DesignPlanReviewRoundModel } from "../models/DesignPlanReviewRound.js";
+import { DesignPlanResponseProofModel } from "../models/DesignPlanResponseProof.js";
+import { EstimateDesignDrawingModel } from "../models/EstimateDesignDrawing.js";
+import { EstimateDesignRevisionModel } from "../models/EstimateDesignRevision.js";
+import { EstimatePlanChangeRequestModel } from "../models/EstimatePlanChangeRequest.js";
+import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
+import { allocateAiEstimatorKnowledgeDisplayOrder, createAiEstimatorKnowledgeMasterDisplayOrderScope } from "../services/ai-estimator-knowledge-display-order.service.js";
+import type { FurnitureUomOption } from "../domain/workflow-uoms.js";
+import { workflowApprovedLines, workflowEstimateRooms, WorkflowEstimateSourceError, type WorkflowEstimateApproval } from "../domain/workflow-estimate-items.js";
 import { ProjectFinanceBucketModel } from "../models/ProjectFinanceBucket.js";
 import { DesignWorkflowStateModel } from "../models/DesignWorkflowState.js";
 import type { DesignWorkflowState } from "../domain/design-workflow-state.js";
@@ -418,11 +428,87 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
   };
 
   const repository: AppRepository = {
-    async findDesignWorkflowRoomContext(projectId) {
+    async findDesignWorkflowSpacePlanningSource(projectId, lock = false) {
+      if (lock && !session) throw new Error("Confirming space planning requires a transaction.");
+      const context = await repository.findDesignWorkflowRoomContext(projectId);
+      const roundQuery = DesignPlanReviewRoundModel.find(context ? { estimateId: context.estimateId } : { projectId }).select("estimateId projectId designPlanVersion status decision decisionSource decidedById decidedByRole decidedAt submittedRevisionIds");
+      if (session) roundQuery.session(session);
+      const rounds = await roundQuery.lean();
+      if (rounds.some(round => String(round.projectId) !== projectId || String(round.estimateId) !== context?.estimateId)) throw new RepositoryConflictError("The Design plan source is ambiguous or unavailable.");
+      if (!context) {
+        const orphanQuery = EstimateModel.exists({ projectId, $or: [{ designPlanStatus: { $exists: true, $ne: null } }, { designPlanVersion: { $gt: 0 } }, { designFrozenAt: { $exists: true, $ne: null } }] });
+        if (session) orphanQuery.session(session);
+        if (await orphanQuery) throw new RepositoryConflictError("The Design plan approved estimate is unavailable.");
+        return null;
+      }
+      const estimateQuery = EstimateModel.findOne({ _id: context.estimateId, projectId, status: "client_approved" }).select("version designLifecycleVersion designPlanVersion designPlanStatus designPlanApprovedAt designPlanApprovedById designPlanApprovalSource designFrozenAt");
+      if (session) estimateQuery.session(session);
+      const estimate = await estimateQuery.lean();
+      if (!estimate) throw new RepositoryConflictError("The Design plan estimate is unavailable.");
+      if (lock) {
+        // Every mutable Design path also writes the estimate lifecycle. This makes the
+        // source check and workflow acknowledgement serialize with edits and approvals.
+        const lifecycleVersion = Number(estimate.designLifecycleVersion ?? 0);
+        if (!Number.isSafeInteger(lifecycleVersion) || lifecycleVersion < 0 || lifecycleVersion >= Number.MAX_SAFE_INTEGER) throw new RepositoryConflictError("The Design lifecycle version is invalid.");
+        const result = await EstimateModel.updateOne({ _id: estimate._id, projectId, status: "client_approved", version: estimate.version, designPlanVersion: estimate.designPlanVersion, designPlanStatus: estimate.designPlanStatus, designLifecycleVersion: lifecycleVersion === 0 ? { $in: [0, null] } : lifecycleVersion }, { $inc: { designLifecycleVersion: 1 } }, { session, timestamps: false });
+        if (result.matchedCount !== 1) throw new RepositoryConflictError("The Design plan changed before confirmation.");
+      }
+      const drawingQuery = EstimateDesignDrawingModel.find({ estimateId: estimate._id, active: true }).select("_id");
+      if (session) drawingQuery.session(session);
+      const drawings = await drawingQuery.lean();
+      const revisionQuery = EstimateDesignRevisionModel.find({ drawingId: { $in: drawings.map(row => row._id) } }).select("drawingId revisionNumber reviewStatus reviewerId reviewedAt");
+      const feedbackQuery = EstimatePlanChangeRequestModel.countDocuments({ estimateId: estimate._id, status: "open" });
+      const proofQuery = DesignPlanResponseProofModel.find({ reviewRoundId: { $in: rounds.map(round => round._id) } }).select("+storageReference");
+      if (session) { revisionQuery.session(session); feedbackQuery.session(session); proofQuery.session(session); }
+      const revisions = await revisionQuery.lean();
+      const openFeedback = await feedbackQuery;
+      const proofs = await proofQuery.lean();
+      const iso = (value: unknown): string | null => value instanceof Date && Number.isFinite(value.getTime()) ? value.toISOString() : typeof value === "string" ? value : null;
+      const data: WorkflowDesignPlanData = {
+        estimateId: String(estimate._id), projectId, designPlanStatus: estimate.designPlanStatus ?? null, designPlanVersion: Number(estimate.designPlanVersion ?? 0), approvedAt: iso(estimate.designPlanApprovedAt), approvedById: estimate.designPlanApprovedById ?? null, approvalSource: estimate.designPlanApprovalSource ?? null, frozenAt: iso(estimate.designFrozenAt), openFeedback,
+        rounds: rounds.map(round => {
+          const matchingProofs = proofs.filter(proof => String(proof.reviewRoundId) === String(round._id));
+          const proof = matchingProofs.length === 1 ? matchingProofs[0] : undefined;
+          return { id: String(round._id), estimateId: String(round.estimateId), projectId: String(round.projectId), designPlanVersion: Number(round.designPlanVersion), status: String(round.status), decision: round.decision ?? null, decisionSource: round.decisionSource ?? null, decidedById: round.decidedById ?? null, decidedByRole: round.decidedByRole ?? null, decidedAt: iso(round.decidedAt), submittedRevisionIds: Array.isArray(round.submittedRevisionIds) ? round.submittedRevisionIds.map(String) : [],
+            ...(proof ? { proof: { estimateId: String(proof.estimateId), reviewRoundId: String(proof.reviewRoundId), uploadedById: String(proof.uploadedById), valid: typeof proof.storageReference === "string" && proof.storageReference.length > 0 && typeof proof.originalFilename === "string" && proof.originalFilename.length > 0 && ["application/pdf", "image/jpeg", "image/png", "image/webp"].includes(proof.mimeType) && Number.isSafeInteger(proof.byteSize) && proof.byteSize > 0 && /^[a-f0-9]{64}$/.test(proof.sha256) && Number.isFinite(Date.parse(iso(proof.uploadedAt) ?? "")) } } : {}) };
+        }),
+        drawings: drawings.map(drawing => ({ id: String(drawing._id), revisions: revisions.filter(revision => String(revision.drawingId) === String(drawing._id)).map(revision => ({ id: String(revision._id), revisionNumber: Number(revision.revisionNumber), reviewStatus: String(revision.reviewStatus), reviewerId: revision.reviewerId ?? null, reviewedAt: iso(revision.reviewedAt) })) }))
+      };
+      return workflowSpacePlanningSource(data);
+    },
+    async listActiveWorkflowUoms() {
+      const query = AiEstimatorKnowledgeUomModel.find({ status: "active" }).select({ _id: 1, code: 1, name: 1, decimalScale: 1 }).sort({ displayOrder: 1, _id: 1 });
+      if (session) query.session(session);
+      return (await query.lean()).map(row => ({ id: String(row._id), code: row.code, name: row.name, decimalScale: row.decimalScale }));
+    },
+    async findWorkflowUomsByIdentity(codeNormalized, nameNormalized) {
+      const query = AiEstimatorKnowledgeUomModel.find({ status: { $in: ["active", "inactive"] }, $or: [{ codeNormalized }, { nameNormalized }] }).select({ _id: 1, code: 1, name: 1, decimalScale: 1, status: 1 });
+      if (session) query.session(session);
+      return (await query.lean()).map(row => ({ id: String(row._id), code: row.code, name: row.name, decimalScale: row.decimalScale, status: row.status as "active" | "inactive" }));
+    },
+    async createWorkflowUom(input) {
+      if (!session) throw new Error("Creating a workflow UOM requires a transaction.");
+      const displayOrder = await allocateAiEstimatorKnowledgeDisplayOrder({ scope: createAiEstimatorKnowledgeMasterDisplayOrderScope("uoms"), resourceModel: AiEstimatorKnowledgeUomModel, resourceFilter: {}, session });
+      const [row] = await AiEstimatorKnowledgeUomModel.create([{ _id: input.id, code: input.code, name: input.name, decimalScale: input.decimalScale, displayOrder, status: "active", version: 1, dependencyEpoch: 0, createdById: input.actorId, updatedById: input.actorId, createdAt: new Date(input.at), updatedAt: new Date(input.at), archivedAt: null, archivedById: null }], { session });
+      if (!row) throw new Error("UOM creation failed.");
+      return { id: String(row._id), code: row.code, name: row.name, decimalScale: row.decimalScale };
+    },
+    async referenceWorkflowUoms(ids) {
+      if (!session) throw new Error("Referencing workflow UOMs requires a transaction.");
+      const result: FurnitureUomOption[] = [];
+      for (const id of [...new Set(ids)].sort()) {
+        // Shared write serializes submission with Configuration rename, scale and lifecycle changes.
+        // Snapshot measurements do not depend on quantity scale and remain valid after archival.
+        const row = await AiEstimatorKnowledgeUomModel.findOneAndUpdate({ _id: id, status: "active" }, { $inc: { dependencyEpoch: 1 } }, { session, returnDocument: "after", runValidators: true, timestamps: false }).lean();
+        if (row) result.push({ id: String(row._id), code: row.code, name: row.name, decimalScale: row.decimalScale });
+      }
+      return result;
+    },
+    async findDesignWorkflowRoomContext(projectId, includeEstimateItems = false) {
       const bucketQuery = ProjectFinanceBucketModel.findOne({ projectId }).select({ estimateId: 1, estimateVersion: 1, estimateReviewRoundId: 1 });
       if (session) bucketQuery.session(session);
       const bucket = await bucketQuery.lean();
-      const query = EstimateModel.find({ projectId, status: "client_approved", ...(bucket ? { _id: bucket.estimateId } : {}) }).limit(2).select({ rooms: 1, version: 1 });
+      const query = EstimateModel.find({ projectId, status: "client_approved", ...(bucket ? { _id: bucket.estimateId } : {}) }).limit(2).select({ rooms: 1, version: 1, ...(includeEstimateItems ? { lineItems: 1 } : {}) });
       if (session) query.session(session);
       const estimates = await query.lean();
       if (estimates.length > 1 || bucket && estimates.length !== 1) throw new RepositoryConflictError("The project's approved estimate source is ambiguous or unavailable.");
@@ -431,15 +517,28 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       const currentVersion = Number(estimate.version);
       const approvedVersion = currentVersion > 1 ? currentVersion - 1 : 1;
       if (!Number.isSafeInteger(currentVersion) || currentVersion < 1 || bucket && Number(bucket.estimateVersion) !== approvedVersion) throw new RepositoryConflictError("The approved estimate version does not match its finance source.");
-      if (bucket?.estimateReviewRoundId) {
-        const roundQuery = EstimateClientReviewRoundModel.exists({ _id: bucket.estimateReviewRoundId, estimateId: estimate._id, estimateVersion: approvedVersion, status: "approved", $or: [{ projectId }, { projectId: null }] });
-        if (session) roundQuery.session(session);
-        if (!(await roundQuery)) throw new RepositoryConflictError("The approved estimate snapshot does not match its finance source.");
+      if (!includeEstimateItems) {
+        if (bucket?.estimateReviewRoundId) {
+          const roundQuery = EstimateClientReviewRoundModel.exists({ _id: bucket.estimateReviewRoundId, estimateId: estimate._id, estimateVersion: approvedVersion, status: "approved", $or: [{ projectId }, { projectId: null }] });
+          if (session) roundQuery.session(session);
+          if (!(await roundQuery)) throw new RepositoryConflictError("The approved estimate snapshot does not match its finance source.");
+        }
+        return { estimateId: String(estimate._id), estimateVersion: approvedVersion, rooms: (Array.isArray(estimate.rooms) ? estimate.rooms : []).flatMap((room: PlainDocument) => typeof room?.id === "string" && typeof room.label === "string" ? [{ id: room.id, name: room.label, estimateItems: [] }] : []) };
       }
-      return { estimateId: String(estimate._id), estimateVersion: approvedVersion, rooms: (Array.isArray(estimate.rooms) ? estimate.rooms : []).flatMap((room: PlainDocument) => typeof room?.id === "string" && typeof room.label === "string" ? [{ id: room.id, name: room.label }] : []) };
+      const roundQuery = EstimateClientReviewRoundModel.find({ estimateId: estimate._id, status: "approved" });
+      if (session) roundQuery.session(session);
+      const rounds = await roundQuery.lean();
+      try {
+        const lines = workflowApprovedLines({ projectId, estimateId: String(estimate._id), estimateVersion: approvedVersion, reviewRoundId: bucket?.estimateReviewRoundId ?? null,
+          rounds: rounds.map((round): WorkflowEstimateApproval => ({ id: String(round._id), estimateId: String(round.estimateId), projectId: round.projectId ?? null, estimateVersion: round.estimateVersion, status: round.status, decision: round.decision ?? null, decidedById: round.decidedById ?? null, decidedAt: round.decidedAt ? new Date(round.decidedAt).toISOString() : null, decisionSource: round.decisionSource ?? null, lineItems: round.estimateSnapshot.lineItems })), legacyLines: estimate.lineItems ?? [] });
+        return { estimateId: String(estimate._id), estimateVersion: approvedVersion, rooms: workflowEstimateRooms(String(estimate._id), approvedVersion, Array.isArray(estimate.rooms) ? estimate.rooms : [], lines) };
+      } catch (error) {
+        if (error instanceof WorkflowEstimateSourceError) throw new RepositoryConflictError(error.message);
+        throw error;
+      }
     },
     async findDesignWorkflowRoomOptions(projectId) {
-      return (await repository.findDesignWorkflowRoomContext(projectId))?.rooms ?? [];
+      return (await repository.findDesignWorkflowRoomContext(projectId, true))?.rooms ?? [];
     },
     async findDesignWorkflowState(projectId) {
       const query = DesignWorkflowStateModel.findById(projectId).select("+history");

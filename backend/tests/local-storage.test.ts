@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { Readable } from "node:stream";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -42,6 +44,36 @@ describe("local file storage", () => {
 
     await storage.delete(saved.reference);
     expect(await readdir(directory)).toEqual([]);
+  });
+
+  it.each([".gif", ".mp4", ".mov", ".webm"] as const)("stores measurement %s bytes under opaque references", async extension => {
+    const { storage, directory } = await setup(); const data = Buffer.from("synthetic media bytes");
+    const saved = await storage.save({ data, extension });
+    expect(saved.reference.endsWith(extension)).toBe(true); expect(await storage.read(saved.reference)).toEqual(data);
+    expect(await buffer(await storage.open(saved.reference))).toEqual(data);
+    await storage.delete(saved.reference); expect(await readdir(directory)).toEqual([]);
+    await expect(storage.read(`../outside${extension}`)).rejects.toThrow("Invalid storage reference.");
+  });
+
+  it("imports a stream without calling the buffered save/read methods", async () => {
+    const { storage } = await setup(); const part = Buffer.alloc(64 * 1024, 0x61); const hash = createHash("sha256");
+    for (let index = 0; index < 512; index++) hash.update(part);
+    const sha256 = hash.digest("hex");
+    const saved = await storage.importStream!({ source: Readable.from((function* () { for (let index = 0; index < 512; index++) yield part; })()), extension: ".mp4", expectedBytes: part.length * 512, sha256 });
+    let size = 0; let largest = 0; const actual = createHash("sha256");
+    for await (const chunk of await storage.open(saved.reference)) { size += chunk.length; largest = Math.max(largest, chunk.length); actual.update(chunk); }
+    expect(size).toBe(32 * 1024 * 1024); expect(largest).toBeLessThanOrEqual(64 * 1024); expect(actual.digest("hex")).toBe(sha256);
+  });
+  it.each(["abort", "source error", "wrong size", "wrong hash"])("removes partial streamed targets after %s", async mode => {
+    const { directory, storage } = await setup(); const controller = new AbortController();
+    const part = Buffer.alloc(64 * 1024, 0x62); const hash = createHash("sha256").update(part).digest("hex");
+    const source = Readable.from((async function* () {
+      yield part;
+      if (mode === "abort") { controller.abort(); yield part; }
+      if (mode === "source error") throw new Error("Source failed");
+    })());
+    await expect(storage.importStream!({ source, extension: ".mp4", expectedBytes: mode === "wrong size" ? part.length + 1 : part.length, sha256: mode === "wrong hash" ? "0".repeat(64) : hash, signal: controller.signal })).rejects.toThrow();
+    expect(await readdir(directory)).toEqual([]); expect(source.destroyed).toBe(true);
   });
 
   it("stores generated images through the same opaque, immutable adapter", async () => {

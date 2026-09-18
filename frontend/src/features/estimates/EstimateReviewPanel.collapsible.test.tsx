@@ -108,6 +108,18 @@ function installClientApi() {
     if (url.includes("/api/v1/client/estimates/") && url.endsWith("/plan-review")) {
       return Response.json({ data: planWorkspace });
     }
+    if (url.endsWith("/api/v1/projects/project-loft/design-workflow")) {
+      return Response.json({ data: {
+        projectId: "project-loft", projectName: "Cedar Loft", serverNow: "2026-09-18T09:00:00.000Z", floors: [],
+        projectStages: [{
+          id: "project-loft:planning", type: "space_planning_tentative_look_feel", name: "Space planning", status: "in_review", tasks: [],
+          operational: {
+            version: 9, availableActions: [{ id: "space_planning_complete", label: "Approve and complete stage", actor: "client", requiresProof: false }],
+            spacePlanning: { estimateId: "estimate-approved", designPlanVersion: 1, reviewRoundId: "round-loft", totalImages: 2, approvedImages: 2, readyForCompletion: true, completedAt: null }
+          }
+        }]
+      } });
+    }
     if ((url.includes("/api/v1/client/estimate-plan-pages/") && (url.endsWith("/thumbnail") || url.endsWith("/current-image"))) || url.endsWith("/plan-page-1") || url.endsWith("/plan-thumb-1")) {
       return new Response(new Blob(["image"], { type: "image/png" }), { headers: { "Content-Type": "image/png" } });
     }
@@ -131,6 +143,25 @@ function ruleBody(source: string, selector: string) {
 }
 
 describe("EstimateReviewPanel client disclosures", () => {
+  it("loads final stage approval only beside the expanded approved estimate", async () => {
+    tokenStorage.set("client-token");
+    installClientApi();
+    renderApp(["/client"]);
+    const user = userEvent.setup();
+    const villa = await screen.findByRole("button", { name: /Aurora Villa/ });
+    const workflowCalls = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/design-workflow"));
+    expect(workflowCalls()).toHaveLength(0);
+    await user.click(villa);
+    expect(await screen.findByRole("button", { name: "Approve estimate" })).toBeVisible();
+    expect(workflowCalls()).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: "Approve and complete stage" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Cedar Loft/ }));
+    expect(await screen.findByRole("button", { name: "Approve and complete stage" })).toBeEnabled();
+    expect(workflowCalls()).toHaveLength(1);
+    expect(String(workflowCalls()[0]![0])).toContain("/projects/project-loft/design-workflow");
+    expect(within(villa.closest("article")!).queryByRole("button", { name: "Approve and complete stage" })).not.toBeInTheDocument();
+  });
+
   it("opens the exact Client design task selected from a project workflow", async () => {
     tokenStorage.set("client-token");
     installClientApi();

@@ -7,21 +7,13 @@ import { RiskBadge } from "../../components/tasks/RiskBadge";
 import { Button } from "../../components/ui/Button";
 import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StatusBadge, type StatusTone } from "../../components/ui/StatusBadge";
-import type { DesignWorkflowView } from "./projectWorkflowApi";
-import { currentProjectWorkflowStage, workflowStageStatus as savedStageStatus } from "./projectWorkflowSelectors";
+import type { DesignStageOperational, DesignWorkflowView } from "./projectWorkflowApi";
+import { currentProjectWorkflowStage, furnitureRoomStatusLabel, workflowStageStatus as savedStageStatus, workflowStageStatusLabel, workflowStatusLabels as statusLabels } from "./projectWorkflowSelectors";
 import { WorkflowStageRequirements } from "./WorkflowStageRequirements";
 import "./projectWorkflowProgress.css";
 
 type WorkflowStage = DesignWorkflowView["floors"][number]["stages"][number];
 type WorkflowTask = WorkflowStage["tasks"][number];
-
-const statusLabels: Record<TaskStatus, string> = {
-  not_started: "Not started",
-  in_progress: "In progress",
-  in_review: "In review",
-  blocked: "Blocked",
-  completed: "Completed"
-};
 
 const statusTones: Record<TaskStatus, StatusTone> = {
   not_started: "neutral",
@@ -141,17 +133,34 @@ function stageAppearance(stage: WorkflowStage, current: boolean) {
   return "upcoming";
 }
 
+function FurnitureProgressSummary({ furniture }: { furniture: DesignStageOperational["furniture"] }) {
+  if (!furniture || furniture.phase === "requirements_pending") return null;
+  const combined = Boolean(furniture.requirementsSubmissionEventId);
+  return <div className="workflow-progress__furniture-summary" role="group" aria-label="Furniture requirements progress">
+    <strong>{furniture.phase === "completed" ? "Furniture requirements completed" : combined ? "Furniture dimensions submitted" : "Furniture requirements saved"}</strong>
+    <p>{furniture.phase === "awaiting_client_acceptance" ? combined ? "The Client needs to review the room requirements, dimensions and document, then approve them together." : "The Client needs to review and accept these requirements."
+      : furniture.phase === "requirements_changes_requested" ? combined ? "Correct the returned requirements and measurements, then resubmit them for Client approval." : "The Designer needs to correct and resubmit the requirements for Client acceptance."
+      : furniture.phase === "awaiting_dimensions" ? "Submit the required furniture dimensions and document for Client approval."
+      : furniture.phase === "awaiting_dimension_approval" ? "The Client needs to approve the submitted dimensions before these rooms can proceed."
+      : furniture.phase === "dimension_changes_requested" ? "Correct the returned measurements and resubmit them for Client approval."
+      : furniture.requiredRoomCount === 0 ? "The Client has confirmed that no existing furniture dimensions are needed." : "All required rooms are ready."}</p>
+    {furniture.requiredRoomCount > 0 ? <p>{furniture.readyRoomCount} of {furniture.requiredRoomCount} required rooms ready · {furniture.pendingRoomCount} pending</p>
+      : furniture.phase !== "completed" ? <p>No existing furniture dimensions are needed. Client acceptance is still required.</p> : null}
+  </div>;
+}
+
 function StageOperationalDetails({ stage, compact = false }: { stage: WorkflowStage; compact?: boolean }) {
   const id = useId();
   const RoomHeading = compact ? "h5" : "h6";
   const operational = stage.operational!;
   const { timing } = operational;
   const showElapsed = timing.clockOwner !== null || timing.designerElapsedMs > 0 || timing.clientElapsedMs > 0 || ["running", "paused", "completed"].includes(timing.state);
-  if (compact && !operational.blockingReasons.length && !operational.facts.length && !operational.rooms?.length) return null;
+  if (compact && !operational.blockingReasons.length && !operational.facts.length && !operational.rooms?.length && (!operational.furniture || operational.furniture.phase === "requirements_pending")) return null;
   return (
     <section className={`workflow-progress__operational${compact ? " workflow-progress__operational--compact" : ""}`} aria-labelledby={compact ? undefined : `${id}-heading`} aria-label={compact ? `${stage.name} recorded information` : undefined}>
       {!compact ? <h5 id={`${id}-heading`}>Recorded stage details</h5> : null}
       {operational.blockingReasons.length ? <div className="workflow-progress__dependency-group workflow-progress__dependency-group--blocked"><strong><LockKeyhole aria-hidden="true" />Waiting for</strong><ul className="workflow-progress__dependencies">{operational.blockingReasons.map((reason, index) => <li key={`${index}-${reason}`}>{reason}</li>)}</ul></div> : null}
+      <FurnitureProgressSummary furniture={operational.furniture} />
       {!compact || operational.facts.length > 0 ? <dl className="workflow-progress__facts">
         {!compact ? <>
         {timing.band ? <div><dt>Current SLA band</dt><dd>{timing.band}</dd></div> : null}
@@ -164,7 +173,7 @@ function StageOperationalDetails({ stage, compact = false }: { stage: WorkflowSt
         </> : null}
         {operational.facts.map((fact, index) => <div key={`${index}-${fact.label}`}><dt>{fact.label}</dt><dd>{/^\d{4}-\d{2}-\d{2}T/.test(fact.value) && Number.isFinite(Date.parse(fact.value)) ? formatDate(fact.value) : fact.value.startsWith("https://") ? <a href={fact.value} target="_blank" rel="noopener noreferrer">Open {fact.label.toLowerCase()}</a> : fact.value}</dd></div>)}
       </dl> : null}
-      {operational.rooms?.length ? <div className="workflow-progress__room-group"><RoomHeading>Room readiness</RoomHeading><ul className="workflow-progress__rooms">{operational.rooms.map((room) => <li key={room.id}><strong>{room.name}</strong><span>{!room.required ? "Existing furniture not required" : room.hasDimensions ? "Dimensions received" : "Dimensions pending"}</span>{room.canProceed ? <StatusBadge label="Can proceed" tone="success" /> : null}</li>)}</ul></div> : null}
+      {operational.rooms?.length ? <div className="workflow-progress__room-group"><RoomHeading>Room readiness</RoomHeading><ul className="workflow-progress__rooms">{operational.rooms.map((room) => <li key={room.id}><strong>{room.name}</strong><span>{stage.type === "existing_furniture_dimensions" ? furnitureRoomStatusLabel(room) : !room.required ? "Existing furniture not required" : room.hasDimensions ? "Dimensions received" : room.canProceed ? "Proceeding without dimensions" : "Dimensions pending"}</span>{room.canProceed ? <StatusBadge label="Can proceed" tone="success" /> : null}</li>)}</ul></div> : null}
       {!compact && operational.reminders?.length ? <div className="workflow-progress__room-group"><h6>Due reminders</h6><ul className="workflow-progress__reminders">{operational.reminders.map((reminder) => <li key={reminder.id}><span>{reminder.label}</span><time dateTime={reminder.dueAt}>{formatDate(reminder.dueAt)}</time></li>)}</ul></div> : null}
     </section>
   );
@@ -324,7 +333,7 @@ export function ProjectWorkflowProgress({ workflow, onOpenTask, actionLabel = "O
                   return (
                     <li className="workflow-progress__step" data-state={appearance} key={stage.id}>
                       <span className="workflow-progress__node" aria-hidden="true"><Icon /></span>
-                      <button ref={selectedInGroup ? (element) => { if (element) selectedButton.current = element; } : undefined} type="button" className="workflow-progress__stage" aria-expanded={expanded} aria-controls={selectedInGroup && presentation === "designer" ? `${panelId}-body` : expanded ? showPrimaryAction ? `${panelId}-acknowledgement` : panelId : undefined} aria-describedby={stage.id === timerStage?.id ? deadlineId : undefined} aria-current={stage.id === currentStage?.id && (status === "in_progress" || status === "in_review") ? "step" : undefined} aria-label={`${stage.name} — ${status ? statusLabels[status] : "No tasks configured"}`} onClick={(event) => {
+                      <button ref={selectedInGroup ? (element) => { if (element) selectedButton.current = element; } : undefined} type="button" className="workflow-progress__stage" aria-expanded={expanded} aria-controls={selectedInGroup && presentation === "designer" ? `${panelId}-body` : expanded ? showPrimaryAction ? `${panelId}-acknowledgement` : panelId : undefined} aria-describedby={stage.id === timerStage?.id ? deadlineId : undefined} aria-current={stage.id === currentStage?.id && (status === "in_progress" || status === "in_review") ? "step" : undefined} aria-label={`${stage.name} — ${workflowStageStatusLabel(stage)}`} onClick={(event) => {
                         selectedButton.current = event.currentTarget;
                         if (presentation === "designer" && selectedInGroup) setSelected((selection) => selection ? { ...selection, collapsed: !selection.collapsed } : null);
                         else setSelected(expanded ? null : { projectId: workflow.projectId, groupKey: group.key, stageId: stage.id });
@@ -342,8 +351,8 @@ export function ProjectWorkflowProgress({ workflow, onOpenTask, actionLabel = "O
             {timelineContainer === undefined ? navigation : timelineContainer ? createPortal(navigation, timelineContainer, group.key) : null}
             {timelineContainer !== undefined ? <h3 id={localHeadingId} className="sr-only">{group.name} actions and details</h3> : null}
             {selectedStage && presentation === "designer" ? <section id={panelId} className="workflow-progress__disclosure" aria-label={`${selectedStage.name} details`} onKeyDown={handleStageKeyDown}>
-              <h4 className="workflow-progress__disclosure-heading"><button ref={disclosureButton} type="button" className="workflow-progress__disclosure-toggle" aria-label={`${selected?.collapsed ? "Expand" : "Collapse"} ${selectedStage.name}`} aria-expanded={!selected?.collapsed} aria-controls={`${panelId}-body`} onClick={() => setSelected((selection) => selection ? { ...selection, collapsed: !selection.collapsed } : null)}>
-                <span>{selectedStage.name}</span><StatusBadge label={selectedStatus ? statusLabels[selectedStatus] : "No tasks configured"} tone={selectedStatus ? statusTones[selectedStatus] : "neutral"} /><ChevronDown aria-hidden="true" />
+              <h4 className="workflow-progress__disclosure-heading"><button ref={disclosureButton} type="button" className="workflow-progress__disclosure-toggle" data-furniture={selectedStage.type === "existing_furniture_dimensions" || undefined} aria-label={`${selected?.collapsed ? "Expand" : "Collapse"} ${selectedStage.name}`} aria-expanded={!selected?.collapsed} aria-controls={`${panelId}-body`} onClick={() => setSelected((selection) => selection ? { ...selection, collapsed: !selection.collapsed } : null)}>
+                <span>{selectedStage.name}</span><StatusBadge label={workflowStageStatusLabel(selectedStage)} tone={selectedStatus ? statusTones[selectedStatus] : "neutral"} /><ChevronDown aria-hidden="true" />
               </button></h4>
               <div id={`${panelId}-body`} className="workflow-progress__disclosure-body" hidden={Boolean(selected?.collapsed)}>
                 {renderStageActions?.(selectedStage)}
@@ -365,9 +374,10 @@ export function ProjectWorkflowProgress({ workflow, onOpenTask, actionLabel = "O
             </section> : null}
             {selectedStage && !showPrimaryAction && presentation !== "designer" ? (
               <section id={panelId} className={`workflow-progress__details${presentation === "client" ? " workflow-progress__details--client" : ""}`} aria-labelledby={`${panelId}-heading`} onKeyDown={handleStageKeyDown}>
-                <div className="workflow-progress__detail-heading"><div>{presentation !== "client" ? <p className="workflow-progress__eyebrow">{group.name}</p> : null}<h4 id={`${panelId}-heading`}>{selectedStage.name}</h4><StatusBadge label={selectedStatus ? statusLabels[selectedStatus] : "No tasks configured"} tone={selectedStatus ? statusTones[selectedStatus] : "neutral"} /></div><Button variant="secondary" size="compact" onClick={closeDetails} aria-label="Close stage details" leadingIcon={<X />}>Close</Button></div>
+                <div className="workflow-progress__detail-heading"><div>{presentation !== "client" ? <p className="workflow-progress__eyebrow">{group.name}</p> : null}<h4 id={`${panelId}-heading`}>{selectedStage.name}</h4><StatusBadge label={workflowStageStatusLabel(selectedStage)} tone={selectedStatus ? statusTones[selectedStatus] : "neutral"} /></div><Button variant="secondary" size="compact" onClick={closeDetails} aria-label="Close stage details" leadingIcon={<X />}>Close</Button></div>
                 {renderStageActions?.(selectedStage)}
                 {presentation === "client" ? <>
+                  <FurnitureProgressSummary furniture={selectedStage.operational?.furniture} />
                   {!selectedStage.operational?.availableActions.length && selectedStatus !== "completed" && !selectedStage.operational?.submittedDocument ? <p className="workflow-progress__empty">{selectedStage.operational?.blockingReasons[0] ?? (selectedStage.id === currentStage?.id ? `Your project team is completing ${selectedStage.name}.` : "This stage is not ready yet.")}</p> : null}
                 </> : <>
                   {selectedStage.operational ? <StageOperationalDetails stage={selectedStage} /> : null}

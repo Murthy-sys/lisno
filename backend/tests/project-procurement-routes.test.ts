@@ -9,8 +9,8 @@ import type { AuthService, PublicUser } from "../src/services/auth.service.js";
 import type { ProjectProcurementService } from "../src/services/project-procurement.service.js";
 
 const actor: PublicUser = { id: "buyer", name: "Buyer", email: "buyer@example.test", role: "procurement" };
-const fields = { itemName: "Plywood", brand: "Timber", uomId: "sheet", vendorId: null, pricePaise: 12345 };
-const item = { id: "item-1", projectId: "project-a", vendor: null, itemName: "Plywood", brand: "Timber", pricePaise: 12345,
+const fields = { estimateId: "estimate-a", estimateVersion: 1, sourceLineItemKey: "line-a", itemName: "Plywood", brand: "Timber", uomId: "sheet", vendorId: null, pricePaise: 12345 };
+const item = { id: "item-1", projectId: "project-a", estimateSource: null, vendor: null, itemName: "Plywood", brand: "Timber", pricePaise: 12345,
   uom: { id: "sheet", name: "Sheet", code: "SHT", status: "active" as const },
   version: 1, createdAt: "2026-09-17T00:00:00.000Z", updatedAt: "2026-09-17T00:00:00.000Z" };
 const vendor = { id: "vendor-1", code: "V1", name: "Saved Vendor", status: "active" as const };
@@ -49,6 +49,29 @@ describe("project procurement item and vendor routes", () => {
       .send({ ...fields, expectedVersion: 1 }).expect(200);
     expect(service.update).toHaveBeenCalledWith(actor, "project-a", "item-1", { ...fields, expectedVersion: 1 });
     await request(app).patch(`${base}/items/item-1`).set("Authorization", "Bearer procurement").send(fields).expect(400);
+  });
+  it("accepts exact parent paging and explicit unassigned reads without widening vendor queries", async () => {
+    const { app, service } = setup();
+    await request(app).get(`${base}/items?estimateId=estimate-a&estimateVersion=1&sourceLineItemKey=line-a&limit=5&offset=25`).set("Authorization", "Bearer procurement").expect(200);
+    expect(service.list).toHaveBeenLastCalledWith(actor, "project-a", { q: "", limit: 5, offset: 25, estimateId: "estimate-a", estimateVersion: 1, sourceLineItemKey: "line-a" });
+    await request(app).get(`${base}/items?unassigned=true`).set("Authorization", "Bearer procurement").expect(200);
+    expect(service.list).toHaveBeenLastCalledWith(actor, "project-a", { q: "", limit: 20, offset: 0, unassigned: true });
+    await request(app).get(`${referenceBase}/vendors?unassigned=true`).set("Authorization", "Bearer procurement").expect(400);
+  });
+  it.each(["estimateId=estimate-a", "estimateVersion=1", "sourceLineItemKey=line-a", "estimateId=a&estimateVersion=1&sourceLineItemKey=x&unassigned=true", "unassigned=false", "estimateId=a&estimateVersion=1.5&sourceLineItemKey=x", "estimateId=a&estimateVersion=1&sourceLineItemKey=", "estimateId=a&estimateId=b&estimateVersion=1&sourceLineItemKey=x"])("rejects malformed parent query %s", async (query) => {
+    const { app, service } = setup();
+    await request(app).get(`${base}/items?${query}`).set("Authorization", "Bearer procurement").expect(400);
+    expect(service.list).not.toHaveBeenCalled();
+  });
+  it("requires create linkage and allows either absent or complete update linkage", async () => {
+    const { app, service } = setup();
+    const { estimateId, estimateVersion, sourceLineItemKey, ...legacy } = fields;
+    await request(app).post(`${base}/items`).set("Authorization", "Bearer procurement").send(legacy).expect(400);
+    await request(app).patch(`${base}/items/item-1`).set("Authorization", "Bearer procurement").send({ ...legacy, expectedVersion: 1 }).expect(200);
+    for (const extra of [{ estimateId }, { estimateVersion }, { sourceLineItemKey }, { estimateId, estimateVersion }, { estimateId: null, estimateVersion, sourceLineItemKey }]) {
+      await request(app).patch(`${base}/items/item-1`).set("Authorization", "Bearer procurement").send({ ...legacy, expectedVersion: 1, ...extra }).expect(400);
+    }
+    expect(service.update).toHaveBeenCalledTimes(1);
   });
   it.each([0, -1, 1.2, MAX_FINANCE_AMOUNT_PAISE + 1, "12345", null])("rejects invalid pricePaise %s", async (pricePaise) => {
     const { app, service } = setup();

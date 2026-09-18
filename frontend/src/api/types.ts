@@ -642,6 +642,14 @@ export interface ProcurementUomOption {
   name: string;
 }
 
+export interface ProcurementEstimateSource {
+  estimateId: string;
+  estimateVersion: number;
+  estimateReviewRoundId: string | null;
+  sourceSectionId: string;
+  sourceLineItemKey: string;
+}
+
 export interface ProjectProcurementItem {
   id: string;
   projectId: string;
@@ -652,6 +660,7 @@ export interface ProjectProcurementItem {
   };
   vendor: ProcurementVendorReference | null;
   pricePaise: number;
+  estimateSource: ProcurementEstimateSource | null;
   version: number;
   createdAt: string;
   updatedAt: string;

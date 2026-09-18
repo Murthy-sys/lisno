@@ -2,10 +2,17 @@ import type { Role } from "../contracts/domain.js";
 import type { DesignStageType } from "./design-workflow.js";
 import type { StoredEstimateClientResponseProof } from "./estimate-client-review.js";
 
-export const DESIGN_WORKFLOW_ACTIONS = ["confirm_initial_payment", "internal_kickoff_complete", "sales_calendar_accept", "client_kickoff_request", "client_kickoff_schedule", "client_kickoff_complete", "client_kickoff_not_required", "keys_handed_over", "keys_received", "measurement_assign", "measurement_access_block", "measurement_access_restore", "measurement_complete", "furniture_scope", "furniture_accept", "furniture_upload", "furniture_proceed"] as const;
+export const DESIGN_WORKFLOW_ACTIONS = ["confirm_initial_payment", "internal_kickoff_complete", "sales_calendar_accept", "client_kickoff_request", "client_kickoff_schedule", "client_kickoff_complete", "client_kickoff_not_required", "keys_handed_over", "keys_received", "measurement_assign", "measurement_access_block", "measurement_access_restore", "measurement_complete", "furniture_scope", "furniture_accept", "furniture_scope_return", "furniture_upload", "furniture_dimensions_approve", "furniture_dimensions_return", "furniture_proceed", "space_planning_complete"] as const;
 export type DesignWorkflowAction = (typeof DESIGN_WORKFLOW_ACTIONS)[number];
-export interface WorkflowRoom { id: string; name: string; required: boolean; uploadedAt: string | null; proceed: boolean }
+interface FurnitureItemSnapshot { id: string; estimateItemId?: string; name: string; unit: string; uomId?: string; uomName?: string }
+export type FurnitureDimensionItem = FurnitureItemSnapshot & (
+  | { measurementType?: "dimensions"; length: number; width: number; height: number; quantity?: never }
+  | { measurementType: "count"; quantity: number; length?: never; width?: never; height?: never }
+);
+export interface FurnitureDimensions { submissionEventId: string; revision: number; status: "pending" | "changes_requested" | "approved"; items: FurnitureDimensionItem[]; submittedAt: string; reviewedAt?: string; returnReason?: string }
+export interface WorkflowRoom { id: string; name: string; required: boolean; uploadedAt: string | null; proceed: boolean; dimensions?: FurnitureDimensions }
 export interface WorkflowStageState {
+  spacePlanningApproval?: { estimateId: string; designPlanVersion: number; reviewRoundId: string };
   timingBasis?: "sequential";
   completedAt?: string;
   meetingAt?: string;
@@ -27,9 +34,28 @@ export interface WorkflowStageState {
   mediaFolderUrl?: string;
   acceptedAt?: string;
   noExistingFurniture?: boolean;
+  requirementsSubmissionEventId?: string;
   scopeEstimateId?: string;
   scopeEstimateVersion?: number;
+  scopeReturn?: { reason: string; at: string };
   rooms?: WorkflowRoom[];
+}
+
+export function workflowFurnitureRoomReady(furniture: WorkflowStageState, room: WorkflowRoom): boolean {
+  if (!room.required) return true;
+  if (room.dimensions) return room.dimensions.status === "approved";
+  // Preserve a valid completed legacy stage, without inventing approval for unfinished work.
+  const completedLegacy = furniture.completedAt && furniture.acceptedAt && furniture.rooms?.every((item) => !item.dimensions && (!item.required || item.uploadedAt || item.proceed));
+  return Boolean(completedLegacy && (room.uploadedAt || room.proceed));
+}
+export interface StoredWorkflowMedia {
+  id: string;
+  storageReference: string;
+  originalFilename: string;
+  mimeType: string;
+  byteSize: number;
+  sha256: string;
+  kind: "image" | "video";
 }
 export interface DesignWorkflowHistoryEvent {
   id: string;
@@ -45,6 +71,7 @@ export interface DesignWorkflowHistoryEvent {
   note: string;
   data?: Record<string, unknown>;
   proof: StoredEstimateClientResponseProof | null;
+  mediaFiles?: StoredWorkflowMedia[];
 }
 export interface DesignWorkflowState {
   projectId: string;
@@ -80,7 +107,8 @@ const precedingStages: Partial<Record<DesignStageType, DesignStageType[]>> = {
   client_kickoff: ["internal_kickoff"],
   key_collection: ["internal_kickoff", "client_kickoff"],
   site_measurement: ["internal_kickoff", "client_kickoff", "key_collection"],
-  existing_furniture_dimensions: ["internal_kickoff", "client_kickoff", "key_collection", "site_measurement"]
+  existing_furniture_dimensions: ["internal_kickoff", "client_kickoff", "key_collection", "site_measurement"],
+  space_planning_tentative_look_feel: ["internal_kickoff", "client_kickoff", "key_collection", "site_measurement", "existing_furniture_dimensions"]
 };
 
 /** Derive activation from immutable confirmations; never invent a start after a legacy completion. */
@@ -115,6 +143,7 @@ export function workflowStagePrerequisiteBlockers(state: DesignWorkflowState, ty
     if (predecessor === "client_kickoff" && !state.stages.client_kickoff?.completedAt) blockers.push("Complete Client Kick off or mark it not necessary before starting this stage.");
     if (predecessor === "key_collection" && (!state.stages.key_collection?.completedAt || !state.stages.key_collection.handedOverAt || !state.stages.key_collection.receivedAt)) blockers.push("The Client and Designer must both confirm key handover before starting this stage.");
     if (predecessor === "site_measurement" && !state.stages.site_measurement?.completedAt) blockers.push("Complete On Site Actual Measurement before starting this stage.");
+    if (predecessor === "existing_furniture_dimensions" && !state.stages.existing_furniture_dimensions?.completedAt) blockers.push("Complete Collection of existing furniture dimensions before starting this stage.");
   }
   return blockers;
 }
@@ -125,14 +154,14 @@ export function workflowSubmissionBlockers(state: DesignWorkflowState, roomIds?:
   if (!state.stages.internal_kickoff?.completedAt) blockers.push("Complete Internal Kick off with its signed checklist.");
   if (!state.stages.client_kickoff?.completedAt) blockers.push("Complete Client Kick off or mark it not necessary.");
   if (!state.stages.key_collection?.handedOverAt || !state.stages.key_collection?.receivedAt) blockers.push("The Client and Designer must both confirm key handover.");
-  if (!state.stages.site_measurement?.completedAt) blockers.push("Complete site measurement with its sketch and media folder.");
+  if (!state.stages.site_measurement?.completedAt) blockers.push("Complete site measurement with uploaded photos or videos.");
   if (phase === "upload") return blockers;
   const furniture = state.stages.existing_furniture_dimensions;
-  if (!furniture?.rooms || !furniture.acceptedAt) blockers.push("Declare existing-furniture applicability and obtain Client acceptance.");
+  if (!furniture?.rooms || !furniture.acceptedAt || furniture.scopeReturn) blockers.push("Declare existing-furniture applicability and obtain Client acceptance.");
   else if (!furniture.noExistingFurniture) {
     const selected = roomIds === undefined ? furniture.rooms : furniture.rooms.filter((room) => roomIds.includes(room.id));
     if (roomIds && (roomIds.length === 0 || selected.length !== new Set(roomIds).size)) blockers.push("Select rooms from the confirmed furniture scope.");
-    if (selected.some((room) => room.required && !room.uploadedAt && !room.proceed)) blockers.push("Existing-furniture dimensions are still required for the selected rooms.");
+    if (selected.some((room) => !workflowFurnitureRoomReady(furniture, room))) blockers.push("Client approval of existing-furniture dimensions is still required for the selected rooms.");
   }
   return blockers;
 }

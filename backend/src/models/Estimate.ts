@@ -33,6 +33,8 @@ const estimateNotificationSchema = new Schema({
 const estimateSchema = new Schema({
   _id: { type: String, required: true }, leadId: { type: String, ref: "Lead", required: true, unique: true }, ownerId: { type: String, ref: "User", required: true },
   version: { type: Number, required: true, default: 1 },
+  // Procurement source reads serialize with estimate changes without advancing business versions.
+  procurementSourceEpoch: { type: Number, default: 0, min: 0, validate: Number.isSafeInteger },
   designLifecycleVersion: { type: Number, required: true, default: 0, min: 0 },
   designFrozenAt: { type: Date, default: null },
   designLifecycleUpdatedAt: { type: Date, default: null },

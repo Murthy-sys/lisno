@@ -7,6 +7,7 @@ import { createNotificationStreamService } from "./services/notification-stream.
 import { createNotificationEmailDispatcher } from "./services/notification-email-dispatcher.js";
 import { createNotificationsRouter } from "./routes/notifications.js";
 import { createDesignWorkflowStateService } from "./services/design-workflow-state.service.js";
+import { createWorkflowEvidenceStorage } from "./services/workflow-evidence-storage.js";
 import { createDesignWorkflowStateRouter } from "./routes/design-workflow-state.js";
 import express, { type RequestHandler } from "express";
 import type { ProjectChatRepository } from "./repositories/project-chat.js";
@@ -464,7 +465,7 @@ export function createApp(dependencies: AppDependencies) {
       aiEstimatorKnowledgeContextService
     )
   );
-  app.use("/api/v1", createDesignWorkflowStateRouter(authService, designWorkflowStateService, estimateClientReviewStorage, maxUploadBytes));
+  app.use("/api/v1", createDesignWorkflowStateRouter(authService, designWorkflowStateService, createWorkflowEvidenceStorage(storage), maxUploadBytes));
   app.use(
     "/api/v1",
     createProjectWorkflowRouter(

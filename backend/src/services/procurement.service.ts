@@ -1654,6 +1654,19 @@ export async function assertProcurementProjectAccess(
   await resolveProcurementProject(projectId, session);
 }
 
+/** Reuses the immutable approved source; the coordination write prevents stale-source item commits. */
+export async function procurementItemSourceSnapshot(projectId: string, session: ClientSession, forWrite = false): Promise<ApprovedProcurementSnapshot> {
+  if (!session.inTransaction()) throw new Error("Procurement source resolution requires an active transaction.");
+  const resolved = await resolveProcurementProject(projectId, session);
+  if (forWrite) {
+    const locked = await EstimateModel.updateOne({
+      _id: resolved.snapshot.estimateId, projectId, status: "client_approved", designPlanStatus: "approved"
+    }, { $inc: { procurementSourceEpoch: 1 } }, { session, timestamps: false, runValidators: true });
+    if (locked.matchedCount !== 1) procurementLineageConflict();
+  }
+  return resolved.snapshot;
+}
+
 function normalizeExpenseInput(
   input: ProcurementExpenseInput
 ): NormalizedProcurementExpense {

@@ -1,8 +1,8 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { http, HttpResponse } from "msw";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { AUTHORIZATION_POLICY_VERSION } from "../../api/authorization-contract";
 import { tokenStorage } from "../../api/client";
@@ -12,40 +12,12 @@ import type {
 } from "../../api/types";
 import { renderApp } from "../../test/render";
 import { server } from "../../test/server";
+import { procurementKeys } from "./procurementApi";
 import {
   procurementProjectsIntegrityError,
   procurementReceiptError,
   rupeesToPaise
 } from "./procurementPresentation";
-
-class FakeXMLHttpRequest {
-  static instances: FakeXMLHttpRequest[] = [];
-
-  status = 0;
-  responseText = "";
-  onload: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  onabort: (() => void) | null = null;
-  upload = { onprogress: null as ((event: ProgressEvent) => void) | null };
-  method = "";
-  url = "";
-  sentBody: XMLHttpRequestBodyInit | Document | null = null;
-
-  constructor() {
-    FakeXMLHttpRequest.instances.push(this);
-  }
-
-  open(method: string, url: string) {
-    this.method = method;
-    this.url = url;
-  }
-
-  setRequestHeader() {}
-
-  send(body: XMLHttpRequestBodyInit | Document | null) {
-    this.sentBody = body;
-  }
-}
 
 const receiptDocument = {
   id: "document-one",
@@ -234,10 +206,6 @@ async function expectNoAxeViolations() {
   }
 }
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
-
 describe("ProcurementWorkspace", () => {
   it("lists Design-approved projects as rows that open the project page", async () => {
     installProcurementSession();
@@ -245,7 +213,7 @@ describe("ProcurementWorkspace", () => {
 
     const { router } = renderApp(["/home"]);
 
-    const workspace = await screen.findByRole("region", { name: "Procurement purchases" });
+    const workspace = await screen.findByRole("region", { name: "Procurement" });
     const list = await within(workspace).findByRole("list", { name: "Design-approved projects" });
     const row = within(list).getByRole("article", { name: "Aurora Villa" });
     expect(within(row).getByRole("heading", { name: "Aurora Villa" })).toBeVisible();
@@ -263,7 +231,7 @@ describe("ProcurementWorkspace", () => {
 
     expect(router.state.location.pathname).toBe("/procurement/projects/project-one");
     expect(await screen.findByRole("heading", { level: 1, name: "Aurora Villa" })).toBeVisible();
-    expect(screen.queryByRole("region", { name: "Procurement purchases" }))
+    expect(screen.queryByRole("region", { name: "Procurement" }))
       .not.toBeInTheDocument();
   });
 
@@ -307,242 +275,72 @@ describe("ProcurementWorkspace", () => {
 });
 
 describe("ProcurementProjectPage", () => {
-  it("shows positive Estimate sections collapsed, expands them independently, and resets on reopen", async () => {
+  it.each(["error", "removed", "invalid"] as const)("preserves an open draft and blocks saving when the project refresh is %s", async (state) => {
     installProcurementSession();
+    server.use(
+      http.get("/api/v1/procurement/uoms", () => HttpResponse.json({ data: [{ id: "uom-one", code: "nos", name: "Numbers" }] })),
+      http.get("/api/v1/procurement/vendors", () => HttpResponse.json({ data: { items: [], total: 0, limit: 20, offset: 0 } }))
+    );
     const user = userEvent.setup();
-
-    renderApp(["/procurement/projects/project-one"]);
-
-    const detail = await screen.findByRole("article", { name: "Aurora Villa procurement detail" });
-    expect(within(detail).getByText("2 selected Estimate sections")).toBeVisible();
-    expect(within(detail).getByLabelText("Aurora Villa procurement totals"))
-      .toHaveTextContent("₹3,750.00");
-
-    const carpentryDisclosure = within(detail).getByRole("button", {
-      name: /Carpentry/i
-    });
-    const electricalDisclosure = within(detail).getByRole("button", {
-      name: /Electrical/i
-    });
-    expect(carpentryDisclosure).toHaveAttribute("aria-expanded", "false");
-    expect(electricalDisclosure).toHaveAttribute("aria-expanded", "false");
-    expect(within(detail).queryByRole("button", { name: /Painting/i }))
-      .not.toBeInTheDocument();
-    expect(within(detail).queryByText("Zero-value provisional allowance"))
-      .not.toBeInTheDocument();
-    expect(within(detail).queryByText("Zero-value paint allowance"))
-      .not.toBeInTheDocument();
-    expect(within(detail).queryByRole("article", {
-      name: "Wardrobe plywood and laminate in Living Room"
-    })).not.toBeInTheDocument();
-    expect(within(detail).queryByRole("button", { name: /Record purchase for/ }))
-      .not.toBeInTheDocument();
-
-    await user.click(carpentryDisclosure);
-    expect(carpentryDisclosure).toHaveFocus();
-    expect(carpentryDisclosure).toHaveAttribute("aria-expanded", "true");
-    expect(electricalDisclosure).toHaveAttribute("aria-expanded", "false");
-    const wardrobe = within(detail).getByRole("article", {
-      name: "Wardrobe plywood and laminate in Living Room"
-    });
-    expect(wardrobe).toHaveTextContent("80 sq ft");
-    expect(wardrobe).toHaveTextContent("₹2,500.00");
-    expect(wardrobe).toHaveTextContent("₹1,250.00");
-    expect(within(wardrobe).getByText("Living room wardrobe plywood")).toBeVisible();
-    expect(within(wardrobe).getByText("carpentry-receipt.png")).toBeVisible();
-    expect(within(wardrobe).getByRole("button", {
-      name: "Preview receipt carpentry-receipt.png"
-    })).toBeEnabled();
-    expect(within(detail).getAllByRole("button", { name: /Record purchase for/ })).toHaveLength(2);
-    expect(within(detail).queryByRole("article", {
-      name: "Modular switch set in Living Room"
-    })).not.toBeInTheDocument();
-
-    await user.click(electricalDisclosure);
-    expect(electricalDisclosure).toHaveFocus();
-    expect(electricalDisclosure).toHaveAttribute("aria-expanded", "true");
-    expect(carpentryDisclosure).toHaveAttribute("aria-expanded", "true");
-    expect(within(detail).getByRole("article", {
-      name: "Modular switch set in Living Room"
-    })).toBeVisible();
-    expect(within(detail).getAllByRole("button", { name: /Record purchase for/ })).toHaveLength(3);
-
-    await user.click(carpentryDisclosure);
-    expect(carpentryDisclosure).toHaveAttribute("aria-expanded", "false");
-    expect(electricalDisclosure).toHaveAttribute("aria-expanded", "true");
-    expect(within(detail).queryByRole("article", {
-      name: "Wardrobe plywood and laminate in Living Room"
-    })).not.toBeInTheDocument();
-    expect(within(detail).getByRole("article", {
-      name: "Modular switch set in Living Room"
-    })).toBeVisible();
-
-    await user.click(screen.getByRole("link", { name: "Back to approved projects" }));
-    await user.click(await screen.findByRole("link", {
-      name: "View procurement items for Aurora Villa"
-    }));
-
-    const reopened = await screen.findByRole("article", { name: "Aurora Villa procurement detail" });
-    expect(within(reopened).getByRole("button", { name: /Carpentry/i }))
-      .toHaveAttribute("aria-expanded", "false");
-    expect(within(reopened).getByRole("button", { name: /Electrical/i }))
-      .toHaveAttribute("aria-expanded", "false");
-    expect(within(reopened).queryByRole("button", { name: /Record purchase for/ }))
-      .not.toBeInTheDocument();
+    const { queryClient } = renderApp(["/procurement/projects/project-one"]);
+    await user.click(await screen.findByRole("button", { name: "Add item under Bedside table — Bedroom" }));
+    const editor = await screen.findByRole("dialog", { name: "Add procurement item" });
+    await user.type(within(editor).getByRole("textbox", { name: "Item name" }), "Keep this draft");
+    await within(editor).findByRole("option", { name: "nos — Numbers" });
+    server.use(http.get("/api/v1/procurement/projects", () => state === "error"
+      ? HttpResponse.json({ error: { code: "PROCUREMENT_APPROVAL_SOURCE_CONFLICT", message: "The approved estimate changed." } }, { status: 409 })
+      : HttpResponse.json({ data: state === "removed" ? [] : [{ ...procurementProject, sections: [{ ...procurementProject.sections[0], estimatedAmountPaise: 1 }] }] })));
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: procurementKeys.projects }); });
+    expect(screen.getByRole("dialog", { name: "Add procurement item" })).toBe(editor);
+    expect(within(editor).getByRole("textbox", { name: "Item name" })).toHaveValue("Keep this draft");
+    expect(await within(editor).findByText(/Your entries are preserved/)).toBeVisible();
+    expect(within(editor).getByRole("button", { name: "Add item" })).toBeDisabled();
+    expect(screen.queryByRole("region", { name: "Procurement items" })).not.toBeInTheDocument();
   });
 
-  it("keeps collapsed and expanded section states free of automated accessibility violations", async () => {
+  it("keeps project items and the Add item form without estimate purchases, including on reopen", async () => {
     installProcurementSession();
+    server.use(
+      http.get("/api/v1/procurement/uoms", () => HttpResponse.json({ data: [{ id: "uom-one", code: "nos", name: "Numbers" }] })),
+      http.get("/api/v1/procurement/vendors", () => HttpResponse.json({ data: { items: [], total: 0, limit: 20, offset: 0 } }))
+    );
     const user = userEvent.setup();
     renderApp(["/procurement/projects/project-one"]);
-    const carpentryDisclosure = await screen.findByRole("button", {
-      name: /Carpentry/i
-    });
-    expect(carpentryDisclosure).toHaveAttribute("aria-expanded", "false");
+
+    const items = await screen.findByRole("region", { name: "Procurement items" });
+    expect(within(items).getByRole("heading", { name: "Bedside table" })).toBeVisible();
+    expect(within(items).getByRole("heading", { name: "Zero-value provisional allowance" })).toBeVisible();
+    expect(within(items).getByText("₹500.00")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Approved-estimate purchases" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("article", { name: "Aurora Villa procurement detail" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Record purchase|Preview receipt|Carpentry/i })).not.toBeInTheDocument();
     await expectNoAxeViolations();
 
-    await user.click(carpentryDisclosure);
-    expect(carpentryDisclosure).toHaveFocus();
-    expect(carpentryDisclosure).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("article", {
-      name: "Wardrobe plywood and laminate in Living Room"
-    })).toBeVisible();
+    const add = within(items).getByRole("button", { name: "Add item under Bedside table — Bedroom" });
+    await user.click(add);
+    const editor = await screen.findByRole("dialog", { name: "Add procurement item" });
+    expect(within(editor).getByRole("textbox", { name: "Item name" })).toBeVisible();
+    expect(within(editor).getByRole("textbox", { name: "Brand" })).toBeVisible();
+    expect(await within(editor).findByRole("option", { name: "nos — Numbers" })).toBeInTheDocument();
+    expect(within(editor).getByRole("textbox", { name: "Price (INR)" })).toBeVisible();
     await expectNoAxeViolations();
+    await user.click(within(editor).getByRole("button", { name: "Cancel" }));
+    expect(add).toHaveFocus();
+
+    await user.click(screen.getByRole("link", { name: "Back to approved projects" }));
+    await user.click(await screen.findByRole("link", { name: "View procurement items for Aurora Villa" }));
+    expect(await screen.findByRole("region", { name: "Procurement items" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Record purchase/i })).not.toBeInTheDocument();
   });
 
   it("reports a project that is not available for procurement", async () => {
     installProcurementSession();
-
     renderApp(["/procurement/projects/project-missing"]);
-
     expect(await screen.findByText(/not available for procurement/i)).toBeVisible();
-    expect(screen.queryByRole("button", { name: /Carpentry/i })).not.toBeInTheDocument();
-  });
-
-  it("preserves a purchase draft through close confirmation and resets it for a different selected item", async () => {
-    installProcurementSession();
-    const user = userEvent.setup();
-    renderApp(["/procurement/projects/project-one"]);
-    await user.click(await screen.findByRole("button", { name: /Carpentry/i }));
-    await user.click(screen.getByRole("button", { name: "Record purchase for Bedside table in Bedroom" }));
-    let panel = screen.getByRole("dialog", { name: "Record purchase for Bedside table" });
-    const receipt = new File(["image"], "bedside-receipt.png", { type: "image/png" });
-    await user.type(within(panel).getByLabelText(/Actual price/), "1400.50");
-    await user.type(within(panel).getByLabelText(/Description/), "Bedroom tables");
-    await user.upload(within(panel).getByLabelText(/Receipt or supporting document/), receipt);
-    await expectNoAxeViolations();
-    await user.click(within(panel).getByRole("button", { name: "Cancel" }));
-    let confirmation = screen.getByRole("alertdialog", { name: "Discard unsaved changes?" });
-    await user.click(within(confirmation).getByRole("button", { name: "Keep editing" }));
-    panel = screen.getByRole("dialog", { name: "Record purchase for Bedside table" });
-    expect(within(panel).getByLabelText(/Actual price/)).toHaveValue("1400.50");
-    expect((within(panel).getByLabelText(/Receipt or supporting document/) as HTMLInputElement).files?.[0]).toBe(receipt);
-    await user.keyboard("{Escape}");
-    confirmation = screen.getByRole("alertdialog", { name: "Discard unsaved changes?" });
-    await user.click(within(confirmation).getByRole("button", { name: "Discard changes" }));
-    expect(screen.getByRole("button", { name: "Record purchase for Bedside table in Bedroom" })).toHaveFocus();
-    await user.click(screen.getByRole("button", { name: "Record purchase for Wardrobe plywood and laminate in Living Room" }));
-    panel = screen.getByRole("dialog", { name: "Record purchase for Wardrobe plywood and laminate" });
-    expect(within(panel).getByLabelText(/Actual price/)).toHaveValue("");
-    expect(within(panel).getByLabelText(/Description/)).toHaveValue("");
-    expect(within(panel).queryByText("bedside-receipt.png")).not.toBeInTheDocument();
-    expect(within(panel).getByText("₹2,500.00")).toBeVisible();
-  });
-
-  it("validates the purchase, reuses idempotency on an unchanged network retry, and refreshes the workspace after success", async () => {
-    installProcurementSession();
-    FakeXMLHttpRequest.instances = [];
-    vi.stubGlobal("XMLHttpRequest", FakeXMLHttpRequest);
-    const user = userEvent.setup({ applyAccept: false });
-
-    renderApp(["/procurement/projects/project-one"]);
-    await user.click(await screen.findByRole("button", {
-      name: /Carpentry/i
-    }));
-    await user.click(await screen.findByRole("button", {
-      name: "Record purchase for Bedside table in Bedroom"
-    }));
-
-    const dialog = screen.getByRole("dialog", { name: "Record purchase for Bedside table" });
-    expect(within(dialog).getByRole("button", { name: "Cancel" }))
-      .toHaveClass("ui-button--secondary");
-    expect(within(dialog).getByRole("button", { name: "Record purchase" }))
-      .toHaveClass("ui-button--primary");
-    const amountField = within(dialog).getByLabelText(/Actual price/);
-    expect(amountField).toHaveAttribute("type", "text");
-    expect(amountField).toHaveAttribute("inputmode", "decimal");
-    await user.type(amountField, "12.345");
-    await user.click(within(dialog).getByRole("button", { name: "Record purchase" }));
-    expect(within(dialog).getByRole("alert")).toHaveTextContent("no more than two decimal places");
-
-    const amount = within(dialog).getByLabelText(/Actual price/);
-    await user.clear(amount);
-    await user.type(amount, "1250");
-    await user.type(within(dialog).getByLabelText(/Description/), "Two bedside tables");
-    const fileInput = within(dialog).getByLabelText(/Receipt or supporting document/);
-    await user.upload(fileInput, new File(["notes"], "notes.txt", { type: "text/plain" }));
-    await user.click(within(dialog).getByRole("button", { name: "Record purchase" }));
-    expect(within(dialog).getByRole("alert")).toHaveTextContent("PDF, JPEG, PNG, or WebP");
-
-    await user.upload(fileInput, new File(["image"], "receipt.png", { type: "image/png" }));
-    await user.type(within(dialog).getByLabelText(/Vendor/), "Wood Studio");
-    await user.type(within(dialog).getByLabelText(/Invoice/), "WS-22");
-    await user.click(within(dialog).getByRole("button", { name: "Record purchase" }));
-
-    const first = FakeXMLHttpRequest.instances[0]!;
-    expect(amount).toBeDisabled();
-    expect(fileInput).toBeDisabled();
-    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
-    await user.keyboard("{Escape}");
-    expect(screen.getByRole("dialog", { name: "Record purchase for Bedside table" })).toBeVisible();
-    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-    expect(first.method).toBe("POST");
-    expect(first.url).toBe("/api/v1/procurement/projects/project-one/expenses");
-    expect(first.sentBody).toBeInstanceOf(FormData);
-    const firstBody = first.sentBody as FormData;
-    expect(firstBody.get("sourceLineItemKey")).toBe("bedroom:CA02");
-    expect(firstBody.get("amountPaise")).toBe("125000");
-    expect(firstBody.get("description")).toBe("Two bedside tables");
-    expect(firstBody.get("vendor")).toBe("Wood Studio");
-    expect(firstBody.get("reference")).toBe("WS-22");
-    expect(firstBody.get("receipt")).toBeInstanceOf(File);
-    const idempotencyKey = firstBody.get("idempotencyKey");
-    first.upload.onprogress?.({
-      lengthComputable: true,
-      loaded: 50,
-      total: 100
-    } as ProgressEvent);
-    expect(await within(dialog).findByRole("progressbar", {
-      name: "Receipt upload progress"
-    })).toHaveAttribute("aria-valuenow", "50");
-
-    first.onerror?.();
-    expect(await within(dialog).findByRole("button", { name: "Retry purchase" })).toBeEnabled();
-    expect(within(dialog).getByRole("alert")).toHaveTextContent("request could not be completed");
-    await user.click(within(dialog).getByRole("button", { name: "Retry purchase" }));
-
-    const retry = FakeXMLHttpRequest.instances[1]!;
-    expect((retry.sentBody as FormData).get("idempotencyKey")).toBe(idempotencyKey);
-    retry.status = 201;
-    retry.responseText = JSON.stringify({
-      data: {
-        entry: {
-          ...postedExpense,
-          id: "entry-two",
-          amountPaise: 125_000,
-          sourceLineItemKey: "bedroom:CA02"
-        },
-        bucket: {},
-        replayed: false
-      }
-    });
-    retry.onload?.();
-
-    expect(await screen.findByText("Purchase recorded")).toBeVisible();
-    expect(screen.queryByRole("dialog", { name: "Record purchase for Bedside table" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Procurement items" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add item" })).not.toBeInTheDocument();
   });
 });
-
 
 describe("procurement financial and file validation", () => {
   it("converts rupees to integer paise without floating-point drift", () => {

@@ -33,7 +33,7 @@ export function procurementProjectPath(projectId: string) {
  * Both the /home list and the project page read the same authorized projects
  * payload, so they share one query, one integrity gate, and one display filter.
  */
-export function useProcurementProjects(enabled: boolean) {
+export function useProcurementProjects(enabled: boolean, includeZeroBudgetItems = false) {
   const query = useQuery({
     queryKey: procurementKeys.projects,
     queryFn: getProcurementProjects,
@@ -44,9 +44,9 @@ export function useProcurementProjects(enabled: boolean) {
     : null;
   const projects = useMemo(
     () => query.data && !integrityError
-      ? query.data.map(procurementProjectForDisplay)
+      ? includeZeroBudgetItems ? query.data : query.data.map(procurementProjectForDisplay)
       : null,
-    [integrityError, query.data]
+    [integrityError, query.data, includeZeroBudgetItems]
   );
 
   return { query, integrityError, projects };

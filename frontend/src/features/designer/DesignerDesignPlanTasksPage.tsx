@@ -23,7 +23,7 @@ import {
   projectWorkflowKeys
 } from "../workflow/projectWorkflowApi";
 import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
-import { currentProjectWorkflowStage, workflowStageStatus } from "../workflow/projectWorkflowSelectors";
+import { currentProjectWorkflowStage, workflowStageNextStep, workflowStageStatus } from "../workflow/projectWorkflowSelectors";
 
 const statusLabels: Record<DesignPlanStatus, string> = {
   pending_assignment: "Awaiting assignment",
@@ -60,6 +60,8 @@ function stageAction(workflow: DesignWorkflowView, stage: DesignWorkflowStage | 
     return status === "ready_for_client" || status === "approved" ? designAction(status) : "Review project designs";
   }
   const actions = stage.operational?.availableActions ?? [];
+  const pendingStep = workflowStageNextStep(stage);
+  if (pendingStep) return pendingStep;
   const enabled = actions.filter((action) => !action.disabledReason);
   const completion = enabled.find((action) => action.id.endsWith("_complete"));
   if (completion) return completion.label;

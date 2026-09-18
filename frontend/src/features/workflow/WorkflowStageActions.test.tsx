@@ -21,7 +21,7 @@ function fixture(action?: DesignWorkflowAction) {
       rooms: [{ id: "room-bedroom", name: "Bedroom", required: true, hasDimensions: false, canProceed: false }, { id: "room-living", name: "Living room", required: true, hasDimensions: false, canProceed: false }]
     }
   };
-  const workflow: DesignWorkflowView = { projectId: "project-a", projectName: "Project A", serverNow: "2026-09-11T09:00:00.000Z", projectStages: [stage], floors: [], furnitureRooms: [{ id: "room-bedroom", name: "Bedroom" }, { id: "room-living", name: "Living room" }], measurementDesigners: [{ id: "designer-b", name: "Assigned Designer B" }] };
+  const workflow: DesignWorkflowView = { projectId: "project-a", projectName: "Project A", serverNow: "2026-09-11T09:00:00.000Z", projectStages: [stage], floors: [], furnitureRooms: [{ id: "room-bedroom", name: "Bedroom", estimateItems: [{ id: "estimate-bedroom", name: "Wardrobe", catalogueId: "wardrobe", specification: "Oak", quantity: 1, uom: "nos" }] }, { id: "room-living", name: "Living room", estimateItems: [{ id: "estimate-living", name: "Sofa", catalogueId: "sofa", specification: "Grey", quantity: 1, uom: "nos" }] }], measurementDesigners: [{ id: "designer-b", name: "Assigned Designer B" }] };
   return { stage, workflow };
 }
 
@@ -38,7 +38,6 @@ describe("WorkflowStageActions", () => {
     setup({ id: "keys_received", label: "Mark keys received", actor: "designer", requiresProof: false });
     await user.click(screen.getByRole("button", { name: "Mark keys received" }));
     const panel = screen.getByRole("dialog", { name: "Mark keys received" });
-    expect(within(panel).getByText("Workflow version 4")).toBeVisible();
     await user.type(within(panel).getByLabelText("Note"), "Keys collected from reception");
     await user.click(within(panel).getByRole("button", { name: "Cancel" }));
     await user.click(screen.getByRole("button", { name: "Keep editing" }));
@@ -152,16 +151,11 @@ describe("WorkflowStageActions", () => {
     expect(post).not.toHaveBeenCalled();
   });
 
-  it("sends only the selected persisted room IDs when Client permits work to proceed", async () => {
-    const post = vi.spyOn(apiClient, "post").mockResolvedValue({ version: 5 });
-    const user = userEvent.setup();
+  it("does not offer the retired furniture proceed bypass from an older response", () => {
+    const post = vi.spyOn(apiClient, "post");
     setup({ id: "furniture_proceed", label: "Allow selected rooms to proceed", actor: "client", requiresProof: false });
-    await user.click(screen.getByRole("button", { name: "Allow selected rooms to proceed" }));
-    await user.click(screen.getByRole("checkbox", { name: "Bedroom" }));
-    await user.type(screen.getByRole("textbox", { name: "Reason" }), "Proceed with Bedroom while the remaining dimensions are collected.");
-    await user.click(screen.getByRole("button", { name: "Allow selected rooms to proceed" }));
-    await waitFor(() => expect(post).toHaveBeenCalled());
-    expect(post.mock.calls[0]![1]).toEqual(expect.objectContaining({ data: { roomIds: ["room-bedroom"] } }));
+    expect(screen.queryByRole("button", { name: "Allow selected rooms to proceed" })).not.toBeInTheDocument();
+    expect(post).not.toHaveBeenCalled();
   });
 
   it("records an explicit no-furniture declaration without inventing a room", async () => {
@@ -175,15 +169,25 @@ describe("WorkflowStageActions", () => {
     expect(post.mock.calls[0]![1]).toEqual(expect.objectContaining({ data: { rooms: [], notApplicable: true } }));
   });
 
-  it("declares applicability for every canonical room, including rooms without existing furniture", async () => {
-    const post = vi.spyOn(apiClient, "post").mockResolvedValue({ version: 5 });
+  it("submits measurements for required rooms and applicability for every canonical room", async () => {
+    const post = vi.spyOn(apiClient, "postMultipartWithProgress").mockResolvedValue({ version: 5 });
+    vi.spyOn(apiClient, "get").mockResolvedValue([{ id: "uom-mm", code: "mm", name: "Millimetres", decimalScale: 3 }]);
     const user = userEvent.setup();
     setup({ id: "furniture_scope", label: "Set furniture requirement", actor: "designer", requiresProof: false });
     await user.click(screen.getByRole("button", { name: "Set furniture requirement" }));
     await user.click(screen.getByRole("checkbox", { name: "Bedroom" }));
-    await user.click(screen.getByRole("button", { name: "Set furniture requirement" }));
+    await user.type(screen.getByRole("spinbutton", { name: "Length" }), "2100");
+    await user.type(screen.getByRole("spinbutton", { name: "Width" }), "900");
+    await user.type(screen.getByRole("spinbutton", { name: "Height" }), "850");
+    await user.selectOptions(screen.getByRole("combobox", { name: "UOM" }), "uom-mm");
+    const proof = new File(["dimensions"], "furniture.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText(/Furniture dimensions document/), proof);
+    fireEvent.submit(screen.getByRole("form"));
     await waitFor(() => expect(post).toHaveBeenCalled());
-    expect(post.mock.calls[0]![1]).toEqual(expect.objectContaining({ data: { rooms: [{ id: "room-bedroom", required: true }, { id: "room-living", required: false }], notApplicable: false } }));
+    expect(JSON.parse(post.mock.calls[0]![1].get("data") as string)).toEqual({
+      rooms: [{ id: "room-bedroom", required: true }, { id: "room-living", required: false }], notApplicable: false,
+      dimensions: [{ roomId: "room-bedroom", items: [{ estimateItemId: "estimate-bedroom", length: 2100, width: 900, height: 850, uomId: "uom-mm" }] }]
+    });
   });
 
   it("requires assignment from the supplied project design team and provides accessible controls", async () => {
@@ -291,10 +295,12 @@ describe("WorkflowStageActions", () => {
 
 it("serializes evidence and versioned action data using the protected multipart endpoint", async () => {
   const post = vi.spyOn(apiClient, "postMultipartWithProgress").mockResolvedValue({ version: 8 });
-  await performDesignWorkflowAction({ projectId: "project/a", stageId: "stage:b", expectedVersion: 7, action: "measurement_complete", idempotencyKey: "measurement-confirmed-1", data: { mediaFolderUrl: "https://example.com/site" }, note: "Checked on site", file: new File(["sketch"], "sketch.pdf", { type: "application/pdf" }) });
+  await performDesignWorkflowAction({ projectId: "project/a", stageId: "stage:b", expectedVersion: 7, action: "measurement_complete", idempotencyKey: "measurement-confirmed-1", data: {}, note: "Checked on site", file: new File(["sketch"], "sketch.pdf", { type: "application/pdf" }), mediaFiles: [new File(["photo"], "site.jpg", { type: "image/jpeg" }), new File(["video"], "tour.mp4", { type: "video/mp4" })] });
   expect(post.mock.calls[0]![0]).toBe("/projects/project%2Fa/design-workflow/actions");
   const body = post.mock.calls[0]![1];
   expect(body.get("expectedVersion")).toBe("7");
-  expect(JSON.parse(body.get("data") as string)).toEqual({ mediaFolderUrl: "https://example.com/site" });
+  expect(JSON.parse(body.get("data") as string)).toEqual({});
   expect(body.get("note")).toBe("Checked on site");
+  expect((body.get("file") as File).name).toBe("sketch.pdf");
+  expect(body.getAll("mediaFiles").map((file) => (file as File).name)).toEqual(["site.jpg", "tour.mp4"]);
 });

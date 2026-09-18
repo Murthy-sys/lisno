@@ -21,6 +21,8 @@ export const projectWorkflowKeys = {
     ["project-workflow", "design-reviews", "project", projectId] as const,
   designWorkflow: (projectId: string) =>
     ["project-workflow", "design-workflow", projectId] as const,
+  allFurnitureUoms: () => ["project-workflow", "furniture-uoms"] as const,
+  furnitureUoms: (projectId: string) => ["project-workflow", "furniture-uoms", projectId] as const,
   paymentConfirmations: ["project-workflow", "payment-confirmations"] as const,
   operational: ["project-workflow", "operational"] as const,
   workers: ["project-workflow", "workers"] as const,
@@ -115,7 +117,64 @@ export type DesignWorkflowActionId =
   | "client_kickoff_not_required" | "keys_handed_over" | "keys_received"
   | "measurement_assign" | "measurement_access_block" | "measurement_access_restore"
   | "measurement_complete" | "furniture_scope" | "furniture_accept"
-  | "furniture_upload" | "furniture_proceed";
+  | "furniture_upload" | "furniture_proceed" | "furniture_scope_return"
+  | "furniture_dimensions_approve" | "furniture_dimensions_return" | "space_planning_complete";
+
+interface FurnitureMeasurementItemBase {
+  id: string;
+  estimateItemId?: string;
+  name: string;
+  /** Submitted labels remain unchanged when the Configuration record changes. */
+  unit: string;
+  uomId?: string;
+  uomName?: string;
+}
+
+export type FurnitureDimensionItem = FurnitureMeasurementItemBase & (
+  | { measurementType?: "dimensions"; length: number; width: number; height: number }
+  | { measurementType: "count"; quantity: number }
+);
+
+export interface FurnitureUomOption {
+  id: string;
+  code: string;
+  name: string;
+  decimalScale: number;
+}
+
+export const getFurnitureUoms = (projectId: string, signal?: AbortSignal) =>
+  apiClient.get<FurnitureUomOption[]>(`/projects/${encodeURIComponent(projectId)}/design-workflow/furniture-uoms`, { signal, showGlobalLoader: false });
+
+export const createFurnitureUom = (projectId: string, input: { code: string; name: string; decimalScale: number }) =>
+  apiClient.post<{ uom: FurnitureUomOption; reused: boolean }>(`/projects/${encodeURIComponent(projectId)}/design-workflow/furniture-uoms`, input, { showGlobalLoader: false });
+
+export interface FurnitureEstimateItem {
+  id: string;
+  name: string;
+  catalogueId: string;
+  specification: string;
+  quantity: number;
+  uom: string;
+  /** Canonical mode from the approved estimate; older responses use dimensions. */
+  measurementType?: "count" | "dimensions";
+}
+
+export interface FurnitureEstimateRoom {
+  id: string;
+  name: string;
+  /** Older responses may omit items; the editor must block rather than invent them. */
+  estimateItems?: FurnitureEstimateItem[];
+}
+
+export interface FurnitureDimensionsSubmission {
+  submissionEventId: string;
+  revision: number;
+  status: "pending" | "changes_requested" | "approved";
+  items: FurnitureDimensionItem[];
+  submittedAt: string;
+  reviewedAt?: string;
+  returnReason?: string;
+}
 
 export interface DesignWorkflowAction {
   id: DesignWorkflowActionId;
@@ -129,6 +188,27 @@ export interface DesignStageOperational {
   status: TaskStatus;
   version: number;
   availableActions: DesignWorkflowAction[];
+  spacePlanning?: {
+    estimateId: string;
+    designPlanVersion: number;
+    reviewRoundId: string | null;
+    totalImages: number;
+    approvedImages: number;
+    readyForCompletion: boolean;
+    completedAt: string | null;
+  };
+  furniture?: {
+    phase: "requirements_pending" | "awaiting_client_acceptance" | "awaiting_dimensions" | "completed"
+      | "requirements_changes_requested" | "awaiting_dimension_approval" | "dimension_changes_requested";
+    notApplicable: boolean;
+    requiredRoomCount: number;
+    readyRoomCount: number;
+    pendingRoomCount: number;
+    /** Exact combined room/dimension submission reviewed by Client acceptance or send-back. */
+    requirementsSubmissionEventId?: string;
+    evidence?: FurnitureReviewEvidence[];
+    scopeReturn?: { reason: string; at: string };
+  };
   submittedDocument?: {
     eventId: string;
     filename: string;
@@ -150,7 +230,7 @@ export interface DesignStageOperational {
   };
   blockingReasons: string[];
   facts: Array<{ label: string; value: string }>;
-  rooms?: Array<{ id: string; name: string; required: boolean; hasDimensions: boolean; canProceed: boolean }>;
+  rooms?: Array<{ id: string; name: string; required: boolean; hasDimensions: boolean; canProceed: boolean; dimensions?: FurnitureDimensionsSubmission }>;
   reminders?: Array<{ id: string; label: string; dueAt: string }>;
   history: Array<{
     id: string;
@@ -161,7 +241,17 @@ export interface DesignStageOperational {
     at: string;
     note: string;
     proofAvailable: boolean;
+    mediaFiles?: Array<{ id: string; filename: string; mimeType: string; byteSize: number; kind: "image" | "video" }>;
   }>;
+}
+
+export interface FurnitureReviewEvidence {
+  eventId: string;
+  mediaId?: string;
+  filename: string;
+  mimeType: string;
+  byteSize: number;
+  source: "site_measurement" | "furniture_requirements" | "furniture_dimensions";
 }
 
 export type InitialPaymentStatus = "awaiting_estimate_approval" | "awaiting_payment" | "received";
@@ -175,7 +265,7 @@ export interface DesignWorkflowView {
   projectStages?: DesignWorkflowStage[];
   initialPayment?: { confirmedAt: string | null; canConfirm: boolean; version: number; status?: InitialPaymentStatus; issue?: string };
   measurementDesigners?: Array<{ id: string; name: string }>;
-  furnitureRooms?: Array<{ id: string; name: string }>;
+  furnitureRooms?: FurnitureEstimateRoom[];
   furnitureScopeIssue?: string;
   notices?: Array<{ id: string; stageId: string; message: string }>;
   floors: Array<{
@@ -214,10 +304,11 @@ export async function performDesignWorkflowAction(input: {
   note?: string;
   idempotencyKey: string;
   file?: File | null;
+  mediaFiles?: File[];
 }, onProgress?: (percent: number) => void): Promise<{ version: number }> {
-  const { projectId, file, ...payload } = input;
+  const { projectId, file, mediaFiles = [], ...payload } = input;
   const path = `/projects/${encodeURIComponent(projectId)}/design-workflow/actions`;
-  if (!file) return apiClient.post<{ version: number }>(path, payload, { showGlobalLoader: false });
+  if (!file && mediaFiles.length === 0) return apiClient.post<{ version: number }>(path, payload, { showGlobalLoader: false });
   const body = new FormData();
   body.set("expectedVersion", String(payload.expectedVersion));
   body.set("action", payload.action);
@@ -225,12 +316,20 @@ export async function performDesignWorkflowAction(input: {
   if (payload.stageId) body.set("stageId", payload.stageId);
   if (payload.note) body.set("note", payload.note);
   if (payload.data) body.set("data", JSON.stringify(payload.data));
-  body.set("file", file);
+  if (file) body.set("file", file);
+  for (const mediaFile of mediaFiles) body.append("mediaFiles", mediaFile);
   return apiClient.postMultipartWithProgress<{ version: number }>(path, body, onProgress ?? (() => {}), { showGlobalLoader: false });
 }
 
-export const downloadWorkflowActionProof = (projectId: string, eventId: string) =>
-  apiClient.getBlob(`/projects/${encodeURIComponent(projectId)}/design-workflow/history/${encodeURIComponent(eventId)}/proof`);
+const downloadWorkflowFile = (path: string, signal?: AbortSignal) => signal
+  ? apiClient.getBlob(path, { signal, showGlobalLoader: false })
+  : apiClient.getBlob(path);
+
+export const downloadWorkflowActionProof = (projectId: string, eventId: string, signal?: AbortSignal) =>
+  downloadWorkflowFile(`/projects/${encodeURIComponent(projectId)}/design-workflow/history/${encodeURIComponent(eventId)}/proof`, signal);
+
+export const downloadWorkflowActionMedia = (projectId: string, eventId: string, mediaId: string, signal?: AbortSignal) =>
+  downloadWorkflowFile(`/projects/${encodeURIComponent(projectId)}/design-workflow/history/${encodeURIComponent(eventId)}/media/${encodeURIComponent(mediaId)}`, signal);
 
 export const downloadDesignPlanReviewProof = (roundId: string) =>
   apiClient.getBlob(
