@@ -1,3 +1,5 @@
+import type { WorkflowSpacePlanningSource } from "../domain/workflow-space-planning.js";
+import type { WorkflowEstimateRoom } from "../domain/workflow-estimate-items.js";
 import { RepositoryConflictError } from "../repositories/types.js";
 import { instructionsForStage, type DesignStageInstructions } from "../domain/design-workflow-instructions.js";
 import { emptyDesignWorkflowState, workflowStageStartAt, workflowIsPaused } from "../domain/design-workflow-state.js";
@@ -116,7 +118,7 @@ export interface DesignWorkflowDto {
   notices?: Array<{ id: string; stageId: string; message: string }>;
   initialPayment?: Awaited<ReturnType<typeof projectInitialPayment>>;
   measurementDesigners?: Array<{ id: string; name: string }>;
-  furnitureRooms?: Array<{ id: string; name: string }>;
+  furnitureRooms?: WorkflowEstimateRoom[];
   furnitureScopeIssue?: string;
   projectId: string;
   projectName: string;
@@ -255,7 +257,7 @@ export function createProjectService(
       const measurementDesigners = savedStages && capabilities.designer ? (await Promise.all(hierarchy.assignedDesignerIds.map((id) => repository.findUserById(id)))).flatMap((user) => user?.active && user.role === "designer" ? [{ id: user.id, name: user.name }] : []) : undefined;
       const measurementAssigneeId = operationalState?.stages.site_measurement?.assignedDesignerId;
       const measurementAssigneeName = measurementAssigneeId ? (await repository.findUserById(measurementAssigneeId))?.name : undefined;
-      let furnitureRooms: Array<{ id: string; name: string }> | undefined;
+      let furnitureRooms: WorkflowEstimateRoom[] | undefined;
       let furnitureScopeIssue: string | undefined;
       if (savedStages && (capabilities.designer || capabilities.client)) {
         try { furnitureRooms = await repository.findDesignWorkflowRoomOptions(projectId); }
@@ -263,6 +265,15 @@ export function createProjectService(
           if (!(error instanceof RepositoryConflictError)) throw error;
           furnitureRooms = [];
           furnitureScopeIssue = "The approved estimate room source is ambiguous or unavailable. Reconcile the project approved source before confirming furniture requirements.";
+        }
+      }
+      let spacePlanning: WorkflowSpacePlanningSource | null = null;
+      let spacePlanningIssue: string | undefined;
+      if (savedStages?.some(stage => stage.type === "space_planning_tentative_look_feel")) {
+        try { spacePlanning = await repository.findDesignWorkflowSpacePlanningSource(projectId); }
+        catch (error) {
+          if (!(error instanceof RepositoryConflictError)) throw error;
+          spacePlanningIssue = "The approved Design plan source is ambiguous or unavailable. Reconcile it before completing this stage.";
         }
       }
       const notices: Array<{ id: string; stageId: string; message: string }> = [];
@@ -300,10 +311,12 @@ export function createProjectService(
           projectStages: ordered(savedStages).map((stage) => {
             const sources = linkedStages.filter(({ stage: actual }) => actual.workflowStageId === stage.id);
             const view = stageView({ ...stage, dependencyStageIds: [] }, sources.flatMap(({ stage: actual, floor }) => actual.tasks.map((task) => ({ ...task, floorName: floor.name }))));
-            const operational = projectOperationalStage(stage, operationalState!, capabilities, now, actor.id, measurementAssigneeName, { paymentStatus: initialPayment!.status, projectId: hierarchy.id, internalKickoffStageId: savedStages.find((configured) => configured.type === "internal_kickoff")?.id });
+            const operational = projectOperationalStage(stage, operationalState!, capabilities, now, actor.id, measurementAssigneeName, { spacePlanning, spacePlanningIssue, paymentStatus: initialPayment!.status, projectId: hierarchy.id, internalKickoffStageId: savedStages.find((configured) => configured.type === "internal_kickoff")?.id, measurementStageId: savedStages.find((configured) => configured.type === "site_measurement")?.id });
             const instructions = instructionsForStage(stage.type);
-            // Space-planning progress comes from floor tasks, independently of its help content.
-            const taskDerivedProgress = stage.type === "space_planning_tentative_look_feel" || !instructions;
+            // Review-backed plans require the Client's explicit acknowledgement; legacy
+            // floor-only projects keep their established task-derived progress.
+            const reviewBacked = Boolean(spacePlanning || spacePlanningIssue || operationalState!.stages.space_planning_tentative_look_feel?.spacePlanningApproval);
+            const taskDerivedProgress = stage.type === "space_planning_tentative_look_feel" ? !reviewBacked : !instructions;
             if (stage.type === "existing_furniture_dimensions" && furnitureScopeIssue) {
               operational.blockingReasons.push(furnitureScopeIssue);
               operational.availableActions = [];

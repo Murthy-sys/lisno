@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ReadStream } from "node:fs";
 import { mkdir, open as openFile, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { writePrivateStream } from "./stream-file.js";
 import { createLocalManagedStorage } from "./local-managed-storage.js";
 import type { ManagedStorageCapability } from "./managed-storage.js";
 
@@ -12,7 +13,7 @@ import type {
 } from "./storage.js";
 
 const safeReference =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:pdf|png|jpg|webp|tif|heic)$/i;
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:pdf|png|jpg|webp|tif|heic|gif|mp4|mov|webm)$/i;
 
 export function createLocalStorage(rootDirectory: string): FileStorage & ManagedStorageCapability {
   const root = path.resolve(rootDirectory);
@@ -34,6 +35,8 @@ export function createLocalStorage(rootDirectory: string): FileStorage & Managed
             !("code" in error) ||
             error.code !== "EEXIST"
           ) {
+            // A failed exclusive write can leave partial bytes; no durable owner exists yet.
+            await unlink(resolveReference(root, reference)).catch(() => {});
             throw error;
           }
         }
@@ -45,6 +48,16 @@ export function createLocalStorage(rootDirectory: string): FileStorage & Managed
     managed: createLocalManagedStorage(root),
     save,
     saveGenerated: save,
+    async importStream({ source, extension, expectedBytes, sha256, signal }) {
+      source.once("error", () => {});
+      try {
+        signal?.throwIfAborted();
+        await mkdir(root, { recursive: true });
+        const reference = `${randomUUID()}${extension}`;
+        await writePrivateStream(resolveReference(root, reference), source, { expectedBytes, sha256, signal });
+        return { reference };
+      } finally { source.destroy(); }
+    },
     async read(reference: string) {
       return readFile(resolveReference(root, reference));
     },

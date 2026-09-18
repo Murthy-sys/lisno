@@ -63,7 +63,7 @@ function readyState(): DesignWorkflowState {
         scopeEstimateId: "gate-approved-estimate",
         scopeEstimateVersion: 3,
         rooms: [
-          { id: "room-living", name: "Living room", required: true, uploadedAt: NOW, proceed: false },
+          { id: "room-living", name: "Living room", required: true, uploadedAt: NOW, proceed: false, dimensions: { submissionEventId: "living-dimensions", revision: 1, status: "approved", items: [{ id: "sofa", name: "Sofa", length: 2, width: 1, height: 1, unit: "m" }], submittedAt: NOW, reviewedAt: NOW } },
           { id: "room-bedroom", name: "Bedroom", required: true, uploadedAt: null, proceed: false }
         ]
       }
@@ -200,26 +200,39 @@ describe("Design workflow upload and submission gates", () => {
     expect((await repository.findExtractionJobByVersionId("version-aurora-plan-1"))!.status).toBe("designer_review");
   });
 
-  it("submits sections when all affected furniture rooms have data or Client permission", async () => {
+  it("submits sections when all affected furniture rooms have Client-approved dimensions", async () => {
     const state = readyState();
-    state.stages.existing_furniture_dimensions!.rooms![1]!.proceed = true;
+    state.stages.existing_furniture_dimensions!.rooms![1]!.dimensions = { ...state.stages.existing_furniture_dimensions!.rooms![0]!.dimensions!, submissionEventId: "bedroom-dimensions" };
     const { sections, actor, repository } = setup({ state });
     await expect(sections.submit(actor, "version-aurora-plan-1")).resolves.toMatchObject({ submittedCount: 1 });
     expect((await repository.listSectionRevisions("gate-section"))[0]!.reviewStatus).toBe("submitted");
     expect((await repository.findDesignWorkflowState(PROJECT_ID))!.version).toBe(2);
   });
 
-  it("allows a mapped room with uploaded data while another room remains pending", async () => {
+  it("allows a mapped room with approved dimensions while another room remains pending", async () => {
     const { repository } = setup({ state: readyState() });
     await expect(assertDesignWorkflowSubmissionAllowed(repository, PROJECT_ID, { roomIds: ["room-living"] })).resolves.toBeUndefined();
     await expect(assertDesignWorkflowSubmissionAllowed(repository, PROJECT_ID, { roomIds: ["room-bedroom"] })).rejects.toMatchObject({ code: "DESIGN_WORKFLOW_BLOCKED" });
   });
 
-  it("allows explicit Client permission to proceed without dimensions for that room", async () => {
+  it("rejects an incomplete legacy room with permission to proceed but no explicit dimensions approval", async () => {
     const state = readyState();
     state.stages.existing_furniture_dimensions!.rooms![1]!.proceed = true;
     const { repository } = setup({ state });
-    await expect(assertDesignWorkflowSubmissionAllowed(repository, PROJECT_ID, { roomIds: ["room-bedroom"] })).resolves.toBeUndefined();
+    await expect(assertDesignWorkflowSubmissionAllowed(repository, PROJECT_ID, { roomIds: ["room-bedroom"] })).rejects.toMatchObject({ code: "DESIGN_WORKFLOW_BLOCKED" });
+  });
+
+  it.each(["pending", "changes_requested"] as const)("blocks %s dimensions even when uploadedAt is set", async status => {
+    const state = readyState(); state.stages.existing_furniture_dimensions!.rooms![0]!.dimensions!.status = status;
+    const { repository } = setup({ state });
+    await expect(assertDesignWorkflowSubmissionAllowed(repository, PROJECT_ID, { roomIds: ["room-living"] })).rejects.toMatchObject({ code: "DESIGN_WORKFLOW_BLOCKED" });
+  });
+  it("preserves a valid completed legacy stage without manufacturing revision approvals", async () => {
+    const state = readyState(); const furniture = state.stages.existing_furniture_dimensions!;
+    delete furniture.rooms![0]!.dimensions; furniture.rooms![1]!.proceed = true; furniture.completedAt = NOW;
+    const { repository } = setup({ state });
+    await expect(assertDesignWorkflowSubmissionAllowed(repository, PROJECT_ID)).resolves.toBeUndefined();
+    expect((await repository.findDesignWorkflowState(PROJECT_ID))!.stages.existing_furniture_dimensions).toEqual(furniture);
   });
 
   it("rejects a different room identifier even when it has the same room name", async () => {
@@ -233,6 +246,22 @@ describe("Design workflow upload and submission gates", () => {
     else state.stages.existing_furniture_dimensions!.scopeEstimateVersion = 4;
     const { repository } = setup({ state });
     await expect(assertDesignWorkflowSubmissionAllowed(repository, PROJECT_ID, { roomIds: ["room-living"] })).rejects.toMatchObject({ code: "DESIGN_WORKFLOW_BLOCKED" });
+  });
+  it.each(["scopeEstimateId", "scopeEstimateVersion"] as const)("requires the accepted no-furniture %s to match the approved source before final submission", async field => {
+    const state = readyState();
+    state.stages.existing_furniture_dimensions = { ...state.stages.existing_furniture_dimensions, noExistingFurniture: true, completedAt: NOW, rooms: [] };
+    const { repository } = setup({ state });
+    await expect(assertDesignWorkflowSubmissionAllowed(repository, PROJECT_ID)).resolves.toBeUndefined();
+    const changedSource = { ...(await repository.findDesignWorkflowRoomContext(PROJECT_ID))! };
+    if (field === "scopeEstimateId") changedSource.estimateId = "replacement-approved-estimate";
+    else changedSource.estimateVersion = 4;
+    vi.spyOn(repository, "findDesignWorkflowRoomContext").mockResolvedValue(changedSource);
+    const before = await repository.findDesignWorkflowState(PROJECT_ID);
+    const auditBefore = await repository.listAuditEvents({});
+    await expect(assertDesignWorkflowSubmissionAllowed(repository, PROJECT_ID, { lock: true })).rejects.toMatchObject({ code: "DESIGN_WORKFLOW_BLOCKED" });
+    await expect(assertDesignWorkflowSubmissionAllowed(repository, PROJECT_ID, { phase: "upload" })).resolves.toBeUndefined();
+    expect(await repository.findDesignWorkflowState(PROJECT_ID)).toEqual(before);
+    expect(await repository.listAuditEvents({})).toEqual(auditBefore);
   });
 });
 

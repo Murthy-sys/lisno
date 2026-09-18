@@ -9,6 +9,8 @@ import {
   syncKnowledgeSectionMutation
 } from "./knowledgeMutationSync";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
+import { projectProcurementKeys } from "../procurement/projectProcurementApi";
+import { vendorSuggestionKeys } from "../procurement/vendorSuggestionsApi";
 import type {
   KnowledgeCompleteness,
   KnowledgeItemDetail,
@@ -37,6 +39,16 @@ function queryClient() {
 }
 
 describe("knowledge mutation cache synchronization", () => {
+  it("refreshes shared vendor options and suggestions across projects while preserving item drafts", async () => {
+    const client = queryClient();
+    const keys = [projectProcurementKeys.vendorSearch("timber"), vendorSuggestionKeys.page("one", 0), vendorSuggestionKeys.page("two", 20)];
+    keys.forEach((key) => client.setQueryData(key, { available: true }));
+    client.setQueryData(["item-draft"], { vendorId: "vendor-one", price: "150" });
+    await syncKnowledgeMasterMutation(client, "vendors");
+    keys.forEach((key) => expect(client.getQueryState(key)?.isInvalidated).toBe(true));
+    expect(client.getQueryData(["item-draft"])).toEqual({ vendorId: "vendor-one", price: "150" });
+    expect(client.getQueryState(["item-draft"])?.isInvalidated).toBe(false);
+  });
   it("refreshes temporary Main Line references after source edits, lifecycle changes and deletion without invalidating other drafts", async () => {
     const client = queryClient();
     const targetKey = knowledgeQueryKeys.item("temporary-1");

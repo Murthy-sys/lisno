@@ -157,6 +157,8 @@
 .workflow-progress__empty { padding-block: var(--space-4); color: var(--color-text-muted); font-size: var(--text-sm); }
 .workflow-progress__operational { display: grid; gap: var(--space-4); margin-block-end: var(--space-5); border-block-start: 1px solid var(--color-border); padding-block-start: var(--space-4); }
 .workflow-progress__operational .workflow-progress__dependency-group { margin: 0; }
+.workflow-progress__furniture-summary { display: grid; gap: var(--space-2); min-inline-size: 0; font-size: var(--text-sm); }
+.workflow-progress__furniture-summary p { margin: 0; color: var(--color-text-muted); overflow-wrap: anywhere; }
 .workflow-progress__room-group { display: grid; gap: var(--space-2); min-inline-size: 0; }
 .workflow-progress__room-group :is(h5, h6) { margin: 0; font-size: var(--text-sm); font-weight: 650; }
 .workflow-progress__rooms,
@@ -198,6 +200,9 @@
 .workflow-requirements__message p { font-size: var(--text-sm); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 @media (max-width: 640px) {
+  .workflow-progress__disclosure-toggle[data-furniture] { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .workflow-progress__disclosure-toggle[data-furniture] > .ui-status { grid-row: 2; grid-column: 1 / -1; justify-self: start; max-inline-size: 100%; white-space: normal; }
+  .workflow-progress__disclosure-toggle[data-furniture] > svg { grid-row: 1; grid-column: 2; }
   .workflow-progress__heading { gap: var(--space-3); }
   .workflow-progress__heading > div:first-child { min-inline-size: 0; }
   .workflow-progress__current-timer { flex-basis: 40%; }

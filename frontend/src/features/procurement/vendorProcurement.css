@@ -1,0 +1,65 @@
+:is(.ui-app-shell[data-role], body) .vendor-procurement { display: grid; gap: 22px; min-width: 0; }
+:is(.ui-app-shell[data-role], body) .vendor-procurement__surface { display: grid; gap: 20px; min-width: 0; padding: 22px; container-type: inline-size; }
+:is(.ui-app-shell[data-role], body) .vendor-procurement__heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+:is(.ui-app-shell[data-role], body) .vendor-procurement__heading h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -.02em; }
+:is(.ui-app-shell[data-role], body) :is(.vendor-procurement__heading, .vendor-procurement__projects) p { margin: 5px 0 0; font-size: 12px; color: var(--color-text-muted); line-height: 1.6; }
+:is(.ui-app-shell[data-role], body) .vendor-procurement__filters { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; padding: 0 0 18px; border-bottom: 1px solid var(--color-border); margin: 0; }
+:is(.ui-app-shell[data-role], body) .vendor-procurement__filters .ui-field { flex: 1 1 170px; max-width: 380px; }
+:is(.ui-app-shell[data-role], body) :is(.vendor-procurement, .vendor-suggestions-panel, .procurement-suggested-vendors) .ui-button { min-height: 36px; font-size: 12px; font-weight: 500; padding: 7px 11px; box-shadow: none; border-radius: 6px; }
+:is(.ui-app-shell[data-role], body) :is(.vendor-procurement, .vendor-suggestions-panel) .ui-control { min-width: 0; min-height: 38px; font-size: 13px; }
+:is(.ui-app-shell[data-role], body) :is(.vendor-procurement, .vendor-suggestions-panel) .ui-field__label { font-size: 12px; }
+.vendor-procurement__table-wrap { max-width: 100%; min-width: 0; overflow-x: auto; border: 1px solid var(--color-border); border-radius: 8px; }
+:is(.ui-app-shell[data-role], body) .vendor-procurement__table { width: 100%; margin: 0; border-collapse: collapse; text-align: left; font-size: 12px; }
+:is(.ui-app-shell[data-role], body) .vendor-procurement__table :is(th, td) { padding: 13px 15px; border-bottom: 1px solid var(--color-border); vertical-align: middle; overflow-wrap: anywhere; }
+:is(.ui-app-shell[data-role], body) .vendor-procurement__table thead th { background: var(--color-table-header); font-weight: 600; font-size: 11px; color: var(--color-text-muted); }
+.vendor-procurement__table tbody tr:last-child > * { border-bottom: 0; }
+.vendor-procurement__table tbody tr:hover { background: var(--color-surface-subtle); }
+.vendor-procurement__table strong { font-weight: 600; }
+.vendor-procurement__table small { display: block; margin-top: 4px; font-size: 10px; color: var(--color-text-muted); font-weight: 400; }
+.vendor-procurement__muted-chip { display: inline-block; border: 1px solid var(--color-border); border-radius: 5px; padding: 4px 8px; background: var(--color-surface-subtle); color: var(--color-text-muted); font-size: 11px; white-space: nowrap; }
+.vendor-procurement__actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.vendor-procurement__pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--color-text-muted); }
+.vendor-procurement__stack { display: grid; gap: 18px; min-width: 0; }
+.vendor-procurement__fieldset { display: grid; gap: 18px; padding: 0; margin: 0; border: 0; min-width: 0; }
+:is(.ui-app-shell[data-role], body) .vendor-procurement__stack h3 { font-size: 14px; margin: 0; font-weight: 600; }
+.vendor-procurement__muted { color: var(--color-text-muted); font-size: 12px; line-height: 1.6; margin: 0; }
+:is(.ui-app-shell[data-role], body) .vendor-procurement__projects { list-style: none; padding: 0; margin: 0; }
+.vendor-procurement__projects > li { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; padding: 18px 0; border-bottom: 1px solid var(--color-border); }
+.vendor-procurement__projects > li:first-child { padding-top: 0; }
+.vendor-procurement__projects > li:last-child { border-bottom: 0; padding-bottom: 0; }
+.vendor-procurement__projects > li > div:first-child { flex: 1 1 200px; min-width: 0; }
+:is(.ui-app-shell[data-role], body) .vendor-procurement__projects h3 { font-size: 15px; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
+.vendor-kpi-placeholder { display: flex; align-items: flex-start; gap: 12px; padding: 16px; border: 1px dashed var(--color-border); border-radius: 8px; background: var(--color-surface-subtle); font-size: 12px; line-height: 1.6; }
+.vendor-kpi-placeholder > svg { flex: 0 0 20px; width: 20px; height: 20px; color: var(--color-text-muted); margin-top: 1px; }
+.vendor-kpi-placeholder strong { font-weight: 600; }
+.vendor-kpi-placeholder p { margin: 3px 0 0; color: var(--color-text-muted); }
+.procurement-suggested-vendors { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface-subtle); font-size: 12px; }
+:is(.ui-app-shell[data-role], body) .procurement-suggested-vendors h3 { font-size: 13px; font-weight: 600; margin: 0; }
+.procurement-suggested-vendors > p { margin: 0; color: var(--color-text-muted); line-height: 1.6; }
+.procurement-suggested-vendors .vendor-kpi-placeholder { border: 0; border-top: 1px solid var(--color-border); border-radius: 0; padding: 12px 0 0; }
+:is(.ui-app-shell[data-role], body) .vendor-suggestions-list { list-style: none; padding: 0; margin: 0; }
+.vendor-suggestions-list li { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--color-border); }
+.vendor-suggestions-list li:first-child { padding-top: 0; }
+.vendor-suggestions-list li:last-child { padding-bottom: 0; border-bottom: 0; }
+.vendor-suggestions-list li > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.vendor-suggestions-list strong { font-size: 13px; font-weight: 600; }
+.vendor-suggestions-list small { display: block; font-size: 11px; color: var(--color-text-muted); line-height: 1.5; margin-top: 4px; }
+.vendor-suggestions-list p { margin: 6px 0 0; font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
+.vendor-suggestions-list .ui-button { flex-shrink: 0; }
+@container (max-width: 650px) {
+  .vendor-procurement__table, .vendor-procurement__table tbody { display: block; }
+  .vendor-procurement__table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .vendor-procurement__table tbody tr { display: grid; gap: 12px; padding: 14px; border-bottom: 1px solid var(--color-border); }
+  :is(.ui-app-shell[data-role], body) .vendor-procurement__table tbody :is(th, td) { border: 0; padding: 0; text-align: left; }
+  .vendor-procurement__table td[data-label] { display: grid; grid-template-columns: 80px minmax(0, 1fr); align-items: center; gap: 8px; }
+  .vendor-procurement__table td[data-label]::before { content: attr(data-label); font-size: 11px; color: var(--color-text-muted); }
+  .vendor-procurement__table td > * { justify-self: start; }
+}
+@media (max-width: 640px) {
+  :is(.ui-app-shell[data-role], body) .vendor-procurement__surface { padding: 16px; }
+  :is(.ui-app-shell[data-role], body) :is(.vendor-procurement, .vendor-suggestions-panel, .procurement-suggested-vendors) .ui-button { min-height: 44px; }
+  :is(.ui-app-shell[data-role], body) :is(.vendor-procurement, .vendor-suggestions-panel) .ui-control { min-height: 44px; font-size: 16px; }
+  .vendor-procurement__projects > li { gap: 12px; }
+  .vendor-procurement__projects > li > div:first-child { flex-basis: 100%; }
+  .vendor-suggestions-list li { flex-wrap: wrap; }
+}

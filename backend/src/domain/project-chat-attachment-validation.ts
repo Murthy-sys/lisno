@@ -33,7 +33,7 @@ export function sanitizeChatFilename(input: string): string {
 }
 class InspectionReader {
   calls = 0; bytes = 0;
-  constructor(readonly storage: ManagedFileStorage, readonly reference: string, readonly size: number, readonly signal?: AbortSignal) {}
+  constructor(readonly storage: Pick<ManagedFileStorage, "open" | "readRange">, readonly reference: string, readonly size: number, readonly signal?: AbortSignal) {}
   async read(offset: number, length: number): Promise<Buffer> {
     this.signal?.throwIfAborted();
     if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(length) || offset < 0 || length < 0 || length > MAX_READ || offset + length > this.size || ++this.calls > 8192 || (this.bytes += length) > 12 * MAX_READ) invalid("The file exceeds the safe container inspection limit.");
@@ -202,7 +202,7 @@ async function inspectPdf(reader: InspectionReader) {
     if (!valid) invalid("The PDF structure is invalid or contains no readable pages.");
   } finally {stream?.destroy(); activePdfParses--;}
 }
-export async function inspectChatAttachment(storage: ManagedFileStorage, reference: string, input: {id: string; filename: string; claimedMimeType: string; byteSize: number; signal?: AbortSignal}): Promise<ChatAttachment> {
+export async function inspectChatAttachment(storage: Pick<ManagedFileStorage, "open" | "readRange">, reference: string, input: {id: string; filename: string; claimedMimeType: string; byteSize: number; signal?: AbortSignal; allowedKinds?: readonly ChatAttachmentKind[]}): Promise<ChatAttachment> {
   const extension = extname(input.filename).toLowerCase();
   const policy = createProjectChatAttachmentPolicy();
   if (!policy.formats.some(format => format.extensions.includes(extension))) invalid("Supported files are images, MP4/MOV/WebM video, audio, PDF, Office documents, TXT/CSV, and ZIP.");
@@ -214,6 +214,9 @@ export async function inspectChatAttachment(storage: ManagedFileStorage, referen
       ? {mime: "application/zip"} : await fileTypeFromTokenizer(new ManagedTokenizer(reader));
     let mimeType = normalizedMime(detected?.mime ?? "");
     let kind: ChatAttachmentKind;
+    // Restricted consumers may exclude document/archive parsers before those
+    // parsers allocate their format-specific buffers or expand archive metadata.
+    if (input.allowedKinds && !mimeType.startsWith("image/") && !mimeType.startsWith("audio/") && !mimeType.startsWith("video/")) invalid();
     if ([".txt", ".csv"].includes(extension)) {
       if (detected) invalid();
       ({mimeType, kind} = await inspectText(reader, extension));
@@ -234,6 +237,7 @@ export async function inspectChatAttachment(storage: ManagedFileStorage, referen
       if (mimeType === "video/mp4" || mimeType === "audio/mp4") mimeType = `${kind}/mp4`;
       if (mimeType === "audio/opus") mimeType = "audio/ogg";
     } else invalid();
+    if (input.allowedKinds && !input.allowedKinds.includes(kind!)) invalid();
     if (!formatExtensions[mimeType]?.includes(extension)) invalid("The filename extension does not match the file contents.");
     const allowed = policy.formats.find(format => format.kind === kind! && format.extensions.includes(extension) && format.mimeTypes.includes(mimeType));
     if (!allowed) invalid();

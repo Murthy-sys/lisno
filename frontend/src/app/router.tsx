@@ -57,6 +57,7 @@ import { FinanceOverviewPage } from "../features/finance/FinanceOverviewPage";
 import { FinanceProjectPage } from "../features/finance/FinanceProjectPage";
 import { ProcurementProjectPage } from "../features/procurement/ProcurementProjectPage";
 import { ProcurementWorkspace } from "../features/procurement/ProcurementWorkspace";
+import { ProcurementManagementPage } from "../features/procurement/ProcurementManagementPage";
 import { KnowledgeBaseIndexPage } from "../features/ai-estimator-knowledge/KnowledgeBaseIndexPage";
 import { KnowledgeItemWorkspacePage } from "../features/ai-estimator-knowledge/KnowledgeItemWorkspacePage";
 import { KnowledgeReusableValuesPage } from "../features/ai-estimator-knowledge/KnowledgeReusableValuesPage";
@@ -357,6 +358,8 @@ export function AppRoutes() {
           path="/home"
           element={registeredElement("/home", <CurrentRoleLanding />)}
         />
+        <Route path="/admin/procurement" element={registeredElement("/admin/procurement", <ProcurementManagementPage />)} />
+        <Route path="/procurement" element={registeredElement("/procurement", <ProcurementWorkspace />)} />
         <Route element={<ProjectChatLayout />}>
           <Route path="/project-messages" element={registeredElement("/project-messages", <ProjectMessagesListPage />)} />
           <Route path="/projects/:projectId/messages" element={registeredElement("/projects/:projectId/messages", <ProjectMessagesPage />)} />

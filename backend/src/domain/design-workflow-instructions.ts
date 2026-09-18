@@ -95,7 +95,7 @@ const instructions: Partial<Record<DesignStageType, DesignStageInstructions>> = 
     owner: "Designer · assigned measurement taker",
     trigger: "The Client has handed over the keys and the Designer has confirmed receipt after both kick-off stages are complete.",
     start: "After both key handover and receipt are confirmed.",
-    completion: ["Assign a measurement taker from the project’s design team.", "Assigned Designer records measurement completion, uploads the as-built sketch and adds the site photos/videos folder link.", "Client-reported access issues pause the workflow; restore access before completing measurement."],
+    completion: ["Assign a measurement taker from the project’s design team.", "Assigned Designer records measurement completion and uploads site photos or videos. An as-built sketch is optional.", "Client-reported access issues pause the workflow; restore access before completing measurement."],
     sla: {
       enabled: true,
       bands: [
@@ -112,33 +112,33 @@ const instructions: Partial<Record<DesignStageType, DesignStageInstructions>> = 
     clientExperience: ["Measurement is ongoing after access is cleared and closes once completed.", "Not taking on-site actual measurements will hamper all technical drawing submissions and halt drawing preparation."],
     clientMessage: "Congratulations, we are on the right path.",
     managerReminders: ["The Line Manager continues to receive measurement SLA reports.", ...reminderRules],
-    requirements: ["The measurement taker must belong to the allocated project design team.", "Keep the as-built sketch and the photographs/videos folder together as measurement evidence."]
+    requirements: ["The measurement taker must belong to the allocated project design team.", "Upload site photos or videos as measurement evidence. Attach an as-built sketch if available."]
   },
   existing_furniture_dimensions: {
     objective: null,
     owner: "Client",
-    trigger: "On Site Actual Measurement is complete. The Designer identifies the existing furniture dimensions needed; the Client accepts the request.",
+    trigger: "On Site Actual Measurement is complete. The Designer submits room requirements, furniture dimensions and supporting evidence for Client approval.",
     start: "After On Site Actual Measurement is complete.",
-    completion: ["Designer declares furniture requirements; Client accepts the scope.", "For affected rooms, Client uploads dimensions or explicitly permits selected rooms to proceed without them.", "Rooms without the required dimensions or permission remain pending."],
+    completion: ["Designer selects required rooms and enters dimensions for their selected estimate items with a supporting document.", "Client reviews and approves the requirements and submitted dimensions together, or sends them back with a reason.", "Only Client-approved current dimensions complete a required room. Returned dimensions must be corrected and resubmitted."],
     sla: { enabled: false, bands: [], clockOwner: null, clockRule: "No SLA or time bands apply to furniture dimensions.", pauseRule: "Missing dimensions affect the relevant room layouts; they do not create an extra project SLA." },
-    dependencies: ["Furniture layouts for affected rooms need the existing furniture dimensions.", "The Client may select rooms to proceed with while dimensions for other rooms are still pending."],
-    clientExperience: ["Missing dimensions prevent preparation of the affected room’s furniture layout unless the Client explicitly accepts proceeding without them.", "The Client can select rooms that may proceed before the remaining data is uploaded."],
+    dependencies: ["Furniture layouts for affected rooms need the existing furniture dimensions.", "Final submissions may include only rooms whose required dimensions have Client approval."],
+    clientExperience: ["Review the submitted furniture requirements, measurements and document, then approve them together or send them back with a correction reason.", "Uploading dimensions does not approve them. A separate Client decision is required for each current submission."],
     clientMessage: null,
     managerReminders: [],
-    requirements: ["Identify the affected rooms explicitly so permission to proceed stays limited to the rooms the Client selected."]
+    requirements: ["Enter a positive whole number for point items, or positive length, width and height for other items, with an active configured UOM for every selected approved-estimate item in each required room."]
   },
   space_planning_tentative_look_feel: {
     objective: "Prepare space planning with tentative look and feel for Client review.",
     owner: "Assigned Designer",
     trigger: "Initial payment, both kick-off stages, both key confirmations and on-site measurement are complete, and site access is available.",
     start: "After initial payment, both kick-offs, both key confirmations and measurement are complete, with site access available.",
-    completion: ["Upload the design, finish extraction and review the required drawing mappings.", "Submit at least one active drawing with a current revision for Client review.", "Before submission, Client must accept the furniture scope; submitted rooms need required dimensions or permission to proceed without them.", "Complete the linked space-planning tasks for every floor, with submission prerequisites cleared."],
+    completion: ["Upload the design, finish extraction and review the required drawing mappings.", "Submit at least one active drawing with a current revision for Client review.", "Before submission, Client must accept the furniture scope and approve the current dimensions for required rooms in the submission.", "Complete the linked space-planning tasks for every floor, with submission prerequisites cleared."],
     sla: {
       enabled: false, bands: [], clockOwner: null,
       clockRule: "This stage has no separate SLA allowance or time bands. Saved task deadlines remain unchanged.",
       pauseRule: "Uploading and submitting designs are blocked while the Client has reported unavailable site access."
     },
-    dependencies: ["Initial payment, both kick-offs, key handover and receipt, and actual measurement must be complete.", "The Client must accept the existing-furniture scope. Rooms included in a submission need the required dimensions or the Client’s permission to proceed without them."],
+    dependencies: ["Initial payment, both kick-offs, key handover and receipt, and actual measurement must be complete.", "The Client must accept the existing-furniture scope and approve current dimensions for required rooms included in a submission."],
     clientExperience: ["The Client reviews the submitted drawings and can approve them or request changes.", "The Designer updates requested changes and resubmits the drawings for review."],
     clientMessage: null,
     managerReminders: [],

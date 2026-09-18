@@ -1,3 +1,4 @@
+import { ProjectProcurementItemModel } from "../src/models/ProjectProcurementItem.js";
 import { ChatNotificationModel } from "../src/models/ChatNotification.js";
 import { ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel } from "../src/models/ProjectChat.js";
 import { ProjectChatAttachmentModel } from "../src/models/ProjectChatAttachment.js";
@@ -423,6 +424,10 @@ describe("production server bootstrap", () => {
 
   it("initializes every application index before repository creation and listen", async () => {
     const events: string[] = [];
+    vi.spyOn(ProjectProcurementItemModel, "init").mockImplementation(async () => {
+      events.push("project-procurement-index");
+      return ProjectProcurementItemModel as never;
+    });
     const chatModels = [ChatNotificationModel, ProjectChatAttachmentModel, ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel];
     for (const model of chatModels) vi.spyOn(model, "init").mockImplementation(async () => { events.push(model.modelName + "-index"); return model as never; });
     const server = fakeServer();
@@ -552,6 +557,7 @@ describe("production server bootstrap", () => {
 
     expect(events).toEqual([
       "connect",
+      "project-procurement-index",
       ...chatModels.map((model) => model.modelName + "-index"),
       "user-index",
       "invitation-index",

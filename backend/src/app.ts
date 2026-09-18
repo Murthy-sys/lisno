@@ -1,3 +1,7 @@
+import { createProjectVendorSuggestionRouter } from "./routes/project-vendor-suggestions.js";
+import { createProjectVendorSuggestionService } from "./services/project-vendor-suggestions.service.js";
+import { createProjectProcurementRouter } from "./routes/project-procurement.js";
+import { createProjectProcurementService } from "./services/project-procurement.service.js";
 import type { ChatMentionMailer } from "./services/chat-mention-mailer.js";
 import { createNotificationService } from "./services/notifications.service.js";
 import { createNotificationEventsHub } from "./services/notification-events.service.js";
@@ -5,6 +9,7 @@ import { createNotificationStreamService } from "./services/notification-stream.
 import { createNotificationEmailDispatcher } from "./services/notification-email-dispatcher.js";
 import { createNotificationsRouter } from "./routes/notifications.js";
 import { createDesignWorkflowStateService } from "./services/design-workflow-state.service.js";
+import { createWorkflowEvidenceStorage } from "./services/workflow-evidence-storage.js";
 import { createDesignWorkflowStateRouter } from "./routes/design-workflow-state.js";
 import express, { type RequestHandler } from "express";
 import type { ProjectChatRepository } from "./repositories/project-chat.js";
@@ -309,6 +314,8 @@ export function createApp(dependencies: AppDependencies) {
     now: clock,
     storage
   });
+  const projectVendorSuggestionService = createProjectVendorSuggestionService({ audit: auditService, now: clock });
+  const projectProcurementService = createProjectProcurementService({ audit: auditService, now: clock });
   const procurementService = createProcurementService({
     storage,
     audit: auditService,
@@ -461,7 +468,7 @@ export function createApp(dependencies: AppDependencies) {
       aiEstimatorKnowledgeContextService
     )
   );
-  app.use("/api/v1", createDesignWorkflowStateRouter(authService, designWorkflowStateService, estimateClientReviewStorage, maxUploadBytes));
+  app.use("/api/v1", createDesignWorkflowStateRouter(authService, designWorkflowStateService, createWorkflowEvidenceStorage(storage), maxUploadBytes));
   app.use(
     "/api/v1",
     createProjectWorkflowRouter(
@@ -474,6 +481,11 @@ export function createApp(dependencies: AppDependencies) {
   app.use(
     "/api/v1",
     createProcurementRouter(authService, procurementService, maxUploadBytes)
+  );
+  app.use("/api/v1", createProjectVendorSuggestionRouter(authService, projectVendorSuggestionService));
+  app.use(
+    "/api/v1",
+    createProjectProcurementRouter(authService, projectProcurementService)
   );
   app.use(
     "/api/v1",

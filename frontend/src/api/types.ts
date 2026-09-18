@@ -636,6 +636,61 @@ export interface ProcurementProject {
   sections: ProcurementEstimateSection[];
 }
 
+export interface ProcurementUomOption {
+  id: string;
+  code: string;
+  name: string;
+}
+
+export interface ProcurementEstimateSource {
+  estimateId: string;
+  estimateVersion: number;
+  estimateReviewRoundId: string | null;
+  sourceSectionId: string;
+  sourceLineItemKey: string;
+}
+
+export interface ProjectProcurementItem {
+  id: string;
+  projectId: string;
+  itemName: string;
+  brand: string;
+  uom: ProcurementUomOption & {
+    status: "active" | "inactive" | "archived" | "unavailable";
+  };
+  vendor: ProcurementVendorReference | null;
+  pricePaise: number;
+  estimateSource: ProcurementEstimateSource | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectProcurementItemsPage {
+  items: ProjectProcurementItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface ProcurementVendorReference {
+  id: string;
+  code: string;
+  name: string;
+  status: "active" | "inactive" | "archived" | "unavailable";
+}
+
+export interface ProcurementVendorOption extends ProcurementVendorReference {
+  status: "active";
+}
+
+export interface ProcurementVendorPage {
+  items: ProcurementVendorOption[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface PostFinanceEntryResult {
   entry: FinanceLedgerEntry;
   bucket: ProjectFinanceBucket;

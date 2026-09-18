@@ -10,6 +10,7 @@ import {
   MessagesSquare,
   Palette,
   Settings2,
+  ShoppingCart,
   UsersRound,
   WalletCards,
   type LucideIcon
@@ -62,6 +63,8 @@ export const ROUTE_REGISTRY = [
   { path: "/admin/projects/:projectId", permission: "projects.read", presentationRoles: ["admin", "super_admin"], navigation: null },
   { path: "/admin/users", permission: "identity.users.read", presentationRoles: ["super_admin"], navigation: { roles: ["super_admin"], item: { label: "Users", to: "/admin/users", end: true, icon: UsersRound } } },
   { path: "/admin/configuration/estimation", permission: "ai_estimator_knowledge.configuration.read", presentationRoles: ["super_admin"], navigation: { roles: ["super_admin"], item: { label: "Configuration", to: "/admin/configuration/estimation", end: false, icon: Settings2 } } },
+  { path: "/admin/procurement", permission: "procurement.vendor_suggestions.read", presentationRoles: ["admin", "super_admin"], navigation: { roles: ["admin", "super_admin"], item: { label: "Procurement", to: "/admin/procurement", end: true, icon: ShoppingCart } } },
+  { path: "/procurement", permission: "procurement.workspace.read", presentationRoles: ["procurement"], navigation: { roles: ["procurement"], item: { label: "Procurement", to: "/procurement", end: false, icon: ShoppingCart } } },
   { path: "/admin/configuration/estimation/items/:itemId", permission: "ai_estimator_knowledge.configuration.read", presentationRoles: ["super_admin"], navigation: null },
   { path: "/admin/configuration/estimation/reusable-values", permission: "ai_estimator_knowledge.configuration.read", presentationRoles: ["super_admin"], navigation: null },
   { path: "/admin/client-responses", permission: "estimation.client_response_tasks.read", presentationRoles: ["admin", "super_admin"], navigation: { roles: ["admin", "super_admin"], item: { label: "Client responses", to: "/admin/client-responses", end: true, icon: MailCheck } } },

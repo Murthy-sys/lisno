@@ -32,9 +32,9 @@ export function ProcurementWorkspace() {
     >
       <div className="section-heading procurement-workspace__heading">
         <div>
-          <p className="eyebrow">Approved Estimate purchasing</p>
-          <h2 id="procurement-workspace-title">Procurement purchases</h2>
-          <p>Record actual costs and receipts against each approved Estimate item.</p>
+          <p className="eyebrow">Project procurement</p>
+          <h2 id="procurement-workspace-title">Procurement</h2>
+          <p>Open a project to view estimate budgets and manage procurement items.</p>
         </div>
         {query.data && !integrityError ? (
           <span>{projects?.length ?? 0} {projects?.length === 1 ? "project" : "projects"}</span>
@@ -47,7 +47,7 @@ export function ProcurementWorkspace() {
           message="You do not have permission to view the procurement workspace."
         />
       ) : query.isPending ? (
-        <PageState state="loading" message="Loading approved Estimate items…" />
+        <PageState state="loading" message="Loading procurement projects…" />
       ) : query.isError ? (
         <PageState
           state="error"

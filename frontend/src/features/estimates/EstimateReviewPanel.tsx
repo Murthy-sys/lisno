@@ -38,6 +38,8 @@ import { clientKeys } from "../client/clientApi";
 import type { EstimatePlanPage } from "../../api/types";
 import { ClientFullPlanNav } from "./ClientFullPlanNav";
 import { ClientPlanPageReview } from "./ClientPlanPageReview";
+import { EstimateSpacePlanningCompletion } from "../workflow/SpacePlanningCompletion";
+import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 
 const money = (value: number) => `₹${value.toLocaleString("en-IN")}`;
 const catalogue = new Map<string, { description: string; sectionId: string; sectionLabel: string; icon: string }>();
@@ -241,6 +243,7 @@ function EstimateReviewCard({
               canReview={canReviewDesign(role, estimate)}
               planWorkspace={planWorkspace.data}
             />
+            {estimate.status === "client_approved" && estimate.projectId ? <EstimateSpacePlanningCompletion projectId={estimate.projectId} estimateId={estimate.id} /> : null}
             {!actionable ? <p className="estimate-notice">{estimate.status === "client_approved" ? <><strong>Estimate approved</strong>. Review the design plan here when your Designer submits it.</> : "Changes requested"}</p> : null}
             {reviewControls}
           </div>
@@ -284,7 +287,9 @@ function EstimateReviewCard({
               await Promise.all([
                 queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimate.id) }),
                 queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimate.id) }),
-                queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client })
+                queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client }),
+                queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
+                queryClient.invalidateQueries({ queryKey: clientKeys.projects })
               ]);
             }}
             updateRequest={async ({ requestId, version, summary, annotations }) => {
@@ -292,7 +297,9 @@ function EstimateReviewCard({
               await Promise.all([
                 queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimate.id) }),
                 queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimate.id) }),
-                queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client })
+                queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client }),
+                queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
+                queryClient.invalidateQueries({ queryKey: clientKeys.projects })
               ]);
             }}
           />

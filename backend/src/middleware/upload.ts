@@ -81,15 +81,10 @@ export function uploadSingleFile(
   const claimedTypeMessage =
     normalized.allowedTypeMessage ??
     "Choose a PDF, PNG, JPEG, WebP, TIFF, or HEIC file.";
-  const detectedTypeMessage =
-    normalized.allowedTypeMessage ??
-    "Choose a valid PDF, PNG, JPEG, WebP, TIFF, or HEIC file.";
   const malformedRequestMessage =
     normalized.allowedTypeMessage ?? `Provide one file in the ${fieldName} field.`;
   const missingFileMessage =
     normalized.allowedTypeMessage ?? "A file is required.";
-  const permittedDetectedMimeTypes =
-    normalized.allowedDetectedMimeTypes ?? allowedDetectedMimeTypes;
   const parse = multer({
     storage: multer.memoryStorage(),
     limits: {
@@ -158,53 +153,61 @@ export function uploadSingleFile(
         return;
       }
 
-      const detected = detectFileType(request.file.buffer);
-      const claimed = request.file.mimetype.toLowerCase();
-      // This is advisory only: all generic claims must still match magic bytes.
-      const claimIsGeneric =
-        claimed === "application/octet-stream" ||
-        claimed === "text/plain" ||
-        claimed === "";
-      const contentIsValid =
-        detected?.mimeType !== "application/pdf" ||
-        (await isValidPdfDocument(request.file.buffer));
-      const detectedMimeTypeIsAllowed =
-        detected !== null && permittedDetectedMimeTypes.has(detected.mimeType);
-      const safeFilename = detected
-        ? safeOriginalFilename(request.file.originalname, detected.extension)
-        : null;
-      const filenameMatchesType =
-        !normalized.allowedDetectedMimeTypes ||
-        (detected !== null &&
-          safeFilename !== null &&
-          filenameExtensionMatchesDetected(safeFilename, detected.extension));
-      if (
-        !detected ||
-        !contentIsValid ||
-        !detectedMimeTypeIsAllowed ||
-        !filenameMatchesType ||
-        (!claimIsGeneric && !claimMatchesDetected(claimed, detected.mimeType))
-      ) {
-        next(
-          new ApiError(
-            415,
-            "UNSUPPORTED_FILE_TYPE",
-            "The file contents do not match an allowed file type.",
-            { [fieldErrorKey]: detectedTypeMessage }
-          )
-        );
-        return;
-      }
-
-      request.validatedUpload = {
-        data: request.file.buffer,
-        extension: detected.extension,
-        originalFilename: safeFilename!,
-        mimeType: detected.mimeType,
-        sizeBytes: request.file.size
-      };
+      try { request.validatedUpload = await validateUploadedFile(request.file, normalized); }
+      catch (validationError) { next(validationError); return; }
       next();
     });
+  };
+}
+
+export async function validateUploadedFile(
+  file: { buffer: Buffer; originalname: string; mimetype: string; size: number },
+  options: UploadSingleFileOptions = {}
+): Promise<ValidatedUpload> {
+  const fieldErrorKey = options.fieldErrorKey ?? options.fieldName ?? "file";
+  const detectedTypeMessage = options.allowedTypeMessage ?? "Choose a valid PDF, PNG, JPEG, WebP, TIFF, or HEIC file.";
+  const permittedDetectedMimeTypes = options.allowedDetectedMimeTypes ?? allowedDetectedMimeTypes;
+  const detected = detectFileType(file.buffer);
+  const claimed = file.mimetype.toLowerCase();
+  // This is advisory only: all generic claims must still match magic bytes.
+  const claimIsGeneric =
+    claimed === "application/octet-stream" ||
+    claimed === "text/plain" ||
+    claimed === "";
+  const contentIsValid =
+    detected?.mimeType !== "application/pdf" ||
+    (await isValidPdfDocument(file.buffer));
+  const detectedMimeTypeIsAllowed =
+    detected !== null && permittedDetectedMimeTypes.has(detected.mimeType);
+  const safeFilename = detected
+    ? safeOriginalFilename(file.originalname, detected.extension)
+    : null;
+  const filenameMatchesType =
+    !options.allowedDetectedMimeTypes ||
+    (detected !== null &&
+      safeFilename !== null &&
+      filenameExtensionMatchesDetected(safeFilename, detected.extension));
+  if (
+    !detected ||
+    !contentIsValid ||
+    !detectedMimeTypeIsAllowed ||
+    !filenameMatchesType ||
+    (!claimIsGeneric && !claimMatchesDetected(claimed, detected.mimeType))
+  ) {
+    throw new ApiError(
+      415,
+      "UNSUPPORTED_FILE_TYPE",
+      "The file contents do not match an allowed file type.",
+      { [fieldErrorKey]: detectedTypeMessage }
+    );
+  }
+
+  return {
+    data: file.buffer,
+    extension: detected.extension,
+    originalFilename: safeFilename!,
+    mimeType: detected.mimeType,
+    sizeBytes: file.size
   };
 }
 

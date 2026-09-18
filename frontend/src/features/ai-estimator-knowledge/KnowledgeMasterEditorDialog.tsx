@@ -18,6 +18,7 @@ interface KnowledgeMasterEditorDialogProps {
   readonly masterType: KnowledgeMasterType;
   readonly existing?: KnowledgeMaster;
   readonly quickAdd?: boolean;
+  readonly usage?: "configuration" | "procurement";
   readonly onClose: () => void;
   readonly onSaved?: (master: KnowledgeMaster) => void;
 }
@@ -35,6 +36,7 @@ export function KnowledgeMasterEditorDialog({
   masterType,
   existing,
   quickAdd = false,
+  usage = "configuration",
   onClose,
   onSaved
 }: KnowledgeMasterEditorDialogProps) {
@@ -132,9 +134,9 @@ export function KnowledgeMasterEditorDialog({
   return (
     <ContextPanel
       title={`${existing ? "Edit" : quickAdd ? "Quick add" : "Add"} ${itemLabel}`}
-      eyebrow="Estimation configuration"
+      eyebrow={usage === "procurement" ? "Vendor directory" : "Estimation configuration"}
       description={
-        quickAdd
+        usage === "procurement" ? "Saved vendors are shared across projects. Inactive vendors cannot be selected for new procurement items." : quickAdd
           ? "The value will become available in this item workspace after it is saved."
           : "Reusable values are shared by the additive AI estimator knowledge base."
       }

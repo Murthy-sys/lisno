@@ -1,3 +1,6 @@
+import type { WorkflowDesignPlanData, WorkflowSpacePlanningSource } from "../domain/workflow-space-planning.js";
+import type { FurnitureUomOption, FurnitureUomRecord, NewFurnitureUom } from "../domain/workflow-uoms.js";
+import type { WorkflowEstimateApproval, WorkflowEstimateLine, WorkflowEstimateRoom, WorkflowEstimateRoomContext } from "../domain/workflow-estimate-items.js";
 import type { DesignWorkflowState } from "../domain/design-workflow-state.js";
 import type { DesignStageType, ProjectDesignWorkflowStage } from "../domain/design-workflow.js";
 export type { DesignStageType } from "../domain/design-workflow.js";
@@ -350,6 +353,7 @@ export interface EstimatorOption {
 }
 
 export interface EstimateSummaryRecord {
+  lineItems?: WorkflowEstimateLine[];
   rooms?: Array<{id: string; label: string}>;
   id: string;
   leadId: string;
@@ -877,6 +881,9 @@ export interface SeedData {
   leads: LeadRecord[];
   estimateResponsibilities: EstimateResponsibilityRecord[];
   estimateSummaries?: EstimateSummaryRecord[];
+  estimateReviewRounds?: WorkflowEstimateApproval[];
+  designPlanReviewSources?: WorkflowDesignPlanData[];
+  knowledgeUoms?: FurnitureUomRecord[];
   leadActivities: LeadActivityRecord[];
   projects: ProjectRecord[];
   floors: FloorRecord[];
@@ -919,11 +926,16 @@ export type NewDesignStage = DesignStageRecord;
 export type NewTask = TaskRecord;
 
 export interface AppRepository {
+  findDesignWorkflowSpacePlanningSource(projectId: string, lock?: boolean): Promise<WorkflowSpacePlanningSource | null>;
+  listActiveWorkflowUoms(): Promise<FurnitureUomOption[]>;
+  findWorkflowUomsByIdentity(codeNormalized: string, nameNormalized: string): Promise<Array<FurnitureUomOption & { status: "active" | "inactive" }>>;
+  createWorkflowUom(input: NewFurnitureUom): Promise<FurnitureUomOption>;
+  referenceWorkflowUoms(ids: string[]): Promise<FurnitureUomOption[]>;
   findDesignWorkflowState(projectId: string): Promise<DesignWorkflowState | null>;
   saveDesignWorkflowState(projectId: string, expectedVersion: number, state: DesignWorkflowState): Promise<DesignWorkflowState>;
   listDesignWorkflowPaymentProjects(): Promise<ProjectRecord[]>;
-  findDesignWorkflowRoomContext(projectId: string): Promise<{estimateId: string; estimateVersion: number; rooms: Array<{id: string; name: string}>} | null>;
-  findDesignWorkflowRoomOptions(projectId: string): Promise<Array<{id: string; name: string}>>;
+  findDesignWorkflowRoomContext(projectId: string, includeEstimateItems?: boolean): Promise<WorkflowEstimateRoomContext | null>;
+  findDesignWorkflowRoomOptions(projectId: string): Promise<WorkflowEstimateRoom[]>;
   runInTransaction<T>(
     operation: (repository: AppRepository) => Promise<T>
   ): Promise<T>;

@@ -1,3 +1,7 @@
+import { workflowSpacePlanningSource } from "../domain/workflow-space-planning.js";
+import { furnitureUomOption } from "../domain/workflow-uoms.js";
+import { normalizeKnowledgeIdentity } from "../domain/ai-estimator-knowledge.js";
+import { workflowApprovedLines, workflowEstimateRooms, WorkflowEstimateSourceError } from "../domain/workflow-estimate-items.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { timingSafeEqual } from "node:crypto";
 
@@ -98,6 +102,8 @@ interface MemorySnapshot {
 const snapshotReaders = new WeakMap<AppRepository, () => MemorySnapshot>();
 const mutationMethods = new Set<keyof AppRepository>([
   "saveDesignWorkflowState",
+  "createWorkflowUom",
+  "referenceWorkflowUoms",
   "coordinateClientEmail",
   "createUserInvitation",
   "supersedeUserInvitation",
@@ -253,14 +259,57 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
   };
 
   const implementation: AppRepository = {
-    async findDesignWorkflowRoomContext(projectId) {
+    async findDesignWorkflowSpacePlanningSource(projectId) {
+      const context = await implementation.findDesignWorkflowRoomContext(projectId);
+      const sources = (state.designPlanReviewSources ?? []).filter(row => context ? row.estimateId === context.estimateId : row.projectId === projectId);
+      if (sources.length > 1 || sources.some(row => row.projectId !== projectId || row.estimateId !== context?.estimateId)) throw new RepositoryConflictError("The Design plan source is ambiguous or unavailable.");
+      if (sources[0]) return workflowSpacePlanningSource(clone(sources[0]));
+      if (!context && state.estimateSummaries?.some(row => row.projectId === projectId && (row.designPlanStatus || row.designPlanVersion))) throw new RepositoryConflictError("The Design plan approved estimate is unavailable.");
+      const estimate = state.estimateSummaries?.find(row => row.id === context?.estimateId);
+      return estimate ? workflowSpacePlanningSource({ estimateId: estimate.id, projectId, designPlanStatus: estimate.designPlanStatus ?? null, designPlanVersion: estimate.designPlanVersion ?? 0, approvedAt: null, approvedById: null, approvalSource: null, frozenAt: null, rounds: [], drawings: [], openFeedback: 0 }) : null;
+    },
+    async listActiveWorkflowUoms() {
+      return (state.knowledgeUoms ?? []).filter(row => row.status === "active").sort((a, b) => a.displayOrder - b.displayOrder || a.id.localeCompare(b.id)).map(furnitureUomOption);
+    },
+    async findWorkflowUomsByIdentity(codeNormalized, nameNormalized) {
+      return (state.knowledgeUoms ?? []).flatMap(row => row.status !== "archived" && (normalizeKnowledgeIdentity(row.code) === codeNormalized || normalizeKnowledgeIdentity(row.name) === nameNormalized) ? [{ ...furnitureUomOption(row), status: row.status }] : []);
+    },
+    async createWorkflowUom(input) {
+      state.knowledgeUoms ??= [];
+      if (state.knowledgeUoms.some(row => row.id === input.id || row.status !== "archived" && (normalizeKnowledgeIdentity(row.code) === normalizeKnowledgeIdentity(input.code) || normalizeKnowledgeIdentity(row.name) === normalizeKnowledgeIdentity(input.name)))) throw new RepositoryConflictError("A non-archived UOM already uses this code or name.");
+      const displayOrder = Math.max(-1, ...state.knowledgeUoms.map(row => row.displayOrder)) + 1;
+      if (!Number.isSafeInteger(displayOrder)) throw new RepositoryConflictError("The UOM display order is exhausted.");
+      const row = { id: input.id, code: input.code, name: input.name, decimalScale: input.decimalScale, displayOrder, dependencyEpoch: 0, status: "active" as const, version: 1, createdById: input.actorId, updatedById: input.actorId, createdAt: input.at, updatedAt: input.at };
+      state.knowledgeUoms.push(row);
+      return furnitureUomOption(row);
+    },
+    async referenceWorkflowUoms(ids) {
+      return [...new Set(ids)].sort().flatMap(id => {
+        const row = state.knowledgeUoms?.find(row => row.id === id && row.status === "active");
+        if (!row) return [];
+        if (!Number.isSafeInteger(row.dependencyEpoch) || row.dependencyEpoch >= Number.MAX_SAFE_INTEGER) throw new RepositoryConflictError("The UOM dependency epoch is invalid.");
+        row.dependencyEpoch += 1;
+        return [furnitureUomOption(row)];
+      });
+    },
+    async findDesignWorkflowRoomContext(projectId, includeEstimateItems = false) {
       const estimates = (state.estimateSummaries ?? []).filter((row) => row.projectId === projectId && row.status === "client_approved");
       if (estimates.length > 1) throw new RepositoryConflictError("The project's approved estimate source is ambiguous.");
       const estimate = estimates[0];
-      return estimate ? { estimateId: estimate.id, estimateVersion: estimate.approvedBaseline?.estimateVersion ?? Math.max(1, estimate.version - 1), rooms: (estimate.rooms ?? []).map((room) => ({ id: room.id, name: room.label })) } : null;
+      if (!estimate) return null;
+      const estimateVersion = estimate.approvedBaseline?.estimateVersion ?? Math.max(1, estimate.version - 1);
+      if (!Number.isSafeInteger(estimate.version) || estimate.version < 1 || estimateVersion !== Math.max(1, estimate.version - 1)) throw new RepositoryConflictError("The approved estimate version does not match its finance source.");
+      if (!includeEstimateItems) return { estimateId: estimate.id, estimateVersion, rooms: (estimate.rooms ?? []).map((room) => ({ id: room.id, name: room.label, estimateItems: [] })) };
+      try {
+        const lines = workflowApprovedLines({ projectId, estimateId: estimate.id, estimateVersion, reviewRoundId: estimate.approvedBaseline?.reviewRoundId, rounds: (state.estimateReviewRounds ?? []).filter((round) => round.estimateId === estimate.id), legacyLines: estimate.lineItems ?? [] });
+        return { estimateId: estimate.id, estimateVersion, rooms: workflowEstimateRooms(estimate.id, estimateVersion, estimate.rooms ?? [], lines) };
+      } catch (error) {
+        if (error instanceof WorkflowEstimateSourceError) throw new RepositoryConflictError(error.message);
+        throw error;
+      }
     },
     async findDesignWorkflowRoomOptions(projectId) {
-      return (await implementation.findDesignWorkflowRoomContext(projectId))?.rooms ?? [];
+      return (await implementation.findDesignWorkflowRoomContext(projectId, true))?.rooms ?? [];
     },
     async findDesignWorkflowState(projectId) {
       return clone(state.designWorkflowStates?.find((row) => row.projectId === projectId) ?? null);

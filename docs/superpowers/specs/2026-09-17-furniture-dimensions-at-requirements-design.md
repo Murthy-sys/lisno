@@ -1,0 +1,26 @@
+# Enter furniture dimensions before Client review
+
+## Goal, evidence and authority
+User's screenshot shows the returned `furniture_scope` action (Edit furniture requirements) contains only room checkboxes and Note. Current frontend renders FurnitureDimensionsEditor only for furniture_upload. Backend permits that action only after acceptedAt, so the Client is asked to accept room scope without seeing measurements. This contradicts the requested enter-dimensions-then-submit journey. Standing autonomous Mode A applies; local edits/tests only.
+
+## Chosen workflow
+Use the existing scope screen to submit room requirements, selected estimate item dimensions and proof together, followed by one explicit Client approve/send-back decision for the combined submission. Keeping a separate preliminary approval would retain the reported confusion. Reuse existing actions, editor, immutable history, active Configuration UOM lookup and storage protections; no new route, dependency, migration or production change.
+
+- `furniture_scope` accepts existing rooms/notApplicable plus optional `dimensions: [{roomId,items:[{estimateItemId,length,width,height,uomId}]}]`. New UI sends this for every required room, requires positive finite dimensions for every selected approved-estimate item and supporting proof. No-furniture declaration omits dimensions and does not require dimension proof.
+- Source names/items and unit snapshots remain canonical server data. Validate active UOMs and increment reference epochs in the same transaction. Adding a UOM must also be available to a Designer currently eligible to declare/edit scope; other roles retain existing upload-scoped authority.
+- Add `requirementsSubmissionEventId` to stage state and safe furniture projection for combined submissions. Store pending per-room revisions tied to the same scope history event, including canonical dimensions and protected proof. Submission does not accept or approve anything.
+- Combined `furniture_accept`/`furniture_scope_return` require `{submissionEventId}` matching the current requirements pointer and validate the full room/item/proof snapshot. Acceptance explicitly approves both scope and all submitted dimensions atomically, then completes the stage. Send-back requires a reason, marks submitted dimensions for correction and preserves values/history for editing.
+- Validate bundle state as legacy / combined / invalid. A pointer, present dimensions field or pre-acceptance dimensions cannot be silently downgraded to legacy when evidence is malformed/missing. Reject replacing a combined required-room submission with a scope-only payload. Explicitly changing to no required furniture creates a fresh scope decision while preserving old history.
+- Pending Designer edits create a new submission token and monotonically increasing revisions; a Client decision opened against the previous submission must fail as stale. Combined Client actions are labeled “Approve requirements and dimensions” and “Send back requirements and dimensions”; legacy labels remain unchanged.
+- Legacy scope-only and already accepted upload/review flows remain supported. Completed approvals remain immutable. Preserve actual actor, representative proof, scope/version/CAS, idempotency/replay, source gates, rollback and uploaded-file cleanup.
+- Current evidence appears once in Client review. Render stored dimensions and proof before the decision; detect same-version replacement tokens as stale. Returned draft values are retained only by stable estimate-item IDs; archived UOMs require replacement before a new submission.
+
+## UI and acceptance
+1. In the screenshot's returned Edit furniture requirements panel, checked rooms immediately show their estimate-selected item dimension fields and configured UOM selectors, before any Client acceptance.
+2. Newly selected rooms show the same editor; toggling rooms or no-furniture preserves local drafts. Untouched forms dismiss without a false discard warning; editing, nested UOM save, failure/retry and stale source states are protected.
+3. Required item/room coverage, positive dimensions, active units and proof are enforced server-side and in UI. Scope-only legacy compatibility cannot bypass an existing combined submission's validation.
+4. Client sees submitted dimensions/document, explicitly approves both once or returns them with feedback. Pending/returned work does not unlock the next stage. Corrected submission preserves revision history and requires fresh exact-token approval.
+5. Small fonts, controls and responsive layout remain consistent. One shared UOM query serves visible entry fields; no polling or room-level fan-out.
+
+## Verification and risks
+Focused returned-scope/new-scope/no-furniture/legacy UI regressions, actual responsive rendered interaction and axe checks; backend memory and Mongo replica tests for combined submit/accept/return, wrong/missing tokens, evidence tampering, role/project denial, inactive UOMs, concurrency, replay and rollback. Typechecks/builds, independent integrity review and final verification. Main risk is accidentally granting approval through a Designer submission or treating corrupted combined evidence as legacy; exact pointer/snapshot validation must fail closed. Frontend/backend deploy together if separately authorized.

@@ -26,6 +26,86 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents scoped vendor suggestions, request replay and honest KPI placeholders", () => {
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const route = paths["/procurement/projects/{projectId}/vendor-suggestions"]!;
+    expect(route.post!.responses).toHaveProperty("200");
+    expect(route.post!.responses).toHaveProperty("201");
+    expect(route.get!.parameters).toEqual(expect.arrayContaining([expect.objectContaining({ name: "limit" }), expect.objectContaining({ name: "offset" })]));
+    const schemas = componentSchemas();
+    expect(schemas.VendorSuggestionCreate!.required).toEqual(["estimateId", "estimateVersion", "designPlanVersion", "vendorId", "idempotencyKey"]);
+    expect(schemas.VendorSuggestionUpdate!.required).toEqual(["expectedVersion", "note", "status"]);
+    expect(schemas.ProjectVendorSuggestion).toHaveProperty("properties.kpi.properties.score", { type: "number", nullable: true, enum: [null] });
+    expect(schemas.VendorSuggestionPage).toHaveProperty("properties.performance.properties.recommendations.maxItems", 0);
+  });
+  it("documents scoped reusable UOM creation and immutable furniture unit snapshots", () => {
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const route = paths["/projects/{projectId}/design-workflow/furniture-uoms"]!;
+    expect(route.get!.security).toEqual([{ bearerAuth: [] }]);
+    expect(route.post!.requestBody).toHaveProperty("content.application/json.schema.$ref", "#/components/schemas/FurnitureUomCreate");
+    expect(route.post!.responses).toHaveProperty("200");
+    expect(route.post!.responses).toHaveProperty("201");
+    const schemas = componentSchemas();
+    expect(schemas.FurnitureUomCreate).toMatchObject({ additionalProperties: false, required: ["code", "name"], properties: { decimalScale: { type: "integer", minimum: 0, maximum: 3, default: 3 } } });
+    expect(schemas.FurnitureUomOption!.required).toEqual(["id", "code", "name", "decimalScale"]);
+    expect(schemas.FurniturePhysicalDimensionItem!.properties).toMatchObject({ uomId: { type: "string" }, uomName: { type: "string" }, unit: { type: "string" } });
+    expect((schemas.FurniturePhysicalDimensionItem!.properties as Record<string, OpenApiObject>).unit).not.toHaveProperty("enum");
+    expect(schemas.FurniturePhysicalDimensionItem!.required).not.toContain("uomId");
+    expect((schemas.DesignWorkflowActionRequest!.properties as Record<string, OpenApiObject>).data!.description).toContain("uomId");
+  });
+  it("documents actual point counts separately from dimensional measurements", () => {
+    const schemas = componentSchemas();
+    expect(schemas.FurnitureDimensionItem!.oneOf).toEqual([{ $ref: "#/components/schemas/FurniturePhysicalDimensionItem" }, { $ref: "#/components/schemas/FurnitureCountItem" }]);
+    expect(schemas.FurnitureCountItem).toMatchObject({ additionalProperties: false, required: ["id", "name", "measurementType", "quantity", "unit"], properties: { measurementType: { enum: ["count"] }, quantity: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER } } });
+    expect(schemas.FurnitureCountItem!.properties).not.toHaveProperty("length");
+    expect(schemas.DesignWorkflow).toHaveProperty("properties.furnitureRooms.items.properties.estimateItems.items.properties.measurementType.enum", ["count", "dimensions"]);
+    expect(schemas.DesignWorkflow).toHaveProperty("properties.furnitureRooms.items.properties.estimateItems.items.properties.quantity", {
+      type: "number", minimum: 0, description: "Approved estimate reference quantity. Selected items remain available for measurements when this quantity is zero."
+    });
+  });
+  it("documents combined furniture requirements, exact review tokens and pre-acceptance Designer UOM creation", () => {
+    const schemas = componentSchemas();
+    expect(schemas.DesignWorkflowStage).toHaveProperty("properties.operational.properties.furniture.properties.requirementsSubmissionEventId.type", "string");
+    const description = (schemas.DesignWorkflowActionRequest!.properties as Record<string, OpenApiObject>).data!.description;
+    expect(description).toContain("Combined furniture_accept and furniture_scope_return require {submissionEventId}");
+    expect(description).toContain("dimensions: [{roomId, items:");
+    expect(schemas.FurnitureUomCreate!.description).toContain("eligible Designer furniture scope declaration/edit");
+  });
+  it("documents direct measurement media and authenticated individual downloads with an optional sketch", () => {
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    expect(paths["/projects/{projectId}/design-workflow/actions"]!.post!.requestBody).toHaveProperty("content.multipart/form-data.schema.$ref", "#/components/schemas/DesignWorkflowActionRequest");
+    expect(componentSchemas().DesignWorkflowActionRequest!.properties).toMatchObject({
+      mediaFiles: { type: "array", items: { type: "string", format: "binary" } },
+      file: { description: expect.stringContaining("measurement sketch is optional") }
+    });
+    expect(componentSchemas().DesignWorkflowActionRequest!.required).not.toContain("file");
+    expect((componentSchemas().DesignWorkflowActionRequest!.properties as Record<string, OpenApiObject>).mediaFiles).not.toHaveProperty("maxItems");
+    expect(paths["/projects/{projectId}/design-workflow/history/{eventId}/media/{mediaId}"]!.get).toMatchObject({
+      security: [{ bearerAuth: [] }], parameters: expect.arrayContaining([expect.objectContaining({ name: "mediaId", in: "path", required: true })])
+    });
+  });
+
+  it("documents project items, saved vendors, unit prices, bounded search and CAS updates", () => {
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    expect(paths["/procurement/projects/{projectId}/items"]!.get!.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "q", schema: { type: "string", maxLength: 100 } }),
+      expect.objectContaining({ name: "limit", schema: { type: "integer", minimum: 1, maximum: 100, default: 20 } }),
+      expect.objectContaining({ name: "offset" }),
+      ...["estimateId", "estimateVersion", "sourceLineItemKey", "unassigned"].map((name) => expect.objectContaining({ name }))
+    ]));
+    expect(paths["/procurement/projects/{projectId}/items"]!.post!.requestBody).toHaveProperty("content.application/json.schema.$ref", "#/components/schemas/ProjectProcurementCreate");
+    expect(paths["/procurement/projects/{projectId}/items/{itemId}"]!.patch!.requestBody).toHaveProperty("content.application/json.schema.$ref", "#/components/schemas/ProjectProcurementUpdate");
+    expect(componentSchemas().ProjectProcurementCreate).toMatchObject({ additionalProperties: false, required: ["itemName", "brand", "uomId", "pricePaise", "estimateId", "estimateVersion", "sourceLineItemKey"] });
+    expect(componentSchemas().ProjectProcurementUpdate!.required).toContain("expectedVersion");
+    expect(componentSchemas().ProjectProcurementItem!.required).toEqual(expect.arrayContaining(["projectId", "uom", "vendor", "estimateSource"]));
+    expect(componentSchemas().ProjectProcurementCreate!.properties).toHaveProperty("vendorId", expect.objectContaining({ nullable: true, default: null }));
+    expect(paths["/procurement/vendors"]!.post!.requestBody).toHaveProperty("content.application/json.schema.$ref", "#/components/schemas/ProcurementVendorCreate");
+    expect(paths["/procurement/vendors"]!.get!.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "q" }), expect.objectContaining({ name: "limit" }), expect.objectContaining({ name: "offset" })
+    ]));
+    expect(componentSchemas().ProjectProcurementItem!.properties).not.toHaveProperty("createdById");
+    expect(componentSchemas().ProjectProcurementItem!.properties).toHaveProperty("pricePaise", expect.objectContaining({ type: "integer", minimum: 1, maximum: 9_000_000_000_000 }));
+  });
   it("documents bounded typing updates separately from durable message events", () => {
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
     expect(paths["/projects/{projectId}/chat/typing"]!.put!.requestBody).toHaveProperty("content.application/json.schema.$ref", "#/components/schemas/ChatTypingRequest");
@@ -293,7 +373,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 220 routes without versioning paths twice", () => {
+  it("contains all 234 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -302,7 +382,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 13);
-    expect(operationCount).toBe(220);
+    expect(operationCount).toBe(234);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);

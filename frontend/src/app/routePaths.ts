@@ -83,6 +83,10 @@ export function safeReturnPath(
       role === "super_admin" &&
       (parsed.pathname === "/admin/configuration/estimation" ||
         parsed.pathname.startsWith("/admin/configuration/estimation/"));
+    const canReturnToProcurement =
+      ((role === "admin" || role === "super_admin") && parsed.pathname === "/admin/procurement") ||
+      (role === "procurement" && (parsed.pathname === "/procurement" ||
+        /^\/procurement\/projects\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(parsed.pathname)));
     if (
       parsed.origin !== returnPathOrigin ||
       hasEncodedTraversal(parsed.pathname) ||
@@ -94,7 +98,8 @@ export function safeReturnPath(
         !canReturnToSuperAdminUsers &&
         !canReturnToSuperAdminAccessRequests &&
         !canReturnToSuperAdminFinance &&
-        !canReturnToKnowledgeConfiguration)
+        !canReturnToKnowledgeConfiguration &&
+        !canReturnToProcurement)
     ) {
       return home;
     }

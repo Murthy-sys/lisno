@@ -202,6 +202,7 @@ describe("authorization policy", () => {
       const historicalPermissions = ROLE_PERMISSIONS[role].filter(
         (permission) =>
           !permission.startsWith("chat.") &&
+          !permission.startsWith("procurement.items.") && !permission.startsWith("procurement.vendors.") && !permission.startsWith("procurement.vendor_suggestions.") &&
           permission !== "projects.design_workflow.read" &&
           permission !== "estimation.design_upload.delete" &&
           permission !== "projects.design_workflow.act" &&
@@ -230,8 +231,8 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(128);
-    expect(new Set(PERMISSION_CODES).size).toBe(128);
+    expect(PERMISSION_CODES).toHaveLength(134);
+    expect(new Set(PERMISSION_CODES).size).toBe(134);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
@@ -389,6 +390,20 @@ describe("authorization policy", () => {
     }
   });
 
+  it("adds item and saved vendor permissions only to Procurement and the operation-specific Super Admin vocabulary", () => {
+    for (const role of ROLE_CODES) {
+      for (const permission of ["procurement.items.read", "procurement.items.manage", "procurement.vendors.read", "procurement.vendors.create"] as const) {
+        expect(hasPermission(role, permission), `${role} ${permission}`).toBe((permission === "procurement.vendors.read" ? ["admin", "procurement", "super_admin"] : ["procurement", "super_admin"]).includes(role));
+      }
+    }
+  });
+  it("limits project vendor suggestions to assigned manager writes and three-role reads", () => {
+    for (const role of ROLE_CODES) {
+      expect(hasPermission(role, "procurement.vendor_suggestions.read")).toBe(["admin", "super_admin", "procurement"].includes(role));
+      expect(hasPermission(role, "procurement.vendor_suggestions.manage")).toBe(["admin", "super_admin"].includes(role));
+    }
+  });
+
   it("grants all five AI Estimator Knowledge permissions only to Super Admin", () => {
     expect(PERMISSION_CODES.filter((permission) =>
       AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS.includes(permission as never)
@@ -428,7 +443,7 @@ describe("authorization policy", () => {
   });
 
   it("registers the sanitized procurement expense audit action", () => {
-    expect(PROCUREMENT_AUDIT_ACTIONS).toEqual(["procurement_expense_recorded"]);
+    expect(PROCUREMENT_AUDIT_ACTIONS).toEqual(["procurement_expense_recorded", "project_procurement_item_created", "project_vendor_suggestion_created", "project_vendor_suggestion_updated", "project_procurement_item_updated"]);
     expect(AUDIT_ACTIONS).toContain("procurement_expense_recorded");
   });
 
