@@ -327,6 +327,9 @@ function installAuthorizationSession(
     if (path === "/api/v1/auth/authorization") {
       return Response.json({ data: authorizationFor(role, permissions) });
     }
+    if (path.startsWith("/api/v1/procurement/suggestion-projects?")) return Response.json({ data: { items: [], total: 0, limit: 20, offset: 0 } });
+    if (path.startsWith("/api/v1/admin/ai-estimator-knowledge/vendors?")) return Response.json({ data: { items: [], pagination: { total: 0, limit: 20, offset: 0, hasMore: false } } });
+    if (path === "/api/v1/procurement/projects") return Response.json({ data: [] });
     if (path === "/api/v1/admin/dashboard/overview?periodDays=30") {
       return Response.json({ data: superAdminDashboardOverviewFixture });
     }
@@ -632,7 +635,7 @@ describe("role landing staging contract", () => {
 
 describe("public invitation route", () => {
   it("mounts directly while staying outside the protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(33);
+    expect(ROUTE_REGISTRY).toHaveLength(35);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -720,17 +723,30 @@ describe("public password recovery routes", () => {
 });
 
 describe("registered permission routes", () => {
+  it.each([
+    ["admin", "/admin/procurement", "Project vendor suggestions"],
+    ["super_admin", "/admin/procurement", "Vendor directory"],
+    ["procurement", "/procurement", "Procurement"]
+  ] as const)("renders %s procurement independently of the chat layout", async (role, path, title) => {
+    installAuthorizationSession(role, authorizationFor(role).permissions);
+    renderApp([path]);
+    expect(await screen.findByRole("heading", { name: title })).toBeVisible();
+    expect(document.querySelector(".project-chat-layout")).not.toBeInTheDocument();
+    expect(vi.mocked(globalThis.fetch).mock.calls.some(([input]) => apiRequestPath(input).startsWith("/api/v1/project-messages"))).toBe(false);
+  });
   it("adds workflow, finance, and isolated knowledge configuration routes while preserving both Client route contracts", () => {
     const paths = ROUTE_REGISTRY.map(({ path }) => path);
     const additions = paths.filter(
       (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
     );
 
-    expect(paths).toHaveLength(historicalProtectedPaths.length + 12);
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 14);
     expect(additions).toEqual([
       "/project-messages", "/projects/:projectId/messages",
       "/designer/design-plans",
-      ...knowledgeConfigurationPaths,
+      knowledgeConfigurationPaths[0],
+      "/admin/procurement", "/procurement",
+      ...knowledgeConfigurationPaths.slice(1),
       ...clientResponsePaths,
       "/admin/design-approvals",
       ...procurementPaths,
@@ -741,6 +757,7 @@ describe("registered permission routes", () => {
         "/project-messages", "/projects/:projectId/messages",
         "/designer/design-plans",
         ...knowledgeConfigurationPaths,
+        "/admin/procurement", "/procurement",
         ...clientResponsePaths,
         "/admin/design-approvals",
         ...procurementPaths,

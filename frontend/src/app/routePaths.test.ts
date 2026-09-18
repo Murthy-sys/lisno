@@ -37,6 +37,13 @@ describe("roleHomePath", () => {
 });
 
 describe("safeReturnPath", () => {
+  it("keeps procurement returns within the permitted role boundary", () => {
+    for (const role of ROLE_CODES) {
+      expect(safeReturnPath(role, "/admin/procurement")).toBe(["admin", "super_admin"].includes(role) ? "/admin/procurement" : roleHomePath(role));
+      for (const path of ["/procurement", "/procurement/projects/project-two"]) expect(safeReturnPath(role, path)).toBe(role === "procurement" ? path : roleHomePath(role));
+      for (const path of ["/admin/procurement-extra", "/admin/procurement/private", "/procurement/projects/a/other", "/procurement/projects/a%2fb"]) expect(safeReturnPath(role, path)).toBe(roleHomePath(role));
+    }
+  });
   it.each([
     ["admin", "/admin/projects/project-1", "/admin/projects/project-1"],
     ["super_admin", "/admin/projects", "/admin/projects"],

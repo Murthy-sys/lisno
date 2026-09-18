@@ -26,6 +26,18 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents scoped vendor suggestions, request replay and honest KPI placeholders", () => {
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const route = paths["/procurement/projects/{projectId}/vendor-suggestions"]!;
+    expect(route.post!.responses).toHaveProperty("200");
+    expect(route.post!.responses).toHaveProperty("201");
+    expect(route.get!.parameters).toEqual(expect.arrayContaining([expect.objectContaining({ name: "limit" }), expect.objectContaining({ name: "offset" })]));
+    const schemas = componentSchemas();
+    expect(schemas.VendorSuggestionCreate!.required).toEqual(["estimateId", "estimateVersion", "designPlanVersion", "vendorId", "idempotencyKey"]);
+    expect(schemas.VendorSuggestionUpdate!.required).toEqual(["expectedVersion", "note", "status"]);
+    expect(schemas.ProjectVendorSuggestion).toHaveProperty("properties.kpi.properties.score", { type: "number", nullable: true, enum: [null] });
+    expect(schemas.VendorSuggestionPage).toHaveProperty("properties.performance.properties.recommendations.maxItems", 0);
+  });
   it("documents scoped reusable UOM creation and immutable furniture unit snapshots", () => {
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
     const route = paths["/projects/{projectId}/design-workflow/furniture-uoms"]!;
@@ -361,7 +373,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 230 routes without versioning paths twice", () => {
+  it("contains all 234 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -370,7 +382,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 13);
-    expect(operationCount).toBe(230);
+    expect(operationCount).toBe(234);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);

@@ -11,8 +11,12 @@ import { SearchCombobox } from "../../components/ui/SearchCombobox";
 import { syncKnowledgeMasterMutation } from "../ai-estimator-knowledge/knowledgeMutationSync";
 import { createProcurementVendor, getProcurementVendors, projectProcurementKeys } from "./projectProcurementApi";
 import { procurementError } from "./procurementPresentation";
+import { ProcurementSuggestedVendors } from "./ProcurementSuggestedVendors";
 
 interface Props {
+  projectId?: string;
+  required?: boolean;
+  suggestionsDisabled?: boolean;
   value: ProcurementVendorReference | null;
   onChange: (value: ProcurementVendorReference | null) => void;
   error?: string;
@@ -20,7 +24,7 @@ interface Props {
   onUnresolvedChange: (unresolved: boolean) => void;
 }
 
-export function ProcurementVendorField({ value, onChange, error, onBusyChange, onUnresolvedChange }: Props) {
+export function ProcurementVendorField({ value, onChange, error, onBusyChange, onUnresolvedChange, projectId, required = false, suggestionsDisabled = false }: Props) {
   const auth = useAuth();
   const canRead = hasFrontendPermission(auth.authorization, "procurement.vendors.read");
   const canCreate = hasFrontendPermission(auth.authorization, "procurement.vendors.create");
@@ -91,8 +95,9 @@ export function ProcurementVendorField({ value, onChange, error, onBusyChange, o
       event.stopPropagation();
     }
   }}>
+    {projectId && canRead && hasFrontendPermission(auth.authorization, "procurement.vendor_suggestions.read") ? <ProcurementSuggestedVendors key={projectId} projectId={projectId} disabled={suggestionsDisabled || adding} onSelect={(selected) => { onChange(selected); setQuery(selected.name); setNotice(`${selected.name} selected.`); }} /> : null}
     {canRead ? <SearchCombobox<ProcurementVendorReference>
-      label="Vendor" placeholder="Search saved vendors" value={value}
+      label="Vendor" placeholder="Search saved vendors" value={value} required={required}
       onChange={(selected) => { onChange(selected); setNotice(""); }}
       query={query} onQueryChange={(next) => setQuery(next.slice(0, 200))}
       items={options} itemKey={(vendor) => vendor.id} itemLabel={(vendor) => vendor.name}
@@ -102,7 +107,7 @@ export function ProcurementVendorField({ value, onChange, error, onBusyChange, o
       onRetry={() => void vendors.refetch()} invalid={Boolean(error)} inputRef={inputRef}
       describedBy={`${id}-hint${error ? ` ${id}-error` : ""}`}
     /> : <p>You do not have permission to search vendors.{value ? ` Current vendor: ${value.name}.` : ""}</p>}
-    <p id={`${id}-hint`} className="ui-field__hint">Optional. Saved vendors are available across projects.</p>
+    <p id={`${id}-hint`} className="ui-field__hint">{required ? "Choose an active vendor from the shared directory." : "Optional. Saved vendors are available across projects."}</p>
     {error ? <p id={`${id}-error`} className="ui-field__error">{error}</p> : null}
     {value && value.status !== "active" ? <InlineMessage tone="warning">The current vendor is {value.status}. You can retain it, clear it or choose an active vendor.</InlineMessage> : null}
     <div className="project-procurement-vendor__actions">

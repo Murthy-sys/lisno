@@ -192,7 +192,7 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
           <Field id="procurement-item-brand" label="Brand" required error={errors.brand}>
             {(props) => <Input {...props} value={draft.brand} maxLength={200} onChange={(event) => change("brand", event.target.value)} autoComplete="off" />}
           </Field>
-          <ProcurementVendorField key={vendorFieldRevision} value={vendor} error={errors.vendorId}
+          <ProcurementVendorField key={vendorFieldRevision} projectId={projectId} suggestionsDisabled={sourceStale || sourceConflict} value={vendor} error={errors.vendorId}
             onChange={(selected) => {
               setVendor(selected);
               setErrors((previous) => ({ ...previous, vendorId: "" }));

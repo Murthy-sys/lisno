@@ -1,6 +1,8 @@
 import type { QueryClient } from "@tanstack/react-query";
 
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
+import { projectProcurementKeys } from "../procurement/projectProcurementApi";
+import { vendorSuggestionKeys } from "../procurement/vendorSuggestionsApi";
 import type {
   KnowledgeBasketListResponse,
   KnowledgeItemDetail,
@@ -171,6 +173,10 @@ export async function syncKnowledgeMasterMutation(
   if (master) commitKnowledgeMasterCatalogMutation(queryClient, master);
 
   await Promise.allSettled([
+    ...(masterType === "vendors" ? [
+      queryClient.invalidateQueries({ queryKey: projectProcurementKeys.vendors }),
+      queryClient.invalidateQueries({ queryKey: vendorSuggestionKeys.all })
+    ] : []),
     queryClient.invalidateQueries({
       queryKey: knowledgeQueryKeys.masterLists(masterType)
     }),

@@ -37,7 +37,9 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "ai_estimator_knowledge.configuration.update",
     "ai_estimator_knowledge.configuration.lifecycle",
     "ai_estimator_knowledge.context.read",
-    "admin.dashboard.read"
+    "admin.dashboard.read",
+    "procurement.vendor_suggestions.read",
+    "procurement.vendors.read"
   ],
   admin: [
     ...BASE_SESSION_PERMISSIONS,
@@ -47,7 +49,10 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "organization.estimators.read",
     "access_request.review.read",
     "access_request.review.decide",
-    "project_access_grant.revoke"
+    "project_access_grant.revoke",
+    "procurement.vendor_suggestions.read",
+    "procurement.vendor_suggestions.manage",
+    "procurement.vendors.read"
   ],
   estimator_sales: [
     ...BASE_SESSION_PERMISSIONS,
@@ -72,6 +77,7 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "procurement.items.manage",
     "procurement.vendors.read",
     "procurement.vendors.create",
+    "procurement.vendor_suggestions.read",
     "procurement.expense.create",
     "procurement.document.read",
     "access_request.self.read"

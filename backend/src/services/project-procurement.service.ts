@@ -19,6 +19,7 @@ import { allocateAiEstimatorKnowledgeDisplayOrder, createAiEstimatorKnowledgeMas
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import { assertProcurementProjectAccess, requireProcurementActor, procurementItemSourceSnapshot } from "./procurement.service.js";
+import { requireProcurementVendorReader } from "./project-vendor-suggestions.service.js";
 
 type Row = Record<string, any>;
 type Statuses = Map<string, ProcurementReferenceStatus>;
@@ -35,9 +36,10 @@ export interface ProjectProcurementService {
 export function createProjectProcurementService(input: { audit: AuditService; now?: () => Date }): ProjectProcurementService {
   const now = input.now ?? (() => new Date());
 
-  async function transaction<T>(actor: PublicUser, operation: (session: ClientSession) => Promise<T>, projectId?: string): Promise<T> {
+  async function transaction<T>(actor: PublicUser, operation: (session: ClientSession) => Promise<T>, projectId?: string, directoryRead = false): Promise<T> {
     return mongoose.connection.transaction(async (session) => {
-      if (projectId === undefined) await requireProcurementActor(actor, session);
+      if (directoryRead) await requireProcurementVendorReader(actor, session);
+      else if (projectId === undefined) await requireProcurementActor(actor, session);
       else await assertProcurementProjectAccess(actor, projectId, session);
       return operation(session);
     }, { readConcern: { level: "snapshot" }, readPreference: "primary" });
@@ -157,7 +159,7 @@ export function createProjectProcurementService(input: { audit: AuditService; no
         const rows = await AiEstimatorKnowledgeVendorModel.find(filter).select({ _id: 1, code: 1, name: 1 })
           .sort({ displayOrder: 1, _id: 1 }).skip(offset).limit(limit).session(session).lean();
         return { items: rows.map(vendorOption), total, limit, offset };
-      });
+      }, undefined, true);
     },
     async createVendor(actor, value) {
       // A competing admin create may surface E11000 instead of a transient write

@@ -93,7 +93,8 @@ describe("project procurement item and vendor routes", () => {
     for (const path of ["items", "items/item-1"]) await request(app).get(`${base}/${path}`).set("Authorization", `Bearer ${role}`).expect(403);
     await request(app).post(`${base}/items`).set("Authorization", `Bearer ${role}`).send(fields).expect(403);
     await request(app).patch(`${base}/items/item-1`).set("Authorization", `Bearer ${role}`).send({ ...fields, expectedVersion: 1 }).expect(403);
-    for (const path of ["uoms", "vendors"]) await request(app).get(`${referenceBase}/${path}`).set("Authorization", `Bearer ${role}`).expect(403);
+    await request(app).get(`${referenceBase}/uoms`).set("Authorization", `Bearer ${role}`).expect(403);
+    if (!["admin", "super_admin"].includes(role)) await request(app).get(`${referenceBase}/vendors`).set("Authorization", `Bearer ${role}`).expect(403);
     await request(app).post(`${referenceBase}/vendors`).set("Authorization", `Bearer ${role}`).send({ name: "Vendor" }).expect(403);
     for (const method of Object.values(service)) expect(method).not.toHaveBeenCalled();
   });

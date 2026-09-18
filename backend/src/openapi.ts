@@ -1,3 +1,4 @@
+import { VENDOR_SUGGESTION_SCHEMAS, VENDOR_SUGGESTION_REQUESTS, VENDOR_SUGGESTION_RESPONSES } from "./openapi/project-vendor-suggestions.js";
 import { PROJECT_PROCUREMENT_SCHEMAS, PROJECT_PROCUREMENT_REQUESTS, PROJECT_PROCUREMENT_RESPONSES, PROJECT_PROCUREMENT_ITEM_QUERY_PARAMETERS } from "./openapi/project-procurement.js";
 import { DESIGN_WORKFLOW_ACTIONS } from "./domain/design-workflow-state.js";
 import { CHAT_COMPONENT_SCHEMAS, CHAT_REQUEST_BODIES, CHAT_RESPONSE_SCHEMAS, CHAT_QUERY_PARAMETERS } from "./openapi/project-chat.js";
@@ -114,6 +115,7 @@ const genericJsonRequestBody: OpenApiRequestBody = {
 const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   ...CHAT_REQUEST_BODIES,
   ...PROJECT_PROCUREMENT_REQUESTS,
+  ...VENDOR_SUGGESTION_REQUESTS,
   "POST /projects/:projectId/design-workflow/furniture-uoms": jsonRequest("FurnitureUomCreate"),
   "POST /projects/:projectId/design-workflow/actions": { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/DesignWorkflowActionRequest" } }, "multipart/form-data": { schema: { $ref: "#/components/schemas/DesignWorkflowActionRequest" } } } },
   "POST /auth/login": jsonRequest("LoginRequest"),
@@ -195,6 +197,7 @@ const operationsWithoutBodies = new Set<string>([
 const responseSchemaByOperation: Readonly<Record<string, string>> = {
   ...CHAT_RESPONSE_SCHEMAS,
   ...PROJECT_PROCUREMENT_RESPONSES,
+  ...VENDOR_SUGGESTION_RESPONSES,
   "POST /auth/login": "AuthPayload",
   "POST /auth/client-signup": "AuthPayload",
   "POST /auth/password-reset/request": "PasswordResetAccepted",
@@ -330,6 +333,10 @@ const operationSummaries: Readonly<Record<string, string>> = {
   "GET /procurement/projects/:projectId/items": "List project procurement items",
   "GET /procurement/uoms": "List active procurement UOM options",
   "GET /procurement/vendors": "List active saved Configuration vendors",
+  "GET /procurement/suggestion-projects": "List authorized Design-approved vendor suggestion projects",
+  "GET /procurement/projects/:projectId/vendor-suggestions": "List current-source vendor suggestions",
+  "POST /procurement/projects/:projectId/vendor-suggestions": "Suggest a vendor as the assigned Sales Manager",
+  "PATCH /procurement/projects/:projectId/vendor-suggestions/:suggestionId": "Edit, withdraw or reinstate a vendor suggestion",
   "POST /procurement/vendors": "Create or reuse a saved Configuration vendor",
   "GET /procurement/projects/:projectId/items/:itemId": "Read a project procurement item",
   "POST /procurement/projects/:projectId/items": "Create a project procurement item",
@@ -363,6 +370,8 @@ const operationSummaries: Readonly<Record<string, string>> = {
 };
 
 const paginationOperationKeys = new Set<string>([
+  "GET /procurement/suggestion-projects",
+  "GET /procurement/projects/:projectId/vendor-suggestions",
   "GET /procurement/vendors",
   "GET /procurement/projects/:projectId/items",
   "GET /projects",
@@ -463,6 +472,8 @@ const queryParametersByOperation: Readonly<
   Record<string, readonly OpenApiParameter[]>
 > = {
   ...CHAT_QUERY_PARAMETERS,
+  "GET /procurement/suggestion-projects": [{ name: "q", in: "query", required: false, schema: { type: "string", maxLength: 100 } }],
+  "GET /procurement/projects/:projectId/vendor-suggestions": [{ name: "q", in: "query", required: false, schema: { type: "string", maxLength: 100 } }],
   "GET /procurement/vendors": [{ name: "q", in: "query", required: false, schema: { type: "string", maxLength: 100 }, description: "Literal normalized search across active Configuration vendor codes and names." }],
   "GET /procurement/projects/:projectId/items": PROJECT_PROCUREMENT_ITEM_QUERY_PARAMETERS,
   "GET /admin/dashboard/overview": [dashboardPeriodParameter()],
@@ -1006,6 +1017,7 @@ function requestBodyFor(
 }
 
 function responsesFor(key: HumanJwtOperationKeyShape): Readonly<Record<string, OpenApiResponse>> {
+  if (key === "POST /procurement/projects/:projectId/vendor-suggestions") return { "200": dataResponse("ProjectVendorSuggestion", "Same request replayed without another write."), "201": dataResponse("ProjectVendorSuggestion", "Vendor suggestion created."), ...standardProtectedErrors };
   if (key === "POST /projects/:projectId/design-workflow/furniture-uoms") {
     return { "200": dataResponse("FurnitureUomCreateResult", "Existing active UOM reused; its settings are unchanged."), "201": dataResponse("FurnitureUomCreateResult", "Reusable Configuration UOM created."), ...standardProtectedErrors };
   }
@@ -1289,6 +1301,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     ...AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS,
     ...CHAT_COMPONENT_SCHEMAS,
     ...PROJECT_PROCUREMENT_SCHEMAS,
+    ...VENDOR_SUGGESTION_SCHEMAS,
     DashboardRatio: {
       type: "object",
       additionalProperties: false,

@@ -11,6 +11,7 @@ import {
   MailCheck,
   Palette,
   Settings2,
+  ShoppingCart,
   UsersRound,
   WalletCards
 } from "lucide-react";
@@ -25,11 +26,11 @@ import { Sidebar } from "./Sidebar";
 import { navigationForAuthorization } from "./navigation";
 
 const roleNavigation = [
-  ["super_admin", [["Dashboard", "/admin/dashboard", LayoutDashboard], ["All Projects", "/admin/projects", FolderKanban], ["Users", "/admin/users", UsersRound], ["Configuration", "/admin/configuration/estimation", Settings2, false], ["Client responses", "/admin/client-responses", MailCheck], ["Design approvals", "/admin/design-approvals", Palette], ["Access requests", "/admin/access-requests", ClipboardCheck], ["Finance", "/finance", WalletCards]]],
-  ["admin", [["My Projects", "/admin/projects", FolderKanban], ["Client responses", "/admin/client-responses", MailCheck], ["Design approvals", "/admin/design-approvals", Palette], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
+  ["super_admin", [["Dashboard", "/admin/dashboard", LayoutDashboard], ["All Projects", "/admin/projects", FolderKanban], ["Users", "/admin/users", UsersRound], ["Configuration", "/admin/configuration/estimation", Settings2, false], ["Procurement", "/admin/procurement", ShoppingCart], ["Client responses", "/admin/client-responses", MailCheck], ["Design approvals", "/admin/design-approvals", Palette], ["Access requests", "/admin/access-requests", ClipboardCheck], ["Finance", "/finance", WalletCards]]],
+  ["admin", [["My Projects", "/admin/projects", FolderKanban], ["Procurement", "/admin/procurement", ShoppingCart], ["Client responses", "/admin/client-responses", MailCheck], ["Design approvals", "/admin/design-approvals", Palette], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
   ["estimator_sales", [["Leads & estimates", "/estimator-sales", BriefcaseBusiness]]],
   ["designer", [["Workspace", "/designer", LayoutDashboard], ["Design plans", "/designer/design-plans", Palette], ["My access requests", "/access-requests/mine", KeyRound]]],
-  ["procurement", [["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
+  ["procurement", [["Procurement", "/procurement", ShoppingCart, false], ["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
   ["finance_head", [["Finance", "/finance", WalletCards], ["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
   ["site_manager", [["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
   ["worker_electrician", [["Home", "/home", House]]],
@@ -85,7 +86,7 @@ describe("role navigation", () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByText(ROLE_LABELS[role])).toBeVisible();
+    expect(screen.getAllByText(ROLE_LABELS[role]).some((element) => element.closest(".ui-sidebar__role"))).toBe(true);
   });
 
   it.each(roleNavigation)(
