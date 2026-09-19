@@ -186,6 +186,50 @@ describe("AI estimator knowledge item service", () => {
     }
   });
 
+  it("preserves a legacy PMC single value until an explicit range is saved and copied", async () => {
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: "PMC legacy range line" });
+    const revisionId = created.draftRevisionId!;
+    const overview = await service.updateSection(ACTOR, created.mainLineId, revisionId, "overview", {
+      expectedVersion: 1, expectedAggregateVersion: created.version, payload: { uomId: "uom-sqft" }
+    });
+    const advanced = await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced");
+    const legacyPayload = { pmcMarginBps: 1_825, modeDescription: "Legacy PMC range." };
+    const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: advanced.version, expectedAggregateVersion: overview.aggregateVersion, payload: legacyPayload
+    });
+    const unrelated = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion,
+      payload: { ...legacyPayload, modeDescription: "Edited without materializing Min." }
+    });
+    expect(unrelated.payload).not.toHaveProperty("pmcMinimumMarginBps");
+    const rangePayload = { ...unrelated.payload, pmcMinimumMarginBps: 1_250, pmcMarginBps: 1_900 };
+    const ranged = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: unrelated.version, expectedAggregateVersion: unrelated.aggregateVersion, payload: rangePayload
+    });
+    expect(ranged.payload).toEqual(rangePayload);
+    const active = await service.activate(ACTOR, created.mainLineId, revisionId, { expectedVersion: ranged.aggregateVersion });
+    const next = await service.createRevision(ACTOR, created.mainLineId, { expectedVersion: active.version });
+    expect((await service.getSection(ACTOR, created.mainLineId, next.draftRevisionId!, "advanced")).payload).toEqual(rangePayload);
+  });
+
+  it.each([
+    { pmcMinimumMarginBps: 1_500 },
+    { pmcMinimumMarginBps: null, pmcMarginBps: 1_500 },
+    { pmcMinimumMarginBps: 1_500, pmcMarginBps: null },
+    { pmcMinimumMarginBps: 1_900, pmcMarginBps: 1_500 },
+    { pmcMinimumMarginBps: 999, pmcMarginBps: 1_500 },
+    { pmcMinimumMarginBps: 1_500, pmcMarginBps: 2_001 }
+  ])("rejects invalid PMC range %j before persistence", async (payload) => {
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: `Invalid PMC ${JSON.stringify(payload)}` });
+    const before = await service.getSection(ACTOR, created.mainLineId, created.draftRevisionId!, "advanced");
+    await expect(service.updateSection(ACTOR, created.mainLineId, created.draftRevisionId!, "advanced", {
+      expectedVersion: before.version, expectedAggregateVersion: created.version, payload
+    })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(await service.getSection(ACTOR, created.mainLineId, created.draftRevisionId!, "advanced")).toEqual(before);
+  });
+
   it("isolates Sub-Vendor and PMC margins across lines, activation and later draft changes", async () => {
     const { service } = createService();
     const published: Array<{ mainLineId: string; revisionId: string; pmcMarginBps: number; subVendorMarginBps: number }> = [];
@@ -546,6 +590,36 @@ describe("AI estimator knowledge item service", () => {
     await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
       expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload
     })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+  });
+
+  it("round-trips In-house scope independently from PMC and rejects Sub-Vendor scope", async () => {
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: "In-house scope line" });
+    const revisionId = created.draftRevisionId!;
+    const advanced = await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced");
+    const pmc = { id: "pmc", modeKind: "pmc", fields: [],
+      inclusions: [{ id: "pmc-supplier", name: "Supplier", selected: false }], exclusions: [] };
+    const inHouse = { id: "in-house", modeKind: "execution", executionSource: "in_house", fields: [],
+      inclusions: [{ id: "supplier", name: "Supplier", selected: true }, { id: "execution", name: "Execution", selected: false }],
+      exclusions: [{ id: "labour", name: "Labour", selected: true }] };
+    const payload = { modeConfigurations: [pmc, inHouse] };
+    const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: advanced.version, expectedAggregateVersion: created.version, payload
+    });
+    expect(saved.payload).toEqual(payload);
+    const changed = { ...payload, modeConfigurations: [pmc, { ...inHouse,
+      inclusions: inHouse.inclusions.map((row) => row.id === "execution" ? { ...row, selected: true } : row) }] };
+    const updated = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: changed
+    });
+    expect(updated.payload).toEqual(changed);
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: updated.version, expectedAggregateVersion: updated.aggregateVersion,
+      payload: { modeConfigurations: [{ ...inHouse, executionSource: "sub_vendor" }] }
+    })).rejects.toMatchObject({ code: "VALIDATION_ERROR", fields: {
+      "payload.modeConfigurations.0.inclusions": expect.any(String)
+    } });
+    expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(changed);
   });
 
   it.each(["inclusions", "exclusions"] as const)("persists ordinary and final %s deletion without changing the other list or Main Line", async (list) => {

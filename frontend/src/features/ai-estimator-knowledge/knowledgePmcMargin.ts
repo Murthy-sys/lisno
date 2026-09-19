@@ -12,6 +12,49 @@ export function pmcMarginIssues(value: KnowledgeJsonValue | undefined) {
   return marginIssues(value, "pmcMarginBps", PMC_MARGIN_ERROR);
 }
 
+/** Read legacy single-rate PMC data without changing its persisted representation. */
+export function pmcMarginRange(payload: KnowledgeJsonObject): {
+  minimum: KnowledgeJsonValue | undefined;
+  maximum: KnowledgeJsonValue | undefined;
+} {
+  return {
+    minimum: Object.hasOwn(payload, "pmcMinimumMarginBps")
+      ? payload.pmcMinimumMarginBps : payload.pmcMarginBps,
+    maximum: payload.pmcMarginBps
+  };
+}
+
+export function pmcMarginRangeIssues(payload: KnowledgeJsonObject): { path: string; message: string }[] {
+  const { minimum, maximum } = pmcMarginRange(payload);
+  const issues = [
+    ...marginIssues(minimum, "pmcMinimumMarginBps", "Enter a minimum PMC margin from 10% to 20%, with up to two decimal places."),
+    ...marginIssues(maximum, "pmcMarginBps", "Enter a maximum PMC margin from 10% to 20%, with up to two decimal places.")
+  ];
+  if (Object.hasOwn(payload, "pmcMinimumMarginBps") && !Object.hasOwn(payload, "pmcMarginBps")) issues.push({
+    path: "pmcMarginBps", message: "Enter the maximum PMC margin, or clear both margins."
+  });
+  if (minimum == null && maximum != null) issues.push({
+    path: "pmcMinimumMarginBps", message: "Enter the minimum PMC margin, or clear both margins."
+  });
+  if (Object.hasOwn(payload, "pmcMarginBps") && maximum == null && minimum != null) issues.push({
+    path: "pmcMarginBps", message: "Enter the maximum PMC margin, or clear both margins."
+  });
+  if (!issues.length && typeof minimum === "number" && typeof maximum === "number" && minimum > maximum) {
+    issues.push({ path: "pmcMinimumMarginBps", message: "Minimum PMC margin must not exceed maximum PMC margin." });
+  }
+  return issues;
+}
+
+export function withPmcMargin(payload: KnowledgeJsonObject, field: "minimum" | "maximum", value: KnowledgeJsonValue): KnowledgeJsonObject {
+  const original = pmcMarginRange(payload);
+  const configured = Object.hasOwn(payload, "pmcMinimumMarginBps") ? payload : {
+    ...payload,
+    pmcMinimumMarginBps: original.minimum ?? null,
+    pmcMarginBps: original.maximum ?? null
+  };
+  return { ...configured, [field === "minimum" ? "pmcMinimumMarginBps" : "pmcMarginBps"]: value };
+}
+
 export function subVendorMarginIssues(value: KnowledgeJsonValue | undefined) {
   return lisnoMarginIssues(value, "subVendorMarginBps", SUB_VENDOR_MARGIN_ERROR);
 }

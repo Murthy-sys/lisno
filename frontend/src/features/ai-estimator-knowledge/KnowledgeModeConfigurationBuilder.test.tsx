@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   KnowledgeModeConfigurationBuilder,
+  modeSelectionForPayload,
   type KnowledgeLegacyModeCatalogState
 } from "./KnowledgeModeConfigurationBuilder";
 import type { KnowledgeJsonObject, KnowledgeMaster } from "./knowledgeTypes";
@@ -113,6 +114,40 @@ const definitionPayload: KnowledgeJsonObject = {
 };
 
 describe("KnowledgeModeConfigurationBuilder", () => {
+  it("restores selections only from complete source-specific saved evidence", () => {
+    const calculation = {
+      baseRatePaise: 10_000,
+      lowQuantityLimit: "1",
+      impactBps: 0,
+      minimumMarkupBps: 1_000,
+      startingMarkupBps: 1_500
+    };
+    expect(modeSelectionForPayload({ modeCalculation: calculation })).toEqual({
+      modes: { pmc: false, execution: false },
+      executionSources: { sub_vendor: false, in_house: false }
+    });
+    expect(modeSelectionForPayload({
+      modeCalculations: { pmc: null, sub_vendor: calculation, in_house: calculation }
+    })).toEqual({
+      modes: { pmc: false, execution: true },
+      executionSources: { sub_vendor: true, in_house: true }
+    });
+    expect(modeSelectionForPayload({ pmcMinimumMarginBps: 1_200, pmcMarginBps: 1_800 })).toEqual({
+      modes: { pmc: true, execution: false },
+      executionSources: { sub_vendor: false, in_house: false }
+    });
+    expect(modeSelectionForPayload({ pmcMinimumMarginBps: 900, pmcMarginBps: 1_800 })).toEqual({
+      modes: { pmc: false, execution: false },
+      executionSources: { sub_vendor: false, in_house: false }
+    });
+    expect(modeSelectionForPayload({ modeConfigurations: [{
+      id: "legacy-sub-vendor-scope", modeKind: "pmc", fields: [], inclusions: [], exclusions: []
+    }] })).toEqual({
+      modes: { pmc: true, execution: true },
+      executionSources: { sub_vendor: true, in_house: false }
+    });
+  });
+
   it("renders Mode checkboxes and keeps PMC direct without an Execution source selector", async () => {
     render(<Harness />);
 
@@ -138,6 +173,50 @@ describe("KnowledgeModeConfigurationBuilder", () => {
       rules: { "color-contrast": { enabled: false } }
     });
     expect(results.violations).toEqual([]);
+  });
+
+  it("restores saved Execution and source selections without leaking the empty-revision defaults", () => {
+    render(<Harness initialPayload={{ modeCalculations: {
+      pmc: null,
+      sub_vendor: null,
+      in_house_labor: { baseRatePaise: 1, lowQuantityLimit: "1", impactBps: 0, minimumMarkupBps: 0, startingMarkupBps: 0 },
+      in_house_material: null
+    } }} />);
+    expect(screen.getByRole("checkbox", { name: "PMC" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Execution" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "In-house" })).toBeChecked();
+  });
+
+  it("shows In-house starter scope without a write and materializes both lists on first edit", async () => {
+    const onPayload = vi.fn();
+    render(<Harness onPayload={onPayload} initialPayload={{ modeConfigurations: [{
+      id: "configuration-in-house", modeKind: "execution", executionSource: "in_house", fields: []
+    }] }} />);
+    const inclusions = screen.getByRole("group", { name: "In-house Inclusions" });
+    const exclusions = screen.getByRole("group", { name: "In-house Exclusions" });
+    for (const name of ["Supplier", "Execution", "Labour"]) {
+      expect(within(inclusions).getByRole("checkbox", { name: `In-house Inclusion: ${name}` })).not.toBeChecked();
+      expect(within(exclusions).getByRole("checkbox", { name: `In-house Exclusion: ${name}` })).not.toBeChecked();
+    }
+    expect(onPayload).not.toHaveBeenCalled();
+    await userEvent.click(within(inclusions).getByRole("checkbox", { name: "In-house Inclusion: Supplier" }));
+    const latest = onPayload.mock.calls.at(-1)?.[0] as KnowledgeJsonObject;
+    expect(latest.modeConfigurations).toEqual([expect.objectContaining({
+      modeKind: "execution",
+      executionSource: "in_house",
+      inclusions: expect.arrayContaining([expect.objectContaining({ name: "Supplier", selected: true })]),
+      exclusions: expect.arrayContaining([expect.objectContaining({ name: "Supplier", selected: false })])
+    })]);
+  });
+
+  it("preserves explicitly saved empty In-house lists without recreating starter rows", () => {
+    render(<Harness initialPayload={{ modeConfigurations: [{
+      id: "configuration-in-house", modeKind: "execution", executionSource: "in_house", fields: [], inclusions: [], exclusions: []
+    }] }} />);
+    expect(screen.getByRole("group", { name: "In-house Inclusions" })).toHaveTextContent("No inclusions added.");
+    expect(screen.getByRole("group", { name: "In-house Exclusions" })).toHaveTextContent("No exclusions added.");
+    expect(screen.queryByRole("checkbox", { name: "Supplier" })).not.toBeInTheDocument();
   });
 
   it("shows each checked Mode independently and supports hiding both without editing saved data", async () => {
@@ -185,7 +264,7 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     const executionToggle = screen.getByRole("button", { name: "Collapse Execution" });
     const pmcBody = document.getElementById(pmcToggle.getAttribute("aria-controls")!);
     const executionBody = document.getElementById(executionToggle.getAttribute("aria-controls")!);
-    expect(pmcBody).toContainElement(screen.getByRole("spinbutton", { name: "PMC Margin" }));
+    expect(pmcBody).toContainElement(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" }));
     expect(executionBody).toContainElement(screen.getByRole("group", { name: "Execution source" }));
     expect(pmcToggle).toBeEnabled();
     expect(executionToggle).toBeEnabled();
@@ -223,10 +302,7 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     const onPayload = vi.fn();
     const onDirty = vi.fn();
     render(<Harness readOnly={readOnly} onPayload={onPayload} onDirty={onDirty} initialPayload={definitionPayload} />);
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     const inHouseSelection = screen.getByRole("checkbox", { name: "In-house" });
-    inHouseSelection.focus();
-    await user.keyboard(" ");
     const subVendorSelection = screen.getByRole("checkbox", { name: "Sub-Vendor" });
     expect(subVendorSelection).toBeChecked();
     expect(inHouseSelection).toBeChecked();
@@ -266,7 +342,6 @@ describe("KnowledgeModeConfigurationBuilder", () => {
   it.each(["Min.", "Max."])("reveals collapsed Execution panels and focuses an invalid %s Lisno margin", async (label) => {
     const user = userEvent.setup();
     render(<Harness initialPayload={{ pmcMarginBps: 1_200, subVendorMarginBps: 2_000 }} />);
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     await user.click(screen.getByRole("checkbox", { name: "In-house" }));
     const margin = screen.getByRole("spinbutton", { name: `${label} Lisno Margin (%)` });
     fireEvent.change(margin, { target: { value: "21" } });
@@ -280,7 +355,7 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     expect(screen.getByRole("button", { name: "Collapse Execution" })).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("button", { name: "Collapse Sub-Vendor" })).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("button", { name: "Expand In-house" })).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(12);
+    expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(12);
   });
 
   it("preserves independent margins and Sub-Vendor scope while toggling sources", async () => {
@@ -288,9 +363,11 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     const onPayload = vi.fn();
     render(<Harness onPayload={onPayload} initialPayload={{ modeConfigurations: [{ id: "saved-scope", modeKind: "pmc", fields: [], inclusions: [{ id: "transport-in", name: "Transport", selected: false }], exclusions: [{ id: "shifting-out", name: "Shifting", selected: false }] }] }} />);
 
-    await user.type(screen.getByRole("spinbutton", { name: "PMC Margin" }), "15");
+    await user.type(screen.getByRole("spinbutton", { name: "Min. PMC Margin (%)" }), "10");
+    await user.type(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" }), "15");
 
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    expect(screen.getByRole("checkbox", { name: "Execution" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
     const sourceGroup = screen.getByRole("group", { name: "Execution source" });
     expect(within(sourceGroup).getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
@@ -316,7 +393,7 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(15);
+    expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(15);
     expect(screen.queryByRole("group", { name: "Inclusions" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Exclusions" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
@@ -346,8 +423,6 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     const user = userEvent.setup();
     const onPayload = vi.fn();
     render(<Harness initialPayload={definitionPayload} readOnly={readOnly} onPayload={onPayload} />);
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
-    await user.click(screen.getByRole("checkbox", { name: "In-house" }));
     expect(screen.getByRole("region", { name: "Sub-Vendor" })).toBeVisible();
     expect(screen.getByRole("region", { name: "In-house" })).toBeVisible();
     expect(screen.queryByRole("region", { name: /components$/u })).not.toBeInTheDocument();
@@ -363,11 +438,10 @@ describe("KnowledgeModeConfigurationBuilder", () => {
   it("preserves all stored component types, values, IDs, and ordering after independent margin edits", async () => {
     const user = userEvent.setup();
     render(<Harness initialPayload={definitionPayload} />);
-    await user.type(screen.getByRole("spinbutton", { name: "PMC Margin" }), "15");
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await user.type(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" }), "15");
     await user.type(screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" }), "15");
     await user.type(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" }), "20");
-    expect(payload()).toEqual({ ...definitionPayload, pmcMarginBps: 1_500, subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 });
+    expect(payload()).toEqual({ ...definitionPayload, pmcMinimumMarginBps: null, pmcMarginBps: 1_500, subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 });
   });
 
   it("announces authoritative errors for retained historical fields without dropping them", async () => {
@@ -423,6 +497,7 @@ describe("KnowledgeModeConfigurationBuilder", () => {
       onPayload={onPayload}
     />);
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await user.click(screen.getByRole("checkbox", { name: "Sub-Vendor" }));
     await user.click(screen.getByRole("checkbox", { name: "In-house" }));
     await user.click(screen.getByRole("button", { name: "Collapse Sub-Vendor" }));
     await user.click(screen.getByRole("checkbox", { name: "Sub-Vendor" }));

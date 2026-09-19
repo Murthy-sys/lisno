@@ -177,21 +177,29 @@ describe("automatic knowledge-base display order forms", () => {
     );
   });
 
-  it("keeps display order required and explicit when editing a main basket", async () => {
+  it("edits the Main Basket name while keeping display order required and explicit", async () => {
     const user = userEvent.setup();
+    const inactiveBasket = { ...basket, status: "inactive" as const };
     vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({
-      items: [basket],
+      items: [inactiveBasket],
       pagination: { ...pagination, total: 1 }
     });
     vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({
       items: [item],
       pagination: { ...pagination, limit: 20, total: 1 }
     });
+    vi.mocked(knowledgeApi.updateKnowledgeBasket).mockResolvedValue({
+      ...inactiveBasket,
+      name: "Joinery",
+      version: basket.version + 1
+    });
     renderWithQuery(<KnowledgeBaseIndexPage />, true);
 
     await user.click(await screen.findByRole("button", { name: "Edit basket" }));
     const dialog = screen.getByRole("dialog", { name: "Edit main basket" });
+    const name = within(dialog).getByRole("textbox", { name: "Basket name" });
     const order = within(dialog).getByRole("spinbutton", { name: "Display order" });
+    expect(name).toHaveValue("Carpentry");
     expect(order).toHaveValue(12);
 
     await user.clear(order);
@@ -200,16 +208,18 @@ describe("automatic knowledge-base display order forms", () => {
     expect(within(dialog).getByRole("button", { name: "Save basket" })).toBeDisabled();
     await user.clear(order);
     await user.type(order, "14");
+    await user.clear(name);
+    await user.type(name, "Joinery");
     await user.click(within(dialog).getByRole("button", { name: "Save basket" }));
 
     await waitFor(() => expect(knowledgeApi.updateKnowledgeBasket).toHaveBeenCalledWith(
-      basket.id,
+      inactiveBasket.id,
       {
-        expectedVersion: basket.version,
-        name: basket.name,
-        description: basket.description,
+        expectedVersion: inactiveBasket.version,
+        name: "Joinery",
+        description: inactiveBasket.description,
         displayOrder: 14,
-        status: "active"
+        status: "inactive"
       }
     ));
   });

@@ -51,9 +51,13 @@ function InHouseTotalContent({ active, labor, material, valid, uom }: Props) {
     </div>
     {result ? <InHouseResult result={result} uomLabel={uom.label} /> : <>
       <dl className="knowledge-in-house-total__amounts">
-        <div><dt>Labor total</dt><dd>—</dd></div>
-        <div><dt>Material total</dt><dd>—</dd></div>
-        <div><dt>Labor + Material total</dt><dd>—</dd></div>
+        <div><dt>Labour expense</dt><dd>—</dd></div>
+        <div><dt>Margin on labour</dt><dd>—</dd></div>
+        <div><dt>Material expense</dt><dd>—</dd></div>
+        <div><dt>Margin on material</dt><dd>—</dd></div>
+        <div><dt>Total expense</dt><dd>—</dd></div>
+        <div><dt>Total margin</dt><dd>—</dd></div>
+        <div className="knowledge-in-house-total__subtotal"><dt>Subtotal</dt><dd>—</dd></div>
       </dl>
       <p className="knowledge-mode-calculation__hint">{!settingsReady
         ? "Complete both Labor and Material calculation settings to test the total."
@@ -68,11 +72,19 @@ function InHouseTotalContent({ active, labor, material, valid, uom }: Props) {
 }
 
 function InHouseResult({ result, uomLabel }: { readonly result: TestResult; readonly uomLabel: string }) {
+  const labourMargin = result.preview.labor.totalPaise - result.preview.labor.revisedAmountPaise;
+  const materialMargin = result.preview.material.totalPaise - result.preview.material.revisedAmountPaise;
+  const totalExpense = result.preview.labor.revisedAmountPaise + result.preview.material.revisedAmountPaise;
+  const totalMargin = labourMargin + materialMargin;
   return <div role="status" aria-label="In-house calculation results">
     <dl className="knowledge-in-house-total__amounts">
-      <div><dt>Labor total</dt><dd><output aria-label="Labor total">{formatKnowledgeMoney(result.preview.labor.totalPaise)}</output></dd></div>
-      <div><dt>Material total</dt><dd><output aria-label="Material total">{formatKnowledgeMoney(result.preview.material.totalPaise)}</output></dd></div>
-      <div><dt>Labor + Material total</dt><dd><output aria-label="Labor + Material total">{formatKnowledgeMoney(result.preview.totalPaise)}</output></dd></div>
+      <div><dt>Labour expense</dt><dd><output aria-label="Labour expense">{formatKnowledgeMoney(result.preview.labor.revisedAmountPaise)}</output></dd></div>
+      <div><dt>Margin on labour</dt><dd><output aria-label="Margin on labour">{formatKnowledgeMoney(labourMargin)}</output></dd></div>
+      <div><dt>Material expense</dt><dd><output aria-label="Material expense">{formatKnowledgeMoney(result.preview.material.revisedAmountPaise)}</output></dd></div>
+      <div><dt>Margin on material</dt><dd><output aria-label="Margin on material">{formatKnowledgeMoney(materialMargin)}</output></dd></div>
+      <div><dt>Total expense</dt><dd><output aria-label="Total expense">{formatKnowledgeMoney(totalExpense)}</output></dd></div>
+      <div><dt>Total margin</dt><dd><output aria-label="Total margin">{formatKnowledgeMoney(totalMargin)}</output></dd></div>
+      <div className="knowledge-in-house-total__subtotal"><dt>Subtotal</dt><dd><output aria-label="Subtotal">{formatKnowledgeMoney(result.preview.totalPaise)}</output></dd></div>
     </dl>
     <p className="knowledge-mode-calculation__hint">Simulator values · Quantity: {result.quantity} {uomLabel} · {result.markupBasis === "starting" ? "Starting" : "Minimum"} markup. Includes each cost’s Impact and markup.</p>
     {result.preview.labor.discount && result.preview.material.discount ? <p className="knowledge-mode-calculation__hint">
@@ -117,6 +129,20 @@ function InHouseSimulator({ settings, uom, onClose, onResult }: {
     }, { signal, showGlobalLoader: false });
     if (!preview.inHouseCalculation?.labor || !preview.inHouseCalculation.material || !Number.isSafeInteger(preview.inHouseCalculation.totalPaise)) {
       throw new Error("The server did not return both costs. Please try calculating again.");
+    }
+    const { labor: laborResult, material: materialResult, totalPaise } = preview.inHouseCalculation;
+    const values = [laborResult.revisedAmountPaise, laborResult.totalPaise,
+      materialResult.revisedAmountPaise, materialResult.totalPaise, totalPaise];
+    const laborMargin = laborResult.totalPaise - laborResult.revisedAmountPaise;
+    const materialMargin = materialResult.totalPaise - materialResult.revisedAmountPaise;
+    const totalExpense = laborResult.revisedAmountPaise + materialResult.revisedAmountPaise;
+    const totalMargin = laborMargin + materialMargin;
+    if (values.some((value) => !Number.isSafeInteger(value)) ||
+      !Number.isSafeInteger(laborMargin) || !Number.isSafeInteger(materialMargin) ||
+      !Number.isSafeInteger(totalExpense) || !Number.isSafeInteger(totalMargin) ||
+      BigInt(laborResult.totalPaise) + BigInt(materialResult.totalPaise) !== BigInt(totalPaise) ||
+      BigInt(totalExpense) + BigInt(totalMargin) !== BigInt(totalPaise)) {
+      throw new Error("The server returned an inconsistent In-house cost breakup. Please try again.");
     }
     if (parsedDiscount.bps > 0 && (preview.inHouseCalculation.labor.discount?.rateBps !== parsedDiscount.bps || preview.inHouseCalculation.material.discount?.rateBps !== parsedDiscount.bps)) {
       throw new Error("The server did not return the discount for both costs. Please try again.");

@@ -9,6 +9,7 @@ export interface KnowledgePmcScopeItem {
 export const PMC_SCOPE_LISTS = ["inclusions", "exclusions"] as const;
 export type KnowledgePmcScopeList = (typeof PMC_SCOPE_LISTS)[number];
 export const MAX_PMC_SCOPE_ITEMS = 200;
+export const IN_HOUSE_SCOPE_NAMES = ["Supplier", "Execution", "Labour"] as const;
 
 let fallbackIdSequence = 0;
 
@@ -16,6 +17,15 @@ export function createPmcScopeItem(list: KnowledgePmcScopeList, name: string): K
   const uniqueId = globalThis.crypto?.randomUUID?.()
     ?? `${Date.now().toString(36)}-${++fallbackIdSequence}`;
   return { id: `pmc-${list}-${uniqueId}`, name: name.trim(), selected: false };
+}
+
+/** Presentation-only defaults. Callers materialize copies only after the first edit. */
+export function inHouseScopeStarterItems(list: KnowledgePmcScopeList): readonly KnowledgePmcScopeItem[] {
+  return IN_HOUSE_SCOPE_NAMES.map((name) => ({
+    id: `in-house-${list}-${normalizePmcScopeName(name).replace(/\s+/gu, "-")}`,
+    name,
+    selected: false
+  }));
 }
 
 export function normalizePmcScopeName(name: string): string {

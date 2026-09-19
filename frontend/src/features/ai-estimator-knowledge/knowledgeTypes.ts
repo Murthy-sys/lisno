@@ -328,7 +328,7 @@ export interface KnowledgePreview {
     readonly pmcMarginBps: number;
     readonly pmcMarginAmountPaise: number;
     readonly totalBeforeDiscountPaise: number;
-    /** Signed remainder after subtracting the configured margin from the discounted total. */
+    /** Preserved adjusted cost for PMC; Sub-Vendor retains its legacy signed remainder semantics. */
     readonly finalVendorChargesPaise: number;
     readonly discount?: {
       readonly rateBps: number;

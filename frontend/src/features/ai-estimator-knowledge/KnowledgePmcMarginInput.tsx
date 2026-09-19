@@ -16,8 +16,26 @@ interface MarginInputProps {
   onChange: (value: KnowledgeJsonValue) => void;
 }
 
-export function KnowledgePmcMarginInput(props: MarginInputProps) {
-  return <MarginInput {...props} label="PMC Margin" className="knowledge-pmc-margin" hint="Allowed: 10%–20%" min={10} max={20} step={5} placeholder="10–20" />;
+export function KnowledgePmcMarginRange({ minimum, maximum, readOnly, errors, onChange, onFieldRef }: {
+  minimum: KnowledgeJsonValue | undefined;
+  maximum: KnowledgeJsonValue | undefined;
+  readOnly: boolean;
+  errors: { minimum?: string; maximum?: string };
+  onChange: (field: "minimum" | "maximum", value: KnowledgeJsonValue) => void;
+  onFieldRef: (field: "minimum" | "maximum", node: HTMLDivElement | null) => void;
+}) {
+  const hintId = `${useId()}-pmc-margin-hint`;
+  return <div className="knowledge-lisno-margin knowledge-pmc-margin-range" role="group" aria-label="PMC Margin">
+    <div className="knowledge-lisno-margin__fields">
+      {(["minimum", "maximum"] as const).map((field) => <div key={field} ref={(node) => onFieldRef(field, node)}>
+        <MarginInput value={field === "minimum" ? minimum : maximum}
+          readOnly={readOnly} error={errors[field]} min={10} max={20} step={0.01} describedBy={hintId}
+          label={<>{field === "minimum" ? "Min." : "Max."}<span className="sr-only"> PMC Margin (%)</span></>}
+          onChange={(value) => onChange(field, value)} />
+      </div>)}
+    </div>
+    <p className="ui-field__hint" id={hintId}>Allowed: 10%–20% · Up to 2 decimal places · Min. ≤ Max.</p>
+  </div>;
 }
 
 export function KnowledgeSubVendorMarginRange({ minimum, maximum, readOnly, errors, onChange, onFieldRef }: {

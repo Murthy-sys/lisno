@@ -352,3 +352,111 @@ describe("related item creation", () => {
     else expect(onCreated).toHaveBeenCalledWith("line-created");
   });
 });
+
+describe("temporary item Main Basket creation", () => {
+  it("creates and selects a Main Basket without losing the temporary item draft", async () => {
+    const addedBasket: KnowledgeBasket = {
+      ...metadata,
+      id: "basket-created",
+      name: "Electrical",
+      description: null,
+      displayOrder: 0,
+      status: "active"
+    };
+    vi.mocked(api.listKnowledgeBaskets).mockResolvedValue(page([]));
+    vi.mocked(api.createKnowledgeBasket).mockResolvedValue(addedBasket);
+    const { user, onCreated } = setup({ itemType: "temporary", canCreateBasket: true });
+
+    expect(await screen.findByText(/No Main Baskets are available/)).toBeVisible();
+    await user.type(screen.getByRole("textbox", { name: "Temporary item name" }), "Temporary wiring point");
+    await user.click(screen.getByRole("button", { name: "Add main basket" }));
+    await user.type(screen.getByRole("textbox", { name: "New Main Basket name" }), "  Electrical  ");
+    await user.click(screen.getByRole("button", { name: "Save main basket" }));
+
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Main basket" })).toHaveValue("basket-created"));
+    expect(screen.getByRole("combobox", { name: "Main basket" })).toHaveFocus();
+    expect(screen.getByRole("textbox", { name: "Temporary item name" })).toHaveValue("Temporary wiring point");
+    expect(screen.getByRole("status")).toHaveTextContent("Electrical");
+    expect(api.createKnowledgeBasket).toHaveBeenCalledWith({ name: "Electrical" });
+
+    await user.click(screen.getByRole("button", { name: "Add temporary item" }));
+    expect(api.createKnowledgeMainLine).toHaveBeenCalledWith("basket-created", {
+      name: "Temporary wiring point",
+      itemType: "temporary"
+    });
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("line-created"));
+  });
+
+  it("offers inline creation with existing baskets and reconciles an uncertain response before retry", async () => {
+    const matchingBasket: KnowledgeBasket = {
+      ...metadata,
+      id: "basket-existing-match",
+      name: "Electrical works",
+      description: null,
+      displayOrder: 3,
+      status: "active"
+    };
+    vi.mocked(api.createKnowledgeBasket).mockRejectedValueOnce(new Error("Response lost"));
+    vi.mocked(api.listKnowledgeBaskets)
+      .mockResolvedValueOnce(page(baskets))
+      .mockResolvedValue(page([...baskets, matchingBasket]));
+    const { user } = setup({ itemType: "temporary", canCreateBasket: true, initialBasketId: "basket-0" });
+
+    await screen.findByRole("option", { name: "Carpentry" });
+    expect(screen.getByRole("button", { name: "Add main basket" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Add main basket" }));
+    await user.type(screen.getByRole("textbox", { name: "New Main Basket name" }), " electrical   WORKS ");
+    await user.click(screen.getByRole("button", { name: "Save main basket" }));
+
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Main basket" })).toHaveValue("basket-existing-match"));
+    expect(screen.getByText(/already exists and is selected/)).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "New Main Basket name" })).not.toBeInTheDocument();
+    expect(api.createKnowledgeBasket).toHaveBeenCalledOnce();
+  });
+
+  it("blocks a duplicate basket POST until an authoritative recheck confirms the name is absent", async () => {
+    vi.mocked(api.createKnowledgeBasket).mockRejectedValue(new Error("Response lost"));
+    vi.mocked(api.listKnowledgeBaskets)
+      .mockResolvedValueOnce(page(baskets))
+      .mockRejectedValueOnce(new Error("Catalog unavailable"))
+      .mockResolvedValueOnce(page(baskets));
+    const { user } = setup({ itemType: "temporary", canCreateBasket: true, initialBasketId: "basket-0" });
+
+    await screen.findByRole("option", { name: "Carpentry" });
+    await user.click(screen.getByRole("button", { name: "Add main basket" }));
+    await user.type(screen.getByRole("textbox", { name: "New Main Basket name" }), "Electrical");
+    await user.click(screen.getByRole("button", { name: "Save main basket" }));
+
+    const recheck = await screen.findByRole("button", { name: "Check basket list again" });
+    expect(api.createKnowledgeBasket).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Save main basket" })).toBeDisabled();
+
+    await user.click(recheck);
+    expect(await screen.findByText(/No matching Main Basket was found/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save main basket" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Save main basket" }));
+    await waitFor(() => expect(api.createKnowledgeBasket).toHaveBeenCalledTimes(2));
+  });
+
+  it("does not expose basket creation without the explicit Super Admin capability", async () => {
+    setup({ itemType: "temporary", initialBasketId: "basket-0" });
+    await screen.findByRole("option", { name: "Carpentry" });
+    expect(screen.queryByRole("button", { name: "Add main basket" })).not.toBeInTheDocument();
+  });
+
+  it("locks duplicate Main Basket submissions while the first request is pending", async () => {
+    let resolveCreate!: (basket: KnowledgeBasket) => void;
+    vi.mocked(api.createKnowledgeBasket).mockImplementation(() => new Promise((resolve) => { resolveCreate = resolve; }));
+    const { user } = setup({ itemType: "temporary", canCreateBasket: true, initialBasketId: "basket-0" });
+    await screen.findByRole("option", { name: "Carpentry" });
+    await user.click(screen.getByRole("button", { name: "Add main basket" }));
+    await user.type(screen.getByRole("textbox", { name: "New Main Basket name" }), "Electrical");
+
+    await user.dblClick(screen.getByRole("button", { name: "Save main basket" }));
+    expect(api.createKnowledgeBasket).toHaveBeenCalledOnce();
+
+    await act(async () => resolveCreate({ ...baskets[0], id: "basket-created", name: "Electrical" }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Main basket" })).toHaveValue("basket-created"));
+  });
+});

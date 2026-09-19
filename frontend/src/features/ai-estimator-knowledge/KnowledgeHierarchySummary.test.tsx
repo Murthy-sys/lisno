@@ -41,6 +41,31 @@ describe("KnowledgeHierarchySummary", () => {
     expect(group).toHaveTextContent("PMC, Sub-Vendor");
   });
 
+  it("shows the three Mode configuration statuses without a details disclosure", async () => {
+    const statuses: SavedSummaryGroup = {
+      key: "mode",
+      label: "Mode",
+      notices: [],
+      preview: [
+        { key: "pmc-status", label: "PMC", value: "Configured" },
+        { key: "sub-vendor-status", label: "Sub-Vendor", value: "Not configured" },
+        { key: "in-house-status", label: "In-house", value: "Configured" }
+      ],
+      details: [
+        { key: "pmc-status", label: "PMC", value: "Configured" },
+        { key: "sub-vendor-status", label: "Sub-Vendor", value: "Not configured" },
+        { key: "in-house-status", label: "In-house", value: "Configured" }
+      ]
+    };
+    render(<main><KnowledgeHierarchySummary item={item} groups={[statuses]} sourceKey="statuses" /></main>);
+
+    const group = screen.getByRole("region", { name: "Mode saved summary" });
+    expect(within(group).getAllByRole("term").map(term => term.textContent)).toEqual(["PMC", "Sub-Vendor", "In-house"]);
+    expect(within(group).getAllByRole("definition").map(definition => definition.textContent)).toEqual(["Configured", "Not configured", "Configured"]);
+    expect(within(group).queryByRole("button", { name: /Mode details/ })).not.toBeInTheDocument();
+    expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  });
+
   it("keeps independent loading, error/retry and explicit empty states alongside available data", async () => {
     let retries = 0;
     const user = userEvent.setup();

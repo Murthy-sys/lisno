@@ -23,10 +23,10 @@ import {
 import { KnowledgePmcScopeChecklist } from "./KnowledgePmcScopeChecklist";
 import { KnowledgeModeDescriptionEditor } from "./KnowledgeModeDescriptionEditor";
 import { generateModeDescription, modeDescriptionIssues, syncModeDescription } from "./knowledgeModeDescription";
-import { calculationScopeForIssue, MODE_CALCULATION_SCOPES, modeCalculationsIssues, type ModeCalculationScope } from "./knowledgeModeCalculation";
-import { pmcMarginIssues, subVendorMarginRange, subVendorMarginRangeIssues, withSubVendorMargin } from "./knowledgePmcMargin";
-import { KnowledgePmcMarginInput, KnowledgeSubVendorMarginRange } from "./KnowledgePmcMarginInput";
-import { PMC_SCOPE_LISTS } from "./knowledgePmcScope";
+import { calculationScopeForIssue, MODE_CALCULATION_SCOPES, modeCalculationIssues, modeCalculationsIssues, type ModeCalculationScope } from "./knowledgeModeCalculation";
+import { pmcMarginRange, pmcMarginRangeIssues, subVendorMarginRange, subVendorMarginRangeIssues, withPmcMargin, withSubVendorMargin } from "./knowledgePmcMargin";
+import { KnowledgePmcMarginRange, KnowledgeSubVendorMarginRange } from "./KnowledgePmcMarginInput";
+import { inHouseScopeStarterItems, PMC_SCOPE_LISTS, type KnowledgePmcScopeList } from "./knowledgePmcScope";
 import type {
   KnowledgeJsonObject,
   KnowledgeMaster
@@ -84,11 +84,12 @@ export function KnowledgeModeConfigurationBuilder({
     () => partitionKnowledgeModeConfigurations(parsed.configurations),
     [parsed.configurations]
   );
-  const generatedDescription = generateModeDescription(mainLineName, partitioned.primary.pmc);
+  const inHouseConfiguration = partitioned.primary.execution.in_house;
+  const generatedDescription = generateModeDescription(mainLineName, partitioned.primary.pmc, inHouseConfiguration);
   const description = typeof payload.modeDescription === "string"
-    ? syncModeDescription(payload.modeDescription, partitioned.primary.pmc) : generatedDescription;
+    ? syncModeDescription(payload.modeDescription, partitioned.primary.pmc, undefined, inHouseConfiguration) : generatedDescription;
   const issues = useMemo(
-    () => [...parsed.issues, ...modeDescriptionIssues(payload.modeDescription == null || typeof payload.modeDescription === "string" ? description : payload.modeDescription), ...modeCalculationsIssues(payload), ...pmcMarginIssues(payload.pmcMarginBps), ...subVendorMarginRangeIssues(payload), ...serverIssues],
+    () => [...parsed.issues, ...modeDescriptionIssues(payload.modeDescription == null || typeof payload.modeDescription === "string" ? description : payload.modeDescription), ...modeCalculationsIssues(payload), ...pmcMarginRangeIssues(payload), ...subVendorMarginRangeIssues(payload), ...serverIssues],
     [parsed.issues, description, payload, serverIssues]
   );
   const recoveries = [
@@ -108,10 +109,8 @@ export function KnowledgeModeConfigurationBuilder({
     setParagraphPending(pending);
     onPendingDescriptionChange(pending);
   }, [onPendingDescriptionChange]);
-  const [visibleModes, setVisibleModes] = useState<Record<KnowledgeModeKind, boolean>>({
-    pmc: true,
-    execution: false
-  });
+  const initialSelection = modeSelectionForPayload(payload, parsed.configurations);
+  const [visibleModes, setVisibleModes] = useState<Record<KnowledgeModeKind, boolean>>(initialSelection.modes);
   const [expandedModes, setExpandedModes] = useState<Record<KnowledgeModeKind, boolean>>({
     pmc: true,
     execution: true
@@ -120,10 +119,7 @@ export function KnowledgeModeConfigurationBuilder({
     setVisibleModes((current) => ({ ...current, [mode]: true }));
     setExpandedModes((current) => ({ ...current, [mode]: true }));
   }, []);
-  const [visibleExecutionSources, setVisibleExecutionSources] = useState<Record<KnowledgeExecutionSource, boolean>>({
-    sub_vendor: true,
-    in_house: false
-  });
+  const [visibleExecutionSources, setVisibleExecutionSources] = useState<Record<KnowledgeExecutionSource, boolean>>(initialSelection.executionSources);
   const [expandedExecutionSources, setExpandedExecutionSources] = useState<Record<KnowledgeExecutionSource, boolean>>({
     sub_vendor: true,
     in_house: true
@@ -133,6 +129,18 @@ export function KnowledgeModeConfigurationBuilder({
     setVisibleExecutionSources((current) => ({ ...current, [source]: true }));
     setExpandedExecutionSources((current) => ({ ...current, [source]: true }));
   }, [showMode]);
+  const selectionResetKey = useRef(descriptionResetKey);
+  useEffect(() => {
+    if (selectionResetKey.current === descriptionResetKey) return;
+    selectionResetKey.current = descriptionResetKey;
+    const selection = modeSelectionForPayload(payload, parsed.configurations);
+    setVisibleModes(selection.modes);
+    setVisibleExecutionSources(selection.executionSources);
+    setExpandedModes({ pmc: true, execution: true });
+    setExpandedExecutionSources({ sub_vendor: true, in_house: true });
+  // Re-evaluate only when the parent changes item/revision or explicitly resets the draft.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [descriptionResetKey]);
   const validationSummaryRef = useRef<HTMLDivElement>(null);
   const fieldRefs = useRef(new Map<string, HTMLElement>());
   const lastValidationAttempt = useRef(0);
@@ -156,7 +164,7 @@ export function KnowledgeModeConfigurationBuilder({
     if ((paragraphPending || issues[0]?.path === "modeDescription") && !visibleModes.pmc && !visibleModes.execution) showMode("pmc");
     const firstIssue = paragraphPending ? { path: "modeDescription", message: "Save or cancel the paragraph." }
       : invalidCalculationScope ? { path: `modeCalculations.${invalidCalculationScope}`, message: "Review the calculation inputs." } : issues[0]!;
-    if (firstIssue.path === "pmcMarginBps") showMode("pmc");
+    if (firstIssue.path === "pmcMarginBps" || firstIssue.path === "pmcMinimumMarginBps") showMode("pmc");
     selectConfigurationForIssue(
       firstIssue,
       parsed.configurations,
@@ -173,7 +181,13 @@ export function KnowledgeModeConfigurationBuilder({
     const nextPayload = withKnowledgeModeConfigurations(payload, next);
     onChange(typeof payload.modeDescription === "string" ? {
       ...nextPayload,
-      modeDescription: syncModeDescription(payload.modeDescription, partitionKnowledgeModeConfigurations(next).primary.pmc, partitioned.primary.pmc)
+      modeDescription: syncModeDescription(
+        payload.modeDescription,
+        partitionKnowledgeModeConfigurations(next).primary.pmc,
+        partitioned.primary.pmc,
+        partitionKnowledgeModeConfigurations(next).primary.execution.in_house,
+        partitioned.primary.execution.in_house
+      )
     } : nextPayload);
   }
 
@@ -217,17 +231,32 @@ export function KnowledgeModeConfigurationBuilder({
     return issues.find((issue) => issue.path === path)?.message;
   }
 
-  const pmcMarginControl = <div ref={(node) => {
-    if (node) fieldRefs.current.set("pmcMarginBps", node);
-    else fieldRefs.current.delete("pmcMarginBps");
-  }}>
-    <KnowledgePmcMarginInput key={descriptionResetKey} value={payload.pmcMarginBps}
-      readOnly={readOnly} error={issueFor("pmcMarginBps")}
-      onChange={(pmcMarginBps) => {
-        onDirty();
-        onChange({ ...payload, pmcMarginBps });
-      }} />
-  </div>;
+  const pmcMarginControl = <KnowledgePmcMarginRange key={descriptionResetKey}
+    {...pmcMarginRange(payload)} readOnly={readOnly}
+    errors={{ minimum: issueFor("pmcMinimumMarginBps"), maximum: issueFor("pmcMarginBps") }}
+    onFieldRef={(field, node) => {
+      const path = field === "minimum" ? "pmcMinimumMarginBps" : "pmcMarginBps";
+      if (node) fieldRefs.current.set(path, node);
+      else fieldRefs.current.delete(path);
+    }}
+    onChange={(field, value) => {
+      onDirty();
+      onChange(withPmcMargin(payload, field, value));
+    }} />;
+
+  function inHouseScopeItems(list: KnowledgePmcScopeList) {
+    return inHouseConfiguration?.[list] ?? (inHouseConfiguration && Object.hasOwn(inHouseConfiguration, list)
+      ? [] : inHouseScopeStarterItems(list));
+  }
+
+  function updateInHouseScope(list: KnowledgePmcScopeList, items: ReturnType<typeof inHouseScopeItems>) {
+    const configuration = inHouseConfiguration ?? createKnowledgeModeConfiguration("execution", "in_house");
+    updateConfiguration({
+      ...configuration,
+      inclusions: list === "inclusions" ? items : inHouseScopeItems("inclusions").map((item) => ({ ...item })),
+      exclusions: list === "exclusions" ? items : inHouseScopeItems("exclusions").map((item) => ({ ...item }))
+    });
+  }
 
   const subVendorMarginControl = <KnowledgeSubVendorMarginRange key={descriptionResetKey}
     {...subVendorMarginRange(payload)} readOnly={readOnly}
@@ -315,7 +344,7 @@ export function KnowledgeModeConfigurationBuilder({
                 <button
                   type="button"
                   onClick={() => {
-                    if (issue.path === "pmcMarginBps") showMode("pmc");
+                    if (issue.path === "pmcMarginBps" || issue.path === "pmcMinimumMarginBps") showMode("pmc");
                     if (issue.path === "modeDescription" && !visibleModes.pmc && !visibleModes.execution) showMode("pmc");
                     selectConfigurationForIssue(
                       issue,
@@ -371,6 +400,7 @@ export function KnowledgeModeConfigurationBuilder({
           key={descriptionResetKey}
           description={description}
           pmc={partitioned.primary.pmc}
+          inHouse={inHouseConfiguration}
           readOnly={readOnly}
           validationAttempt={validationAttempt}
           error={issueFor("modeDescription")}
@@ -454,6 +484,23 @@ export function KnowledgeModeConfigurationBuilder({
                     </section>
                     {!calculation ? subVendorMarginControl : calculationSlot("sub_vendor")}
                   </> : <>
+                    <section aria-label="In-house scope">
+                      <div className="knowledge-mode-configuration__mode-content">
+                        <div className="knowledge-pmc-scope knowledge-in-house-scope">
+                          {PMC_SCOPE_LISTS.map((list) => (
+                            <KnowledgePmcScopeChecklist
+                              key={list}
+                              list={list}
+                              contextLabel="In-house"
+                              items={inHouseScopeItems(list)}
+                              oppositeItems={inHouseScopeItems(list === "inclusions" ? "exclusions" : "inclusions")}
+                              readOnly={readOnly}
+                              onChange={(items) => updateInHouseScope(list, items)}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </section>
                     {calculationSlot("in_house_labor")}
                     {calculationSlot("in_house_material")}
                     {inHouseTotal?.(active)}
@@ -556,6 +603,53 @@ export function KnowledgeModeConfigurationBuilder({
 }
 
 function ignorePendingDescription() {}
+
+export function modeSelectionForPayload(
+  payload: KnowledgeJsonObject,
+  configurations = parseKnowledgeModeConfigurations(payload.modeConfigurations).configurations
+): {
+  readonly modes: Record<KnowledgeModeKind, boolean>;
+  readonly executionSources: Record<KnowledgeExecutionSource, boolean>;
+} {
+  const primary = partitionKnowledgeModeConfigurations(configurations).primary;
+  const rawCalculations = payload.modeCalculations;
+  const calculations = rawCalculations && typeof rawCalculations === "object" && !Array.isArray(rawCalculations)
+    ? rawCalculations as KnowledgeJsonObject
+    : undefined;
+  const completeCalculation = (value: KnowledgeJsonObject[string] | undefined) =>
+    value != null && modeCalculationIssues(value).length === 0;
+  const pmcRange = pmcMarginRange(payload);
+  const completePmcMargin = pmcRange.minimum != null && pmcRange.maximum != null &&
+    pmcMarginRangeIssues(payload).length === 0;
+  const subVendorRange = subVendorMarginRange(payload);
+  const completeSubVendorMargin = subVendorRange.minimum != null && subVendorRange.maximum != null &&
+    subVendorMarginRangeIssues(payload).length === 0;
+  const hasSplitInHouse = calculations != null &&
+    (Object.hasOwn(calculations, "in_house_labor") || Object.hasOwn(calculations, "in_house_material"));
+  // The established Sub-Vendor scope is stored on the canonical PMC row.
+  // An own list, including an explicitly saved empty list, is therefore
+  // source-specific evidence that Sub-Vendor was configured or reviewed.
+  const hasSubVendorScope = primary.pmc != null && PMC_SCOPE_LISTS.some((list) =>
+    primary.pmc?.[list] !== undefined);
+  const pmc = Boolean(primary.pmc || completeCalculation(calculations?.pmc) || completePmcMargin);
+  const subVendor = Boolean(primary.execution.sub_vendor || hasSubVendorScope || completeCalculation(calculations?.sub_vendor) ||
+    completeSubVendorMargin);
+  const inHouse = Boolean(primary.execution.in_house ||
+    (hasSplitInHouse
+      ? completeCalculation(calculations?.in_house_labor) || completeCalculation(calculations?.in_house_material)
+      : completeCalculation(calculations?.in_house)));
+  const hasUnmatchedModeData = payload.modeCalculation != null ||
+    (calculations != null && Object.values(calculations).some((value) => value != null)) ||
+    (Array.isArray(payload.modeConfigurations) && payload.modeConfigurations.length > 0) ||
+    [payload.pmcMinimumMarginBps, payload.pmcMarginBps,
+      payload.subVendorMinimumMarginBps, payload.subVendorMarginBps]
+      .some((value) => value != null);
+  const empty = !pmc && !subVendor && !inHouse && !hasUnmatchedModeData;
+  return {
+    modes: { pmc: pmc || empty, execution: subVendor || inHouse },
+    executionSources: { sub_vendor: subVendor || empty, in_house: inHouse }
+  };
+}
 
 function RecoveryModeFields({
   fields,

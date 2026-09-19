@@ -294,3 +294,9 @@
 {"_e":"metro:bundling:done","_t":1789820551549,"id":"10","total":1,"ms":69.848208}
 {"_e":"metro:bundling:started","_t":1789820578771,"id":"11","platform":"android","environment":null,"entry":"node_modules/expo-router/entry.js"}
 {"_e":"metro:bundling:done","_t":1789820578836,"id":"11","total":1,"ms":64.99575}
+{"_e":"metro:server_log","_t":1789824791011,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1789824997553,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1789825572433,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1789825997196,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1789826366867,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1789827319936,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}

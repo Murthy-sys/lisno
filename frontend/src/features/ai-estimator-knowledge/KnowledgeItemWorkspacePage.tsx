@@ -1,5 +1,5 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Copy, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowLeft, Copy, Pencil, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
@@ -9,6 +9,7 @@ import { hasFrontendPermission } from "../../auth/authorization";
 import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
 import { Field, Input, Textarea } from "../../components/ui/Field";
+import { IconButton } from "../../components/ui/IconButton";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
@@ -26,6 +27,7 @@ import {
   listKnowledgeBaskets,
   listKnowledgeItems,
   listKnowledgeMasters,
+  updateKnowledgeMainLine,
   updateKnowledgeSection
 } from "./knowledgeApi";
 import { KnowledgeLifecycleDialog, type KnowledgeLifecycleAction } from "./KnowledgeLifecycleDialogs";
@@ -169,6 +171,7 @@ export function KnowledgeItemWorkspacePage() {
   const [command, setCommand] = useState<"revision" | "duplicate" | null>(null);
   const [commandReason, setCommandReason] = useState("");
   const [duplicateName, setDuplicateName] = useState("");
+  const [mainLineEditorOpen, setMainLineEditorOpen] = useState(false);
 
   const canCreate = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.create");
   const canUpdate = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.update");
@@ -515,8 +518,14 @@ export function KnowledgeItemWorkspacePage() {
         breadcrumb={<Button variant="quiet" size="compact" leadingIcon={<ArrowLeft />} onClick={() => guard.requestNavigation(() => navigate("/admin/configuration/estimation"))}>Back to Main Baskets</Button>}
         eyebrow={`Main Basket · ${item.basketName}${item.subBasketName ? ` · Sub Basket · ${item.subBasketName}` : ""}`}
         title={item.mainLineName}
+        titleAction={auth.user?.role === "super_admin" && canUpdate && item.status !== "archived"
+          ? <IconButton className="knowledge-main-line-edit" label="Edit Main Line" tooltip="Edit Main Line" variant="quiet" icon={<Pencil size={18} aria-hidden="true" />}
+              onClick={() => guard.requestNavigation(() => setMainLineEditorOpen(true))} />
+          : null}
         metadata={<div className="knowledge-header-metadata">{item.itemType === "temporary" && <span className="knowledge-temporary-badge">Temporary item</span>}<StatusBadge label={KNOWLEDGE_ITEM_STATUS_LABELS[item.status]} tone={item.status === "active" ? "success" : item.status === "draft" ? "warning" : item.status === "archived" ? "danger" : "neutral"} /><span>Updated {formatKnowledgeDateTime(item.updatedAt)}</span></div>}
-        actions={<WorkspaceActions item={item} canCreate={canCreate} canLifecycle={canLifecycle} onCommand={(next) => guard.requestNavigation(() => setCommand(next))} onLifecycle={(next) => guard.requestNavigation(() => setLifecycleAction(next))} />}
+        actions={<WorkspaceActions item={item} canCreate={canCreate} canLifecycle={canLifecycle}
+          onCommand={(next) => guard.requestNavigation(() => setCommand(next))}
+          onLifecycle={(next) => guard.requestNavigation(() => setLifecycleAction(next))} />}
       />
       <KnowledgeSafetyNotice />
       <KnowledgeWorkspaceStatus item={item} />
@@ -621,6 +630,11 @@ export function KnowledgeItemWorkspacePage() {
       ) : null}
       {lifecycleAction ? <KnowledgeLifecycleDialog action={lifecycleAction} blockers={lifecycleAction === "activate" ? item.blockers : []} warnings={lifecycleAction === "activate" ? item.warnings : []} reason={lifecycleReason} onReasonChange={setLifecycleReason} onClose={() => { setLifecycleAction(null); lifecycleMutation.reset(); }} onConfirm={() => lifecycleMutation.mutate({ action: lifecycleAction, target: item })} busy={lifecycleMutation.isPending} error={lifecycleError} /> : null}
       {command ? <KnowledgeCommandDialog kind={command} reason={commandReason} duplicateName={duplicateName} onReasonChange={setCommandReason} onNameChange={setDuplicateName} onClose={() => { setCommand(null); commandMutation.reset(); }} onConfirm={() => commandMutation.mutate({ kind: command, target: item })} busy={commandMutation.isPending} error={commandError} /> : null}
+      {mainLineEditorOpen ? <MainLineEditorDialog item={item} onClose={() => setMainLineEditorOpen(false)} onSaved={async (updated) => {
+        await syncKnowledgeLifecycleMutation(queryClient, updated);
+        setMainLineEditorOpen(false);
+        setAnnouncement(`Main Line renamed to “${updated.mainLineName}”.`);
+      }} /> : null}
     </div>
   );
 }
@@ -640,6 +654,42 @@ function WorkspaceActions({ item, canCreate, canLifecycle, onCommand, onLifecycl
     ? "Review activation"
     : "Review and activate";
   return <>{canLifecycle && item.allowedActions.includes("review_and_activate") ? <Button variant={item.blockers.length > 0 ? "secondary" : "success"} leadingIcon={<ShieldCheck />} onClick={() => onLifecycle("activate")}>{activationLabel}</Button> : null}{canCreate && item.allowedActions.includes("create_revision") ? <Button leadingIcon={<Plus />} onClick={() => onCommand("revision")}>Create revision</Button> : null}{canCreate && item.allowedActions.includes("duplicate") ? <Button variant="secondary" leadingIcon={<Copy />} onClick={() => onCommand("duplicate")}>Duplicate</Button> : null}{canLifecycle && item.allowedActions.includes("deactivate") ? <Button variant="destructive-outline" onClick={() => onLifecycle("deactivate")}>Deactivate</Button> : null}{canLifecycle && item.allowedActions.includes("archive") ? <Button variant="destructive-outline" leadingIcon={<Trash2 />} onClick={() => onLifecycle("archive")}>Delete</Button> : null}</>;
+}
+
+function MainLineEditorDialog({ item, onClose, onSaved }: {
+  readonly item: KnowledgeItemDetail;
+  readonly onClose: () => void;
+  readonly onSaved: (item: KnowledgeItemDetail) => Promise<void>;
+}) {
+  const [name, setName] = useState(item.mainLineName);
+  const trimmedName = name.trim();
+  const mutation = useMutation({
+    mutationFn: () => updateKnowledgeMainLine(item.mainLineId, {
+      expectedVersion: item.version,
+      name: trimmedName
+    }),
+    onSuccess: onSaved
+  });
+  const error = mutation.error instanceof ApiError && mutation.error.code === "VERSION_CONFLICT"
+    ? "This Main Line changed elsewhere. Close this dialog, review the latest name, and try again."
+    : mutation.error?.message ?? null;
+
+  return (
+    <Dialog title="Edit Main Line" eyebrow="Estimation configuration" description="Update the name shown throughout this Main Basket." onClose={onClose} busy={mutation.isPending}>
+      <form className="knowledge-dialog-form" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
+        <div className="knowledge-dialog-body">
+          {error ? <InlineMessage tone="error" role="alert">{error}</InlineMessage> : null}
+          <Field id="main-line-name" label="Main Line name" required>
+            {(props) => <Input {...props} autoFocus value={name} onChange={(event) => setName(event.target.value)} />}
+          </Field>
+        </div>
+        <div className="knowledge-dialog-actions">
+          <Button type="button" variant="quiet" onClick={onClose}>Cancel</Button>
+          <Button type="submit" busy={mutation.isPending} disabled={!trimmedName || trimmedName === item.mainLineName}>Save Main Line</Button>
+        </div>
+      </form>
+    </Dialog>
+  );
 }
 
 function KnowledgeCommandDialog({ kind, reason, duplicateName, onReasonChange, onNameChange, onClose, onConfirm, busy, error }: {

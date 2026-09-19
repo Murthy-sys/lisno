@@ -761,8 +761,16 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       ref("KnowledgeValuedModeField")
     ]
   },
+  KnowledgeModeScopeItem: strictObject(
+    ["id", "name", "selected"],
+    {
+      id,
+      name: shortText,
+      selected: { type: "boolean" }
+    }
+  ),
   KnowledgeModeConfiguration: {
-    description: "Canonical PMC or source-scoped Execution definition template, with deprecated unscoped/Mode-ID compatibility variants.",
+    description: "Canonical PMC or source-scoped Execution definition template. PMC and In-house may own independent Inclusion/Exclusion lists; Sub-Vendor, unscoped Execution and Mode-ID compatibility variants may not.",
     oneOf: [
       strictObject(
         ["id", "modeKind", "fields"],
@@ -772,6 +780,28 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
             type: "string",
             enum: ["pmc"],
             description: "Canonical direct PMC component template."
+          },
+          fields: {
+            type: "array",
+            maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELDS,
+            items: ref("KnowledgeModeFieldInput")
+          },
+          inclusions: { type: "array", maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS, items: ref("KnowledgeModeScopeItem") },
+          exclusions: { type: "array", maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS, items: ref("KnowledgeModeScopeItem") }
+        }
+      ),
+      strictObject(
+        ["id", "modeKind", "executionSource", "fields"],
+        {
+          id,
+          modeKind: {
+            type: "string",
+            enum: ["execution"]
+          },
+          executionSource: {
+            type: "string",
+            enum: ["sub_vendor"],
+            description: "Sub-Vendor source identity for a canonical Execution component template."
           },
           fields: {
             type: "array",
@@ -790,14 +820,16 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
           },
           executionSource: {
             type: "string",
-            enum: [...AI_ESTIMATOR_KNOWLEDGE_EXECUTION_SOURCES],
-            description: "Required source identity for a canonical Execution component template."
+            enum: ["in_house"],
+            description: "In-house source identity. Its Inclusion/Exclusion lists are independent from PMC."
           },
           fields: {
             type: "array",
             maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELDS,
             items: ref("KnowledgeModeFieldInput")
-          }
+          },
+          inclusions: { type: "array", maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS, items: ref("KnowledgeModeScopeItem") },
+          exclusions: { type: "array", maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS, items: ref("KnowledgeModeScopeItem") }
         }
       ),
       {
@@ -926,7 +958,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       impactBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000, default: 1_000 },
       pmcMarginBps: { type: "integer", minimum: 1_000, maximum: 2_000 }
     }),
-    description: "PMC simulator settings. Base Rate, Low Quantity Limit and Impact come from the current PMC cost settings; the single PMC margin comes from advanced.pmcMarginBps. Configured Impact applies at or below the configured quantity limit; zero disables the charge, and omitted Impact defaults to 10%. Selling price = adjusted cost / (1 - PMC margin / 100); adjusted cost includes that charge. Starting and minimum Mode markups are not used."
+    description: "PMC simulator settings. Base Rate, Low Quantity Limit and Impact come from the current PMC cost settings; pmcMarginBps carries one selected Min. or Max. value from advanced configuration. Configured Impact applies at or below the configured quantity limit; zero disables the charge, and omitted Impact defaults to 10%. Selling price = adjusted cost / (1 - PMC margin / 100); adjusted cost includes that charge. Starting and minimum Mode markups are not used."
   },
   KnowledgePmcCalculationPreview: {
     ...strictObject(["baseAmountPaise", "lowQuantityImpactAmountPaise", "revisedUnitRatePaise", "revisedAmountPaise", "totalPaise", "appliedImpactBps", "pmcMarginBps", "pmcMarginAmountPaise", "totalBeforeDiscountPaise", "finalVendorChargesPaise"], {
@@ -941,14 +973,15 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
         description: "Rounded selling price before discount minus revisedAmountPaise; preserved separately when discount is applied." },
       totalBeforeDiscountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER,
         description: "Selling price before discount: revisedAmountPaise * 10000 / (10000 - pmcMarginBps), rounded half-up to integer paise." },
-      finalVendorChargesPaise: { type: "integer", minimum: -Number.MAX_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
+      finalVendorChargesPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER,
+        description: "Adjusted cost preserved in full when the custom discount reduces only the PMC charge." },
       discount: strictObject(["rateBps", "totalBeforeDiscountPaise", "amountPaise"], {
         rateBps: { type: "integer", minimum: 0, maximum: 10_000 },
         totalBeforeDiscountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
         amountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }
       })
     }),
-    description: "At or below the configured quantity limit, configured Impact revises the unit rate before quantity multiplication. The low-quantity charge is the difference between the rounded revised and base amounts. Selling price before discount is revisedAmountPaise * 10000 / (10000 - pmcMarginBps), rounded half-up to integer paise. PMC margin amount is that selling price minus revisedAmountPaise. A custom 0–100% discount applies to the selling price before discount without a margin-based cap. finalVendorChargesPaise retains the signed balance excluding the separately reported PMC margin for response compatibility; this balance can be negative, and its sum with PMC margin equals the non-negative totalPaise. The simulator displays Final total without a separate vendor-charges row."
+    description: "At or below the configured quantity limit, configured Impact revises the unit rate before quantity multiplication. The low-quantity charge is the difference between the rounded revised and base amounts. Selling price before discount is revisedAmountPaise * 10000 / (10000 - pmcMarginBps), rounded half-up to integer paise. PMC margin amount is that selling price minus revisedAmountPaise. A custom 0–100% discount applies only to the pre-discount PMC margin amount, rounded half-up to integer paise. finalVendorChargesPaise equals revisedAmountPaise, so the adjusted cost is never discounted. The final total equals adjusted cost plus PMC margin minus discount."
   },
   KnowledgeSubVendorCalculationSettings: {
     ...strictObject(["baseRatePaise", "lowQuantityLimit", "subVendorMarginBps"], {
@@ -1012,7 +1045,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     },
     modeCalculationDiscountBps: {
       type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000, default: 0,
-      description: "Simulator-only discount. For Mode and In-house, it reduces markup percentage points and cannot exceed chosen markup minus minimum markup (0 when using minimum); both In-house costs must satisfy that limit. For PMC and Sub-Vendor, the custom rate is 0–10000 basis points (0–100%) and discounts the rounded selling subtotal calculated by dividing adjusted cost by (1 - the independently configured margin). There is no margin-based cap or minimum final margin. Never persisted."
+      description: "Simulator-only discount. For Mode and In-house, it reduces markup percentage points and cannot exceed chosen markup minus minimum markup (0 when using minimum); both In-house costs must satisfy that limit. For PMC, the 0–10000-bps rate discounts only the pre-discount PMC charge and preserves adjusted cost. For Sub-Vendor, the same rate continues to discount the rounded selling subtotal. Neither margin preview has a margin-based cap. Never persisted."
     }
   }),
   KnowledgeDurationPreviewRequest: strictObject(["productivity", "productivityScale", "unit"], {
@@ -1413,7 +1446,7 @@ function sectionPayloadKeys(sectionKey: string): readonly string[] {
     recommendations: ["recommendations", "exclusions", "budgetAlterations"],
     quality: ["parameters"],
     execution: ["steps", "productivity"],
-    advanced: ["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "pmcMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"]
+    advanced: ["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "pmcMarginBps", "pmcMinimumMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"]
   };
   return keys[sectionKey] ?? [];
 }
@@ -1446,7 +1479,11 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
     properties.modeCalculations = ref("KnowledgeModeCalculations");
     properties.pmcMarginBps = {
       type: "integer", minimum: 1_000, maximum: 2_000, nullable: true,
-      description: "Configured PMC margin in integer basis points, from 10% to 20% inclusive. Null or absent means not configured."
+      description: "Maximum PMC margin in integer basis points, from 10% to 20% inclusive. When pmcMinimumMarginBps is absent, legacy data reads as an equal Min./Max. pair without a write. An explicit minimum requires a complete ordered pair or both values empty."
+    };
+    properties.pmcMinimumMarginBps = {
+      type: "integer", minimum: 1_000, maximum: 2_000, nullable: true,
+      description: "Minimum PMC margin in integer basis points, from 10% to 20% inclusive and no greater than pmcMarginBps. Absence inherits the effective legacy maximum without persisting it; explicit null never inherits. An explicit partial pair is invalid; both values empty remain allowed."
     };
     properties.subVendorMarginBps = {
       type: "integer", minimum: 0, maximum: 9_500, multipleOf: 500, nullable: true,

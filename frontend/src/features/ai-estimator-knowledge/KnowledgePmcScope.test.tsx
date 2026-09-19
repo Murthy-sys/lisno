@@ -29,6 +29,13 @@ function Harness({ initial = backendLists, readOnly = false, onChange = vi.fn(),
   /></main>;
 }
 
+async function showSubVendor(user: ReturnType<typeof userEvent.setup>) {
+  const execution = screen.getByRole("checkbox", { name: "Execution" }) as HTMLInputElement;
+  if (!execution.checked) await user.click(execution);
+  const subVendor = screen.getByRole("checkbox", { name: "Sub-Vendor" }) as HTMLInputElement;
+  if (!subVendor.checked) await user.click(subVendor);
+}
+
 const saved: KnowledgeJsonObject = { modeConfigurations: [{
   id: "pmc-saved", modeKind: "pmc", fields: [],
   inclusions: [{ id: "transport-in", name: "Transport", selected: true }],
@@ -40,7 +47,7 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness initial={initial} onChange={onChange} />);
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showSubVendor(user);
     expect(screen.getByText("No inclusions added.")).toBeVisible();
     expect(screen.getByText("No exclusions added.")).toBeVisible();
     expect(within(screen.getByRole("region", { name: "Sub-Vendor scope" })).queryByRole("checkbox")).not.toBeInTheDocument();
@@ -60,7 +67,7 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
       inclusions: [{ id: "original-in", name: "Transport service", selected: false }],
       exclusions: [{ id: "different-out", name: "  ＴＲＡＮＳＰＯＲＴ   service  ", selected: false }]
     }] }} />);
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showSubVendor(user);
     const source = within(screen.getByRole("group", { name: chosen }));
     const opposite = within(screen.getByRole("group", { name: chosen === "Inclusions" ? "Exclusions" : "Inclusions" }));
     const box = source.getByRole("checkbox");
@@ -97,7 +104,7 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     render(<Harness initial={{ modeConfigurations: [{ id: "scope", modeKind: "pmc", fields: [],
       inclusions: [{ id: "in", name: "Transport", selected: true }]
     }] }} />);
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showSubVendor(user);
     await user.click(screen.getByRole("button", { name: "Add Exclusion" }));
     await user.type(screen.getByRole("textbox", { name: "Exclusion name" }), "transport{Enter}");
     const other = within(screen.getByRole("group", { name: "Exclusions" }));
@@ -121,7 +128,7 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Transport is selected in both lists. Uncheck one before saving.");
     expect(onValidationChange).toHaveBeenLastCalledWith(false);
     expect(onChange).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showSubVendor(user);
     const region = within(screen.getByRole("region", { name: "Sub-Vendor scope" }));
     for (const checkbox of region.getAllByRole("checkbox")) {
       expect(checkbox).toBeChecked();
@@ -138,17 +145,19 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
   });
 
-  it("keeps the lists out of PMC and In-house while retaining Sub-Vendor selections across Mode switches", async () => {
+  it("restores saved Sub-Vendor scope and keeps it independent from PMC and In-house scope", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
     expect(screen.queryByRole("region", { name: "PMC components" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
     expect(screen.queryByText("No components configured for PMC.")).not.toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Inclusions" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Exclusions" })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Execution" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
+    expect(screen.getByRole("group", { name: "Inclusions" })).toBeVisible();
+    expect(screen.getByRole("group", { name: "Exclusions" })).toBeVisible();
     expect(onChange).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showSubVendor(user);
     expect(screen.getByRole("region", { name: "Sub-Vendor scope" })).toBeVisible();
     for (const title of ["Inclusions", "Exclusions"]) {
       const list = screen.getByRole("group", { name: title });
@@ -167,7 +176,10 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     }
     await user.click(screen.getByRole("checkbox", { name: "In-house" }));
     expect(screen.getByRole("region", { name: "Sub-Vendor scope" })).toBeVisible();
-    expect(within(screen.getByRole("region", { name: "In-house" })).queryByRole("group", { name: "Inclusions" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "In-house" }))
+      .getByRole("group", { name: "In-house Inclusions" })).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "In-house Inclusions" }))
+      .getByRole("checkbox", { name: "In-house Inclusion: Supplier" })).not.toBeChecked();
     await user.click(screen.getByRole("checkbox", { name: "Sub-Vendor" }));
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
     expect(screen.getByRole("checkbox", { name: "PMC" })).toBeChecked();
@@ -190,7 +202,7 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showSubVendor(user);
     for (const singular of ["Inclusion", "Exclusion"]) {
       const list = screen.getByRole("group", { name: `${singular}s` });
       expect(within(list).queryByRole("textbox")).not.toBeInTheDocument();
@@ -218,7 +230,7 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showSubVendor(user);
     const inclusions = screen.getByRole("group", { name: "Inclusions" });
     const exclusions = screen.getByRole("group", { name: "Exclusions" });
     await user.click(within(inclusions).getByRole("button", { name: "Add Inclusion" }));
@@ -241,9 +253,8 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness initial={{ modeConfigurations: [{ ...(saved.modeConfigurations as KnowledgeJsonObject[])[0], exclusions: [{ id: "legacy-out", name: "Transport", selected: true }] }] }} readOnly onChange={onChange} />);
-    expect(screen.queryByRole("group", { name: "Inclusions" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Exclusions" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    expect(screen.getByRole("group", { name: "Inclusions" })).toBeVisible();
+    expect(screen.getByRole("group", { name: "Exclusions" })).toBeVisible();
     expect(screen.getAllByRole("checkbox", { name: "Transport" }).every((box) => (box as HTMLInputElement).checked)).toBe(true);
     for (const box of within(screen.getByRole("region", { name: "Sub-Vendor scope" })).getAllByRole("checkbox")) {
       expect(box).toBeDisabled();
@@ -265,7 +276,7 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showSubVendor(user);
     const chosen = screen.getByRole("group", { name: kind === "inclusion" ? "Inclusions" : "Exclusions" });
     const other = screen.getByRole("group", { name: kind === "inclusion" ? "Exclusions" : "Inclusions" });
     const remove = within(chosen).getByRole("button", { name: `Delete ${kind} Transport` });
@@ -285,7 +296,7 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     const view = render(<Harness initial={saved} onChange={onChange} />);
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showSubVendor(user);
     const inclusions = screen.getByRole("group", { name: "Inclusions" });
     await user.click(within(inclusions).getByRole("button", { name: "Delete inclusion Transport" }));
     expect(within(inclusions).getByText("No inclusions added.")).toBeVisible();
@@ -294,7 +305,7 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     expect(next.modeConfigurations).toEqual([{ ...(saved.modeConfigurations as KnowledgeJsonObject[])[0], inclusions: [] }]);
     view.unmount();
     render(<Harness initial={next} readOnly />);
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showSubVendor(user);
     expect(within(screen.getByRole("group", { name: "Inclusions" })).queryByRole("checkbox")).not.toBeInTheDocument();
     expect(within(screen.getByRole("group", { name: "Exclusions" })).getByRole("checkbox", { name: "Transport" })).not.toBeChecked();
   });
@@ -308,7 +319,7 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
         exclusions: [{ id: "lift-out", name: "Lift service", selected: true }]
       }] };
     render(<Harness initial={initial} onChange={onChange} />);
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showSubVendor(user);
     await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
     const text = screen.getByRole("textbox", { name: "Mode paragraph" });
     await user.type(text, " Keep this edit.");
@@ -333,7 +344,7 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     render(<Harness initial={{ modeConfigurations: [{ id: "pmc", modeKind: "pmc", fields, inclusions: [{ id: "saved-input", name: "Transport", selected: false }] }] }} onChange={onChange} />);
     expect(screen.queryByRole("region", { name: "PMC components" })).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Component label" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showSubVendor(user);
     await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ modeConfigurations: [expect.objectContaining({ fields })] }));
   });

@@ -45,6 +45,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     createKnowledgeMaster: vi.fn(),
     createKnowledgeSurface: vi.fn(),
     getKnowledgeItem: vi.fn(),
+    updateKnowledgeMainLine: vi.fn(),
     getKnowledgeHistory: vi.fn(),
     getKnowledgeSection: vi.fn(),
     getKnowledgeBasketQuality: vi.fn(),
@@ -281,9 +282,12 @@ async function findPricingSpecificationName() {
 }
 
 async function editPmcMargin(user: ReturnType<typeof userEvent.setup>) {
-  const margin = await screen.findByRole("spinbutton", { name: "PMC Margin" });
-  await user.clear(margin);
-  await user.type(margin, "15");
+  const minimum = await screen.findByRole("spinbutton", { name: "Min. PMC Margin (%)" });
+  const maximum = screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" });
+  await user.clear(minimum);
+  await user.type(minimum, "15");
+  await user.clear(maximum);
+  await user.type(maximum, "15");
 }
 
 function mockConfiguredModeSections(
@@ -535,8 +539,11 @@ describe("workspace hierarchy summary", () => {
     expectSummary();
     await user.clear(name); await user.type(name, "Moisture-resistant board");
     const card = expectSummary();
-    expect(card).toHaveTextContent("Specifications");
-    expect(card).toHaveTextContent(serverPricingSpecification.name);
+    const modeSummary = within(card).getByRole("region", { name: "Mode saved summary" });
+    expect(within(modeSummary).getAllByRole("term").map((term) => term.textContent)).toEqual(["PMC", "Sub-Vendor", "In-house"]);
+    expect(within(modeSummary).getAllByRole("definition")).toHaveLength(3);
+    expect(card).not.toHaveTextContent("Specifications");
+    expect(card).not.toHaveTextContent(serverPricingSpecification.name);
     expect(card).not.toHaveTextContent("Moisture-resistant board");
     for (const status of screen.getAllByText("Unsaved changes")) expect(status).toBeVisible();
     expect(card).not.toHaveTextContent("Server pricing");
@@ -796,6 +803,39 @@ describe("AI estimator knowledge screens", () => {
     expect(main!.compareDocumentPosition(history!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
+  it("lets a Super Admin rename the Main Line from the workspace header", async () => {
+    const user = userEvent.setup();
+    const renamed = {
+      ...item,
+      mainLineName: "TV Console",
+      version: item.version + 1,
+      updatedAt: "2026-09-19T12:00:00.000Z"
+    };
+    vi.mocked(knowledgeApi.getKnowledgeItem)
+      .mockResolvedValueOnce(item)
+      .mockResolvedValue(renamed);
+    vi.mocked(knowledgeApi.updateKnowledgeMainLine).mockResolvedValue(renamed);
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+
+    const editButton = await screen.findByRole("button", { name: "Edit Main Line" });
+    expect(editButton).toHaveClass("knowledge-main-line-edit");
+    await user.click(editButton);
+    const dialog = screen.getByRole("dialog", { name: "Edit Main Line" });
+    const name = within(dialog).getByRole("textbox", { name: "Main Line name" });
+    expect(name).toHaveValue("Wall panelling");
+    await user.clear(name);
+    await user.type(name, "TV Console");
+    await user.click(within(dialog).getByRole("button", { name: "Save Main Line" }));
+
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeMainLine).toHaveBeenCalledWith("line-1", {
+      expectedVersion: item.version,
+      name: "TV Console"
+    }));
+    expect(await screen.findByRole("heading", { name: "TV Console", level: 1 })).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "Edit Main Line" })).not.toBeInTheDocument();
+    expect(screen.getByText("Main Line renamed to “TV Console”.")).toBeInTheDocument();
+  });
+
   it("shows a terminal empty state with no Save when the item has no revision", async () => {
     vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({
       ...item,
@@ -871,6 +911,7 @@ describe("AI estimator knowledge screens", () => {
     await screen.findByRole("heading", { name: "UOM" });
     expect(screen.queryByRole("button", { name: "Review and activate" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit Main Line" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Duplicate" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Save Overview" })).not.toBeInTheDocument();
     expect(screen.getAllByText("Read-only revision")[0]).toBeVisible();
@@ -1571,7 +1612,7 @@ describe("AI estimator knowledge screens", () => {
       "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
     expect(await screen.findByRole("combobox", { name: "Unit of measure (UOM)" })).toHaveValue(squareFoot.id);
     await user.click(screen.getByRole("tab", { name: "Mode" }));
-    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
+    expect(await screen.findByRole("checkbox", { name: "Execution" })).toBeChecked();
     const calculations = await screen.findByRole("region", { name: "Sub-Vendor calculations" });
     expect(await within(calculations).findByText("Square foot")).toBeVisible();
     const maximum = within(calculations).getByRole("spinbutton", { name: "Max. Lisno Margin (%)" });
@@ -1884,7 +1925,7 @@ describe("AI estimator knowledge screens", () => {
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.map((call) => call[2])).toEqual(["advanced", "pricing"]);
     expect(knowledgeApi.updateKnowledgeSection).toHaveBeenNthCalledWith(1, "line-1", "revision-1", "advanced", expect.objectContaining({
       expectedVersion: 2, expectedAggregateVersion: 4, applicability: "configured",
-      payload: { pmcMarginBps: 1500 }
+      payload: { pmcMinimumMarginBps: 1500, pmcMarginBps: 1500 }
     }));
     expect(knowledgeApi.updateKnowledgeSection).toHaveBeenNthCalledWith(2, "line-1", "revision-1", "pricing", {
       expectedVersion: 2, expectedAggregateVersion: 5, applicability: "configured",
@@ -1951,8 +1992,9 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.getByRole("button", { name: "Save Mode" })).toBeEnabled();
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.map((call) => call[2])).toEqual(["advanced", "pricing"]);
     const summary = screen.getByRole("region", { name: "Mode saved summary" });
-    expect(summary).toHaveTextContent("15.00%");
-    expect(summary).toHaveTextContent(serverPricingSpecification.name);
+    expect(within(summary).getAllByRole("definition").map((definition) => definition.textContent))
+      .toEqual(["Not configured", "Not configured", "Not configured"]);
+    expect(summary).not.toHaveTextContent(serverPricingSpecification.name);
     expect(summary).not.toHaveTextContent("Unsaved specification");
 
     await user.click(screen.getAllByRole("button", { name: "Save Mode" })[0]);
@@ -1963,7 +2005,8 @@ describe("AI estimator knowledge screens", () => {
       "pricing"
     ]);
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.map((call) => call[3].expectedAggregateVersion)).toEqual([4, 5, 5]);
-    await waitFor(() => expect(summary).toHaveTextContent("Unsaved specification"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save Mode" })).toBeDisabled());
+    expect(summary).not.toHaveTextContent("Unsaved specification");
   });
 
   it("attributes a Specifications conflict without discarding the acknowledged Mode change", async () => {
@@ -2007,11 +2050,11 @@ describe("AI estimator knowledge screens", () => {
     expect(pricingReads).toBeGreaterThan(1);
     expect(knowledgeApi.getKnowledgeItem).toHaveBeenCalled();
     expect(specificationName).toHaveValue("My local specification");
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(15);
+    expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(15);
 
     await user.click(within(conflict).getByRole("button", { name: "Discard local changes" }));
     expect(await findPricingSpecificationName()).toHaveValue("Latest server specification");
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(15);
+    expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(15);
 
     expect(screen.getByRole("button", { name: "Save Mode" })).toBeDisabled();
     expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(2);
@@ -2129,7 +2172,7 @@ describe("AI estimator knowledge screens", () => {
     expect(await screen.findByRole("tabpanel", { name: "Recommendation & Exclusions" })).toBeVisible();
     await user.click(screen.getByRole("tab", { name: "Mode" }));
     expect(await findPricingSpecificationName()).toHaveValue("Server specification");
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(null);
+    expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(null);
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
   });
 
@@ -2148,7 +2191,7 @@ describe("AI estimator knowledge screens", () => {
     expect(overview).not.toHaveTextContent("Hidden saved description");
     expect(overview).not.toHaveTextContent("Main Basket");
     expect(within(overview).queryByRole("button", { name: /^Open /u })).not.toBeInTheDocument();
-    expect(vi.mocked(knowledgeApi.getKnowledgeSection).mock.calls.map(([, , sectionKey]) => sectionKey).sort()).toEqual(["advanced", "overview", "pricing", "recommendations"]);
+    expect(vi.mocked(knowledgeApi.getKnowledgeSection).mock.calls.map(([, , sectionKey]) => sectionKey).sort()).toEqual(["advanced", "overview", "recommendations"]);
     expect(knowledgeApi.getKnowledgeBasketQuality).toHaveBeenCalledExactlyOnceWith("basket-1");
     expect(screen.getByRole("region", { name: "Revision history" })).toBeVisible();
     await expectNoAutomatedAccessibilityViolations();
@@ -2190,7 +2233,7 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.queryByRole("combobox", { name: "Priority" })).not.toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Specifications" })).queryByRole("textbox", { name: "Technical description" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toBeDisabled();
+    expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Add UOM" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save Mode" })).not.toBeInTheDocument();
     await expectNoAutomatedAccessibilityViolations();
@@ -2221,6 +2264,7 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.queryByRole("button", { name: "Save Mode" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Review and activate" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit Main Line" })).not.toBeInTheDocument();
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
     await expectNoAutomatedAccessibilityViolations();
   });

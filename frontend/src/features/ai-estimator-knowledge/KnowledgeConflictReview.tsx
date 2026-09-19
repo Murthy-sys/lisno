@@ -1,6 +1,6 @@
 import { Surface } from "../../components/ui/Surface";
 import { BUDGET_ACTIONS, budgetAlterationRows } from "./knowledgeBudgetAlterations";
-import { subVendorMarginRange } from "./knowledgePmcMargin";
+import { pmcMarginRange, subVendorMarginRange } from "./knowledgePmcMargin";
 import {
   KNOWLEDGE_SECTION_LABELS,
   formatKnowledgeDateTime,
@@ -152,6 +152,13 @@ function advancedValues(
     label: "Mode paragraph",
     value: typeof payload.modeDescription === "string" ? payload.modeDescription : "Generated from the main line and selected inclusions and exclusions."
   });
+  if (Object.hasOwn(payload, "pmcMinimumMarginBps") || Object.hasOwn(payload, "pmcMarginBps")) {
+    const range = pmcMarginRange(payload);
+    for (const [key, value] of [["pmcMinimumMarginBps", range.minimum], ["pmcMarginBps", range.maximum]] as const) {
+      values.push({ label: displayLabel(key), value: value == null ? "Not configured"
+        : typeof value === "object" ? "Invalid value" : formatPrimitive(key, value) });
+    }
+  }
   if (Object.hasOwn(payload, "subVendorMinimumMarginBps") || Object.hasOwn(payload, "subVendorMarginBps")) {
     const range = subVendorMarginRange(payload);
     for (const [key, value] of [["subVendorMinimumMarginBps", range.minimum], ["subVendorMarginBps", range.maximum]] as const) {
@@ -160,6 +167,7 @@ function advancedValues(
     }
   }
   const { modeConfigurations: _privateModeConfigurations, modeDescription: _modeDescription,
+    pmcMinimumMarginBps: _minimumPmcMargin, pmcMarginBps: _maximumPmcMargin,
     subVendorMinimumMarginBps: _minimumMargin, subVendorMarginBps: _maximumMargin, ...otherAdvanced } = payload;
   return [...values, ...projectValues(otherAdvanced, {
     ...context,
@@ -488,7 +496,8 @@ function displayLabel(key: string): string {
     uomId: "Unit of measure (UOM)",
     uomIds: "Units of measure (UOM)",
     pmcMarkupBps: "PMC markup",
-    pmcMarginBps: "PMC Margin",
+    pmcMinimumMarginBps: "Min. PMC Margin",
+    pmcMarginBps: "Max. PMC Margin",
     subVendorMinimumMarginBps: "Min. Lisno Margin",
     subVendorMarginBps: "Max. Lisno Margin",
     taxRuleId: "Tax rule",

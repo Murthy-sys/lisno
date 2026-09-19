@@ -175,6 +175,66 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     expect(await AiEstimatorKnowledgeMainLineModel.findById(other.mainLineId).lean()).toEqual(otherLine);
   });
 
+  it("persists an unequal PMC range and isolated In-house scope while preserving legacy equal-pair copies", async () => {
+    const { item } = createServices();
+    const source = await createConfiguredDraft(item, "PMC range and In-house scope");
+    const original = await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced");
+    const payload = {
+      pmcMinimumMarginBps: 1_250,
+      pmcMarginBps: 1_900,
+      modeConfigurations: [
+        { id: "pmc-scope", modeKind: "pmc", fields: [],
+          inclusions: [{ id: "pmc-supplier", name: "Supplier", selected: false }], exclusions: [] },
+        { id: "in-house-scope", modeKind: "execution", executionSource: "in_house", fields: [],
+          inclusions: [{ id: "supplier", name: "Supplier", selected: true }, { id: "execution", name: "Execution", selected: false }],
+          exclusions: [{ id: "labour", name: "Labour", selected: true }] }
+      ]
+    };
+    const saved = await item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", {
+      expectedVersion: original.version, expectedAggregateVersion: source.aggregateVersion, payload
+    });
+    expect(saved).toMatchObject({ payload, version: original.version + 1, aggregateVersion: source.aggregateVersion + 1 });
+    expect(await AiEstimatorKnowledgeSectionModel.findById(saved.id).lean()).toMatchObject({ payload, version: original.version + 1 });
+    expect(await AuditEventModel.find({ entityId: saved.id, action: "ai_estimator_knowledge_section_updated" }).lean())
+      .toHaveLength(1);
+
+    for (const invalidPayload of [
+      { ...payload, pmcMinimumMarginBps: 2_000, pmcMarginBps: 1_500 },
+      { ...payload, pmcMinimumMarginBps: null },
+      { pmcMinimumMarginBps: null },
+      { ...payload, modeConfigurations: [payload.modeConfigurations[0], {
+        ...payload.modeConfigurations[1],
+        exclusions: [{ id: "supplier-out", name: "ＳＵＰＰＬＩＥＲ", selected: true }]
+      }] },
+      { ...payload, modeConfigurations: [{
+        ...payload.modeConfigurations[1], executionSource: "sub_vendor"
+      }] }
+    ]) {
+      const before = await lisnoPersistenceSnapshot();
+      await expect(item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: invalidPayload
+      })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+      expect(await lisnoPersistenceSnapshot()).toEqual(before);
+    }
+
+    const active = await item.activate(SUPER_ADMIN, source.mainLineId, source.revisionId, {
+      expectedVersion: saved.aggregateVersion
+    });
+    const copied = await item.createRevision(SUPER_ADMIN, source.mainLineId, { expectedVersion: active.version });
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, copied.draftRevisionId!, "advanced")).payload).toEqual(payload);
+
+    let legacy = await createConfiguredDraft(item, "Legacy PMC equal range");
+    const legacyPayload = { pmcMarginBps: 1_600, modeDescription: "Legacy single PMC value" };
+    legacy = await updateDraftSection(item, legacy, "advanced", legacyPayload);
+    const legacyActive = await item.activate(SUPER_ADMIN, legacy.mainLineId, legacy.revisionId, {
+      expectedVersion: legacy.aggregateVersion
+    });
+    const legacyCopy = await item.createRevision(SUPER_ADMIN, legacy.mainLineId, { expectedVersion: legacyActive.version });
+    const legacyDraft = await item.getSection(SUPER_ADMIN, legacy.mainLineId, legacyCopy.draftRevisionId!, "advanced");
+    expect(legacyDraft.payload).toEqual(legacyPayload);
+    expect(legacyDraft.payload).not.toHaveProperty("pmcMinimumMarginBps");
+  });
+
   it("accepts historical 10% Lisno margins without repair or implicit minimum writes", async () => {
     const { item } = createServices();
     let source = await createConfiguredDraft(item, "Historical valid 10% Lisno", { withPrice: true });
@@ -320,6 +380,10 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
         id: `scope-${draft.mainLineId}`, modeKind: "pmc", fields: [],
         inclusions: [{ id: `in-${draft.mainLineId}`, name: "Transport", selected: true }, { id: "unchecked", name: "Unchecked label", selected: false }],
         exclusions: [{ id: `out-${draft.mainLineId}`, name: "Night unloading", selected: true }]
+      }, {
+        id: `in-house-scope-${draft.mainLineId}`, modeKind: "execution", executionSource: "in_house", fields: [],
+        inclusions: [{ id: `supplier-${draft.mainLineId}`, name: "Supplier", selected: true }],
+        exclusions: [{ id: `labour-${draft.mainLineId}`, name: "Labour", selected: true }]
       }] };
       draft = await updateDraftSection(services.item, draft, "advanced", advanced);
       const active = await services.item.activate(SUPER_ADMIN, draft.mainLineId, draft.revisionId, { expectedVersion: draft.aggregateVersion });
@@ -342,7 +406,10 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
       expect(inHouse.configuration.calculations.map((row) => row.settings)).toEqual([map.in_house_labor, map.in_house_material]);
       expect(pmc.configuration.uom?.id).toBe(line === first ? UOM_ID : secondUom.id);
       expect(pmc.configuration.uom?.decimalScale).toBe(line === first ? 2 : 0);
-      expect(inHouse.configuration.shared).toEqual(pmc.configuration.shared);
+      expect(inHouse.configuration.shared).toMatchObject({ paragraph: line.advanced.modeDescription,
+        scopeConfigurationId: `in-house-scope-${line.mainLineId}`,
+        inclusions: [{ id: `supplier-${line.mainLineId}`, name: "Supplier" }],
+        exclusions: [{ id: `labour-${line.mainLineId}`, name: "Labour" }] });
       expect(vendor.configuration.shared).toMatchObject({ paragraph: line.advanced.modeDescription,
         inclusions: [{ id: `in-${line.mainLineId}`, name: "Transport" }], exclusions: [{ id: `out-${line.mainLineId}`, name: "Night unloading" }] });
       expect(JSON.stringify(pmc.configuration)).not.toContain("Unchecked label");

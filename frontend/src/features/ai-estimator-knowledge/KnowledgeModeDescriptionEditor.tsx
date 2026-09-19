@@ -11,6 +11,7 @@ import { PMC_SCOPE_LISTS } from "./knowledgePmcScope";
 interface Props {
   readonly description: string;
   readonly pmc?: KnowledgeModeConfiguration;
+  readonly inHouse?: KnowledgeModeConfiguration;
   readonly readOnly: boolean;
   readonly validationAttempt: number;
   readonly error?: string;
@@ -19,7 +20,7 @@ interface Props {
   readonly onPendingTextChange?: (text: string | null) => void;
 }
 
-export function KnowledgeModeDescriptionEditor({ description, pmc, readOnly, validationAttempt, error, onSave, onPendingChange, onPendingTextChange }: Props) {
+export function KnowledgeModeDescriptionEditor({ description, pmc, inHouse, readOnly, validationAttempt, error, onSave, onPendingChange, onPendingTextChange }: Props) {
   const id = useId();
   const [text, setText] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string>();
@@ -28,19 +29,34 @@ export function KnowledgeModeDescriptionEditor({ description, pmc, readOnly, val
   const restoreFocus = useRef(false);
   const lastValidationAttempt = useRef(validationAttempt);
   const previousPmc = useRef(pmc);
+  const previousInHouse = useRef(inHouse);
   const editing = text !== null;
-  const preview = text === null ? description : syncModeDescription(text, pmc, previousPmc.current);
+  const preview = text === null ? description : syncModeDescription(text, pmc, previousPmc.current, inHouse, previousInHouse.current);
   const pending = editing && preview.trim() !== description.trim();
 
   useEffect(() => {
-    const previous = previousPmc.current;
+    const previousPmcValue = previousPmc.current;
+    const previousInHouseValue = previousInHouse.current;
     previousPmc.current = pmc;
-    const removed = PMC_SCOPE_LISTS.some((list) => {
+    previousInHouse.current = inHouse;
+    const pmcRemoved = PMC_SCOPE_LISTS.some((list) => {
       const remainingIds = new Set((pmc?.[list] ?? []).map((item) => item.id));
-      return (previous?.[list] ?? []).some((item) => !remainingIds.has(item.id));
+      return (previousPmcValue?.[list] ?? []).some((item) => !remainingIds.has(item.id));
     });
-    if (removed) setText((current) => current === null ? null : syncModeDescription(current, pmc, previous));
-  }, [pmc]);
+    const inHouseRemoved = PMC_SCOPE_LISTS.some((list) => {
+      const remainingIds = new Set((inHouse?.[list] ?? []).map((item) => item.id));
+      return (previousInHouseValue?.[list] ?? []).some((item) => !remainingIds.has(item.id));
+    });
+    if (pmcRemoved || inHouseRemoved) {
+      setText((current) => current === null ? null : syncModeDescription(
+        current,
+        pmc,
+        previousPmcValue,
+        inHouse,
+        previousInHouseValue
+      ));
+    }
+  }, [inHouse, pmc]);
 
   useEffect(() => { onPendingTextChange?.(pending ? preview : null); }, [onPendingTextChange, pending, preview]);
   useEffect(() => () => onPendingTextChange?.(null), [onPendingTextChange]);

@@ -15,6 +15,7 @@ import type {
 
 const authState = vi.hoisted(() => ({
   role: "super_admin",
+  update: true,
   lifecycle: true
 }));
 
@@ -36,6 +37,8 @@ vi.mock("../../auth/authorization", () => ({
   hasFrontendPermission: (_authorization: unknown, permission: string) =>
     permission === "ai_estimator_knowledge.configuration.lifecycle"
       ? authState.lifecycle
+      : permission === "ai_estimator_knowledge.configuration.update"
+        ? authState.update
       : true
 }));
 
@@ -132,6 +135,7 @@ async function openPermanentDelete(
 beforeEach(() => {
   vi.clearAllMocks();
   authState.role = "super_admin";
+  authState.update = true;
   authState.lifecycle = true;
   vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({
     items: [],
@@ -186,16 +190,32 @@ describe("Super Admin permanent Main Basket deletion", () => {
 
   it("keeps the management action absent without lifecycle permission or the Super Admin role", async () => {
     authState.lifecycle = false;
+    authState.update = false;
     const first = renderPage();
     expect(await screen.findByRole("heading", { name: "AI Estimator Knowledge Base" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Manage main baskets" })).not.toBeInTheDocument();
     first.unmount();
 
     authState.lifecycle = true;
+    authState.update = true;
     authState.role = "admin";
     renderPage();
     expect(await screen.findByRole("heading", { name: "AI Estimator Knowledge Base" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Manage main baskets" })).not.toBeInTheDocument();
+  });
+
+  it("lets an update-only Super Admin manage names without exposing permanent deletion", async () => {
+    authState.lifecycle = false;
+    authState.update = true;
+    const user = userEvent.setup();
+    renderPage();
+
+    const management = await openManagement(user);
+    await within(management).findByText(emptyBasket.name);
+    expect(within(management).getByRole("button", { name: `Edit ${emptyBasket.name}` })).toBeVisible();
+    expect(within(management).queryByRole("button", {
+      name: `Delete ${emptyBasket.name} permanently`
+    })).not.toBeInTheDocument();
   });
 
   it("loads a later management page and opens permanent deletion for its Basket", async () => {

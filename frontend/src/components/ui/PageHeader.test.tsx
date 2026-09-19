@@ -14,6 +14,7 @@ describe("PageHeader", () => {
         breadcrumb={<nav aria-label="Breadcrumb">People / Team</nav>}
         eyebrow="Design manager"
         title="Team delivery pulse"
+        titleAction={<Button>Rename team</Button>}
         description="Priorities across your direct reports."
         metadata={<StatusBadge tone="success" label="On track" />}
         actions={<Button>Assign estimate</Button>}
@@ -24,6 +25,8 @@ describe("PageHeader", () => {
     const header = heading.closest("header");
     expect(heading).toHaveAttribute("id", "team-title");
     expect(screen.getByRole("group", { name: "Page actions" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Rename team" })).toBeVisible();
+    expect(heading).not.toContainElement(screen.getByRole("button", { name: "Rename team" }));
     expect(header).toHaveAttribute("aria-labelledby", "team-title");
     expect(header?.textContent).toMatch(/People \/ Team[\s\S]*Design manager[\s\S]*Team delivery pulse[\s\S]*Priorities across your direct reports\.[\s\S]*On track[\s\S]*Assign estimate/);
   });

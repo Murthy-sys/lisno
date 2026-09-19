@@ -19,6 +19,7 @@ export interface KnowledgeModeCalculationUom {
 interface Props {
   readonly scope?: ModeCalculationScope;
   readonly pmcMarginBps?: KnowledgeJsonValue;
+  readonly pmcMinimumMarginBps?: KnowledgeJsonValue;
   readonly subVendorMarginBps?: KnowledgeJsonValue;
   readonly subVendorMinimumMarginBps?: KnowledgeJsonValue;
   readonly marginControl?: ReactNode;
@@ -37,12 +38,12 @@ interface Props {
   readonly onPendingInputChange?: (pending: KnowledgePendingCalculation | null) => void;
 }
 
-export function KnowledgeModeCalculationEditor({ value, uom, readOnly, validationAttempt, issues, onChange, onDirty, onValidationChange, onPendingInputChange, pendingSaveVersion = 0, active = true, contextLabel, issuePath = "modeCalculation", scope, pmcMarginBps, subVendorMarginBps, subVendorMinimumMarginBps, marginControl }: Props) {
+export function KnowledgeModeCalculationEditor({ value, uom, readOnly, validationAttempt, issues, onChange, onDirty, onValidationChange, onPendingInputChange, pendingSaveVersion = 0, active = true, contextLabel, issuePath = "modeCalculation", scope, pmcMarginBps, pmcMinimumMarginBps, subVendorMarginBps, subVendorMinimumMarginBps, marginControl }: Props) {
   const [draft, setDraft] = useState(() => modeCalculationDraft(value));
   const [locallyEdited, setLocallyEdited] = useState(false);
   const baselineDraft = useRef(modeCalculationDraft(value));
   const [touched, setTouched] = useState(value != null);
-  const [simulator, setSimulator] = useState<{ scopeKey: string; initialDraft: KnowledgeModeCalculationDraft; pmcMarginBps?: KnowledgeJsonValue; subVendorMarginBps?: KnowledgeJsonValue; subVendorMinimumMarginBps?: KnowledgeJsonValue } | null>(null);
+  const [simulator, setSimulator] = useState<{ scopeKey: string; initialDraft: KnowledgeModeCalculationDraft; pmcMarginBps?: KnowledgeJsonValue; pmcMinimumMarginBps?: KnowledgeJsonValue; subVendorMarginBps?: KnowledgeJsonValue; subVendorMinimumMarginBps?: KnowledgeJsonValue } | null>(null);
   const previousValue = useRef(JSON.stringify(value));
   const rootRef = useRef<HTMLDivElement>(null);
   const scale = uom.decimalScale ?? 6;
@@ -102,14 +103,14 @@ export function KnowledgeModeCalculationEditor({ value, uom, readOnly, validatio
       readOnly={readOnly} errors={errors} onChange={change}
       actions={<div className="knowledge-mode-calculation__actions">
         {uom.onRetry ? <Button variant="secondary" onClick={uom.onRetry}>Retry UOM</Button> : null}
-        <Button variant="secondary" onClick={() => setSimulator({ scopeKey: uom.scopeKey, initialDraft: { ...draft }, pmcMarginBps, subVendorMarginBps, subVendorMinimumMarginBps })}>
+        <Button variant="secondary" onClick={() => setSimulator({ scopeKey: uom.scopeKey, initialDraft: { ...draft }, pmcMarginBps, pmcMinimumMarginBps, subVendorMarginBps, subVendorMinimumMarginBps })}>
           Test calculations
         </Button>
       </div>}
     /> : null}
     {active && simulator?.scopeKey === uom.scopeKey ? <KnowledgeModeCalculationSimulator
       key={`${scope ?? "generic"}:${uom.scopeKey}:${uom.id ?? "missing"}:${uom.decimalScale ?? "missing"}`}
-      initialDraft={simulator.initialDraft} scope={scope} pmcMarginBps={simulator.pmcMarginBps} subVendorMarginBps={simulator.subVendorMarginBps} subVendorMinimumMarginBps={simulator.subVendorMinimumMarginBps} uom={uom} contextLabel={contextLabel} onClose={() => setSimulator(null)}
+      initialDraft={simulator.initialDraft} scope={scope} pmcMarginBps={simulator.pmcMarginBps} pmcMinimumMarginBps={simulator.pmcMinimumMarginBps} subVendorMarginBps={simulator.subVendorMarginBps} subVendorMinimumMarginBps={simulator.subVendorMinimumMarginBps} uom={uom} contextLabel={contextLabel} onClose={() => setSimulator(null)}
     /> : null}
   </div>;
 }

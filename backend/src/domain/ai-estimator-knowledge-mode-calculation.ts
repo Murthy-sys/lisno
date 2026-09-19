@@ -125,12 +125,17 @@ function calculateKnowledgeMarginPrice(input: KnowledgeModeBaseRateInput & {
   const lowQuantityImpactAmountPaise = revised.revisedAmountPaise - baseAmountPaise;
   const totalBeforeDiscountPaise = calculateMarginSellingPrice(revised.revisedAmountPaise, input.marginBps);
   const marginAmountPaise = totalBeforeDiscountPaise - revised.revisedAmountPaise;
-  const discountAmountPaise = applyBasisPoints(totalBeforeDiscountPaise, discountBps);
+  const discountBasisPaise = label === "PMC" ? marginAmountPaise : totalBeforeDiscountPaise;
+  const discountAmountPaise = applyBasisPoints(discountBasisPaise, discountBps);
   const totalPaise = totalBeforeDiscountPaise - discountAmountPaise;
-  // Preserve the configured margin separately; a custom discount can leave a signed balance.
+  // PMC discounts reduce Lisno's charge only and always preserve adjusted cost. Sub-Vendor
+  // retains its existing selling-price discount and signed-balance response semantics.
+  const finalVendorChargesPaise = label === "PMC"
+    ? revised.revisedAmountPaise
+    : totalPaise - marginAmountPaise;
   return { ...revised, baseAmountPaise, lowQuantityImpactAmountPaise,
     totalPaise, marginBps: input.marginBps, marginAmountPaise,
-    totalBeforeDiscountPaise, finalVendorChargesPaise: totalPaise - marginAmountPaise,
+    totalBeforeDiscountPaise, finalVendorChargesPaise,
     ...(input.discountBps !== undefined ? { discount: {
       rateBps: discountBps, totalBeforeDiscountPaise, amountPaise: discountAmountPaise
     } } : {}) };

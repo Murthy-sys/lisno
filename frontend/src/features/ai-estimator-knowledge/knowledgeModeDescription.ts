@@ -4,39 +4,57 @@ import { PMC_SCOPE_LISTS, type KnowledgePmcScopeList } from "./knowledgePmcScope
 
 export const MAX_MODE_DESCRIPTION_LENGTH = 4_000;
 
-export function generateModeDescription(mainLineName: string, pmc: KnowledgeModeConfiguration | undefined) {
+export function generateModeDescription(
+  mainLineName: string,
+  pmc: KnowledgeModeConfiguration | undefined,
+  inHouse?: KnowledgeModeConfiguration
+) {
   const selectedNames = (list: "inclusions" | "exclusions") =>
     pmc?.[list]?.filter((item) => item.selected).map((item) => item.name).join(", ") || "none";
-  return `Providing, Supplying, Fixing, testing and commissioning of ${mainLineName}, inclusions ${selectedNames("inclusions")} and exclusions ${selectedNames("exclusions")}.`;
+  const base = `Providing, Supplying, Fixing, testing and commissioning of ${mainLineName}, inclusions ${selectedNames("inclusions")} and exclusions ${selectedNames("exclusions")}.`;
+  const inHouseClauses = PMC_SCOPE_LISTS.flatMap((list) => {
+    const names = selectedScopeNames(inHouse, list);
+    return names.length ? [`In-house ${list}: ${names.join(", ")}.`] : [];
+  });
+  return [base, ...inHouseClauses].join(" ");
 }
 
 /** Checklist values belong to their labelled list; other paragraph wording stays editable. */
 export function syncModeDescription(
   text: string,
   pmc: KnowledgeModeConfiguration | undefined,
-  previousPmc?: KnowledgeModeConfiguration
+  previousPmc?: KnowledgeModeConfiguration,
+  inHouse?: KnowledgeModeConfiguration,
+  previousInHouse?: KnowledgeModeConfiguration
 ): string {
-  const labels = [...text.matchAll(/\b(inclusions|exclusions)\b/giu)];
-  const seen = new Set<KnowledgePmcScopeList>();
+  const labels = [...text.matchAll(/\b(?:(In-house)\s+)?(inclusions|exclusions)\b/giu)];
+  const seen = new Set<string>();
   let result = text.slice(0, labels[0]?.index ?? text.length);
   for (const [index, match] of labels.entries()) {
-    const list = match[1]!.toLowerCase() as KnowledgePmcScopeList;
+    const source = match[1] ? "in_house" : "pmc";
+    const list = match[2]!.toLowerCase() as KnowledgePmcScopeList;
+    const key = `${source}:${list}`;
     const content = text.slice(match.index! + match[0].length, labels[index + 1]?.index ?? text.length);
-    if (seen.has(list)) {
+    if (seen.has(key)) {
       result += match[0] + content;
       continue;
     }
-    seen.add(list);
-    const clause = syncScopeClause(content, list, pmc, previousPmc);
+    seen.add(key);
+    const clause = source === "pmc"
+      ? syncScopeClause(content, list, pmc, previousPmc)
+      : syncScopeClause(content, list, inHouse, previousInHouse);
     result += match[0] + clause;
     if (labels[index + 1] && !/\s$/u.test(clause)) result += content.includes("\n") ? "\n" : " ";
   }
-  for (const list of PMC_SCOPE_LISTS) {
-    const names = selectedScopeNames(pmc, list);
-    if (seen.has(list) || !names.length) continue;
-    result = result.trimEnd();
-    if (result) result += /[.!?]$/u.test(result) ? " " : ". ";
-    result += `${list === "inclusions" ? "Inclusions" : "Exclusions"}: ${names.join(", ")}.`;
+  for (const [source, configuration] of [["pmc", pmc], ["in_house", inHouse]] as const) {
+    for (const list of PMC_SCOPE_LISTS) {
+      const names = selectedScopeNames(configuration, list);
+      if (seen.has(`${source}:${list}`) || !names.length) continue;
+      result = result.trimEnd();
+      if (result) result += /[.!?]$/u.test(result) ? " " : ". ";
+      const label = `${source === "in_house" ? "In-house " : ""}${list === "inclusions" ? "Inclusions" : "Exclusions"}`;
+      result += `${label}: ${names.join(", ")}.`;
+    }
   }
   return result;
 }

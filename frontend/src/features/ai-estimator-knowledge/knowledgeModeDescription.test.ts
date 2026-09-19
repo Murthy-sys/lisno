@@ -68,6 +68,25 @@ describe("Mode paragraph checklist synchronization", () => {
       .toBe(generateModeDescription("TV Unit", selected));
   });
 
+  it("keeps In-house scope clauses labelled and independent from PMC scope", () => {
+    const pmc = scope(["Transport"]);
+    const inHouse = {
+      ...createKnowledgeModeConfiguration("execution", "in_house"),
+      inclusions: [
+        { id: "supplier", name: "Supplier", selected: true },
+        { id: "execution", name: "Execution", selected: false }
+      ],
+      exclusions: [{ id: "labour", name: "Labour", selected: true }]
+    };
+    const generated = generateModeDescription("TV Unit", pmc, inHouse);
+    expect(generated).toContain("inclusions Transport and exclusions none");
+    expect(generated).toContain("In-house inclusions: Supplier.");
+    expect(generated).toContain("In-house exclusions: Labour.");
+    const next = { ...inHouse, inclusions: inHouse.inclusions.map((item) => ({ ...item, selected: false })) };
+    expect(syncModeDescription(generated, pmc, pmc, next, inHouse))
+      .toContain("In-house inclusions: none. In-house exclusions: Labour.");
+  });
+
   it("leaves wording without selected items or labels alone, including empty drafts", () => {
     expect(syncModeDescription("Custom work.\nKeep this wording.", undefined)).toBe("Custom work.\nKeep this wording.");
     expect(syncModeDescription("", scope())).toBe("");

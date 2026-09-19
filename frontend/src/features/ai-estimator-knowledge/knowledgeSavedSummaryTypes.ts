@@ -8,8 +8,8 @@ import type {
   KnowledgeSubBasket
 } from "./knowledgeTypes";
 
-export const SAVED_SUMMARY_SECTION_KEYS = ["overview", "advanced", "pricing", "recommendations"] as const;
-export type SavedSummarySectionKey = (typeof SAVED_SUMMARY_SECTION_KEYS)[number];
+export const SAVED_SUMMARY_SECTION_KEYS = ["overview", "advanced", "recommendations"] as const;
+export type SavedSummarySectionKey = (typeof SAVED_SUMMARY_SECTION_KEYS)[number] | "pricing";
 export type SavedSummaryGroupKey = "overview" | "mode" | "recommendations" | "quality";
 
 export interface SavedSummaryRow {

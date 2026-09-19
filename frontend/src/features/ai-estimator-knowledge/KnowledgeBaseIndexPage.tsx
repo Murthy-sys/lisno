@@ -42,7 +42,7 @@ import {
   updateKnowledgeBasket,
   type KnowledgeListParams
 } from "./knowledgeApi";
-import { invalidateTemporaryMainLineDetails, syncKnowledgeBasketDeletion } from "./knowledgeMutationSync";
+import { syncKnowledgeBasketDeletion, syncKnowledgeBasketMutation } from "./knowledgeMutationSync";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { KNOWLEDGE_ITEM_STATUS_LABELS } from "./knowledgePresentation";
 import { CreateKnowledgeItemDialog } from "./CreateKnowledgeItemDialog";
@@ -129,7 +129,8 @@ export function KnowledgeBaseIndexPage() {
     auth.authorization,
     "ai_estimator_knowledge.configuration.lifecycle"
   );
-  const canManageBaskets = auth.user?.role === "super_admin" && canLifecycle;
+  const canManageBaskets = auth.user?.role === "super_admin" && (canUpdate || canLifecycle);
+  const canCreateBasketInline = auth.user?.role === "super_admin" && canCreate;
   const request = { ...appliedFilters, limit: PAGE_SIZE, offset };
   const itemsQuery = useQuery({
     queryKey: knowledgeQueryKeys.itemList(request),
@@ -287,6 +288,15 @@ export function KnowledgeBaseIndexPage() {
                 onClick={() => setBasketDialogOpen(true)}
               >
                 Add main basket
+              </Button>
+            ) : null}
+            {canCreate ? (
+              <Button
+                variant="secondary"
+                leadingIcon={<Plus />}
+                onClick={() => setTemporaryBasketId("")}
+              >
+                Add temporary item
               </Button>
             ) : null}
             {canCreate ? (
@@ -566,6 +576,7 @@ export function KnowledgeBaseIndexPage() {
       {basketManagerOpen ? (
         <MainBasketManagementDialog
           canUpdate={canUpdate}
+          canLifecycle={canLifecycle}
           onClose={closeBasketManager}
           onEdit={setBasketEditor}
           onDelete={setBasketDelete}
@@ -576,12 +587,9 @@ export function KnowledgeBaseIndexPage() {
         <BasketEditorDialog
           existing={basketEditor}
           onClose={() => setBasketEditor(null)}
-          onCreated={async () => {
-            await Promise.all([
-              invalidateTemporaryMainLineDetails(queryClient),
-              queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketLists() }),
-              queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() })
-            ]);
+          onCreated={async (basket) => {
+            await syncKnowledgeBasketMutation(queryClient, basket);
+            setAnnouncement(`Main basket renamed to “${basket.name}”.`);
             setBasketEditor(null);
           }}
         />
@@ -602,7 +610,8 @@ export function KnowledgeBaseIndexPage() {
           }}
         />
       ) : null}
-      {temporaryBasketId && <CreateKnowledgeItemDialog itemType="temporary" initialBasketId={temporaryBasketId}
+      {temporaryBasketId !== null && <CreateKnowledgeItemDialog itemType="temporary" initialBasketId={temporaryBasketId}
+        canCreateBasket={canCreateBasketInline}
         onClose={() => setTemporaryBasketId(null)} onCreated={async (id) => {
           setTemporaryBasketId(null);
           navigate(`/admin/configuration/estimation/items/${encodeURIComponent(id)}`);
@@ -633,12 +642,14 @@ function masterStatusLabel(status: KnowledgeMasterStatus): string {
 
 function MainBasketManagementDialog({
   canUpdate,
+  canLifecycle,
   onClose,
   onEdit,
   onDelete,
   childDialogOpen
 }: {
   readonly canUpdate: boolean;
+  readonly canLifecycle: boolean;
   readonly onClose: () => void;
   readonly onEdit: (basket: KnowledgeBasket) => void;
   readonly onDelete: (basket: KnowledgeBasket) => void;
@@ -673,7 +684,11 @@ function MainBasketManagementDialog({
     <ContextPanel
       title="Manage main baskets"
       eyebrow="Estimation configuration"
-      description="Edit or permanently delete existing baskets. Deleting a basket also deletes the Main Lines inside it."
+      description={canUpdate && canLifecycle
+        ? "Edit or permanently delete existing baskets. Deleting a basket also deletes the Main Lines inside it."
+        : canUpdate
+          ? "Edit existing baskets."
+          : "Permanently delete existing baskets. Deleting a basket also deletes the Main Lines inside it."}
       onClose={onClose}
       contentInert={childDialogOpen}
       width="wide"
@@ -734,7 +749,7 @@ function MainBasketManagementDialog({
                             Edit
                           </Button>
                         ) : null}
-                        <Button
+                        {canLifecycle ? <Button
                           size="compact"
                           variant="destructive-outline"
                           leadingIcon={<Trash2 />}
@@ -742,7 +757,7 @@ function MainBasketManagementDialog({
                           onClick={() => onDelete(basket)}
                         >
                           Delete
-                        </Button>
+                        </Button> : null}
                       </div>
                     </li>
                   ))}
@@ -1057,7 +1072,7 @@ function FilterSelect({ id, label, value, options, onChange }: {
 function BasketEditorDialog({ existing, onClose, onCreated }: {
   readonly existing?: KnowledgeBasket;
   readonly onClose: () => void;
-  readonly onCreated: () => Promise<void>;
+  readonly onCreated: (basket: KnowledgeBasket) => Promise<void>;
 }) {
   const formId = useId();
   const [name, setName] = useState(existing?.name ?? "");

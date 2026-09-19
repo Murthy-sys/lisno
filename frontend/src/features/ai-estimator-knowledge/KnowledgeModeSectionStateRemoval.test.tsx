@@ -256,6 +256,8 @@ function renderPanel(
 }
 
 async function selectExecutionSource(user: ReturnType<typeof userEvent.setup>, source: "Sub-Vendor" | "In-house") {
+  const execution = screen.getByRole("checkbox", { name: "Execution" }) as HTMLInputElement;
+  if (!execution.checked) await user.click(execution);
   for (const label of ["Sub-Vendor", "In-house"] as const) {
     const checkbox = screen.getByRole("checkbox", { name: label }) as HTMLInputElement;
     if (checkbox.checked !== (label === source)) await user.click(checkbox);
@@ -301,8 +303,8 @@ describe("Knowledge Mode section-state removal", () => {
       return result;
     });
     renderPanel(ref);
-    expect(await screen.findByRole("spinbutton", { name: "PMC Margin" })).toBeVisible();
-    await waitFor(() => expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(15.25));
+    expect(await screen.findByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(15.25));
     expect(screen.queryByRole("textbox", { name: "PMC Margin (%)" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
     await userEvent.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
@@ -327,8 +329,10 @@ describe("Knowledge Mode section-state removal", () => {
       return result;
     });
     const panel = renderPanel(ref);
-    const margin = () => screen.getByRole("spinbutton", { name: "PMC Margin" });
+    const minimum = () => screen.getByRole("spinbutton", { name: "Min. PMC Margin (%)" });
+    const margin = () => screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" });
     await waitFor(() => expect(margin()).toHaveValue(pmcMarginBps / 100));
+    expect(minimum()).toHaveValue(pmcMarginBps / 100);
     expect(margin()).toHaveAttribute("aria-invalid", "true");
     await userEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
     await userEvent.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
@@ -338,7 +342,8 @@ describe("Knowledge Mode section-state removal", () => {
     await act(async () => { expect(await ref.current?.save()).toBe(false); });
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Collapse PMC" })).toHaveAttribute("aria-expanded", "true");
-    await waitFor(() => expect(invalidMargin).toHaveFocus());
+    await waitFor(() => expect(minimum()).toHaveFocus());
+    fireEvent.change(minimum(), { target: { value: "15.75" } });
     fireEvent.change(margin(), { target: { value: "15.75" } });
     await act(async () => { expect(await ref.current?.save()).toBe(true); });
     expect(saved.payload).toMatchObject({ pmcMarginBps: 1575, modeDescription: expect.stringContaining("Original scope") });
@@ -369,8 +374,8 @@ describe("Knowledge Mode section-state removal", () => {
     const rate = await screen.findByRole("textbox", { name: "Base Rate (₹)" });
     await screen.findByText("Sq.ft");
     const calculations = screen.getByRole("region", { name: "PMC calculations" });
-    expect(within(calculations).getAllByRole("spinbutton", { name: "PMC Margin" })).toHaveLength(1);
-    expect(screen.getAllByRole("spinbutton", { name: "PMC Margin" })).toHaveLength(1);
+    expect(within(calculations).getAllByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveLength(1);
+    expect(screen.getAllByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveLength(1);
     expect(within(calculations).queryByRole("group", { name: "Gross margin markup" })).not.toBeInTheDocument();
     expect(within(calculations).queryByRole("status", { name: "Max Discount" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Inclusions" })).not.toBeInTheDocument();
@@ -381,12 +386,13 @@ describe("Knowledge Mode section-state removal", () => {
     expect(knowledgeApi.previewKnowledge).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Test calculations" }));
     const simulator = within(screen.getByRole("dialog", { name: "Test calculations" }));
-    for (const label of ["Base Rate (₹)", "Low Quantity Limit", "Impact (%)", "UOM", "PMC Margin (%)"]) {
+    for (const label of ["Base Rate (₹)", "Low Quantity Limit", "Impact (%)", "UOM", "Min. PMC Margin (%)", "Max. PMC Margin (%)"]) {
       expect(simulator.getByRole("textbox", { name: label })).toHaveAttribute("readonly");
     }
     expect(simulator.getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("1500");
-    expect(simulator.getByRole("textbox", { name: "PMC Margin (%)" })).toHaveValue("15.00");
-    expect(simulator.queryByRole("radio")).not.toBeInTheDocument();
+    expect(simulator.getByRole("textbox", { name: "Min. PMC Margin (%)" })).toHaveValue("15.00");
+    expect(simulator.getByRole("textbox", { name: "Max. PMC Margin (%)" })).toHaveValue("15.00");
+    expect(simulator.getByRole("radio", { name: "Max. PMC Margin" })).toBeChecked();
     expect(simulator.queryByRole("textbox", { name: /Gross Margin Markup/ })).not.toBeInTheDocument();
     fireEvent.change(simulator.getByRole("textbox", { name: "Quantity" }), { target: { value: "14.25" } });
     fireEvent.change(simulator.getByRole("textbox", { name: "Discount (%)" }), { target: { value: "2" } });
@@ -399,8 +405,8 @@ describe("Knowledge Mode section-state removal", () => {
         baseAmountPaise: 2_137_500, lowQuantityImpactAmountPaise: 213_750,
         revisedUnitRatePaise: 165_000, revisedAmountPaise: 2_351_250, appliedImpactBps: 1_000,
         pmcMarginBps: 1_500, pmcMarginAmountPaise: 414_926, totalBeforeDiscountPaise: 2_766_176,
-        discount: { rateBps: 200, totalBeforeDiscountPaise: 2_766_176, amountPaise: 55_324 },
-        totalPaise: 2_710_852, finalVendorChargesPaise: 2_295_926
+        discount: { rateBps: 200, totalBeforeDiscountPaise: 2_766_176, amountPaise: 8_299 },
+        totalPaise: 2_757_877, finalVendorChargesPaise: 2_351_250
       }
     });
     await waitFor(() => expect(knowledgeApi.previewKnowledge).toHaveBeenLastCalledWith({
@@ -412,13 +418,14 @@ describe("Knowledge Mode section-state removal", () => {
     expect(simulator.queryByText(/Additional low-quantity impact/)).not.toBeInTheDocument();
     expect(simulator.queryByLabelText("Additional low-quantity impact amount")).not.toBeInTheDocument();
     expect(simulator.getByLabelText("Total including low-quantity charges")).toHaveTextContent("₹23,512.50");
-    expect(simulator.getByLabelText("PMC margin amount")).toHaveTextContent("₹4,149.26");
-    expect(simulator.getByLabelText("Subtotal after PMC margin")).toHaveTextContent("₹27,661.76");
-    expect(simulator.getByLabelText("Discount amount")).toHaveTextContent("₹553.24");
+    expect(simulator.getByLabelText("PMC charge")).toHaveTextContent("₹4,149.26");
+    expect(simulator.getByLabelText("Selling price before discount")).toHaveTextContent("₹27,661.76");
+    expect(simulator.getByLabelText("Discount on PMC charge")).toHaveTextContent("₹82.99");
+    expect(simulator.getByLabelText("Effective PMC charge")).toHaveTextContent("₹4,066.27");
     expect(simulator.queryByLabelText("Final vendor charges")).not.toBeInTheDocument();
     expect(simulator.queryByLabelText("Balance after margin")).not.toBeInTheDocument();
     expect(simulator.queryByText(/Final vendor charges exclude|The discount exceeds the amount excluding/)).not.toBeInTheDocument();
-    expect(simulator.getByLabelText("Final total")).toHaveTextContent("₹27,108.52");
+    expect(simulator.getByLabelText("Final total")).toHaveTextContent("₹27,578.77");
     expect(simulator.queryByLabelText("Effective PMC margin")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
     await act(async () => { expect(await ref.current?.save()).toBe(true); });
@@ -433,15 +440,15 @@ describe("Knowledge Mode section-state removal", () => {
     expect(screen.getByRole("region", { name: "PMC" })).not.toContainElement(
       screen.getByRole("region", { name: "Execution" })
     );
-    fireEvent.change(within(screen.getByRole("region", { name: "PMC calculations" })).getByRole("spinbutton", { name: "PMC Margin" }), { target: { value: "23" } });
+    fireEvent.change(within(screen.getByRole("region", { name: "PMC calculations" })).getByRole("spinbutton", { name: "Max. PMC Margin (%)" }), { target: { value: "23" } });
     await userEvent.click(screen.getByRole("checkbox", { name: "PMC" }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
     await act(async () => { expect(await ref.current?.save()).toBe(false); });
     expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveFocus());
     act(() => ref.current?.discard());
     expect(screen.getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("1500.00");
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(15);
+    expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(15);
     expect(screen.queryByRole("textbox", { name: "Quantity (test)" })).not.toBeInTheDocument();
     expect(props.onDirtyChange).toHaveBeenLastCalledWith(false);
   });
@@ -462,10 +469,10 @@ describe("Knowledge Mode section-state removal", () => {
     const pmcCalculation = within(pmc).getByRole("region", { name: "PMC calculations" });
     const subVendorCalculation = within(execution).getByRole("region", { name: "Sub-Vendor calculations" });
 
-    expect(within(pmcCalculation).getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(15);
+    expect(within(pmcCalculation).getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(15);
     expect(pmc).not.toContainElement(execution);
     expect(execution).not.toContainElement(pmc);
-    expect(within(execution).queryByRole("spinbutton", { name: "PMC Margin" })).not.toBeInTheDocument();
+    expect(within(execution).queryByRole("spinbutton", { name: "Max. PMC Margin (%)" })).not.toBeInTheDocument();
     expect(within(execution).getByRole("group", { name: "Execution source" })).toBeVisible();
     expect(within(execution).getByRole("region", { name: "Sub-Vendor scope" })).toContainElement(
       within(execution).getByRole("group", { name: "Inclusions" })
@@ -597,28 +604,30 @@ describe("Knowledge Mode section-state removal", () => {
       return saved;
     });
     renderPanel(ref);
-    await screen.findByRole("textbox", { name: "Base Rate (₹)" });
+    await screen.findByRole("checkbox", { name: "Execution" });
     await screen.findByText("Sq.ft");
-    await user.click(screen.getByRole("checkbox", { name: "PMC" }));
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
-    const rate = screen.getByRole("textbox", { name: "Base Rate (₹)" });
+    if ((screen.getByRole("checkbox", { name: "PMC" }) as HTMLInputElement).checked) {
+      await user.click(screen.getByRole("checkbox", { name: "PMC" }));
+    }
+    await selectExecutionSource(user, "Sub-Vendor");
+    const calculations = screen.getByRole("region", { name: "Sub-Vendor calculations" });
+    const rate = within(calculations).getByRole("textbox", { name: "Base Rate (₹)" });
     expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
-    expect(screen.queryByRole("spinbutton", { name: "PMC Margin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: "Max. PMC Margin (%)" })).not.toBeInTheDocument();
     expect(screen.getByText(`Execution (Sub-Vendor) for ${item.mainLineName}`)).toBeVisible();
     const inclusions = screen.getByRole("group", { name: "Inclusions" });
     const exclusions = screen.getByRole("group", { name: "Exclusions" });
-    const calculations = screen.getByRole("region", { name: "Sub-Vendor calculations" });
     expect(screen.getByRole("group", { name: "Execution source" }).compareDocumentPosition(inclusions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(exclusions.compareDocumentPosition(calculations) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(inclusions).getByRole("checkbox", { name: "Transport" })).toBeChecked();
     expect(rate).toHaveValue("1500.00");
-    expect(screen.getByRole("textbox", { name: "Impact (%)" })).toHaveValue("10.00");
+    expect(within(calculations).getByRole("textbox", { name: "Impact (%)" })).toHaveValue("10.00");
     expect(screen.queryByRole("status", { name: "Max Discount" })).not.toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" })).toHaveValue(15);
     expect(within(exclusions).getByRole("checkbox", { name: "Transport" })).toBeDisabled();
     expect(within(inclusions).getByRole("checkbox", { name: "Transport" })).toBeChecked();
     fireEvent.change(rate, { target: { value: "1750" } });
-    fireEvent.change(screen.getByRole("textbox", { name: "Impact (%)" }), { target: { value: "12.5" } });
+    fireEvent.change(within(calculations).getByRole("textbox", { name: "Impact (%)" }), { target: { value: "12.5" } });
     await user.click(screen.getByRole("button", { name: "Test calculations" }));
     await waitFor(() => expect(knowledgeApi.previewKnowledge).toHaveBeenLastCalledWith({
       quantity: "1", quantityScale: 2, subVendorCalculation: { baseRatePaise: 175_000, lowQuantityLimit: "15", impactBps: 1_250, subVendorMarginBps: 1_500 }
@@ -648,12 +657,13 @@ describe("Knowledge Mode section-state removal", () => {
     expect(screen.queryByRole("group", { name: "Inclusions" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Exclusions" })).not.toBeInTheDocument();
     act(() => ref.current?.discard());
-    expect(screen.getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("1500.00");
-    expect(screen.getByRole("textbox", { name: "Impact (%)" })).toHaveValue("10.00");
-    await user.click(screen.getByRole("checkbox", { name: "PMC" }));
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
-    expect(screen.getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("1750.00");
-    expect(screen.getByRole("textbox", { name: "Impact (%)" })).toHaveValue("12.50");
+    const restoredPmc = within(screen.getByRole("region", { name: "PMC calculations" }));
+    expect(restoredPmc.getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("1500.00");
+    expect(restoredPmc.getByRole("textbox", { name: "Impact (%)" })).toHaveValue("10.00");
+    await selectExecutionSource(user, "Sub-Vendor");
+    const restoredSubVendor = within(screen.getByRole("region", { name: "Sub-Vendor calculations" }));
+    expect(restoredSubVendor.getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("1750.00");
+    expect(restoredSubVendor.getByRole("textbox", { name: "Impact (%)" })).toHaveValue("12.50");
     expect(within(screen.getByRole("group", { name: "Exclusions" })).getByRole("checkbox", { name: "Transport" })).not.toBeChecked();
   });
 
@@ -667,7 +677,8 @@ describe("Knowledge Mode section-state removal", () => {
       stored = savedSection(key as "advanced", input); return stored as KnowledgeSectionMutationEnvelope<KnowledgeJsonObject>;
     });
     const panel = renderPanel(ref);
-    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
+    await screen.findByRole("checkbox", { name: "Execution" });
+    await selectExecutionSource(user, "Sub-Vendor");
     expect(screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" })).toHaveValue(10);
     expect(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" })).toHaveValue(10);
     expect(screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" })).not.toHaveAttribute("aria-invalid");
@@ -703,7 +714,8 @@ describe("Knowledge Mode section-state removal", () => {
       stored = savedSection(key as "advanced", input); return stored as KnowledgeSectionMutationEnvelope<KnowledgeJsonObject>;
     });
     const panel = renderPanel(ref);
-    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
+    await screen.findByRole("checkbox", { name: "Execution" });
+    await selectExecutionSource(user, "Sub-Vendor");
     let minimum = screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" });
     let maximum = screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" });
     expect(minimum).toHaveValue(legacyMargin / 100);
@@ -717,6 +729,7 @@ describe("Knowledge Mode section-state removal", () => {
     await act(async () => { expect(await ref.current?.save()).toBe(false); });
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
     await act(async () => ref.current?.discard());
+    await selectExecutionSource(user, "Sub-Vendor");
     minimum = screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" });
     maximum = screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" });
     expect(minimum).toHaveValue(legacyMargin / 100);
@@ -732,10 +745,11 @@ describe("Knowledge Mode section-state removal", () => {
     expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(1);
     panel.unmount();
     renderPanel(ref);
-    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
+    await screen.findByRole("checkbox", { name: "Execution" });
+    await selectExecutionSource(user, "Sub-Vendor");
     expect(screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" })).toHaveValue(15);
     expect(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" })).toHaveValue(20);
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(12.25);
+    expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(12.25);
   });
 
   it("keeps PMC and Sub-Vendor margins separate from In-house markups through validation, save and reload", async () => {
@@ -773,7 +787,7 @@ describe("Knowledge Mode section-state removal", () => {
       editableLabels.forEach((name, index) => fireEvent.change(region.getByRole("textbox", { name }), { target: { value: scenario.inputs[index] } }));
       if (scenario.scope === "pmc") {
         expect(region.queryByRole("status", { name: "Max Discount" })).not.toBeInTheDocument();
-        expect(region.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(17.5);
+        expect(region.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(17.5);
       } else if (scenario.scope === "sub_vendor") {
         expect(region.queryByRole("status", { name: "Max Discount" })).not.toBeInTheDocument();
         expect(region.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" })).toHaveValue(20);
@@ -794,7 +808,7 @@ describe("Knowledge Mode section-state removal", () => {
       const region = await select(scenario.label);
       const editableLabels = scenario.scope === "pmc" || scenario.scope === "sub_vendor" ? labels.slice(0, 3) : labels;
       editableLabels.forEach((name, index) => expect(Number((region.getByRole("textbox", { name }) as HTMLInputElement).value)).toBe(Number(scenario.inputs[index])));
-      if (scenario.scope === "pmc") expect(region.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(17.5);
+      if (scenario.scope === "pmc") expect(region.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(17.5);
       else if (scenario.scope === "sub_vendor") expect(region.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" })).toHaveValue(20);
       else expect(region.getByRole("status", { name: "Max Discount" })).toHaveTextContent(scenario.discount);
       await user.click(region.getByRole("button", { name: "Test calculations" }));
@@ -866,14 +880,14 @@ describe("Knowledge Mode section-state removal", () => {
     expect(screen.getByRole("region", { name: "Execution" })).toContainElement(materialSection);
     expect(materialSection.compareDocumentPosition(total) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await user.click(within(total).getByRole("button", { name: "Test In-house total" }));
-    expect(await within(screen.getByRole("dialog")).findByLabelText("Labor + Material total")).toHaveTextContent("₹1,550.22");
+    expect(await within(screen.getByRole("dialog")).findByLabelText("Subtotal")).toHaveTextContent("₹1,550.22");
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Close" }));
-    expect(within(total).getByLabelText("Labor + Material total")).toHaveTextContent("₹1,550.22");
+    expect(within(total).getByLabelText("Subtotal")).toHaveTextContent("₹1,550.22");
     expect(knowledgeApi.previewKnowledge).toHaveBeenCalledWith({ inHouseCalculation: { labor, material }, quantity: "1", quantityScale: 2, modeCalculationMarkupBasis: "starting" }, automaticPreviewOptions);
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
     expect(props.onDirtyChange).toHaveBeenLastCalledWith(false);
     fireEvent.change(within(materialSection).getByRole("textbox", { name: "Impact (%)" }), { target: { value: "12." } });
-    expect(screen.queryByLabelText("Labor + Material total")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Subtotal")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Test In-house total" })).toBeDisabled();
     await selectExecutionSource(user, "Sub-Vendor");
     expect(screen.queryByRole("region", { name: "In-house total" })).not.toBeInTheDocument();
@@ -1190,7 +1204,7 @@ describe("Knowledge Mode section-state removal", () => {
     const { props } = renderPanel(ref);
     await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Lift service is selected in both lists.");
-    fireEvent.change(screen.getByRole("spinbutton", { name: "PMC Margin" }), { target: { value: "15" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" }), { target: { value: "15" } });
     await act(async () => { expect(await ref.current?.save()).toBe(false); });
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
     act(() => ref.current?.discard());

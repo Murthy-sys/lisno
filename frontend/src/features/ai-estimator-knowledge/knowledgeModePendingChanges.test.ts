@@ -46,7 +46,13 @@ describe("Mode pending change projection", () => {
       { key: "options", label: "Options", value: "", cleared: true },
       { key: "value", label: "Value", value: "No" }
     ]);
-    expect(project({}, { pmcMarginBps: 0 })[0]?.entries[0]).toMatchObject({ incomplete: true, fields: [{ value: "0.00%" }] });
+    expect(project({}, { pmcMarginBps: 0 })[0]?.entries[0]).toMatchObject({
+      incomplete: true,
+      fields: [
+        { key: "minimum", label: "Min. PMC Margin", value: "0.00%" },
+        { key: "maximum", label: "Max. PMC Margin", value: "0.00%" }
+      ]
+    });
   });
 
   it("separates same-label source components and source moves by IDs", () => {
@@ -93,9 +99,11 @@ describe("Mode pending change projection", () => {
     expect(project(legacy, legacy)).toEqual([]);
     expect(project(legacy, { ...legacy, subVendorMinimumMarginBps: legacyMargin })).toEqual([]);
     const partiallyRepaired = withSubVendorMargin(legacy, "maximum", 2_000);
-    expect(project(legacy, partiallyRepaired)[0]?.entries[0]).toMatchObject({
-      incomplete: true, fields: [{ key: "maximum", value: "20.00%" }]
-    });
+    const partialEntry = project(legacy, partiallyRepaired)[0]?.entries[0];
+    expect(partialEntry?.fields).toEqual([
+      { key: "maximum", label: "Max. Lisno Margin", value: "20.00%" }
+    ]);
+    expect(partialEntry?.incomplete).toBe(legacyMargin === 1_750 ? true : undefined);
     const repaired = withSubVendorMargin(partiallyRepaired, "minimum", 1_500);
     expect(project(legacy, repaired)[0]?.entries[0]?.incomplete).toBeUndefined();
     expect(project(legacy, repaired)[0]?.entries[0]?.fields).toEqual([
