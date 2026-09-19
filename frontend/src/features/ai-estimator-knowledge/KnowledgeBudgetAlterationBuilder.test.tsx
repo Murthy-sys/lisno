@@ -119,6 +119,97 @@ describe("Budget Alterations", () => {
     expect(screen.getByLabelText("Scope change summary")).toHaveTextContent("Lights Procurement");
   });
 
+  it("adds repeated catalog and temporary sub-items while keeping the Whole Sub-Basket target unchanged", async () => {
+    const whole = { ...rule, targetKind: "sub_basket", targetType: null, targetSubBasketId: sub.id, targetMainLineId: null };
+    const catalogChild = { ...items[1], mainLineId: "twelve-watt", mainLineName: "12 watt lights", itemType: "main_line" as const, subBasketId: sub.id, subBasketName: sub.name } as KnowledgeItemDetail;
+    const temporaryChild = { ...items[1], mainLineId: "open-lights", mainLineName: "Lights", itemType: "temporary" as const, completionRequired: true, subBasketId: sub.id, subBasketName: sub.name } as KnowledgeItemDetail;
+    vi.mocked(api.createKnowledgeMainLine).mockResolvedValueOnce(catalogChild).mockResolvedValueOnce(temporaryChild);
+    const onItemConfirmed = vi.fn();
+    const { user, change } = setup([whole], { onItemConfirmed });
+    await openRule(user);
+    const childList = await screen.findByRole("region", { name: "Sub-items" });
+    expect(within(childList).getByText("Ceiling COB Lights")).toBeVisible();
+
+    await user.click(within(childList).getByRole("button", { name: "Add sub-item" }));
+    let dialog = screen.getByRole("dialog", { name: "Add sub-item" });
+    expect(within(dialog).getByRole("combobox", { name: "Main basket" })).toBeDisabled();
+    expect(within(dialog).getByRole("textbox", { name: "Sub basket" })).toHaveValue(sub.name);
+    expect(within(dialog).getByRole("textbox", { name: "Sub basket" })).toBeDisabled();
+    await user.type(within(dialog).getByRole("textbox", { name: "Sub-item name" }), catalogChild.mainLineName);
+    await user.click(within(dialog).getByRole("button", { name: "Add sub-item" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add sub-item" })).not.toBeInTheDocument());
+    expect(api.createKnowledgeMainLine).toHaveBeenNthCalledWith(1, "basket-0", { name: catalogChild.mainLineName, subBasketId: sub.id });
+    expect(within(childList).getByText(catalogChild.mainLineName)).toBeVisible();
+
+    await user.click(within(childList).getByRole("button", { name: "Add sub-item" }));
+    dialog = screen.getByRole("dialog", { name: "Add sub-item" });
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Sub-item type" }), "temporary");
+    await user.type(within(dialog).getByRole("textbox", { name: "Sub-item name" }), temporaryChild.mainLineName);
+    await user.click(within(dialog).getByRole("button", { name: "Add sub-item" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add sub-item" })).not.toBeInTheDocument());
+    expect(api.createKnowledgeMainLine).toHaveBeenNthCalledWith(2, "basket-0", { name: temporaryChild.mainLineName, subBasketId: sub.id, itemType: "temporary" });
+    expect(within(childList).getByText(temporaryChild.mainLineName)).toBeVisible();
+    expect(within(within(childList).getByText(temporaryChild.mainLineName).closest("li")!).getByText("Must be completed")).toBeVisible();
+    expect(change).not.toHaveBeenCalled();
+    expect(onItemConfirmed).toHaveBeenNthCalledWith(1, catalogChild);
+    expect(onItemConfirmed).toHaveBeenNthCalledWith(2, temporaryChild);
+    expect(screen.getByRole("combobox", { name: "Addition type" })).toHaveValue("sub_basket");
+    expect(screen.getByRole("combobox", { name: "Sub Basket" })).toHaveValue(sub.id);
+    expect(screen.queryByRole("combobox", { name: "Related item" })).not.toBeInTheDocument();
+  });
+
+  it("preserves the selected Whole Sub-Basket when sub-item creation is cancelled or fails", async () => {
+    const whole = { ...rule, targetKind: "sub_basket", targetType: null, targetSubBasketId: sub.id, targetMainLineId: null };
+    vi.mocked(api.createKnowledgeMainLine).mockRejectedValueOnce(new ApiError(400, "VALIDATION_ERROR", "Review the sub-item name."));
+    const { user, change } = setup([whole]);
+    await openRule(user);
+    const childList = await screen.findByRole("region", { name: "Sub-items" });
+    await user.click(within(childList).getByRole("button", { name: "Add sub-item" }));
+    let dialog = screen.getByRole("dialog", { name: "Add sub-item" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Sub-item name" }), "9 watt lights");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add sub-item" })).not.toBeInTheDocument());
+    expect(screen.getByRole("combobox", { name: "Sub Basket" })).toHaveValue(sub.id);
+    expect(change).not.toHaveBeenCalled();
+
+    await user.click(within(childList).getByRole("button", { name: "Add sub-item" }));
+    dialog = screen.getByRole("dialog", { name: "Add sub-item" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Sub-item name" }), "9 watt lights");
+    await user.click(within(dialog).getByRole("button", { name: "Add sub-item" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Review the sub-item name");
+    expect(within(dialog).getByRole("textbox", { name: "Sub-item name" })).toHaveValue("9 watt lights");
+    expect(screen.getByRole("combobox", { name: "Sub Basket" })).toHaveValue(sub.id);
+    expect(change).not.toHaveBeenCalled();
+  });
+
+  it("does not publish a returned child from the wrong Sub-Basket", async () => {
+    const whole = { ...rule, targetKind: "sub_basket", targetType: null, targetSubBasketId: sub.id, targetMainLineId: null };
+    const wrongParent = { ...items[1], mainLineId: "wrong-parent", mainLineName: "Wrong parent", subBasketId: "other-sub", subBasketName: "Other" } as KnowledgeItemDetail;
+    vi.mocked(api.createKnowledgeMainLine).mockResolvedValue(wrongParent);
+    const onItemConfirmed = vi.fn();
+    const { user, change } = setup([whole], { onItemConfirmed });
+    await openRule(user);
+    const childList = await screen.findByRole("region", { name: "Sub-items" });
+    await user.click(within(childList).getByRole("button", { name: "Add sub-item" }));
+    const dialog = screen.getByRole("dialog", { name: "Add sub-item" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Sub-item name" }), wrongParent.mainLineName);
+    await user.click(within(dialog).getByRole("button", { name: "Add sub-item" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("saved in the catalog, but could not be selected");
+    expect(onItemConfirmed).not.toHaveBeenCalled();
+    expect(change).not.toHaveBeenCalled();
+    expect(within(childList).queryByText(wrongParent.mainLineName)).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Sub Basket" })).toHaveValue(sub.id);
+  });
+
+  it.each([{ canCreate: false }, { readOnly: true }])("shows Sub-Basket children but hides Add sub-item without create access: %j", async (options) => {
+    const whole = { ...rule, targetKind: "sub_basket", targetType: null, targetSubBasketId: sub.id, targetMainLineId: null };
+    const { user } = setup([whole], options);
+    await openRule(user);
+    const childList = await screen.findByRole("region", { name: "Sub-items" });
+    expect(within(childList).getByText("Ceiling COB Lights")).toBeVisible();
+    expect(within(childList).queryByRole("button", { name: "Add sub-item" })).not.toBeInTheDocument();
+  });
+
   it("keeps the selected line item until addition-type clearing is confirmed", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
     const { user, change } = setup([rule]);
@@ -133,18 +224,24 @@ describe("Budget Alterations", () => {
     confirm.mockRestore();
   });
 
-  it("disables empty and self-containing Sub-Baskets and flags overlapping active targets", async () => {
+  it("allows adding the first child to an empty Sub-Basket, disables self-containing targets and flags overlaps", async () => {
     const empty = { ...sub, id: "sub-empty", name: "Empty Sub-Basket" };
     const self = { ...sub, id: "sub-self", name: "Source group" };
     vi.mocked(api.listKnowledgeSubBaskets).mockResolvedValue(page([sub, empty, self]));
     const sourceInSub = { ...items[0], subBasketId: self.id, subBasketName: self.name };
     const whole = { ...rule, id: "whole-rule", targetKind: "sub_basket", targetType: null, targetSubBasketId: sub.id, targetMainLineId: null };
-    const { user } = setup([rule, whole], { items: [sourceInSub, ...items.slice(1)] });
+    const { user, change } = setup([rule, whole], { items: [sourceInSub, ...items.slice(1)] });
     expect(screen.getAllByText("Overlapping target")).toHaveLength(2);
     await openRule(user, 2);
     const selector = screen.getByRole("combobox", { name: "Sub Basket" });
-    expect(within(selector).getByRole("option", { name: "Empty Sub-Basket · Empty" })).toBeDisabled();
+    const emptyOption = within(selector).getByRole("option", { name: "Empty Sub-Basket · Empty · Add a sub-item" });
+    expect(emptyOption).toBeEnabled();
     expect(within(selector).getByRole("option", { name: "Source group · Contains this item" })).toBeDisabled();
+    await user.selectOptions(selector, empty.id);
+    const childList = screen.getByRole("region", { name: "Sub-items" });
+    expect(within(childList).getByText("No sub-items are available in this Sub-Basket.")).toBeVisible();
+    expect(within(childList).getByRole("button", { name: "Add sub-item" })).toBeEnabled();
+    expect(change.mock.lastCall![0][1]).toMatchObject({ targetKind: "sub_basket", targetSubBasketId: empty.id, targetMainLineId: null });
   });
 
   it("creates a missing Main Basket and Sub-Basket with a generic temporary child", async () => {

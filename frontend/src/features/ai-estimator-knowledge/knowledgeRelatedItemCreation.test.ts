@@ -29,6 +29,38 @@ describe("related item creation reconciliation", () => {
     expect(api.getKnowledgeItem).toHaveBeenCalledWith("downlight");
   });
 
+  it("reconciles a sub-item against its exact Sub-Basket ID without joining by name", async () => {
+    const result = await reconcileRelatedItemCreation({
+      basketId: input.basketId,
+      subBasketId: subBasket.id,
+      itemType: input.itemType,
+      name: input.name,
+      excludeMainLineId: input.excludeMainLineId
+    });
+    expect(result).toEqual({ kind: "match", item: detail });
+    expect(api.listKnowledgeSubBaskets).not.toHaveBeenCalled();
+  });
+
+  it("rejects a same-name sub-item from a different stable Sub-Basket", async () => {
+    expect(await reconcileRelatedItemCreation({
+      basketId: input.basketId,
+      subBasketId: "other-sub-basket",
+      itemType: input.itemType,
+      name: input.name
+    })).toMatchObject({ kind: "conflict" });
+    expect(api.getKnowledgeItem).not.toHaveBeenCalled();
+  });
+
+  it("rechecks the stable Sub-Basket ID on authoritative detail", async () => {
+    vi.mocked(api.getKnowledgeItem).mockResolvedValue({ ...detail, subBasketId: "moved-sub-basket" } as KnowledgeItemDetail);
+    expect(await reconcileRelatedItemCreation({
+      basketId: input.basketId,
+      subBasketId: subBasket.id,
+      itemType: input.itemType,
+      name: input.name
+    })).toMatchObject({ kind: "conflict" });
+  });
+
   it("finds matches on later item and Sub Basket pages", async () => {
     vi.mocked(api.listKnowledgeMainLines).mockResolvedValueOnce(page([{ ...line, id: "other", name: "Surface light" }], 0, true)).mockResolvedValueOnce(page([line], 1));
     vi.mocked(api.listKnowledgeSubBaskets).mockResolvedValueOnce(page([{ ...subBasket, id: "cove", name: "Cove lighting" }], 0, true)).mockResolvedValueOnce(page([subBasket], 1));

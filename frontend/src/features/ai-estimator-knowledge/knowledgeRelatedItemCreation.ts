@@ -3,13 +3,17 @@ import { getKnowledgeItem, listKnowledgeMainLines, listKnowledgeSubBaskets } fro
 import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
 import type { KnowledgeItemDetail } from "./knowledgeTypes";
 
-export interface RelatedItemCreationInput {
+interface RelatedItemCreationBase {
   readonly basketId: string;
-  readonly subBasketName: string;
   readonly name: string;
   readonly itemType: "main_line" | "temporary";
   readonly excludeMainLineId?: string;
 }
+
+export type RelatedItemCreationInput = RelatedItemCreationBase & (
+  | { readonly subBasketId: string; readonly subBasketName?: never }
+  | { readonly subBasketId?: never; readonly subBasketName: string }
+);
 
 export type RelatedItemReconciliation =
   | { readonly kind: "absent" }
@@ -28,15 +32,17 @@ export function requiresRelatedItemReconciliation(error: unknown): boolean {
 export async function reconcileRelatedItemCreation(input: RelatedItemCreationInput): Promise<RelatedItemReconciliation> {
   const [mainLines, subBaskets] = await Promise.all([
     collectAllKnowledgeMasterPages((page) => listKnowledgeMainLines(input.basketId, { ...page, includeArchived: true }), "Related items"),
-    collectAllKnowledgeMasterPages((page) => listKnowledgeSubBaskets(input.basketId, page), "Sub Basket")
+    input.subBasketId === undefined
+      ? collectAllKnowledgeMasterPages((page) => listKnowledgeSubBaskets(input.basketId, page), "Sub Basket")
+      : Promise.resolve(null)
   ]);
   const sameName = mainLines.items.filter((item) => item.basketId === input.basketId && normalizeIdentity(item.name) === normalizeIdentity(input.name));
   if (sameName.length === 0) return { kind: "absent" };
 
-  const subBasketName = normalizeIdentity(input.subBasketName);
-  const subBasketId = subBasketName
-    ? subBaskets.items.find((basket) => basket.basketId === input.basketId && normalizeIdentity(basket.name) === subBasketName)?.id
-    : null;
+  const subBasketName = normalizeIdentity(input.subBasketName ?? "");
+  const subBasketId = input.subBasketId ?? (subBasketName
+    ? subBaskets?.items.find((basket) => basket.basketId === input.basketId && normalizeIdentity(basket.name) === subBasketName)?.id
+    : null);
   const eligible = sameName.filter((item) =>
     item.id !== input.excludeMainLineId &&
     (item.status === "active" || item.status === "draft") &&

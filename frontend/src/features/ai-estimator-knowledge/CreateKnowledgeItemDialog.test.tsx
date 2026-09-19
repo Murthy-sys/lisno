@@ -353,6 +353,56 @@ describe("related item creation", () => {
   });
 });
 
+describe("sub-item creation", () => {
+  const subItemProps = {
+    context: "sub-item",
+    initialBasketId: "basket-0",
+    initialSubBasketId: "sub-walls",
+    initialSubBasketName: "Walls"
+  } as const;
+
+  it("locks the selected hierarchy and creates a catalog child by stable Sub-Basket ID", async () => {
+    const { user, onCreated } = setup(subItemProps);
+    await screen.findByRole("option", { name: "Carpentry" });
+    expect(screen.getByRole("dialog", { name: "Add sub-item" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Main basket" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Sub basket" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Sub basket" })).toHaveValue("Walls");
+    expect(screen.getByRole("combobox", { name: "Sub-item type" })).toHaveValue("main_line");
+    await user.type(screen.getByRole("textbox", { name: "Sub-item name" }), "Panelling");
+    await user.click(screen.getByRole("button", { name: "Add sub-item" }));
+    expect(api.createKnowledgeMainLine).toHaveBeenCalledWith("basket-0", { name: "Panelling", subBasketId: "sub-walls" });
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("line-created", createdDetail));
+    const results = await axe.run(screen.getByRole("dialog"), { rules: { "color-contrast": { enabled: false } } });
+    expect(results.violations).toEqual([]);
+  });
+
+  it("creates a temporary child under the same stable parent", async () => {
+    const temporaryDetail = { ...createdDetail, mainLineId: "temporary-child", mainLineName: "Lights", itemType: "temporary" as const };
+    vi.mocked(api.createKnowledgeMainLine).mockResolvedValue(temporaryDetail);
+    const { user, onCreated } = setup(subItemProps);
+    await screen.findByRole("option", { name: "Carpentry" });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sub-item type" }), "temporary");
+    await user.type(screen.getByRole("textbox", { name: "Sub-item name" }), "Lights");
+    await user.click(screen.getByRole("button", { name: "Add sub-item" }));
+    expect(api.createKnowledgeMainLine).toHaveBeenCalledWith("basket-0", { name: "Lights", subBasketId: "sub-walls", itemType: "temporary" });
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("temporary-child", temporaryDetail));
+  });
+
+  it("reconciles a lost response using the exact Sub-Basket and does not blindly retry", async () => {
+    vi.mocked(api.createKnowledgeMainLine).mockRejectedValueOnce(new Error("Response lost"));
+    vi.mocked(api.listKnowledgeMainLines).mockResolvedValue(page([existingLine]));
+    const { user, onCreated } = setup(subItemProps);
+    await screen.findByRole("option", { name: "Carpentry" });
+    await user.type(screen.getByRole("textbox", { name: "Sub-item name" }), "Panelling");
+    await user.click(screen.getByRole("button", { name: "Add sub-item" }));
+    await user.click(await screen.findByRole("button", { name: "Use existing item" }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("line-created", createdDetail));
+    expect(api.createKnowledgeMainLine).toHaveBeenCalledOnce();
+    expect(api.listKnowledgeSubBaskets).not.toHaveBeenCalled();
+  });
+});
+
 describe("temporary item Main Basket creation", () => {
   it("creates and selects a Main Basket without losing the temporary item draft", async () => {
     const addedBasket: KnowledgeBasket = {

@@ -233,9 +233,10 @@ function BudgetAlterationRow({ row, index, mainLineId, mainLineName, baskets, it
     ownerMounted.current = true;
     return () => { ownerMounted.current = false; };
   }, []);
-  const [creatingItem, setCreatingItem] = useState<{ type: "main_line" | "temporary"; name: string; subBasketName: string; targetKind: "main_line" | "sub_basket" } | null>(null);
+  const [creatingItem, setCreatingItem] = useState<{ type: "main_line" | "temporary"; name: string; subBasketName: string; purpose: "main_line" | "sub_basket" | "sub_item" } | null>(null);
   const [creationNotice, setCreationNotice] = useState("");
   const [refreshWarning, setRefreshWarning] = useState("");
+  const [highlightedChildId, setHighlightedChildId] = useState("");
   const text = (key: string) => typeof row[key] === "string" ? row[key] as string : "";
   const set = (key: string, next: KnowledgeJsonValue) => onChange({ ...row, [key]: next });
   const error = (key: string) => issues.find((issue) => issue.path === `budgetAlterations.${index}.${key}`)?.message;
@@ -257,6 +258,9 @@ function BudgetAlterationRow({ row, index, mainLineId, mainLineName, baskets, it
   const selectedItem = items.find((item) => item.mainLineId === lineId);
   const selectedSubBasketName = subOptions.find((basket) => basket.id === subBasketId)?.name
     ?? items.find((item) => item.basketId === basketId && item.subBasketId === subBasketId)?.subBasketName;
+  const selectedSubBasketChildren = targetKind === "sub_basket" && basketId && subBasketId
+    ? items.filter((item) => item.basketId === basketId && item.subBasketId === subBasketId)
+    : [];
   const selectedName = targetKind === "sub_basket" ? selectedSubBasketName : selectedItem?.mainLineName;
   const action = BUDGET_ACTIONS.find((choice) => choice.action === row.action && choice.requirement === row.requirement);
   const catalogDisabled = readOnly || catalogState.status !== "ready" || Boolean(catalogState.refreshErrorMessage);
@@ -266,8 +270,8 @@ function BudgetAlterationRow({ row, index, mainLineId, mainLineName, baskets, it
     subBasket: subOptions.find((basket) => basket.id === subBasketId),
     subBasketId, items, catalogReady: !catalogDisabled && !subUnavailable
   }) : [];
-  const openCreation = (type: "main_line" | "temporary", forTarget: "main_line" | "sub_basket" = targetKind) => setCreatingItem({
-    type, targetKind: forTarget, name: forTarget === "sub_basket" ? "Lights" : "", subBasketName: subOptions.find((basket) => basket.id === subBasketId)?.name ?? ""
+  const openCreation = (type: "main_line" | "temporary", purpose: "main_line" | "sub_basket" | "sub_item" = targetKind) => setCreatingItem({
+    type, purpose, name: purpose === "sub_basket" ? "Lights" : "", subBasketName: subOptions.find((basket) => basket.id === subBasketId)?.name ?? ""
   });
   const retryCatalogRefresh = async () => {
     const results = await Promise.allSettled([
@@ -329,8 +333,9 @@ function BudgetAlterationRow({ row, index, mainLineId, mainLineName, baskets, it
           {subBasketId && !subOptions.some((basket) => basket.id === subBasketId) && <option value={subBasketId} disabled>{selectedSubBasketName ?? "Unavailable Sub-Basket"}</option>}
           {subOptions.map((basket) => {
             const children = items.filter((item) => item.basketId === basketId && item.subBasketId === basket.id && ["active", "draft"].includes(item.status));
-            const unavailable = targetKind === "sub_basket" && (children.length === 0 || children.some((item) => item.mainLineId === mainLineId));
-            return <option key={basket.id} value={basket.id} disabled={unavailable}>{basket.name}{targetKind === "sub_basket" ? unavailable ? children.length === 0 ? " · Empty" : " · Contains this item" : ` · ${children.length} item${children.length === 1 ? "" : "s"}` : ""}</option>;
+            const containsSource = targetKind === "sub_basket" && children.some((item) => item.mainLineId === mainLineId);
+            const emptyWithoutCreateAccess = targetKind === "sub_basket" && children.length === 0 && !canCreate;
+            return <option key={basket.id} value={basket.id} disabled={containsSource || emptyWithoutCreateAccess}>{basket.name}{targetKind === "sub_basket" ? containsSource ? " · Contains this item" : children.length === 0 ? canCreate ? " · Empty · Add a sub-item" : " · Empty" : ` · ${children.length} item${children.length === 1 ? "" : "s"}` : ""}</option>;
           })}
         </Select>}
       </Field>
@@ -338,7 +343,7 @@ function BudgetAlterationRow({ row, index, mainLineId, mainLineName, baskets, it
         {(control) => <Select {...control} value={lineId} disabled={catalogDisabled || !basketId || subUnavailable} onChange={(event) => {
           const suggestion = suggestions.find((candidate) => `suggestion:${candidate.key}` === event.target.value);
           if (suggestion) {
-            setCreatingItem({ type: "main_line", targetKind: "main_line", name: suggestion.name, subBasketName: suggestion.subBasketName });
+            setCreatingItem({ type: "main_line", purpose: "main_line", name: suggestion.name, subBasketName: suggestion.subBasketName });
             return;
           }
           const item = availableItems.find((candidate) => candidate.mainLineId === event.target.value);
@@ -358,6 +363,27 @@ function BudgetAlterationRow({ row, index, mainLineId, mainLineName, baskets, it
     {basketId && subBaskets.isPending && <p role="status">Loading Sub Baskets…</p>}
     {basketId && subBaskets.isError && <InlineMessage tone="warning">Sub Baskets could not be loaded. <Button type="button" variant="secondary" onClick={() => void subBaskets.refetch()}>Retry Sub Baskets</Button></InlineMessage>}
     {!basketId && <p className="knowledge-budget-alterations__help">Select a Main Basket to see related items.</p>}
+    {targetKind === "sub_basket" && basketId && subBasketId && <section className="knowledge-budget-rule__sub-items" aria-labelledby={`${id}-sub-items`}>
+      <div className="knowledge-budget-rule__sub-items-heading">
+        <div><h5 id={`${id}-sub-items`}>Sub-items</h5><p>Items currently included in this Whole Sub-Basket recommendation.</p></div>
+        {!readOnly && canCreate && <Button type="button" variant="secondary" size="compact" leadingIcon={<Plus aria-hidden="true" />}
+          disabled={catalogDisabled || subUnavailable || !selectedSubBasketName}
+          onClick={() => openCreation("main_line", "sub_item")}>Add sub-item</Button>}
+      </div>
+      {selectedSubBasketChildren.length > 0 ? <ul className="knowledge-budget-rule__sub-item-list">
+        {selectedSubBasketChildren.map((child) => {
+          const available = child.status === "active" || child.status === "draft";
+          const childNeedsCompletion = recommendationItemRequiresCompletion(child);
+          return <li key={child.mainLineId} className={highlightedChildId === child.mainLineId ? "knowledge-budget-rule__sub-item--new" : undefined}>
+            <span className="knowledge-budget-rule__sub-item-name">{child.mainLineName}</span>
+            <span>{child.itemType === "temporary" ? "Temporary item" : "Catalog item"}</span>
+            <span>{available ? child.status === "active" ? "Active" : "Draft" : "Unavailable"}</span>
+            {childNeedsCompletion && <span className="knowledge-recommendations__status knowledge-recommendations__status--attention">Must be completed</span>}
+            {highlightedChildId === child.mainLineId && <span className="knowledge-recommendations__status">Added</span>}
+          </li>;
+        })}
+      </ul> : <p className="knowledge-budget-rule__sub-items-empty">No sub-items are available in this Sub-Basket.</p>}
+    </section>}
     {targetKind === "main_line" && basketId && !catalogDisabled && !subUnavailable && !availableItems.length && !suggestions.length && <p className="knowledge-budget-alterations__help">
       No related items available.{subBasketId && !temporary ? " Choose All Sub Baskets to see more items and suggestions." : ""}
     </p>}
@@ -373,23 +399,29 @@ function BudgetAlterationRow({ row, index, mainLineId, mainLineName, baskets, it
     </div>
     {creationNotice && <p role="status" className="knowledge-budget-alterations__help">{creationNotice}</p>}
     {refreshWarning && <InlineMessage tone="warning">{refreshWarning} <Button type="button" variant="quiet" size="compact" onClick={() => void retryCatalogRefresh()}>Retry catalog refresh</Button></InlineMessage>}
-    {creatingItem && !readOnly && canCreate && <CreateKnowledgeItemDialog context={creatingItem.targetKind === "sub_basket" ? "sub-basket" : "related-item"} itemType={creatingItem.type}
-      initialBasketId={basketId} initialName={creatingItem.name} initialSubBasketName={creatingItem.subBasketName}
+    {creatingItem && !readOnly && canCreate && <CreateKnowledgeItemDialog context={creatingItem.purpose === "sub_basket" ? "sub-basket" : creatingItem.purpose === "sub_item" ? "sub-item" : "related-item"} itemType={creatingItem.type}
+      initialBasketId={basketId} initialSubBasketId={creatingItem.purpose === "sub_item" ? subBasketId : ""} initialName={creatingItem.name} initialSubBasketName={creatingItem.subBasketName}
       canCreateBasket excludeMainLineId={mainLineId} onRefreshError={(message) => { if (ownerMounted.current) setRefreshWarning(message); }}
       onClose={() => setCreatingItem(null)} onCreated={async (createdId, detail) => {
         if (!ownerMounted.current) return;
         const created = detail ?? queryClient.getQueryData<KnowledgeItemDetail>(knowledgeQueryKeys.item(createdId));
         if (!created || created.mainLineId !== createdId || createdId === mainLineId) return;
-        if (creatingItem.targetKind === "sub_basket" && !created.subBasketId) {
+        if (creatingItem.purpose === "sub_basket" && !created.subBasketId) {
           throw new Error("The saved item did not return a Sub-Basket identity.");
         }
+        if (creatingItem.purpose === "sub_item" && (created.basketId !== basketId || created.subBasketId !== subBasketId)) {
+          throw new Error("The saved item did not return under the selected Sub-Basket.");
+        }
         onItemCreated(created);
-        onChange(creatingItem.targetKind === "sub_basket"
+        if (creatingItem.purpose === "sub_item") {
+          setHighlightedChildId(created.mainLineId);
+          setCreationNotice(`${created.mainLineName} was added under ${selectedSubBasketName ?? "the selected Sub-Basket"}. The Whole Sub-Basket recommendation target is unchanged.`);
+        } else onChange(creatingItem.purpose === "sub_basket"
           ? { ...row, targetKind: "sub_basket", targetType: null, targetBasketId: created.basketId,
             targetSubBasketId: created.subBasketId ?? null, targetMainLineId: null }
           : { ...row, targetKind: "main_line", targetType: created.itemType === "temporary" ? "temporary" : "catalog", targetBasketId: created.basketId,
             targetSubBasketId: created.subBasketId ?? null, targetMainLineId: createdId });
-        setCreationNotice(creatingItem.targetKind === "sub_basket"
+        if (creatingItem.purpose !== "sub_item") setCreationNotice(creatingItem.purpose === "sub_basket"
           ? `${created.subBasketName ?? "Sub-Basket"} and temporary item ${created.mainLineName} are in Configuration. Save this section to keep the rule change.`
           : `${created.mainLineName} is in the catalog. Save this section to keep the rule change.`);
         setRefreshWarning("");

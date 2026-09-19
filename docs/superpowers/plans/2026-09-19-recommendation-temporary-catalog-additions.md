@@ -4,11 +4,13 @@
 
 - Approved specification: `docs/superpowers/specs/2026-09-19-recommendation-temporary-catalog-additions-design.md`
 - This plan implements the approved Configuration and knowledge-context behavior only. It does not add automatic Estimate mutation, an estimator-facing acceptance screen, or new `estimator_sales` permissions.
-- Baseline worktree evidence for this change is the untracked approved specification. Writers must re-check `git status --short` and inspect any relevant pre-existing diff before editing because the shared worktree may change between approval and execution.
+- The approved follow-up defines a recommendation **sub-item** as an existing Main Line beneath the selected Sub-Basket. It adds no fourth catalog level, recommendation target kind, or database migration.
+- The original Line item/Whole Sub-Basket implementation is already present in the local worktree. This approved follow-up extends that baseline with child sub-item authoring; it must preserve and build on the existing uncommitted changes.
+- Writers must re-check `git status --short` and inspect every relevant pre-existing diff before editing because the shared worktree may change between approval and execution.
 
 ## Delivery order
 
-The contract and compatibility rules are the first dependency. Backend persistence/reference work and frontend interaction work may proceed in parallel only after that contract is fixed. Integrated integrity review and verification run after all writers finish.
+The target contract and backend Main-Line creation path are already available. The sub-item follow-up should reuse them, so no backend schema or feature endpoint change is expected. Implementation resumes in the frontend portions of Tasks 3–5, followed by the cross-layer checks in Tasks 6–8. If implementation evidence reveals that the existing API cannot create a child under a selected Sub-Basket safely, stop and return to the specification rather than inventing a client-only record. Integrated integrity review and verification run after the writer finishes.
 
 ## Task 1 — Freeze the recommendation target contract
 
@@ -103,16 +105,21 @@ The contract and compatibility rules are the first dependency. Backend persisten
 4. For a new whole-Sub-Basket target, support:
    - selecting an existing non-empty Sub-Basket; or
    - creating a Sub-Basket and a generic temporary child such as **Lights** before the target becomes saveable.
-5. Reconcile duplicate names and lost responses by normalized name plus parent ID before retry. Require explicit reuse of an exact active match.
-6. Treat a successful parent create followed by a child failure as a recoverable partial success: retain and select the created parent, preserve entered values, and never fabricate the missing ID.
-7. Invalidate/update Basket, Sub-Basket, Main-Line, item-list, deletion-impact, and incoming-reference queries after each successful mutation.
-8. Preserve single-submit locking, focus return, status announcements, cancellation semantics, and responsive layout.
+5. For a selected existing or newly created Sub-Basket, let the author create multiple child Main Lines through **Add sub-item**:
+   - known children use catalog type;
+   - unresolved children use temporary type and retain **Must be completed**;
+   - every child uses the selected Basket/Sub-Basket IDs and the authoritative Main-Line ID returned by the backend.
+6. Preserve the selected hierarchy, pending recommendation, and all entered rule values while a sub-item is created, cancelled, or fails.
+7. Reconcile duplicate names and lost responses by normalized name plus parent ID before retry. Require explicit reuse of an exact active match.
+8. Treat a successful parent create followed by a child failure as a recoverable partial success: retain and select the created parent, preserve entered values, and never fabricate the missing ID.
+9. Invalidate/update Basket, Sub-Basket, Main-Line, item-list, deletion-impact, and incoming-reference queries after each successful mutation so the child list and Configuration workspace agree.
+10. Preserve single-submit locking, focus return, status announcements, cancellation semantics, and responsive layout.
 
-**Acceptance coverage:** AC2, AC5, AC11.
+**Acceptance coverage:** AC2, AC5, AC11, AC13, AC14, AC16.
 
 **Focused verification**
 
-- Component tests cover zero-Basket state, existing and new parents, duplicate reconciliation, lost-response recovery, partial success, cancellation, permission-hidden actions, keyboard flow, and retained form state.
+- Component tests cover zero-Basket state, existing and new parents, adding multiple catalog/temporary sub-items, duplicate reconciliation, lost-response recovery, partial success, cancellation, permission-hidden actions, keyboard flow, and retained form state.
 - API/helper tests assert exact IDs and query invalidations; no generated client-side target ID enters a rule.
 
 ## Task 4 — Add Line item versus Whole Sub-Basket authoring
@@ -138,20 +145,23 @@ The contract and compatibility rules are the first dependency. Backend persisten
 3. Show target-kind-appropriate selectors and creation actions.
 4. Confirm before clearing an incompatible unsaved target when the author changes kind.
 5. For a whole Sub-Basket, save the exact approved shape and block an empty/unavailable/self-containing target based on frontend evidence while relying on backend validation as authority.
-6. Display target kind, hierarchy names, action/requirement, status, and unresolved temporary state in:
+6. Once a Sub-Basket is selected, render its available child Main Lines in a compact list with name, type, availability, and completion state, plus an authorized **Add sub-item** action.
+7. Keep a Whole Sub-Basket rule targeted to its existing Sub-Basket stable ID after a child is added. Refresh/highlight the child without creating another recommendation rule or changing to Line-item mode.
+8. Allow repeated **Add sub-item** operations without closing, resetting, or losing the current recommendation draft.
+9. Display target kind, hierarchy names, action/requirement, status, and unresolved temporary state in:
    - the editable recommendation table;
    - read-only history;
    - pending-change cards;
    - saved summaries.
-7. Use `[trigger, targetKind, target ID]` for duplicate presentation and emit an overlap warning when a whole Sub-Basket addition and a contained Main-Line addition coexist.
-8. Preserve all four recommendation groups, existing rule actions, unsaved state, validation focus, read-only behavior, and responsive/accessibility behavior.
+10. Use `[trigger, targetKind, target ID]` for duplicate presentation and emit an overlap warning when a whole Sub-Basket addition and a contained Main-Line addition coexist.
+11. Preserve all four recommendation groups, existing rule actions, unsaved state, validation focus, read-only behavior, and responsive/accessibility behavior.
 
-**Acceptance coverage:** AC1, AC4, AC6, AC8, AC9, AC11.
+**Acceptance coverage:** AC1, AC4, AC6, AC8, AC9, AC11, AC13, AC15, AC16.
 
 **Focused verification**
 
 - Interaction tests create/edit/save/reopen both target kinds in mandatory, probable, exclusion, and other groups.
-- Tests cover kind switching confirmation, overlap warning, legacy rows, invalid targets, read-only history, responsive labels, focus management, and accessible names/statuses.
+- Tests cover kind switching confirmation, compact child rendering, repeated child creation, stable Sub-Basket targeting, overlap warning, legacy rows, invalid targets, read-only history, responsive labels, focus management, and accessible names/statuses.
 
 ## Task 5 — Surface temporary completion in Configuration
 
@@ -171,9 +181,10 @@ The contract and compatibility rules are the first dependency. Backend persisten
 1. Render **Temporary item · Must be completed** for temporary Main Lines in both index and workspace.
 2. Keep draft/active/inactive/archived status visually and semantically separate from completion requirement.
 3. Preserve incoming recommendation references so the unresolved item shows where it is used.
-4. Ensure filters, accessible row names, empty states, mobile layout, and workspace navigation still work with the additional state.
+4. After **Add sub-item**, expose the new child under the correct Sub-Basket without requiring a full reload and without displaying it under another parent.
+5. Ensure filters, accessible row names, empty states, mobile layout, and workspace navigation still work with the additional state.
 
-**Acceptance coverage:** AC3, AC9.
+**Acceptance coverage:** AC3, AC9, AC14, AC15.
 
 **Focused verification**
 
@@ -196,8 +207,9 @@ The contract and compatibility rules are the first dependency. Backend persisten
 1. Inspect the integrated diff and confirm every frontend payload is accepted by runtime validation and OpenAPI.
 2. Confirm API route-operation authorization remains synchronized and no new estimator permission was introduced.
 3. Confirm all query invalidations cover newly created and referenced hierarchy records.
-4. Confirm completion is derived, target names remain presentation only, and all joins use stable IDs.
-5. Confirm no Estimate mutation, migration, seed, deployment, commit, or production action was added.
+4. Confirm a sub-item is persisted only as an existing Main Line beneath the selected Sub-Basket and that a Whole Sub-Basket rule remains targeted to the Sub-Basket ID.
+5. Confirm completion is derived, target names remain presentation only, and all joins use stable IDs.
+6. Confirm no Estimate mutation, migration, seed, deployment, commit, or production action was added.
 
 **Acceptance coverage:** all criteria, with emphasis on AC6, AC9, AC10, and AC11.
 
@@ -215,6 +227,7 @@ The contract and compatibility rules are the first dependency. Backend persisten
 - Stable-ID lineage; no label joins or client-generated persisted target IDs.
 - Parent/child reference races and deletion impact.
 - Partial-create recovery, idempotency, query freshness, and stale section CAS.
+- Multiple sub-item creation, correct Basket/Sub-Basket parenting, stable Whole Sub-Basket targeting, and absence of duplicate recommendation rules.
 - No accidental temporary-to-catalog conversion or false completion.
 - No automatic Estimate side effects.
 
@@ -246,6 +259,9 @@ Confirmed findings are fixed before final verification.
    - new temporary Line item with new Main Basket;
    - existing whole Sub-Basket;
    - new Sub-Basket plus **Lights** placeholder;
+   - adding multiple catalog and temporary sub-items to a selected Sub-Basket;
+   - cancelling and retrying sub-item creation while preserving the recommendation draft;
+   - verifying that the Whole Sub-Basket target ID remains unchanged after child creation;
    - duplicate/lost-response/permission/error states;
    - Configuration index/workspace completion badges;
    - mobile and desktop widths.
@@ -259,11 +275,11 @@ Confirmed findings are fixed before final verification.
 
 ## Parallel execution map
 
-After Task 1 fixes the union contract:
+For the approved sub-item follow-up:
 
-- **Backend lane:** Task 2.
-- **Frontend lane:** Tasks 3–5, owned by one frontend writer to avoid overlap across the shared recommendation components.
-- **Primary integration lane:** monitor contract adherence and begin Task 6 only after both lanes finish.
+- **Frontend lane:** the sub-item increments in Tasks 3–5, owned by one frontend writer because the dialog, builder, and tests overlap.
+- **Contract audit lane:** in Mode A, a read-only backend/integrity audit may confirm that existing Main-Line creation and authorization cover the selected-parent workflow while the frontend writer works.
+- **Primary integration lane:** reconcile the frontend result with the current contract and complete Task 6 after the writer finishes.
 
 Tasks 7 and 8 are sequential on the fully integrated worktree. Tests run by writers are provisional; only Task 8 results count as final verification.
 
@@ -271,7 +287,7 @@ Tasks 7 and 8 are sequential on the fully integrated worktree. Tests run by writ
 
 The handoff must report:
 
-- behavior delivered against all twelve acceptance criteria;
+- behavior delivered against all sixteen acceptance criteria;
 - principal contract and compatibility decisions;
 - exact affected files;
 - exact focused/full checks and results;

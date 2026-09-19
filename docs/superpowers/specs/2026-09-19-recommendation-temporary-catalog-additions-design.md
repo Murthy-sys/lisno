@@ -7,7 +7,7 @@ Allow a Super Admin configuring **Recommendations & Exclusions** to recommend ei
 1. one related Main Line; or
 2. an entire Sub-Basket.
 
-The author may select existing catalog records or create the missing Main Basket, Sub-Basket, and temporary placeholder item from the recommendation flow. A placeholder such as **Lights** is a real catalog record, appears in Configuration as **Temporary item · Must be completed**, and leaves the exact choice, such as 12 watt or 9 watt, open for later resolution.
+The author may select existing catalog records or create the missing Main Basket, Sub-Basket, and one or more child items from the recommendation flow. In this design, a recommendation **sub-item** is an existing Main Line record that belongs to the selected Sub-Basket; it is not a new hierarchy level. A placeholder such as **Lights** is a real temporary Main Line, appears in Configuration as **Temporary item · Must be completed**, and leaves the exact choice, such as 12 watt or 9 watt, open for later resolution.
 
 ## Current behavior and evidence
 
@@ -27,6 +27,7 @@ The author may select existing catalog records or create the missing Main Basket
 - Preserve all existing Main-Line recommendation rules without a data rewrite.
 - Let authorized users create and select a missing Main Basket from the recommendation flow.
 - Let authorized users create and select a missing Sub-Basket from the recommendation flow.
+- Let authorized users add one or more child Main Lines, presented as **sub-items**, inside the selected Sub-Basket without leaving the recommendation editor.
 - Let a new Sub-Basket recommendation include a generic temporary Main Line, such as **Lights**, when the exact line is unknown.
 - Make every temporary Main Line created through Recommendations visible in Configuration with a clear **Must be completed** state and its originating recommendation references.
 - Keep unresolved recommendation targets visible to the knowledge-context consumer so the downstream estimator is told that the addition is required while the exact specification remains open.
@@ -38,6 +39,7 @@ The author may select existing catalog records or create the missing Main Basket
 - Building a new estimator-facing recommendation-acceptance screen.
 - Giving the `estimator_sales` role broad Knowledge Configuration create/update permissions.
 - Guessing 12 watt versus 9 watt, expanding a generic placeholder into invented items, or using names as joins.
+- Introducing a separate nested `subItem` entity or storing child items only inside the recommendation payload.
 - Automatically activating temporary items or incomplete Sub-Baskets.
 - Migrating existing records in place; compatibility is handled when reading legacy rules.
 
@@ -85,12 +87,15 @@ The new temporary Main Line is a real draft catalog record. The rule stores only
 The author selects an active Main Basket and one of its Sub-Baskets. If either is missing and the actor has create permission, the same flow can create and select it.
 
 - Selecting an existing Sub-Basket recommends that stable Sub-Basket ID as a whole.
+- After selecting the Sub-Basket, the editor lists its available child Main Lines and provides **Add sub-item** for authorized users. Each added sub-item is created as a real Main Line beneath the selected Sub-Basket, and the author may add multiple sub-items before saving the recommendation section.
+- When the exact child is known, the author can add it as a catalog Main Line. When the exact choice is still open, the author can add a temporary Main Line, which is immediately marked **Temporary item · Must be completed**.
 - Creating a new Sub-Basket may also create a generic temporary child Main Line when the exact item is unknown. For the example, the hierarchy is:
   - Main Basket: the selected or newly created parent;
   - Sub-Basket: **False ceiling lights**;
   - Temporary Main Line: **Lights**;
 - A newly created Sub-Basket may be targeted without a temporary child only when it already contains at least one available Main Line by the time the rule is saved. An empty new Sub-Basket cannot be saved as an active recommendation target because it would add no actionable scope.
 - The rule targets the Sub-Basket, not the placeholder child. The placeholder remains visible under that Sub-Basket as a separate catalog item requiring completion.
+- Adding a sub-item does not create another recommendation rule. Because a Whole Sub-Basket rule targets the Sub-Basket by stable ID, its current eligible children are included when the recommendation is read or later applied.
 
 The recommendation table and saved summary show **Whole Sub-Basket**, the Main Basket/Sub-Basket names, whether unresolved temporary children exist, the action/requirement, and enabled state.
 
@@ -113,6 +118,7 @@ This preserves stable identity and avoids changing immutable `itemType` or silen
 - Duplicate-name and ambiguous network outcomes re-read the relevant catalog before offering another create. The flow may explicitly reuse an exact active match; it must not blindly retry and create duplicates.
 - If a Main Basket succeeds but a later Sub-Basket or item create fails, the valid created Basket remains available and selected. The unsaved recommendation and entered names remain recoverable.
 - Closing or cancelling creation leaves the existing rule target unchanged.
+- Closing or cancelling **Add sub-item** leaves the selected Sub-Basket and unsaved recommendation values unchanged. A successful child create refreshes the visible child list and highlights the returned Main Line without changing the rule target away from the Sub-Basket.
 - Section save continues to use existing section and aggregate version checks. A catalog create never bypasses a stale recommendation draft conflict.
 
 ## Data and API contract
@@ -147,6 +153,8 @@ The other existing fields (`id`, `trigger`, `action`, `requirement`, `reason`, a
 
 New or edited rules write `targetKind` explicitly. Existing persisted rows without it remain valid and serialize in responses without forced mutation until saved again.
 
+Sub-items do not add another recommendation target kind or persistence schema. They use the existing Main Line create contract with the selected `targetBasketId` and `targetSubBasketId`; the backend response supplies the authoritative child ID. A Whole Sub-Basket rule continues to store only its Sub-Basket target fields.
+
 ### Validation invariants
 
 - A Main-Line target requires a real draft/active Main Line matching Basket, optional Sub-Basket, and `targetType`.
@@ -178,6 +186,8 @@ This is descriptive context. It does not mutate catalog or Estimate records.
 - Use clear labels: **Addition type**, **Line item**, **Whole Sub-Basket**, **Main Basket**, **Sub-Basket**, **Temporary item**, and **Must be completed**.
 - Keep creation inside the current contextual drawer/dialog pattern. Do not navigate away and lose the unsaved recommendation.
 - Show **Add Main Basket**, **Add Sub-Basket**, and **Add temporary item** only when the actor has the matching capability.
+- After a Sub-Basket is selected, show its child items in a compact list and provide **Add sub-item** when the actor has create permission. The sub-item form supports catalog or temporary type and preserves the parent selection.
+- Each child row shows its name, type, availability, and **Must be completed** state where applicable. The user can add another sub-item without closing or resetting the recommendation draft.
 - When an empty new Sub-Basket needs an unresolved child, explain: “Add a temporary item such as Lights. The estimator can choose the exact item later.”
 - Loading, empty, unavailable, duplicate, permission, version-conflict, and refresh-warning states remain keyboard accessible and have announced status/error text.
 - On mobile, selectors and create actions stack; on wider screens they may share a row. No horizontal scrolling is required to complete the rule.
@@ -216,11 +226,16 @@ This is descriptive context. It does not mutate catalog or Estimate records.
 10. Knowledge context returns the target kind and unresolved/completion metadata without creating or changing Estimate, catalog, audit, or recommendation records during a read.
 11. Failed, cancelled, stale-version, duplicate-name, and ambiguous-response flows preserve entered data, avoid fabricated targets, and do not double-submit.
 12. Focused backend contract/reference tests, replica-set race tests, frontend interaction/accessibility tests, TypeScript checks, builds, and repository hygiene checks pass.
+13. After selecting a Sub-Basket in Recommendations, a Super Admin can add one or more sub-items without leaving the editor or losing unsaved recommendation values.
+14. Every added sub-item is a real child Main Line under the selected Main Basket and Sub-Basket. A known child may be catalog; an unresolved child may be temporary and displays **Temporary item · Must be completed**.
+15. Adding a sub-item to a Whole Sub-Basket recommendation keeps the rule targeted to the same Sub-Basket stable ID, refreshes the visible children and Configuration workspace, and does not create a duplicate rule or fabricated nested ID.
+16. Cancelling or failing a sub-item create preserves the selected hierarchy and entered values. Ambiguous responses reconcile the child list before retry so repeated submission does not create duplicates.
 
 ## Assumptions settled by approval
 
 - “Add a whole Sub-Basket” means the recommendation targets the Sub-Basket by stable ID; it is not represented by a fake Main Line.
 - A generic unknown choice such as **Lights** is a real temporary child Main Line, not free text embedded in the rule.
+- “Sub-item” means a Main Line directly under the selected Sub-Basket. It does not introduce a fourth catalog hierarchy level or a new recommendation target kind.
 - **Must be completed** is unresolved workflow metadata, separate from draft/active lifecycle and section completeness.
 - This change prepares authoritative context for a later estimator decision but does not introduce automatic Estimate mutation or a new estimator-facing screen.
 
