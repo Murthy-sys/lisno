@@ -189,8 +189,11 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     const path = "/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/recommendations";
     const rule = { id: "rule-1", trigger: "removed", action: "remove", requirement: "must", targetType: "temporary", targetBasketId: "basket-1", targetSubBasketId: null, targetMainLineId: "line-2", reason: "Ceiling fixtures require support.", active: true };
     expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send({ expectedVersion: 1, expectedAggregateVersion: 1, payload: { budgetAlterations: [rule] } })).status).toBe(200);
+    const subBasketRule = { ...rule, id: "rule-2", targetKind: "sub_basket", targetType: null, targetSubBasketId: "sub-basket-1", targetMainLineId: null };
+    expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send({ expectedVersion: 1, expectedAggregateVersion: 1, payload: { budgetAlterations: [subBasketRule] } })).status).toBe(200);
     expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send({ expectedVersion: 1, expectedAggregateVersion: 1, payload: { budgetAlterations: [{ ...rule, reason: " " }] } })).status).toBe(400);
-    expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
+    expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send({ expectedVersion: 1, expectedAggregateVersion: 1, payload: { budgetAlterations: [{ ...subBasketRule, targetMainLineId: "line-2" }] } })).status).toBe(400);
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(2);
   });
 
   it("accepts a Sub Basket text name and rejects blank or ambiguous mappings", async () => {

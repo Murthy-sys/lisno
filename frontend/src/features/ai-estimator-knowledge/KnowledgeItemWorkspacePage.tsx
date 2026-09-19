@@ -522,7 +522,7 @@ export function KnowledgeItemWorkspacePage() {
           ? <IconButton className="knowledge-main-line-edit" label="Edit Main Line" tooltip="Edit Main Line" variant="quiet" icon={<Pencil size={18} aria-hidden="true" />}
               onClick={() => guard.requestNavigation(() => setMainLineEditorOpen(true))} />
           : null}
-        metadata={<div className="knowledge-header-metadata">{item.itemType === "temporary" && <span className="knowledge-temporary-badge">Temporary item</span>}<StatusBadge label={KNOWLEDGE_ITEM_STATUS_LABELS[item.status]} tone={item.status === "active" ? "success" : item.status === "draft" ? "warning" : item.status === "archived" ? "danger" : "neutral"} /><span>Updated {formatKnowledgeDateTime(item.updatedAt)}</span></div>}
+        metadata={<div className="knowledge-header-metadata">{item.itemType === "temporary" && <span className="knowledge-temporary-badge">Temporary item · Must be completed</span>}<StatusBadge label={KNOWLEDGE_ITEM_STATUS_LABELS[item.status]} tone={item.status === "active" ? "success" : item.status === "draft" ? "warning" : item.status === "archived" ? "danger" : "neutral"} /><span>Updated {formatKnowledgeDateTime(item.updatedAt)}</span></div>}
         actions={<WorkspaceActions item={item} canCreate={canCreate} canLifecycle={canLifecycle}
           onCommand={(next) => guard.requestNavigation(() => setCommand(next))}
           onLifecycle={(next) => guard.requestNavigation(() => setLifecycleAction(next))} />}

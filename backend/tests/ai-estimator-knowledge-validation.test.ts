@@ -39,6 +39,35 @@ describe("AI estimator knowledge validation", () => {
     expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [], exclusions: [{ id: "old-note", name: "Existing exclusion", reason: "Existing reason", active: true }] })).toEqual([]);
   });
 
+  it("validates legacy, explicit Main-Line and whole Sub-Basket alteration targets", () => {
+    const base = { id: "rule-1", trigger: "added", action: "add", requirement: "must", targetBasketId: "basket-electrical", reason: "Lighting remains required.", active: true };
+    const legacy = { ...base, targetType: "temporary", targetSubBasketId: "sub-basket-lights", targetMainLineId: "line-lights" };
+    const mainLine = { ...legacy, targetKind: "main_line" };
+    const subBasket = { ...base, targetKind: "sub_basket", targetType: null, targetSubBasketId: "sub-basket-lights", targetMainLineId: null };
+    expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [legacy] })).toEqual([]);
+    expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [mainLine] })).toEqual([]);
+    expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [subBasket] })).toEqual([]);
+    for (const [row, field] of [
+      [{ ...subBasket, targetType: "catalog" }, "targetType"],
+      [{ ...subBasket, targetMainLineId: "line-lights" }, "targetMainLineId"],
+      [{ ...subBasket, targetSubBasketId: null }, "targetSubBasketId"],
+      [{ ...mainLine, targetType: null }, "targetType"],
+      [{ ...mainLine, targetMainLineId: null }, "targetMainLineId"],
+      [{ ...mainLine, targetKind: "basket" }, "targetKind"]
+    ] as const) {
+      expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [row] }))
+        .toContainEqual(expect.objectContaining({ path: `payload.budgetAlterations.0.${field}` }));
+    }
+    expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [
+      mainLine,
+      { ...mainLine, id: "rule-2" }
+    ] })).toContainEqual(expect.objectContaining({ code: "DUPLICATE_RULE" }));
+    expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [
+      mainLine,
+      { ...subBasket, id: "rule-2", targetSubBasketId: mainLine.targetMainLineId }
+    ] })).toEqual([]);
+  });
+
   it("accepts split Labor and Material costs, requires both keys, and reports precise cost errors", () => {
     const settings = { baseRatePaise: 90_000, lowQuantityLimit: "8", impactBps: 525, minimumMarkupBps: 1_200, startingMarkupBps: 3_100 };
     const split = { pmc: null, sub_vendor: settings, in_house_labor: settings, in_house_material: null };

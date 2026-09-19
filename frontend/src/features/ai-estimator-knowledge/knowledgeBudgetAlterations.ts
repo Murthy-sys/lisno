@@ -1,4 +1,23 @@
-import type { KnowledgeJsonObject, KnowledgeJsonValue } from "./knowledgeTypes";
+import type { KnowledgeItemListItem, KnowledgeJsonObject, KnowledgeJsonValue } from "./knowledgeTypes";
+
+export type KnowledgeRecommendationTargetKind = "main_line" | "sub_basket";
+
+/** Legacy rows predate targetKind and always represent a Main Line. */
+export function recommendationTargetKind(row: KnowledgeJsonObject): KnowledgeRecommendationTargetKind {
+  return row.targetKind === "sub_basket" ? "sub_basket" : "main_line";
+}
+
+/** Any edited row is rewritten using the explicit union discriminator. */
+export function withExplicitRecommendationTargetKind(row: KnowledgeJsonObject): KnowledgeJsonObject {
+  return { ...row, targetKind: recommendationTargetKind(row) };
+}
+
+/** A Sub-Basket remains incomplete until every available child is active, resolved catalog knowledge. */
+export function recommendationItemRequiresCompletion(
+  item: Pick<KnowledgeItemListItem, "activeRevisionId" | "itemType" | "status">
+): boolean {
+  return item.itemType === "temporary" || item.status !== "active" || !item.activeRevisionId;
+}
 
 export const BUDGET_ACTIONS = [
   { value: "must_remove", label: "Must be removed", action: "remove", requirement: "must" },
@@ -12,7 +31,7 @@ export function budgetAlterationRows(value: KnowledgeJsonValue | undefined): Kno
 }
 
 export function createBudgetAlteration(): KnowledgeJsonObject {
-  return { id: crypto.randomUUID(), trigger: "removed", action: "remove", requirement: "must", targetType: "catalog",
+  return { id: crypto.randomUUID(), trigger: "removed", action: "remove", requirement: "must", targetKind: "main_line", targetType: "catalog",
     targetBasketId: "", targetSubBasketId: null, targetMainLineId: null, reason: "", active: true };
 }
 
@@ -32,16 +51,25 @@ export function budgetAlterationIssues(value: KnowledgeJsonValue | undefined, cu
     if (typeof row.id === "string") ids.add(row.id);
     if (!["added", "removed"].includes(String(row.trigger))) add("trigger", "Choose when this rule applies.");
     if (!["add", "remove"].includes(String(row.action)) || !["must", "can"].includes(String(row.requirement))) add("action", "Choose the related scope change.");
-    if (!["catalog", "temporary"].includes(String(row.targetType))) add("targetType", "Select a catalog or temporary item.");
+    if (row.targetKind !== undefined && !["main_line", "sub_basket"].includes(String(row.targetKind))) add("targetKind", "Choose a valid addition type.");
+    const targetKind = recommendationTargetKind(row);
     if (typeof row.targetBasketId !== "string" || !row.targetBasketId.trim()) add("targetBasketId", "Choose a Main Basket.");
-    if (row.targetSubBasketId !== null && (typeof row.targetSubBasketId !== "string" || !row.targetSubBasketId)) add("targetSubBasketId", "Choose a valid Sub Basket.");
-    if (typeof row.targetMainLineId !== "string" || !row.targetMainLineId) add("targetMainLineId", "Choose a related item.");
-    if (row.targetMainLineId === currentMainLineId) add("targetMainLineId", "Choose a different item.");
+    if (targetKind === "sub_basket") {
+      if (row.targetType !== null) add("targetType", "Whole Sub-Basket rules do not use an item type.");
+      if (typeof row.targetSubBasketId !== "string" || !row.targetSubBasketId) add("targetSubBasketId", "Choose a Sub-Basket with at least one available item.");
+      if (row.targetMainLineId !== null) add("targetMainLineId", "Whole Sub-Basket rules do not select one related item.");
+    } else {
+      if (!["catalog", "temporary"].includes(String(row.targetType))) add("targetType", "Select a catalog or temporary item.");
+      if (row.targetSubBasketId !== null && (typeof row.targetSubBasketId !== "string" || !row.targetSubBasketId)) add("targetSubBasketId", "Choose a valid Sub-Basket.");
+      if (typeof row.targetMainLineId !== "string" || !row.targetMainLineId) add("targetMainLineId", "Choose a related item.");
+      if (row.targetMainLineId === currentMainLineId) add("targetMainLineId", "Choose a different item.");
+    }
     if (typeof row.reason !== "string" || !row.reason.trim() || row.reason.length > 4000) add("reason", "Explain why this change is needed, using up to 4,000 characters.");
     if (typeof row.active !== "boolean") add("active", "Choose whether this rule is enabled.");
-    if (row.active === false || !row.targetMainLineId) return;
-    const key = JSON.stringify([row.trigger, row.targetMainLineId]);
-    if (targets.has(key)) add("", "Use one active rule per related item and trigger; combine its explanation instead of adding conflicting actions.");
+    const targetId = targetKind === "sub_basket" ? row.targetSubBasketId : row.targetMainLineId;
+    if (row.active === false || typeof targetId !== "string" || !targetId) return;
+    const key = JSON.stringify([row.trigger, targetKind, targetId]);
+    if (targets.has(key)) add("", `Use one active rule per related ${targetKind === "sub_basket" ? "Sub-Basket" : "item"} and trigger; combine its explanation instead of adding conflicting actions.`);
     targets.add(key);
   });
   return issues;

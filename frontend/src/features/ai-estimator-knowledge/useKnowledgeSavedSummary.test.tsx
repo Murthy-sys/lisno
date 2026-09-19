@@ -172,6 +172,25 @@ describe("saved summary queries", () => {
     expect(JSON.stringify(result.current)).not.toContain("target-unequal");
   });
 
+  it("resolves a whole Sub-Basket without requesting a nullable Main Line target", async () => {
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => section(key, key === "recommendations" ? {
+      budgetAlterations: [{ id: "rule", trigger: "added", action: "add", requirement: "must", targetKind: "sub_basket",
+        targetType: null, targetBasketId: "electrical", targetSubBasketId: "lighting", targetMainLineId: null,
+        reason: "Add lighting scope", active: true }]
+    } : {}));
+    vi.mocked(api.listKnowledgeSubBaskets).mockResolvedValue({
+      items: [{ id: "lighting", basketId: "electrical", name: "Lighting", displayOrder: 0,
+        version: 1, createdById: "actor", updatedById: "actor", createdAt: "2026-09-01T00:00:00Z", updatedAt: "2026-09-01T00:00:00Z" }],
+      pagination: { limit: 100, offset: 0, total: 1, hasMore: false }
+    });
+    const { result } = setup();
+    await waitFor(() => expect(JSON.stringify(result.current[2])).toContain("Whole Sub-Basket"));
+    expect(JSON.stringify(result.current[2])).toContain("Lighting");
+    expect(JSON.stringify(result.current[2])).not.toMatch(/targetMainLineId|targetType/iu);
+    expect(api.getKnowledgeItem).not.toHaveBeenCalled();
+    expect(api.listKnowledgeSubBaskets).toHaveBeenCalledExactlyOnceWith("electrical", { limit: 100, offset: 0 });
+  });
+
   it("does not display mismatched envelope identities or report them as empty configuration", async () => {
     vi.mocked(api.getKnowledgeSection).mockResolvedValue({ ...section("overview", { uomId: squareFoot.id }), revisionId: "wrong-revision" });
     vi.mocked(api.getKnowledgeBasketQuality).mockResolvedValue({ ...checklist, basketId: "wrong-basket" });

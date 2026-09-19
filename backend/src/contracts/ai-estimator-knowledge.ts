@@ -96,11 +96,16 @@ export interface KnowledgeTemporaryMainLineReference {
   status: KnowledgeItemStatus;
   revisionId: string;
   revisionStatus: "draft" | "active";
-  rules: Array<Pick<KnowledgeBudgetAlteration, "id" | "trigger" | "action" | "requirement" | "reason" | "active">>;
+  rules: Array<Pick<KnowledgeBudgetAlteration, "id" | "trigger" | "action" | "requirement" | "reason" | "active"> & {
+    /** Absent identifies a legacy Main-Line rule. */
+    targetKind?: "main_line" | "sub_basket";
+  }>;
 }
 
 export interface KnowledgeItemListItem extends KnowledgeVersionedResource {
   itemType?: "main_line" | "temporary";
+  /** Temporary catalog placeholders remain unresolved regardless of lifecycle or section completeness. */
+  completionRequired: boolean;
   linkedMainLines?: KnowledgeTemporaryMainLineReference[];
   basketId: KnowledgeStableId;
   basketName: string;
@@ -266,18 +271,35 @@ export interface KnowledgeRecommendation {
 }
 
 /** Conditional scope guidance, never an instruction to mutate an estimate automatically. */
-export interface KnowledgeBudgetAlteration {
+interface KnowledgeBudgetAlterationBase {
   id: KnowledgeStableId;
   trigger: "added" | "removed";
   action: "add" | "remove";
   requirement: "must" | "can";
-  targetType: "catalog" | "temporary";
   targetBasketId: KnowledgeStableId;
-  targetSubBasketId: KnowledgeStableId | null;
-  targetMainLineId: KnowledgeStableId;
   reason: string;
   active: boolean;
 }
+
+export interface KnowledgeMainLineBudgetAlteration extends KnowledgeBudgetAlterationBase {
+  /** Absent on legacy rows; new and edited rows write this discriminator explicitly. */
+  targetKind?: "main_line";
+  targetType: "catalog" | "temporary";
+  targetSubBasketId: KnowledgeStableId | null;
+  targetMainLineId: KnowledgeStableId;
+}
+
+export interface KnowledgeSubBasketBudgetAlteration extends KnowledgeBudgetAlterationBase {
+  targetKind: "sub_basket";
+  targetType: null;
+  targetSubBasketId: KnowledgeStableId;
+  targetMainLineId: null;
+}
+
+/** Conditional scope guidance, never an instruction to mutate an estimate automatically. */
+export type KnowledgeBudgetAlteration =
+  | KnowledgeMainLineBudgetAlteration
+  | KnowledgeSubBasketBudgetAlteration;
 
 export interface KnowledgeExclusion {
   id: KnowledgeStableId;

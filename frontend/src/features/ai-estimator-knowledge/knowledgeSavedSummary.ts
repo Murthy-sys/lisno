@@ -1,4 +1,4 @@
-import { BUDGET_ACTIONS, budgetAlterationIssues } from "./knowledgeBudgetAlterations";
+import { BUDGET_ACTIONS, budgetAlterationIssues, recommendationItemRequiresCompletion, recommendationTargetKind } from "./knowledgeBudgetAlterations";
 import { modeCalculationIssues } from "./knowledgeModeCalculation";
 import { pmcMarginRange, pmcMarginRangeIssues, subVendorMarginRange, subVendorMarginRangeIssues } from "./knowledgePmcMargin";
 import { validateQualityParameters } from "./knowledgeQuality";
@@ -127,14 +127,15 @@ function mode(input: SavedSummaryProjectionInput): SavedSummaryContent {
 
 function targetRows(input: SavedSummaryProjectionInput, value: KnowledgeJsonObject, key: string): SavedSummaryRow[] {
   const rows: SavedSummaryRow[] = [];
+  const targetKind = recommendationTargetKind(value);
   if (present(value.targetBasketId)) rows.push(row(`${key}-basket`, "Related Main Basket", input.baskets.find(item => item.id === value.targetBasketId)?.name.trim() || NAME_UNAVAILABLE));
   if (present(value.targetSubBasketId)) {
     const matchesBasket = (basketId: string) => !present(value.targetBasketId) || basketId === value.targetBasketId;
     const namedSubBasket = input.subBaskets.find(item => item.id === value.targetSubBasketId && matchesBasket(item.basketId))?.name.trim();
     const namedItem = input.items.find(item => item.subBasketId === value.targetSubBasketId && matchesBasket(item.basketId) && item.subBasketName?.trim())?.subBasketName?.trim();
-    rows.push(row(`${key}-sub-basket`, "Related Sub-Basket", namedSubBasket || namedItem || NAME_UNAVAILABLE));
+    rows.push(row(`${key}-sub-basket`, targetKind === "sub_basket" ? "Whole Sub-Basket" : "Related Sub-Basket", namedSubBasket || namedItem || NAME_UNAVAILABLE));
   }
-  if (present(value.targetMainLineId)) rows.push(row(`${key}-main-line`, "Related Main Line", input.items.find(item => item.mainLineId === value.targetMainLineId && (!present(value.targetBasketId) || item.basketId === value.targetBasketId))?.mainLineName.trim() || NAME_UNAVAILABLE));
+  if (targetKind === "main_line" && present(value.targetMainLineId)) rows.push(row(`${key}-main-line`, "Related Main Line", input.items.find(item => item.mainLineId === value.targetMainLineId && (!present(value.targetBasketId) || item.basketId === value.targetBasketId))?.mainLineName.trim() || NAME_UNAVAILABLE));
   return rows;
 }
 
@@ -148,16 +149,29 @@ function recommendations(input: SavedSummaryProjectionInput): SavedSummaryConten
     const key = `rule-${index}`;
     const label = `Rule ${index + 1}${rule.active === false ? " · Inactive" : ""}`;
     const targets = targetRows(input, rule, key);
-    const target = targets.find(item => item.key.endsWith("-main-line"))?.value || NOT_CONFIGURED;
+    const targetKind = recommendationTargetKind(rule);
+    const target = targets.find(item => item.key.endsWith(targetKind === "sub_basket" ? "-sub-basket" : "-main-line"))?.value || NOT_CONFIGURED;
+    const targetChildren = targetKind === "sub_basket" ? input.items.filter(item => item.basketId === rule.targetBasketId
+      && item.subBasketId === rule.targetSubBasketId && ["active", "draft"].includes(item.status)) : [];
+    const completionRequired = targetKind === "sub_basket"
+      ? targetChildren.length === 0 || targetChildren.some(recommendationItemRequiresCompletion)
+      : rule.targetType === "temporary";
+    const completionLabel = targetKind === "sub_basket"
+      ? targetChildren.some(item => item.itemType === "temporary")
+        ? "Temporary item · Must be completed"
+        : targetChildren.length > 0 ? "Incomplete item · Must be completed" : "Sub-Basket · Must be completed"
+      : "Temporary item · Must be completed";
     const action = BUDGET_ACTIONS.find(item => item.action === rule.action && item.requirement === rule.requirement)?.label || (present(rule.action) || present(rule.requirement) ? NEEDS_REVIEW : NOT_CONFIGURED);
-    details.push(row(key, label, `${target} · ${action}`));
+    details.push(row(key, label, `${target}${completionRequired ? " · Must be completed" : ""} · ${action}`));
     details.push(row(`${key}-trigger`, `${label} · Trigger`, rule.trigger === "added" ? "When this Main Line is added" : rule.trigger === "removed" ? "When this Main Line is removed" : present(rule.trigger) ? NEEDS_REVIEW : NOT_CONFIGURED));
+    details.push(row(`${key}-target-kind`, `${label} · Addition type`, targetKind === "sub_basket" ? "Whole Sub-Basket" : "Line item"));
     details.push(...targets.map(item => ({ ...item, label: `${label} · ${item.label}` })));
     add(details, `${key}-reason`, `${label} · Reason`, rule.reason);
     add(details, `${key}-enabled`, `${label} · Enabled`, rule.active);
+    if (completionRequired) details.push(row(`${key}-completion`, `${label} · Completion`, completionLabel));
     if (present(rule.targetType)) details.push(row(`${key}-target-type`, `${label} · Target type`, rule.targetType === "catalog" ? "Catalog Main Line" : rule.targetType === "temporary" ? "Temporary Main Line" : NEEDS_REVIEW));
-    if (Object.keys(rule).some(field => !["id", "trigger", "action", "requirement", "targetType", "targetBasketId", "targetSubBasketId", "targetMainLineId", "reason", "active"].includes(field))) review(details, `${key}-review`, label, true);
-    previews.push(row(key, label, `${target} · ${action}`));
+    if (Object.keys(rule).some(field => !["id", "trigger", "action", "requirement", "targetKind", "targetType", "targetBasketId", "targetSubBasketId", "targetMainLineId", "reason", "active"].includes(field))) review(details, `${key}-review`, label, true);
+    previews.push(row(key, label, `${target}${completionRequired ? " · Must be completed" : ""} · ${action}`));
   });
   if (budgetAlterationIssues(payload.budgetAlterations).length && !details.some(item => item.key === "rules-review")) review(details, "rules-review", "Related scope rules");
   for (const list of ["recommendations", "exclusions"] as const) {

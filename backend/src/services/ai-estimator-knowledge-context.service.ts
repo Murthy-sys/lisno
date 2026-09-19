@@ -26,6 +26,7 @@ import {
   findCanonicalKnowledgePriorityById,
   type CanonicalKnowledgePriority
 } from "../domain/ai-estimator-knowledge-priority.js";
+import { normalizeKnowledgeBudgetAlterationTarget } from "../domain/ai-estimator-knowledge-recommendation.js";
 import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../models/AiEstimatorKnowledgeMainLine.js";
@@ -35,6 +36,7 @@ import { AiEstimatorKnowledgePriorityModel } from "../models/AiEstimatorKnowledg
 import { AiEstimatorKnowledgeRevisionModel } from "../models/AiEstimatorKnowledgeRevision.js";
 import { AiEstimatorKnowledgeSectionModel } from "../models/AiEstimatorKnowledgeSection.js";
 import { AiEstimatorKnowledgeSurfaceModel } from "../models/AiEstimatorKnowledgeSurface.js";
+import { AiEstimatorKnowledgeSubBasketModel } from "../models/AiEstimatorKnowledgeSubBasket.js";
 import { AiEstimatorKnowledgeTaxVersionModel } from "../models/AiEstimatorKnowledgeTaxVersion.js";
 import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
 import type { PublicUser } from "./auth.service.js";
@@ -720,20 +722,57 @@ function filterSpecifications(payload: Row, requested: string | undefined): void
 async function resolveBudgetAlterationTargets(payload: Row, session: ClientSession): Promise<void> {
   const rules = activeRows(payload.budgetAlterations);
   if (!rules.length) return;
-  const targets = await AiEstimatorKnowledgeMainLineModel.find({ _id: { $in: rules.map((rule) => rule.targetMainLineId) } })
-    .select({ _id: 1, name: 1, status: 1, itemType: 1, basketId: 1, subBasketId: 1, activeRevisionId: 1 })
-    .session(session).lean().exec();
+  const normalized = rules.map((rule) => ({ rule, target: normalizeKnowledgeBudgetAlterationTarget(rule) }));
+  const mainLineIds = normalized.flatMap(({ target }) => target?.targetKind === "main_line" && typeof target.targetId === "string" ? [target.targetId] : []);
+  const subBasketIds = normalized.flatMap(({ target }) => target?.targetKind === "sub_basket" && typeof target.targetId === "string" ? [target.targetId] : []);
+  const basketIds = rules.flatMap((rule) => typeof rule.targetBasketId === "string" ? [rule.targetBasketId] : []);
+  const [targets, subBaskets, subBasketChildren, activeBaskets] = await Promise.all([
+    AiEstimatorKnowledgeMainLineModel.find({ _id: { $in: mainLineIds } })
+      .select({ _id: 1, name: 1, status: 1, itemType: 1, basketId: 1, subBasketId: 1, activeRevisionId: 1 })
+      .session(session).lean().exec(),
+    AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: subBasketIds } })
+      .select({ _id: 1, name: 1, basketId: 1 }).session(session).lean().exec(),
+    AiEstimatorKnowledgeMainLineModel.find({
+      subBasketId: { $in: subBasketIds },
+      status: { $in: ["draft", "active"] }
+    }).select({ _id: 1, basketId: 1, subBasketId: 1, itemType: 1, status: 1, activeRevisionId: 1 }).session(session).lean().exec(),
+    AiEstimatorKnowledgeBasketModel.find({ _id: { $in: basketIds }, status: "active" })
+      .select({ _id: 1 }).session(session).lean().exec()
+  ]);
   const byId = new Map(targets.map((target) => [String(target._id), target]));
+  const subBasketById = new Map(subBaskets.map((target) => [String(target._id), target]));
+  const activeBasketIds = new Set(activeBaskets.map((basket) => String(basket._id)));
   payload.budgetAlterations = rules.map((rule) => {
+    const normalizedTarget = normalizeKnowledgeBudgetAlterationTarget(rule);
+    if (normalizedTarget?.targetKind === "sub_basket") {
+      const subBasketId = String(normalizedTarget.targetId ?? "");
+      const target = subBasketById.get(subBasketId);
+      const compatible = target && target.basketId === rule.targetBasketId && activeBasketIds.has(String(rule.targetBasketId));
+      const children = compatible ? subBasketChildren.filter((child) => child.basketId === rule.targetBasketId && child.subBasketId === subBasketId) : [];
+      const temporaryChildCount = children.filter((child) => child.itemType === "temporary").length;
+      const availableChildCount = children.length;
+      const hasIncompleteChild = children.some((child) => child.itemType === "temporary"
+        || child.status !== "active" || typeof child.activeRevisionId !== "string");
+      return { ...rule, target: compatible ? {
+        kind: "sub_basket", subBasketId, name: target.name, basketId: target.basketId,
+        status: availableChildCount > 0 ? "available" : "unavailable",
+        availableChildCount, temporaryChildCount,
+        completionRequired: availableChildCount === 0 || hasIncompleteChild
+      } : {
+        kind: "sub_basket", subBasketId, status: "unavailable",
+        availableChildCount: 0, temporaryChildCount: 0, completionRequired: true
+      } };
+    }
     const target = byId.get(String(rule.targetMainLineId));
     const compatible = target && target.basketId === rule.targetBasketId
       && (target.subBasketId ?? null) === rule.targetSubBasketId
       && (target.itemType === "temporary" ? "temporary" : "catalog") === rule.targetType;
     return { ...rule, target: compatible ? {
-      mainLineId: String(target._id), name: target.name,
+      kind: "main_line", mainLineId: String(target._id), name: target.name,
       itemType: target.itemType === "temporary" ? "temporary" : "main_line",
-      status: target.status, activeRevisionId: target.activeRevisionId ?? null
-    } : { mainLineId: rule.targetMainLineId, status: "unavailable", activeRevisionId: null } };
+      status: target.status, activeRevisionId: target.activeRevisionId ?? null,
+      completionRequired: target.itemType === "temporary"
+    } : { kind: "main_line", mainLineId: rule.targetMainLineId, status: "unavailable", activeRevisionId: null, completionRequired: rule.targetType === "temporary" } };
   });
 }
 

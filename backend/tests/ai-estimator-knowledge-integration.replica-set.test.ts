@@ -2180,18 +2180,121 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     const services = createServices();
     const target = await createAndActivateOverviewOnly(services.item, "Ceiling COB Lights");
     const temporary = await services.item.createMainLine(SUPER_ADMIN, BASKET_ID, { name: "Temporary pendant", itemType: "temporary" });
+    const temporaryGroupChild = await services.item.createMainLine(SUPER_ADMIN, BASKET_ID, {
+      name: "Unresolved light", subBasketName: "False ceiling lights", itemType: "temporary"
+    });
+    const concreteGroupChild = await services.item.createMainLine(SUPER_ADMIN, BASKET_ID, {
+      name: "12 watt light", subBasketId: temporaryGroupChild.subBasketId!
+    });
     let source = await createConfiguredDraft(services.item, "POP False Ceiling");
     const rule = { id: "budget-rule-active", trigger: "removed", action: "remove", requirement: "must", targetType: "catalog", targetBasketId: BASKET_ID, targetSubBasketId: null, targetMainLineId: target.mainLineId, reason: "The lights need the ceiling for recessed fixing.", active: true };
     const temporaryRule = { ...rule, id: "budget-rule-temporary", trigger: "added", requirement: "can", action: "add", targetType: "temporary", targetMainLineId: temporary.mainLineId };
-    source = await updateDraftSection(services.item, source, "recommendations", { budgetAlterations: [rule, temporaryRule, { ...rule, id: "budget-rule-disabled", reason: "Private disabled explanation", active: false }] });
+    const subBasketRule = { ...rule, id: "budget-rule-sub-basket", trigger: "added", action: "add", targetKind: "sub_basket", targetType: null,
+      targetSubBasketId: temporaryGroupChild.subBasketId!, targetMainLineId: null, reason: "Add the complete lighting scope." };
+    const disabledSubBasketRule = { ...subBasketRule, id: "budget-rule-sub-basket-disabled", reason: "Retained disabled Sub-Basket history", active: false };
+    source = await updateDraftSection(services.item, source, "recommendations", { budgetAlterations: [rule, temporaryRule, subBasketRule,
+      disabledSubBasketRule, { ...rule, id: "budget-rule-disabled", reason: "Private disabled explanation", active: false }] });
     const activated = await services.item.activate(SUPER_ADMIN, source.mainLineId, source.revisionId, { expectedVersion: source.aggregateVersion });
+    const stateBeforeContext = await persistentStateCounts();
     const context = await services.context.resolve(SUPER_ADMIN, { mainBasketId: BASKET_ID, mainLineId: source.mainLineId, quantity: "1.00", uomId: UOM_ID });
-    expect(context.sections.recommendations).toMatchObject({ budgetAlterations: [{ ...rule, target: { status: "active", name: "Ceiling COB Lights" } }, { ...temporaryRule, target: { status: "draft", itemType: "temporary", activeRevisionId: null } }] });
+    expect(await persistentStateCounts()).toEqual(stateBeforeContext);
+    expect(context.sections.recommendations).toMatchObject({ budgetAlterations: [
+      { ...rule, target: { kind: "main_line", status: "active", name: "Ceiling COB Lights", completionRequired: false } },
+      { ...temporaryRule, target: { kind: "main_line", status: "draft", itemType: "temporary", activeRevisionId: null, completionRequired: true } },
+      { ...subBasketRule, target: { kind: "sub_basket", status: "available", name: "False ceiling lights", availableChildCount: 2,
+        temporaryChildCount: 1, completionRequired: true } }
+    ] });
     expect(context.lineage).toMatchObject({ mainLineId: source.mainLineId, revisionId: source.revisionId, contentDigest: activated.activeRevision?.contentDigest });
     expect(JSON.stringify(context)).not.toContain("Private disabled explanation");
     await services.item.deactivate(SUPER_ADMIN, target.mainLineId, { expectedVersion: target.aggregateVersion });
     const refreshed = await services.context.resolve(SUPER_ADMIN, { mainBasketId: BASKET_ID, mainLineId: source.mainLineId, quantity: "1.00", uomId: UOM_ID });
-    expect(refreshed.sections.recommendations).toMatchObject({ budgetAlterations: [{ target: { status: "inactive" } }, { target: { status: "draft" } }] });
+    expect(refreshed.sections.recommendations).toMatchObject({ budgetAlterations: [
+      { target: { status: "inactive" } }, { target: { status: "draft" } }, { target: { status: "available" } }
+    ] });
+
+    const activeSectionBeforeDelete = await services.item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "recommendations");
+    const activeSectionAuditCount = await AuditEventModel.countDocuments({
+      entityId: activeSectionBeforeDelete.id, action: "ai_estimator_knowledge_section_updated"
+    });
+    await services.item.permanentlyDeleteMainLine(SUPER_ADMIN, temporaryGroupChild.mainLineId, { expectedVersion: temporaryGroupChild.version });
+    await services.item.permanentlyDeleteMainLine(SUPER_ADMIN, concreteGroupChild.mainLineId, { expectedVersion: concreteGroupChild.version });
+    const activeSectionAfterDelete = await services.item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "recommendations");
+    expect(activeSectionAfterDelete).toMatchObject({
+      version: activeSectionBeforeDelete.version,
+      payload: { budgetAlterations: expect.arrayContaining([subBasketRule, disabledSubBasketRule]) }
+    });
+    expect(await AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean()).toMatchObject({
+      contentDigest: activated.activeRevision?.contentDigest
+    });
+    expect(await AuditEventModel.countDocuments({
+      entityId: activeSectionBeforeDelete.id, action: "ai_estimator_knowledge_section_updated"
+    })).toBe(activeSectionAuditCount);
+    const stateBeforeUnavailableContext = await persistentStateCounts();
+    const unavailable = await services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID, mainLineId: source.mainLineId, quantity: "1.00", uomId: UOM_ID
+    });
+    expect(await persistentStateCounts()).toEqual(stateBeforeUnavailableContext);
+    expect(unavailable.sections.recommendations).toMatchObject({ budgetAlterations: [
+      { target: { kind: "main_line", status: "inactive" } },
+      { target: { kind: "main_line", status: "draft" } },
+      { ...subBasketRule, target: { kind: "sub_basket", status: "unavailable", availableChildCount: 0,
+        temporaryChildCount: 0, completionRequired: true } }
+    ] });
+    expect(JSON.stringify(unavailable)).not.toContain(disabledSubBasketRule.reason);
+  });
+
+  it("requires completion for draft, temporary and mixed Sub-Baskets while accepting active concrete scope", async () => {
+    const services = createServices();
+    const draftOnly = await services.item.createMainLine(SUPER_ADMIN, BASKET_ID, {
+      name: "Draft-only light", subBasketName: "Draft-only lighting"
+    });
+    let activeOnly = await services.item.createMainLine(SUPER_ADMIN, BASKET_ID, {
+      name: "Active concrete light", subBasketName: "Active lighting"
+    });
+    const activeOverview = await services.item.getSection(SUPER_ADMIN, activeOnly.mainLineId, activeOnly.draftRevisionId!, "overview");
+    const activeOverviewSaved = await services.item.updateSection(SUPER_ADMIN, activeOnly.mainLineId, activeOnly.draftRevisionId!, "overview", {
+      expectedVersion: activeOverview.version,
+      expectedAggregateVersion: activeOnly.version,
+      payload: overviewPayload("Active concrete light")
+    });
+    activeOnly = await services.item.activate(SUPER_ADMIN, activeOnly.mainLineId, activeOnly.draftRevisionId!, {
+      expectedVersion: activeOverviewSaved.aggregateVersion
+    });
+    const temporaryOnly = await services.item.createMainLine(SUPER_ADMIN, BASKET_ID, {
+      name: "Temporary light", subBasketName: "Temporary lighting", itemType: "temporary"
+    });
+    let source = await createConfiguredDraft(services.item, "Completion matrix source");
+    const subBasketRule = (id: string, targetSubBasketId: string) => ({
+      id, trigger: "added", action: "add", requirement: "must", targetKind: "sub_basket", targetType: null,
+      targetBasketId: BASKET_ID, targetSubBasketId, targetMainLineId: null,
+      reason: "Resolve the complete related scope.", active: true
+    });
+    source = await updateDraftSection(services.item, source, "recommendations", { budgetAlterations: [
+      subBasketRule("draft-only-rule", draftOnly.subBasketId!),
+      subBasketRule("active-only-rule", activeOnly.subBasketId!),
+      subBasketRule("temporary-only-rule", temporaryOnly.subBasketId!)
+    ] });
+    await services.item.activate(SUPER_ADMIN, source.mainLineId, source.revisionId, { expectedVersion: source.aggregateVersion });
+    const context = await services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID, mainLineId: source.mainLineId, quantity: "1.00", uomId: UOM_ID
+    });
+    expect(context.sections.recommendations).toMatchObject({ budgetAlterations: [
+      { id: "draft-only-rule", target: { status: "available", availableChildCount: 1, temporaryChildCount: 0, completionRequired: true } },
+      { id: "active-only-rule", target: { status: "available", availableChildCount: 1, temporaryChildCount: 0, completionRequired: false } },
+      { id: "temporary-only-rule", target: { status: "available", availableChildCount: 1, temporaryChildCount: 1, completionRequired: true } }
+    ] });
+
+    await services.item.createMainLine(SUPER_ADMIN, BASKET_ID, {
+      name: "Temporary mixed light", subBasketId: activeOnly.subBasketId!, itemType: "temporary"
+    });
+    const mixed = await services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID, mainLineId: source.mainLineId, quantity: "1.00", uomId: UOM_ID
+    });
+    expect(mixed.sections.recommendations).toMatchObject({ budgetAlterations: [
+      { id: "draft-only-rule" },
+      { id: "active-only-rule", target: { status: "available", availableChildCount: 2, temporaryChildCount: 1, completionRequired: true } },
+      { id: "temporary-only-rule" }
+    ] });
   });
 
   it("keeps inactive nested history while projecting mandatory quality and filtering other inactive sections", async () => {

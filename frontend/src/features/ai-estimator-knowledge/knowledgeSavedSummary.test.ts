@@ -12,6 +12,7 @@ const basket: KnowledgeBasket = { ...metadata, id: "basket-private", name: "Fini
 const subBasket: KnowledgeSubBasket = { ...metadata, id: "sub-private", basketId: basket.id, name: "Wall work", displayOrder: 0 };
 const item: KnowledgeItemListItem = {
   ...metadata, id: "item-private", mainLineId: "line-private", mainLineName: "Acoustic panels", basketId: basket.id, basketName: basket.name,
+  completionRequired: false,
   subBasketId: subBasket.id, subBasketName: subBasket.name, description: null, status: "active", activeRevisionId: "revision-private", draftRevisionId: null,
   revisionNumber: 1, uomId: null, priorityId: null, modeIds: [], surfaceIds: [], vendorIds: [],
   completeness: { percentage: 0, sections: [], blockers: [], warnings: [] }, allowedActions: []
@@ -195,7 +196,8 @@ describe("projectKnowledgeSavedSummary", () => {
       targetBasketId: "missing-basket-private", targetSubBasketId: subBasket.id, targetMainLineId: item.mainLineId,
       reason: "Related scope", active: true
     }], recommendations: [{ id: "rec", name: "Essential", priorityId: "missing-priority-private", active: true }] } } })).recommendations;
-    expect(values(result)).toContain("Name unavailable · Must be removed");
+    expect(values(result)).toContain("Name unavailable · Must be completed · Must be removed");
+    expect(values(result)).toContain("Completion: Temporary item · Must be completed");
     expect(values(result)).toContain("Related Main Basket: Name unavailable");
     expect(values(result)).toContain("Related Sub-Basket: Name unavailable");
     expect(values(result)).toContain("Essential · Priority: Name unavailable");
@@ -209,6 +211,45 @@ describe("projectKnowledgeSavedSummary", () => {
     }] } } })).recommendations;
     expect(values(result)).toContain("Related Sub-Basket: Wall work");
     expect(values(result)).not.toContain("private");
+  });
+
+  it("summarizes a whole Sub-Basket target without requiring or exposing a Main Line ID", () => {
+    const temporaryChild: KnowledgeItemListItem = {
+      ...item,
+      id: "temporary-child-private",
+      mainLineId: "temporary-line-private",
+      mainLineName: "Lights",
+      itemType: "temporary"
+    };
+    const result = projectKnowledgeSavedSummary(input({ items: [temporaryChild], sections: { recommendations: { budgetAlterations: [{
+      id: "whole-private", trigger: "added", action: "add", requirement: "must", targetKind: "sub_basket", targetType: null,
+      targetBasketId: basket.id, targetSubBasketId: subBasket.id, targetMainLineId: null, reason: "Add the complete lighting scope", active: true
+    }] } } })).recommendations;
+    const detail = values(result);
+    expect(detail).toContain("Addition type: Whole Sub-Basket");
+    expect(detail).toContain("Whole Sub-Basket: Wall work");
+    expect(detail).toContain("Completion: Temporary item · Must be completed");
+    expect(result.preview[0]?.value).toBe("Wall work · Must be completed · Must be added");
+    expect(detail).not.toMatch(/Related Main Line|whole-private|targetMainLineId/iu);
+  });
+
+  it.each([
+    ["active catalog children", [item], false, null],
+    ["draft-only catalog children", [{ ...item, id: "draft-child", mainLineId: "draft-child", status: "draft" as const, activeRevisionId: null, draftRevisionId: "draft-revision" }], true, "Incomplete item · Must be completed"],
+    ["inactive-only catalog children", [{ ...item, id: "inactive-child", mainLineId: "inactive-child", status: "inactive" as const }], true, "Sub-Basket · Must be completed"],
+    ["active children without an active revision", [{ ...item, id: "unactivated-child", mainLineId: "unactivated-child", activeRevisionId: null }], true, "Incomplete item · Must be completed"],
+    ["temporary children", [{ ...item, id: "temporary-child", mainLineId: "temporary-child", itemType: "temporary" as const, completionRequired: true }], true, "Temporary item · Must be completed"],
+    ["mixed active and draft children", [item, { ...item, id: "mixed-draft", mainLineId: "mixed-draft", status: "draft" as const, activeRevisionId: null, draftRevisionId: "mixed-draft-revision" }], true, "Incomplete item · Must be completed"],
+    ["no applicable children", [], true, "Sub-Basket · Must be completed"]
+  ])("derives whole Sub-Basket completion from %s", (_label, children, completionRequired, completionLabel) => {
+    const result = projectKnowledgeSavedSummary(input({ items: children, sections: { recommendations: { budgetAlterations: [{
+      id: "whole-completion", trigger: "added", action: "add", requirement: "must", targetKind: "sub_basket", targetType: null,
+      targetBasketId: basket.id, targetSubBasketId: subBasket.id, targetMainLineId: null, reason: "Add the complete scope", active: true
+    }] } } })).recommendations;
+    const detail = values(result);
+    if (completionLabel) expect(detail).toContain(`Completion: ${completionLabel}`);
+    else expect(detail).not.toMatch(/Completion: .*Must be completed/u);
+    expect(result.preview[0]?.value.includes("Must be completed")).toBe(completionRequired);
   });
 
   it("covers every saved Quality question, answer and inspection/sampling/evidence field without defaults", () => {

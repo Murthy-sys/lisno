@@ -523,7 +523,7 @@ export function KnowledgeBaseIndexPage() {
                         {item.mainLineName}
                       </Link>
                     </h3>
-                    {item.itemType === "temporary" && <span id={`temporary-kind-${item.id}`} className="sr-only">Temporary item</span>}
+                    {item.itemType === "temporary" && <span id={`temporary-kind-${item.id}`} className="knowledge-temporary-badge">Temporary item · Must be completed</span>}
                     <div className="knowledge-item-card__progress">
                       <span>{item.completeness.percentage}% complete</span>
                       <ProgressBar

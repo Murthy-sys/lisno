@@ -33,7 +33,7 @@ export function KnowledgeTemporaryMainLineInfo({ item, compact = false, onOpenMa
               : references.map((reference) => <div className="knowledge-temporary-main-lines__reference" key={reference.revisionId}>
                 <span className="knowledge-temporary-main-lines__revision">{reference.revisionStatus === "draft" ? "Draft reference" : "Active reference"}</span>
                 {reference.rules.map((rule) => <div className="knowledge-temporary-main-lines__rule" key={rule.id}>
-                  <p>{rule.active ? "" : "Disabled rule · "}When this Main Line is {rule.trigger === "added" ? "added to" : "removed from"} scope, this temporary item {rule.requirement} be {rule.action === "add" ? "added" : "removed"}.</p>
+                  <p>{rule.active ? "" : "Disabled rule · "}When this Main Line is {rule.trigger === "added" ? "added to" : "removed from"} scope, {rule.targetKind === "sub_basket" ? "this temporary item's whole Sub-Basket" : "this temporary item"} {rule.requirement} be {rule.action === "add" ? "added" : "removed"}.</p>
                   <p><strong>Why:</strong> {rule.reason}</p>
                 </div>)}
               </div>)}

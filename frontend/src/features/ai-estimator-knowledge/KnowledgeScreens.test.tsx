@@ -77,6 +77,7 @@ const revision: KnowledgeRevision = {
 };
 const item: KnowledgeItemDetail = {
   id: "line-1",
+  completionRequired: false,
   mainLineId: "line-1",
   mainLineName: "Wall panelling",
   basketId: "basket-1",
@@ -670,6 +671,7 @@ describe("temporary item workspace", () => {
     expect(screen.getByRole("link", { name: "Wall panelling" })).toBeVisible();
     const temporaryCard = screen.getByRole("link", { name: "Temporary pendant" }).closest("article")!;
     expect(temporaryCard).toHaveAttribute("data-item-type", "temporary");
+    expect(within(temporaryCard).getByText("Temporary item · Must be completed")).toBeVisible();
     expect(within(temporaryCard).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
     expect(within(temporaryCard).queryByRole("heading", { name: "Main Line info" })).not.toBeInTheDocument();
     expect(screen.queryByText("Overview · Mode · Quality Parameters")).not.toBeInTheDocument();
@@ -704,7 +706,7 @@ describe("temporary item workspace", () => {
     await user.type(reason, "Recessed lights need the false ceiling.");
     await doneFocusedEditing(user);
     await user.click(screen.getByRole("button", { name: "Save Recommendation & Exclusions" }));
-    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith("line-1", "revision-1", "recommendations", expect.objectContaining({ expectedVersion: 2, expectedAggregateVersion: 4, payload: { budgetAlterations: [{ ...budgetRule, reason: "Recessed lights need the false ceiling." }], exclusions: notes } })));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith("line-1", "revision-1", "recommendations", expect.objectContaining({ expectedVersion: 2, expectedAggregateVersion: 4, payload: { budgetAlterations: [{ ...budgetRule, targetKind: "main_line", reason: "Recessed lights need the false ceiling." }], exclusions: notes } })));
   });
 
   it("exposes only Overview, Mode and Quality without changing regular Main Line navigation", async () => {
@@ -712,6 +714,7 @@ describe("temporary item workspace", () => {
     const user = userEvent.setup();
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
     await screen.findByRole("heading", { name: "Wall panelling" });
+    expect(screen.getByText("Temporary item · Must be completed")).toBeVisible();
     expect(screen.queryByRole("tab", { name: "Recommendation & Exclusions" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("tab")).toHaveLength(3);
     await doneFocusedEditing(user);

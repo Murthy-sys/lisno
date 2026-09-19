@@ -21,6 +21,7 @@ function item(overrides: Partial<KnowledgeItemListItem> = {}): KnowledgeItemList
     ...meta,
     id: "item-downlight",
     itemType: "main_line",
+    completionRequired: false,
     basketId: electrical.id,
     basketName: electrical.name,
     subBasketId: ceiling.id,

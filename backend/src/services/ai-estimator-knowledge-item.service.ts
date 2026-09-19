@@ -44,6 +44,7 @@ import {
   findCanonicalKnowledgePriorityById,
   type CanonicalKnowledgePriority
 } from "../domain/ai-estimator-knowledge-priority.js";
+import { normalizeKnowledgeBudgetAlterationTarget } from "../domain/ai-estimator-knowledge-recommendation.js";
 import {
   assertValidKnowledgeSectionPayload,
   findOverlappingEffectiveWindows,
@@ -1945,9 +1946,15 @@ async function attachTemporaryMainLineReferences(items: KnowledgeItemListItem[])
   const targets = new Map(items.filter((item) => item.itemType === "temporary").map((item) => [item.mainLineId, item]));
   if (!targets.size) return items;
   const references = new Map<string, KnowledgeTemporaryMainLineReference[]>([...targets.keys()].map((id) => [id, []]));
+  const targetSubBasketIds = [...new Set([...targets.values()].flatMap((item) => item.subBasketId ? [item.subBasketId] : []))];
   const sections = (await AiEstimatorKnowledgeSectionModel.find({
     sectionKey: "recommendations", applicability: "configured",
-    "payload.budgetAlterations": { $elemMatch: { targetType: "temporary", targetMainLineId: { $in: [...targets.keys()] } } }
+    $or: [
+      { "payload.budgetAlterations": { $elemMatch: { targetType: "temporary", targetMainLineId: { $in: [...targets.keys()] } } } },
+      ...(targetSubBasketIds.length > 0 ? [{ "payload.budgetAlterations": { $elemMatch: {
+        targetKind: "sub_basket", targetSubBasketId: { $in: targetSubBasketIds }
+      } } }] : [])
+    ]
   }).select({ mainLineId: 1, revisionId: 1, payload: 1 }).lean().exec()).map((section) => asRow(section)!);
   const sources = (await AiEstimatorKnowledgeMainLineModel.find({
     _id: { $in: [...new Set(sections.map((section) => section.mainLineId))] },
@@ -1969,16 +1976,27 @@ async function attachTemporaryMainLineReferences(items: KnowledgeItemListItem[])
     const subBasket = subBasketById.get(optionalString(source.subBasketId) ?? "");
     const grouped = new Map<string, KnowledgeTemporaryMainLineReference["rules"]>();
     for (const rule of structuredRows(payloadFor(section).budgetAlterations)) {
-      const targetId = optionalString(rule.targetMainLineId);
-      const target = targetId ? targets.get(targetId) : null;
-      if (!target || rule.targetType !== "temporary" || rule.targetBasketId !== target.basketId
-        || (rule.targetSubBasketId ?? null) !== (target.subBasketId ?? null)
+      const normalizedTarget = normalizeKnowledgeBudgetAlterationTarget(rule);
+      const matchingTargets = normalizedTarget?.targetKind === "sub_basket"
+        ? [...targets.values()].filter((target) => target.basketId === rule.targetBasketId
+          && target.subBasketId === rule.targetSubBasketId)
+        : normalizedTarget?.targetKind === "main_line" && typeof normalizedTarget.targetId === "string"
+          ? [targets.get(normalizedTarget.targetId)].filter((target): target is KnowledgeItemListItem => Boolean(target))
+            .filter((target) => target.basketId === rule.targetBasketId
+              && (target.subBasketId ?? null) === (rule.targetSubBasketId ?? null))
+          : [];
+      if (matchingTargets.length === 0
+        || (normalizedTarget?.targetKind === "main_line" && rule.targetType !== "temporary")
         || !["added", "removed"].includes(String(rule.trigger)) || !["add", "remove"].includes(String(rule.action))
         || !["must", "can"].includes(String(rule.requirement)) || typeof rule.reason !== "string" || typeof rule.active !== "boolean") continue;
-      const rules = grouped.get(targetId!) ?? [];
-      rules.push({ id: requiredString(rule.id), trigger: rule.trigger as "added" | "removed", action: rule.action as "add" | "remove",
-        requirement: rule.requirement as "must" | "can", reason: rule.reason, active: rule.active });
-      grouped.set(targetId!, rules);
+      for (const target of matchingTargets) {
+        const rules = grouped.get(target.mainLineId) ?? [];
+        rules.push({ id: requiredString(rule.id), trigger: rule.trigger as "added" | "removed", action: rule.action as "add" | "remove",
+          requirement: rule.requirement as "must" | "can",
+          ...(rule.targetKind === undefined ? {} : { targetKind: normalizedTarget!.targetKind }),
+          reason: rule.reason, active: rule.active });
+        grouped.set(target.mainLineId, rules);
+      }
     }
     for (const [targetId, rules] of grouped) references.get(targetId)!.push({
       mainLineId: requiredString(source._id), mainLineName: requiredString(source.name),
@@ -2037,6 +2055,7 @@ async function buildItemSummary(
     basketId: requiredString(line.basketId),
     basketName: requiredString(basket.name),
     itemType: line.itemType === "temporary" ? "temporary" : "main_line",
+    completionRequired: line.itemType === "temporary",
     subBasketId: optionalString(line.subBasketId) ?? null,
     subBasketName: subBasketDocument ? requiredString(asRow(subBasketDocument)!.name) : null,
     mainLineId: requiredString(line._id),
@@ -2997,12 +3016,33 @@ async function validateBudgetAlterationReferences(mainLineId: string, rows: Row[
     if (rule.active === false) continue;
     const path = `payload.budgetAlterations.${index}`;
     const reject = (field: string, message: string): never => invalidRevisionSectionRules([validationIssue(`${path}.${field}`, "INVALID_REFERENCE", message)]);
+    const normalizedTarget = normalizeKnowledgeBudgetAlterationTarget(rule);
+    if (!normalizedTarget) reject("targetKind", "Select a valid recommendation target type.");
     const basketId = optionalString(rule.targetBasketId);
     if (!basketId || !await AiEstimatorKnowledgeBasketModel.exists({ _id: basketId, status: "active" }).session(session)) {
       reject("targetBasketId", "Select an available Main Basket.");
     }
     basketIds.add(basketId!);
     const subBasketId = optionalString(rule.targetSubBasketId) ?? null;
+    if (normalizedTarget!.targetKind === "sub_basket") {
+      if (!subBasketId || !await AiEstimatorKnowledgeSubBasketModel.exists({ _id: subBasketId, basketId }).session(session)) {
+        reject("targetSubBasketId", "Select a Sub Basket belonging to this Main Basket.");
+      }
+      const children = await AiEstimatorKnowledgeMainLineModel.find({
+        basketId,
+        subBasketId,
+        status: { $in: ["draft", "active"] }
+      }).select({ _id: 1 }).session(session).lean().exec();
+      const childIds = children.map((child) => String(child._id));
+      if (childIds.includes(mainLineId)) {
+        reject("targetSubBasketId", "Select a Sub Basket that does not contain this item.");
+      }
+      if (childIds.length === 0) {
+        reject("targetSubBasketId", "Select a Sub Basket with at least one available item.");
+      }
+      for (const childId of childIds) lineIds.add(childId);
+      continue;
+    }
     if (subBasketId && !await AiEstimatorKnowledgeSubBasketModel.exists({ _id: subBasketId, basketId }).session(session)) {
       reject("targetSubBasketId", "Select a Sub Basket belonging to this Main Basket.");
     }
@@ -3359,6 +3399,7 @@ function publicMainLine(value: unknown): Row {
   return {
     id: requiredString(row._id),
     itemType: row.itemType === "temporary" ? "temporary" : "main_line",
+    completionRequired: row.itemType === "temporary",
     basketId: requiredString(row.basketId),
     subBasketId: optionalString(row.subBasketId) ?? null,
     name: requiredString(row.name),

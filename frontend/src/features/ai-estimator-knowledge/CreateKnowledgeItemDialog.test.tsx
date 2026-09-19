@@ -145,7 +145,7 @@ describe("related item creation", () => {
     expect(api.createKnowledgeMainLine).toHaveBeenCalledOnce();
     unmount();
     await act(async () => { resolveSave(createdDetail); });
-    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(5));
     expect(client.getQueryData(knowledgeQueryKeys.item("line-created"))).toEqual(createdDetail);
     expect(onCreated).not.toHaveBeenCalled();
   });
@@ -167,7 +167,7 @@ describe("related item creation", () => {
     await screen.findByRole("option", { name: "Carpentry" });
     await user.click(screen.getByRole("button", { name: "Add related item" }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith("line-created", createdDetail));
-    expect(invalidate).toHaveBeenCalledTimes(4);
+    expect(invalidate).toHaveBeenCalledTimes(5);
     unmount();
     await act(async () => { rejectRefresh(new Error("Catalog refresh failed")); });
     await waitFor(() => expect(onRefreshError).toHaveBeenCalledWith(expect.stringContaining("related item is saved")));
@@ -204,9 +204,9 @@ describe("related item creation", () => {
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith("line-created", createdDetail));
     expect(client.getQueryData(knowledgeQueryKeys.item("line-created"))).toEqual(createdDetail);
     expect(api.createKnowledgeMainLine).toHaveBeenCalledWith("basket-0", { name: "Panelling", subBasketName: "Walls" });
-    expect(invalidate).toHaveBeenCalledTimes(4);
+    expect(invalidate).toHaveBeenCalledTimes(5);
     expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
-      knowledgeQueryKeys.itemLists(), knowledgeQueryKeys.mainLineLists("basket-0"), knowledgeQueryKeys.subBasketLists("basket-0"), knowledgeQueryKeys.basketDeletionImpact("basket-0")
+      knowledgeQueryKeys.itemLists(), knowledgeQueryKeys.mainLineLists("basket-0"), knowledgeQueryKeys.subBasketLists("basket-0"), knowledgeQueryKeys.basketDeletionImpact("basket-0"), knowledgeQueryKeys.contexts()
     ]);
     expect(onCreated.mock.invocationCallOrder[0]).toBeLessThan(invalidate.mock.invocationCallOrder[0]);
     expect(screen.getByRole("button", { name: "Close" })).toBeEnabled();

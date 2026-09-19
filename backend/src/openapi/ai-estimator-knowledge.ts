@@ -1224,11 +1224,12 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
   KnowledgePriorityPage: pageSchema("KnowledgePriority"),
   KnowledgeSurfacePage: pageSchema("KnowledgeSurface"),
   KnowledgeMainLine: strictObject(
-    ["id", "basketId", "name", "description", "displayOrder", "status", "activeRevisionId", "draftRevisionId", "version", ...Object.keys(actorMetadata)],
+    ["id", "basketId", "name", "description", "displayOrder", "status", "activeRevisionId", "draftRevisionId", "completionRequired", "version", ...Object.keys(actorMetadata)],
     {
       id,
       basketId: id,
       itemType: { type: "string", enum: ["main_line", "temporary"] },
+      completionRequired: { type: "boolean", description: "True for temporary catalog placeholders until a future explicit resolution workflow completes them." },
       subBasketId: { ...id, nullable: true },
       name: masterProperties.name,
       description,
@@ -1268,16 +1269,19 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       revisionStatus: { type: "string", enum: ["draft", "active"] },
       rules: { type: "array", items: strictObject(["id", "trigger", "action", "requirement", "reason", "active"], {
         id, trigger: { type: "string", enum: ["added", "removed"] }, action: { type: "string", enum: ["add", "remove"] },
-        requirement: { type: "string", enum: ["must", "can"] }, reason: { type: "string" }, active: { type: "boolean" }
+        requirement: { type: "string", enum: ["must", "can"] },
+        targetKind: { type: "string", enum: ["main_line", "sub_basket"], description: "Absent means a legacy Main-Line rule." },
+        reason: { type: "string" }, active: { type: "boolean" }
       }) }
     }
   ),
   KnowledgeItemListItem: strictObject(
-    ["id", "basketId", "basketName", "mainLineId", "mainLineName", "description", "status", "activeRevisionId", "draftRevisionId", "revisionNumber", "uomId", "priorityId", "modeIds", "surfaceIds", "vendorIds", "completeness", "allowedActions", "version", ...Object.keys(actorMetadata)],
+    ["id", "basketId", "basketName", "mainLineId", "mainLineName", "description", "status", "activeRevisionId", "draftRevisionId", "revisionNumber", "uomId", "priorityId", "modeIds", "surfaceIds", "vendorIds", "completionRequired", "completeness", "allowedActions", "version", ...Object.keys(actorMetadata)],
     {
       id,
       basketId: id,
       itemType: { type: "string", enum: ["main_line", "temporary"] },
+      completionRequired: { type: "boolean", description: "True for temporary catalog placeholders until a future explicit resolution workflow completes them." },
       linkedMainLines: { type: "array", items: ref("KnowledgeTemporaryMainLineReference") },
       basketName: { type: "string" },
       subBasketId: { ...id, nullable: true },
@@ -1302,11 +1306,12 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
   ),
   KnowledgeItemPage: pageSchema("KnowledgeItemListItem"),
   KnowledgeItemDetail: strictObject(
-    ["id", "basketId", "basketName", "mainLineId", "mainLineName", "description", "status", "activeRevisionId", "draftRevisionId", "revisionNumber", "uomId", "priorityId", "modeIds", "surfaceIds", "vendorIds", "completeness", "allowedActions", "version", ...Object.keys(actorMetadata), "activeRevision", "draftRevision", "blockers", "warnings"],
+    ["id", "basketId", "basketName", "mainLineId", "mainLineName", "description", "status", "activeRevisionId", "draftRevisionId", "revisionNumber", "uomId", "priorityId", "modeIds", "surfaceIds", "vendorIds", "completionRequired", "completeness", "allowedActions", "version", ...Object.keys(actorMetadata), "activeRevision", "draftRevision", "blockers", "warnings"],
     {
       id,
       basketId: id,
       itemType: { type: "string", enum: ["main_line", "temporary"] },
+      completionRequired: { type: "boolean", description: "True for temporary catalog placeholders until a future explicit resolution workflow completes them." },
       linkedMainLines: { type: "array", items: ref("KnowledgeTemporaryMainLineReference") },
       basketName: { type: "string" },
       subBasketId: { ...id, nullable: true },
@@ -1534,20 +1539,36 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
     sectionPayloadKeys(sectionKey).map((key) => [key, {}])
   );
   if (sectionKey === "recommendations") {
+    const commonBudgetAlterationProperties = {
+      id: { type: "string" }, trigger: { type: "string", enum: ["added", "removed"] },
+      action: { type: "string", enum: ["add", "remove"] }, requirement: { type: "string", enum: ["must", "can"] },
+      targetBasketId: { type: "string" },
+      reason: { type: "string", minLength: 1, maxLength: 4000 }, active: { type: "boolean" }
+    };
     properties.budgetAlterations = {
       type: "array", maxItems: 100,
-      description: "Conditional scope guidance for this Main Line. Must/can actions are proposals, not automatic estimate mutations. Temporary items have their own Overview, Mode and Quality configuration. Catalog targets use stable Basket, Sub Basket and Main Line identities.",
-      items: { type: "object", additionalProperties: false,
-        required: ["id", "trigger", "action", "requirement", "targetType", "targetBasketId", "targetSubBasketId", "targetMainLineId", "reason", "active"],
-        properties: {
-          id: { type: "string" }, trigger: { type: "string", enum: ["added", "removed"] },
-          action: { type: "string", enum: ["add", "remove"] }, requirement: { type: "string", enum: ["must", "can"] },
-          targetType: { type: "string", enum: ["catalog", "temporary"] },
-          targetBasketId: { type: "string" }, targetSubBasketId: { type: "string", nullable: true },
-          targetMainLineId: { type: "string" },
-          reason: { type: "string", minLength: 1, maxLength: 4000 }, active: { type: "boolean" }
+      description: "Conditional scope guidance for this Main Line. Absent targetKind is the legacy main_line shape. New writes identify either one Main Line or a whole non-empty Sub Basket. Must/can actions are proposals, not automatic estimate mutations.",
+      items: { oneOf: [
+        { type: "object", additionalProperties: false,
+          required: ["id", "trigger", "action", "requirement", "targetType", "targetBasketId", "targetSubBasketId", "targetMainLineId", "reason", "active"],
+          properties: {
+            ...commonBudgetAlterationProperties,
+            targetKind: { type: "string", enum: ["main_line"], description: "Optional only for legacy-compatible Main-Line rows; new writes include it." },
+            targetType: { type: "string", enum: ["catalog", "temporary"] },
+            targetSubBasketId: { type: "string", nullable: true }, targetMainLineId: { type: "string" }
+          }
+        },
+        { type: "object", additionalProperties: false,
+          required: ["id", "trigger", "action", "requirement", "targetKind", "targetType", "targetBasketId", "targetSubBasketId", "targetMainLineId", "reason", "active"],
+          properties: {
+            ...commonBudgetAlterationProperties,
+            targetKind: { type: "string", enum: ["sub_basket"] },
+            targetType: { type: "string", nullable: true, enum: [null] },
+            targetSubBasketId: { type: "string" },
+            targetMainLineId: { type: "string", nullable: true, enum: [null] }
+          }
         }
-      }
+      ] }
     };
   }
   if (sectionKey === "advanced") {

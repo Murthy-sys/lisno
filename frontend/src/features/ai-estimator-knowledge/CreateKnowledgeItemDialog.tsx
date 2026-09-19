@@ -13,7 +13,7 @@ import type { KnowledgeBasket, KnowledgeItemDetail } from "./knowledgeTypes";
 
 export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, context, itemType = "main_line", initialBasketId = "", initialSubBasketName = "", initialName = "", excludeMainLineId, canCreateBasket = false }: {
   readonly itemType?: "main_line" | "temporary";
-  readonly context?: "related-item";
+  readonly context?: "related-item" | "sub-basket";
   readonly initialBasketId?: string;
   readonly initialSubBasketName?: string;
   readonly initialName?: string;
@@ -26,7 +26,8 @@ export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, 
   const formId = useId();
   const queryClient = useQueryClient();
   const temporary = itemType === "temporary";
-  const related = context === "related-item";
+  const related = context === "related-item" || context === "sub-basket";
+  const createsSubBasketTarget = context === "sub-basket";
   const [basketId, setBasketId] = useState(initialBasketId);
   const [subBasketName, setSubBasketName] = useState(initialSubBasketName);
   const [name, setName] = useState(initialName);
@@ -61,8 +62,9 @@ export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, 
   const activeBaskets = createdBasket && !listedBaskets.some(({ id }) => id === createdBasket.id)
     ? [...listedBaskets, createdBasket]
     : listedBaskets;
-  const inlineBasketCreation = temporary && !related && canCreateBasket;
-  const valid = Boolean(!baskets.isError && activeBaskets.some((basket) => basket.id === basketId) && (temporary || subBasketName.trim()) && name.trim());
+  const inlineBasketCreation = temporary && canCreateBasket;
+  const valid = Boolean(!baskets.isError && activeBaskets.some((basket) => basket.id === basketId)
+    && ((temporary && !createsSubBasketTarget) || subBasketName.trim()) && name.trim());
 
   async function checkCreation(input: RelatedItemCreationInput) {
     setRecovery({ kind: "checking" });
@@ -95,7 +97,8 @@ export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, 
       queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }, { throwOnError: true }),
       queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists(item.basketId) }, { throwOnError: true }),
       queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketLists(item.basketId) }, { throwOnError: true }),
-      queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketDeletionImpact(item.basketId) }, { throwOnError: true })
+      queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketDeletionImpact(item.basketId) }, { throwOnError: true }),
+      queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }, { throwOnError: true })
     ]);
     if (refreshed.some((result) => result.status === "rejected")) {
       reportRefreshWarning("The related item is saved, but some catalog lists could not refresh. Retry the catalog refresh before making further changes.");
@@ -157,7 +160,7 @@ export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, 
   const showCreateError = createItem.error && recovery.kind === "idle";
   const hasRecoveryError = recovery.kind === "conflict" || recovery.kind === "failed";
   const errorDescription = showCreateError || hasRecoveryError ? "item-creation-error" : undefined;
-  const title = related ? "Add related item" : temporary ? "Add temporary item" : "Add estimation item";
+  const title = createsSubBasketTarget ? "Add Sub-Basket" : related ? "Add related item" : temporary ? "Add temporary item" : "Add estimation item";
 
   function clearFailure() {
     createItem.reset();
@@ -236,7 +239,9 @@ export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, 
       }}>
         <div className="knowledge-dialog-body">
           {temporary && <p>This item will be listed under its Main Basket with Overview, Mode and Quality Parameters.</p>}
-          {related && <p>Adding an item saves a reusable draft in the catalog. Save the rule separately to keep this relationship.</p>}
+          {createsSubBasketTarget
+            ? <p>Add a temporary item such as Lights. The estimator can choose the exact item later. The Sub-Basket and temporary item are saved in Configuration; save the rule separately.</p>
+            : related && <p>Adding an item saves a reusable draft in the catalog. Save the rule separately to keep this relationship.</p>}
           {showCreateError ? <div id="item-creation-error"><InlineMessage tone="error" role="alert">{createItem.error?.message}</InlineMessage></div> : null}
           {recovery.kind === "checking" ? <p role="status">Checking whether this related item is already in the catalog…</p> : null}
           {recovery.kind === "failed" ? <div id="item-creation-error"><InlineMessage tone="error" role="alert">Could not confirm whether the item was added. Check the catalog again before another attempt. <Button type="button" variant="quiet" onClick={() => { if (lastAttempt.current) void checkCreation(lastAttempt.current); }}>Check catalog again</Button></InlineMessage></div> : null}
@@ -306,10 +311,10 @@ export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, 
               Add main basket
             </Button>}
           </div> : null}
-          <Field id="item-sub-basket" label="Sub basket" required={!temporary} error={fieldErrors?.subBasketName} describedBy={errorDescription}>
+          <Field id="item-sub-basket" label="Sub basket" required={!temporary || createsSubBasketTarget} error={fieldErrors?.subBasketName} describedBy={errorDescription}>
             {(props) => <Input {...props} maxLength={240} value={subBasketName} disabled={locked} onChange={(event) => { setSubBasketName(event.target.value); clearFailure(); }} />}
           </Field>
-          <Field id="item-name" label={related ? "Related item name" : temporary ? "Temporary item name" : "Main Line name"} required error={fieldErrors?.name} describedBy={errorDescription}>
+          <Field id="item-name" label={createsSubBasketTarget ? "Temporary item name" : related ? "Related item name" : temporary ? "Temporary item name" : "Main Line name"} required error={fieldErrors?.name} describedBy={errorDescription}>
             {(props) => <Input {...props} maxLength={240} value={name} disabled={locked} onChange={(event) => { setName(event.target.value); clearFailure(); }} />}
           </Field>
         </div>

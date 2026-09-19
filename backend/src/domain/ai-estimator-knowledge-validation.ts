@@ -29,6 +29,7 @@ import {
   type KnowledgeSectionKey
 } from "./ai-estimator-knowledge.js";
 import { parseScaledDecimal } from "./ai-estimator-knowledge-calculation.js";
+import { normalizeKnowledgeBudgetAlterationTarget } from "./ai-estimator-knowledge-recommendation.js";
 
 export type { KnowledgeCompletenessSectionInput } from "./ai-estimator-knowledge-completeness.js";
 
@@ -1091,22 +1092,34 @@ function validateBudgetAlterations(value: unknown, issues: KnowledgeValidationIs
   const targets = new Set<string>();
   rows.forEach((row, index) => {
     const path = `payload.budgetAlterations.${index}`;
-    const keys = ["id", "trigger", "action", "requirement", "targetType", "targetBasketId", "targetSubBasketId", "targetMainLineId", "reason", "active"];
-    validateExactRowKeys(row, keys, keys, path, issues);
+    const keys = ["id", "trigger", "action", "requirement", "targetKind", "targetType", "targetBasketId", "targetSubBasketId", "targetMainLineId", "reason", "active"];
+    const normalizedTarget = normalizeKnowledgeBudgetAlterationTarget(row);
+    const requiredKeys = normalizedTarget?.targetKind === "sub_basket" ? keys : keys.filter((key) => key !== "targetKind");
+    validateExactRowKeys(row, keys, requiredKeys, path, issues);
     validateStableId(row.id, `${path}.id`, issues);
     addUniqueString(row.id, ids, `${path}.id`, "DUPLICATE_ID", issues);
     validateClosedEnum(row.trigger, ["added", "removed"], `${path}.trigger`, issues);
     validateClosedEnum(row.action, ["add", "remove"], `${path}.action`, issues);
     validateClosedEnum(row.requirement, ["must", "can"], `${path}.requirement`, issues);
-    validateClosedEnum(row.targetType, ["catalog", "temporary"], `${path}.targetType`, issues);
+    if ("targetKind" in row) {
+      validateClosedEnum(row.targetKind, ["main_line", "sub_basket"], `${path}.targetKind`, issues);
+    }
     validateStableId(row.targetBasketId, `${path}.targetBasketId`, issues);
-    validateNullableStableId(row.targetSubBasketId, `${path}.targetSubBasketId`, issues);
     validateText(row.reason, `${path}.reason`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT);
     validateBoolean(row.active, `${path}.active`, issues);
-    validateStableId(row.targetMainLineId, `${path}.targetMainLineId`, issues);
+    if (normalizedTarget?.targetKind === "sub_basket") {
+      validateStableId(row.targetSubBasketId, `${path}.targetSubBasketId`, issues);
+      if (row.targetType !== null) issues.push({ path: `${path}.targetType`, code: "INVALID_NULL", message: "Whole Sub-Basket targets require targetType to be null." });
+      if (row.targetMainLineId !== null) issues.push({ path: `${path}.targetMainLineId`, code: "INVALID_NULL", message: "Whole Sub-Basket targets require targetMainLineId to be null." });
+    } else {
+      validateClosedEnum(row.targetType, ["catalog", "temporary"], `${path}.targetType`, issues);
+      validateNullableStableId(row.targetSubBasketId, `${path}.targetSubBasketId`, issues);
+      validateStableId(row.targetMainLineId, `${path}.targetMainLineId`, issues);
+    }
     if (row.active === false) return;
-    const targetKey = JSON.stringify([row.trigger, row.targetMainLineId]);
-    if (targets.has(targetKey)) issues.push({ path, code: "DUPLICATE_RULE", message: "Use one active rule per related item and trigger; combine its explanation instead of adding conflicting actions." });
+    if (!normalizedTarget || typeof normalizedTarget.targetId !== "string") return;
+    const targetKey = JSON.stringify([row.trigger, normalizedTarget.targetKind, normalizedTarget.targetId]);
+    if (targets.has(targetKey)) issues.push({ path, code: "DUPLICATE_RULE", message: "Use one active rule per target and trigger; combine its explanation instead of adding conflicting actions." });
     targets.add(targetKey);
   });
 }

@@ -503,6 +503,29 @@ describe("OpenAPI and Swagger UI", () => {
         aggregateVersion: { type: "integer", minimum: 1 }
       }
     });
+    const sectionPayloads = componentSchemas().KnowledgeSectionPayload!.anyOf as OpenApiObject[];
+    const recommendationPayload = sectionPayloads.find((schema) =>
+      (schema.properties as Record<string, unknown>).budgetAlterations
+    )!;
+    const budgetAlterations = (recommendationPayload.properties as Record<string, OpenApiObject>).budgetAlterations!;
+    const targetShapes = (budgetAlterations.items as OpenApiObject).oneOf as OpenApiObject[];
+    expect(targetShapes).toHaveLength(2);
+    expect(targetShapes[0]).toMatchObject({ additionalProperties: false,
+      properties: { targetKind: { enum: ["main_line"] }, targetType: { enum: ["catalog", "temporary"] } } });
+    expect(targetShapes[0]!.required).not.toContain("targetKind");
+    expect(targetShapes[1]).toMatchObject({ additionalProperties: false,
+      required: expect.arrayContaining(["targetKind", "targetType", "targetSubBasketId", "targetMainLineId"]),
+      properties: { targetKind: { enum: ["sub_basket"] }, targetType: { enum: [null] }, targetMainLineId: { enum: [null] } } });
+    expect(componentSchemas().KnowledgeItemListItem).toMatchObject({
+      required: expect.arrayContaining(["completionRequired"]),
+      properties: { completionRequired: { type: "boolean" } }
+    });
+    expect(componentSchemas().KnowledgeMainLine).toMatchObject({
+      required: expect.arrayContaining(["completionRequired"]),
+      properties: { completionRequired: { type: "boolean" } }
+    });
+    expect(componentSchemas().KnowledgeTemporaryMainLineReference)
+      .toHaveProperty("properties.rules.items.properties.targetKind.enum", ["main_line", "sub_basket"]);
 
     const previewRequest = componentSchemas().KnowledgePreviewRequest as {
       additionalProperties?: boolean;

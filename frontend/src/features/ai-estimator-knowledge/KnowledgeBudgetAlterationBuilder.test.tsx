@@ -12,7 +12,7 @@ import { budgetAlterationIssues, createBudgetAlteration } from "./knowledgeBudge
 import * as api from "./knowledgeApi";
 import type { KnowledgeBasket, KnowledgeItemDetail, KnowledgeItemListItem, KnowledgeJsonValue, KnowledgeSubBasket } from "./knowledgeTypes";
 
-vi.mock("./knowledgeApi", () => ({ listKnowledgeSubBaskets: vi.fn(), listKnowledgeBaskets: vi.fn(), createKnowledgeMainLine: vi.fn(), listKnowledgeMainLines: vi.fn(), getKnowledgeItem: vi.fn() }));
+vi.mock("./knowledgeApi", () => ({ listKnowledgeSubBaskets: vi.fn(), listKnowledgeBaskets: vi.fn(), createKnowledgeBasket: vi.fn(), createKnowledgeMainLine: vi.fn(), listKnowledgeMainLines: vi.fn(), getKnowledgeItem: vi.fn() }));
 const meta = { version: 1, createdById: "admin", updatedById: "admin", createdAt: "2026-09-08T00:00:00.000Z", updatedAt: "2026-09-08T00:00:00.000Z" };
 const baskets = ["Electrical", "Carpentry"].map((name, i) => ({ ...meta, id: `basket-${i}`, name, description: null, status: "active", displayOrder: i })) as KnowledgeBasket[];
 const sub = { ...meta, id: "sub-lights", name: "Lights Procurement", basketId: "basket-0", displayOrder: 0 } as KnowledgeSubBasket;
@@ -21,7 +21,7 @@ const items = [
   { mainLineId: "lights", mainLineName: "Ceiling COB Lights", basketId: "basket-0", subBasketId: sub.id, subBasketName: sub.name },
   { mainLineId: "temp", mainLineName: "Temporary LED Lights", basketId: "basket-0", subBasketId: null, itemType: "temporary" },
   { mainLineId: "cabinet", mainLineName: "Cabinet", basketId: "basket-1", subBasketId: null }
-].map((item) => ({ ...meta, itemType: "main_line", status: "draft", ...item })) as KnowledgeItemListItem[];
+].map((item) => ({ ...meta, itemType: "main_line", completionRequired: item.itemType === "temporary", status: "draft", ...item })) as KnowledgeItemListItem[];
 const page = <T,>(entries: T[]) => ({ items: entries, pagination: { offset: 0, limit: 100, total: entries.length, hasMore: false } });
 const rule = { ...createBudgetAlteration(), id: "rule-1", targetBasketId: "basket-0", targetSubBasketId: sub.id, targetMainLineId: "lights", reason: "Recessed lights require the ceiling for fixing." };
 async function openRule(user: ReturnType<typeof userEvent.setup>, index = 1) {
@@ -59,6 +59,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(api.listKnowledgeSubBaskets).mockImplementation(async (basketId) => page(basketId === "basket-0" ? [sub] : []));
   vi.mocked(api.listKnowledgeBaskets).mockResolvedValue(page(baskets));
+  vi.mocked(api.createKnowledgeBasket).mockResolvedValue({ ...baskets[0], id: "basket-new", name: "Lighting" });
   vi.mocked(api.createKnowledgeMainLine).mockResolvedValue({ ...items[2], mainLineId: "new-temp", itemType: "temporary" } as KnowledgeItemDetail);
 });
 
@@ -96,6 +97,106 @@ describe("Budget Alterations", () => {
     expect(screen.getByLabelText("Scope change summary")).toHaveTextContent("Disabled");
     await user.click(screen.getByRole("button", { name: "Remove rule 1" }));
     expect(change).toHaveBeenLastCalledWith([]);
+  });
+
+  it("targets an existing whole Sub-Basket using the explicit union shape", async () => {
+    const initial = [{ ...rule, targetKind: "main_line", targetSubBasketId: null, targetMainLineId: null }];
+    const { user, change } = setup(initial);
+    await openRule(user);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Addition type" }), "sub_basket");
+    const subBasket = screen.getByRole("combobox", { name: "Sub Basket" });
+    await screen.findByRole("option", { name: "Lights Procurement · 1 item" });
+    await user.selectOptions(subBasket, sub.id);
+    expect(change.mock.lastCall![0][0]).toMatchObject({
+      targetKind: "sub_basket",
+      targetType: null,
+      targetBasketId: "basket-0",
+      targetSubBasketId: sub.id,
+      targetMainLineId: null
+    });
+    expect(budgetAlterationIssues(change.mock.lastCall![0], "source")).toEqual([]);
+    expect(screen.queryByRole("combobox", { name: "Related item" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Scope change summary")).toHaveTextContent("Lights Procurement");
+  });
+
+  it("keeps the selected line item until addition-type clearing is confirmed", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const { user, change } = setup([rule]);
+    await openRule(user);
+    const additionType = screen.getByRole("combobox", { name: "Addition type" });
+    await user.selectOptions(additionType, "sub_basket");
+    expect(additionType).toHaveValue("main_line");
+    expect(change).not.toHaveBeenCalled();
+    await user.selectOptions(additionType, "sub_basket");
+    expect(change.mock.lastCall![0][0]).toMatchObject({ targetKind: "sub_basket", targetType: null, targetSubBasketId: null, targetMainLineId: null });
+    expect(confirm).toHaveBeenCalledTimes(2);
+    confirm.mockRestore();
+  });
+
+  it("disables empty and self-containing Sub-Baskets and flags overlapping active targets", async () => {
+    const empty = { ...sub, id: "sub-empty", name: "Empty Sub-Basket" };
+    const self = { ...sub, id: "sub-self", name: "Source group" };
+    vi.mocked(api.listKnowledgeSubBaskets).mockResolvedValue(page([sub, empty, self]));
+    const sourceInSub = { ...items[0], subBasketId: self.id, subBasketName: self.name };
+    const whole = { ...rule, id: "whole-rule", targetKind: "sub_basket", targetType: null, targetSubBasketId: sub.id, targetMainLineId: null };
+    const { user } = setup([rule, whole], { items: [sourceInSub, ...items.slice(1)] });
+    expect(screen.getAllByText("Overlapping target")).toHaveLength(2);
+    await openRule(user, 2);
+    const selector = screen.getByRole("combobox", { name: "Sub Basket" });
+    expect(within(selector).getByRole("option", { name: "Empty Sub-Basket · Empty" })).toBeDisabled();
+    expect(within(selector).getByRole("option", { name: "Source group · Contains this item" })).toBeDisabled();
+  });
+
+  it("creates a missing Main Basket and Sub-Basket with a generic temporary child", async () => {
+    const created = {
+      ...items[2],
+      mainLineId: "lights-placeholder",
+      mainLineName: "Lights",
+      basketId: "basket-new",
+      basketName: "Lighting",
+      subBasketId: "sub-false-ceiling",
+      subBasketName: "False ceiling lights",
+      itemType: "temporary"
+    } as KnowledgeItemDetail;
+    vi.mocked(api.createKnowledgeMainLine).mockResolvedValue(created);
+    const { user, change } = setup();
+    await user.click(screen.getByRole("button", { name: "Add Mandatory Item" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Addition type" }), "sub_basket");
+    await user.click(screen.getByRole("button", { name: "Add Sub-Basket" }));
+    const dialog = screen.getByRole("dialog", { name: "Add Sub-Basket" });
+    await within(dialog).findByRole("option", { name: "Electrical" });
+    await user.click(within(dialog).getByRole("button", { name: "Add main basket" }));
+    await user.type(within(dialog).getByRole("textbox", { name: "New Main Basket name" }), "Lighting");
+    await user.click(within(dialog).getByRole("button", { name: "Save main basket" }));
+    await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Main basket" })).toHaveValue("basket-new"));
+    await user.type(within(dialog).getByRole("textbox", { name: "Sub basket" }), "False ceiling lights");
+    expect(within(dialog).getByRole("textbox", { name: "Temporary item name" })).toHaveValue("Lights");
+    await user.click(within(dialog).getByRole("button", { name: "Add Sub-Basket" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add Sub-Basket" })).not.toBeInTheDocument());
+    expect(api.createKnowledgeMainLine).toHaveBeenCalledWith("basket-new", {
+      name: "Lights",
+      subBasketName: "False ceiling lights",
+      itemType: "temporary"
+    });
+    expect(change.mock.lastCall![0][0]).toMatchObject({
+      targetKind: "sub_basket",
+      targetType: null,
+      targetBasketId: "basket-new",
+      targetSubBasketId: "sub-false-ceiling",
+      targetMainLineId: null
+    });
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.getByText("Temporary child · Must be completed")).toBeVisible();
+  });
+
+  it("normalizes a legacy line-item rule when it is edited", async () => {
+    const legacy = { ...rule };
+    Reflect.deleteProperty(legacy, "targetKind");
+    const { user, change } = setup([legacy]);
+    await openRule(user);
+    const reason = screen.getByRole("textbox", { name: "Why is this change needed?" });
+    await user.type(reason, " Updated.");
+    expect(change.mock.lastCall![0][0]).toMatchObject({ targetKind: "main_line", targetMainLineId: "lights" });
   });
 
   it("creates a reusable temporary item under the chosen Basket and links its identity", async () => {
@@ -276,7 +377,7 @@ describe("Budget Alterations", () => {
     expect(screen.getByRole("combobox", { name: "Related item" })).toHaveDisplayValue("Saved fitting");
     await user.click(retry);
     await waitFor(() => expect(screen.queryByRole("button", { name: "Retry catalog refresh" })).not.toBeInTheDocument());
-    expect(invalidation).toHaveBeenCalledTimes(8);
+    expect(invalidation).toHaveBeenCalledTimes(10);
     expect(api.createKnowledgeMainLine).toHaveBeenCalledTimes(1);
   });
 
@@ -284,7 +385,7 @@ describe("Budget Alterations", () => {
     const stale = { ...items[1], mainLineName: "Old fitting name", status: "inactive" as const };
     const confirmed = { ...items[1], mainLineName: "Renamed fitting", status: "active" as const, version: 2 } as KnowledgeItemDetail;
     vi.mocked(api.createKnowledgeMainLine).mockRejectedValue(new ApiError(409, "CONFLICT", "Already exists"));
-    vi.mocked(api.listKnowledgeMainLines).mockResolvedValue(page([{ ...meta, id: "lights", name: confirmed.mainLineName, basketId: "basket-0", subBasketId: sub.id, status: "active", itemType: "main_line", displayOrder: 0, description: null, activeRevisionId: "confirmed-active", draftRevisionId: null }]));
+    vi.mocked(api.listKnowledgeMainLines).mockResolvedValue(page([{ ...meta, id: "lights", name: confirmed.mainLineName, basketId: "basket-0", subBasketId: sub.id, status: "active", itemType: "main_line", completionRequired: false, displayOrder: 0, description: null, activeRevisionId: "confirmed-active", draftRevisionId: null }]));
     vi.mocked(api.getKnowledgeItem).mockResolvedValue(confirmed);
     const onItemConfirmed = vi.fn();
     const { user, updateItems } = setup([rule, { ...rule, id: "second", targetMainLineId: null }], { items: items.map((item) => item.mainLineId === "lights" ? stale : item), onItemConfirmed });

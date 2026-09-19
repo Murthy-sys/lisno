@@ -5,6 +5,21 @@ import { describe, expect, it } from "vitest";
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 
 describe("KnowledgeConflictReview Budgeting projection", () => {
+  it("shows a whole Sub-Basket recommendation without exposing nullable target IDs", () => {
+    render(<KnowledgeConflictReview sectionKey="recommendations" localVersion={2} serverVersion={3}
+      payload={{ budgetAlterations: [{ id: "private-rule", trigger: "added", action: "add", requirement: "must",
+        targetKind: "sub_basket", targetType: null, targetBasketId: "basket-private", targetSubBasketId: "sub-private",
+        targetMainLineId: null, reason: "Add complete lighting scope", active: true }] }}
+      masters={{}}
+      relationshipBaskets={[{ id: "basket-private", name: "Electrical" }] as never}
+      relationshipItems={[{ mainLineId: "light-private", mainLineName: "Lights", basketId: "basket-private",
+        subBasketId: "sub-private", subBasketName: "False ceiling lights" }] as never} />);
+    const review = screen.getByRole("region", { name: "Latest Recommendation & Exclusions server version" });
+    expect(review).toHaveTextContent("Addition typeWhole Sub-Basket");
+    expect(review).toHaveTextContent("False ceiling lights");
+    expect(review).not.toHaveTextContent(/private|null/iu);
+  });
+
   it("shows descriptive Specifications and business Budget values without private metadata", async () => {
     render(
       <KnowledgeConflictReview

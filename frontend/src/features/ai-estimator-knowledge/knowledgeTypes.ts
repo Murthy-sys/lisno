@@ -65,6 +65,33 @@ export interface KnowledgeJsonObject {
   readonly [key: string]: KnowledgeJsonValue;
 }
 
+export interface KnowledgeBudgetAlterationBase {
+  readonly id: string;
+  readonly trigger: "added" | "removed";
+  readonly action: "add" | "remove";
+  readonly requirement: "must" | "can";
+  readonly targetBasketId: string;
+  readonly reason: string;
+  readonly active: boolean;
+}
+
+export interface KnowledgeMainLineBudgetAlteration extends KnowledgeBudgetAlterationBase {
+  /** Missing on legacy responses; normalize to main_line before editing. */
+  readonly targetKind?: "main_line";
+  readonly targetType: "catalog" | "temporary";
+  readonly targetSubBasketId: string | null;
+  readonly targetMainLineId: string;
+}
+
+export interface KnowledgeSubBasketBudgetAlteration extends KnowledgeBudgetAlterationBase {
+  readonly targetKind: "sub_basket";
+  readonly targetType: null;
+  readonly targetSubBasketId: string;
+  readonly targetMainLineId: null;
+}
+
+export type KnowledgeBudgetAlteration = KnowledgeMainLineBudgetAlteration | KnowledgeSubBasketBudgetAlteration;
+
 export interface KnowledgeActorMetadata {
   readonly createdById: string;
   readonly updatedById: string;
@@ -190,6 +217,7 @@ export interface KnowledgePermanentDeleteBasketResult {
 
 export interface KnowledgeMainLine extends KnowledgeVersionedResource {
   readonly itemType?: "main_line" | "temporary";
+  readonly completionRequired: boolean;
   readonly subBasketId?: string | null;
   readonly basketId: string;
   readonly name: string;
@@ -210,12 +238,13 @@ export interface KnowledgeTemporaryMainLineReference {
   status: KnowledgeItemStatus;
   revisionId: string;
   revisionStatus: "draft" | "active";
-  rules: Array<{ id: string; trigger: "added" | "removed"; action: "add" | "remove"; requirement: "must" | "can"; reason: string; active: boolean }>;
+  rules: Array<{ id: string; trigger: "added" | "removed"; action: "add" | "remove"; requirement: "must" | "can"; targetKind?: "main_line" | "sub_basket"; reason: string; active: boolean }>;
 }
 
 export interface KnowledgeItemListItem extends KnowledgeVersionedResource {
   readonly linkedMainLines?: readonly KnowledgeTemporaryMainLineReference[];
   readonly itemType?: "main_line" | "temporary";
+  readonly completionRequired: boolean;
   readonly basketId: string;
   readonly basketName: string;
   readonly subBasketId?: string | null;

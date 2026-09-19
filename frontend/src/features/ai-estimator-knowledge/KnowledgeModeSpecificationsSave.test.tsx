@@ -34,6 +34,7 @@ const metadata = {
 
 const item: KnowledgeItemDetail = {
   id: "line-spec-save",
+  completionRequired: false,
   mainLineId: "line-spec-save",
   mainLineName: "Specification save line",
   basketId: "basket-1",

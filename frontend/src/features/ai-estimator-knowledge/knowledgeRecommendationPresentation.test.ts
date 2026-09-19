@@ -21,12 +21,16 @@ describe("recommendation presentation", () => {
     expect(recommendationRemovalSummary(addition, [addition, { ...removal, targetMainLineId: "other-lights" }])).toBe("Not configured");
     expect(recommendationRemovalSummary(addition, [addition, removal])).toBe("Required removal (disabled)");
     expect(recommendationRemovalSummary(removal, [addition, removal])).toBe("—");
+    const subAddition = { ...addition, targetKind: "sub_basket", targetType: null, targetSubBasketId: "lighting", targetMainLineId: null };
+    const subRemoval = { ...removal, targetKind: "sub_basket", targetType: null, targetSubBasketId: "lighting", targetMainLineId: null };
+    expect(recommendationRemovalSummary(subAddition, [subAddition, subRemoval])).toBe("Required removal (disabled)");
+    expect(recommendationRemovalSummary(subAddition, [subAddition, removal])).toBe("Not configured");
   });
 
   it("creates group defaults with distinct IDs and leaves target and explanation incomplete", () => {
     const mandatory = newRecommendationRule("mandatory");
     const probable = newRecommendationRule("probable");
-    expect(mandatory).toMatchObject({ trigger: "added", action: "add", requirement: "must", targetMainLineId: null, reason: "" });
+    expect(mandatory).toMatchObject({ trigger: "added", action: "add", requirement: "must", targetKind: "main_line", targetMainLineId: null, reason: "" });
     expect(probable).toMatchObject({ trigger: "added", action: "add", requirement: "can" });
     expect(newRecommendationRule("exclusions")).toMatchObject({ trigger: "added", action: "remove", requirement: "must" });
     expect(newRecommendationRule("other")).toMatchObject({ trigger: "removed", action: "remove", requirement: "must" });

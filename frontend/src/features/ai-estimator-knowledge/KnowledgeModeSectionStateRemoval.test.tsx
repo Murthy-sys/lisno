@@ -43,6 +43,7 @@ const actorMetadata = {
 
 const item: KnowledgeItemDetail = {
   id: "line-1",
+  completionRequired: false,
   mainLineId: "line-1",
   mainLineName: "Wall panelling",
   basketId: "basket-1",
