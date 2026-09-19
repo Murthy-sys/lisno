@@ -241,8 +241,10 @@ export function parseKnowledgeModeConfigurations(
     const scope: Partial<Record<(typeof PMC_SCOPE_LISTS)[number], readonly KnowledgePmcScopeItem[]>> = {};
     for (const list of PMC_SCOPE_LISTS) {
       if (entry[list] === undefined) continue;
-      if (modeKind !== "pmc" || hasModeId) {
-        issues.push({ path: `${path}.${list}`, message: "Inclusions and Exclusions are available only for PMC." });
+      const supportsScope = !hasModeId && (modeKind === "pmc" ||
+        (modeKind === "execution" && executionSource === "in_house"));
+      if (!supportsScope) {
+        issues.push({ path: `${path}.${list}`, message: "Inclusions and Exclusions are available only for PMC or In-house." });
       }
       const parsedScope = parsePmcScopeItems(entry[list], `${path}.${list}`);
       issues.push(...parsedScope.issues);

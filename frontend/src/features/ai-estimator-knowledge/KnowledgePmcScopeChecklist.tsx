@@ -17,11 +17,12 @@ interface Props {
   readonly list: KnowledgePmcScopeList;
   readonly items: readonly KnowledgePmcScopeItem[];
   readonly oppositeItems: readonly KnowledgePmcScopeItem[];
+  readonly contextLabel?: string;
   readonly readOnly: boolean;
   readonly onChange: (items: readonly KnowledgePmcScopeItem[]) => void;
 }
 
-export function KnowledgePmcScopeChecklist({ list, items, oppositeItems, readOnly, onChange }: Props) {
+export function KnowledgePmcScopeChecklist({ list, items, oppositeItems, contextLabel, readOnly, onChange }: Props) {
   const id = useId();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
@@ -86,7 +87,7 @@ export function KnowledgePmcScopeChecklist({ list, items, oppositeItems, readOnl
   }
 
   return (
-    <fieldset className="knowledge-pmc-scope__list">
+    <fieldset className="knowledge-pmc-scope__list" aria-label={contextLabel ? `${contextLabel} ${title}` : undefined}>
       <legend>{title}</legend>
       <div className="knowledge-pmc-scope__items">
         {items.map((item, index) => {
@@ -100,7 +101,7 @@ export function KnowledgePmcScopeChecklist({ list, items, oppositeItems, readOnl
                 <Checkbox
                   checked={item.selected}
                   disabled={readOnly || unavailable}
-                  aria-label={item.name}
+                  aria-label={contextLabel ? `${contextLabel} ${singular}: ${item.name}` : item.name}
                   aria-describedby={selectedOpposite ? explanationId : undefined}
                   aria-invalid={conflict || undefined}
                   onChange={(event) => {

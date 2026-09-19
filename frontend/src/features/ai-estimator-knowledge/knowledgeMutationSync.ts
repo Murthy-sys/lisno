@@ -4,13 +4,82 @@ import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { projectProcurementKeys } from "../procurement/projectProcurementApi";
 import { vendorSuggestionKeys } from "../procurement/vendorSuggestionsApi";
 import type {
+  KnowledgeBasket,
+  KnowledgeBasketDeletionImpact,
+  KnowledgeBasketQuality,
   KnowledgeBasketListResponse,
   KnowledgeItemDetail,
+  KnowledgeItemListResponse,
   KnowledgeMaster,
   KnowledgeMasterListResponse,
   KnowledgeMasterType,
   KnowledgeSectionMutationEnvelope
 } from "./knowledgeTypes";
+
+/**
+ * Publish the authoritative Basket result immediately, then refresh every
+ * query family that can carry its presentation name. Stable IDs remain the
+ * join key throughout; no cached record is matched by its old or new name.
+ */
+export async function syncKnowledgeBasketMutation(
+  queryClient: QueryClient,
+  basket: KnowledgeBasket
+): Promise<void> {
+  for (const [queryKey, current] of queryClient.getQueriesData<KnowledgeBasketListResponse>({
+    queryKey: knowledgeQueryKeys.basketLists()
+  })) {
+    if (!current?.items.some((entry) => entry.id === basket.id)) continue;
+    queryClient.setQueryData<KnowledgeBasketListResponse>(queryKey, {
+      ...current,
+      items: current.items.map((entry) => entry.id === basket.id ? basket : entry)
+    });
+  }
+
+  queryClient.setQueriesData<KnowledgeItemListResponse>(
+    { queryKey: knowledgeQueryKeys.itemLists() },
+    (current) => current ? {
+      ...current,
+      items: current.items.map((item) => ({
+        ...item,
+        ...(item.basketId === basket.id ? { basketName: basket.name } : {}),
+        ...(item.linkedMainLines ? {
+          linkedMainLines: item.linkedMainLines.map((linked) => linked.basketId === basket.id
+            ? { ...linked, basketName: basket.name }
+            : linked)
+        } : {})
+      }))
+    } : current
+  );
+
+  queryClient.setQueriesData<KnowledgeItemDetail>(
+    { queryKey: knowledgeQueryKeys.items() },
+    (current) => current?.basketId === basket.id
+      ? { ...current, basketName: basket.name }
+      : current
+  );
+  queryClient.setQueriesData<KnowledgeBasketQuality>(
+    { queryKey: knowledgeQueryKeys.basketQualities() },
+    (current) => current?.basketId === basket.id
+      ? { ...current, basketName: basket.name, basketStatus: basket.status }
+      : current
+  );
+  queryClient.setQueryData<KnowledgeBasketDeletionImpact>(
+    knowledgeQueryKeys.basketDeletionImpact(basket.id),
+    (current) => current
+      ? { ...current, basketName: basket.name, version: basket.version }
+      : current
+  );
+
+  await Promise.allSettled([
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketLists() }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.items() }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketQualities() }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketDeletionImpacts() }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists() }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() })
+  ]);
+}
 
 export function invalidateTemporaryMainLineDetails(queryClient: QueryClient): Promise<void> {
   return queryClient.invalidateQueries({

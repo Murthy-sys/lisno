@@ -426,7 +426,7 @@ describe("Knowledge Mode Specifications save integration", () => {
     const description = await screen.findByRole("textbox", { name: "Brief description" });
     await user.clear(description);
     await user.type(description, "Valid Pricing change that must not save alone");
-    const margin = screen.getByRole("spinbutton", { name: "PMC Margin" });
+    const margin = screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" });
     await user.clear(margin);
     await user.type(margin, "9");
 

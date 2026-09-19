@@ -337,7 +337,16 @@ export type KnowledgeModeConfiguration =
     })
   | (KnowledgeModeConfigurationBase & {
       modeKind: Extract<KnowledgeModeKind, "execution">;
-      executionSource: KnowledgeExecutionSource;
+      executionSource: Extract<KnowledgeExecutionSource, "sub_vendor">;
+      inclusions?: never;
+      exclusions?: never;
+      modeId?: never;
+    })
+  | (KnowledgeModeConfigurationBase & {
+      modeKind: Extract<KnowledgeModeKind, "execution">;
+      executionSource: Extract<KnowledgeExecutionSource, "in_house">;
+      inclusions?: KnowledgePmcScopeItem[];
+      exclusions?: KnowledgePmcScopeItem[];
       modeId?: never;
     })
   | (KnowledgeModeConfigurationBase & {
@@ -417,7 +426,7 @@ export interface KnowledgePmcCalculationPreview {
   pmcMarginAmountPaise: KnowledgePaise;
   /** Adjusted cost divided by (1 - PMC margin), rounded half-up to integer paise. */
   totalBeforeDiscountPaise: KnowledgePaise;
-  /** Signed remainder after the configured margin; can be negative for a large custom discount. */
+  /** Adjusted cost preserved when a PMC discount reduces only the PMC charge. */
   finalVendorChargesPaise: KnowledgePaise;
   discount?: {
     rateBps: KnowledgeBasisPoints;
@@ -435,10 +444,12 @@ export interface KnowledgeSubVendorCalculationSettings {
 }
 
 /** Shares PMC's breakdown shape and rounded division selling-price arithmetic. */
-export interface KnowledgeSubVendorCalculationPreview extends Omit<KnowledgePmcCalculationPreview, "pmcMarginBps" | "pmcMarginAmountPaise"> {
+export interface KnowledgeSubVendorCalculationPreview extends Omit<KnowledgePmcCalculationPreview, "pmcMarginBps" | "pmcMarginAmountPaise" | "finalVendorChargesPaise"> {
   subVendorMarginBps: KnowledgeBasisPoints;
   /** Rounded selling price minus adjusted cost, preserved separately when discount is applied. */
   subVendorMarginAmountPaise: KnowledgePaise;
+  /** Signed remainder after the configured margin; can be negative for a large selling-price discount. */
+  finalVendorChargesPaise: KnowledgePaise;
 }
 
 export interface KnowledgeInHouseCalculationSettings {

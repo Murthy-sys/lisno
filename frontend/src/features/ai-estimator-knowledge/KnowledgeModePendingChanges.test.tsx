@@ -51,6 +51,23 @@ describe("Mode pending publication lifecycle", () => {
     expect(panel.latest()?.groups).toEqual([]);
   });
 
+  it("publishes first-edited In-house starter lists under source-labelled groups", async () => {
+    const user = userEvent.setup();
+    const panel = setup();
+    await screen.findByRole("textbox", { name: "Specification name" });
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await user.click(screen.getByRole("checkbox", { name: "In-house" }));
+    expect(panel.latest()?.groups).toEqual([]);
+    await user.click(screen.getByRole("checkbox", { name: "In-house Inclusion: Supplier" }));
+    expect(panel.latest()?.groups.map(({ key, label }) => ({ key, label }))).toEqual([
+      { key: "in_house:inclusions", label: "Execution · In-house · Inclusions" },
+      { key: "in_house:exclusions", label: "Execution · In-house · Exclusions" },
+      { key: "mode:paragraph", label: "Mode · Shared paragraph" }
+    ]);
+    expect(panel.latest()?.groups[0]?.entries.find(({ title }) => title === "Supplier")?.fields)
+      .toContainEqual({ key: "selected", label: "State", value: "Selected" });
+  });
+
   it("publishes only the independent Sub-Vendor margin edit and clears it after confirmed save", async () => {
     const user = userEvent.setup();
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
@@ -59,7 +76,7 @@ describe("Mode pending publication lifecycle", () => {
     await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
     expect(panel.latest()?.groups).toEqual([]);
     fireEvent.change(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" }), { target: { value: "20" } });
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(12);
+    expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(12);
     expect(panel.latest()?.groups.map(({ key }) => key)).toEqual(["sub_vendor:margin"]);
     expect(panel.latest()?.groups[0]?.entries[0]?.fields).toEqual([{ key: "maximum", label: "Max. Lisno Margin", value: "20.00%" }]);
     await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
@@ -82,7 +99,7 @@ describe("Mode pending publication lifecycle", () => {
       ? { pmcMarginBps: 1_450, subVendorMarginBps: 1_500 } : key === "pricing" ? savedPricing : {}, 2, revision));
     await act(async () => { expect(await panel.ref.current?.save()).toBe(false); });
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(14.5);
+    expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(14.5);
     expect(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" })).toHaveValue(20);
     expect(panel.latest()?.groups.map(({ key }) => key)).toEqual(["sub_vendor:margin"]);
     expect(panel.latest()?.groups[0]?.entries[0]?.fields).toEqual([{ key: "maximum", label: "Max. Lisno Margin", value: "20.00%" }]);
@@ -131,7 +148,7 @@ describe("Mode pending publication lifecycle", () => {
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
       ? { pmcMarginBps: 1_200, ...original } : {}, 1, revision));
     const panel = setup();
-    fireEvent.change(await screen.findByRole("spinbutton", { name: "PMC Margin" }), { target: { value: "15" } });
+    fireEvent.change(await screen.findByRole("spinbutton", { name: "Max. PMC Margin (%)" }), { target: { value: "15" } });
     vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Updated elsewhere."));
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
       ? { pmcMarginBps: 1_400, ...server } : {}, 2, revision));
@@ -169,7 +186,8 @@ describe("Mode pending publication lifecycle", () => {
     const user = userEvent.setup();
     const panel = setup();
     await screen.findByRole("textbox", { name: "Brief description" });
-    fireEvent.change(screen.getByRole("spinbutton", { name: "PMC Margin" }), { target: { value: "15" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Min. PMC Margin (%)" }), { target: { value: "15" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" }), { target: { value: "15" } });
     const remoteCalculation = { baseRatePaise: 30_000, lowQuantityLimit: "82", impactBps: 1_600, minimumMarkupBps: 2_700, startingMarkupBps: 3_900 };
     vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Updated elsewhere."));
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced" ? { modeCalculations: { pmc: null, sub_vendor: remoteCalculation, in_house_labor: null, in_house_material: null }, pmcMarginBps: 1_900 } : savedPricing, 2, revision));
@@ -190,7 +208,8 @@ describe("Mode pending publication lifecycle", () => {
     const panel = setup();
     const description = await screen.findByRole("textbox", { name: "Brief description" });
     fireEvent.change(description, { target: { value: "Unconfirmed specification" } });
-    fireEvent.change(screen.getByRole("spinbutton", { name: "PMC Margin" }), { target: { value: "15" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Min. PMC Margin (%)" }), { target: { value: "15" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" }), { target: { value: "15" } });
     expect(panel.latest()?.groups.map((group) => group.key)).toEqual(["pmc:margin", "specifications"]);
     vi.mocked(api.updateKnowledgeSection).mockImplementation(async (_id, revision, key, input) => {
       if (key === "pricing") throw new Error("Connection interrupted");

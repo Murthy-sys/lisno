@@ -1,14 +1,7 @@
 import { BUDGET_ACTIONS, budgetAlterationIssues } from "./knowledgeBudgetAlterations";
-import { MODE_CALCULATION_LABELS, MODE_CALCULATION_SCOPES, modeCalculationIssues, modeCalculationsIssues } from "./knowledgeModeCalculation";
-import {
-  knowledgeModeFieldTypeLabel,
-  parseKnowledgeModeConfigurations,
-  partitionKnowledgeModeConfigurations
-} from "./knowledgeModeConfiguration";
-import { pmcMarginIssues, subVendorMarginRangeIssues } from "./knowledgePmcMargin";
-import { formatKnowledgeMoney, formatKnowledgePercentage } from "./knowledgePresentation";
+import { modeCalculationIssues } from "./knowledgeModeCalculation";
+import { pmcMarginRange, pmcMarginRangeIssues, subVendorMarginRange, subVendorMarginRangeIssues } from "./knowledgePmcMargin";
 import { validateQualityParameters } from "./knowledgeQuality";
-import { parseKnowledgeSpecifications } from "./knowledgeSpecificationConfiguration";
 import type { KnowledgeJsonObject, KnowledgeJsonValue, KnowledgeMasterType } from "./knowledgeTypes";
 import type {
   SavedSummaryContent,
@@ -40,12 +33,6 @@ function scalar(value: KnowledgeJsonValue | undefined): string {
   if (typeof value === "string") return value.trim() || NOT_CONFIGURED;
   if (Array.isArray(value)) return value.length ? value.map(scalar).join(", ") : NOT_CONFIGURED;
   return NEEDS_REVIEW;
-}
-
-function financial(value: KnowledgeJsonValue | undefined, money = false): string {
-  if (!present(value)) return NOT_CONFIGURED;
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return NEEDS_REVIEW;
-  return money ? formatKnowledgeMoney(value) : formatKnowledgePercentage(value);
 }
 
 function row(key: string, label: string, value: string): SavedSummaryRow {
@@ -117,98 +104,25 @@ function overview(input: SavedSummaryProjectionInput): SavedSummaryContent {
 
 function mode(input: SavedSummaryProjectionInput): SavedSummaryContent {
   const payload = input.sections.advanced;
-  const pricing = input.sections.pricing;
-  const details: SavedSummaryRow[] = [];
-  const configuredNames: string[] = [];
-  const rateHighlights: string[] = [];
-  const marginHighlights: string[] = [];
-  if (payload) {
-    const parsed = parseKnowledgeModeConfigurations(payload.modeConfigurations, input.masters.modes ?? []);
-    const partitioned = partitionKnowledgeModeConfigurations(parsed.configurations);
-    parsed.configurations.forEach((configuration, index) => {
-      const key = `configuration-${index}`;
-      const name = configuration.legacyModeId
-        ? masterName(input, "modes", configuration.legacyModeId)
-        : configuration.modeKind === "pmc" ? "PMC"
-          : configuration.executionSource === "sub_vendor" ? "Execution · Sub-Vendor"
-            : configuration.executionSource === "in_house" ? "Execution · In-house" : "Execution";
-      configuredNames.push(name);
-      details.push(row(key, "Configured mode", name));
-      for (const list of ["inclusions", "exclusions"] as const) {
-        const selected = configuration[list]?.filter(item => item.selected);
-        if (selected?.length) details.push(row(`${key}-${list}`, `Sub-Vendor ${list}`, selected.map(item => item.name.trim() || NAME_UNAVAILABLE).join(", ")));
-      }
-      configuration.fields.forEach((field, fieldIndex) => {
-        const fieldKey = `${key}-component-${fieldIndex}`;
-        const label = `${name} · ${field.label.trim() || NAME_UNAVAILABLE}`;
-        details.push(row(fieldKey, label, scalar(field.value)));
-        details.push(row(`${fieldKey}-type`, `${label} · Type`, knowledgeModeFieldTypeLabel(field.type)));
-        if (field.options.length) details.push(row(`${fieldKey}-options`, `${label} · Options`, field.options.join(", ")));
-      });
-    });
-    if (parsed.issues.length || partitioned.recovery.length) review(details, "configurations-review", "Mode components", partitioned.recovery.length > 0);
-    add(details, "description", "Shared description", payload.modeDescription);
-
-    // Do not use modeCalculationDraft or modeCalculationsForPayload here: both
-    // intentionally seed editor defaults / legacy values into multiple scopes.
-    const calculations = object(payload.modeCalculations) ? payload.modeCalculations : undefined;
-    const calculationEntries: [string, string, KnowledgeJsonValue | undefined][] = calculations
-      ? MODE_CALCULATION_SCOPES.filter(scope => present(calculations[scope])).map(scope => [scope, MODE_CALCULATION_LABELS[scope], calculations[scope]])
-      : [];
-    if (calculations && present(calculations.in_house)) calculationEntries.push(["in_house", "In-house (legacy)", calculations.in_house]);
-    if (present(payload.modeCalculation)) calculationEntries.push(["legacy", "Shared calculation (legacy)", payload.modeCalculation]);
-    if (modeCalculationsIssues(payload).some(issue => issue.path === "modeCalculations" || issue.path.startsWith("modeCalculations."))) {
-      review(details, "calculations-review", "Calculation settings");
-    }
-    for (const [scope, label, settings] of calculationEntries) {
-      if (!object(settings)) { review(details, `calculation-${scope}-review`, label); continue; }
-      if (present(settings.baseRatePaise)) {
-        const formatted = financial(settings.baseRatePaise, true);
-        details.push(row(`${scope}-base`, `${label} · Base Rate`, formatted));
-        rateHighlights.push(`${label} ${formatted}`);
-      }
-      add(details, `${scope}-limit`, `${label} · Low Quantity Limit`, settings.lowQuantityLimit);
-      if (present(settings.impactBps)) details.push(row(`${scope}-impact`, `${label} · Impact`, financial(settings.impactBps)));
-      if (scope !== "pmc" && scope !== "sub_vendor") {
-        if (present(settings.minimumMarkupBps)) details.push(row(`${scope}-minimum`, `${label} · Min. Gross Margin Markup`, financial(settings.minimumMarkupBps)));
-        if (present(settings.startingMarkupBps)) details.push(row(`${scope}-starting`, `${label} · Starting Gross Margin Markup`, financial(settings.startingMarkupBps)));
-      }
-      if (modeCalculationIssues(settings).length || scope === "legacy" || scope === "in_house") review(details, `calculation-${scope}-review`, `${label} settings`, scope === "legacy" || scope === "in_house");
-    }
-    const margins = [
-      ["pmcMarginBps", "PMC Margin"],
-      ["subVendorMinimumMarginBps", "Sub-Vendor · Min. Lisno Margin"],
-      ["subVendorMarginBps", "Sub-Vendor · Max. Lisno Margin"]
-    ] as const;
-    for (const [field, label] of margins) {
-      if (!present(payload[field])) continue;
-      const value = financial(payload[field]);
-      details.push(row(field, label, value));
-      marginHighlights.push(`${label} ${value}`);
-    }
-    if (present(payload.subVendorMarginBps) && !Object.hasOwn(payload, "subVendorMinimumMarginBps")) review(details, "margin-legacy", "Lisno margin", true);
-    if (pmcMarginIssues(payload.pmcMarginBps).length || subVendorMarginRangeIssues(payload).length) review(details, "margin-review", "Margins");
-    const supported = ["modeConfigurations", "modeDescription", "modeCalculations", "modeCalculation", ...margins.map(([field]) => field)];
-    if (Object.keys(payload).some(key => !supported.includes(key) && present(payload[key]) && (!Array.isArray(payload[key]) || payload[key].length > 0))) review(details, "advanced-legacy", "Other Mode settings", true);
-  }
-  const specifications = parseKnowledgeSpecifications(pricing?.specifications);
-  specifications.specifications.forEach((specification, index) => {
-    const name = specification.name.trim() || NAME_UNAVAILABLE;
-    details.push(row(`specification-${index}`, "Specification", name));
-    add(details, `specification-${index}-description`, `${name} · Description`, specification.description);
-    if (specification.hiddenTypedFields) review(details, `specification-${index}-legacy`, name, true);
-  });
-  if (specifications.issues.length) review(details, "specifications-review", "Specifications");
-  const previews: SavedSummaryRow[] = [];
-  if (configuredNames.length) previews.push(row("modes", "Modes", namesPreview(configuredNames)));
-  if (rateHighlights.length || marginHighlights.length) previews.push(row("rates", "Saved rates / margins", namesPreview([
-    ...rateHighlights.slice(0, 1), ...marginHighlights, ...rateHighlights.slice(1)
-  ])));
-  if (specifications.specifications.length) previews.push(row("specifications", `Specifications (${specifications.specifications.length})`, namesPreview(specifications.specifications.map(item => item.name.trim() || NAME_UNAVAILABLE))));
-  const calculationReview = details.find(item => item.key === "calculations-review");
-  if (calculationReview && previews.length < 3) previews.push(calculationReview);
-  if (!previews.length) previews.push(...details);
-  return content(details, previews);
+  if (!payload) return content([]);
+  const calculations = payload && object(payload.modeCalculations) ? payload.modeCalculations : undefined;
+  const validCalculation = (value: KnowledgeJsonValue | undefined) => object(value) && modeCalculationIssues(value).length === 0;
+  const completeRange = (range: { minimum: KnowledgeJsonValue | undefined; maximum: KnowledgeJsonValue | undefined }) =>
+    typeof range.minimum === "number" && typeof range.maximum === "number";
+  const pmcRange = pmcMarginRange(payload);
+  const subVendorRange = subVendorMarginRange(payload);
+  const pmcConfigured = Boolean(validCalculation(calculations?.pmc)
+    && completeRange(pmcRange) && pmcMarginRangeIssues(payload).length === 0);
+  const subVendorConfigured = Boolean(validCalculation(calculations?.sub_vendor)
+    && completeRange(subVendorRange) && subVendorMarginRangeIssues(payload).length === 0);
+  const inHouseConfigured = Boolean(validCalculation(calculations?.in_house_labor)
+    && validCalculation(calculations?.in_house_material));
+  const statuses = [
+    row("pmc-status", "PMC", pmcConfigured ? "Configured" : "Not configured"),
+    row("sub-vendor-status", "Sub-Vendor", subVendorConfigured ? "Configured" : "Not configured"),
+    row("in-house-status", "In-house", inHouseConfigured ? "Configured" : "Not configured")
+  ];
+  return content(statuses, statuses);
 }
 
 function targetRows(input: SavedSummaryProjectionInput, value: KnowledgeJsonObject, key: string): SavedSummaryRow[] {

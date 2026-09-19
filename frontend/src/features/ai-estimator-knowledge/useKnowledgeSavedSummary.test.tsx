@@ -21,6 +21,13 @@ const checklist: KnowledgeBasketQuality = { basketId: item.basketId, basketName:
   version: 1, revisionId: "checklist-1", revisionNumber: 1, contentDigest: null, updatedAt: null,
   parameters: [{ id: "q-1", label: "Saved basket alignment", type: "text", acceptanceCriteria: "Level joints" }] };
 const input: KnowledgeSavedSummaryInput = { item, revisionId: "revision-1", masters: { uoms: [squareFoot, squareMetre] }, baskets: [], items: [] };
+const configuredPmc: KnowledgeJsonObject = {
+  pmcMinimumMarginBps: 1_000,
+  pmcMarginBps: 2_000,
+  modeCalculations: {
+    pmc: { baseRatePaise: 12_345, lowQuantityLimit: "0", impactBps: 750, minimumMarkupBps: 1_000, startingMarkupBps: 2_000 }
+  }
+};
 
 function setup(props: KnowledgeSavedSummaryInput = input) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 }, mutations: { retry: false } } });
@@ -48,7 +55,8 @@ describe("saved summary queries", () => {
   it("loads every saved source initially and shares existing editor query keys without repeat reads", async () => {
     const { result, client, rerender } = setup();
     await waitFor(() => expect(result.current.every((group) => !group.notices.length)).toBe(true));
-    expect(api.getKnowledgeSection).toHaveBeenCalledTimes(4);
+    expect(api.getKnowledgeSection).toHaveBeenCalledTimes(3);
+    expect(api.getKnowledgeSection).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), "pricing");
     expect(api.getKnowledgeSection).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), "quality");
     expect(api.getKnowledgeBasketQuality).toHaveBeenCalledWith(item.basketId);
     expect(JSON.stringify(result.current)).toContain("Square foot");
@@ -56,7 +64,7 @@ describe("saved summary queries", () => {
     await client.fetchQuery({ queryKey: knowledgeQueryKeys.section(item.mainLineId, "revision-1", "overview"),
       queryFn: () => api.getKnowledgeSection(item.mainLineId, "revision-1", "overview") });
     rerender({ ...input });
-    expect(api.getKnowledgeSection).toHaveBeenCalledTimes(4);
+    expect(api.getKnowledgeSection).toHaveBeenCalledTimes(3);
     expect(api.previewKnowledge).not.toHaveBeenCalled();
     expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
   });
@@ -78,31 +86,31 @@ describe("saved summary queries", () => {
     expect(JSON.stringify(result.current[3])).not.toContain("Saved basket alignment");
   });
 
-  it("shows partial Mode success while pricing remains at its last saved value", async () => {
+  it("updates Mode status from confirmed Advanced cache writes without loading Pricing", async () => {
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => section(key,
-      key === "advanced" ? { pmcMarginBps: 1_000 } : key === "pricing" ? { specifications: [{ id: "s-1", name: "Saved plywood" }] } : {}));
+      key === "advanced" ? { pmcMarginBps: 1_000, modeDescription: "Do not disclose" } : {}));
     const { result, client } = setup();
-    await waitFor(() => expect(JSON.stringify(result.current[1])).toContain("Saved plywood"));
-    await act(async () => { commitKnowledgeSectionMutation(client, { ...section("advanced", { pmcMarginBps: 2_000 }, 3), aggregateVersion: 5 }); });
-    await waitFor(() => expect(JSON.stringify(result.current[1])).toContain("20.00%"));
-    expect(JSON.stringify(result.current[1])).toContain("Saved plywood");
-    expect(JSON.stringify(result.current[1])).not.toContain("Unsaved new board");
+    await waitFor(() => expect(result.current[1].details.find(row => row.label === "PMC")?.value).toBe("Not configured"));
+    await act(async () => { commitKnowledgeSectionMutation(client, { ...section("advanced", configuredPmc, 3), aggregateVersion: 5 }); });
+    await waitFor(() => expect(result.current[1].details.find(row => row.label === "PMC")?.value).toBe("Configured"));
+    expect(JSON.stringify(result.current[1])).not.toContain("Do not disclose");
+    expect(api.getKnowledgeSection).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), "pricing");
   });
 
   it("keeps available sources visible through an independent failure and scoped retry", async () => {
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => {
       if (key === "advanced") throw new Error("Unavailable");
-      return section(key, key === "pricing" ? { specifications: [{ id: "s-1", name: "Oak finish" }] } : {});
+      return section(key, {});
     });
     const { result } = setup();
     await waitFor(() => expect(result.current[1].notices.some((notice) => notice.tone === "error")).toBe(true));
-    expect(JSON.stringify(result.current[1])).toContain("Oak finish");
+    expect(result.current[1].details).toEqual([]);
     expect(JSON.stringify(result.current[3])).toContain("Saved basket alignment");
-    vi.mocked(api.getKnowledgeSection).mockResolvedValue(section("advanced", { modeDescription: "Confirmed shared paragraph" }));
+    vi.mocked(api.getKnowledgeSection).mockResolvedValue(section("advanced", configuredPmc));
     await act(async () => { result.current[1].notices.find((notice) => notice.onRetry)?.onRetry?.(); });
     await waitFor(() => expect(result.current[1].notices).toEqual([]));
-    expect(api.getKnowledgeSection).toHaveBeenCalledTimes(5);
-    expect(JSON.stringify(result.current[1])).toContain("Confirmed shared paragraph");
+    expect(api.getKnowledgeSection).toHaveBeenCalledTimes(4);
+    expect(result.current[1].details.find(row => row.label === "PMC")?.value).toBe("Configured");
   });
 
   it("marks failed refreshes stale, but hides cached data after an authorization denial", async () => {
@@ -142,7 +150,7 @@ describe("saved summary queries", () => {
     expect(api.getKnowledgeSection).not.toHaveBeenCalled();
     expect(result.current[0].emptyMessage).toBe("No revision available");
     rerender({ ...input, item: { ...item, itemType: "temporary" } });
-    await waitFor(() => expect(api.getKnowledgeSection).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(api.getKnowledgeSection).toHaveBeenCalledTimes(2));
     expect(api.getKnowledgeSection).not.toHaveBeenCalledWith(item.mainLineId, "revision-1", "recommendations");
     expect(result.current[2].emptyMessage).toBe("Not applicable");
   });

@@ -665,6 +665,14 @@
   color: var(--role-ink-muted, var(--color-text-muted));
 }
 
+.ui-app-shell[data-role] .knowledge-page .ui-page-header__title-action .knowledge-main-line-edit,
+.ui-app-shell[data-role] .knowledge-page .ui-page-header__title-action .knowledge-main-line-edit:not(:disabled):hover {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-lisno-warning, #d97706);
+}
+
 .ui-app-shell[data-role] .knowledge-page :is(.knowledge-section-tab, .knowledge-master-tab) {
   min-block-size: var(--control-height);
 }

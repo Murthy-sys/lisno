@@ -2,7 +2,7 @@ import { modeCalculationDraft, modeCalculationsForPayload, parseModeQuantity, MO
 import { generateModeDescription, syncModeDescription } from "./knowledgeModeDescription";
 import { knowledgeModeFieldTypeLabel, parseKnowledgeModeConfigurations, partitionKnowledgeModeConfigurations, type KnowledgeModeConfiguration } from "./knowledgeModeConfiguration";
 import { PMC_SCOPE_LISTS } from "./knowledgePmcScope";
-import { pmcMarginIssues, subVendorMarginRange, subVendorMarginRangeIssues } from "./knowledgePmcMargin";
+import { pmcMarginRange, pmcMarginRangeIssues, subVendorMarginRange, subVendorMarginRangeIssues } from "./knowledgePmcMargin";
 import { formatKnowledgePercentage, parseRupeeInputToPaise } from "./knowledgePresentation";
 import { pairPendingRows, pendingObjectRows, pendingRowsReordered, pendingText, pendingValuesEqual, type KnowledgePendingChangeEntry, type KnowledgePendingChangeField, type KnowledgePendingChangeGroup } from "./knowledgePendingChanges";
 import type { KnowledgeModeCalculationDraft } from "./KnowledgeModeCalculationTable";
@@ -63,8 +63,10 @@ function configLabel(configuration: KnowledgeModeConfiguration) {
     ? configuration.executionSource === "sub_vendor" ? "Execution · Sub-Vendor" : configuration.executionSource === "in_house" ? "Execution · In-house" : "Execution · Source not set"
     : "Mode configuration · Details unavailable";
 }
-function description(payload: KnowledgeJsonObject, name: string, pmc?: KnowledgeModeConfiguration) {
-  return typeof payload.modeDescription === "string" ? syncModeDescription(payload.modeDescription, pmc) : generateModeDescription(name, pmc);
+function description(payload: KnowledgeJsonObject, name: string, pmc?: KnowledgeModeConfiguration, inHouse?: KnowledgeModeConfiguration) {
+  return typeof payload.modeDescription === "string"
+    ? syncModeDescription(payload.modeDescription, pmc, undefined, inHouse)
+    : generateModeDescription(name, pmc, inHouse);
 }
 
 /** Projects only editable display values. Saved payloads never reach the request card. */
@@ -76,8 +78,10 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
   if (before) {
     const oldConfigs = parseKnowledgeModeConfigurations(before.modeConfigurations, input.modes).configurations;
     const configs = parseKnowledgeModeConfigurations(after.modeConfigurations, input.modes).configurations;
-    const oldPmc = partitionKnowledgeModeConfigurations(oldConfigs).primary.pmc;
-    const pmc = partitionKnowledgeModeConfigurations(configs).primary.pmc;
+    const oldPrimary = partitionKnowledgeModeConfigurations(oldConfigs).primary;
+    const primary = partitionKnowledgeModeConfigurations(configs).primary;
+    const oldPmc = oldPrimary.pmc;
+    const pmc = primary.pmc;
     for (const list of PMC_SCOPE_LISTS) {
       add(`pmc:${list}`, `PMC · ${list === "inclusions" ? "Inclusions" : "Exclusions"}`, rows(
         (oldPmc?.[list] ?? []).map((row) => ({ ...row })),
@@ -85,8 +89,15 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
         { name: "Name", selected: "State" }, { required: ["name"], format: (name, value) => name === "selected" ? value ? "Selected" : "Not selected" : value }
       ));
     }
-    if (!pendingValuesEqual(before.pmcMarginBps ?? null, after.pmcMarginBps ?? null)) {
-      add("pmc:margin", "PMC", [{ key: "pmc:margin", title: "PMC margin", kind: "updated", fields: [field("margin", "Margin", typeof after.pmcMarginBps === "number" ? formatKnowledgePercentage(after.pmcMarginBps) : after.pmcMarginBps)], ...(pmcMarginIssues(after.pmcMarginBps).length ? { incomplete: true } : {}) }]);
+    const oldPmcRange = pmcMarginRange(before);
+    const pmcRange = pmcMarginRange(after);
+    const pmcMarginFields = (["minimum", "maximum"] as const).flatMap((name) => {
+      const value = pmcRange[name];
+      if (pendingValuesEqual(oldPmcRange[name] ?? null, value ?? null)) return [];
+      return [field(name, name === "minimum" ? "Min. PMC Margin" : "Max. PMC Margin", typeof value === "number" ? formatKnowledgePercentage(value) : value)];
+    });
+    if (pmcMarginFields.length) {
+      add("pmc:margin", "PMC", [{ key: "pmc:margin", title: "PMC Margin", kind: "updated", fields: pmcMarginFields, ...(pmcMarginRangeIssues(after).length ? { incomplete: true } : {}) }]);
     }
     const oldMarginRange = subVendorMarginRange(before);
     const marginRange = subVendorMarginRange(after);
@@ -97,6 +108,15 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
     });
     if (marginFields.length) {
       add("sub_vendor:margin", "Execution · Sub-Vendor", [{ key: "sub_vendor:margin", title: "Lisno Margin", kind: "updated", fields: marginFields, ...(subVendorMarginRangeIssues(after).length ? { incomplete: true } : {}) }]);
+    }
+    const oldInHouse = oldPrimary.execution.in_house;
+    const inHouse = primary.execution.in_house;
+    for (const list of PMC_SCOPE_LISTS) {
+      add(`in_house:${list}`, `Execution · In-house · ${list === "inclusions" ? "Inclusions" : "Exclusions"}`, rows(
+        (oldInHouse?.[list] ?? []).map((row) => ({ ...row })),
+        (inHouse?.[list] ?? []).map((row) => ({ ...row })), `in_house:${list}`, "name", list === "inclusions" ? "Inclusion" : "Exclusion",
+        { name: "Name", selected: "State" }, { required: ["name"], format: (name, value) => name === "selected" ? value ? "Selected" : "Not selected" : value }
+      ));
     }
     // Configuration identities are retained, even when names or sources coincide.
     for (const pair of pairPendingRows(oldConfigs.map((row) => ({ id: row.id, modeKind: row.modeKind, executionSource: row.executionSource, fields: row.fields.map((value) => ({ ...value, options: [...value.options] })) })), configs.map((row) => ({ id: row.id, modeKind: row.modeKind, executionSource: row.executionSource, fields: row.fields.map((value) => ({ ...value, options: [...value.options] })) })))) {
@@ -119,8 +139,14 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
     }
     // Generated/automatically synchronized paragraph clauses are derived from scope controls,
     // so only a user's paragraph wording change receives a separate entry.
-    const expectedDescription = syncModeDescription(description(before, input.mainLineName, oldPmc), pmc, oldPmc);
-    const currentDescription = input.pendingDescription ?? description(after, input.mainLineName, pmc);
+    const expectedDescription = syncModeDescription(
+      description(before, input.mainLineName, oldPmc, oldInHouse),
+      pmc,
+      oldPmc,
+      inHouse,
+      oldInHouse
+    );
+    const currentDescription = input.pendingDescription ?? description(after, input.mainLineName, pmc, inHouse);
     if (expectedDescription.trim() !== currentDescription.trim()) add("mode:paragraph", "Mode · Shared paragraph", [{ key: "mode:paragraph", title: "Mode paragraph", kind: "updated", fields: [field("paragraph", "Paragraph", currentDescription)], ...(!currentDescription.trim() ? { incomplete: true } : {}) }]);
     const oldCalculations = modeCalculationsForPayload(before);
     const calculations = modeCalculationsForPayload(after);

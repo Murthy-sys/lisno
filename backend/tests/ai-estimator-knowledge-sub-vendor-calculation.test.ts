@@ -139,12 +139,10 @@ describe("Sub-Vendor Lisno margin simulator", () => {
   it.each([
     { quantity: "0" }, { quantity: "2.5" }, { quantity: "3" }, { quantity: "3.1" },
     { impactBps: undefined }, { impactBps: 0 }, { impactBps: 725 },
-    { subVendorMarginBps: 1_500 }, { subVendorMarginBps: 2_000, discountBps: 833 },
-    { subVendorMarginBps: 1_500, discountBps: 2_000 }, { subVendorMarginBps: 1_500, discountBps: 5_000 },
-    { subVendorMarginBps: 1_500, discountBps: 10_000 }, { discountBps: 9_999 },
-    { baseRatePaise: 997, quantity: "0.25", quantityScale: 2, discountBps: 455 },
+    { subVendorMarginBps: 1_500 }, { subVendorMarginBps: 2_000 },
+    { baseRatePaise: 997, quantity: "0.25", quantityScale: 2 },
     { baseRatePaise: 0, impactBps: KNOWLEDGE_PMC_MAX_IMPACT_BPS }
-  ])("matches PMC's quantity, impact, selling-price and discount arithmetic for %j", (patch) => {
+  ])("matches PMC's quantity, impact and selling-price arithmetic before discount for %j", (patch) => {
     const subVendorInput = { ...input, ...patch };
     const { subVendorMarginBps, ...common } = subVendorInput;
     const { pmcMarginBps, pmcMarginAmountPaise, ...pmc } = calculateKnowledgePmcPrice({ ...common, pmcMarginBps: subVendorMarginBps });
@@ -157,6 +155,17 @@ describe("Sub-Vendor Lisno margin simulator", () => {
     expect(result.totalPaise + (result.discount?.amountPaise ?? 0)).toBe(result.totalBeforeDiscountPaise);
     expect(result.finalVendorChargesPaise + result.subVendorMarginAmountPaise).toBe(result.totalPaise);
     expect(result).not.toHaveProperty("pmcMarginBps");
+  });
+
+  it("keeps Sub-Vendor selling-price discounts while PMC discounts only its charge", () => {
+    const common = { ...input, subVendorMarginBps: 2_000, discountBps: 833 };
+    const subVendor = calculateKnowledgeSubVendorPrice(common);
+    const { subVendorMarginBps, ...shared } = common;
+    const pmc = calculateKnowledgePmcPrice({ ...shared, pmcMarginBps: subVendorMarginBps });
+    expect(subVendor).toMatchObject({ totalBeforeDiscountPaise: 43_400, subVendorMarginAmountPaise: 8_680,
+      discount: { amountPaise: 3_615 }, totalPaise: 39_785, finalVendorChargesPaise: 31_105 });
+    expect(pmc).toMatchObject({ totalBeforeDiscountPaise: 43_400, pmcMarginAmountPaise: 8_680,
+      discount: { amountPaise: 723 }, totalPaise: 42_677, finalVendorChargesPaise: 34_720 });
   });
 
   it.each([["14.9", 1_000], ["15", 1_000], ["15.1", 0]] as const)("uses the inclusive configured limit for quantity %s", (quantity, appliedImpactBps) => {

@@ -32,7 +32,8 @@ describe("shared Mode paragraph", () => {
     const user = userEvent.setup();
     render(<Harness />);
     expect(screen.getByText(generated)).toBeVisible();
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    expect(screen.getByRole("checkbox", { name: "Execution" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     for (const list of ["Inclusions", "Exclusions"]) {
       await user.click(within(screen.getByRole("group", { name: list })).getByRole("checkbox", { name: list === "Inclusions" ? "Transport" : "Unloading" }));
     }
@@ -73,7 +74,8 @@ describe("shared Mode paragraph", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(screen.queryByRole("textbox", { name: "Mode paragraph" })).not.toBeInTheDocument();
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ modeDescription: "Custom work for both Modes.\nKeep this wording." }));
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    expect(screen.getByRole("checkbox", { name: "Execution" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Shifting" }));
     expect(screen.getByText("Custom work for both Modes. Keep this wording. Inclusions: Shifting.")).toBeVisible();
     const saved = onChange.mock.calls.at(-1)![0] as KnowledgeJsonObject;
@@ -87,7 +89,8 @@ describe("shared Mode paragraph", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    expect(screen.getByRole("checkbox", { name: "Execution" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     for (const list of ["Inclusions", "Exclusions"]) {
       await user.click(within(screen.getByRole("group", { name: list })).getByRole("checkbox", { name: list === "Inclusions" ? "Transport" : "Unloading" }));
     }
@@ -120,7 +123,8 @@ describe("shared Mode paragraph", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    expect(screen.getByRole("checkbox", { name: "Execution" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
     await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
     const text = screen.getByRole("textbox", { name: "Mode paragraph" });

@@ -2,6 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  syncKnowledgeBasketMutation,
   syncKnowledgeBasketDeletion,
   syncKnowledgeMainLineDeletion,
   syncKnowledgeLifecycleMutation,
@@ -129,6 +130,62 @@ describe("knowledge mutation cache synchronization", () => {
     expect(client.getQueryState(knowledgeQueryKeys.items())?.isInvalidated).toBe(true);
     expect(client.getQueryState(knowledgeQueryKeys.contexts())?.isInvalidated).toBe(true);
     expect(client.getQueryState(["unrelated"])?.isInvalidated).toBe(false);
+  });
+
+  it("publishes a renamed Basket by stable ID and refreshes every name-bearing cache", async () => {
+    const client = queryClient();
+    const basketListKey = knowledgeQueryKeys.basketList({ limit: 100, offset: 0 });
+    const itemKey = knowledgeQueryKeys.item("line-1");
+    const itemListKey = knowledgeQueryKeys.itemList({ limit: 20, offset: 0 });
+    const sectionKey = knowledgeQueryKeys.section("line-1", "revision-1", "advanced");
+    const qualityKey = knowledgeQueryKeys.basketQuality("basket-1");
+    const impactKey = knowledgeQueryKeys.basketDeletionImpact("basket-1");
+    client.setQueryData(basketListKey, {
+      items: [{ id: "basket-1", name: "Old name", status: "active" }],
+      pagination: { limit: 100, offset: 0, total: 1, hasMore: false }
+    });
+    client.setQueryData(itemKey, { mainLineId: "line-1", basketId: "basket-1", basketName: "Old name" });
+    client.setQueryData(itemListKey, {
+      items: [
+        { mainLineId: "line-1", basketId: "basket-1", basketName: "Old name", linkedMainLines: [
+          { mainLineId: "linked-1", basketId: "basket-1", basketName: "Old name" }
+        ] },
+        { mainLineId: "line-2", basketId: "basket-2", basketName: "Other basket" }
+      ],
+      pagination: { limit: 20, offset: 0, total: 2, hasMore: false }
+    });
+    client.setQueryData(sectionKey, { payload: { modeDescription: "Keep this draft" } });
+    client.setQueryData(qualityKey, { basketId: "basket-1", basketName: "Old name", basketStatus: "active", parameters: [] });
+    client.setQueryData(impactKey, { basketId: "basket-1", basketName: "Old name", version: 4, canDelete: true });
+    client.setQueryData(knowledgeQueryKeys.mainLineLists(), []);
+    client.setQueryData(knowledgeQueryKeys.contexts(), {});
+    const renamed = {
+      ...actor,
+      id: "basket-1",
+      name: "Renamed basket",
+      description: null,
+      displayOrder: 2,
+      status: "inactive" as const,
+      version: 5
+    };
+
+    await syncKnowledgeBasketMutation(client, renamed);
+
+    expect(client.getQueryData<{ items: { id: string; name: string }[] }>(basketListKey)?.items[0]?.name)
+      .toBe("Renamed basket");
+    expect(client.getQueryData(itemKey)).toMatchObject({ basketId: "basket-1", basketName: "Renamed basket" });
+    expect(client.getQueryData<{ items: Array<{ basketName: string; linkedMainLines?: Array<{ basketName: string }> }> }>(itemListKey)?.items)
+      .toMatchObject([
+        { basketName: "Renamed basket", linkedMainLines: [{ basketName: "Renamed basket" }] },
+        { basketName: "Other basket" }
+      ]);
+    expect(client.getQueryData(qualityKey)).toMatchObject({ basketName: "Renamed basket", basketStatus: "inactive" });
+    expect(client.getQueryData(impactKey)).toMatchObject({ basketName: "Renamed basket", version: 5 });
+    expect(client.getQueryData(sectionKey)).toEqual({ payload: { modeDescription: "Keep this draft" } });
+    for (const key of [basketListKey, itemKey, itemListKey, qualityKey, impactKey,
+      knowledgeQueryKeys.mainLineLists(), knowledgeQueryKeys.contexts()]) {
+      expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+    }
   });
 
   it("updates the section and invalidates related summaries and resolved contexts", async () => {

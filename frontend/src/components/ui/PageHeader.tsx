@@ -3,6 +3,7 @@ import type { ReactNode, Ref } from "react";
 export interface PageHeaderProps {
   id: string;
   title: ReactNode;
+  titleAction?: ReactNode;
   eyebrow?: ReactNode;
   description?: ReactNode;
   breadcrumb?: ReactNode;
@@ -15,6 +16,7 @@ export interface PageHeaderProps {
 export function PageHeader({
   id,
   title,
+  titleAction,
   eyebrow,
   description,
   breadcrumb,
@@ -28,14 +30,17 @@ export function PageHeader({
       {breadcrumb ? <div className="ui-page-header__breadcrumb">{breadcrumb}</div> : null}
       <div className="ui-page-header__content">
         {eyebrow ? <div className="ui-page-header__eyebrow">{eyebrow}</div> : null}
-        <h1
-          ref={headingRef}
-          className="ui-page-header__title"
-          id={id}
-          tabIndex={headingTabIndex}
-        >
-          {title}
-        </h1>
+        <div className="ui-page-header__title-row">
+          <h1
+            ref={headingRef}
+            className="ui-page-header__title"
+            id={id}
+            tabIndex={headingTabIndex}
+          >
+            {title}
+          </h1>
+          {titleAction ? <div className="ui-page-header__title-action">{titleAction}</div> : null}
+        </div>
         {description ? <p className="ui-page-header__description">{description}</p> : null}
         {metadata ? <div className="ui-page-header__metadata">{metadata}</div> : null}
       </div>

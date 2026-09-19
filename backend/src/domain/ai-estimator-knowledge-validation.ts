@@ -283,7 +283,7 @@ const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   recommendations: new Set(["recommendations", "exclusions", "budgetAlterations"]),
   quality: new Set(["parameters"]),
   execution: new Set(["steps", "productivity"]),
-  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "pmcMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"])
+  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "pmcMarginBps", "pmcMinimumMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"])
 };
 
 function inspectBoundedValue(
@@ -374,7 +374,7 @@ export function validateKnowledgeSectionPayload(
       issues.push({ path: `payload.${key}`, code: "TEXT_TOO_LONG", message: `${key} exceeds the supported short-text length.` });
     }
     // Configuration margins have optional, strictly bounded validation below.
-    const separatelyValidatedMargin = sectionKey === "advanced" && ["pmcMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"].includes(key);
+    const separatelyValidatedMargin = sectionKey === "advanced" && ["pmcMarginBps", "pmcMinimumMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"].includes(key);
     if (key.endsWith("Bps") && !separatelyValidatedMargin && (
       !Number.isSafeInteger(value) ||
       (value as number) < 0 ||
@@ -1416,9 +1416,7 @@ function validateAdvancedPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
   const issues: KnowledgeValidationIssue[] = [];
-  if (record.pmcMarginBps !== undefined && record.pmcMarginBps !== null) {
-    validateInteger(record.pmcMarginBps, "payload.pmcMarginBps", issues, 1_000, 2_000);
-  }
+  validatePmcMarginRange(record, issues);
   validateSubVendorLisnoMarginRange(record, issues);
   if (record.modeCalculation !== undefined) validateModeCalculationSettings(record.modeCalculation, "payload.modeCalculation", issues);
   if (Object.hasOwn(record, "modeCalculations")) {
@@ -1581,15 +1579,19 @@ function validateModeConfigurations(
         issues
       );
     }
+    const ownsScope = !hasModeId && (
+      configuration.modeKind === "pmc" ||
+      (configuration.modeKind === "execution" && configuration.executionSource === "in_house")
+    );
     for (const list of ["inclusions", "exclusions"] as const) {
       if (!(list in configuration)) continue;
-      if (configuration.modeKind !== "pmc" || hasModeId) {
+      if (!ownsScope) {
         issues.push(irrelevantFieldIssue(`${configurationPath}.${list}`));
       }
-      validatePmcScopeItems(configuration[list], `${configurationPath}.${list}`, issues);
+      validateModeScopeItems(configuration[list], `${configurationPath}.${list}`, issues);
     }
-    if (configuration.modeKind === "pmc" && !hasModeId) {
-      validatePmcScopeSelections(configuration, configurationPath, issues);
+    if (ownsScope) {
+      validateModeScopeSelections(configuration, configurationPath, issues);
     }
     validateModeConfigurationFields(
       configuration.fields,
@@ -1597,6 +1599,51 @@ function validateModeConfigurations(
       issues
     );
   });
+}
+
+function validatePmcMarginRange(record: Record<string, unknown>, issues: KnowledgeValidationIssue[]): void {
+  const minimumKey = "pmcMinimumMarginBps";
+  const maximumKey = "pmcMarginBps";
+  for (const [key, label] of [[minimumKey, "Min."], [maximumKey, "Max."]] as const) {
+    if (!Object.hasOwn(record, key) || record[key] === null) continue;
+    const value = record[key];
+    if (!Number.isSafeInteger(value) || (value as number) < 1_000 || (value as number) > 2_000) {
+      issues.push({
+        path: `payload.${key}`,
+        code: "INVALID_INTEGER",
+        message: `${label} PMC Margin must be between 10% and 20%, with up to two decimal places.`
+      });
+    }
+  }
+  // A missing minimum is legacy data: its effective value equals maximum without changing storage.
+  if (!Object.hasOwn(record, minimumKey)) return;
+  if (!Object.hasOwn(record, maximumKey)) {
+    issues.push({
+      path: `payload.${maximumKey}`,
+      code: "INCOMPLETE_MARGIN_RANGE",
+      message: "Enter both Min. and Max. PMC Margin, or clear both values."
+    });
+    return;
+  }
+  const minimum = record[minimumKey];
+  const maximum = record[maximumKey];
+  const minimumEmpty = minimum === null;
+  const maximumEmpty = maximum === null;
+  if (minimumEmpty !== maximumEmpty) {
+    issues.push({
+      path: `payload.${minimumEmpty ? minimumKey : maximumKey}`,
+      code: "INCOMPLETE_MARGIN_RANGE",
+      message: "Enter both Min. and Max. PMC Margin, or clear both values."
+    });
+  } else if (Number.isSafeInteger(minimum) && Number.isSafeInteger(maximum) && (minimum as number) > (maximum as number)) {
+    for (const key of [minimumKey, maximumKey]) {
+      issues.push({
+        path: `payload.${key}`,
+        code: "INVALID_MARGIN_RANGE",
+        message: "Min. PMC Margin must be less than or equal to Max. PMC Margin."
+      });
+    }
+  }
 }
 
 function validateSubVendorLisnoMarginRange(record: Record<string, unknown>, issues: KnowledgeValidationIssue[]): void {
@@ -1632,7 +1679,7 @@ function validateSubVendorLisnoMarginRange(record: Record<string, unknown>, issu
   }
 }
 
-function validatePmcScopeItems(value: unknown, path: string, issues: KnowledgeValidationIssue[]): void {
+function validateModeScopeItems(value: unknown, path: string, issues: KnowledgeValidationIssue[]): void {
   const rows = validateObjectArray(value, path, issues);
   const ids = new Set<string>();
   const names = new Set<string>();
@@ -1649,7 +1696,7 @@ function validatePmcScopeItems(value: unknown, path: string, issues: KnowledgeVa
   });
 }
 
-function validatePmcScopeSelections(
+function validateModeScopeSelections(
   configuration: Record<string, unknown>,
   path: string,
   issues: KnowledgeValidationIssue[]

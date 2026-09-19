@@ -6,8 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { KnowledgeModeConfigurationBuilder } from "./KnowledgeModeConfigurationBuilder";
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
-import { KnowledgeSubVendorMarginRange } from "./KnowledgePmcMarginInput";
-import { subVendorMarginRange, subVendorMarginRangeIssues, withSubVendorMargin } from "./knowledgePmcMargin";
+import { KnowledgePmcMarginRange, KnowledgeSubVendorMarginRange } from "./KnowledgePmcMarginInput";
+import { pmcMarginRange, pmcMarginRangeIssues, subVendorMarginRange, subVendorMarginRangeIssues, withPmcMargin, withSubVendorMargin } from "./knowledgePmcMargin";
 import type { KnowledgeJsonObject } from "./knowledgeTypes";
 
 function Harness({ initial = {}, readOnly = false, onChange = vi.fn(), onValidationChange = vi.fn() }: {
@@ -20,74 +20,73 @@ function Harness({ initial = {}, readOnly = false, onChange = vi.fn(), onValidat
     onChange={(next) => { setPayload(next); onChange(next); }} /></main>;
 }
 
-describe("PMC Margin", () => {
-  it("shows a compact number input beside the main line with strict limits", async () => {
+async function showExecution(user: ReturnType<typeof userEvent.setup> = userEvent.setup()) {
+  const control = screen.getByRole("checkbox", { name: "Execution" });
+  if (!(control as HTMLInputElement).checked) await user.click(control);
+  const subVendor = screen.getByRole("checkbox", { name: "Sub-Vendor" });
+  if (!(subVendor as HTMLInputElement).checked) await user.click(subVendor);
+}
+
+describe("PMC Margin range", () => {
+  it("rejects an explicit minimum without an owned maximum, including an empty minimum", () => {
+    expect(pmcMarginRangeIssues({ pmcMinimumMarginBps: null })).toContainEqual({
+      path: "pmcMarginBps",
+      message: "Enter the maximum PMC margin, or clear both margins."
+    });
+    expect(pmcMarginRangeIssues({ pmcMinimumMarginBps: 1_500 })).toContainEqual({
+      path: "pmcMarginBps",
+      message: "Enter the maximum PMC margin, or clear both margins."
+    });
+  });
+
+  it("opens a legacy single value as an equal pair without writing", async () => {
     const onChange = vi.fn();
-    render(<Harness onChange={onChange} />);
-    const margin = within(screen.getByRole("region", { name: "PMC" })).getByText("PMC Margin");
-    expect(margin).toBeVisible();
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveAttribute("type", "number");
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveAttribute("min", "10");
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveAttribute("max", "20");
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveAttribute("step", "5");
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveAccessibleDescription("Allowed: 10%–20%");
-    expect(screen.queryByRole("textbox", { name: "PMC Margin (%)" })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("checkbox", { name: "PMC" }));
-    await userEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
-    expect(margin).not.toBeVisible();
-    await userEvent.click(screen.getByRole("checkbox", { name: "PMC" }));
-    expect(margin).toBeVisible();
+    render(<Harness initial={{ pmcMarginBps: 1_525 }} onChange={onChange} />);
+    for (const label of ["Min.", "Max."]) {
+      const input = screen.getByRole("spinbutton", { name: `${label} PMC Margin (%)` });
+      expect(input).toHaveValue(15.25);
+      expect(input).toHaveAttribute("min", "10");
+      expect(input).toHaveAttribute("max", "20");
+      expect(input).toHaveAttribute("step", "0.01");
+      expect(input).toHaveAccessibleDescription("Allowed: 10%–20% · Up to 2 decimal places · Min. ≤ Max.");
+    }
     expect(onChange).not.toHaveBeenCalled();
     expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
   });
 
-  it("disables the saved number in read-only revisions and retains values in conflict review", () => {
+  it("materializes both effective values on the first legacy edit", () => {
     const onChange = vi.fn();
-    const view = render(<Harness initial={{ pmcMarginBps: 2_000 }} readOnly onChange={onChange} />);
-    expect(screen.getByText("PMC Margin")).toBeVisible();
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(20);
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toBeDisabled();
-    expect(screen.queryByRole("textbox", { name: "PMC Margin (%)" })).not.toBeInTheDocument();
-    expect(onChange).not.toHaveBeenCalled();
+    render(<Harness initial={{ modeDescription: "Keep", pmcMarginBps: 1_525 }} onChange={onChange} />);
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Min. PMC Margin (%)" }), { target: { value: "12.5" } });
+    expect(onChange).toHaveBeenLastCalledWith({ modeDescription: "Keep", pmcMinimumMarginBps: 1_250, pmcMarginBps: 1_525 });
+  });
+
+  it("validates the 10–20% pair and preserves typed invalid values", () => {
+    const onValidationChange = vi.fn();
+    render(<Harness initial={{ pmcMinimumMarginBps: 1_500, pmcMarginBps: 2_000 }} onValidationChange={onValidationChange} />);
+    const minimum = screen.getByRole("spinbutton", { name: "Min. PMC Margin (%)" });
+    fireEvent.change(minimum, { target: { value: "20.01" } });
+    expect(minimum).toHaveValue(20.01);
+    expect(minimum).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter a minimum PMC margin from 10% to 20%");
+    fireEvent.change(minimum, { target: { value: "19.99" } });
+    expect(minimum).not.toHaveAttribute("aria-invalid");
+    expect(onValidationChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it("renders saved Min/Max values in read-only and conflict review", () => {
+    const payload = { pmcMinimumMarginBps: 1_250, pmcMarginBps: 1_800 };
+    const view = render(<Harness initial={payload} readOnly />);
+    expect(screen.getByRole("spinbutton", { name: "Min. PMC Margin (%)" })).toHaveValue(12.5);
+    expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(18);
+    expect(screen.getByRole("spinbutton", { name: "Min. PMC Margin (%)" })).toBeDisabled();
     view.unmount();
-    render(<KnowledgeConflictReview sectionKey="advanced" payload={{ pmcMarginBps: 1_250 }}
+    render(<KnowledgeConflictReview sectionKey="advanced" payload={payload}
       localVersion={1} serverVersion={2} masters={{}} relationshipBaskets={[]} relationshipItems={[]} />);
-    expect(screen.getByText("PMC Margin")).toBeVisible();
+    expect(screen.getByText("Min. PMC Margin")).toBeVisible();
+    expect(screen.getByText("Max. PMC Margin")).toBeVisible();
     expect(screen.getByText("12.50%")).toBeVisible();
-  });
-
-  it("accepts both bounds and decimal margins within them while retaining other fields", async () => {
-    const user = userEvent.setup();
-    const onChange = vi.fn();
-    const onValidationChange = vi.fn();
-    const other = { modeDescription: "Custom scope", modeCalculations: { pmc: null, sub_vendor: null, in_house_labor: null, in_house_material: null } };
-    render(<Harness initial={other} onChange={onChange} onValidationChange={onValidationChange} />);
-    const input = screen.getByRole("spinbutton", { name: "PMC Margin" });
-    for (const [text, bps] of [["10", 1000], ["15.25", 1525], ["19.99", 1999], ["20", 2000]] as const) {
-      await user.clear(input);
-      await user.type(input, text);
-      expect(input).toHaveValue(Number(text));
-      expect(onChange).toHaveBeenLastCalledWith({ ...other, pmcMarginBps: bps });
-      expect(onValidationChange).toHaveBeenLastCalledWith(true);
-    }
-    await user.clear(input);
-    expect(onChange).toHaveBeenLastCalledWith({ ...other, pmcMarginBps: null });
-    expect(onValidationChange).toHaveBeenLastCalledWith(true);
-  });
-
-  it("rejects margins outside 10–20 percent, over-precise and unsafe values without silently clamping", () => {
-    const onValidationChange = vi.fn();
-    render(<Harness onValidationChange={onValidationChange} />);
-    const input = screen.getByRole("spinbutton", { name: "PMC Margin" });
-    for (const value of ["-1", "0", "9.99", "20.01", "23", "12.345", "90071992547409.92"]) {
-      fireEvent.change(input, { target: { value } });
-      expect(input).toHaveAttribute("aria-invalid", "true");
-      expect(onValidationChange).toHaveBeenLastCalledWith(false);
-      expect(screen.getByRole("alert")).toHaveTextContent("Enter a PMC margin from 10% to 20%");
-    }
-    fireEvent.change(input, { target: { value: "15.75" } });
-    expect(input).not.toHaveAttribute("aria-invalid");
-    expect(onValidationChange).toHaveBeenLastCalledWith(true);
+    expect(screen.getByText("18.00%")).toBeVisible();
   });
 });
 
@@ -95,7 +94,7 @@ describe("Sub-Vendor Lisno Margin range", () => {
   it("opens legacy data as equal values without writing and uses one accessible range hint", async () => {
     const onChange = vi.fn();
     render(<Harness initial={{ subVendorMarginBps: 1_500 }} onChange={onChange} />);
-    await userEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showExecution();
     for (const label of ["Min.", "Max."]) {
       const input = screen.getByRole("spinbutton", { name: `${label} Lisno Margin (%)` });
       expect(input).toHaveValue(15);
@@ -114,7 +113,7 @@ describe("Sub-Vendor Lisno Margin range", () => {
     const onChange = vi.fn();
     const onValidationChange = vi.fn();
     render(<Harness initial={{ subVendorMarginBps: 1_000 }} onChange={onChange} onValidationChange={onValidationChange} />);
-    await userEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showExecution();
     for (const label of ["Min.", "Max."]) {
       const input = screen.getByRole("spinbutton", { name: `${label} Lisno Margin (%)` });
       expect(input).toHaveValue(10);
@@ -128,7 +127,7 @@ describe("Sub-Vendor Lisno Margin range", () => {
     const onChange = vi.fn();
     const onValidationChange = vi.fn();
     render(<Harness initial={{ pmcMarginBps: 1_225 }} onChange={onChange} onValidationChange={onValidationChange} />);
-    await userEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showExecution();
     const min = screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" });
     const max = screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" });
     fireEvent.change(min, { target: { value: String(minimum) } });
@@ -138,25 +137,25 @@ describe("Sub-Vendor Lisno Margin range", () => {
     expect(onValidationChange).toHaveBeenLastCalledWith(true);
     expect(onChange).toHaveBeenLastCalledWith({ pmcMarginBps: 1_225,
       subVendorMinimumMarginBps: minimum * 100, subVendorMarginBps: maximum * 100 });
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(12.25);
+    expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(12.25);
   });
 
   it.each(["Min.", "Max."])("freezes the other legacy value when first editing %s", async (label) => {
     const onChange = vi.fn();
     render(<Harness initial={{ pmcMarginBps: 1_250, subVendorMarginBps: 1_750 }} onChange={onChange} />);
-    await userEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showExecution();
     fireEvent.change(screen.getByRole("spinbutton", { name: `${label} Lisno Margin (%)` }), { target: { value: label === "Min." ? "15" : "20" } });
     expect(onChange).toHaveBeenLastCalledWith({ pmcMarginBps: 1_250,
       subVendorMinimumMarginBps: label === "Min." ? 1_500 : 1_750,
       subVendorMarginBps: label === "Max." ? 2_000 : 1_750 });
-    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(12.5);
+    expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(12.5);
   });
 
   it.each([1_750])("keeps historical %i basis points visible until both margins are corrected", async (legacyMargin) => {
     const onChange = vi.fn();
     const onValidationChange = vi.fn();
     render(<Harness initial={{ subVendorMarginBps: legacyMargin }} onChange={onChange} onValidationChange={onValidationChange} />);
-    await userEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showExecution();
     const min = screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" });
     const max = screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" });
     expect(min).toHaveValue(legacyMargin / 100);
@@ -180,7 +179,7 @@ describe("Sub-Vendor Lisno Margin range", () => {
     const onValidationChange = vi.fn();
     render(<Harness initial={{ subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 }}
       onValidationChange={onValidationChange} />);
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showExecution(user);
     const input = screen.getByRole("spinbutton", { name: `${label} Lisno Margin (%)` });
     for (const value of ["12.5", "17", "18", "17.5"]) {
       await user.clear(input);
@@ -200,7 +199,7 @@ describe("Sub-Vendor Lisno Margin range", () => {
     const onChange = vi.fn();
     const onValidationChange = vi.fn();
     render(<Harness initial={{ pmcMarginBps: 1_250 }} onChange={onChange} onValidationChange={onValidationChange} />);
-    await userEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showExecution();
     const min = screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" });
     const max = screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" });
     expect(min).toHaveValue(null);
@@ -236,7 +235,7 @@ describe("Sub-Vendor Lisno Margin range", () => {
     const onChange = vi.fn();
     const payload = { pmcMarginBps: 1_250, subVendorMinimumMarginBps: 1_000, subVendorMarginBps: 3_500 };
     const view = render(<Harness initial={payload} readOnly onChange={onChange} />);
-    await userEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await showExecution();
     expect(screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" })).toHaveValue(10);
     expect(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" })).toHaveValue(35);
     expect(screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" })).toBeDisabled();
@@ -249,7 +248,7 @@ describe("Sub-Vendor Lisno Margin range", () => {
     expect(screen.getByText("Max. Lisno Margin")).toBeVisible();
     expect(screen.getByText("10.00%")).toBeVisible();
     expect(screen.getByText("35.00%")).toBeVisible();
-    expect(screen.getByText("12.50%")).toBeVisible();
+    expect(screen.getAllByText("12.50%")).toHaveLength(2);
   });
 
   it("restores both controls on discard and accepts updated controlled values", () => {
@@ -265,6 +264,33 @@ describe("Sub-Vendor Lisno Margin range", () => {
     view.rerender(<KnowledgeSubVendorMarginRange {...props} minimum={1_500} maximum={2_000} key="discard" />);
     expect(screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" })).toHaveValue(15);
     expect(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" })).toHaveValue(20);
+  });
+});
+
+describe("PMC margin compatibility helpers", () => {
+  it("preserves legacy absence and materializes an equal pair only on edit", () => {
+    expect(pmcMarginRange({})).toEqual({ minimum: undefined, maximum: undefined });
+    expect(pmcMarginRange({ pmcMarginBps: 1_800 })).toEqual({ minimum: 1_800, maximum: 1_800 });
+    expect(withPmcMargin({ pmcMarginBps: 1_800 }, "maximum", 1_900)).toEqual({ pmcMinimumMarginBps: 1_800, pmcMarginBps: 1_900 });
+    expect(withPmcMargin({}, "minimum", 1_000)).toEqual({ pmcMinimumMarginBps: 1_000, pmcMarginBps: null });
+  });
+
+  it("rejects partial, reversed and out-of-domain pairs", () => {
+    expect(pmcMarginRangeIssues({ pmcMinimumMarginBps: null, pmcMarginBps: 1_500 })).not.toEqual([]);
+    expect(pmcMarginRangeIssues({ pmcMinimumMarginBps: 1_900, pmcMarginBps: 1_800 })).toEqual([
+      { path: "pmcMinimumMarginBps", message: "Minimum PMC margin must not exceed maximum PMC margin." }
+    ]);
+    expect(pmcMarginRangeIssues({ pmcMinimumMarginBps: 999, pmcMarginBps: 2_001 })).toHaveLength(2);
+  });
+
+  it("restores the controlled PMC pair after invalid local text", () => {
+    const props = { minimum: 1_100, maximum: 1_700, readOnly: false, errors: {}, onChange: vi.fn(), onFieldRef: vi.fn() };
+    const view = render(<KnowledgePmcMarginRange {...props} key="draft" />);
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Min. PMC Margin (%)" }), { target: { value: "12.345" } });
+    expect(props.onChange).toHaveBeenCalledWith("minimum", "12.345");
+    view.rerender(<KnowledgePmcMarginRange {...props} key="discard" />);
+    expect(screen.getByRole("spinbutton", { name: "Min. PMC Margin (%)" })).toHaveValue(11);
+    expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(17);
   });
 });
 

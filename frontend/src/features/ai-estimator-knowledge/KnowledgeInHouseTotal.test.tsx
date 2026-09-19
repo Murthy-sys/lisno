@@ -41,7 +41,7 @@ function open() {
 function close(dialog: HTMLElement) { fireEvent.click(within(dialog).getByRole("button", { name: "Close" })); }
 async function advance(milliseconds = 300) { await act(async () => { await vi.advanceTimersByTimeAsync(milliseconds); }); }
 function expectBothTotals(value: string) {
-  const totals = screen.getAllByLabelText("Labor + Material total", { exact: true });
+  const totals = screen.getAllByLabelText("Subtotal", { exact: true });
   expect(totals).toHaveLength(2);
   for (const total of totals) expect(total).toHaveTextContent(value);
 }
@@ -62,15 +62,17 @@ describe("combined In-house total", () => {
     expect(fireEvent.submit(dialog.querySelector("form")!)).toBe(false);
     await advance(1);
     expect(previewKnowledge).toHaveBeenCalledExactlyOnceWith({ inHouseCalculation: { labor, material }, quantity: "1", quantityScale: 0, modeCalculationMarkupBasis: "starting" }, transportOptions);
-    expect(within(dialog).getByLabelText("Labor total", { exact: true })).toHaveTextContent("₹553.50");
-    expect(within(dialog).getByLabelText("Material total", { exact: true })).toHaveTextContent("₹996.72");
+    expect(within(dialog).getByLabelText("Labour expense", { exact: true })).toHaveTextContent("₹450.00");
+    expect(within(dialog).getByLabelText("Margin on labour", { exact: true })).toHaveTextContent("₹103.50");
+    expect(within(dialog).getByLabelText("Material expense", { exact: true })).toHaveTextContent("₹732.88");
+    expect(within(dialog).getByLabelText("Margin on material", { exact: true })).toHaveTextContent("₹263.84");
     expectBothTotals("₹1,550.22");
     view.rerenderTotal({ labor: { ...labor }, material: { ...material } });
     fireEvent.submit(dialog.querySelector("form")!);
     await advance(1_000);
     expect(previewKnowledge).toHaveBeenCalledTimes(1);
     close(dialog);
-    expect(screen.getByLabelText("Labor + Material total", { exact: true })).toHaveTextContent("₹1,550.22");
+    expect(screen.getByLabelText("Subtotal", { exact: true })).toHaveTextContent("₹1,550.22");
     expect(screen.getByText(/Quantity: 1 Number · Starting markup/)).toBeVisible();
   });
 
@@ -80,7 +82,7 @@ describe("combined In-house total", () => {
     await advance();
     const quantity = within(dialog).getByRole("textbox", { name: "Quantity" });
     fireEvent.change(quantity, { target: { value: "2" } });
-    expect(screen.queryByLabelText("Labor + Material total")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Subtotal")).not.toBeInTheDocument();
     await advance(200);
     fireEvent.change(quantity, { target: { value: "20" } });
     await advance(299);
@@ -111,10 +113,10 @@ describe("combined In-house total", () => {
     expectBothTotals("₹1,491.07");
     expect(within(dialog).getByText(/Discount: 5.00% · Effective markup: Labor 18.00%, Material 31.00%/)).toBeVisible();
     close(dialog);
-    expect(screen.getByLabelText("Labor + Material total")).toHaveTextContent("₹1,491.07");
+    expect(screen.getByLabelText("Subtotal")).toHaveTextContent("₹1,491.07");
     open();
     expect(screen.getByRole("textbox", { name: "Discount (%)" })).toHaveValue("0");
-    expect(screen.queryByLabelText("Labor + Material total")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Subtotal")).not.toBeInTheDocument();
   });
 
   it("rechecks the smaller allowance after cost edits and refuses discount metadata missing from either cost", async () => {
@@ -135,13 +137,13 @@ describe("combined In-house total", () => {
     await advance();
     expect(within(dialog).getByText(/Maximum allowed: 0.00%/)).toBeVisible();
     expect(previewKnowledge).toHaveBeenCalledTimes(1);
-    expect(screen.queryByLabelText("Labor + Material total")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Subtotal")).not.toBeInTheDocument();
   });
 
   it("waits for both configured costs and a saved UOM instead of treating missing data as zero", async () => {
     const view = setup({ material: null });
     expect(screen.getByRole("button", { name: "Test In-house total" })).toBeDisabled();
-    expect(screen.queryByLabelText("Labor + Material total")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Subtotal")).not.toBeInTheDocument();
     view.rerenderTotal({ material, uom: { scopeKey: "line-one:revision-one", label: "Unavailable", message: "Overview unavailable" } });
     expect(screen.getByText("Overview unavailable")).toBeVisible();
     expect(screen.getByRole("button", { name: "Test In-house total" })).toBeDisabled();
@@ -187,7 +189,7 @@ describe("combined In-house total", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(signal.aborted).toBe(true);
     await act(async () => pending.resolve(response()));
-    expect(screen.queryByLabelText("Labor + Material total")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Subtotal")).not.toBeInTheDocument();
   });
 
   it.each(["success", "failure"] as const)("ignores stale %s while the latest request controls both totals and loading", async (outcome) => {
@@ -209,7 +211,7 @@ describe("combined In-house total", () => {
     await act(async () => outcome === "success" ? obsolete.resolve(response({ ...result, totalPaise: 99_999 })) : obsolete.reject(new Error("Old material failure")));
     expect(within(dialog).getByText("Calculating both costs…")).toBeVisible();
     expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Labor + Material total")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Subtotal")).not.toBeInTheDocument();
     await act(async () => latest.resolve(response()));
     expectBothTotals("₹1,550.22");
     expect(within(dialog).queryByText("Calculating both costs…")).not.toBeInTheDocument();
@@ -238,7 +240,7 @@ describe("combined In-house total", () => {
     quantity.focus();
     fireEvent.change(quantity, { target: { value: invalidQuantity } });
     await act(async () => pending.resolve(response()));
-    expect(screen.queryByLabelText("Labor + Material total")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Subtotal")).not.toBeInTheDocument();
     await advance();
     expect(quantity).toHaveAttribute("aria-invalid", "true");
     expect(quantity).toHaveFocus();
@@ -263,7 +265,7 @@ describe("combined In-house total", () => {
     const dialog = open();
     await advance();
     expect(within(dialog).getByRole("alert")).toHaveTextContent("Material calculation failed");
-    expect(screen.queryByLabelText("Labor + Material total")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Subtotal")).not.toBeInTheDocument();
     await advance(2_000);
     expect(previewKnowledge).toHaveBeenCalledTimes(1);
     vi.mocked(previewKnowledge).mockResolvedValueOnce({ ...response(), inHouseCalculation: undefined });
@@ -277,6 +279,16 @@ describe("combined In-house total", () => {
     expectBothTotals("₹1,550.22");
   });
 
+  it("rejects backend totals that do not reconcile expense plus margin", async () => {
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response({ ...result, totalPaise: result.totalPaise + 1 }));
+    setup();
+    const dialog = open();
+    await advance();
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("inconsistent In-house cost breakup");
+    expect(within(dialog).getByRole("button", { name: "Retry calculation" })).toBeVisible();
+    expect(screen.queryByLabelText("Subtotal")).not.toBeInTheDocument();
+  });
+
   it("cancels scheduled and in-flight work on close and prevents old responses from reaching a reopened summary", async () => {
     setup();
     close(open());
@@ -288,7 +300,7 @@ describe("combined In-house total", () => {
     await advance();
     close(dialog);
     expect(vi.mocked(previewKnowledge).mock.calls[0]![1]!.signal!.aborted).toBe(true);
-    expect(screen.queryByLabelText("Labor + Material total")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Subtotal")).not.toBeInTheDocument();
     open();
     await advance();
     expectBothTotals("₹1,550.22");
@@ -302,7 +314,7 @@ describe("combined In-house total", () => {
     const trigger = screen.getByRole("button", { name: "Test In-house total" });
     await userEvent.click(trigger);
     const dialog = screen.getByRole("dialog", { name: "Test In-house total" });
-    await within(dialog).findByLabelText("Labor + Material total");
+    await within(dialog).findByLabelText("Subtotal");
     expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(trigger).toHaveFocus());

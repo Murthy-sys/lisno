@@ -31,26 +31,33 @@ export function buildKnowledgeConfigurationContext(input: {
     calculations: []
   };
   if (typeof advanced.modeDescription === "string") context.shared.paragraph = advanced.modeDescription;
-  // These lists are intentionally shared by the Main Line UI; retain that identity before mode filtering.
-  const pmcRows = Array.isArray(advanced.modeConfigurations)
-    ? advanced.modeConfigurations.map(asRow).filter((row) => row?.modeKind === "pmc" && row.active !== false)
+  // PMC remains the shared source for PMC/Sub-Vendor. In-house owns an independent
+  // scope so editing it cannot change the established PMC/Sub-Vendor wording.
+  const inHouseScope = modeKind === "execution" && executionSource === "in_house";
+  const scopeRows = Array.isArray(advanced.modeConfigurations)
+    ? advanced.modeConfigurations.map(asRow).filter((row) => row?.active !== false && (
+      inHouseScope
+        ? row?.modeKind === "execution" && row.executionSource === "in_house"
+        : row?.modeKind === "pmc"
+    ))
     : [];
-  if (pmcRows.length > 1) {
+  if (scopeRows.length > 1) {
     context.issues.push({ code: "AMBIGUOUS_SHARED_SCOPE", scope: null });
-  } else if (pmcRows[0]) {
-    const pmc = pmcRows[0];
-    const scopeRow = { id: pmc.id, modeKind: "pmc", fields: [],
-      ...(Object.hasOwn(pmc, "inclusions") ? { inclusions: pmc.inclusions } : {}),
-      ...(Object.hasOwn(pmc, "exclusions") ? { exclusions: pmc.exclusions } : {}) };
+  } else if (scopeRows[0]) {
+    const scope = scopeRows[0];
+    const scopeRow = { id: scope.id, modeKind: inHouseScope ? "execution" : "pmc",
+      ...(inHouseScope ? { executionSource: "in_house" } : {}), fields: [],
+      ...(Object.hasOwn(scope, "inclusions") ? { inclusions: scope.inclusions } : {}),
+      ...(Object.hasOwn(scope, "exclusions") ? { exclusions: scope.exclusions } : {}) };
     const scopeIssues = validateKnowledgeSectionPayload("advanced", { modeConfigurations: [scopeRow] });
     if (scopeIssues.some(({ code }) => code !== "CONFLICTING_SCOPE_SELECTION")) {
       context.issues.push({ code: "INVALID_SHARED_SCOPE", scope: null });
     } else {
       // Retain readable legacy values, while marking conflicting selections invalid for analysis.
       if (scopeIssues.length) context.issues.push({ code: "CONFLICTING_SCOPE_SELECTION", scope: null });
-      context.shared.scopeConfigurationId = pmc.id as string;
+      context.shared.scopeConfigurationId = scope.id as string;
       for (const list of ["inclusions", "exclusions"] as const) {
-        context.shared[list] = Array.isArray(pmc[list]) ? pmc[list].map(asRow)
+        context.shared[list] = Array.isArray(scope[list]) ? scope[list].map(asRow)
           .filter((row): row is Row => row !== null && row.selected === true)
           .map((row) => ({ id: row.id as string, name: row.name as string })) : [];
       }

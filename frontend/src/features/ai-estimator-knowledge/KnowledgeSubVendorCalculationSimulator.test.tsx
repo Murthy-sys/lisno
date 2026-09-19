@@ -156,17 +156,16 @@ describe("Lisno margin calculation", () => {
       pmcCalculation: { baseAmountPaise: 30_863, lowQuantityImpactAmountPaise: 3_857,
         revisedUnitRatePaise: 13_888, revisedAmountPaise: 34_720, appliedImpactBps: 1_250,
         pmcMarginBps: 1_800, pmcMarginAmountPaise: 7_621,
-        totalBeforeDiscountPaise: 42_341, totalPaise: 40_414, finalVendorChargesPaise: 32_793,
-        discount: { rateBps: 455, totalBeforeDiscountPaise: 42_341, amountPaise: 1_927 } } });
+        totalBeforeDiscountPaise: 42_341, totalPaise: 41_994, finalVendorChargesPaise: 34_720,
+        discount: { rateBps: 455, totalBeforeDiscountPaise: 42_341, amountPaise: 347 } } });
     view.rerenderEditor({ scope: "pmc", contextLabel: "PMC", pmcMarginBps: 1_800 });
     const pmcDialog = await open();
     await settleCalculation();
-    expect(within(pmcDialog).getByLabelText("Subtotal after PMC margin")).toHaveTextContent("₹423.41");
-    expect(within(pmcDialog).getByLabelText("PMC margin amount")).toHaveTextContent("+₹76.21");
-    expect(within(pmcDialog).getByLabelText("Final total")).toHaveTextContent("₹404.14");
+    expect(within(pmcDialog).getByLabelText("Selling price before discount")).toHaveTextContent("₹423.41");
+    expect(within(pmcDialog).getByLabelText("PMC charge")).toHaveTextContent("+₹76.21");
+    expect(within(pmcDialog).getByLabelText("Final total")).toHaveTextContent("₹419.94");
     expectNoVendorSummary(pmcDialog);
-    expect(field("PMC Margin (%)")).toHaveValue("18.00");
-    expect(within(pmcDialog).queryByLabelText("Selling price before discount")).not.toBeInTheDocument();
+    expect(field("Max. PMC Margin (%)")).toHaveValue("18.00");
   });
 
   it.each([undefined, null, "15.00", -500, 999, 1_499, 1_600, 1_750, 2_001, 9_900, 10_000, 1_500.1])("requires its own valid configured margin (%s) despite a valid PMC margin", async (subVendorMarginBps) => {

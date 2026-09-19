@@ -72,9 +72,18 @@ describe("AI estimator knowledge validation", () => {
     expect(validateKnowledgeSectionPayload("pricing", { modeCalculations: { pmc: settings, sub_vendor: null, in_house: null } }))
       .toContainEqual(expect.objectContaining({ path: "payload.modeCalculations", code: "UNKNOWN_FIELD" }));
   });
-  it("accepts optional PMC margins from 10 to 20 percent inclusive and rejects out-of-range or imprecise values", () => {
+  it("accepts legacy and ordered PMC margin ranges from 10 to 20 percent inclusive", () => {
     for (const pmcMarginBps of [null, 1_000, 1_001, 1_250, 1_999, 2_000]) {
       expect(validateKnowledgeSectionPayload("advanced", { pmcMarginBps })).toEqual([]);
+    }
+    for (const payload of [
+      {},
+      { pmcMinimumMarginBps: null, pmcMarginBps: null },
+      { pmcMinimumMarginBps: 1_000, pmcMarginBps: 2_000 },
+      { pmcMinimumMarginBps: 1_375, pmcMarginBps: 1_825 },
+      { pmcMinimumMarginBps: 2_000, pmcMarginBps: 2_000 }
+    ]) {
+      expect(validateKnowledgeSectionPayload("advanced", payload)).toEqual([]);
     }
     for (const pmcMarginBps of [-1, 0, 525, 999, 2_001, 2_300, 1_250.5, "15", {}, true, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER + 1]) {
       expect(validateKnowledgeSectionPayload("advanced", { pmcMarginBps }))
@@ -84,6 +93,33 @@ describe("AI estimator knowledge validation", () => {
       .toContainEqual(expect.objectContaining({ path: "payload.pmcMarginBps", code: "UNKNOWN_FIELD" }));
     expect(validateKnowledgeSectionPayload("quantity-margin", { pmcMarkupBps: null }))
       .toContainEqual(expect.objectContaining({ path: "payload.pmcMarkupBps", code: "INVALID_BPS" }));
+  });
+
+  it.each([
+    [{ pmcMinimumMarginBps: null }, "pmcMarginBps"],
+    [{ pmcMinimumMarginBps: null, pmcMarginBps: 1_500 }, "pmcMinimumMarginBps"],
+    [{ pmcMinimumMarginBps: 1_500, pmcMarginBps: null }, "pmcMarginBps"],
+    [{ pmcMinimumMarginBps: 1_500 }, "pmcMarginBps"]
+  ] as const)("rejects an explicit incomplete PMC margin pair %j", (payload, missingKey) => {
+    expect(validateKnowledgeSectionPayload("advanced", payload)).toContainEqual(expect.objectContaining({
+      path: `payload.${missingKey}`, code: "INCOMPLETE_MARGIN_RANGE"
+    }));
+  });
+
+  it("rejects reversed, unsafe, out-of-range, and wrong-type PMC range values", () => {
+    expect(validateKnowledgeSectionPayload("advanced", { pmcMinimumMarginBps: 1_900, pmcMarginBps: 1_500 }))
+      .toEqual(["pmcMinimumMarginBps", "pmcMarginBps"].map((key) => expect.objectContaining({
+        path: `payload.${key}`, code: "INVALID_MARGIN_RANGE"
+      })));
+    for (const key of ["pmcMinimumMarginBps", "pmcMarginBps"] as const) {
+      for (const value of [999, 2_001, 1_500.5, "1500", {}, [], true, undefined, Number.NaN, Number.POSITIVE_INFINITY]) {
+        expect(validateKnowledgeSectionPayload("advanced", {
+          pmcMinimumMarginBps: 1_000, pmcMarginBps: 2_000, [key]: value
+        })).toContainEqual(expect.objectContaining({ path: `payload.${key}`, code: "INVALID_INTEGER" }));
+      }
+    }
+    expect(validateKnowledgeSectionPayload("pricing", { pmcMinimumMarginBps: 1_500 }))
+      .toContainEqual(expect.objectContaining({ path: "payload.pmcMinimumMarginBps", code: "UNKNOWN_FIELD" }));
   });
 
   it("validates Lisno margin independently without requiring or inheriting PMC margin", () => {
@@ -263,7 +299,27 @@ describe("AI estimator knowledge validation", () => {
     }
   });
 
-  it("rejects invalid PMC checklist rows and scope on Execution", () => {
+  it("accepts independent In-house scope with the same normalized mutual-exclusion rule", () => {
+    expect(validateKnowledgeSectionPayload("advanced", { modeConfigurations: [{
+      id: "in-house", modeKind: "execution", executionSource: "in_house", fields: [],
+      inclusions: [
+        { id: "supplier-in", name: "Supplier", selected: true },
+        { id: "execution-in", name: "Execution", selected: false }
+      ],
+      exclusions: [{ id: "labour-out", name: "Labour", selected: true }]
+    }] })).toEqual([]);
+    const conflict = validateKnowledgeSectionPayload("advanced", { modeConfigurations: [{
+      id: "in-house", modeKind: "execution", executionSource: "in_house", fields: [],
+      inclusions: [{ id: "labour-in", name: "Labour", selected: true }],
+      exclusions: [{ id: "labour-out", name: "  ＬＡＢＯＵＲ ", selected: true }]
+    }] });
+    expect(conflict).toEqual([
+      expect.objectContaining({ path: "payload.modeConfigurations.0.inclusions.0.selected", code: "CONFLICTING_SCOPE_SELECTION" }),
+      expect.objectContaining({ path: "payload.modeConfigurations.0.exclusions.0.selected", code: "CONFLICTING_SCOPE_SELECTION" })
+    ]);
+  });
+
+  it("rejects invalid PMC checklist rows and scope on Sub-Vendor Execution", () => {
     const issues = validateKnowledgeSectionPayload("advanced", { modeConfigurations: [{
       id: "pmc", modeKind: "pmc", fields: [],
       inclusions: [
@@ -273,7 +329,7 @@ describe("AI estimator knowledge validation", () => {
       ],
       exclusions: "invalid"
     }, {
-      id: "execution", modeKind: "execution", executionSource: "in_house", fields: [],
+      id: "execution", modeKind: "execution", executionSource: "sub_vendor", fields: [],
       inclusions: [{ id: "transport", name: "Transport", selected: true }]
     }] });
     for (const path of [

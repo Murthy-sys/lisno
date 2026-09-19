@@ -31,7 +31,7 @@ export interface KnowledgeSavedSummaryInput extends Pick<SavedSummaryProjectionI
   };
 }
 
-const SOURCE_LABELS = { overview: "Overview", advanced: "Mode configuration", pricing: "Specifications", recommendations: "Recommendation & Exclusions" };
+const SOURCE_LABELS = { overview: "Overview", advanced: "Mode configuration", recommendations: "Recommendation & Exclusions" };
 
 export function useKnowledgeSavedSummary(input: KnowledgeSavedSummaryInput): readonly SavedSummaryGroup[] {
   const { item, revisionId, referenceStates } = input;
@@ -55,7 +55,7 @@ export function useKnowledgeSavedSummary(input: KnowledgeSavedSummaryInput): rea
   for (const [index, key] of SAVED_SUMMARY_SECTION_KEYS.entries()) {
     if (!revisionId || (key === "recommendations" && item.itemType === "temporary")) continue;
     const query = sectionQueries[index]!;
-    const group = key === "advanced" || key === "pricing" ? "mode" : key;
+    const group = key === "advanced" ? "mode" : key;
     const data = allowedData(query);
     const matches = data?.mainLineId === item.mainLineId && data.revisionId === revisionId && data.sectionKey === key;
     if (data && matches) sections[key] = data.payload;

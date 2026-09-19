@@ -71,12 +71,15 @@ describe("selected configuration context", () => {
     expect(build({ advanced: payload, uom, modeKind: "pmc" }).calculations[0]?.settings?.baseRatePaise).toBe(150_000);
   });
 
-  it("preserves checked legacy conflicts by stable ID while marking the context invalid", () => {
+  it("keeps PMC/Sub-Vendor scope conflicts isolated from independent In-house scope", () => {
     const advanced = {
       modeDescription: "Custom wording with no list labels.", modeCalculations: map,
       modeConfigurations: [{ id: "shared-scope", modeKind: "pmc", fields: [{ value: "private-answer" }],
         inclusions: [{ id: "in-transport", name: "Transport", selected: true }, { id: "in-hidden", name: "Unchecked private label", selected: false }],
-        exclusions: [{ id: "out-transport", name: "Transport", selected: true }] }],
+        exclusions: [{ id: "out-transport", name: "Transport", selected: true }] },
+      { id: "in-house-scope", modeKind: "execution", executionSource: "in_house", fields: [],
+        inclusions: [{ id: "supplier", name: "Supplier", selected: true }],
+        exclusions: [{ id: "labour", name: "Labour", selected: true }] }],
       internalVendorNotes: "private-notes"
     };
     const before = structuredClone(advanced);
@@ -86,8 +89,9 @@ describe("selected configuration context", () => {
     expect(context.issues).toEqual([{ code: "CONFLICTING_SCOPE_SELECTION", scope: null }]);
     expect(JSON.stringify(context)).not.toMatch(/private-answer|private-notes|Unchecked private label/);
     const inHouse = build({ advanced, uom, modeKind: "execution", executionSource: "in_house" });
-    expect(inHouse.shared).toEqual(context.shared);
-    expect(inHouse.state).toBe("invalid");
+    expect(inHouse.shared).toEqual({ paragraph: advanced.modeDescription, scopeConfigurationId: "in-house-scope",
+      inclusions: [{ id: "supplier", name: "Supplier" }], exclusions: [{ id: "labour", name: "Labour" }] });
+    expect(inHouse.state).toBe("ready");
     expect(advanced).toEqual(before);
   });
 

@@ -41,7 +41,7 @@ import {
 import type { KnowledgeModeConfigurationIssue } from "./knowledgeModeConfiguration";
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 import { KnowledgeVersionConflictDialog } from "./KnowledgeVersionConflictDialog";
-import { subVendorMarginRange } from "./knowledgePmcMargin";
+import { pmcMarginRange, subVendorMarginRange } from "./knowledgePmcMargin";
 import { KnowledgeModeCalculationEditor, type KnowledgeModeCalculationUom } from "./KnowledgeModeCalculationEditor";
 import { KnowledgeInHouseTotal } from "./KnowledgeInHouseTotal";
 import { MODE_CALCULATION_LABELS, MODE_CALCULATION_SCOPES, modeCalculationsForPayload, modeCalculationsForStorage, withModeCalculation, type ModeCalculationScope } from "./knowledgeModeCalculation";
@@ -72,7 +72,7 @@ const MODE_SECTION_LABELS = {
 } as const satisfies Readonly<Record<ModeSectionKey, string>>;
 
 const PENDING_DESCRIPTION_MESSAGE = "Save or cancel the paragraph before saving Mode.";
-const ADVANCED_EDITABLE_FIELDS = ["modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"] as const;
+const ADVANCED_EDITABLE_FIELDS = ["modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps", "pmcMinimumMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"] as const;
 type AdvancedEditableField = (typeof ADVANCED_EDITABLE_FIELDS)[number];
 
 interface ModeDraft {
@@ -632,6 +632,7 @@ export const KnowledgeModePanel = forwardRef<
             active={active}
             scope={scope}
             pmcMarginBps={scope === "pmc" ? drafts.advanced.payload.pmcMarginBps : undefined}
+            pmcMinimumMarginBps={scope === "pmc" ? drafts.advanced.payload.pmcMinimumMarginBps : undefined}
             subVendorMarginBps={scope === "sub_vendor" ? drafts.advanced.payload.subVendorMarginBps : undefined}
             subVendorMinimumMarginBps={scope === "sub_vendor" ? drafts.advanced.payload.subVendorMinimumMarginBps : undefined}
             marginControl={marginControl}
@@ -815,7 +816,10 @@ function rebaseDraftAfterConflict(
         })
   };
   const pending = server.sectionKey === "advanced"
-    ? acceptPendingMarginCounterparts(draft.pendingBaseline ?? {}, draft.pendingPayload, payload)
+    ? (() => {
+        const pmc = acceptPendingMarginCounterparts(draft.pendingBaseline ?? {}, draft.pendingPayload, payload, "pmc");
+        return acceptPendingMarginCounterparts(pmc.baseline, pmc.payload, payload, "sub_vendor");
+      })()
     : { baseline: draft.pendingBaseline, payload: draft.pendingPayload };
   return {
     ...draft,
@@ -869,13 +873,22 @@ function ModeBlockToolbar({
 }
 
 /** Refresh accepted counterparts without losing any locally edited margin. */
-function acceptPendingMarginCounterparts(baseline: KnowledgeJsonObject, local: KnowledgeJsonObject, accepted: KnowledgeJsonObject) {
-  const baselineRange = subVendorMarginRange(baseline);
-  const localRange = subVendorMarginRange(local);
-  const acceptedRange = subVendorMarginRange(accepted);
+function acceptPendingMarginCounterparts(
+  baseline: KnowledgeJsonObject,
+  local: KnowledgeJsonObject,
+  accepted: KnowledgeJsonObject,
+  kind: "pmc" | "sub_vendor"
+) {
+  const range = kind === "pmc" ? pmcMarginRange : subVendorMarginRange;
+  const baselineRange = range(baseline);
+  const localRange = range(local);
+  const acceptedRange = range(accepted);
   const nextBaseline = { ...baseline };
   const nextLocal = { ...local };
-  for (const [basis, field] of [["minimum", "subVendorMinimumMarginBps"], ["maximum", "subVendorMarginBps"]] as const) {
+  const fields = kind === "pmc"
+    ? [["minimum", "pmcMinimumMarginBps"], ["maximum", "pmcMarginBps"]] as const
+    : [["minimum", "subVendorMinimumMarginBps"], ["maximum", "subVendorMarginBps"]] as const;
+  for (const [basis, field] of fields) {
     const untouched = pendingValuesEqual(baselineRange[basis], localRange[basis]);
     nextBaseline[field] = (untouched ? acceptedRange[basis] : baselineRange[basis]) ?? null;
     nextLocal[field] = (untouched ? acceptedRange[basis] : localRange[basis]) ?? null;
@@ -894,16 +907,21 @@ function pendingModeStateAfterEdit(draft: ModeDraft, after: KnowledgeJsonObject,
     return { baseline: acceptedBaseline, payload: applyPendingEdit(acceptedDraft, saved, edited) };
   };
   const fields = sectionKey === "pricing" ? ["specifications"] : ADVANCED_EDITABLE_FIELDS;
-  const marginEdited = sectionKey === "advanced" &&
+  const subVendorMarginEdited = sectionKey === "advanced" &&
     (!pendingValuesEqual(before.subVendorMarginBps, after.subVendorMarginBps) ||
       !pendingValuesEqual(before.subVendorMinimumMarginBps, after.subVendorMinimumMarginBps));
-  if (marginEdited) {
-    const accepted = acceptPendingMarginCounterparts(baseline, next, before);
+  const pmcMarginEdited = sectionKey === "advanced" &&
+    (!pendingValuesEqual(before.pmcMarginBps, after.pmcMarginBps) ||
+      !pendingValuesEqual(before.pmcMinimumMarginBps, after.pmcMinimumMarginBps));
+  for (const kind of [pmcMarginEdited ? "pmc" : null, subVendorMarginEdited ? "sub_vendor" : null] as const) {
+    if (!kind) continue;
+    const accepted = acceptPendingMarginCounterparts(baseline, next, before, kind);
     baseline = accepted.baseline;
     next = accepted.payload;
   }
   const valueForField = (payload: KnowledgeJsonObject, field: string) => field === "subVendorMinimumMarginBps"
-    ? subVendorMarginRange(payload).minimum : payload[field];
+    ? subVendorMarginRange(payload).minimum
+    : field === "pmcMinimumMarginBps" ? pmcMarginRange(payload).minimum : payload[field];
   for (const field of fields) {
     const beforeValue = valueForField(before, field);
     const afterValue = valueForField(after, field);

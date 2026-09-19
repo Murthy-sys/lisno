@@ -155,7 +155,7 @@ describe("OpenAPI and Swagger UI", () => {
     expect(Object.keys(item.properties as OpenApiObject)).toEqual(["id", "name", "email", "title"]);
   });
 
-  it("documents saved Lisno margin ranges and the unchanged single selected-rate preview", () => {
+  it("documents saved PMC/Lisno ranges and their single selected-rate previews", () => {
     const schemas = componentSchemas();
     const alternatives = schemas.KnowledgeSectionPayload!.anyOf as OpenApiObject[];
     const advanced = alternatives.find((schema) => String(schema.description).startsWith("advanced section"))!;
@@ -163,6 +163,10 @@ describe("OpenAPI and Swagger UI", () => {
     expect(properties.subVendorMarginBps).toMatchObject({ type: "integer", minimum: 0, maximum: 9_500, multipleOf: 500, nullable: true,
       description: expect.stringContaining("Maximum Lisno margin") });
     expect(properties.subVendorMinimumMarginBps).toMatchObject({ type: "integer", minimum: 0, maximum: 9_500, multipleOf: 500, nullable: true,
+      description: expect.stringContaining("explicit null never inherits") });
+    expect(properties.pmcMarginBps).toMatchObject({ type: "integer", minimum: 1_000, maximum: 2_000, nullable: true,
+      description: expect.stringContaining("Maximum PMC margin") });
+    expect(properties.pmcMinimumMarginBps).toMatchObject({ type: "integer", minimum: 1_000, maximum: 2_000, nullable: true,
       description: expect.stringContaining("explicit null never inherits") });
     expect(schemas.KnowledgeSubVendorCalculationSettings).toMatchObject({
       additionalProperties: false, description: expect.stringContaining("one selected rate"),
@@ -186,14 +190,35 @@ describe("OpenAPI and Swagger UI", () => {
       subVendorMarginAmountPaise: { description: expect.stringContaining("selling price before discount minus revisedAmountPaise") }
     });
     expect(schemas.KnowledgePmcCalculationPreview!.description).toContain("10000 / (10000 - pmcMarginBps)");
-    expect(schemas.KnowledgePmcCalculationSettings!.description).toContain("the single PMC margin");
+    expect(schemas.KnowledgePmcCalculationSettings!.description).toContain("one selected Min. or Max. value");
     expect(schemas.KnowledgePmcCalculationPreview!.properties).toMatchObject({
       totalBeforeDiscountPaise: { description: expect.stringContaining("rounded half-up to integer paise") },
-      pmcMarginAmountPaise: { description: expect.stringContaining("selling price before discount minus revisedAmountPaise") }
+      pmcMarginAmountPaise: { description: expect.stringContaining("selling price before discount minus revisedAmountPaise") },
+      finalVendorChargesPaise: { minimum: 0, description: expect.stringContaining("Adjusted cost preserved") }
     });
-    expect(properties).not.toHaveProperty("pmcMinimumMarginBps");
-    expect(properties.pmcMarginBps).toMatchObject({ minimum: 1_000, maximum: 2_000 });
+    expect(schemas.KnowledgePmcCalculationPreview!.description).toContain("discount applies only to the pre-discount PMC margin amount");
+    expect((schemas.KnowledgePmcCalculationSettings!.properties as OpenApiObject)).not.toHaveProperty("pmcMinimumMarginBps");
     expect(properties.pmcMarginBps).not.toHaveProperty("enum");
+  });
+
+  it("documents scope lists only for canonical PMC and In-house configurations", () => {
+    const schemas = componentSchemas();
+    expect(schemas.KnowledgeModeScopeItem).toMatchObject({
+      additionalProperties: false,
+      required: ["id", "name", "selected"],
+      properties: { selected: { type: "boolean" } }
+    });
+    const alternatives = schemas.KnowledgeModeConfiguration!.oneOf as OpenApiObject[];
+    const pmc = alternatives.find((schema) =>
+      ((schema.properties as OpenApiObject | undefined)?.modeKind as OpenApiObject | undefined)?.enum?.[0] === "pmc")!;
+    const inHouse = alternatives.find((schema) =>
+      ((schema.properties as OpenApiObject | undefined)?.executionSource as OpenApiObject | undefined)?.enum?.[0] === "in_house")!;
+    const subVendor = alternatives.find((schema) =>
+      ((schema.properties as OpenApiObject | undefined)?.executionSource as OpenApiObject | undefined)?.enum?.[0] === "sub_vendor")!;
+    expect(pmc.properties).toMatchObject({ inclusions: { type: "array" }, exclusions: { type: "array" } });
+    expect(inHouse.properties).toMatchObject({ inclusions: { type: "array" }, exclusions: { type: "array" } });
+    expect(subVendor.properties).not.toHaveProperty("inclusions");
+    expect(subVendor.properties).not.toHaveProperty("exclusions");
   });
 
   it("serves a public OpenAPI document with local API and JWT configuration", async () => {
@@ -505,7 +530,7 @@ describe("OpenAPI and Swagger UI", () => {
     expect(componentSchemas().KnowledgePmcCalculationPreview).toMatchObject({
       required: expect.arrayContaining(["baseAmountPaise", "lowQuantityImpactAmountPaise", "pmcMarginBps", "pmcMarginAmountPaise", "totalBeforeDiscountPaise", "totalPaise", "finalVendorChargesPaise"]),
       properties: { pmcMarginAmountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
-        finalVendorChargesPaise: { type: "integer", minimum: -Number.MAX_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
+        finalVendorChargesPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
         totalPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
         discount: { properties: { rateBps: { type: "integer", minimum: 0, maximum: 10_000 } } } }
     });
@@ -595,12 +620,28 @@ describe("OpenAPI and Swagger UI", () => {
           required: ["id", "modeKind", "executionSource", "fields"],
           properties: {
             modeKind: { enum: ["execution"] },
-            executionSource: { enum: ["sub_vendor", "in_house"] },
+            executionSource: { enum: ["sub_vendor"] },
             fields: {
               type: "array",
               maxItems: 50,
               items: { $ref: "#/components/schemas/KnowledgeModeFieldInput" }
             }
+          }
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "modeKind", "executionSource", "fields"],
+          properties: {
+            modeKind: { enum: ["execution"] },
+            executionSource: { enum: ["in_house"] },
+            fields: {
+              type: "array",
+              maxItems: 50,
+              items: { $ref: "#/components/schemas/KnowledgeModeFieldInput" }
+            },
+            inclusions: { type: "array", items: { $ref: "#/components/schemas/KnowledgeModeScopeItem" } },
+            exclusions: { type: "array", items: { $ref: "#/components/schemas/KnowledgeModeScopeItem" } }
           }
         },
         {

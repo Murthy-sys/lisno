@@ -5,19 +5,20 @@ import { Button } from "../../components/ui/Button";
 import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field, Input, Select } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
-import { createKnowledgeMainLine, listKnowledgeBaskets } from "./knowledgeApi";
+import { createKnowledgeBasket, createKnowledgeMainLine, listKnowledgeBaskets } from "./knowledgeApi";
 import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { reconcileRelatedItemCreation, requiresRelatedItemReconciliation, type RelatedItemCreationInput, type RelatedItemReconciliation } from "./knowledgeRelatedItemCreation";
-import type { KnowledgeItemDetail } from "./knowledgeTypes";
+import type { KnowledgeBasket, KnowledgeItemDetail } from "./knowledgeTypes";
 
-export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, context, itemType = "main_line", initialBasketId = "", initialSubBasketName = "", initialName = "", excludeMainLineId }: {
+export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, context, itemType = "main_line", initialBasketId = "", initialSubBasketName = "", initialName = "", excludeMainLineId, canCreateBasket = false }: {
   readonly itemType?: "main_line" | "temporary";
   readonly context?: "related-item";
   readonly initialBasketId?: string;
   readonly initialSubBasketName?: string;
   readonly initialName?: string;
   readonly excludeMainLineId?: string;
+  readonly canCreateBasket?: boolean;
   readonly onClose: () => void;
   readonly onCreated: (mainLineId: string, detail?: KnowledgeItemDetail) => Promise<void>;
   readonly onRefreshError?: (message: string) => void;
@@ -33,7 +34,19 @@ export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, 
   const [confirmedItem, setConfirmedItem] = useState<KnowledgeItemDetail | null>(null);
   const [refreshWarning, setRefreshWarning] = useState<string | null>(null);
   const [usingExisting, setUsingExisting] = useState(false);
+  const [addingBasket, setAddingBasket] = useState(false);
+  const [newBasketName, setNewBasketName] = useState("");
+  const [createdBasket, setCreatedBasket] = useState<KnowledgeBasket | null>(null);
+  const [basketNotice, setBasketNotice] = useState("");
+  const [basketRecovery, setBasketRecovery] = useState<
+    | { kind: "idle" }
+    | { kind: "checking"; requestedName: string }
+    | { kind: "unresolved"; requestedName: string }
+    | { kind: "absent"; requestedName: string }
+  >({ kind: "idle" });
   const submissionLocked = useRef(false);
+  const basketSubmissionLocked = useRef(false);
+  const basketSelectRef = useRef<HTMLSelectElement>(null);
   const lastAttempt = useRef<RelatedItemCreationInput | null>(null);
   const mounted = useRef(false);
   useEffect(() => {
@@ -44,7 +57,11 @@ export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, 
     queryKey: [...knowledgeQueryKeys.basketLists(), "creation-catalog"],
     queryFn: () => collectAllKnowledgeMasterPages((page) => listKnowledgeBaskets({ ...page, status: "active" }), "Main Basket")
   });
-  const activeBaskets = baskets.data?.items.filter((basket) => basket.status === "active") ?? [];
+  const listedBaskets = baskets.data?.items.filter((basket) => basket.status === "active") ?? [];
+  const activeBaskets = createdBasket && !listedBaskets.some(({ id }) => id === createdBasket.id)
+    ? [...listedBaskets, createdBasket]
+    : listedBaskets;
+  const inlineBasketCreation = temporary && !related && canCreateBasket;
   const valid = Boolean(!baskets.isError && activeBaskets.some((basket) => basket.id === basketId) && (temporary || subBasketName.trim()) && name.trim());
 
   async function checkCreation(input: RelatedItemCreationInput) {
@@ -106,10 +123,36 @@ export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, 
     },
     onSettled: () => { submissionLocked.current = false; }
   });
-  const busy = createItem.isPending || recovery.kind === "checking" || usingExisting;
+  const createBasket = useMutation({
+    mutationFn: (requestedName: string) => createKnowledgeBasket({ name: requestedName }),
+    onSuccess: async (basket) => {
+      if (mounted.current) {
+        setBasketRecovery({ kind: "idle" });
+        setCreatedBasket(basket);
+        setBasketId(basket.id);
+        setAddingBasket(false);
+        setNewBasketName("");
+        setBasketNotice(`Main Basket “${basket.name}” was added and selected.`);
+        clearFailure();
+        globalThis.setTimeout(() => basketSelectRef.current?.focus(), 0);
+      }
+      await queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketLists() });
+    },
+    onError: async (_error, requestedName) => {
+      // A lost create response is ambiguous. Re-read the authoritative catalog
+      // before offering another POST so a successful first request is not
+      // duplicated by a blind retry.
+      await reconcileBasketCreation(requestedName);
+    },
+    onSettled: () => { basketSubmissionLocked.current = false; }
+  });
+  const basketRetryBlocked = (basketRecovery.kind === "checking" || basketRecovery.kind === "unresolved")
+    && normalizeBasketName(basketRecovery.requestedName) === normalizeBasketName(newBasketName);
+  const busy = createItem.isPending || createBasket.isPending || basketRecovery.kind === "checking"
+    || recovery.kind === "checking" || usingExisting;
   const unresolved = recovery.kind === "failed";
   const locked = busy || unresolved || Boolean(confirmedItem);
-  const canCreate = !busy && !confirmedItem && (recovery.kind === "idle" || recovery.kind === "absent");
+  const canCreate = !busy && !addingBasket && !confirmedItem && (recovery.kind === "idle" || recovery.kind === "absent");
   const fieldErrors = createItem.error instanceof ApiError ? createItem.error.fields : undefined;
   const showCreateError = createItem.error && recovery.kind === "idle";
   const hasRecoveryError = recovery.kind === "conflict" || recovery.kind === "failed";
@@ -138,11 +181,44 @@ export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, 
     }
   }
 
+  async function reconcileBasketCreation(requestedName: string) {
+    if (mounted.current) setBasketRecovery({ kind: "checking", requestedName });
+    const refreshed = await baskets.refetch();
+    if (!mounted.current) return;
+    if (refreshed.isError || !refreshed.data) {
+      setBasketRecovery({ kind: "unresolved", requestedName });
+      return;
+    }
+    const match = refreshed.data.items.find((basket) => basket.status === "active"
+      && normalizeBasketName(basket.name) === normalizeBasketName(requestedName));
+    if (!match) {
+      setBasketRecovery({ kind: "absent", requestedName });
+      createBasket.reset();
+      return;
+    }
+    setBasketRecovery({ kind: "idle" });
+    setCreatedBasket(match);
+    setBasketId(match.id);
+    setAddingBasket(false);
+    setNewBasketName("");
+    setBasketNotice(`Main Basket “${match.name}” already exists and is selected.`);
+    createBasket.reset();
+    globalThis.setTimeout(() => basketSelectRef.current?.focus(), 0);
+  }
+
+  function submitBasket() {
+    const requestedName = newBasketName.trim();
+    if (!requestedName || createBasket.isPending || basketRetryBlocked || basketSubmissionLocked.current) return;
+    basketSubmissionLocked.current = true;
+    setBasketRecovery({ kind: "idle" });
+    createBasket.mutate(requestedName);
+  }
+
   return (
     <ContextPanel title={title} eyebrow="Estimation configuration" onClose={onClose} busy={busy && !confirmedItem}
       width="medium"
       className="knowledge-context-panel"
-      dirty={!confirmedItem && (basketId !== initialBasketId || subBasketName !== initialSubBasketName || name !== initialName)}
+      dirty={!confirmedItem && (basketId !== initialBasketId || subBasketName !== initialSubBasketName || name !== initialName || addingBasket || Boolean(newBasketName))}
       footer={({ requestClose }) => (
         <div className="knowledge-dialog-actions">
           <Button type="button" variant="quiet" disabled={busy && !confirmedItem} onClick={requestClose}>{confirmedItem ? "Close" : "Cancel"}</Button>
@@ -169,15 +245,67 @@ export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, 
           {recovery.kind === "match" && !confirmedItem ? <InlineMessage tone="info" role="status">“{recovery.item.mainLineName}” already exists in this Main Basket and Sub Basket. Select it explicitly to use it in this rule. <Button type="button" variant="quiet" disabled={busy} onClick={() => void useExisting()}>Use existing item</Button></InlineMessage> : null}
           {confirmedItem ? <InlineMessage tone="success" role="status">“{confirmedItem.mainLineName}” is saved in the catalog. Save the rule separately to keep this relationship.</InlineMessage> : null}
           {refreshWarning ? <InlineMessage tone="warning" role="alert">{refreshWarning}</InlineMessage> : null}
+          {basketNotice ? <InlineMessage tone="success" role="status">{basketNotice}</InlineMessage> : null}
           {baskets.isPending ? <p role="status">Loading Main Baskets…</p> : null}
           {baskets.isError ? <InlineMessage tone="error" role="alert">Main Baskets could not be loaded. <Button type="button" variant="quiet" onClick={() => void baskets.refetch()}>Retry Main Baskets</Button></InlineMessage> : null}
-          {baskets.isSuccess && activeBaskets.length === 0 ? <InlineMessage tone="info">{related ? "Create a Main Basket from Configuration before adding a related item." : "Create a Main Basket from Configuration before adding a Main Line."}</InlineMessage> : null}
+          {baskets.isSuccess && activeBaskets.length === 0 ? <InlineMessage tone="info">{inlineBasketCreation
+            ? "No Main Baskets are available. Add one here to continue with this temporary item."
+            : related ? "Create a Main Basket from Configuration before adding a related item."
+              : "Create a Main Basket from Configuration before adding a Main Line."}</InlineMessage> : null}
           <Field id="item-basket" label="Main basket" required error={fieldErrors?.basketId} describedBy={errorDescription}>
-            {(props) => <Select {...props} value={basketId} disabled={locked || !baskets.data || baskets.isError} onChange={(event) => { setBasketId(event.target.value); if (temporary) setSubBasketName(""); clearFailure(); }}>
+            {(props) => <Select {...props} ref={basketSelectRef} value={basketId} disabled={locked || !baskets.data || baskets.isError} onChange={(event) => { setBasketId(event.target.value); setBasketNotice(""); if (temporary) setSubBasketName(""); clearFailure(); }}>
               <option value="">Select a basket</option>
               {activeBaskets.map((basket) => <option key={basket.id} value={basket.id}>{basket.name}</option>)}
             </Select>}
           </Field>
+          {inlineBasketCreation ? <div className="knowledge-dialog-form__inline-action">
+            {addingBasket ? <>
+              {createBasket.error && basketRecovery.kind !== "unresolved"
+                ? <InlineMessage tone="error" role="alert">{createBasket.error.message}</InlineMessage> : null}
+              {basketRecovery.kind === "unresolved" ? <InlineMessage tone="error" role="alert">
+                Could not confirm whether this Main Basket was added. Check the basket list again before another attempt.{" "}
+                <Button type="button" variant="quiet"
+                  onClick={() => void reconcileBasketCreation(basketRecovery.requestedName)}>Check basket list again</Button>
+              </InlineMessage> : null}
+              {basketRecovery.kind === "absent" ? <InlineMessage tone="info" role="status">
+                No matching Main Basket was found after checking the basket list. You can try adding it again.
+              </InlineMessage> : null}
+              <Field id="item-new-basket" label="New Main Basket name" required
+                error={createBasket.error instanceof ApiError ? createBasket.error.fields?.name : undefined}>
+                {(props) => <Input {...props} autoFocus maxLength={240} value={newBasketName} disabled={createBasket.isPending || basketRecovery.kind === "checking"}
+                  onChange={(event) => { setNewBasketName(event.target.value); setBasketNotice(""); createBasket.reset(); }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && newBasketName.trim() && !createBasket.isPending && !basketRetryBlocked) {
+                      event.preventDefault();
+                      submitBasket();
+                    }
+                    if (event.key === "Escape" && !createBasket.isPending) {
+                      event.preventDefault();
+                      setAddingBasket(false);
+                      setNewBasketName("");
+                      setBasketRecovery({ kind: "idle" });
+                      createBasket.reset();
+                      basketSelectRef.current?.focus();
+                    }
+                  }} />}
+              </Field>
+              <div className="knowledge-dialog-actions">
+                <Button type="button" variant="quiet" disabled={createBasket.isPending} onClick={() => {
+                  setAddingBasket(false);
+                  setNewBasketName("");
+                  setBasketRecovery({ kind: "idle" });
+                  createBasket.reset();
+                  basketSelectRef.current?.focus();
+                }}>Cancel new basket</Button>
+                <Button type="button" busy={createBasket.isPending || basketRecovery.kind === "checking"}
+                  disabled={!newBasketName.trim() || createBasket.isPending || basketRetryBlocked}
+                  onClick={submitBasket}>Save main basket</Button>
+              </div>
+            </> : <Button type="button" variant="secondary" disabled={locked || baskets.isError}
+              onClick={() => { setAddingBasket(true); setBasketNotice(""); setBasketRecovery({ kind: "idle" }); createBasket.reset(); }}>
+              Add main basket
+            </Button>}
+          </div> : null}
           <Field id="item-sub-basket" label="Sub basket" required={!temporary} error={fieldErrors?.subBasketName} describedBy={errorDescription}>
             {(props) => <Input {...props} maxLength={240} value={subBasketName} disabled={locked} onChange={(event) => { setSubBasketName(event.target.value); clearFailure(); }} />}
           </Field>
@@ -189,4 +317,8 @@ export function CreateKnowledgeItemDialog({ onClose, onCreated, onRefreshError, 
       </form>
     </ContextPanel>
   );
+}
+
+function normalizeBasketName(name: string): string {
+  return name.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase("en-US");
 }
