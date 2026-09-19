@@ -393,8 +393,9 @@ function validatePricingPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
   const issues: KnowledgeValidationIssue[] = [];
+  const brandIdCounts = pricingBrandIdCounts(record.brands);
   if ("specifications" in record) {
-    validateSpecificationRows(record.specifications, issues);
+    validateSpecificationRows(record.specifications, brandIdCounts, issues);
   }
   if ("brands" in record) {
     validateNamedPricingRows(record.brands, "payload.brands", issues);
@@ -426,8 +427,26 @@ function validatePricingPayload(
   return issues;
 }
 
+function pricingBrandIdCounts(value: unknown): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  if (!Array.isArray(value)) return counts;
+  value.forEach((candidate) => {
+    if (candidate === null || Array.isArray(candidate) || typeof candidate !== "object") return;
+    const brandId = (candidate as Record<string, unknown>).id;
+    if (
+      typeof brandId !== "string"
+      || brandId.length === 0
+      || brandId.length > 240
+      || brandId !== brandId.trim()
+    ) return;
+    counts.set(brandId, (counts.get(brandId) ?? 0) + 1);
+  });
+  return counts;
+}
+
 function validateSpecificationRows(
   value: unknown,
+  brandIdCounts: ReadonlyMap<string, number>,
   issues: KnowledgeValidationIssue[]
 ): void {
   const path = "payload.specifications";
@@ -450,8 +469,8 @@ function validateSpecificationRows(
     validateExactRowKeys(
       row,
       isCanonical
-        ? ["id", "name", "description", "type", "options", "value"]
-        : ["id", "name", "description"],
+        ? ["id", "name", "description", "brandId", "type", "options", "value"]
+        : ["id", "name", "description", "brandId"],
       isCanonical
         ? ["id", "name", "type", "options", "value"]
         : ["id", "name"],
@@ -459,6 +478,23 @@ function validateSpecificationRows(
       issues
     );
     validateNamedPricingRow(row, rowPath, ids, names, issues);
+    if ("brandId" in row) {
+      const brandPath = `${rowPath}.brandId`;
+      validatePricingBrandId(row.brandId, brandPath, issues);
+      if (
+        typeof row.brandId === "string" &&
+        row.brandId.length > 0 &&
+        row.brandId.length <= 240 &&
+        row.brandId === row.brandId.trim() &&
+        brandIdCounts.get(row.brandId) !== 1
+      ) {
+        issues.push({
+          path: brandPath,
+          code: "INVALID_REFERENCE",
+          message: "Select a Brand configured in this Pricing section."
+        });
+      }
+    }
     if (isCanonical) {
       validateCanonicalSpecification(row, rowPath, issues);
     }
@@ -482,7 +518,7 @@ function validateNamedPricingRows(
       rowPath,
       issues
     );
-    validateNamedPricingRow(row, rowPath, ids, names, issues);
+    validateNamedPricingRow(row, rowPath, ids, names, issues, true);
   });
 }
 
@@ -491,9 +527,11 @@ function validateNamedPricingRow(
   path: string,
   ids: Set<string>,
   names: Set<string>,
-  issues: KnowledgeValidationIssue[]
+  issues: KnowledgeValidationIssue[],
+  requireTrimmedId = false
 ): void {
-  validateStableId(row.id, `${path}.id`, issues);
+  if (requireTrimmedId) validatePricingBrandId(row.id, `${path}.id`, issues);
+  else validateStableId(row.id, `${path}.id`, issues);
   validateText(
     row.name,
     `${path}.name`,
@@ -517,6 +555,25 @@ function validateNamedPricingRow(
       "DUPLICATE_NAME",
       issues
     );
+  }
+}
+
+function validatePricingBrandId(
+  value: unknown,
+  path: string,
+  issues: KnowledgeValidationIssue[]
+): void {
+  if (
+    typeof value !== "string"
+    || value.length === 0
+    || value.length > 240
+    || value !== value.trim()
+  ) {
+    issues.push({
+      path,
+      code: "INVALID_REFERENCE",
+      message: "Brand references require a trimmed stable ID up to 240 characters."
+    });
   }
 }
 

@@ -4,10 +4,12 @@ import type {
 } from "./knowledgeTypes";
 
 export const KNOWLEDGE_MAX_SPECIFICATIONS = 50;
+export const KNOWLEDGE_MAX_BRANDS = 200;
 
 export interface KnowledgeSpecificationConfiguration {
   readonly id: string;
   readonly name: string;
+  readonly brandId: string | null;
   readonly description: string | null;
   /** Compatibility-only data from the former typed Specification contract. */
   readonly hiddenTypedFields: KnowledgeJsonObject | null;
@@ -23,13 +25,75 @@ export interface ParsedKnowledgeSpecifications {
   readonly issues: readonly KnowledgeSpecificationIssue[];
 }
 
+export function validateKnowledgeBrands(
+  value: KnowledgeJsonValue | undefined
+): readonly KnowledgeSpecificationIssue[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    return [{ path: "brands", message: "Brands must be a list." }];
+  }
+
+  const issues: KnowledgeSpecificationIssue[] = [];
+  if (value.length > KNOWLEDGE_MAX_BRANDS) {
+    issues.push({
+      path: "brands",
+      message: `Brands cannot contain more than ${KNOWLEDGE_MAX_BRANDS} entries.`
+    });
+  }
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  value.forEach((entry, index) => {
+    const path = `brands.${index}`;
+    if (!isObject(entry)) {
+      issues.push({ path, message: "Brand must be an object." });
+      return;
+    }
+    for (const key of Object.keys(entry)) {
+      if (!["id", "name", "description"].includes(key)) {
+        issues.push({ path: `${path}.${key}`, message: "Unknown Brand property." });
+      }
+    }
+
+    const id = stringValue(entry.id);
+    if (!id.trim()) {
+      issues.push({ path: `${path}.id`, message: "Brand ID is required." });
+    } else if (id !== id.trim() || id.length > MAX_SHORT_TEXT) {
+      issues.push({ path: `${path}.id`, message: "Brand ID must be a bounded stable ID." });
+    } else if (ids.has(id)) {
+      issues.push({ path: `${path}.id`, message: "Brand IDs must be unique." });
+    }
+    if (id) ids.add(id);
+
+    const name = typeof entry.name === "string" ? entry.name : "";
+    const normalizedName = normalizeComparable(name);
+    if (!normalizedName) {
+      issues.push({ path: `${path}.name`, message: "Brand name is required." });
+    } else if (name.length > MAX_SHORT_TEXT) {
+      issues.push({ path: `${path}.name`, message: `Brand name must be ${MAX_SHORT_TEXT} characters or fewer.` });
+    } else if (names.has(normalizedName)) {
+      issues.push({ path: `${path}.name`, message: "Brand names must be unique." });
+    }
+    if (normalizedName) names.add(normalizedName);
+
+    if (
+      Object.hasOwn(entry, "description")
+      && entry.description !== null
+      && (typeof entry.description !== "string" || !entry.description.trim() || entry.description.length > MAX_TEXT)
+    ) {
+      issues.push({ path: `${path}.description`, message: `Description must be nonempty and ${MAX_TEXT} characters or fewer.` });
+    }
+  });
+  return issues;
+}
+
 const MAX_SHORT_TEXT = 240;
 const MAX_TEXT = 4_000;
 const TYPED_COMPATIBILITY_KEYS = ["type", "options", "value"] as const;
 let fallbackIdCounter = 0;
 
 export function parseKnowledgeSpecifications(
-  value: KnowledgeJsonValue | undefined
+  value: KnowledgeJsonValue | undefined,
+  brands?: KnowledgeJsonValue
 ): ParsedKnowledgeSpecifications {
   if (value === undefined) return { specifications: [], issues: [] };
   if (!Array.isArray(value)) {
@@ -52,8 +116,8 @@ export function parseKnowledgeSpecifications(
       Object.hasOwn(entry, key)
     );
     const allowedKeys = hasTypedCompatibility
-      ? ["id", "name", "description", ...TYPED_COMPATIBILITY_KEYS]
-      : ["id", "name", "description"];
+      ? ["id", "name", "brandId", "description", ...TYPED_COMPATIBILITY_KEYS]
+      : ["id", "name", "brandId", "description"];
     for (const key of Object.keys(entry)) {
       if (!allowedKeys.includes(key)) {
         issues.push({ path: `${path}.${key}`, message: "Unknown Specification property." });
@@ -70,6 +134,11 @@ export function parseKnowledgeSpecifications(
     specifications.push({
       id: stringValue(entry.id),
       name: typeof entry.name === "string" ? entry.name : "",
+      brandId: Object.hasOwn(entry, "brandId")
+        ? typeof entry.brandId === "string"
+          ? entry.brandId
+          : ""
+        : null,
       description: entry.description === null
         ? null
         : typeof entry.description === "string"
@@ -81,12 +150,13 @@ export function parseKnowledgeSpecifications(
 
   return {
     specifications,
-    issues: [...issues, ...validateKnowledgeSpecifications(specifications)]
+    issues: [...issues, ...validateKnowledgeSpecifications(specifications, brands)]
   };
 }
 
 export function validateKnowledgeSpecifications(
-  specifications: readonly KnowledgeSpecificationConfiguration[]
+  specifications: readonly KnowledgeSpecificationConfiguration[],
+  brands?: KnowledgeJsonValue
 ): readonly KnowledgeSpecificationIssue[] {
   const issues: KnowledgeSpecificationIssue[] = [];
   if (specifications.length > KNOWLEDGE_MAX_SPECIFICATIONS) {
@@ -98,6 +168,15 @@ export function validateKnowledgeSpecifications(
 
   const ids = new Set<string>();
   const names = new Set<string>();
+  const brandIdCounts = brands === undefined
+    ? null
+    : new Map<string, number>();
+  if (brandIdCounts && Array.isArray(brands)) {
+    for (const brand of brands) {
+      if (!isObject(brand) || typeof brand.id !== "string") continue;
+      brandIdCounts.set(brand.id, (brandIdCounts.get(brand.id) ?? 0) + 1);
+    }
+  }
   specifications.forEach((specification, index) => {
     const path = `specifications.${index}`;
     validateStableId(specification.id, `${path}.id`, issues);
@@ -108,16 +187,34 @@ export function validateKnowledgeSpecifications(
 
     const normalizedName = normalizeComparable(specification.name);
     if (!normalizedName) {
-      issues.push({ path: `${path}.name`, message: "Specification name is required." });
+      issues.push({ path: `${path}.name`, message: "Item name is required." });
     } else if (specification.name.length > MAX_SHORT_TEXT) {
       issues.push({
         path: `${path}.name`,
-        message: `Specification name must be ${MAX_SHORT_TEXT} characters or fewer.`
+        message: `Item name must be ${MAX_SHORT_TEXT} characters or fewer.`
       });
     } else if (names.has(normalizedName)) {
-      issues.push({ path: `${path}.name`, message: "Specification names must be unique." });
+      issues.push({ path: `${path}.name`, message: "Item names must be unique." });
     }
     if (normalizedName) names.add(normalizedName);
+
+    if (specification.brandId !== null) {
+      if (
+        !specification.brandId.trim()
+        || specification.brandId !== specification.brandId.trim()
+        || specification.brandId.length > MAX_SHORT_TEXT
+      ) {
+        issues.push({
+          path: `${path}.brandId`,
+          message: "Brand must use a bounded stable ID."
+        });
+      } else if (brandIdCounts && brandIdCounts.get(specification.brandId) !== 1) {
+        issues.push({
+          path: `${path}.brandId`,
+          message: "Choose a configured Brand."
+        });
+      }
+    }
 
     if (
       typeof specification.description === "string" &&
@@ -136,6 +233,7 @@ export function createKnowledgeSpecification(): KnowledgeSpecificationConfigurat
   return {
     id: createStableSpecificationId(),
     name: "",
+    brandId: null,
     description: "",
     hiddenTypedFields: null
   };
@@ -147,6 +245,7 @@ export function serializeKnowledgeSpecifications(
   return specifications.map((specification) => ({
     id: specification.id,
     name: specification.name,
+    ...(specification.brandId ? { brandId: specification.brandId } : {}),
     ...(specification.description === null
       ? { description: null }
       : specification.description.trim()

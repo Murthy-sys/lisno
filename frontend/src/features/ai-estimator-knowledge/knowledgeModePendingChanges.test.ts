@@ -11,6 +11,18 @@ function project(before: KnowledgeJsonObject, after: KnowledgeJsonObject, extra:
   return projectKnowledgeModePendingChanges({ advancedBaseline: before, advancedDraft: after, pricingBaseline: {}, pricingDraft: {}, mainLineName: "Gypsum ceiling", ...extra });
 }
 
+function visiblePendingContent(groups: ReturnType<typeof projectKnowledgeModePendingChanges>) {
+  return groups.map(({ label, entries }) => ({
+    label,
+    entries: entries.map(({ title, kind, fields, incomplete }) => ({
+      title,
+      kind,
+      fields,
+      ...(incomplete ? { incomplete } : {})
+    }))
+  }));
+}
+
 describe("Mode pending change projection", () => {
   it("omits clean payloads, hidden compatibility data, and unloaded blocks", () => {
     const saved = { modeConfigurations: [config], modeCalculation: calculation, modeDescription: "Saved paragraph." };
@@ -146,9 +158,111 @@ describe("Mode pending change projection", () => {
     expect(groups[0]?.entries[0]?.fields).toEqual([{ key: "baseRate", label: "Base Rate (₹)", value: "120.00" }]);
   });
 
-  it("keeps Specifications shared, includes only changed description and ignores typed legacy metadata", () => {
+  it("keeps Specifications shared, uses Item labels, and ignores typed legacy metadata", () => {
     const before = { specifications: [{ id: "spec-1", name: "Saved plywood", description: "Saved detail", type: "text", value: "private old compatibility" }] };
     const after = { specifications: [{ id: "spec-1", name: "Saved plywood", description: "New local detail", type: "dropdown", value: "different hidden value" }] };
-    expect(project({}, {}, { pricingBaseline: before, pricingDraft: after })).toEqual([{ key: "specifications", label: "Specifications · Shared", entries: [{ key: "specification:id:spec-1", title: "Saved plywood", kind: "updated", fields: [{ key: "description", label: "Description", value: "New local detail" }] }] }]);
+    expect(project({}, {}, { pricingBaseline: before, pricingDraft: after })).toEqual([{ key: "specifications", label: "Specifications · Shared", entries: [{ key: "specification:id:spec-1", title: "Saved plywood", kind: "updated", fields: [{ key: "description", label: "Brief description", value: "New local detail" }] }] }]);
+  });
+
+  it("shows Brand-only additions, renames, and removals without exposing stable IDs", () => {
+    const saved = { brands: [{ id: "private-brand-alpha", name: "Century Green", description: "Saved description" }] };
+    const renamed = project({}, {}, {
+      pricingBaseline: saved,
+      pricingDraft: { brands: [{ id: "private-brand-alpha", name: "Century Prime", description: "Updated description" }] }
+    });
+    expect(renamed).toEqual([{
+      key: "brands",
+      label: "Brands · Shared",
+      entries: [{
+        key: "brand:id:private-brand-alpha",
+        title: "Century Prime",
+        kind: "updated",
+        fields: [
+          { key: "name", label: "Brand name", value: "Century Prime" },
+          { key: "description", label: "Description", value: "Updated description" }
+        ]
+      }]
+    }]);
+
+    const added = project({}, {}, {
+      pricingBaseline: { brands: [] },
+      pricingDraft: { brands: [{ id: "private-brand-beta", name: "Hettich" }] }
+    });
+    expect(added[0]?.entries[0]).toMatchObject({
+      title: "Hettich",
+      kind: "added",
+      fields: [{ key: "name", label: "Brand name", value: "Hettich" }]
+    });
+
+    const removed = project({}, {}, {
+      pricingBaseline: saved,
+      pricingDraft: { brands: [] }
+    });
+    expect(removed[0]?.entries[0]).toEqual({
+      key: "brand:id:private-brand-alpha",
+      title: "Century Green",
+      kind: "removed",
+      fields: []
+    });
+    expect(JSON.stringify({
+      renamed: visiblePendingContent(renamed),
+      added: visiblePendingContent(added),
+      removed: visiblePendingContent(removed)
+    })).not.toContain("private-brand");
+  });
+
+  it("resolves changed Brand associations by current stable-ID labels without disclosing IDs", () => {
+    const groups = project({}, {}, {
+      pricingBaseline: {
+        brands: [{ id: "brand-old", name: "Old Brand" }],
+        specifications: [{ id: "spec-1", name: "Plywood", brandId: "brand-old" }]
+      },
+      pricingDraft: {
+        brands: [{ id: "brand-current", name: "Century Green" }],
+        specifications: [{ id: "spec-1", name: "Plywood", brandId: "brand-current" }]
+      }
+    });
+
+    expect(groups.find(({ key }) => key === "specifications")).toEqual({
+      key: "specifications",
+      label: "Specifications · Shared",
+      entries: [{
+        key: "specification:id:spec-1",
+        title: "Plywood",
+        kind: "updated",
+        fields: [{ key: "brandId", label: "Brand name", value: "Century Green" }]
+      }]
+    });
+    expect(JSON.stringify(visiblePendingContent(groups))).not.toContain("brand-current");
+    expect(JSON.stringify(visiblePendingContent(groups))).not.toContain("brand-old");
+  });
+
+  it("shows cleared and unavailable Brand associations without raw IDs", () => {
+    const cleared = project({}, {}, {
+      pricingBaseline: {
+        brands: [{ id: "brand-old", name: "Old Brand" }],
+        specifications: [{ id: "spec-1", name: "Plywood", brandId: "brand-old" }]
+      },
+      pricingDraft: {
+        brands: [],
+        specifications: [{ id: "spec-1", name: "Plywood" }]
+      }
+    });
+    expect(cleared.find(({ key }) => key === "specifications")?.entries[0]?.fields).toEqual([
+      { key: "brandId", label: "Brand name", value: "Not configured" }
+    ]);
+
+    const unavailable = project({}, {}, {
+      pricingBaseline: { specifications: [] },
+      pricingDraft: {
+        brands: [],
+        specifications: [{ id: "spec-1", name: "Plywood", brandId: "private-missing-brand-id" }]
+      }
+    });
+    expect(unavailable[0]?.entries[0]?.fields).toEqual([
+      { key: "name", label: "Item name", value: "Plywood" },
+      { key: "brandId", label: "Brand name", value: "Unavailable brand" }
+    ]);
+    expect(JSON.stringify(unavailable)).not.toContain("private-missing-brand-id");
   });
 });

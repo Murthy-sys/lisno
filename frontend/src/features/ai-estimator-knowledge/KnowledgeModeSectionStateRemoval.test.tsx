@@ -1287,7 +1287,7 @@ describe("Knowledge Mode section-state removal", () => {
     const ref = createRef<KnowledgeModePanelHandle>();
     renderPanel(ref);
     await user.click(await screen.findByRole("button", { name: "Add Specification" }));
-    await user.type(screen.getByRole("textbox", { name: "Specification name" }), "Plywood");
+    await user.type(screen.getByRole("textbox", { name: "Item name" }), "Plywood");
     await act(async () => { expect(await ref.current?.save()).toBe(true); });
     expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledOnce();
     const call = vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[0]!;
@@ -1322,7 +1322,7 @@ describe("Knowledge Mode section-state removal", () => {
     await user.type(screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" }), "15");
     await user.type(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" }), "15");
     await user.click(screen.getByRole("button", { name: "Add Specification" }));
-    await user.type(screen.getByRole("textbox", { name: "Specification name" }), "Plywood");
+    await user.type(screen.getByRole("textbox", { name: "Item name" }), "Plywood");
 
     await act(async () => {
       expect(await ref.current?.save()).toBe(true);
@@ -1365,7 +1365,7 @@ describe("Knowledge Mode section-state removal", () => {
     await user.type(screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" }), "15");
     await user.type(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" }), "15");
     await user.click(screen.getByRole("button", { name: "Add Specification" }));
-    await user.type(screen.getByRole("textbox", { name: "Specification name" }), "Plywood");
+    await user.type(screen.getByRole("textbox", { name: "Item name" }), "Plywood");
 
     const invalidationNeverSettles = new Promise<void>(() => undefined);
     const invalidateSpy = vi
@@ -1547,7 +1547,7 @@ describe("Knowledge Mode section-state removal", () => {
     await user.type(screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" }), "15");
     await user.type(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" }), "15");
     await user.click(screen.getByRole("button", { name: "Add Specification" }));
-    await user.type(screen.getByRole("textbox", { name: "Specification name" }), "Plywood");
+    await user.type(screen.getByRole("textbox", { name: "Item name" }), "Plywood");
 
     await act(async () => {
       expect(await ref.current?.save()).toBe(false);
@@ -1772,7 +1772,7 @@ describe("Knowledge Mode section-state removal", () => {
     await user.type(screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" }), "15");
     await user.type(margin, "15");
     await user.click(screen.getByRole("button", { name: "Add Specification" }));
-    await user.type(screen.getByRole("textbox", { name: "Specification name" }), "Plywood");
+    await user.type(screen.getByRole("textbox", { name: "Item name" }), "Plywood");
 
     await act(async () => {
       expect(await ref.current?.save()).toBe(false);

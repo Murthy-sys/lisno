@@ -59,10 +59,12 @@ const savedBudget = {
 
 function PricingEditorHarness({
   initialPayload,
+  savedPayload = initialPayload,
   readOnly = false,
   serverIssues = []
 }: {
   readonly initialPayload: KnowledgeJsonObject;
+  readonly savedPayload?: KnowledgeJsonObject;
   readonly readOnly?: boolean;
   readonly serverIssues?: readonly KnowledgeValidationIssue[];
 }) {
@@ -75,6 +77,7 @@ function PricingEditorHarness({
       <KnowledgeSectionEditor
         sectionKey="pricing"
         payload={payload}
+        savedPayload={savedPayload}
         masters={masters}
         relationshipBaskets={[]}
         relationshipItems={[]}
@@ -104,27 +107,27 @@ function currentBudget(): Record<string, unknown> {
 }
 
 describe("knowledge Budgeting editor", () => {
-  it("keeps Specifications and Vendors while presenting saved prices as collapsed Budgets", async () => {
+  it("keeps Specifications and local Brands distinct from Budget Vendors", async () => {
     const user = userEvent.setup();
     render(
       <PricingEditorHarness
         initialPayload={{
           technicalDescription: "Preserved compatibility value",
-          specifications: [{ id: "specification-1", name: "Plywood", description: "Structured description" }],
-          brands: [{ id: "brand-1", name: "Preferred vendor", description: "Retained description" }],
+          specifications: [{ id: "specification-1", name: "Plywood", brandId: "brand-1", description: "Structured description" }],
+          brands: [{ id: "brand-1", name: "Century Green", description: "Retained description" }],
           priceEntries: [savedBudget]
         }}
       />
     );
 
     expect(screen.getByRole("heading", { name: "Specifications" })).toBeVisible();
-    const vendors = screen.getByRole("region", { name: "Vendors" });
-    expect(vendors).toBeVisible();
-    /* Stable IDs are storage detail. The author edits the Vendor by name, and
-       the row's own ID never reaches the screen. */
-    expect(within(vendors).getByRole("textbox", { name: "Vendor name" })).toHaveValue("Preferred vendor");
-    expect(within(vendors).queryByRole("textbox", { name: "Stable ID" })).not.toBeInTheDocument();
-    expect(vendors).not.toHaveTextContent("brand-1");
+    expect(screen.queryByRole("region", { name: "Brands" })).not.toBeInTheDocument();
+    expect(screen.getByText("Saved")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
+    const brand = screen.getByRole("combobox", { name: "Brand name" });
+    expect(brand).toHaveDisplayValue("Century Green");
+    expect(screen.getByRole("option", { name: "Add brand" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Specifications" })).not.toHaveTextContent("brand-1");
     expect(screen.getByRole("heading", { name: "Budgets" })).toBeVisible();
     expect(screen.getByText("Set the unit budget used by the estimator. Complete the details, then Save Mode.")).toBeVisible();
     expect(screen.queryByRole("heading", { name: /price versions/iu })).not.toBeInTheDocument();
@@ -142,6 +145,31 @@ describe("knowledge Budgeting editor", () => {
     expect(screen.queryByLabelText(/price operation|price entry|price version|tax version|tax treatment|version status|mode/iu)).not.toBeInTheDocument();
     const budgets = screen.getByRole("region", { name: "Budgets" });
     expect(within(budgets).queryByRole("button", { name: /move .* (up|down)/iu })).not.toBeInTheDocument();
+
+    await user.selectOptions(brand, screen.getByRole("option", { name: "Add brand" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add Brand" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Brand name" }), "Hettich");
+    await user.click(within(dialog).getByRole("button", { name: "Add" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.getByText("Unsaved")).toBeVisible();
+
+    const payload = JSON.parse(screen.getByTestId("pricing-payload").textContent ?? "{}") as {
+      brands: Array<Record<string, unknown>>;
+      specifications: Array<Record<string, unknown>>;
+      priceEntries: Array<Record<string, unknown>>;
+    };
+    expect(payload.brands).toEqual([
+      { id: "brand-1", name: "Century Green", description: "Retained description" },
+      expect.objectContaining({ id: expect.any(String), name: "Hettich" })
+    ]);
+    expect(payload.specifications[0]).toMatchObject({
+      id: "specification-1",
+      name: "Plywood",
+      brandId: payload.brands[1]?.id
+    });
+    expect(payload.priceEntries[0]).toMatchObject({
+      priceVersion: { vendorId: "vendor-1" }
+    });
   });
 
   it("creates a business-only budget draft, opens it, and focuses Vendor", async () => {
@@ -256,7 +284,8 @@ describe("knowledge Budgeting editor", () => {
     expect(screen.getByRole("group", { name: "Saved budget details" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Update budget" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Remove .* from this Draft/iu })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add vendor" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Add brand" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Brands" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add tax" })).not.toBeInTheDocument();
   });
 

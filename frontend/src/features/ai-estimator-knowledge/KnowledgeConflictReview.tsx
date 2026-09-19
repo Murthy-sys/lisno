@@ -254,13 +254,22 @@ function pricingValues(
 ): readonly ConflictReviewValue[] {
   const values: ConflictReviewValue[] = [];
   const specifications = objectArray(payload.specifications);
+  const brands = objectArray(payload.brands);
 
   specifications.forEach((specification, index) => {
-    const prefix = `Specification ${index + 1}`;
+    const prefix = `Item ${index + 1}`;
     const label = meaningfulText(specification.name);
+    const brandId = meaningfulText(specification.brandId);
     const description = meaningfulText(specification.description);
     if (label) {
-      values.push({ label: `${prefix} · Specification name`, value: label });
+      values.push({ label: `${prefix} · Item name`, value: label });
+    }
+    if (brandId) {
+      const brand = brands.find((candidate) => stringValue(candidate.id) === brandId);
+      values.push({
+        label: `${prefix} · Brand name`,
+        value: meaningfulText(brand?.name) ?? "Unavailable brand"
+      });
     }
     if (description) {
       values.push({ label: `${prefix} · Brief description`, value: description });

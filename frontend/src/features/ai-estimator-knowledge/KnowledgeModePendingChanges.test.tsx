@@ -27,6 +27,11 @@ function setup(overrides: Partial<ComponentProps<typeof KnowledgeModePanel>> = {
   return { ...rendered, queryClient, ref, onPendingChanges, latest: () => onPendingChanges.mock.lastCall?.[0], rerenderProps: (next: Partial<typeof props>) => rendered.rerender(view({ ...props, ...next })) };
 }
 
+async function openSavedSpecificationEditor() {
+  fireEvent.click(await screen.findByRole("button", { name: "Edit Specification 1" }));
+  return screen.getByRole("textbox", { name: "Brief description" });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(api.getKnowledgeItem).mockResolvedValue(item);
@@ -38,14 +43,13 @@ describe("Mode pending publication lifecycle", () => {
   it("does not publish saved/default content or viewing selections; local edit/revert is exact", async () => {
     const user = userEvent.setup();
     const panel = setup();
-    await screen.findByRole("textbox", { name: "Specification name" });
+    const description = await openSavedSpecificationEditor();
     expect(panel.latest()?.groups).toEqual([]);
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     await user.click(screen.getByRole("checkbox", { name: "In-house" }));
     expect(panel.latest()?.groups).toEqual([]);
-    const description = screen.getByRole("textbox", { name: "Brief description" });
     fireEvent.change(description, { target: { value: "Only local requirement" } });
-    expect(panel.latest()?.groups[0]?.entries[0]?.fields).toEqual([{ key: "description", label: "Description", value: "Only local requirement" }]);
+    expect(panel.latest()?.groups[0]?.entries[0]?.fields).toEqual([{ key: "description", label: "Brief description", value: "Only local requirement" }]);
     expect(JSON.stringify(panel.latest())).not.toContain("Saved specification detail");
     fireEvent.change(description, { target: { value: "Saved specification detail" } });
     expect(panel.latest()?.groups).toEqual([]);
@@ -54,7 +58,7 @@ describe("Mode pending publication lifecycle", () => {
   it("publishes first-edited In-house starter lists under source-labelled groups", async () => {
     const user = userEvent.setup();
     const panel = setup();
-    await screen.findByRole("textbox", { name: "Specification name" });
+    await screen.findByRole("button", { name: "Edit Specification 1" });
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     await user.click(screen.getByRole("checkbox", { name: "In-house" }));
     expect(panel.latest()?.groups).toEqual([]);
@@ -167,7 +171,7 @@ describe("Mode pending publication lifecycle", () => {
   it("keeps the frozen draft baseline through refetch and conflict keep-editing", async () => {
     const user = userEvent.setup();
     const panel = setup();
-    const description = await screen.findByRole("textbox", { name: "Brief description" });
+    const description = await openSavedSpecificationEditor();
     fireEvent.change(description, { target: { value: "Local specification" } });
     act(() => panel.queryClient.setQueryData(knowledgeQueryKeys.section(item.mainLineId, "revision-1", "pricing"), section("pricing", { specifications: [{ id: "spec-1", name: "Remote board", description: "Remote specification" }] }, 2)));
     expect(panel.latest()?.groups[0]?.entries[0]).toMatchObject({ title: "Saved board", fields: [{ value: "Local specification" }] });
@@ -175,8 +179,8 @@ describe("Mode pending publication lifecycle", () => {
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "pricing" ? { specifications: [{ id: "spec-1", name: "Remote board", description: "Remote specification" }] } : { pmcMarginBps: 1_800 }, 3, revision));
     await act(async () => { expect(await panel.ref.current?.save()).toBe(false); });
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
-    expect(panel.latest()?.groups[0]?.entries[0]).toMatchObject({ title: "Saved board", fields: [{ value: "Local specification" }] });
-    expect(JSON.stringify(panel.latest())).not.toContain("Remote");
+    expect(panel.latest()?.groups[0]?.entries[0]).toMatchObject({ title: "Remote board", fields: [{ value: "Local specification" }] });
+    expect(JSON.stringify(panel.latest())).not.toContain("Remote specification");
     act(() => panel.ref.current?.discard());
     expect(panel.latest()?.groups).toEqual([]);
   });
@@ -185,7 +189,7 @@ describe("Mode pending publication lifecycle", () => {
   it("excludes accepted server calculation fields when their source is first edited after a conflict", async () => {
     const user = userEvent.setup();
     const panel = setup();
-    await screen.findByRole("textbox", { name: "Brief description" });
+    await screen.findByRole("button", { name: "Edit Specification 1" });
     fireEvent.change(screen.getByRole("spinbutton", { name: "Min. PMC Margin (%)" }), { target: { value: "15" } });
     fireEvent.change(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" }), { target: { value: "15" } });
     const remoteCalculation = { baseRatePaise: 30_000, lowQuantityLimit: "82", impactBps: 1_600, minimumMarkupBps: 2_700, startingMarkupBps: 3_900 };
@@ -206,7 +210,7 @@ describe("Mode pending publication lifecycle", () => {
 
   it("clears only the confirmed advanced block on partial save and retains failed Specifications", async () => {
     const panel = setup();
-    const description = await screen.findByRole("textbox", { name: "Brief description" });
+    const description = await openSavedSpecificationEditor();
     fireEvent.change(description, { target: { value: "Unconfirmed specification" } });
     fireEvent.change(screen.getByRole("spinbutton", { name: "Min. PMC Margin (%)" }), { target: { value: "15" } });
     fireEvent.change(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" }), { target: { value: "15" } });
@@ -233,7 +237,8 @@ describe("Mode pending publication lifecycle", () => {
     const rate = await screen.findByRole("textbox", { name: "Base Rate (₹)" });
     await waitFor(() => expect(rate).toHaveValue("100.00"));
     fireEvent.change(rate, { target: { value: "120" } });
-    fireEvent.change(screen.getByRole("textbox", { name: "Brief description" }), { target: { value: "Still unsaved specification" } });
+    const description = await openSavedSpecificationEditor();
+    fireEvent.change(description, { target: { value: "Still unsaved specification" } });
     expect(panel.latest()?.groups.map((group) => group.key)).toEqual(["calculation:pmc", "specifications"]);
     vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Updated elsewhere."));
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced" ? advanced(12_000) : key === "pricing" ? savedPricing : {}, 2, revision));
@@ -292,7 +297,7 @@ describe("Mode pending publication lifecycle", () => {
 
   it("emits empty source cleanup under StrictMode and never republishes old data under a new source", async () => {
     const panel = setup({}, true);
-    const description = await screen.findByRole("textbox", { name: "Brief description" });
+    const description = await openSavedSpecificationEditor();
     fireEvent.change(description, { target: { value: "First session only" } });
     expect(panel.latest()?.groups).toHaveLength(1);
     panel.onPendingChanges.mockClear();
@@ -307,7 +312,8 @@ describe("Mode pending publication lifecycle", () => {
 
   it("does not publish a late save response from a departed source into the new session", async () => {
     const panel = setup();
-    fireEvent.change(await screen.findByRole("textbox", { name: "Brief description" }), { target: { value: "Departed local specification" } });
+    const description = await openSavedSpecificationEditor();
+    fireEvent.change(description, { target: { value: "Departed local specification" } });
     let finish!: (response: Awaited<ReturnType<typeof api.updateKnowledgeSection>>) => void;
     vi.mocked(api.updateKnowledgeSection).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     let saving!: Promise<boolean>;
@@ -319,12 +325,13 @@ describe("Mode pending publication lifecycle", () => {
       await saving;
     });
     expect(panel.latest()).toEqual({ sourceKey: "session-2", groups: [] });
-    expect(screen.getByRole("textbox", { name: "Brief description" })).toHaveValue("Saved specification detail");
+    expect(screen.getByRole("cell", { name: "Saved specification detail" })).toBeVisible();
   });
 
   it("publishes nothing when the same dirty editor becomes read-only", async () => {
     const panel = setup();
-    fireEvent.change(await screen.findByRole("textbox", { name: "Brief description" }), { target: { value: "Local requirement" } });
+    const description = await openSavedSpecificationEditor();
+    fireEvent.change(description, { target: { value: "Local requirement" } });
     expect(panel.latest()?.groups).toHaveLength(1);
     panel.rerenderProps({ editable: false });
     expect(panel.latest()?.groups).toEqual([]);

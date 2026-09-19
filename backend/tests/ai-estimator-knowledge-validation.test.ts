@@ -495,7 +495,12 @@ describe("AI estimator knowledge validation", () => {
     };
     expect(validateKnowledgeSectionPayload("pricing", {
       specifications: [
-        { id: "specification-standard", name: "Standard", description: null },
+        {
+          id: "specification-standard",
+          name: "Standard",
+          description: null,
+          brandId: "brand-expert"
+        },
         { id: "specification-premium", name: "Premium" }
       ],
       brands: [{ id: "brand-expert", name: "Expert", description: "Approved brand" }],
@@ -504,6 +509,68 @@ describe("AI estimator knowledge validation", () => {
       internalVendorNotes: null,
       priceEntries: [append, reference]
     })).toEqual([]);
+  });
+
+  it("accepts optional local Brand associations on descriptive and typed Specification rows", () => {
+    expect(validateKnowledgeSectionPayload("pricing", {
+      specifications: [
+        {
+          id: "specification-plywood",
+          name: "Plywood",
+          brandId: "brand-century-green"
+        },
+        {
+          ...specification("dropdown", "Laminate", ["Matte", "Gloss"], "Matte"),
+          brandId: "brand-century-green"
+        },
+        { id: "specification-glue", name: "Glue" }
+      ],
+      brands: [{ id: "brand-century-green", name: "Century Green" }]
+    })).toEqual([]);
+  });
+
+  it("uses one trimmed 240-character contract for local Brand identities and associations", () => {
+    const maximumBrandId = "b".repeat(240);
+    expect(validateKnowledgeSectionPayload("pricing", {
+      specifications: [{ id: "specification-plywood", name: "Plywood", brandId: maximumBrandId }],
+      brands: [{ id: maximumBrandId, name: "Maximum ID Brand" }]
+    })).toEqual([]);
+
+    const issues = validateKnowledgeSectionPayload("pricing", {
+      specifications: [{ id: "specification-plywood", name: "Plywood", brandId: " brand-century " }],
+      brands: [{ id: " brand-century ", name: "Century Green" }]
+    });
+    expect(issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "payload.specifications.0.brandId", code: "INVALID_REFERENCE" }),
+      expect.objectContaining({ path: "payload.brands.0.id", code: "INVALID_REFERENCE" })
+    ]));
+  });
+
+  it("rejects malformed, dangling, and ambiguous local Brand associations at the Item/part field", () => {
+    const tooLongBrandId = "b".repeat(241);
+    const issues = validateKnowledgeSectionPayload("pricing", {
+      specifications: [
+        { id: "specification-null", name: "Null", brandId: null },
+        { id: "specification-long", name: "Long", brandId: tooLongBrandId },
+        { id: "specification-missing", name: "Missing", brandId: "brand-missing" },
+        { id: "specification-ambiguous", name: "Ambiguous", brandId: "brand-duplicate" }
+      ],
+      brands: [
+        { id: "brand-duplicate", name: "Brand one" },
+        { id: "brand-duplicate", name: "Brand two" }
+      ]
+    });
+
+    for (const index of [0, 1, 2, 3]) {
+      expect(issues).toContainEqual(expect.objectContaining({
+        path: `payload.specifications.${index}.brandId`,
+        code: "INVALID_REFERENCE"
+      }));
+    }
+    expect(issues).toContainEqual(expect.objectContaining({
+      path: "payload.brands.1.id",
+      code: "DUPLICATE_ID"
+    }));
   });
 
   it("accepts business-only Budget commands and rejects every server-owned field", () => {

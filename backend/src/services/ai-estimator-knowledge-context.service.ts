@@ -780,15 +780,21 @@ function sanitizeSectionPayload(sectionKey: KnowledgeSectionKey, payload: Row): 
   if (sectionKey === "advanced") return publicAdvancedPayload(payload);
   if (sectionKey !== "pricing") return structuredClone(payload);
   const safe: Row = {};
+  const publicBrands = Array.isArray(payload.brands)
+    ? payload.brands
+      .map(publicNamedRow)
+      .filter((entry): entry is Row => entry !== null)
+    : [];
+  const brandsById = new Map(
+    publicBrands.map((brand) => [requiredString(brand.id), brand] as const)
+  );
   if (Array.isArray(payload.specifications)) {
     safe.specifications = payload.specifications
-      .map(publicSpecification)
+      .map((specification) => publicSpecification(specification, brandsById))
       .filter((entry): entry is Row => entry !== null);
   }
   if (Array.isArray(payload.brands)) {
-    safe.brands = payload.brands
-      .map(publicNamedRow)
-      .filter((entry): entry is Row => entry !== null);
+    safe.brands = publicBrands;
   }
   if (Object.hasOwn(payload, "technicalDescription")) {
     safe.technicalDescription = structuredClone(payload.technicalDescription);
@@ -856,8 +862,23 @@ function publicModeField(value: unknown): Row | null {
   };
 }
 
-function publicSpecification(value: unknown): Row | null {
-  return publicNamedRow(value);
+function publicSpecification(
+  value: unknown,
+  brandsById: ReadonlyMap<string, Row>
+): Row | null {
+  const row = asRow(value);
+  const safe = publicNamedRow(value);
+  if (!row || !safe) return null;
+  const brandId = optionalString(row.brandId);
+  const brand = brandId ? brandsById.get(brandId) : undefined;
+  if (brandId && brand) {
+    safe.brandId = brandId;
+    safe.brand = {
+      id: requiredString(brand.id),
+      name: requiredString(brand.name)
+    };
+  }
+  return safe;
 }
 
 function publicNamedRow(value: unknown): Row | null {

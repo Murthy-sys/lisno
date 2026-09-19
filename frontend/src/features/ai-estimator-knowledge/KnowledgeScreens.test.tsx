@@ -278,7 +278,7 @@ function expectModeRegionsInOrder(container: HTMLElement) {
 
 async function findPricingSpecificationName() {
   const specifications = await screen.findByRole("region", { name: "Specifications" });
-  return within(specifications).getByRole("textbox", { name: "Specification name" });
+  return within(specifications).getByRole("textbox", { name: "Item name" });
 }
 
 async function editPmcMargin(user: ReturnType<typeof userEvent.setup>) {

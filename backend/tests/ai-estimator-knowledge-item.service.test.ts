@@ -2718,11 +2718,13 @@ describe("AI estimator knowledge item service", () => {
           specifications: [{
             id: "spec-referenced",
             name: "Renamed thickness",
+            brandId: "brand-century-green",
             description: "Still linked by stable ID.",
             type: "text",
             options: [],
             value: "18 mm"
           }],
+          brands: [{ id: "brand-century-green", name: "Century Green" }],
           priceEntries: [reference]
         }
       }
@@ -2731,6 +2733,7 @@ describe("AI estimator knowledge item service", () => {
       expect.objectContaining({
         id: "spec-referenced",
         name: "Renamed thickness",
+        brandId: "brand-century-green",
         value: "18 mm"
       })
     ]);

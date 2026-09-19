@@ -766,6 +766,11 @@ describe("OpenAPI and Swagger UI", () => {
           maxItems: 50,
           items: { $ref: "#/components/schemas/KnowledgeSpecification" }
         },
+        brands: {
+          type: "array",
+          items: { $ref: "#/components/schemas/KnowledgeBrand" },
+          description: expect.stringContaining("separate from reusable procurement Vendor masters")
+        },
         priceEntries: {
           type: "array",
           items: { $ref: "#/components/schemas/KnowledgePriceEntryCommand" },
@@ -774,7 +779,7 @@ describe("OpenAPI and Swagger UI", () => {
       }
     });
     expect(componentSchemas().KnowledgeSpecification).toEqual({
-      description: "A descriptive Specification row for current writes, or an unchanged stored typed row retained for compatibility.",
+      description: "An Item/part row with an optional stable local Brand association, or an unchanged stored typed row retained for compatibility.",
       oneOf: [
         { $ref: "#/components/schemas/KnowledgeDescriptiveSpecification" },
         { $ref: "#/components/schemas/KnowledgeCanonicalSpecification" }
@@ -784,9 +789,18 @@ describe("OpenAPI and Swagger UI", () => {
       type: "object",
       additionalProperties: false,
       required: ["id", "name"],
+      properties: expect.objectContaining({
+        brandId: expect.objectContaining({
+          type: "string",
+          maxLength: 240,
+          pattern: "^(?:\\S(?:.*\\S)?)$",
+          description: expect.stringContaining("not a reusable Vendor master ID")
+        })
+      }),
       example: {
         id: "specification-plywood",
         name: "Plywood",
+        brandId: "brand-century-green",
         description: "18 mm BWP-grade plywood for the cabinet carcass."
       }
     });
@@ -801,6 +815,7 @@ describe("OpenAPI and Swagger UI", () => {
       example: {
         id: "specification-finish",
         name: "Finish",
+        brandId: "brand-century-green",
         description: "Choose the approved finish.",
         type: "dropdown",
         options: ["Matte", "Gloss"],
@@ -811,6 +826,7 @@ describe("OpenAPI and Swagger UI", () => {
           required: ["id", "name", "type", "options", "value"],
           properties: expect.objectContaining({
             type: { type: "string", enum: ["number"] },
+            brandId: expect.objectContaining({ type: "string" }),
             value: expect.objectContaining({
               pattern: "^(0|[1-9][0-9]*)(\\.[0-9]{1,6})?$"
             })
@@ -837,6 +853,47 @@ describe("OpenAPI and Swagger UI", () => {
           })
         })
       ])
+    });
+    expect(componentSchemas().KnowledgeBrand).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "name"],
+      properties: {
+        id: expect.objectContaining({
+          type: "string",
+          maxLength: 240,
+          pattern: "^(?:\\S(?:.*\\S)?)$"
+        })
+      },
+      description: expect.stringContaining("distinct from reusable procurement Vendor masters")
+    });
+    expect(componentSchemas().KnowledgeSpecificationContext).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "name"],
+      properties: {
+        brandId: expect.objectContaining({ type: "string" }),
+        brand: { $ref: "#/components/schemas/KnowledgeSpecificationBrandIdentity" }
+      }
+    });
+    expect(componentSchemas().KnowledgeSpecificationBrandIdentity).toMatchObject({
+      properties: {
+        id: {
+          type: "string",
+          minLength: 1,
+          maxLength: 240,
+          pattern: "^(?:\\S(?:.*\\S)?)$"
+        }
+      }
+    });
+    expect(componentSchemas().KnowledgeContext).toMatchObject({
+      properties: {
+        sections: {
+          properties: {
+            pricing: { $ref: "#/components/schemas/KnowledgePricingContext" }
+          }
+        }
+      }
     });
     expect(componentSchemas().KnowledgeBudgetSetCommand).toMatchObject({
       type: "object",

@@ -884,6 +884,39 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     )).version).toBe(pricing.version);
     expect(await AuditEventModel.countDocuments()).toBe(auditCountBeforeOverlap);
 
+    await expect(services.item.updateSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "pricing",
+      {
+        expectedVersion: pricing.version,
+        expectedAggregateVersion: draft.aggregateVersion,
+        payload: {
+          specifications: [{
+            id: "spec-standard",
+            name: "Board grade",
+            brandId: "brand-missing"
+          }],
+          brands: [{ id: "brand-public", name: "Public brand" }],
+          priceEntries: [firstReference]
+        }
+      }
+    )).rejects.toMatchObject({
+      status: 400,
+      code: "VALIDATION_ERROR",
+      fields: {
+        "payload.specifications.0.brandId": expect.any(String)
+      }
+    });
+    expect((await services.item.getSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "pricing"
+    )).version).toBe(pricing.version);
+    expect(await AuditEventModel.countDocuments()).toBe(auditCountBeforeOverlap);
+
     const configuredPricing = await services.item.updateSection(
       SUPER_ADMIN,
       draft.mainLineId,
@@ -897,6 +930,7 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
             {
               id: "spec-standard",
               name: "Board grade",
+              brandId: "brand-public",
               description: "Use the approved board grade."
             },
             {
@@ -980,6 +1014,8 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
       specifications: [{
         id: "spec-standard",
         name: "Board grade",
+        brandId: "brand-public",
+        brand: { id: "brand-public", name: "Public brand" },
         description: "Use the approved board grade."
       }],
       brands: [{ id: "brand-public", name: "Public brand" }],

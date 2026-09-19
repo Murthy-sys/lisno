@@ -209,6 +209,16 @@ export const AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS: Readonly<
 };
 
 const id = { type: "string", minLength: 1, maxLength: 128 } as const;
+const pricingBrandId = {
+  type: "string",
+  minLength: 1,
+  maxLength: 240,
+  pattern: "^(?:\\S(?:.*\\S)?)$"
+} as const;
+const specificationBrandId = {
+  ...pricingBrandId,
+  description: "Stable reference to one local Brand in this Pricing payload's brands array. This is not a reusable Vendor master ID."
+} as const;
 const shortText = { type: "string", minLength: 1, maxLength: 240 } as const;
 const version = { type: "integer", minimum: 1 } as const;
 const dateTime = { type: "string", format: "date-time" } as const;
@@ -474,12 +484,14 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       {
         id,
         name: { type: "string", minLength: 1, maxLength: 240 },
-        description
+        description,
+        brandId: specificationBrandId
       }
     ),
     example: {
       id: "specification-plywood",
       name: "Plywood",
+      brandId: "brand-century-green",
       description: "18 mm BWP-grade plywood for the cabinet carcass."
     }
   },
@@ -498,6 +510,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
           id,
           name: { type: "string", minLength: 1, maxLength: 240 },
           description,
+          brandId: specificationBrandId,
           type: { type: "string", enum: [type] },
           options: { type: "array", maxItems: 0, items: { type: "string" } },
           value: { type: "string", maxLength: 4_000, nullable: true }
@@ -509,6 +522,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
           id,
           name: { type: "string", minLength: 1, maxLength: 240 },
           description,
+          brandId: specificationBrandId,
           type: { type: "string", enum: ["number"] },
           options: { type: "array", maxItems: 0, items: { type: "string" } },
           value: {
@@ -525,6 +539,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
           id,
           name: { type: "string", minLength: 1, maxLength: 240 },
           description,
+          brandId: specificationBrandId,
           type: { type: "string", enum: [type] },
           options: {
             type: "array",
@@ -548,6 +563,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
           id,
           name: { type: "string", minLength: 1, maxLength: 240 },
           description,
+          brandId: specificationBrandId,
           type: { type: "string", enum: ["checkbox"] },
           options: { type: "array", maxItems: 0, items: { type: "string" } },
           value: { type: "boolean" }
@@ -558,6 +574,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     example: {
       id: "specification-finish",
       name: "Finish",
+      brandId: "brand-century-green",
       description: "Choose the approved finish.",
       type: "dropdown",
       options: ["Matte", "Gloss"],
@@ -565,11 +582,65 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     }
   },
   KnowledgeSpecification: {
-    description: "A descriptive Specification row for current writes, or an unchanged stored typed row retained for compatibility.",
+    description: "An Item/part row with an optional stable local Brand association, or an unchanged stored typed row retained for compatibility.",
     oneOf: [
       ref("KnowledgeDescriptiveSpecification"),
       ref("KnowledgeCanonicalSpecification")
     ]
+  },
+  KnowledgeBrand: {
+    ...strictObject(
+      ["id", "name"],
+      {
+        id: pricingBrandId,
+        name: { type: "string", minLength: 1, maxLength: 240 },
+        description
+      }
+    ),
+    description: "A Brand local to one Pricing payload. It is distinct from reusable procurement Vendor masters.",
+    example: {
+      id: "brand-century-green",
+      name: "Century Green"
+    }
+  },
+  KnowledgeSpecificationBrandIdentity: strictObject(
+    ["id", "name"],
+    {
+      id: pricingBrandId,
+      name: { type: "string", minLength: 1, maxLength: 240 }
+    }
+  ),
+  KnowledgeSpecificationContext: {
+    ...strictObject(
+      ["id", "name"],
+      {
+        id,
+        name: { type: "string", minLength: 1, maxLength: 240 },
+        description,
+        brandId: specificationBrandId,
+        brand: ref("KnowledgeSpecificationBrandIdentity")
+      }
+    ),
+    description: "Public Item/part context. When brandId is present, brand contains the identity resolved by that stable local ID."
+  },
+  KnowledgePricingContext: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      specifications: {
+        type: "array",
+        maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELDS,
+        items: ref("KnowledgeSpecificationContext")
+      },
+      brands: {
+        type: "array",
+        maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS,
+        items: ref("KnowledgeBrand")
+      },
+      technicalDescription: description,
+      qualityLevel: { type: "string", minLength: 1, maxLength: 240, nullable: true }
+    },
+    description: "Public Pricing context. Private Vendor notes and immutable price records are excluded."
   },
   KnowledgeBudgetSetCommand: {
     ...strictObject(
@@ -1415,7 +1486,14 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     sections: {
       type: "object",
       additionalProperties: false,
-      properties: Object.fromEntries(AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map((key) => [key, key === "quality" ? ref("KnowledgeQualityContext") : {}]))
+      properties: Object.fromEntries(AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map((key) => [
+        key,
+        key === "quality"
+          ? ref("KnowledgeQualityContext")
+          : key === "pricing"
+            ? ref("KnowledgePricingContext")
+            : {}
+      ]))
     },
     preview: { ...nullableRef("KnowledgePreview"), description: "Legacy price-version preview only. For independent Mode cost settings use configuration; do not combine these pricing systems." },
     configuration: ref("KnowledgeConfigurationContext")
@@ -1503,6 +1581,12 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
       type: "array",
       maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELDS,
       items: ref("KnowledgeSpecification")
+    };
+    properties.brands = {
+      type: "array",
+      maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS,
+      description: "Brands local to this Pricing payload. These identities are separate from reusable procurement Vendor masters.",
+      items: ref("KnowledgeBrand")
     };
     properties.priceEntries = {
       type: "array",
