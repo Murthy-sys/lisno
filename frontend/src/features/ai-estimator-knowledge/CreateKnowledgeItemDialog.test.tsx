@@ -43,7 +43,7 @@ describe("Main Line with a Sub Basket text field", () => {
     const { user, onCreated } = setup();
     await screen.findByRole("option", { name: "Carpentry" });
     expect(screen.queryByRole("textbox", { name: "Description" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add main basket" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Add Main Basket" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add sub basket" })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Sub basket" })).not.toBeInTheDocument();
     await user.selectOptions(screen.getByRole("combobox", { name: "Main basket" }), baskets[0].id);
@@ -98,7 +98,7 @@ describe("Main Line with a Sub Basket text field", () => {
     await user.click(screen.getByRole("button", { name: "Retry Main Baskets" }));
     expect(await screen.findByText("Create a Main Basket from Configuration before adding a Main Line.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Add estimation item" })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Add main basket" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Add Main Basket" })).not.toBeInTheDocument();
   });
 
   it("loads later Main Basket pages", async () => {
@@ -419,7 +419,7 @@ describe("temporary item Main Basket creation", () => {
 
     expect(await screen.findByText(/No Main Baskets are available/)).toBeVisible();
     await user.type(screen.getByRole("textbox", { name: "Temporary item name" }), "Temporary wiring point");
-    await user.click(screen.getByRole("button", { name: "Add main basket" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main basket" }), "add-main-basket");
     await user.type(screen.getByRole("textbox", { name: "New Main Basket name" }), "  Electrical  ");
     await user.click(screen.getByRole("button", { name: "Save main basket" }));
 
@@ -453,8 +453,8 @@ describe("temporary item Main Basket creation", () => {
     const { user } = setup({ itemType: "temporary", canCreateBasket: true, initialBasketId: "basket-0" });
 
     await screen.findByRole("option", { name: "Carpentry" });
-    expect(screen.getByRole("button", { name: "Add main basket" })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Add main basket" }));
+    expect(screen.getByRole("option", { name: "Add Main Basket" })).toBeVisible();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main basket" }), "add-main-basket");
     await user.type(screen.getByRole("textbox", { name: "New Main Basket name" }), " electrical   WORKS ");
     await user.click(screen.getByRole("button", { name: "Save main basket" }));
 
@@ -473,7 +473,7 @@ describe("temporary item Main Basket creation", () => {
     const { user } = setup({ itemType: "temporary", canCreateBasket: true, initialBasketId: "basket-0" });
 
     await screen.findByRole("option", { name: "Carpentry" });
-    await user.click(screen.getByRole("button", { name: "Add main basket" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main basket" }), "add-main-basket");
     await user.type(screen.getByRole("textbox", { name: "New Main Basket name" }), "Electrical");
     await user.click(screen.getByRole("button", { name: "Save main basket" }));
 
@@ -492,7 +492,7 @@ describe("temporary item Main Basket creation", () => {
   it("does not expose basket creation without the explicit Super Admin capability", async () => {
     setup({ itemType: "temporary", initialBasketId: "basket-0" });
     await screen.findByRole("option", { name: "Carpentry" });
-    expect(screen.queryByRole("button", { name: "Add main basket" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Add Main Basket" })).not.toBeInTheDocument();
   });
 
   it("locks duplicate Main Basket submissions while the first request is pending", async () => {
@@ -500,7 +500,7 @@ describe("temporary item Main Basket creation", () => {
     vi.mocked(api.createKnowledgeBasket).mockImplementation(() => new Promise((resolve) => { resolveCreate = resolve; }));
     const { user } = setup({ itemType: "temporary", canCreateBasket: true, initialBasketId: "basket-0" });
     await screen.findByRole("option", { name: "Carpentry" });
-    await user.click(screen.getByRole("button", { name: "Add main basket" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main basket" }), "add-main-basket");
     await user.type(screen.getByRole("textbox", { name: "New Main Basket name" }), "Electrical");
 
     await user.dblClick(screen.getByRole("button", { name: "Save main basket" }));
@@ -508,5 +508,56 @@ describe("temporary item Main Basket creation", () => {
 
     await act(async () => resolveCreate({ ...baskets[0], id: "basket-created", name: "Electrical" }));
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Main basket" })).toHaveValue("basket-created"));
+  });
+});
+
+
+describe("Main Basket dropdown creation in item dialogs", () => {
+  it.each(["main_line", "temporary"] as const)("offers creation for a %s related item and preserves the draft on cancel", async (itemType) => {
+    const { user } = setup({ ...relatedProps, itemType, canCreateBasket: true });
+    await screen.findByRole("option", { name: "Carpentry" });
+    const select = screen.getByRole("combobox", { name: "Main basket" });
+    await user.selectOptions(select, "add-main-basket");
+    expect(select).toHaveValue("basket-0");
+    expect(screen.getByRole("textbox", { name: "New Main Basket name" })).toHaveFocus();
+    await user.type(screen.getByRole("textbox", { name: "New Main Basket name" }), "New basket");
+    await user.keyboard("{Escape}");
+    expect(select).toHaveFocus();
+    expect(select).toHaveValue("basket-0");
+    expect(screen.getByRole("textbox", { name: "Sub basket" })).toHaveValue("Walls");
+    expect(screen.getByRole("textbox", { name: "Related item name" })).toHaveValue("Panelling");
+    expect(api.createKnowledgeBasket).not.toHaveBeenCalled();
+  });
+
+  it("restores the stable Sub-Basket when switching back to the original Main Basket", async () => {
+    const { user, onCreated } = setup({ context: "sub-item", initialBasketId: "basket-0", initialSubBasketId: "sub-walls", initialSubBasketName: "Walls", canCreateBasket: true });
+    await screen.findByRole("option", { name: "Carpentry" });
+    const select = screen.getByRole("combobox", { name: "Main basket" });
+    await user.selectOptions(select, "basket-1");
+    const subBasket = screen.getByRole("textbox", { name: "Sub basket" });
+    expect(subBasket).toBeEnabled();
+    expect(subBasket).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Add sub-item" })).toBeDisabled();
+    await user.type(subBasket, "Other wall");
+    await user.selectOptions(select, "basket-0");
+    expect(subBasket).toBeDisabled();
+    expect(subBasket).toHaveValue("Walls");
+    await user.type(screen.getByRole("textbox", { name: "Sub-item name" }), "Panelling");
+    await user.click(screen.getByRole("button", { name: "Add sub-item" }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("line-created", createdDetail));
+    expect(api.createKnowledgeMainLine).toHaveBeenCalledWith("basket-0", { name: "Panelling", subBasketId: "sub-walls" });
+  });
+
+  it("saves a basket with Enter without submitting the surrounding item form", async () => {
+    vi.mocked(api.createKnowledgeBasket).mockResolvedValue({ ...baskets[0], id: "basket-created", name: "Electrical" });
+    const { user } = setup({ ...relatedProps, canCreateBasket: true });
+    await screen.findByRole("option", { name: "Carpentry" });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main basket" }), "add-main-basket");
+    await user.keyboard("{Enter}");
+    expect(api.createKnowledgeBasket).not.toHaveBeenCalled();
+    await user.type(screen.getByRole("textbox", { name: "New Main Basket name" }), "Electrical{Enter}");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Main basket" })).toHaveValue("basket-created"));
+    expect(api.createKnowledgeBasket).toHaveBeenCalledOnce();
+    expect(api.createKnowledgeMainLine).not.toHaveBeenCalled();
   });
 });
