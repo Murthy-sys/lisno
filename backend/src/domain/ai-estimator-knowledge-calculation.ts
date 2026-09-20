@@ -439,7 +439,7 @@ export function calculateKnowledgePreview(
     throw new KnowledgeCalculationError("INVALID_BASIS_POINTS", KNOWLEDGE_CUSTOM_DISCOUNT_MESSAGE);
   }
   if (input.modeCalculationMarkupBasis !== undefined && !hasCalculation) {
-    throw new KnowledgeCalculationError("INVALID_AMOUNT", "Mode calculation settings are required when choosing a markup.");
+    throw new KnowledgeCalculationError("INVALID_AMOUNT", "Mode calculation settings are required when choosing a margin basis.");
   }
   const baseRate = input.unitRatePaise ?? null;
   if (baseRate !== null) assertSafeMoney(baseRate);

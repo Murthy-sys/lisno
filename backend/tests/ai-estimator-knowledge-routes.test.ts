@@ -919,15 +919,20 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     expect(testServices.item.updateSection).toHaveBeenLastCalledWith(superAdmin, "line-1", "revision-1", "advanced", {
       expectedVersion: 3, expectedAggregateVersion: 7, payload: { modeCalculations }
     });
+    const hiddenLegacyRates = { ...settings, minimumMarkupBps: 12_000, startingMarkupBps: 15_000 };
+    expect((await send({ ...modeCalculations, pmc: hiddenLegacyRates, sub_vendor: hiddenLegacyRates })).status).toBe(200);
     for (const scope of ["in_house_labor", "in_house_material"]) {
       const rejected = await send({ ...modeCalculations, [scope]: { ...settings, impactBps: -1 } });
       expect(rejected.status).toBe(400);
       expect(rejected.body.error.fields).toMatchObject({ [`payload.modeCalculations.${scope}.impactBps`]: expect.any(String) });
+      const impossibleMargin = await send({ ...modeCalculations, [scope]: { ...settings, startingMarkupBps: 10_000 } });
+      expect(impossibleMargin.status).toBe(400);
+      expect(impossibleMargin.body.error.fields).toMatchObject({ [`payload.modeCalculations.${scope}.startingMarkupBps`]: expect.any(String) });
     }
     const { in_house_material: _material, ...partial } = modeCalculations;
     expect((await send({ ...partial, in_house: settings })).status).toBe(400);
     expect((await send({ pmc: settings, execution: settings })).status).toBe(400);
-    expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(2);
   });
 
   it("validates the PMC margin before persisting a Mode section", async () => {
@@ -1127,6 +1132,7 @@ describe("AI Estimator Knowledge HTTP routes", () => {
       { quantityScale: 0, modeCalculationMarkupBasis: "minimum" },
       { ...input, quantity: null }, { modeCalculation, quantityScale: 0 },
       { ...input, modeCalculation: { ...modeCalculation, startingMarkupBps: 2_000 } },
+      { ...input, modeCalculation: { ...modeCalculation, minimumMarkupBps: 9_999, startingMarkupBps: 10_000 } },
       ...[-1, 1.5, null, "10", Number.MAX_SAFE_INTEGER].map((impactBps) => ({ ...input, modeCalculation: { ...modeCalculation, impactBps } })),
       { ...input, modeCalculation: { ...modeCalculation, uomId: "invented" } }
     ]) expect((await send(invalid)).status).toBe(400);
@@ -1158,6 +1164,39 @@ describe("AI Estimator Knowledge HTTP routes", () => {
       expect(response.body.error.fields).toMatchObject({ [path]: expect.any(String) });
     }
     expect(testServices.context.preview).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns corrected In-house prices through authenticated read-only preview without a business write", async () => {
+    const testServices = services();
+    const requireReadActor = vi.fn().mockResolvedValue({ id: superAdmin.id, role: superAdmin.role });
+    const requireMutationActor = vi.fn();
+    testServices.context = createAiEstimatorKnowledgeContextService({ actorGuard: { requireReadActor, requireMutationActor } });
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/preview";
+    const settings = { baseRatePaise: 3_000, lowQuantityLimit: "1", impactBps: 0, minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+    const input = { inHouseCalculation: { labor: settings, material: settings }, quantity: "1", quantityScale: 0,
+      modeCalculationMarkupBasis: "starting", modeCalculationDiscountBps: 1_332 };
+
+    const response = await request(app).post(path).set("Authorization", "Bearer super-admin-token").send(input);
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({ formulaVersion: "knowledge-preview-v1", inHouseCalculation: {
+      labor: { revisedUnitRatePaise: 3_000, revisedAmountPaise: 3_000, floorPricePaise: 4_000,
+        maximumDiscountBps: 1_332, discountBasis: "selling_price", totalPaise: 4_000,
+        discount: { rateBps: 1_332, totalBeforeDiscountPaise: 4_615, amountPaise: 615 } },
+      material: { revisedUnitRatePaise: 3_000, revisedAmountPaise: 3_000, floorPricePaise: 4_000,
+        maximumDiscountBps: 1_332, discountBasis: "selling_price", totalPaise: 4_000,
+        discount: { rateBps: 1_332, totalBeforeDiscountPaise: 4_615, amountPaise: 615 } },
+      totalPaise: 8_000
+    } });
+    expect(response.body.data).not.toHaveProperty("pmcCalculation");
+    expect(response.body.data).not.toHaveProperty("subVendorCalculation");
+    expect((await request(app).post(path).send(input)).status).toBe(401);
+    expect((await request(app).post(path).set("Authorization", "Bearer admin-token").send(input)).status).toBe(403);
+    expect(requireReadActor).toHaveBeenCalledOnce();
+    expect(requireReadActor).toHaveBeenCalledWith(superAdmin);
+    expect(requireMutationActor).not.toHaveBeenCalled();
+    for (const operation of Object.values(testServices.item)) expect(operation).not.toHaveBeenCalled();
+    for (const operation of Object.values(testServices.reference)) expect(operation).not.toHaveBeenCalled();
   });
 
   it("accepts simulator-only discount basis points and rejects malformed or unrelated discounts", async () => {

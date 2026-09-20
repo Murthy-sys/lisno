@@ -104,6 +104,23 @@ describe("projectKnowledgeSavedSummary", () => {
     expect(values(result)).not.toMatch(/description|Transport|Base Rate|Margin|Impact|private/iu);
   });
 
+  it("does not apply the In-house below-100% rule to hidden PMC or Sub-Vendor legacy fields", () => {
+    const hiddenLegacyRates = settings(10_000, 0, 12_000, 15_000);
+    const result = projectKnowledgeSavedSummary(input({ sections: { advanced: {
+      modeCalculations: {
+        pmc: hiddenLegacyRates,
+        sub_vendor: hiddenLegacyRates,
+        in_house_labor: hiddenLegacyRates,
+        in_house_material: settings(20_000, 0, 1_000, 2_000)
+      },
+      pmcMinimumMarginBps: 1_000,
+      pmcMarginBps: 2_000,
+      subVendorMinimumMarginBps: 1_500,
+      subVendorMarginBps: 2_000
+    } } })).mode;
+    expect(result.details.map(row => row.value)).toEqual(["Configured", "Configured", "Not configured"]);
+  });
+
   it.each([
     [false, false, false], [false, false, true], [false, true, false], [false, true, true],
     [true, false, false], [true, false, true], [true, true, false], [true, true, true]

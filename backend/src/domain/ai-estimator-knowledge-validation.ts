@@ -1575,7 +1575,12 @@ function validateProductivityRows(
   });
 }
 
-function validateModeCalculationSettings(row: unknown, path: string, issues: KnowledgeValidationIssue[]): void {
+function validateModeCalculationSettings(
+  row: unknown,
+  path: string,
+  issues: KnowledgeValidationIssue[],
+  options: { readonly grossMargin?: boolean } = {}
+): void {
   if (row === null) return;
   if (!row || typeof row !== "object" || Array.isArray(row)) {
     issues.push(invalidTypeIssue(path, "a calculation settings object or null"));
@@ -1588,10 +1593,13 @@ function validateModeCalculationSettings(row: unknown, path: string, issues: Kno
   validateInteger(settings.baseRatePaise, `${path}.baseRatePaise`, issues, 0, Number.MAX_SAFE_INTEGER);
   validateCanonicalDecimal(settings.lowQuantityLimit, `${path}.lowQuantityLimit`, issues);
   for (const key of ["minimumMarkupBps", "startingMarkupBps"] as const) {
-    validateInteger(settings[key], `${path}.${key}`, issues, 0, Number.MAX_SAFE_INTEGER - 10_000);
+    validateInteger(settings[key], `${path}.${key}`, issues, 0,
+      options.grossMargin ? 9_999 : Number.MAX_SAFE_INTEGER - 10_000);
   }
   if (typeof settings.minimumMarkupBps === "number" && typeof settings.startingMarkupBps === "number" && settings.startingMarkupBps < settings.minimumMarkupBps) {
-    issues.push({ path: `${path}.startingMarkupBps`, code: "INVALID_MARKUP", message: "Starting markup must be at least the minimum markup." });
+    issues.push({ path: `${path}.startingMarkupBps`, code: "INVALID_MARKUP", message: options.grossMargin
+      ? "Starting Gross Margin must be at least Min. Gross Margin."
+      : "Starting markup must be at least the minimum markup." });
   }
 }
 
@@ -1613,7 +1621,12 @@ function validateAdvancedPayload(
         ? ["pmc", "sub_vendor", "in_house_labor", "in_house_material"] : ["pmc", "sub_vendor", "in_house"];
       validateExactRowKeys(settings, scopes, required, "payload.modeCalculations", issues);
       for (const scope of scopes) {
-        if (Object.hasOwn(settings, scope)) validateModeCalculationSettings(settings[scope], `payload.modeCalculations.${scope}`, issues);
+        if (Object.hasOwn(settings, scope)) validateModeCalculationSettings(
+          settings[scope],
+          `payload.modeCalculations.${scope}`,
+          issues,
+          { grossMargin: scope === "in_house" || scope === "in_house_labor" || scope === "in_house_material" }
+        );
       }
     }
   }

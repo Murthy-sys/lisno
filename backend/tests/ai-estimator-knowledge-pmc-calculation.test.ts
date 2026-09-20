@@ -92,12 +92,12 @@ describe("PMC simulator arithmetic", () => {
     expect(calculateKnowledgePmcPrice({ ...fractional, quantity: "2.76" })).toMatchObject({ revisedAmountPaise: 2_752, appliedImpactBps: 0 });
   });
 
-  it("keeps Execution and In-house equality outside their low-quantity range", () => {
+  it("keeps the corrected In-house boundary inclusive without changing the PMC branch", () => {
     const rate = { ...execution, baseRatePaise: 10_000, lowQuantityLimit: "15", impactBps: 1_000 };
-    expect(calculateKnowledgeModePrice({ ...rate, quantity: "15", quantityScale: 0 })).toMatchObject({ revisedAmountPaise: 150_000, appliedImpactBps: 0, totalPaise: 202_500 });
+    expect(calculateKnowledgeModePrice({ ...rate, quantity: "15", quantityScale: 0 })).toMatchObject({ revisedAmountPaise: 165_000, appliedImpactBps: 1_000, totalPaise: 253_846 });
     expect(calculateKnowledgeInHousePrice({ labor: rate, material: { ...rate, baseRatePaise: 7_000 }, quantity: "15", quantityScale: 0 }))
-      .toMatchObject({ labor: { revisedAmountPaise: 150_000, appliedImpactBps: 0, totalPaise: 202_500 },
-        material: { revisedAmountPaise: 105_000, appliedImpactBps: 0, totalPaise: 141_750 }, totalPaise: 344_250 });
+      .toMatchObject({ labor: { revisedAmountPaise: 165_000, appliedImpactBps: 1_000, totalPaise: 253_846 },
+        material: { revisedAmountPaise: 115_500, appliedImpactBps: 1_000, totalPaise: 177_692 }, totalPaise: 431_538 });
   });
 
   it("charges no Impact when configured zero, including at or below the limit", () => {
@@ -198,10 +198,10 @@ describe("PMC simulator arithmetic", () => {
     }
   );
 
-  it("preserves the generic Mode and In-house markup discount guards", () => {
-    expect(() => calculateKnowledgeModePrice({ ...execution, quantity: "1", quantityScale: 0, discountBps: 1_001 })).toThrow("below the minimum standard");
+  it("preserves the generic Mode and In-house gross-margin floor guards", () => {
+    expect(() => calculateKnowledgeModePrice({ ...execution, quantity: "1", quantityScale: 0, discountBps: 1_334 })).toThrow("minimum gross-margin floor");
     expect(() => calculateKnowledgeInHousePrice({ labor: execution, material: { ...execution, startingMarkupBps: 3_000 },
-      quantity: "1", quantityScale: 0, discountBps: 501 })).toThrow("below the minimum standard");
+      quantity: "1", quantityScale: 0, discountBps: 667 })).toThrow("minimum gross-margin floor");
   });
 
   it("rounds a custom discount without enforcing a minimum final margin", () => {

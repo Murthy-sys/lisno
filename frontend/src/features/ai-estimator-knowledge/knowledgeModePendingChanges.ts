@@ -160,7 +160,10 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
         const validEqual = typeof oldNumber === "string" && typeof currentNumber === "string" ? oldNumber === currentNumber
           : typeof oldNumber === "object" && typeof currentNumber === "object" && oldNumber.status === "valid" && currentNumber.status === "valid" && oldNumber.paise === currentNumber.paise;
         if (baseline[name] === current[name] || (!pending?.invalidFields.includes(name) && validEqual)) return [];
-        const label = name === "lowQuantityLimit" && input.uomLabel && !["Unavailable", "Loading…", "Not set"].includes(input.uomLabel) ? `${calculationFields[name]} (${input.uomLabel})` : calculationFields[name];
+        const inHouseLabel = scope === "in_house_labor" || scope === "in_house_material"
+          ? name === "minimumRate" ? "Min. Gross Margin (%)" : name === "startingRate" ? "Starting Gross Margin (%)" : undefined
+          : undefined;
+        const label = name === "lowQuantityLimit" && input.uomLabel && !["Unavailable", "Loading…", "Not set"].includes(input.uomLabel) ? `${calculationFields[name]} (${input.uomLabel})` : inHouseLabel ?? calculationFields[name];
         return [field(name, label, current[name])];
       });
       if (fields.length) add(`calculation:${scope}`, calculationLabels[scope], [{ key: `calculation:${scope}`, title: "Calculation inputs", kind: "updated", fields, ...(pending?.invalidFields.length ? { incomplete: true } : {}) }]);

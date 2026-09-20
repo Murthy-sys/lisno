@@ -343,7 +343,7 @@ function projectValues(
   for (const [key, value] of Object.entries(payload)) {
     if (!hasMeaningfulValue(value) || isAlwaysInternalKey(key)) continue;
 
-    const currentPath = [...path, displayLabel(key)];
+    const currentPath = [...path, displayLabel(key, path)];
     const resolvedReference = resolveReference(key, value, context);
     if (resolvedReference !== null) {
       values.push({ label: currentPath.join(" · "), value: resolvedReference });
@@ -505,7 +505,10 @@ function formatPrimitive(key: string, value: string | number | boolean | null): 
   return "Not configured";
 }
 
-function displayLabel(key: string): string {
+function displayLabel(key: string, path: readonly string[] = []): string {
+  const inHouseCalculation = path.includes("Labor cost") || path.includes("Material cost") || path.includes("In-house");
+  if (inHouseCalculation && key === "minimumMarkupBps") return "Min. Gross Margin";
+  if (inHouseCalculation && key === "startingMarkupBps") return "Starting Gross Margin";
   const known: Readonly<Record<string, string>> = {
     uomId: "Unit of measure (UOM)",
     uomIds: "Units of measure (UOM)",

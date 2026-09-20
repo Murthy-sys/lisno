@@ -9,7 +9,7 @@ import {
 import type { KnowledgeModeCalculationSettings, KnowledgeModeCalculationPreview, KnowledgeInHouseCalculationSettings, KnowledgeInHouseCalculationPreview, KnowledgePmcCalculationSettings, KnowledgePmcCalculationPreview, KnowledgeSubVendorCalculationSettings, KnowledgeSubVendorCalculationPreview } from "../contracts/ai-estimator-knowledge.js";
 
 export const KNOWLEDGE_LOW_QUANTITY_IMPACT_BPS = 1_000;
-export const KNOWLEDGE_DISCOUNT_LIMIT_MESSAGE = "Discount not allowed. Recheck the discount % — it would take the markup below the minimum standard.";
+export const KNOWLEDGE_DISCOUNT_LIMIT_MESSAGE = "Discount not allowed. Recheck the discount % — it would take the selling price below the minimum gross-margin floor.";
 export const KNOWLEDGE_PMC_MAX_IMPACT_BPS = Number.MAX_SAFE_INTEGER - 10_000;
 
 export interface KnowledgeModeBaseRateInput {
@@ -40,26 +40,43 @@ export function calculateKnowledgeModePrice(input: KnowledgeModeBaseRateInput & 
 }): KnowledgeModeCalculationPreview {
   if (!Number.isSafeInteger(input.minimumMarkupBps) || input.minimumMarkupBps < 0 ||
       !Number.isSafeInteger(input.startingMarkupBps) || input.startingMarkupBps < input.minimumMarkupBps ||
-      input.startingMarkupBps > Number.MAX_SAFE_INTEGER - 10_000) {
-    throw new KnowledgeCalculationError("INVALID_BASIS_POINTS", "Starting markup must be at least the non-negative minimum markup.");
+      input.startingMarkupBps >= 10_000) {
+    throw new KnowledgeCalculationError("INVALID_BASIS_POINTS", "Starting gross margin must be at least the non-negative minimum gross margin and remain below 100%.");
   }
-  const markupBps = input.markupBasis === "minimum" ? input.minimumMarkupBps : input.startingMarkupBps;
+  const marginBps = input.markupBasis === "minimum" ? input.minimumMarkupBps : input.startingMarkupBps;
   const discountBps = input.discountBps === undefined ? 0 : input.discountBps;
   if (!Number.isSafeInteger(discountBps) || discountBps < 0) {
     throw new KnowledgeCalculationError("INVALID_BASIS_POINTS", "Enter a non-negative discount with up to two decimal places.");
   }
-  if (discountBps > markupBps - input.minimumMarkupBps) {
+  const revised = calculateKnowledgeModeBaseRate(input, "inclusive");
+  const floorPricePaise = calculateMarginSellingPrice(revised.revisedAmountPaise, input.minimumMarkupBps);
+  const totalBeforeDiscountPaise = calculateMarginSellingPrice(revised.revisedAmountPaise, marginBps);
+  const maximumDiscountBps = totalBeforeDiscountPaise === 0
+    ? 0
+    : Number(
+      (BigInt(totalBeforeDiscountPaise - floorPricePaise) * 10_000n) /
+      BigInt(totalBeforeDiscountPaise)
+    );
+  if (discountBps > maximumDiscountBps) {
     throw new KnowledgeCalculationError("INVALID_BASIS_POINTS", KNOWLEDGE_DISCOUNT_LIMIT_MESSAGE);
   }
-  const revised = calculateKnowledgeModeBaseRate(input);
-  const effectiveMarkupBps = markupBps - discountBps;
-  const totalPaise = applyBasisPoints(revised.revisedAmountPaise, 10_000 + effectiveMarkupBps);
-  const totalBeforeDiscountPaise = applyBasisPoints(revised.revisedAmountPaise, 10_000 + markupBps);
-  return { ...revised, totalPaise, ...(input.discountBps !== undefined ? { discount: {
-    rateBps: discountBps, effectiveMarkupBps, totalBeforeDiscountPaise,
-    // Derive the saving from rounded totals so the displayed amounts reconcile exactly.
-    amountPaise: totalBeforeDiscountPaise - totalPaise
-  } } : {}) };
+  const discountAmountPaise = applyBasisPoints(totalBeforeDiscountPaise, discountBps);
+  const totalPaise = totalBeforeDiscountPaise - discountAmountPaise;
+  if (totalPaise < floorPricePaise) {
+    throw new KnowledgeCalculationError("INVALID_BASIS_POINTS", KNOWLEDGE_DISCOUNT_LIMIT_MESSAGE);
+  }
+  return {
+    ...revised,
+    floorPricePaise,
+    maximumDiscountBps,
+    discountBasis: "selling_price",
+    totalPaise,
+    ...(input.discountBps !== undefined ? { discount: {
+      rateBps: discountBps,
+      totalBeforeDiscountPaise,
+      amountPaise: discountAmountPaise
+    } } : {})
+  };
 }
 
 export function calculateKnowledgeInHousePrice(input: KnowledgeInHouseCalculationSettings & {
@@ -71,7 +88,7 @@ export function calculateKnowledgeInHousePrice(input: KnowledgeInHouseCalculatio
   const context = { quantity: input.quantity, quantityScale: input.quantityScale, markupBasis: input.markupBasis, discountBps: input.discountBps };
   const labor = calculateKnowledgeModePrice({ ...input.labor, ...context });
   const material = calculateKnowledgeModePrice({ ...input.material, ...context });
-  // Add the independently rounded final amounts, including each cost's own Impact and markup.
+  // Add the independently rounded final amounts, including each cost's own Impact and gross margin.
   const total = BigInt(labor.totalPaise) + BigInt(material.totalPaise);
   if (total > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new KnowledgeCalculationError("UNSAFE_RESULT", "The combined In-house total exceeds the supported amount.");

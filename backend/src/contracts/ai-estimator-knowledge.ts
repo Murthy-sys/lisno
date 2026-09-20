@@ -432,9 +432,11 @@ export interface KnowledgePreviewAmountComponent {
 export interface KnowledgeModeCalculationSettings {
   baseRatePaise: KnowledgePaise;
   lowQuantityLimit: KnowledgeCanonicalDecimal;
-  /** Defaults to 1,000 (10%) for configurations saved before editable Impact. */
+  /** Defaults to 1,000 (10%) whenever omitted. */
   impactBps?: KnowledgeBasisPoints;
+  /** Legacy transport name; interpreted as minimum gross margin by the In-house preview. */
   minimumMarkupBps: KnowledgeBasisPoints;
+  /** Legacy transport name; interpreted as starting gross margin by the In-house preview. */
   startingMarkupBps: KnowledgeBasisPoints;
 }
 
@@ -449,11 +451,13 @@ export type KnowledgeModeCalculations = Record<"pmc" | "sub_vendor", KnowledgeMo
 export interface KnowledgeModeCalculationPreview {
   revisedUnitRatePaise: KnowledgePaise;
   revisedAmountPaise: KnowledgePaise;
+  floorPricePaise: KnowledgePaise;
+  maximumDiscountBps: KnowledgeBasisPoints;
+  discountBasis: "selling_price";
   totalPaise: KnowledgePaise;
   appliedImpactBps: KnowledgeBasisPoints;
   discount?: {
     rateBps: KnowledgeBasisPoints;
-    effectiveMarkupBps: KnowledgeBasisPoints;
     totalBeforeDiscountPaise: KnowledgePaise;
     amountPaise: KnowledgePaise;
   };
@@ -572,7 +576,7 @@ export type KnowledgeCalculationScope = "pmc" | "sub_vendor" | "in_house_labor" 
 
 /** Active-revision settings for future analysis, separate from the legacy price-version preview. */
 export interface KnowledgeConfigurationContext {
-  formulaVersion: "mode-markup-v1";
+  formulaVersion: "mode-margin-v2";
   moneyUnit: "paise";
   percentageUnit: "basis_points";
   selection: {
@@ -593,7 +597,7 @@ export interface KnowledgeConfigurationContext {
     scope: KnowledgeCalculationScope;
     source: "scoped" | "legacy_shared" | "legacy_in_house" | null;
     settings: Required<KnowledgeModeCalculationSettings> | null;
-    /** A difference in markup percentage points, not a selling-price discount. */
+    /** Exact selling-price discount cap for In-house when quantity/UOM are known; legacy rate difference for untouched PMC/Sub-Vendor scopes. */
     maximumDiscountBps: number | null;
   }>;
 }

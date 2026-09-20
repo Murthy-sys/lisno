@@ -201,6 +201,47 @@ describe("OpenAPI and Swagger UI", () => {
     expect(properties.pmcMarginBps).not.toHaveProperty("enum");
   });
 
+  it("documents the authoritative In-house true-margin and selling-price discount contract", () => {
+    const schemas = componentSchemas();
+    expect(schemas.KnowledgeInHouseModeCalculationSettings).toMatchObject({
+      additionalProperties: false,
+      required: ["baseRatePaise", "lowQuantityLimit", "minimumMarkupBps", "startingMarkupBps"],
+      properties: {
+        minimumMarkupBps: { minimum: 0, maximum: 9_999 },
+        startingMarkupBps: { minimum: 0, maximum: 9_999 }
+      },
+      description: expect.stringContaining("divided by one minus the selected gross margin")
+    });
+    expect(schemas.KnowledgeModeCalculationPreview!.required).toEqual([
+      "revisedUnitRatePaise", "revisedAmountPaise", "floorPricePaise", "maximumDiscountBps",
+      "discountBasis", "totalPaise", "appliedImpactBps"
+    ]);
+    expect(schemas.KnowledgeModeCalculationPreview!.properties).toMatchObject({
+      floorPricePaise: { description: expect.stringContaining("minimum gross margin") },
+      maximumDiscountBps: { maximum: 10_000, description: expect.stringContaining("floor division") },
+      discountBasis: { enum: ["selling_price"] },
+      discount: {
+        required: ["rateBps", "totalBeforeDiscountPaise", "amountPaise"],
+        additionalProperties: false
+      }
+    });
+    expect((schemas.KnowledgeModeCalculationPreview!.properties as OpenApiObject).discount)
+      .not.toHaveProperty("properties.effectiveMarkupBps");
+    expect((schemas.KnowledgePreviewRequest!.properties as OpenApiObject).modeCalculation)
+      .toEqual({ $ref: "#/components/schemas/KnowledgeInHouseModeCalculationSettings" });
+    const calculationMaps = schemas.KnowledgeModeCalculations!.oneOf as OpenApiObject[];
+    const splitMap = calculationMaps[0]!.properties as OpenApiObject;
+    const legacyMap = calculationMaps[1]!.properties as OpenApiObject;
+    expect(splitMap.in_house_labor).toEqual({ allOf: [{ $ref: "#/components/schemas/KnowledgeInHouseModeCalculationSettings" }], nullable: true });
+    expect(splitMap.in_house_material).toEqual({ allOf: [{ $ref: "#/components/schemas/KnowledgeInHouseModeCalculationSettings" }], nullable: true });
+    expect(splitMap.in_house).toMatchObject({ allOf: [{ $ref: "#/components/schemas/KnowledgeInHouseModeCalculationSettings" }], nullable: true, deprecated: true });
+    expect(legacyMap.in_house).toEqual({ allOf: [{ $ref: "#/components/schemas/KnowledgeInHouseModeCalculationSettings" }], nullable: true });
+    expect(splitMap.pmc).toEqual({ allOf: [{ $ref: "#/components/schemas/KnowledgeModeCalculationSettings" }], nullable: true });
+    expect(splitMap.sub_vendor).toEqual({ allOf: [{ $ref: "#/components/schemas/KnowledgeModeCalculationSettings" }], nullable: true });
+    expect((schemas.KnowledgeConfigurationContext!.properties as OpenApiObject).formulaVersion)
+      .toMatchObject({ enum: ["mode-margin-v2"], description: expect.stringContaining("In-house") });
+  });
+
   it("documents scope lists only for canonical PMC and In-house configurations", () => {
     const schemas = componentSchemas();
     expect(schemas.KnowledgeModeScopeItem).toMatchObject({

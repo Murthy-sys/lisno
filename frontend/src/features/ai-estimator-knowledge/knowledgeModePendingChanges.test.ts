@@ -152,6 +152,16 @@ describe("Mode pending change projection", () => {
     expect(groups).toEqual([{ key: "calculation:in_house_material", label: "Execution · In-house · Material cost", entries: [{ key: "calculation:in_house_material", title: "Calculation inputs", kind: "updated", incomplete: true, fields: [{ key: "baseRate", label: "Base Rate (₹)", value: "12." }] }] }]);
   });
 
+  it("labels legacy In-house rate fields as Gross Margins in pending changes", () => {
+    const before = { modeCalculations: { pmc: calculation, sub_vendor: calculation, in_house_labor: calculation, in_house_material: calculation } };
+    const draft = { ...modeCalculationDraft(calculation), minimumRate: "25.31", startingRate: "35.25" };
+    const group = project(before, before, { pendingCalculations: { in_house_labor: { draft, invalidFields: [] } } })[0];
+    expect(group?.entries[0]?.fields).toEqual([
+      { key: "minimumRate", label: "Min. Gross Margin (%)", value: "25.31" },
+      { key: "startingRate", label: "Starting Gross Margin (%)", value: "35.25" }
+    ]);
+  });
+
   it("leaves untouched numeric defaults out when the first valid rate is entered", () => {
     const groups = project({}, { modeCalculations: { pmc: calculation, sub_vendor: null, in_house_labor: null, in_house_material: null } });
     expect(groups).toHaveLength(1);

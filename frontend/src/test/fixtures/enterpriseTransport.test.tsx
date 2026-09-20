@@ -135,6 +135,47 @@ describe("synthetic enterprise route harness", () => {
     expect(response.status).toBe(422);
     expect(transport.requests).toEqual([{ method: "POST", path: "/projects", status: 422, unexpected: false }]);
   });
+  it("serves exact individual and combined In-house previews only for the opt-in QA route", async () => {
+    transport = installEnterpriseTransport({
+      route: "/admin/configuration/estimation/items/line-1?qaInHouse=ready",
+      role: "super_admin",
+      state: "populated"
+    });
+    const labor = { baseRatePaise: 30_000, lowQuantityLimit: "5", impactBps: 1_000,
+      minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+    const material = { baseRatePaise: 70_000, lowQuantityLimit: "2", impactBps: 500,
+      minimumMarkupBps: 2_000, startingMarkupBps: 3_000 };
+    const request = (body: object) => fetch("/api/v1/admin/ai-estimator-knowledge/preview", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+    });
+
+    const individual = await request({ modeCalculation: labor, quantity: "1", quantityScale: 2,
+      modeCalculationMarkupBasis: "starting", modeCalculationDiscountBps: 500 });
+    expect(individual.status).toBe(200);
+    expect((await individual.json()).data.modeCalculation).toEqual({
+      revisedUnitRatePaise: 33_000,
+      revisedAmountPaise: 33_000,
+      floorPricePaise: 44_000,
+      maximumDiscountBps: 1_333,
+      discountBasis: "selling_price",
+      totalPaise: 48_231,
+      appliedImpactBps: 1_000,
+      discount: { rateBps: 500, totalBeforeDiscountPaise: 50_769, amountPaise: 2_538 }
+    });
+
+    const combined = await request({ inHouseCalculation: { labor, material }, quantity: "1", quantityScale: 2,
+      modeCalculationMarkupBasis: "starting", modeCalculationDiscountBps: 500 });
+    expect(combined.status).toBe(200);
+    expect((await combined.json()).data.inHouseCalculation).toMatchObject({
+      labor: { maximumDiscountBps: 1_333, totalPaise: 48_231 },
+      material: { maximumDiscountBps: 1_250, totalPaise: 99_750 },
+      totalPaise: 147_981
+    });
+    expect(transport.requests).toEqual([
+      { method: "POST", path: "/admin/ai-estimator-knowledge/preview", status: 200, unexpected: false },
+      { method: "POST", path: "/admin/ai-estimator-knowledge/preview", status: 200, unexpected: false }
+    ]);
+  });
   it("makes unexpected GET requests visible without passing them to a backend", async () => {
     transport = installEnterpriseTransport({ route: "/admin/dashboard", role: "super_admin", state: "populated" });
     expect((await fetch("/api/v1/unregistered")).status).toBe(501);

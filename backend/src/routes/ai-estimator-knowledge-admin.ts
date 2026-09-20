@@ -281,10 +281,10 @@ const modeCalculationSettingsSchema = z.object({
   baseRatePaise: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   lowQuantityLimit: canonicalDecimalSchema,
   impactBps: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 10_000).optional(),
-  minimumMarkupBps: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 10_000),
-  startingMarkupBps: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 10_000)
+  minimumMarkupBps: z.number().int().min(0).max(9_999),
+  startingMarkupBps: z.number().int().min(0).max(9_999)
 }).strict().refine((value) => value.startingMarkupBps >= value.minimumMarkupBps, {
-  path: ["startingMarkupBps"], message: "Starting markup must be at least the minimum markup."
+  path: ["startingMarkupBps"], message: "Starting gross margin must be at least the minimum gross margin and remain below 100%."
 });
 
 export const aiEstimatorKnowledgePreviewSchema = z
@@ -337,7 +337,7 @@ export const aiEstimatorKnowledgePreviewSchema = z
   .strict().refine((value) => (!value.modeCalculation && !value.inHouseCalculation && !value.pmcCalculation && !value.subVendorCalculation) || value.quantity != null, {
     path: ["quantity"], message: "A test quantity is required for Mode calculations."
   }).refine((value) => !value.modeCalculationMarkupBasis || Boolean(value.modeCalculation || value.inHouseCalculation || value.pmcCalculation || value.subVendorCalculation), {
-    path: ["modeCalculation"], message: "Mode calculation settings are required when choosing a markup."
+    path: ["modeCalculation"], message: "Mode calculation settings are required when choosing a margin basis."
   }).refine((value) => !(value.modeCalculation && value.inHouseCalculation), {
     path: ["inHouseCalculation"], message: "Choose either an individual calculation or an In-house total."
   }).refine((value) => !value.pmcCalculation || (!value.modeCalculation && !value.inHouseCalculation && !value.subVendorCalculation), {

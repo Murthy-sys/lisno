@@ -114,6 +114,11 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (path === `${prefix}/quality-control-options`) return { items: [] };
   if (/^\/admin\/ai-estimator-knowledge\/main-lines\/line-1\/revisions\/revision-1\/sections\//.test(path)) {
     const sectionKey = path.split("/").at(-1) as KnowledgeSectionKey;
+    const inHouseState = new URLSearchParams(scenario.route.split("?")[1]).get("qaInHouse");
+    if (inHouseState === "ready") {
+      if (sectionKey === "advanced") return knowledge.inHouseSection();
+      if (sectionKey === "overview") return knowledge.section("overview", { uomId: knowledge.squareFoot.id });
+    }
     const marginState = new URLSearchParams(scenario.route.split("?")[1]).get("qaMargin");
     if (marginState && ["ready", "legacy", "legacy-below-range", "legacy-between-steps", "empty"].includes(marginState)) {
       if (sectionKey === "advanced") return knowledge.marginSection(marginState);

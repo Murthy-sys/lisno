@@ -66,4 +66,23 @@ describe("independent Mode calculation settings", () => {
       ]));
     expect(modeCalculationsIssues({ modeCalculations: null })).toHaveLength(1);
   });
+
+  it("applies the below-100% margin rule only to In-house scopes", () => {
+    const legacyHiddenRates = { ...legacy, minimumMarkupBps: 12_000, startingMarkupBps: 15_000 };
+    expect(modeCalculationsIssues({ modeCalculations: {
+      pmc: legacyHiddenRates,
+      sub_vendor: legacyHiddenRates,
+      in_house_labor: legacy,
+      in_house_material: legacy
+    } })).toEqual([]);
+    expect(modeCalculationsIssues({ modeCalculations: {
+      pmc: legacyHiddenRates,
+      sub_vendor: legacyHiddenRates,
+      in_house_labor: legacyHiddenRates,
+      in_house_material: legacy
+    } })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "modeCalculations.in_house_labor.minimumMarkupBps" }),
+      expect.objectContaining({ path: "modeCalculations.in_house_labor.startingMarkupBps" })
+    ]));
+  });
 });

@@ -162,6 +162,30 @@ describe("AI estimator knowledge validation", () => {
     ]));
   });
 
+  it("caps persisted Gross Margin only for In-house scopes", () => {
+    const settings = { baseRatePaise: 90_000, lowQuantityLimit: "8", impactBps: 525, minimumMarkupBps: 1_200, startingMarkupBps: 3_100 };
+    const hiddenLegacyRates = { ...settings, minimumMarkupBps: 12_000, startingMarkupBps: 15_000 };
+    expect(validateKnowledgeSectionPayload("advanced", {
+      modeCalculation: hiddenLegacyRates,
+      modeCalculations: {
+        pmc: hiddenLegacyRates,
+        sub_vendor: hiddenLegacyRates,
+        in_house_labor: settings,
+        in_house_material: settings
+      }
+    })).toEqual([]);
+    for (const scope of ["in_house", "in_house_labor", "in_house_material"] as const) {
+      const scopes = scope === "in_house"
+        ? { pmc: hiddenLegacyRates, sub_vendor: hiddenLegacyRates, in_house: hiddenLegacyRates }
+        : { pmc: hiddenLegacyRates, sub_vendor: hiddenLegacyRates, in_house_labor: settings, in_house_material: settings, [scope]: hiddenLegacyRates };
+      expect(validateKnowledgeSectionPayload("advanced", { modeCalculations: scopes }))
+        .toEqual(expect.arrayContaining([
+          expect.objectContaining({ path: `payload.modeCalculations.${scope}.minimumMarkupBps` }),
+          expect.objectContaining({ path: `payload.modeCalculations.${scope}.startingMarkupBps` })
+        ]));
+    }
+  });
+
   it("validates independent PMC, Sub-Vendor and In-house calculations without requiring unused scopes", () => {
     const settings = { baseRatePaise: 150_000, lowQuantityLimit: "15", impactBps: 1_000, minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
     expect(validateKnowledgeSectionPayload("advanced", { modeCalculations: { pmc: settings, sub_vendor: null, in_house: null } })).toEqual([]);

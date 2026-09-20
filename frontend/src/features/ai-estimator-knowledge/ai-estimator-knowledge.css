@@ -1111,6 +1111,7 @@
   position: static;
   inset-block-start: auto;
   z-index: auto;
+  flex-wrap: nowrap;
   margin: 0;
 }
 

@@ -158,8 +158,8 @@ describe("PMC calculation configuration and simulator", () => {
     fireEvent.change(base, { target: { value: "1800" } });
     expect(view.props.onChange).toHaveBeenLastCalledWith({ ...settings, baseRatePaise: 180_000 });
     view.rerenderEditor({ scope: "in_house_labor", contextLabel: "Labor" });
-    expect(screen.getByText("Gross margin markup")).toBeVisible();
-    expect(screen.getByRole("status", { name: "Max Discount" })).toBeVisible();
+    expect(screen.getByText("Gross margin")).toBeVisible();
+    expect(screen.queryByRole("status", { name: "Max Discount" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "PMC Margin" })).not.toBeInTheDocument();
   });
 

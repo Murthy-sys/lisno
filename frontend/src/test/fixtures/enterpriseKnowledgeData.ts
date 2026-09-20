@@ -171,3 +171,35 @@ export function marginSection(state: string): KnowledgeSectionEnvelope<Knowledge
       : { subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 })
   });
 }
+
+// Opt-in, complete In-house configuration for true-margin and combined-total rendered QA.
+export function inHouseSection(): KnowledgeSectionEnvelope<KnowledgeJsonObject> {
+  return section("advanced", {
+    modeConfigurations: [{
+      id: "qa-in-house-execution",
+      modeKind: "execution",
+      executionSource: "in_house",
+      fields: [],
+      inclusions: [],
+      exclusions: []
+    }],
+    modeCalculations: {
+      pmc: null,
+      sub_vendor: null,
+      in_house_labor: {
+        baseRatePaise: 30_000,
+        lowQuantityLimit: "5",
+        impactBps: 1_000,
+        minimumMarkupBps: 2_500,
+        startingMarkupBps: 3_500
+      },
+      in_house_material: {
+        baseRatePaise: 70_000,
+        lowQuantityLimit: "2",
+        impactBps: 500,
+        minimumMarkupBps: 2_000,
+        startingMarkupBps: 3_000
+      }
+    }
+  });
+}

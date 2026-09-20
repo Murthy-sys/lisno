@@ -5,7 +5,7 @@ import type {
 } from "../contracts/ai-estimator-knowledge.js";
 import type { KnowledgeExecutionSource, KnowledgeModeKind } from "./ai-estimator-knowledge.js";
 import { parseScaledDecimal } from "./ai-estimator-knowledge-calculation.js";
-import { KNOWLEDGE_LOW_QUANTITY_IMPACT_BPS } from "./ai-estimator-knowledge-mode-calculation.js";
+import { calculateKnowledgeModePrice, KNOWLEDGE_LOW_QUANTITY_IMPACT_BPS } from "./ai-estimator-knowledge-mode-calculation.js";
 import { validateKnowledgeSectionPayload } from "./ai-estimator-knowledge-validation.js";
 
 type Row = Record<string, unknown>;
@@ -20,7 +20,7 @@ export function buildKnowledgeConfigurationContext(input: {
 }): KnowledgeConfigurationContext {
   const { advanced, uom, modeKind, executionSource } = input;
   const context: KnowledgeConfigurationContext = {
-    formulaVersion: "mode-markup-v1",
+    formulaVersion: "mode-margin-v2",
     moneyUnit: "paise",
     percentageUnit: "basis_points",
     selection: { modeKind: modeKind ?? null, executionSource: executionSource ?? null },
@@ -73,8 +73,12 @@ export function buildKnowledgeConfigurationContext(input: {
     return context;
   }
   if (!uom) context.issues.push({ code: "UOM_REQUIRED", scope: null });
+  let quantityIsValid = false;
   if (uom && input.quantity !== undefined) {
-    try { parseScaledDecimal(input.quantity, uom.decimalScale); }
+    try {
+      parseScaledDecimal(input.quantity, uom.decimalScale);
+      quantityIsValid = true;
+    }
     catch { context.issues.push({ code: "INVALID_QUANTITY_PRECISION", scope: null }); }
   }
 
@@ -93,6 +97,11 @@ export function buildKnowledgeConfigurationContext(input: {
       continue;
     }
     const settings = resolved.value as KnowledgeModeCalculationSettings;
+    const isInHouse = scope === "in_house_labor" || scope === "in_house_material";
+    if (isInHouse && (settings.minimumMarkupBps >= 10_000 || settings.startingMarkupBps >= 10_000)) {
+      context.issues.push({ code: "INVALID_CALCULATION_SETTINGS", scope });
+      continue;
+    }
     if (uom) {
       try { parseScaledDecimal(settings.lowQuantityLimit, uom.decimalScale); }
       catch {
@@ -108,7 +117,21 @@ export function buildKnowledgeConfigurationContext(input: {
       minimumMarkupBps: settings.minimumMarkupBps,
       startingMarkupBps: settings.startingMarkupBps
     };
-    entry.maximumDiscountBps = settings.startingMarkupBps - settings.minimumMarkupBps;
+    if (!isInHouse) {
+      // Preserve the existing PMC/Sub-Vendor projection; their simulator policies are separate.
+      entry.maximumDiscountBps = settings.startingMarkupBps - settings.minimumMarkupBps;
+    } else if (uom && input.quantity !== undefined && quantityIsValid) {
+      try {
+        entry.maximumDiscountBps = calculateKnowledgeModePrice({
+          ...settings,
+          quantity: input.quantity,
+          quantityScale: uom.decimalScale
+        }).maximumDiscountBps;
+      } catch {
+        // An exact selling-price cap cannot be projected when the requested amount overflows.
+        entry.maximumDiscountBps = null;
+      }
+    }
   }
   context.state = context.issues.some(({ code }) => code !== "CALCULATION_NOT_CONFIGURED" && code !== "UOM_REQUIRED")
     ? "invalid" : context.issues.length ? "not_configured" : "ready";

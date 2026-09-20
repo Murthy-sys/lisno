@@ -23,7 +23,7 @@ describe("selected configuration context", () => {
     expect(context.calculations.map((row) => row.scope)).toEqual(scopes);
     expect(context.calculations.map((row) => row.settings?.baseRatePaise)).toEqual(rates);
     expect(context.calculations.every((row) => row.source === "scoped")).toBe(true);
-    expect(context).toMatchObject({ formulaVersion: "mode-markup-v1", moneyUnit: "paise", percentageUnit: "basis_points", uom });
+    expect(context).toMatchObject({ formulaVersion: "mode-margin-v2", moneyUnit: "paise", percentageUnit: "basis_points", uom });
   });
 
   it("requires an explicit Mode and Execution source without exposing every cost", () => {
@@ -56,10 +56,13 @@ describe("selected configuration context", () => {
     expect(inHouse.calculations.map((row) => row.settings)).toEqual([settings, settings]);
   });
 
-  it("retains explicit zeroes and derives each cost's own markup difference", () => {
-    const context = build({ advanced: { modeCalculations: { ...map, in_house_labor: { ...map.in_house_labor, baseRatePaise: 0, minimumMarkupBps: 0, startingMarkupBps: 0 } } }, uom, modeKind: "execution", executionSource: "in_house" });
+  it("retains explicit zeroes and derives each In-house selling-price cap only with quantity and UOM", () => {
+    const advanced = { modeCalculations: { ...map, in_house_labor: { ...map.in_house_labor, baseRatePaise: 0, minimumMarkupBps: 0, startingMarkupBps: 0 } } };
+    const withoutQuantity = build({ advanced, uom, modeKind: "execution", executionSource: "in_house" });
+    expect(withoutQuantity.calculations.map((row) => row.maximumDiscountBps)).toEqual([null, null]);
+    const context = build({ advanced, uom, modeKind: "execution", executionSource: "in_house", quantity: "1" });
     expect(context.calculations[0]).toMatchObject({ settings: { baseRatePaise: 0, impactBps: 0 }, maximumDiscountBps: 0 });
-    expect(context.calculations[1]?.maximumDiscountBps).toBe(1_200);
+    expect(context.calculations[1]?.maximumDiscountBps).toBe(1_333);
   });
 
   it("does not mutate saved settings or leak response mutations into other scopes", () => {
@@ -128,6 +131,19 @@ describe("selected configuration context", () => {
     expect(vendor.calculations[0]?.settings).toBeNull();
     expect(vendor.issues).toContainEqual({ code: "INVALID_CALCULATION_SETTINGS", scope: "sub_vendor" });
     expect(build({ advanced: { modeCalculations: null }, uom, modeKind: "pmc" }).state).toBe("invalid");
+  });
+
+  it("treats an impossible In-house margin as invalid without tightening PMC or Sub-Vendor projections", () => {
+    const advanced = { modeCalculations: {
+      ...map,
+      in_house_labor: { ...map.in_house_labor, startingMarkupBps: 10_000 }
+    } };
+    const inHouse = build({ advanced, uom, modeKind: "execution", executionSource: "in_house", quantity: "1" });
+    expect(inHouse.state).toBe("invalid");
+    expect(inHouse.calculations[0]).toMatchObject({ settings: null, maximumDiscountBps: null });
+    expect(inHouse.issues).toContainEqual({ code: "INVALID_CALCULATION_SETTINGS", scope: "in_house_labor" });
+    expect(build({ advanced, uom, modeKind: "pmc", quantity: "1" }).calculations[0]?.maximumDiscountBps).toBe(1_000);
+    expect(build({ advanced, uom, modeKind: "execution", executionSource: "sub_vendor", quantity: "1" }).calculations[0]?.maximumDiscountBps).toBe(1_000);
   });
 
   it("reports missing UOM and incompatible low-quantity or requested quantity precision", () => {

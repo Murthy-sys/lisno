@@ -1040,39 +1040,57 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       minimumMarkupBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000 },
       startingMarkupBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000 }
     }),
-    description: "Settings for one Mode calculation. Starting markup must be at least minimum markup. Markup is added to cost; the configured Impact applies strictly below the quantity limit. UOM, test quantity, and derived amounts are not stored here."
+    description: "Stored settings for one Mode calculation. minimumMarkupBps and startingMarkupBps are legacy transport names retained for compatibility. In-house preview interprets them as gross margins; PMC and Sub-Vendor simulators use their separate margin fields. UOM, test quantity, and derived amounts are not stored here."
+  },
+  KnowledgeInHouseModeCalculationSettings: {
+    ...strictObject(["baseRatePaise", "lowQuantityLimit", "minimumMarkupBps", "startingMarkupBps"], {
+      baseRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      lowQuantityLimit: decimal,
+      impactBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000, default: 1_000,
+        description: "Low-quantity Impact in basis points. It applies when quantity is at or below the limit; 0 disables the uplift." },
+      minimumMarkupBps: { type: "integer", minimum: 0, maximum: 9_999,
+        description: "Legacy transport name for the In-house minimum gross margin." },
+      startingMarkupBps: { type: "integer", minimum: 0, maximum: 9_999,
+        description: "Legacy transport name for the In-house starting gross margin; it must be at least the minimum." }
+    }),
+    description: "In-house simulator settings. Selling price is adjusted cost divided by one minus the selected gross margin. Impact applies at or below the low-quantity limit."
   },
   KnowledgeModeCalculations: {
     oneOf: [
       strictObject(["pmc", "sub_vendor", "in_house_labor", "in_house_material"], {
         pmc: nullableRef("KnowledgeModeCalculationSettings"),
         sub_vendor: nullableRef("KnowledgeModeCalculationSettings"),
-        in_house_labor: nullableRef("KnowledgeModeCalculationSettings"),
-        in_house_material: nullableRef("KnowledgeModeCalculationSettings"),
-        in_house: { ...nullableRef("KnowledgeModeCalculationSettings"), deprecated: true,
+        in_house_labor: nullableRef("KnowledgeInHouseModeCalculationSettings"),
+        in_house_material: nullableRef("KnowledgeInHouseModeCalculationSettings"),
+        in_house: { ...nullableRef("KnowledgeInHouseModeCalculationSettings"), deprecated: true,
           description: "Preserved legacy In-house snapshot. Split costs do not inherit subsequent edits." }
       }),
       { ...strictObject(["pmc", "sub_vendor", "in_house"], {
         pmc: nullableRef("KnowledgeModeCalculationSettings"),
         sub_vendor: nullableRef("KnowledgeModeCalculationSettings"),
-        in_house: nullableRef("KnowledgeModeCalculationSettings")
+        in_house: nullableRef("KnowledgeInHouseModeCalculationSettings")
       }), deprecated: true }
     ],
     description: "Independent PMC, Sub-Vendor, In-house Labor cost, and In-house Material cost settings. Null means unconfigured. Older maps without split costs remain accepted; their In-house values seed both costs once on the next calculation edit. Maps never inherit from the root legacy modeCalculation."
   },
-  KnowledgeModeCalculationPreview: strictObject(["revisedUnitRatePaise", "revisedAmountPaise", "totalPaise", "appliedImpactBps"], {
+  KnowledgeModeCalculationPreview: strictObject(["revisedUnitRatePaise", "revisedAmountPaise", "floorPricePaise", "maximumDiscountBps", "discountBasis", "totalPaise", "appliedImpactBps"], {
     revisedUnitRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
     revisedAmountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+    floorPricePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER,
+      description: "Rounded selling price at the configured minimum gross margin." },
+    maximumDiscountBps: { type: "integer", minimum: 0, maximum: 10_000,
+      description: "Maximum selling-price discount derived with floor division from rounded selected and floor prices." },
+    discountBasis: { type: "string", enum: ["selling_price"] },
     totalPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
     appliedImpactBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000 },
-    discount: strictObject(["rateBps", "effectiveMarkupBps", "totalBeforeDiscountPaise", "amountPaise"], {
-      rateBps: { type: "integer", minimum: 0 }, effectiveMarkupBps: { type: "integer", minimum: 0 },
+    discount: strictObject(["rateBps", "totalBeforeDiscountPaise", "amountPaise"], {
+      rateBps: { type: "integer", minimum: 0, maximum: 10_000 },
       totalBeforeDiscountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
       amountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }
     })
   }),
   KnowledgeInHouseCalculationSettings: strictObject(["labor", "material"], {
-    labor: ref("KnowledgeModeCalculationSettings"), material: ref("KnowledgeModeCalculationSettings")
+    labor: ref("KnowledgeInHouseModeCalculationSettings"), material: ref("KnowledgeInHouseModeCalculationSettings")
   }),
   KnowledgePmcCalculationSettings: {
     ...strictObject(["baseRatePaise", "lowQuantityLimit", "pmcMarginBps"], {
@@ -1142,7 +1160,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       labor: ref("KnowledgeModeCalculationPreview"), material: ref("KnowledgeModeCalculationPreview"),
       totalPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }
     }),
-    description: "Sum of the independently rounded Labor and Material final amounts, after each cost's own Impact and chosen additive markup. Both use the same test quantity and markup basis."
+    description: "Sum of independently rounded Labor and Material final amounts. Each component applies its own Impact, true gross margin, selling-price discount, and minimum-margin floor. Both use the same test quantity and selected margin basis."
   },
   KnowledgePreviewRequest: strictObject(["quantityScale"], {
     priceVersionId: { ...id, nullable: true },
@@ -1158,17 +1176,17 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     bottomMarginBps: { type: "integer", minimum: 0, maximum: 9_999, nullable: true },
     pmcMarkupBps: { type: "integer", minimum: 0, nullable: true },
     duration: { allOf: [ref("KnowledgeDurationPreviewRequest")], nullable: true },
-    modeCalculation: ref("KnowledgeModeCalculationSettings"),
+    modeCalculation: ref("KnowledgeInHouseModeCalculationSettings"),
     inHouseCalculation: { ...ref("KnowledgeInHouseCalculationSettings"), description: "Combined simulator settings. Cannot be supplied together with modeCalculation, pmcCalculation or subVendorCalculation." },
     pmcCalculation: { ...ref("KnowledgePmcCalculationSettings"), description: "PMC simulator settings. Cannot be combined with modeCalculation, inHouseCalculation, subVendorCalculation or modeCalculationMarkupBasis." },
     subVendorCalculation: { ...ref("KnowledgeSubVendorCalculationSettings"), description: "Sub-Vendor simulator settings. Cannot be combined with modeCalculation, inHouseCalculation, pmcCalculation or modeCalculationMarkupBasis." },
     modeCalculationMarkupBasis: {
       type: "string", enum: ["starting", "minimum"], default: "starting",
-      description: "Simulator-only choice of additive markup. Requires modeCalculation or inHouseCalculation. Never persisted with Mode settings."
+      description: "Legacy transport field for the simulator-only choice of starting or minimum In-house gross margin. Requires modeCalculation or inHouseCalculation and is never persisted."
     },
     modeCalculationDiscountBps: {
       type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000, default: 0,
-      description: "Simulator-only discount. For Mode and In-house, it reduces markup percentage points and cannot exceed chosen markup minus minimum markup (0 when using minimum); both In-house costs must satisfy that limit. For PMC, the 0–10000-bps rate discounts only the pre-discount PMC charge and preserves adjusted cost. For Sub-Vendor, the same rate continues to discount the rounded selling subtotal. Neither margin preview has a margin-based cap. Never persisted."
+      description: "Simulator-only discount. For generic/In-house preview, it is a percentage of the rounded selected selling price and cannot exceed the returned amount-aware cap (0 when using minimum); both In-house costs independently preserve their minimum-margin floors. For PMC, the 0–10000-bps rate discounts only the pre-discount PMC charge and preserves adjusted cost. For Sub-Vendor, the same rate continues to discount the rounded selling subtotal. Neither PMC nor Sub-Vendor has an In-house margin-floor cap. Never persisted."
     }
   }),
   KnowledgeDurationPreviewRequest: strictObject(["productivity", "productivityScale", "unit"], {
@@ -1487,7 +1505,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
   KnowledgeConfigurationContext: strictObject(
     ["formulaVersion", "moneyUnit", "percentageUnit", "selection", "uom", "shared", "state", "issues", "calculations"],
     {
-      formulaVersion: { type: "string", enum: ["mode-markup-v1"] },
+      formulaVersion: { type: "string", enum: ["mode-margin-v2"],
+        description: "Configuration formula contract. Version 2 identifies true gross-margin and selling-price-discount semantics for In-house scopes while retaining the established PMC/Sub-Vendor compatibility projection." },
       moneyUnit: { type: "string", enum: ["paise"] },
       percentageUnit: { type: "string", enum: ["basis_points"] },
       selection: strictObject(["modeKind", "executionSource"], {
@@ -1515,7 +1534,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
           baseRatePaise: { type: "integer", minimum: 0 }, lowQuantityLimit: decimal,
           impactBps: { type: "integer", minimum: 0 }, minimumMarkupBps: { type: "integer", minimum: 0 }, startingMarkupBps: { type: "integer", minimum: 0 }
         }), nullable: true },
-        maximumDiscountBps: { type: "integer", minimum: 0, nullable: true, description: "Starting markup minus minimum markup, in basis points. This is not a discount percentage on selling price." }
+        maximumDiscountBps: { type: "integer", minimum: 0, nullable: true, description: "For In-house with valid quantity and UOM, the exact maximum selling-price discount from rounded prices. Null when that amount-aware cap cannot be derived. PMC/Sub-Vendor retain their legacy rate-difference projection." }
       }) }
     }
   ),

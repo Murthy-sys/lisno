@@ -107,7 +107,8 @@ function mode(input: SavedSummaryProjectionInput): SavedSummaryContent {
   const payload = input.sections.advanced;
   if (!payload) return content([]);
   const calculations = payload && object(payload.modeCalculations) ? payload.modeCalculations : undefined;
-  const validCalculation = (value: KnowledgeJsonValue | undefined) => object(value) && modeCalculationIssues(value).length === 0;
+  const validCalculation = (value: KnowledgeJsonValue | undefined, rootPath = "modeCalculation") =>
+    object(value) && modeCalculationIssues(value, rootPath).length === 0;
   const completeRange = (range: { minimum: KnowledgeJsonValue | undefined; maximum: KnowledgeJsonValue | undefined }) =>
     typeof range.minimum === "number" && typeof range.maximum === "number";
   const pmcRange = pmcMarginRange(payload);
@@ -116,8 +117,8 @@ function mode(input: SavedSummaryProjectionInput): SavedSummaryContent {
     && completeRange(pmcRange) && pmcMarginRangeIssues(payload).length === 0);
   const subVendorConfigured = Boolean(validCalculation(calculations?.sub_vendor)
     && completeRange(subVendorRange) && subVendorMarginRangeIssues(payload).length === 0);
-  const inHouseConfigured = Boolean(validCalculation(calculations?.in_house_labor)
-    && validCalculation(calculations?.in_house_material));
+  const inHouseConfigured = Boolean(validCalculation(calculations?.in_house_labor, "modeCalculations.in_house_labor")
+    && validCalculation(calculations?.in_house_material, "modeCalculations.in_house_material"));
   const statuses = [
     row("pmc-status", "PMC", pmcConfigured ? "Configured" : "Not configured"),
     row("sub-vendor-status", "Sub-Vendor", subVendorConfigured ? "Configured" : "Not configured"),

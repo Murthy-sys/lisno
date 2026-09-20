@@ -394,11 +394,15 @@ export interface KnowledgePreview {
   readonly modeCalculation?: {
     readonly revisedUnitRatePaise: number;
     readonly revisedAmountPaise: number;
+    /** Rounded selling price at the configured minimum In-house gross margin. */
+    readonly floorPricePaise: number;
+    /** Amount-aware selling-price discount cap for the selected In-house margin. */
+    readonly maximumDiscountBps: number;
+    readonly discountBasis: "selling_price";
     readonly totalPaise: number;
     readonly appliedImpactBps: number;
     readonly discount?: {
       readonly rateBps: number;
-      readonly effectiveMarkupBps: number;
       readonly totalBeforeDiscountPaise: number;
       readonly amountPaise: number;
     };
@@ -456,7 +460,7 @@ export type KnowledgeCalculationScope = "pmc" | "sub_vendor" | "in_house_labor" 
 
 /** Active-revision configuration. Monetary amounts are paise and percentage rates are basis points. */
 export interface KnowledgeConfigurationContext {
-  readonly formulaVersion: "mode-markup-v1";
+  readonly formulaVersion: "mode-margin-v2";
   readonly moneyUnit: "paise";
   readonly percentageUnit: "basis_points";
   readonly selection: {

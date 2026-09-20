@@ -12,7 +12,26 @@ import { SIMULATOR_DISCOUNT_LIMIT_MESSAGE } from "./knowledgeSimulatorDiscount";
 vi.mock("./knowledgeApi", () => ({ previewKnowledge: vi.fn() }));
 
 const settings = { baseRatePaise: 150_000, lowQuantityLimit: "15", impactBps: 1_000, minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
-const result = { revisedUnitRatePaise: 165_000, revisedAmountPaise: 165_000, totalPaise: 222_750, appliedImpactBps: 1_000 };
+function calculation({ configuration = settings, revisedUnitRatePaise = 165_000, revisedAmountPaise = 165_000,
+  appliedImpactBps = 1_000, basis = "starting", discountBps = 0 }: {
+  readonly configuration?: typeof settings;
+  readonly revisedUnitRatePaise?: number;
+  readonly revisedAmountPaise?: number;
+  readonly appliedImpactBps?: number;
+  readonly basis?: "starting" | "minimum";
+  readonly discountBps?: number;
+} = {}): NonNullable<KnowledgePreview["modeCalculation"]> {
+  const price = (marginBps: number) => Number((BigInt(revisedAmountPaise) * 10_000n + (10_000n - BigInt(marginBps)) / 2n) / (10_000n - BigInt(marginBps)));
+  const floorPricePaise = price(configuration.minimumMarkupBps);
+  const totalBeforeDiscountPaise = price(basis === "starting" ? configuration.startingMarkupBps : configuration.minimumMarkupBps);
+  const maximumDiscountBps = totalBeforeDiscountPaise === 0 ? 0
+    : Math.floor(((totalBeforeDiscountPaise - floorPricePaise) * 10_000) / totalBeforeDiscountPaise);
+  const amountPaise = Math.floor((totalBeforeDiscountPaise * discountBps + 5_000) / 10_000);
+  return { revisedUnitRatePaise, revisedAmountPaise, floorPricePaise, maximumDiscountBps, discountBasis: "selling_price",
+    totalPaise: totalBeforeDiscountPaise - amountPaise, appliedImpactBps,
+    ...(discountBps > 0 ? { discount: { rateBps: discountBps, totalBeforeDiscountPaise, amountPaise } } : {}) };
+}
+const result = calculation();
 function response(modeCalculation: NonNullable<KnowledgePreview["modeCalculation"]> = result): KnowledgePreview {
   return { formulaVersion: "knowledge-preview-v1", effectivePriceVersionId: null, taxVersionId: null,
     effectiveUnitRatePaise: null, adjustedUnitRate: null, requiredQuantity: "1", procurementQuantity: null,
@@ -62,66 +81,73 @@ describe("Mode calculation configuration and simulator", () => {
     await advance(1);
     expect(previewKnowledge).toHaveBeenLastCalledWith({ modeCalculation: settings, quantity: "1", quantityScale: 0,
       modeCalculationMarkupBasis: "starting" }, automaticRequestOptions);
-    expect(within(dialog).getByLabelText("Total with starting markup")).toHaveTextContent("₹2,227.50");
-    field("Starting Gross Margin Markup (%)").focus();
-    change("Starting Gross Margin Markup (%)", "40");
+    expect(within(dialog).getByLabelText("Total with Starting Gross Margin")).toHaveTextContent("₹2,538.46");
+    field("Starting Gross Margin (%)").focus();
+    change("Starting Gross Margin (%)", "40");
     await advance(150);
-    vi.mocked(previewKnowledge).mockResolvedValueOnce(response({ ...result, totalPaise: 206_250 }));
-    fireEvent.click(within(dialog).getByRole("radio", { name: "Min. Gross Margin Markup" }));
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response(calculation({ configuration: { ...settings, startingMarkupBps: 4_000 }, basis: "minimum" })));
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Min. Gross Margin" }));
     await advance(299);
     expect(previewKnowledge).toHaveBeenCalledOnce();
     await advance(1);
     expect(previewKnowledge).toHaveBeenLastCalledWith({ modeCalculation: { ...settings, startingMarkupBps: 4_000 },
       quantity: "1", quantityScale: 0, modeCalculationMarkupBasis: "minimum" }, automaticRequestOptions);
-    expect(within(dialog).getByLabelText("Total with minimum markup")).toHaveTextContent("₹2,062.50");
-    expect(field("Starting Gross Margin Markup (%)")).toHaveFocus();
+    expect(within(dialog).getByLabelText("Total with Min. Gross Margin")).toHaveTextContent("₹2,200.00");
+    expect(field("Starting Gross Margin (%)")).toHaveFocus();
     expect(props.onChange).not.toHaveBeenCalled();
     expect(props.onDirty).not.toHaveBeenCalled();
   });
 
-  it("tests a temporary discount and displays the server's reconciled saving and effective markup", async () => {
-    const { props } = setup({ value: settings });
+  it("uses the server's ₹30 true-margin price and 13.32% selling-price cap, rejecting 13.33%", async () => {
+    const example = { ...settings, baseRatePaise: 3_000, impactBps: 0 };
+    const exampleResult = calculation({ configuration: example, revisedUnitRatePaise: 3_000, revisedAmountPaise: 3_000, appliedImpactBps: 0 });
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response(exampleResult));
+    const { props } = setup({ value: example });
     const dialog = await openSimulator();
     expect(field("Discount (%)")).toHaveValue("0");
-    expect(within(dialog).getByText(/Maximum allowed: 10.00%/)).toBeVisible();
-    change("Discount (%)", "5");
-    vi.mocked(previewKnowledge).mockResolvedValueOnce(response({ ...result, totalPaise: 214_500,
-      discount: { rateBps: 500, effectiveMarkupBps: 3_000, totalBeforeDiscountPaise: 222_750, amountPaise: 8_250 } }));
     await settleCalculation();
-    expect(previewKnowledge).toHaveBeenLastCalledWith({ modeCalculation: settings, quantity: "1", quantityScale: 0, modeCalculationMarkupBasis: "starting", modeCalculationDiscountBps: 500 }, automaticRequestOptions);
-    expect(within(dialog).getByLabelText("Total before discount")).toHaveTextContent("₹2,227.50");
-    expect(within(dialog).getByLabelText("Discount amount")).toHaveTextContent("₹82.50");
-    expect(within(dialog).getByLabelText("Effective markup")).toHaveTextContent("30.00%");
-    expect(within(dialog).getByLabelText("Total after discount")).toHaveTextContent("₹2,145.00");
+    expect(within(dialog).getByLabelText("Total with Starting Gross Margin")).toHaveTextContent("₹46.15");
+    expect(within(dialog).getByText(/Maximum selling-price discount: 13.32%/)).toBeVisible();
+    change("Discount (%)", "13.32");
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response(calculation({ configuration: example, revisedUnitRatePaise: 3_000, revisedAmountPaise: 3_000, appliedImpactBps: 0, discountBps: 1_332 })));
+    await settleCalculation();
+    expect(previewKnowledge).toHaveBeenLastCalledWith({ modeCalculation: example, quantity: "1", quantityScale: 0, modeCalculationMarkupBasis: "starting", modeCalculationDiscountBps: 1_332 }, automaticRequestOptions);
+    expect(within(dialog).getByLabelText("Total before discount")).toHaveTextContent("₹46.15");
+    expect(within(dialog).getByLabelText("Discount amount")).toHaveTextContent("₹6.15");
+    expect(within(dialog).queryByLabelText("Effective markup")).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Total after discount")).toHaveTextContent("₹40.00");
+    const callsAtCap = vi.mocked(previewKnowledge).mock.calls.length;
+    change("Discount (%)", "13.33");
+    await settleCalculation();
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(SIMULATOR_DISCOUNT_LIMIT_MESSAGE);
+    expect(previewKnowledge).toHaveBeenCalledTimes(callsAtCap);
     expect(props.onChange).not.toHaveBeenCalled();
     await userEvent.keyboard("{Escape}");
     await openSimulator();
     expect(field("Discount (%)")).toHaveValue("0");
   });
 
-  it("settles discount errors without moving focus and rechecks markup changes", async () => {
+  it("settles discount errors without moving focus and makes the Minimum basis cap zero", async () => {
     setup({ value: settings });
     const dialog = await openSimulator();
+    await settleCalculation();
     field("Quantity").focus();
-    change("Discount (%)", "10.01");
+    const initialCalls = vi.mocked(previewKnowledge).mock.calls.length;
+    change("Discount (%)", "13.34");
     expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
     await settleCalculation();
     expect(within(dialog).getByRole("alert")).toHaveTextContent(SIMULATOR_DISCOUNT_LIMIT_MESSAGE);
     expect(field("Quantity")).toHaveFocus();
-    expect(previewKnowledge).not.toHaveBeenCalled();
-    change("Starting Gross Margin Markup (%)", "40");
-    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
-    expect(within(dialog).getByText(/Maximum allowed: 15.00%/)).toBeVisible();
-    await userEvent.click(within(dialog).getByRole("radio", { name: "Min. Gross Margin Markup" }));
-    expect(within(dialog).getByText(/Maximum allowed: 0.00%/)).toBeVisible();
-    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(previewKnowledge).toHaveBeenCalledTimes(initialCalls);
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response(calculation({ basis: "minimum" })));
+    await userEvent.click(within(dialog).getByRole("radio", { name: "Min. Gross Margin" }));
     await settleCalculation();
+    expect(within(dialog).getByText(/Maximum selling-price discount: 0.00%/)).toBeVisible();
     expect(within(dialog).getByRole("alert")).toHaveTextContent(SIMULATOR_DISCOUNT_LIMIT_MESSAGE);
-    expect(previewKnowledge).not.toHaveBeenCalled();
     expect((await axe.run(dialog, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
     change("Discount (%)", "0");
     await settleCalculation();
-    expect(previewKnowledge).toHaveBeenLastCalledWith({ modeCalculation: { ...settings, startingMarkupBps: 4_000 }, quantity: "1", quantityScale: 0, modeCalculationMarkupBasis: "minimum" }, automaticRequestOptions);
+    expect(previewKnowledge).toHaveBeenLastCalledWith({ modeCalculation: settings, quantity: "1", quantityScale: 0, modeCalculationMarkupBasis: "minimum" }, automaticRequestOptions);
   });
 
   it("rejects malformed discounts and ignores pending results after discount edits", async () => {
@@ -137,7 +163,7 @@ describe("Mode calculation configuration and simulator", () => {
     vi.mocked(previewKnowledge).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     change("Discount (%)", "0");
     await settleCalculation();
-    change("Discount (%)", "11");
+    change("Discount (%)", "13.34");
     await act(async () => finish(response()));
     expect(within(dialog).queryByRole("status", { name: "Calculation results" })).not.toBeInTheDocument();
     await settleCalculation();
@@ -150,7 +176,7 @@ describe("Mode calculation configuration and simulator", () => {
     change("Discount (%)", "5.25");
     await settleCalculation();
     expect(previewKnowledge).toHaveBeenLastCalledWith(expect.objectContaining({ modeCalculationDiscountBps: 525 }), automaticRequestOptions);
-    expect(within(dialog).getByRole("alert")).toHaveTextContent("did not return the discounted calculation");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("incomplete or inconsistent In-house calculation");
     expect(within(dialog).queryByRole("status", { name: "Calculation results" })).not.toBeInTheDocument();
     vi.mocked(previewKnowledge).mockRejectedValueOnce(new Error(SIMULATOR_DISCOUNT_LIMIT_MESSAGE));
     await userEvent.click(screen.getByRole("button", { name: "Retry calculation" }));
@@ -158,58 +184,48 @@ describe("Mode calculation configuration and simulator", () => {
     expect(within(dialog).getByRole("alert")).toHaveTextContent(SIMULATOR_DISCOUNT_LIMIT_MESSAGE);
   });
 
+  it("rejects a self-consistent price calculated from an adjusted cost that does not match the request", async () => {
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response(calculation({
+      revisedUnitRatePaise: 166_000, revisedAmountPaise: 166_000, appliedImpactBps: 1_000
+    })));
+    setup({ value: settings });
+    const dialog = await openSimulator();
+    await settleCalculation();
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("incomplete or inconsistent In-house calculation");
+    expect(within(dialog).queryByRole("status", { name: "Calculation results" })).not.toBeInTheDocument();
+  });
+
   it("keeps configured values on the page and converts rupees and percentages without running a test", () => {
     const { props } = setup();
     expect(field("Base Rate (₹)")).toHaveValue("");
     expect(field("Low Quantity Limit")).toHaveValue("15");
-    expect(field("Min. Gross Margin Markup (%)")).toHaveValue("25");
-    expect(field("Starting Gross Margin Markup (%)")).toHaveValue("35");
+    expect(field("Min. Gross Margin (%)")).toHaveValue("25");
+    expect(field("Starting Gross Margin (%)")).toHaveValue("35");
+    expect(screen.getByRole("heading", { name: "Gross margin" })).toBeVisible();
     expect(screen.getByText("Nos")).toBeVisible();
     expect(field("Impact (%)")).toHaveValue("10");
-    expect(screen.getByRole("status", { name: "Max Discount" })).toHaveTextContent("10.00%");
+    expect(screen.queryByRole("status", { name: "Max Discount" })).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: /Quantity.*test/i })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Total with starting markup")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Total with Starting Gross Margin")).not.toBeInTheDocument();
     change("Base Rate (₹)", "1500");
     expect(props.onChange).toHaveBeenLastCalledWith(settings);
     change("Base Rate (₹)", "1500.51");
-    change("Starting Gross Margin Markup (%)", "40.25");
+    change("Starting Gross Margin (%)", "40.25");
     expect(props.onChange).toHaveBeenLastCalledWith({ ...settings, baseRatePaise: 150_051, startingMarkupBps: 4_025 });
     expect(previewKnowledge).not.toHaveBeenCalled();
   });
 
-  it("derives the estimate discount limit from markup edits without storing a separate discount setting", () => {
+  it("retains exact Gross Margin edits without inventing a configuration-level discount cap", () => {
     const { props } = setup({ value: settings });
-    const maximumDiscount = screen.getByRole("status", { name: "Max Discount" });
-    change("Min. Gross Margin Markup (%)", "25.31");
-    change("Starting Gross Margin Markup (%)", "32.58");
-    expect(maximumDiscount).toHaveTextContent("7.27%");
+    change("Min. Gross Margin (%)", "25.31");
+    change("Starting Gross Margin (%)", "32.58");
     expect(props.onChange).toHaveBeenLastCalledWith({ ...settings, minimumMarkupBps: 2_531, startingMarkupBps: 3_258 });
-    change("Base Rate (₹)", "");
-    change("Low Quantity Limit", "");
-    expect(maximumDiscount).toHaveTextContent("7.27%");
-    change("Starting Gross Margin Markup (%)", "25.31");
-    expect(maximumDiscount).toHaveTextContent("0.00%");
+    expect(screen.queryByText(/Starting.*Min\./)).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Max Discount" })).not.toBeInTheDocument();
     expect(previewKnowledge).not.toHaveBeenCalled();
   });
 
-  it("does not show a stale or negative discount limit for incomplete or invalid markups", () => {
-    setup({ value: settings });
-    const maximumDiscount = screen.getByRole("status", { name: "Max Discount" });
-    for (const invalid of ["", "35.", "35.001", "-1", "24.99", "90071992547409.92"]) {
-      change("Starting Gross Margin Markup (%)", invalid);
-      expect(maximumDiscount).toHaveTextContent("—");
-    }
-    change("Starting Gross Margin Markup (%)", "35");
-    expect(maximumDiscount).toHaveTextContent("10.00%");
-    for (const invalid of ["", "25.", "-1", "36"]) {
-      change("Min. Gross Margin Markup (%)", invalid);
-      expect(maximumDiscount).toHaveTextContent("—");
-    }
-    change("Min. Gross Margin Markup (%)", "0");
-    expect(maximumDiscount).toHaveTextContent("35.00%");
-  });
-
-  it("locks UOM and automatically calculates either markup without changing configuration", async () => {
+  it("locks UOM and automatically calculates either Gross Margin without changing configuration", async () => {
     const { props } = setup({ value: settings });
     await openSimulator();
     expect(field("UOM")).toHaveAttribute("readonly");
@@ -219,22 +235,26 @@ describe("Mode calculation configuration and simulator", () => {
     expect(field("Quantity")).toHaveValue("1");
     expect(previewKnowledge).not.toHaveBeenCalled();
     await settleCalculation();
-    await screen.findByText("₹2,227.50");
+    await screen.findByText("₹2,538.46");
     expect(previewKnowledge).toHaveBeenLastCalledWith({ modeCalculation: settings, quantity: "1", quantityScale: 0, modeCalculationMarkupBasis: "starting" }, automaticRequestOptions);
-    vi.mocked(previewKnowledge).mockResolvedValueOnce(response({ ...result, totalPaise: 206_250 }));
-    await userEvent.click(screen.getByRole("radio", { name: "Min. Gross Margin Markup" }));
-    expect(screen.queryByLabelText("Total with starting markup")).not.toBeInTheDocument();
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response(calculation({ basis: "minimum" })));
+    await userEvent.click(screen.getByRole("radio", { name: "Min. Gross Margin" }));
+    expect(screen.queryByLabelText("Total with Starting Gross Margin")).not.toBeInTheDocument();
     expect(previewKnowledge).toHaveBeenCalledTimes(1);
     await settleCalculation();
-    await screen.findByText("₹2,062.50");
-    expect(screen.getByLabelText("Total with minimum markup")).toBeVisible();
+    await screen.findByText("₹2,200.00");
+    expect(screen.getByLabelText("Total with Min. Gross Margin")).toBeVisible();
     expect(previewKnowledge).toHaveBeenLastCalledWith({ modeCalculation: settings, quantity: "1", quantityScale: 0, modeCalculationMarkupBasis: "minimum" }, automaticRequestOptions);
     change("Base Rate (₹)", "500");
     change("Low Quantity Limit", "10");
     change("Quantity", "20");
-    change("Min. Gross Margin Markup (%)", "20");
-    change("Starting Gross Margin Markup (%)", "30");
-    expect(screen.queryByLabelText("Total with minimum markup")).not.toBeInTheDocument();
+    change("Min. Gross Margin (%)", "20");
+    change("Starting Gross Margin (%)", "30");
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response(calculation({
+      configuration: { baseRatePaise: 50_000, lowQuantityLimit: "10", impactBps: 1_000, minimumMarkupBps: 2_000, startingMarkupBps: 3_000 },
+      revisedUnitRatePaise: 50_000, revisedAmountPaise: 1_000_000, appliedImpactBps: 0, basis: "minimum"
+    })));
+    expect(screen.queryByLabelText("Total with Min. Gross Margin")).not.toBeInTheDocument();
     await settleCalculation();
     expect(previewKnowledge).toHaveBeenLastCalledWith({
       modeCalculation: { baseRatePaise: 50_000, lowQuantityLimit: "10", impactBps: 1_000, minimumMarkupBps: 2_000, startingMarkupBps: 3_000 },
@@ -247,7 +267,7 @@ describe("Mode calculation configuration and simulator", () => {
     await openSimulator();
     expect(field("Quantity")).toHaveValue("1");
     expect(field("Base Rate (₹)")).toHaveValue("1500.00");
-    expect(screen.getByRole("radio", { name: "Starting Gross Margin Markup" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Starting Gross Margin" })).toBeChecked();
     expect(screen.queryByRole("status", { name: "Calculation results" })).not.toBeInTheDocument();
   });
 
@@ -261,7 +281,8 @@ describe("Mode calculation configuration and simulator", () => {
     await openSimulator();
     expect(field("Impact (%)")).toHaveValue("12.75");
     change("Impact (%)", "5.25");
-    vi.mocked(previewKnowledge).mockResolvedValueOnce(response({ revisedUnitRatePaise: 157_875, revisedAmountPaise: 157_875, totalPaise: 213_131, appliedImpactBps: 525 }));
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response(calculation({ revisedUnitRatePaise: 157_875, revisedAmountPaise: 157_875, appliedImpactBps: 525,
+      configuration: { ...settings, impactBps: 525 } })));
     await settleCalculation();
     expect(previewKnowledge).toHaveBeenLastCalledWith({ modeCalculation: { ...settings, impactBps: 525 }, quantity: "1", quantityScale: 0, modeCalculationMarkupBasis: "starting" }, automaticRequestOptions);
     expect(await screen.findByText("5.25% low-quantity impact applied.")).toBeVisible();
@@ -305,10 +326,12 @@ describe("Mode calculation configuration and simulator", () => {
     change("Base Rate (₹)", "");
     expect(view.props.onValidationChange).toHaveBeenLastCalledWith(false);
     change("Base Rate (₹)", "1500");
-    change("Starting Gross Margin Markup (%)", "20");
+    change("Starting Gross Margin (%)", "20");
     view.rerenderEditor({ validationAttempt: 1 });
-    expect(field("Starting Gross Margin Markup (%)")).toHaveFocus();
-    change("Starting Gross Margin Markup (%)", "35");
+    expect(field("Starting Gross Margin (%)")).toHaveFocus();
+    change("Starting Gross Margin (%)", "100");
+    expect(screen.getByText("Gross Margin must be less than 100%.")).toBeVisible();
+    change("Starting Gross Margin (%)", "35");
     expect(view.props.onValidationChange).toHaveBeenLastCalledWith(true);
     await openSimulator();
     for (const input of ["", "-1", "1500.999"]) {
@@ -317,9 +340,9 @@ describe("Mode calculation configuration and simulator", () => {
       expect(field("Base Rate (₹)")).toHaveAttribute("aria-invalid", "true");
     }
     change("Base Rate (₹)", "1500");
-    change("Starting Gross Margin Markup (%)", "20");
+    change("Starting Gross Margin (%)", "20");
     await settleCalculation();
-    expect(screen.getByText("Starting markup must be at least the minimum markup.")).toBeVisible();
+    expect(screen.getByText("Starting Gross Margin must be at least Min. Gross Margin.")).toBeVisible();
     expect(previewKnowledge).not.toHaveBeenCalled();
     expect(view.props.onValidationChange).toHaveBeenLastCalledWith(true);
   });
@@ -339,14 +362,16 @@ describe("Mode calculation configuration and simulator", () => {
     await settleCalculation();
     expect(previewKnowledge).not.toHaveBeenCalled();
     change("Quantity", "2");
-    vi.mocked(previewKnowledge).mockRejectedValueOnce(new Error("Calculation service unavailable"));
+    vi.mocked(previewKnowledge).mockRejectedValueOnce(new Error("Calculation service unavailable"))
+      .mockResolvedValueOnce(response(calculation({ revisedAmountPaise: 330_000 })));
     await settleCalculation();
     await screen.findByText("Calculation service unavailable");
     await userEvent.click(screen.getByRole("button", { name: "Retry calculation" }));
     await settleCalculation();
-    await screen.findByText("₹2,227.50");
+    await screen.findByText("₹5,076.92");
     view.rerenderEditor({ uom: { scopeKey: "first", id: "sqft", label: "Sq.ft", decimalScale: 2 } });
     expect(screen.queryByRole("status", { name: "Calculation results" })).not.toBeInTheDocument();
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response(calculation({ revisedAmountPaise: 206_250 })));
     change("Quantity", "1.25");
     await settleCalculation();
     expect(previewKnowledge).toHaveBeenLastCalledWith({ modeCalculation: settings, quantity: "1.25", quantityScale: 2, modeCalculationMarkupBasis: "starting" }, automaticRequestOptions);
@@ -359,23 +384,25 @@ describe("Mode calculation configuration and simulator", () => {
     await openSimulator();
     await settleCalculation();
     change("Quantity", "15");
-    vi.mocked(previewKnowledge).mockResolvedValueOnce(response({ revisedUnitRatePaise: 150_000, revisedAmountPaise: 2_250_000, totalPaise: 3_037_500, appliedImpactBps: 0 }));
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response(calculation({ revisedUnitRatePaise: 165_000, revisedAmountPaise: 2_475_000, appliedImpactBps: 1_000 })));
     await settleCalculation();
-    await screen.findByText("₹30,375.00");
+    await screen.findByText("₹38,076.92");
     await act(async () => resolveFirst(response()));
-    expect(screen.getByLabelText("Total with starting markup")).toHaveTextContent("₹30,375.00");
-    expect(screen.getByText("No low-quantity impact applied.")).toBeVisible();
+    expect(screen.getByLabelText("Total with Starting Gross Margin")).toHaveTextContent("₹38,076.92");
+    expect(screen.getByText("10.00% low-quantity impact applied.")).toBeVisible();
     vi.mocked(previewKnowledge).mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
     change("Quantity", "16");
     await settleCalculation();
     await userEvent.keyboard("{Escape}");
     view.rerenderEditor({ value: { ...settings, baseRatePaise: 50_000 }, uom: { scopeKey: "second:revision-two", id: "nos", label: "Nos", decimalScale: 0 } });
     await openSimulator();
-    vi.mocked(previewKnowledge).mockResolvedValueOnce(response({ revisedUnitRatePaise: 55_000, revisedAmountPaise: 55_000, totalPaise: 74_250, appliedImpactBps: 1_000 }));
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response(calculation({
+      configuration: { ...settings, baseRatePaise: 50_000 }, revisedUnitRatePaise: 55_000, revisedAmountPaise: 55_000, appliedImpactBps: 1_000
+    })));
     await settleCalculation();
-    await screen.findByText("₹742.50");
+    await screen.findByText("₹846.15");
     await act(async () => resolveFirst(response()));
-    expect(screen.getByLabelText("Total with starting markup")).toHaveTextContent("₹742.50");
+    expect(screen.getByLabelText("Total with Starting Gross Margin")).toHaveTextContent("₹846.15");
     expect(previewKnowledge).toHaveBeenLastCalledWith({ modeCalculation: { ...settings, baseRatePaise: 50_000 }, quantity: "1", quantityScale: 0, modeCalculationMarkupBasis: "starting" }, automaticRequestOptions);
     view.rerenderEditor({ uom: { scopeKey: "third:revision-three", id: "nos", label: "Nos", decimalScale: 0 } });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -413,15 +440,16 @@ describe("Mode calculation configuration and simulator", () => {
     setup({ value: settings, readOnly: true });
     expect(field("Base Rate (₹)")).toBeDisabled();
     expect(field("Impact (%)")).toBeDisabled();
-    expect(screen.getByRole("status", { name: "Max Discount" })).toHaveTextContent("10.00%");
+    expect(screen.queryByRole("status", { name: "Max Discount" })).not.toBeInTheDocument();
     const trigger = screen.getByRole("button", { name: "Test calculations" });
     const dialog = await openSimulator();
     expect(field("Base Rate (₹)")).toBeEnabled();
     expect(field("Impact (%)")).toBeEnabled();
     expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
-    screen.getByRole("radio", { name: "Starting Gross Margin Markup" }).focus();
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response(calculation({ basis: "minimum" })));
+    screen.getByRole("radio", { name: "Starting Gross Margin" }).focus();
     await userEvent.keyboard("{ArrowDown}");
-    expect(screen.getByRole("radio", { name: "Min. Gross Margin Markup" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Min. Gross Margin" })).toBeChecked();
     await userEvent.tab();
     expect(dialog.contains(document.activeElement)).toBe(true);
     await settleCalculation();
