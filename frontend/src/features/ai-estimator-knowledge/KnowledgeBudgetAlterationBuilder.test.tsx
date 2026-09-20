@@ -84,6 +84,79 @@ describe("Budget Alterations", () => {
     expect(screen.getByRole("combobox", { name: "Related item" })).toHaveValue("");
   });
 
+  it.each(["main_line", "sub_basket"])("adds and selects a Main Basket from the %s rule dropdown without losing the rule draft", async (targetKind) => {
+    const initial = { ...rule, targetKind, ...(targetKind === "sub_basket" ? { targetType: null, targetMainLineId: null } : {}) };
+    const { user, change } = setup([initial]);
+    await openRule(user);
+    const basketSelect = screen.getByRole("combobox", { name: "Main Basket" });
+    expect(within(basketSelect).getByRole("option", { name: "Add Main Basket" })).toHaveValue("add-main-basket");
+    await user.selectOptions(basketSelect, "add-main-basket");
+    const basketName = screen.getByRole("textbox", { name: "New Main Basket name" });
+    expect(basketName).toHaveFocus();
+    expect(basketSelect).toHaveValue("basket-0");
+    expect(change).not.toHaveBeenCalled();
+    await user.type(basketName, "  Lighting  ");
+    await user.click(screen.getByRole("button", { name: "Save main basket" }));
+    await waitFor(() => expect(basketSelect).toHaveValue("basket-new"));
+    expect(basketSelect).toHaveDisplayValue("Lighting");
+    expect(api.createKnowledgeBasket).toHaveBeenCalledExactlyOnceWith({ name: "Lighting" });
+    expect(change.mock.lastCall![0]).toEqual([{ ...initial, targetBasketId: "basket-new", targetSubBasketId: null, targetMainLineId: null }]);
+    expect(screen.getByRole("combobox", { name: "Sub Basket" })).toHaveValue("");
+    expect(screen.getByRole("textbox", { name: "Why is this change needed?" })).toHaveValue(rule.reason);
+    expect(api.createKnowledgeMainLine).not.toHaveBeenCalled();
+
+    // The catalog mock deliberately stays stale after creation and editor remount.
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await openRule(user);
+    const reopenedSelect = screen.getByRole("combobox", { name: "Main Basket" });
+    expect(reopenedSelect).toHaveValue("basket-new");
+    expect(reopenedSelect).toHaveDisplayValue("Lighting");
+    expect(within(reopenedSelect).getByRole("option", { name: "Lighting" })).toBeEnabled();
+    expect(api.createKnowledgeBasket).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the rule editor open until Main Basket creation finishes", async () => {
+    let resolveBasket!: (basket: KnowledgeBasket) => void;
+    vi.mocked(api.createKnowledgeBasket).mockImplementation(() => new Promise((resolve) => { resolveBasket = resolve; }));
+    const { user } = setup([rule]);
+    await openRule(user);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), "add-main-basket");
+    await user.type(screen.getByRole("textbox", { name: "New Main Basket name" }), "Lighting");
+    await user.click(screen.getByRole("button", { name: "Save main basket" }));
+    expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove rule 1" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Edit scope rule 1" })).toBeVisible();
+    await act(async () => resolveBasket({ ...baskets[0], id: "basket-new", name: "Lighting" }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Main Basket" })).toHaveValue("basket-new"));
+    expect(screen.getByRole("button", { name: "Done" })).toBeEnabled();
+  });
+
+  it("cancels Main Basket creation from the rule dropdown without clearing its existing targets", async () => {
+    const { user, change } = setup([rule]);
+    await openRule(user);
+    await screen.findByRole("option", { name: sub.name });
+    const basketSelect = screen.getByRole("combobox", { name: "Main Basket" });
+    await user.selectOptions(basketSelect, "add-main-basket");
+    await user.type(screen.getByRole("textbox", { name: "New Main Basket name" }), "Unsaved basket");
+    await user.click(screen.getByRole("button", { name: "Cancel new basket" }));
+    expect(screen.queryByRole("textbox", { name: "New Main Basket name" })).not.toBeInTheDocument();
+    expect(basketSelect).toHaveValue(rule.targetBasketId);
+    expect(basketSelect).toHaveFocus();
+    expect(screen.getByRole("combobox", { name: "Sub Basket" })).toHaveValue(rule.targetSubBasketId);
+    expect(screen.getByRole("combobox", { name: "Related item" })).toHaveValue(rule.targetMainLineId);
+    expect(change).not.toHaveBeenCalled();
+    expect(api.createKnowledgeBasket).not.toHaveBeenCalled();
+  });
+
+  it.each([{ canCreate: false }, { readOnly: true }])("hides Main Basket creation from the rule dropdown without creation access: %j", async (options) => {
+    const { user } = setup([rule], options);
+    await openRule(user);
+    const basketSelect = screen.getByRole("combobox", { name: "Main Basket" });
+    expect(within(basketSelect).queryByRole("option", { name: "Add Main Basket" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "New Main Basket name" })).not.toBeInTheDocument();
+  });
+
   it("supports optional additions and removals, independent triggers, disabling and deleting rules", async () => {
     const { user, change } = setup([rule]);
     await openRule(user);
@@ -132,7 +205,8 @@ describe("Budget Alterations", () => {
 
     await user.click(within(childList).getByRole("button", { name: "Add sub-item" }));
     let dialog = screen.getByRole("dialog", { name: "Add sub-item" });
-    expect(within(dialog).getByRole("combobox", { name: "Main basket" })).toBeDisabled();
+    await within(dialog).findByRole("option", { name: "Carpentry" });
+    expect(within(dialog).getByRole("combobox", { name: "Main basket" })).toBeEnabled();
     expect(within(dialog).getByRole("textbox", { name: "Sub basket" })).toHaveValue(sub.name);
     expect(within(dialog).getByRole("textbox", { name: "Sub basket" })).toBeDisabled();
     await user.type(within(dialog).getByRole("textbox", { name: "Sub-item name" }), catalogChild.mainLineName);
@@ -156,6 +230,80 @@ describe("Budget Alterations", () => {
     expect(screen.getByRole("combobox", { name: "Addition type" })).toHaveValue("sub_basket");
     expect(screen.getByRole("combobox", { name: "Sub Basket" })).toHaveValue(sub.id);
     expect(screen.queryByRole("combobox", { name: "Related item" })).not.toBeInTheDocument();
+  });
+
+  it("adds a Main Basket inside Add sub-item and retargets the same Whole Sub-Basket rule only after its child is saved", async () => {
+    const whole = { ...rule, targetKind: "sub_basket", targetType: null, targetSubBasketId: sub.id, targetMainLineId: null };
+    const created = {
+      ...items[1], mainLineId: "new-light", mainLineName: "Pendant light", basketId: "basket-new", basketName: "Lighting",
+      subBasketId: "sub-pendants", subBasketName: "Pendant lights"
+    } as KnowledgeItemDetail;
+    let complete!: (item: KnowledgeItemDetail) => void;
+    vi.mocked(api.createKnowledgeMainLine).mockImplementation(() => new Promise((resolve) => { complete = resolve; }));
+    const onItemConfirmed = vi.fn();
+    const { user, change } = setup([whole], { onItemConfirmed });
+    await openRule(user);
+    const childList = await screen.findByRole("region", { name: "Sub-items" });
+    await user.click(within(childList).getByRole("button", { name: "Add sub-item" }));
+    const dialog = screen.getByRole("dialog", { name: "Add sub-item" });
+    await within(dialog).findByRole("option", { name: "Carpentry" });
+    const basketSelect = within(dialog).getByRole("combobox", { name: "Main basket" });
+    expect(basketSelect).toBeEnabled();
+    expect(within(basketSelect).getByRole("option", { name: "Add Main Basket" })).toHaveValue("add-main-basket");
+    await user.type(within(dialog).getByRole("textbox", { name: "Sub-item name" }), created.mainLineName);
+    await user.selectOptions(basketSelect, "add-main-basket");
+    await user.type(within(dialog).getByRole("textbox", { name: "New Main Basket name" }), "Lighting");
+    await user.click(within(dialog).getByRole("button", { name: "Save main basket" }));
+    await waitFor(() => expect(basketSelect).toHaveValue("basket-new"));
+    expect(api.createKnowledgeBasket).toHaveBeenCalledExactlyOnceWith({ name: "Lighting" });
+    const subBasketName = within(dialog).getByRole("textbox", { name: "Sub basket" });
+    expect(subBasketName).toBeEnabled();
+    expect(subBasketName).toHaveValue("");
+    expect(subBasketName).toBeRequired();
+    expect(within(dialog).getByRole("textbox", { name: "Sub-item name" })).toHaveValue(created.mainLineName);
+    expect(within(dialog).getByRole("button", { name: "Add sub-item" })).toBeDisabled();
+    expect(change).not.toHaveBeenCalled();
+    expect(screen.getByRole("combobox", { name: "Sub Basket" })).toHaveValue(sub.id);
+
+    await user.type(subBasketName, created.subBasketName!);
+    await user.click(within(dialog).getByRole("button", { name: "Add sub-item" }));
+    expect(api.createKnowledgeMainLine).toHaveBeenCalledExactlyOnceWith("basket-new", { name: created.mainLineName, subBasketName: created.subBasketName });
+    expect(change).not.toHaveBeenCalled();
+    expect(onItemConfirmed).not.toHaveBeenCalled();
+    await act(async () => complete(created));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add sub-item" })).not.toBeInTheDocument());
+    expect(change.mock.lastCall![0]).toEqual([{ ...whole, targetBasketId: created.basketId, targetSubBasketId: created.subBasketId }]);
+    expect(onItemConfirmed).toHaveBeenCalledExactlyOnceWith(created);
+    expect(screen.getByRole("combobox", { name: "Addition type" })).toHaveValue("sub_basket");
+    expect(screen.getByRole("combobox", { name: "Main Basket" })).toHaveDisplayValue("Lighting");
+    expect(screen.getByRole("combobox", { name: "Sub Basket" })).toHaveValue(created.subBasketId);
+    expect(within(screen.getByRole("region", { name: "Sub-items" })).getByText(created.mainLineName)).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "Related item" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the Whole Sub-Basket rule unchanged when a sub-item saves under a different parent than the newly selected Main Basket", async () => {
+    const whole = { ...rule, targetKind: "sub_basket", targetType: null, targetSubBasketId: sub.id, targetMainLineId: null };
+    const wrongParent = { ...items[1], mainLineId: "wrong-new-parent", mainLineName: "New light", subBasketName: "Pendant lights" } as KnowledgeItemDetail;
+    vi.mocked(api.createKnowledgeMainLine).mockResolvedValue(wrongParent);
+    const onItemConfirmed = vi.fn();
+    const { user, change } = setup([whole], { onItemConfirmed });
+    await openRule(user);
+    const childList = await screen.findByRole("region", { name: "Sub-items" });
+    await user.click(within(childList).getByRole("button", { name: "Add sub-item" }));
+    const dialog = screen.getByRole("dialog", { name: "Add sub-item" });
+    await within(dialog).findByRole("option", { name: "Carpentry" });
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Main basket" }), "add-main-basket");
+    await user.type(within(dialog).getByRole("textbox", { name: "New Main Basket name" }), "Lighting");
+    await user.click(within(dialog).getByRole("button", { name: "Save main basket" }));
+    await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Main basket" })).toHaveValue("basket-new"));
+    await user.type(within(dialog).getByRole("textbox", { name: "Sub basket" }), wrongParent.subBasketName!);
+    await user.type(within(dialog).getByRole("textbox", { name: "Sub-item name" }), wrongParent.mainLineName);
+    await user.click(within(dialog).getByRole("button", { name: "Add sub-item" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("saved in the catalog, but could not be selected");
+    expect(onItemConfirmed).not.toHaveBeenCalled();
+    expect(change).not.toHaveBeenCalled();
+    expect(within(childList).queryByText(wrongParent.mainLineName)).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Sub Basket" })).toHaveValue(sub.id);
   });
 
   it("preserves the selected Whole Sub-Basket when sub-item creation is cancelled or fails", async () => {
@@ -262,7 +410,7 @@ describe("Budget Alterations", () => {
     await user.click(screen.getByRole("button", { name: "Add Sub-Basket" }));
     const dialog = screen.getByRole("dialog", { name: "Add Sub-Basket" });
     await within(dialog).findByRole("option", { name: "Electrical" });
-    await user.click(within(dialog).getByRole("button", { name: "Add main basket" }));
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Main basket" }), "add-main-basket");
     await user.type(within(dialog).getByRole("textbox", { name: "New Main Basket name" }), "Lighting");
     await user.click(within(dialog).getByRole("button", { name: "Save main basket" }));
     await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Main basket" })).toHaveValue("basket-new"));
