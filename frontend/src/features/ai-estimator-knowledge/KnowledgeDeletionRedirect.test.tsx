@@ -42,6 +42,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     getKnowledgeBasketQuality: vi.fn(),
     getKnowledgeItem: vi.fn(),
     getKnowledgeSection: vi.fn(),
+    listKnowledgeQualityControlOptions: vi.fn(),
     listKnowledgeBaskets: vi.fn(),
     listKnowledgeItems: vi.fn(),
     listKnowledgeMasters: vi.fn()
@@ -78,6 +79,7 @@ const revision: KnowledgeRevision = {
 };
 const draftItem: KnowledgeItemDetail = {
   id: "line-1",
+  completionRequired: false,
   mainLineId: "line-1",
   mainLineName: "Wall panelling",
   basketId: "basket-1",
@@ -162,6 +164,7 @@ beforeEach(() => {
   vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [], pagination });
   vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({ items: [], pagination: { ...pagination, limit: 20 } });
   vi.mocked(knowledgeApi.listKnowledgeMasters).mockResolvedValue({ items: [], pagination });
+  vi.mocked(knowledgeApi.listKnowledgeQualityControlOptions).mockResolvedValue({ items: [] });
   vi.mocked(knowledgeMutationSync.syncKnowledgeLifecycleMutation).mockResolvedValue();
   vi.mocked(knowledgeMutationSync.syncKnowledgeMainLineDeletion).mockResolvedValue();
 });

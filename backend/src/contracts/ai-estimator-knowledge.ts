@@ -24,6 +24,11 @@ export type KnowledgeStableId = string;
 export type KnowledgeCanonicalDecimal = string;
 export type KnowledgePaise = number;
 export type KnowledgeBasisPoints = number;
+export type KnowledgeQualitySeverity = "critical" | "major" | "minor";
+export type KnowledgeQualityPerformer = "site" | "pm" | "procurement" | "vendor";
+export type KnowledgeQualityControlOptionKind = "frequency" | "performer";
+/** Public custom-option reference. Runtime validation requires qco_<24 lowercase hex>. */
+export type KnowledgeQualityControlOptionReference = `qco_${string}`;
 
 export interface KnowledgeActorMetadata {
   createdById: KnowledgeStableId;
@@ -35,6 +40,21 @@ export interface KnowledgeActorMetadata {
 export interface KnowledgeVersionedResource extends KnowledgeActorMetadata {
   id: KnowledgeStableId;
   version: number;
+}
+
+/** Append-only reusable value for a Quality Parameter control. */
+export interface KnowledgeQualityControlOption extends KnowledgeVersionedResource {
+  kind: KnowledgeQualityControlOptionKind;
+  name: string;
+}
+
+export interface KnowledgeQualityControlOptionListResponse {
+  items: KnowledgeQualityControlOption[];
+}
+
+export interface KnowledgeCreateQualityControlOptionInput {
+  kind: KnowledgeQualityControlOptionKind;
+  name: string;
 }
 
 export interface KnowledgeMaster extends KnowledgeVersionedResource {
@@ -96,11 +116,16 @@ export interface KnowledgeTemporaryMainLineReference {
   status: KnowledgeItemStatus;
   revisionId: string;
   revisionStatus: "draft" | "active";
-  rules: Array<Pick<KnowledgeBudgetAlteration, "id" | "trigger" | "action" | "requirement" | "reason" | "active">>;
+  rules: Array<Pick<KnowledgeBudgetAlteration, "id" | "trigger" | "action" | "requirement" | "reason" | "active"> & {
+    /** Absent identifies a legacy Main-Line rule. */
+    targetKind?: "main_line" | "sub_basket";
+  }>;
 }
 
 export interface KnowledgeItemListItem extends KnowledgeVersionedResource {
   itemType?: "main_line" | "temporary";
+  /** Temporary catalog placeholders remain unresolved regardless of lifecycle or section completeness. */
+  completionRequired: boolean;
   linkedMainLines?: KnowledgeTemporaryMainLineReference[];
   basketId: KnowledgeStableId;
   basketName: string;
@@ -266,18 +291,35 @@ export interface KnowledgeRecommendation {
 }
 
 /** Conditional scope guidance, never an instruction to mutate an estimate automatically. */
-export interface KnowledgeBudgetAlteration {
+interface KnowledgeBudgetAlterationBase {
   id: KnowledgeStableId;
   trigger: "added" | "removed";
   action: "add" | "remove";
   requirement: "must" | "can";
-  targetType: "catalog" | "temporary";
   targetBasketId: KnowledgeStableId;
-  targetSubBasketId: KnowledgeStableId | null;
-  targetMainLineId: KnowledgeStableId;
   reason: string;
   active: boolean;
 }
+
+export interface KnowledgeMainLineBudgetAlteration extends KnowledgeBudgetAlterationBase {
+  /** Absent on legacy rows; new and edited rows write this discriminator explicitly. */
+  targetKind?: "main_line";
+  targetType: "catalog" | "temporary";
+  targetSubBasketId: KnowledgeStableId | null;
+  targetMainLineId: KnowledgeStableId;
+}
+
+export interface KnowledgeSubBasketBudgetAlteration extends KnowledgeBudgetAlterationBase {
+  targetKind: "sub_basket";
+  targetType: null;
+  targetSubBasketId: KnowledgeStableId;
+  targetMainLineId: null;
+}
+
+/** Conditional scope guidance, never an instruction to mutate an estimate automatically. */
+export type KnowledgeBudgetAlteration =
+  | KnowledgeMainLineBudgetAlteration
+  | KnowledgeSubBasketBudgetAlteration;
 
 export interface KnowledgeExclusion {
   id: KnowledgeStableId;
@@ -302,9 +344,20 @@ export interface KnowledgeQualityParameter {
   acceptanceCriteria?: string | null;
   stage?: string | null;
   checkMethod?: "visual" | "measurement" | "functional_test" | "document_review" | null;
-  severity?: "critical" | "major" | "minor" | null;
+  severity?: KnowledgeQualitySeverity | null;
+  /**
+   * Shared-checklist saves use a built-in KnowledgeQualityPerformer code or a
+   * stable, correct-kind quality-control-option reference. Historical immutable
+   * revisions may contain another string and remain readable.
+   */
   responsibleRole?: string | null;
   failureAction?: string | null;
+  /**
+   * Shared-checklist saves use a canonical built-in frequency mapping or
+   * { method: "all", unit: qco_<reference> } for a reusable custom frequency,
+   * both validated at the PUT boundary. Other structurally valid values remain
+   * readable for immutable legacy revisions.
+   */
   sampling?: { method: "all" | "percentage" | "fixed_count"; value?: number | null; unit: string } | null;
   evidence?: { photos: boolean; documents: boolean; video: boolean; minPhotosPerSample?: number | null; instructions?: string | null } | null;
 }
@@ -379,9 +432,11 @@ export interface KnowledgePreviewAmountComponent {
 export interface KnowledgeModeCalculationSettings {
   baseRatePaise: KnowledgePaise;
   lowQuantityLimit: KnowledgeCanonicalDecimal;
-  /** Defaults to 1,000 (10%) for configurations saved before editable Impact. */
+  /** Defaults to 1,000 (10%) whenever omitted. */
   impactBps?: KnowledgeBasisPoints;
+  /** Legacy transport name; interpreted as minimum gross margin by the In-house preview. */
   minimumMarkupBps: KnowledgeBasisPoints;
+  /** Legacy transport name; interpreted as starting gross margin by the In-house preview. */
   startingMarkupBps: KnowledgeBasisPoints;
 }
 
@@ -396,11 +451,13 @@ export type KnowledgeModeCalculations = Record<"pmc" | "sub_vendor", KnowledgeMo
 export interface KnowledgeModeCalculationPreview {
   revisedUnitRatePaise: KnowledgePaise;
   revisedAmountPaise: KnowledgePaise;
+  floorPricePaise: KnowledgePaise;
+  maximumDiscountBps: KnowledgeBasisPoints;
+  discountBasis: "selling_price";
   totalPaise: KnowledgePaise;
   appliedImpactBps: KnowledgeBasisPoints;
   discount?: {
     rateBps: KnowledgeBasisPoints;
-    effectiveMarkupBps: KnowledgeBasisPoints;
     totalBeforeDiscountPaise: KnowledgePaise;
     amountPaise: KnowledgePaise;
   };
@@ -519,7 +576,7 @@ export type KnowledgeCalculationScope = "pmc" | "sub_vendor" | "in_house_labor" 
 
 /** Active-revision settings for future analysis, separate from the legacy price-version preview. */
 export interface KnowledgeConfigurationContext {
-  formulaVersion: "mode-markup-v1";
+  formulaVersion: "mode-margin-v2";
   moneyUnit: "paise";
   percentageUnit: "basis_points";
   selection: {
@@ -540,7 +597,7 @@ export interface KnowledgeConfigurationContext {
     scope: KnowledgeCalculationScope;
     source: "scoped" | "legacy_shared" | "legacy_in_house" | null;
     settings: Required<KnowledgeModeCalculationSettings> | null;
-    /** A difference in markup percentage points, not a selling-price discount. */
+    /** Exact selling-price discount cap for In-house when quantity/UOM are known; legacy rate difference for untouched PMC/Sub-Vendor scopes. */
     maximumDiscountBps: number | null;
   }>;
 }

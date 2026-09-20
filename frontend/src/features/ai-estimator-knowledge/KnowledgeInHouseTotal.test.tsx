@@ -12,8 +12,41 @@ import { SIMULATOR_DISCOUNT_LIMIT_MESSAGE } from "./knowledgeSimulatorDiscount";
 vi.mock("./knowledgeApi", () => ({ previewKnowledge: vi.fn() }));
 const labor = { baseRatePaise: 45_000, lowQuantityLimit: "4", impactBps: 0, minimumMarkupBps: 800, startingMarkupBps: 2_300 };
 const material = { baseRatePaise: 65_000, lowQuantityLimit: "9", impactBps: 1_275, minimumMarkupBps: 1_800, startingMarkupBps: 3_600 };
-const result = { labor: { revisedUnitRatePaise: 45_000, revisedAmountPaise: 45_000, totalPaise: 55_350, appliedImpactBps: 0 },
-  material: { revisedUnitRatePaise: 73_288, revisedAmountPaise: 73_288, totalPaise: 99_672, appliedImpactBps: 1_275 }, totalPaise: 155_022 };
+type CostSettings = typeof labor;
+function halfUp(numerator: bigint, denominator: bigint) { return (numerator + denominator / 2n) / denominator; }
+function scaled(value: string, scale: number) {
+  const [integer, fraction = ""] = value.split(".");
+  return BigInt(integer!) * 10n ** BigInt(scale) + BigInt(fraction.padEnd(scale, "0") || "0");
+}
+function costResult(configuration: CostSettings, quantity: string, scale: number, basis: "starting" | "minimum", discountBps: number) {
+  const factor = 10n ** BigInt(scale);
+  const appliedImpactBps = scaled(quantity, scale) <= scaled(configuration.lowQuantityLimit, scale) ? configuration.impactBps : 0;
+  const revisedUnitRatePaise = Number(halfUp(BigInt(configuration.baseRatePaise) * BigInt(10_000 + appliedImpactBps), 10_000n));
+  const revisedAmountPaise = Number(halfUp(BigInt(revisedUnitRatePaise) * scaled(quantity, scale), factor));
+  const price = (marginBps: number) => Number(halfUp(BigInt(revisedAmountPaise) * 10_000n, 10_000n - BigInt(marginBps)));
+  const floorPricePaise = price(configuration.minimumMarkupBps);
+  const totalBeforeDiscountPaise = price(basis === "starting" ? configuration.startingMarkupBps : configuration.minimumMarkupBps);
+  const maximumDiscountBps = totalBeforeDiscountPaise === 0 ? 0
+    : Math.floor(((totalBeforeDiscountPaise - floorPricePaise) * 10_000) / totalBeforeDiscountPaise);
+  const amountPaise = Number(halfUp(BigInt(totalBeforeDiscountPaise) * BigInt(discountBps), 10_000n));
+  return { revisedUnitRatePaise, revisedAmountPaise, floorPricePaise, maximumDiscountBps,
+    discountBasis: "selling_price" as const, totalPaise: totalBeforeDiscountPaise - amountPaise, appliedImpactBps,
+    ...(discountBps > 0 ? { discount: { rateBps: discountBps, totalBeforeDiscountPaise, amountPaise } } : {}) };
+}
+function inHouseResult({ laborSettings = labor, materialSettings = material, quantity = "1", scale = 0,
+  basis = "starting", discountBps = 0 }: {
+  readonly laborSettings?: CostSettings;
+  readonly materialSettings?: CostSettings;
+  readonly quantity?: string;
+  readonly scale?: number;
+  readonly basis?: "starting" | "minimum";
+  readonly discountBps?: number;
+} = {}) {
+  const laborResult = costResult(laborSettings, quantity, scale, basis, discountBps);
+  const materialResult = costResult(materialSettings, quantity, scale, basis, discountBps);
+  return { labor: laborResult, material: materialResult, totalPaise: laborResult.totalPaise + materialResult.totalPaise };
+}
+const result = inHouseResult();
 const transportOptions = { signal: expect.any(AbortSignal), showGlobalLoader: false };
 function response(inHouseCalculation: NonNullable<KnowledgePreview["inHouseCalculation"]> = result): KnowledgePreview {
   return { formulaVersion: "knowledge-preview-v1", effectivePriceVersionId: null, taxVersionId: null, effectiveUnitRatePaise: null,
@@ -63,17 +96,17 @@ describe("combined In-house total", () => {
     await advance(1);
     expect(previewKnowledge).toHaveBeenCalledExactlyOnceWith({ inHouseCalculation: { labor, material }, quantity: "1", quantityScale: 0, modeCalculationMarkupBasis: "starting" }, transportOptions);
     expect(within(dialog).getByLabelText("Labour expense", { exact: true })).toHaveTextContent("₹450.00");
-    expect(within(dialog).getByLabelText("Margin on labour", { exact: true })).toHaveTextContent("₹103.50");
+    expect(within(dialog).getByLabelText("Margin on labour", { exact: true })).toHaveTextContent("₹134.42");
     expect(within(dialog).getByLabelText("Material expense", { exact: true })).toHaveTextContent("₹732.88");
-    expect(within(dialog).getByLabelText("Margin on material", { exact: true })).toHaveTextContent("₹263.84");
-    expectBothTotals("₹1,550.22");
+    expect(within(dialog).getByLabelText("Margin on material", { exact: true })).toHaveTextContent("₹412.25");
+    expectBothTotals("₹1,729.55");
     view.rerenderTotal({ labor: { ...labor }, material: { ...material } });
     fireEvent.submit(dialog.querySelector("form")!);
     await advance(1_000);
     expect(previewKnowledge).toHaveBeenCalledTimes(1);
     close(dialog);
-    expect(screen.getByLabelText("Subtotal", { exact: true })).toHaveTextContent("₹1,550.22");
-    expect(screen.getByText(/Quantity: 1 Number · Starting markup/)).toBeVisible();
+    expect(screen.getByLabelText("Subtotal", { exact: true })).toHaveTextContent("₹1,729.55");
+    expect(screen.getByText(/Quantity: 1 Number · Starting Gross Margin/)).toBeVisible();
   });
 
   it("debounces rapid quantity edits and immediately clears both accepted summaries", async () => {
@@ -85,58 +118,71 @@ describe("combined In-house total", () => {
     expect(screen.queryByLabelText("Subtotal")).not.toBeInTheDocument();
     await advance(200);
     fireEvent.change(quantity, { target: { value: "20" } });
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response(inHouseResult({ quantity: "20" })));
     await advance(299);
     expect(previewKnowledge).toHaveBeenCalledTimes(1);
     await advance(1);
     expect(previewKnowledge).toHaveBeenCalledTimes(2);
     expect(previewKnowledge).toHaveBeenLastCalledWith({ inHouseCalculation: { labor, material }, quantity: "20", quantityScale: 0, modeCalculationMarkupBasis: "starting" }, transportOptions);
-    expectBothTotals("₹1,550.22");
+    expectBothTotals("₹32,000.81");
   });
 
   it("bounds a common discount by both costs and retains the discounted total without changing settings", async () => {
     setup();
     const dialog = open();
     const discount = within(dialog).getByRole("textbox", { name: "Discount (%)" });
-    expect(within(dialog).getByText(/Maximum allowed: 15.00%/)).toBeVisible();
-    fireEvent.change(discount, { target: { value: "15.01" } });
+    await advance();
+    expect(within(dialog).getByText(/Maximum selling-price discount: 16.30%/)).toBeVisible();
+    const callsAtLimit = vi.mocked(previewKnowledge).mock.calls.length;
+    fireEvent.change(discount, { target: { value: "16.31" } });
     expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
     await advance();
     expect(within(dialog).getByRole("alert")).toHaveTextContent(SIMULATOR_DISCOUNT_LIMIT_MESSAGE);
-    expect(previewKnowledge).not.toHaveBeenCalled();
-    vi.mocked(previewKnowledge).mockResolvedValueOnce(response({ totalPaise: 149_107,
-      labor: { ...result.labor, totalPaise: 53_100, discount: { rateBps: 500, effectiveMarkupBps: 1_800, totalBeforeDiscountPaise: 55_350, amountPaise: 2_250 } },
-      material: { ...result.material, totalPaise: 96_007, discount: { rateBps: 500, effectiveMarkupBps: 3_100, totalBeforeDiscountPaise: 99_672, amountPaise: 3_665 } }
+    expect(previewKnowledge).toHaveBeenCalledTimes(callsAtLimit);
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response({ totalPaise: 164_307,
+      labor: { ...result.labor, totalPaise: 55_520, discount: { rateBps: 500, totalBeforeDiscountPaise: 58_442, amountPaise: 2_922 } },
+      material: { ...result.material, totalPaise: 108_787, discount: { rateBps: 500, totalBeforeDiscountPaise: 114_513, amountPaise: 5_726 } }
     }));
     fireEvent.change(discount, { target: { value: "5" } });
     await advance();
     expect(previewKnowledge).toHaveBeenLastCalledWith({ inHouseCalculation: { labor, material }, quantity: "1", quantityScale: 0, modeCalculationMarkupBasis: "starting", modeCalculationDiscountBps: 500 }, transportOptions);
-    expectBothTotals("₹1,491.07");
-    expect(within(dialog).getByText(/Discount: 5.00% · Effective markup: Labor 18.00%, Material 31.00%/)).toBeVisible();
+    expectBothTotals("₹1,643.07");
+    expect(within(dialog).getByText(/Selling-price discount: 5.00%/)).toBeVisible();
+    expect(within(dialog).queryByText(/Effective markup/)).not.toBeInTheDocument();
     close(dialog);
-    expect(screen.getByLabelText("Subtotal")).toHaveTextContent("₹1,491.07");
+    expect(screen.getByLabelText("Subtotal")).toHaveTextContent("₹1,643.07");
     open();
     expect(screen.getByRole("textbox", { name: "Discount (%)" })).toHaveValue("0");
     expect(screen.queryByLabelText("Subtotal")).not.toBeInTheDocument();
   });
 
-  it("rechecks the smaller allowance after cost edits and refuses discount metadata missing from either cost", async () => {
+  it("rechecks the smaller amount-aware cap after cost edits and makes the Minimum basis cap zero", async () => {
     setup();
     const dialog = open();
     const discount = within(dialog).getByRole("textbox", { name: "Discount (%)" });
-    fireEvent.change(discount, { target: { value: "5" } });
     await advance();
-    expect(within(dialog).getByRole("alert")).toHaveTextContent("did not return the discount for both costs");
+    expect(within(dialog).getByText(/Maximum selling-price discount: 16.30%/)).toBeVisible();
     const materialGroup = within(dialog).getByRole("region", { name: "Material cost" });
-    fireEvent.change(within(materialGroup).getByRole("textbox", { name: "Min. Gross Margin Markup (%)" }), { target: { value: "32" } });
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response({ ...result,
+      material: { ...result.material, floorPricePaise: 112_751, maximumDiscountBps: 153 }
+    }));
+    fireEvent.change(within(materialGroup).getByRole("textbox", { name: "Min. Gross Margin (%)" }), { target: { value: "35" } });
     expect(within(dialog).queryByRole("button", { name: "Retry calculation" })).not.toBeInTheDocument();
-    expect(within(dialog).getByText(/Maximum allowed: 4.00%/)).toBeVisible();
+    await advance();
+    expect(within(dialog).getByText(/Maximum selling-price discount: 1.53%/)).toBeVisible();
+    const callsAtLimit = vi.mocked(previewKnowledge).mock.calls.length;
+    fireEvent.change(discount, { target: { value: "1.54" } });
     await advance();
     expect(within(dialog).getByRole("alert")).toHaveTextContent(SIMULATOR_DISCOUNT_LIMIT_MESSAGE);
-    expect(previewKnowledge).toHaveBeenCalledTimes(1);
-    fireEvent.click(within(dialog).getByRole("radio", { name: "Min. Gross Margin Markup" }));
+    expect(previewKnowledge).toHaveBeenCalledTimes(callsAtLimit);
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response({
+      labor: { ...result.labor, totalPaise: 48_913, maximumDiscountBps: 0 },
+      material: { ...result.material, floorPricePaise: 112_751, maximumDiscountBps: 0, totalPaise: 112_751 },
+      totalPaise: 161_664
+    }));
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Min. Gross Margin" }));
     await advance();
-    expect(within(dialog).getByText(/Maximum allowed: 0.00%/)).toBeVisible();
-    expect(previewKnowledge).toHaveBeenCalledTimes(1);
+    expect(within(dialog).getByText(/Maximum selling-price discount: 0.00%/)).toBeVisible();
     expect(screen.queryByLabelText("Subtotal")).not.toBeInTheDocument();
   });
 
@@ -151,21 +197,23 @@ describe("combined In-house total", () => {
     expect(previewKnowledge).not.toHaveBeenCalled();
   });
 
-  it("uses temporary independent cost edits and a shared quantity/markup choice, including zero totals", async () => {
+  it("uses temporary independent cost edits and a shared Gross Margin choice, including zero totals", async () => {
     setup();
     const dialog = open();
     const laborGroup = within(dialog).getByRole("region", { name: "Labor cost" });
     fireEvent.change(within(laborGroup).getByRole("textbox", { name: "Base Rate (₹)" }), { target: { value: "500" } });
-    fireEvent.click(within(dialog).getByRole("radio", { name: "Min. Gross Margin Markup" }));
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Min. Gross Margin" }));
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Quantity" }), { target: { value: "0" } });
-    vi.mocked(previewKnowledge).mockResolvedValueOnce(response({ labor: { ...result.labor, revisedAmountPaise: 0, totalPaise: 0 }, material: { ...result.material, revisedAmountPaise: 0, totalPaise: 0 }, totalPaise: 0 }));
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response(inHouseResult({
+      laborSettings: { ...labor, baseRatePaise: 50_000 }, quantity: "0", basis: "minimum"
+    })));
     await advance();
     expect(previewKnowledge).toHaveBeenLastCalledWith({ inHouseCalculation: { labor: { ...labor, baseRatePaise: 50_000 }, material }, quantity: "0", quantityScale: 0, modeCalculationMarkupBasis: "minimum" }, transportOptions);
     expectBothTotals("₹0.00");
     close(dialog);
     open();
     expect(within(screen.getByRole("region", { name: "Labor cost" })).getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("450.00");
-    expect(screen.getByRole("radio", { name: "Starting Gross Margin Markup" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Starting Gross Margin" })).toBeChecked();
     expect(screen.queryByRole("status", { name: "In-house calculation results" })).not.toBeInTheDocument();
     await advance();
     expect(previewKnowledge).toHaveBeenLastCalledWith({ inHouseCalculation: { labor, material }, quantity: "1", quantityScale: 0, modeCalculationMarkupBasis: "starting" }, transportOptions);
@@ -175,7 +223,7 @@ describe("combined In-house total", () => {
     const view = setup();
     const dialog = open();
     await advance();
-    expectBothTotals("₹1,550.22");
+    expectBothTotals("₹1,729.55");
     const pending = deferred();
     vi.mocked(previewKnowledge).mockReturnValueOnce(pending.promise);
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Quantity" }), { target: { value: "2" } });
@@ -212,8 +260,8 @@ describe("combined In-house total", () => {
     expect(within(dialog).getByText("Calculating both costs…")).toBeVisible();
     expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Subtotal")).not.toBeInTheDocument();
-    await act(async () => latest.resolve(response()));
-    expectBothTotals("₹1,550.22");
+    await act(async () => latest.resolve(response(inHouseResult({ quantity: "2" }))));
+    expectBothTotals("₹3,459.08");
     expect(within(dialog).queryByText("Calculating both costs…")).not.toBeInTheDocument();
   });
 
@@ -223,11 +271,12 @@ describe("combined In-house total", () => {
     setup();
     const dialog = open();
     await advance();
+    vi.mocked(previewKnowledge).mockResolvedValue(response(inHouseResult({ quantity: "2" })));
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Quantity" }), { target: { value: "2" } });
     await advance();
-    expectBothTotals("₹1,550.22");
+    expectBothTotals("₹3,459.08");
     await act(async () => old.resolve(response({ ...result, totalPaise: 99_999 })));
-    expectBothTotals("₹1,550.22");
+    expectBothTotals("₹3,459.08");
   });
 
   it.each(["", "1.25"])("pauses invalid quantity %j, rejects a pending response and resumes after correction without moving focus", async (invalidQuantity) => {
@@ -255,7 +304,7 @@ describe("combined In-house total", () => {
     fireEvent.change(impact, { target: { value: "12.75" } });
     await advance();
     expect(previewKnowledge).toHaveBeenCalledTimes(2);
-    expectBothTotals("₹1,550.22");
+    expectBothTotals("₹1,729.55");
     expect(quantity).toHaveFocus();
   });
 
@@ -276,7 +325,7 @@ describe("combined In-house total", () => {
     await advance();
     expect(previewKnowledge).toHaveBeenCalledTimes(3);
     expect(previewKnowledge).toHaveBeenLastCalledWith({ inHouseCalculation: { labor, material }, quantity: "1", quantityScale: 0, modeCalculationMarkupBasis: "starting" }, transportOptions);
-    expectBothTotals("₹1,550.22");
+    expectBothTotals("₹1,729.55");
   });
 
   it("rejects backend totals that do not reconcile expense plus margin", async () => {
@@ -286,6 +335,20 @@ describe("combined In-house total", () => {
     await advance();
     expect(within(dialog).getByRole("alert")).toHaveTextContent("inconsistent In-house cost breakup");
     expect(within(dialog).getByRole("button", { name: "Retry calculation" })).toBeVisible();
+    expect(screen.queryByLabelText("Subtotal")).not.toBeInTheDocument();
+  });
+
+  it("rejects a combined response whose self-consistent component expense does not match the requested inputs", async () => {
+    const tamperedLabor = costResult({ ...labor, baseRatePaise: 46_000 }, "1", 0, "starting", 0);
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response({
+      labor: tamperedLabor,
+      material: result.material,
+      totalPaise: tamperedLabor.totalPaise + result.material.totalPaise
+    }));
+    setup();
+    const dialog = open();
+    await advance();
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("incomplete or inconsistent In-house calculation");
     expect(screen.queryByLabelText("Subtotal")).not.toBeInTheDocument();
   });
 
@@ -303,9 +366,9 @@ describe("combined In-house total", () => {
     expect(screen.queryByLabelText("Subtotal")).not.toBeInTheDocument();
     open();
     await advance();
-    expectBothTotals("₹1,550.22");
+    expectBothTotals("₹1,729.55");
     await act(async () => pending.resolve(response({ ...result, totalPaise: 99_999 })));
-    expectBothTotals("₹1,550.22");
+    expectBothTotals("₹1,729.55");
   });
 
   it("closes hidden simulators and provides accessible keyboard and result states", async () => {

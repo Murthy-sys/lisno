@@ -1,4 +1,4 @@
-import { createBudgetAlteration } from "./knowledgeBudgetAlterations";
+import { createBudgetAlteration, recommendationTargetKind } from "./knowledgeBudgetAlterations";
 import type { KnowledgeJsonObject } from "./knowledgeTypes";
 
 export const RECOMMENDATION_GROUPS = [
@@ -34,8 +34,11 @@ export function recommendationAction(row: KnowledgeJsonObject): string {
 
 export function recommendationRemovalSummary(row: KnowledgeJsonObject, rows: readonly KnowledgeJsonObject[]): string {
   if (row.trigger !== "added" || row.action !== "add") return "—";
+  const targetKind = recommendationTargetKind(row);
+  const targetId = targetKind === "sub_basket" ? row.targetSubBasketId : row.targetMainLineId;
   const removals = rows.filter((candidate) => candidate.trigger === "removed" && candidate.action === "remove"
-    && Boolean(row.targetMainLineId) && candidate.targetMainLineId === row.targetMainLineId);
+    && recommendationTargetKind(candidate) === targetKind && Boolean(targetId)
+    && (targetKind === "sub_basket" ? candidate.targetSubBasketId : candidate.targetMainLineId) === targetId);
   if (!removals.length) return "Not configured";
   return removals.map((candidate) => `${recommendationAction(candidate)}${candidate.active === false ? " (disabled)" : ""}`).join("; ");
 }

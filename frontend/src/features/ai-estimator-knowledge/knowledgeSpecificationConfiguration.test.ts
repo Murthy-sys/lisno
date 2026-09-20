@@ -2,20 +2,25 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createKnowledgeSpecification,
+  KNOWLEDGE_MAX_BRANDS,
   parseKnowledgeSpecifications,
   referencedSpecificationIds,
-  serializeKnowledgeSpecifications
+  serializeKnowledgeSpecifications,
+  validateKnowledgeBrands
 } from "./knowledgeSpecificationConfiguration";
+import type { KnowledgeJsonValue } from "./knowledgeTypes";
 
 describe("knowledge descriptive Specification configuration", () => {
-  it("round-trips Plywood, Inner Laminate, and Hardware descriptions", () => {
-    const source = [
-      { id: "spec-plywood", name: "Plywood", description: "18 mm BWP-grade plywood." },
+  it("round-trips Item descriptions and stable Brand associations", () => {
+    const source: KnowledgeJsonValue = [
+      { id: "spec-plywood", name: "Plywood", brandId: "brand-century-green", description: "18 mm BWP-grade plywood." },
       { id: "spec-laminate", name: "Inner Laminate", description: "White matte internal faces." },
       { id: "spec-hardware", name: "Hardware", description: "Soft-close hinges." }
     ];
 
-    const parsed = parseKnowledgeSpecifications(source);
+    const parsed = parseKnowledgeSpecifications(source, [
+      { id: "brand-century-green", name: "Century Green" }
+    ]);
 
     expect(parsed.issues).toEqual([]);
     expect(serializeKnowledgeSpecifications(parsed.specifications)).toEqual(source);
@@ -32,7 +37,7 @@ describe("knowledge descriptive Specification configuration", () => {
     expect(parseKnowledgeSpecifications(serializeKnowledgeSpecifications([draft])).issues)
       .toContainEqual(expect.objectContaining({
         path: "specifications.0.name",
-        message: "Specification name is required."
+        message: "Item name is required."
       }));
     vi.unstubAllGlobals();
   });
@@ -41,12 +46,15 @@ describe("knowledge descriptive Specification configuration", () => {
     const typedSource = {
       id: "spec-typed",
       name: "Old plywood name",
+      brandId: "brand-century-green",
       description: "Old description",
       type: "dropdown",
       options: ["BWP", "BWR"],
       value: "BWP"
     } as const;
-    const parsed = parseKnowledgeSpecifications([typedSource]);
+    const parsed = parseKnowledgeSpecifications([typedSource], [
+      { id: "brand-century-green", name: "Century Green" }
+    ]);
     const updated = {
       ...parsed.specifications[0]!,
       name: "Plywood",
@@ -59,6 +67,44 @@ describe("knowledge descriptive Specification configuration", () => {
       name: "Plywood",
       description: "18 mm BWP-grade plywood."
     }]);
+  });
+
+  it("accepts a missing Brand without writing a default association", () => {
+    const parsed = parseKnowledgeSpecifications([
+      { id: "spec-laminate", name: "Laminate" }
+    ], [{ id: "brand-century-green", name: "Century Green" }]);
+
+    expect(parsed.issues).toEqual([]);
+    expect(parsed.specifications[0]?.brandId).toBeNull();
+    expect(serializeKnowledgeSpecifications(parsed.specifications)).toEqual([
+      { id: "spec-laminate", name: "Laminate" }
+    ]);
+  });
+
+  it("rejects malformed and dangling Brand associations at the exact field path", () => {
+    const brands = [{ id: "brand-century-green", name: "Century Green" }];
+
+    expect(parseKnowledgeSpecifications([
+      { id: "spec-plywood", name: "Plywood", brandId: " brand-century-green " }
+    ], brands).issues).toContainEqual({
+      path: "specifications.0.brandId",
+      message: "Brand must use a bounded stable ID."
+    });
+    expect(parseKnowledgeSpecifications([
+      { id: "spec-plywood", name: "Plywood", brandId: "brand-unavailable" }
+    ], brands).issues).toContainEqual({
+      path: "specifications.0.brandId",
+      message: "Choose a configured Brand."
+    });
+  });
+
+  it("can parse an association before a Brand catalog is available", () => {
+    const parsed = parseKnowledgeSpecifications([
+      { id: "spec-plywood", name: "Plywood", brandId: "brand-century-green" }
+    ]);
+
+    expect(parsed.issues).toEqual([]);
+    expect(parsed.specifications[0]?.brandId).toBe("brand-century-green");
   });
 
   it("accepts nullable descriptions and omits descriptions cleared to blank text", () => {
@@ -84,13 +130,25 @@ describe("knowledge descriptive Specification configuration", () => {
     expect(parsed.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({
         path: "specifications.1.name",
-        message: "Specification names must be unique."
+        message: "Item names must be unique."
       }),
       expect.objectContaining({
         path: "specifications.1.description",
         message: "Brief description must be 4000 characters or fewer."
       })
     ]));
+  });
+
+  it("enforces the backend Brand collection limit before save", () => {
+    const brands = Array.from({ length: KNOWLEDGE_MAX_BRANDS + 1 }, (_, index) => ({
+      id: `brand-${index}`,
+      name: `Brand ${index}`
+    }));
+
+    expect(validateKnowledgeBrands(brands)).toContainEqual({
+      path: "brands",
+      message: `Brands cannot contain more than ${KNOWLEDGE_MAX_BRANDS} entries.`
+    });
   });
 
   it("finds direct and resolved immutable historical price references", () => {

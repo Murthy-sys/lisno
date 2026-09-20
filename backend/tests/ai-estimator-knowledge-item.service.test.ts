@@ -94,8 +94,13 @@ describe("AI estimator knowledge item service", () => {
     const { service } = createService();
     const temporary = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Temporary fixture", itemType: "temporary" });
     const regular = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Regular fixture" });
-    expect(await service.getItem(ACTOR, temporary.mainLineId)).toMatchObject({ itemType: "temporary", basketId: "basket-carpentry", subBasketId: null });
-    expect(regular).toMatchObject({ itemType: "main_line" });
+    expect(await service.getItem(ACTOR, temporary.mainLineId)).toMatchObject({ itemType: "temporary", completionRequired: true, basketId: "basket-carpentry", subBasketId: null });
+    expect(regular).toMatchObject({ itemType: "main_line", completionRequired: false });
+    expect((await service.listMainLines(ACTOR, "basket-carpentry", {}, { limit: 100, offset: 0 })).items)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: temporary.mainLineId, completionRequired: true }),
+        expect.objectContaining({ id: regular.mainLineId, completionRequired: false })
+      ]));
     let version = temporary.version;
     for (const sectionKey of ["overview", "advanced", "pricing", "quality"] as const) {
       const section = await service.getSection(ACTOR, temporary.mainLineId, temporary.draftRevisionId!, sectionKey);
@@ -110,8 +115,11 @@ describe("AI estimator knowledge item service", () => {
       await expect(service.updateSection(ACTOR, temporary.mainLineId, temporary.draftRevisionId!, sectionKey, { expectedVersion: section.version, expectedAggregateVersion: version, payload: {} })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
       expect((await service.getSection(ACTOR, regular.mainLineId, regular.draftRevisionId!, sectionKey)).applicability).toBe("not_configured");
     }
+    expect(await service.getItem(ACTOR, temporary.mainLineId)).toMatchObject({
+      itemType: "temporary", completionRequired: true, version
+    });
     const duplicate = await service.duplicate(ACTOR, temporary.mainLineId, { expectedVersion: version, name: "Temporary fixture copy" });
-    expect(duplicate.itemType).toBe("temporary");
+    expect(duplicate).toMatchObject({ itemType: "temporary", completionRequired: true });
     expect((await service.getSection(ACTOR, duplicate.mainLineId, duplicate.draftRevisionId!, "advanced")).payload).toMatchObject({ pmcMarginBps: 1_500 });
     expect((await service.getSection(ACTOR, duplicate.mainLineId, duplicate.draftRevisionId!, "recommendations")).applicability).toBe("not_applicable");
   });
@@ -157,6 +165,95 @@ describe("AI estimator knowledge item service", () => {
     const remaining = (await service.getSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations")).payload;
     expect(JSON.stringify(remaining)).not.toContain(target.mainLineId);
     if (results[0].status === "rejected") expect(results[0].reason).toMatchObject({ status: 400, code: "VALIDATION_ERROR" });
+  });
+
+  it("saves non-empty whole Sub-Basket targets, exposes temporary child lineage, and rejects empty or self-containing scope", async () => {
+    const { service } = createService();
+    const source = await service.createMainLine(ACTOR, "basket-carpentry", { name: "False Ceiling" });
+    const temporary = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Lights", subBasketName: "False Ceiling Lights", itemType: "temporary"
+    });
+    const catalog = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "12 Watt Light", subBasketId: temporary.subBasketId!
+    });
+    const rule = {
+      id: "sub-basket-rule", trigger: "added", action: "add", requirement: "must",
+      targetKind: "sub_basket", targetType: null, targetBasketId: "basket-carpentry",
+      targetSubBasketId: temporary.subBasketId!, targetMainLineId: null,
+      reason: "Lighting is required, while exact wattage remains open.", active: true
+    };
+    const saved = await service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations", {
+      expectedVersion: 1, expectedAggregateVersion: source.version, payload: { budgetAlterations: [rule] }
+    });
+    expect((await service.getSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations")).payload)
+      .toEqual({ budgetAlterations: [rule] });
+    expect(await AiEstimatorKnowledgeMainLineModel.findById(temporary.mainLineId).lean()).toMatchObject({ dependencyEpoch: 1 });
+    expect(await AiEstimatorKnowledgeMainLineModel.findById(catalog.mainLineId).lean()).toMatchObject({ dependencyEpoch: 1 });
+    expect((await service.getItem(ACTOR, temporary.mainLineId)).linkedMainLines)
+      .toContainEqual(expect.objectContaining({ mainLineId: source.mainLineId, rules: [expect.objectContaining({
+        id: rule.id, targetKind: "sub_basket"
+      })] }));
+
+    const self = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Self-contained source", subBasketName: "Self scope" });
+    await expect(service.updateSection(ACTOR, self.mainLineId, self.draftRevisionId!, "recommendations", {
+      expectedVersion: 1, expectedAggregateVersion: self.version,
+      payload: { budgetAlterations: [{ ...rule, id: "self-rule", targetSubBasketId: self.subBasketId! }] }
+    })).rejects.toMatchObject({ status: 400, fields: {
+      "payload.budgetAlterations.0.targetSubBasketId": "Select a Sub Basket that does not contain this item."
+    } });
+
+    const onlyChild = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Disposable child", subBasketName: "Empty scope" });
+    await service.permanentlyDeleteMainLine(ACTOR, onlyChild.mainLineId, { expectedVersion: onlyChild.version });
+    await expect(service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations", {
+      expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion,
+      payload: { budgetAlterations: [{ ...rule, id: "empty-rule", targetSubBasketId: onlyChild.subBasketId! }] }
+    })).rejects.toMatchObject({ status: 400, fields: {
+      "payload.budgetAlterations.0.targetSubBasketId": "Select a Sub Basket with at least one available item."
+    } });
+
+    await AiEstimatorKnowledgeBasketModel.create(basketDocument("basket-electrical", "Electrical", "active", 2));
+    const foreignChild = await service.createMainLine(ACTOR, "basket-electrical", {
+      name: "Foreign light", subBasketName: "Foreign lighting"
+    });
+    for (const targetSubBasketId of ["missing-sub-basket", foreignChild.subBasketId!] as const) {
+      await expect(service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion,
+        payload: { budgetAlterations: [{ ...rule, id: `invalid-${targetSubBasketId}`, targetSubBasketId }] }
+      })).rejects.toMatchObject({ status: 400, fields: {
+        "payload.budgetAlterations.0.targetSubBasketId": "Select a Sub Basket belonging to this Main Basket."
+      } });
+    }
+    await AiEstimatorKnowledgeBasketModel.updateOne({ _id: "basket-electrical" }, { $set: { status: "inactive" } });
+    await expect(service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations", {
+      expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion,
+      payload: { budgetAlterations: [{ ...rule, id: "inactive-parent", targetBasketId: "basket-electrical",
+        targetSubBasketId: foreignChild.subBasketId! }] }
+    })).rejects.toMatchObject({ status: 400, fields: {
+      "payload.budgetAlterations.0.targetBasketId": "Select an available Main Basket."
+    } });
+  });
+
+  it("preserves whole Sub-Basket rules and their CAS versions after the final child is deleted", async () => {
+    const { service } = createService();
+    const source = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Sub-Basket history source" });
+    const child = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Unresolved history light", subBasketName: "History lights", itemType: "temporary"
+    });
+    const rule = {
+      id: "sub-basket-history", trigger: "added", action: "add", requirement: "must",
+      targetKind: "sub_basket", targetType: null, targetBasketId: "basket-carpentry",
+      targetSubBasketId: child.subBasketId!, targetMainLineId: null,
+      reason: "Keep at least one light in scope.", active: true
+    };
+    const disabled = { ...rule, id: "sub-basket-history-disabled", active: false };
+    const saved = await service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations", {
+      expectedVersion: 1, expectedAggregateVersion: source.version, payload: { budgetAlterations: [rule, disabled] }
+    });
+    const sourceBeforeDelete = await service.getItem(ACTOR, source.mainLineId);
+    await service.permanentlyDeleteMainLine(ACTOR, child.mainLineId, { expectedVersion: child.version });
+    expect(await service.getSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations"))
+      .toMatchObject({ version: saved.version, payload: { budgetAlterations: [rule, disabled] } });
+    expect(await service.getItem(ACTOR, source.mainLineId)).toMatchObject({ version: sourceBeforeDelete.version });
   });
 
   it("persists independent PMC margins across reloads and rejects stale or invalid saves", async () => {
@@ -2718,11 +2815,13 @@ describe("AI estimator knowledge item service", () => {
           specifications: [{
             id: "spec-referenced",
             name: "Renamed thickness",
+            brandId: "brand-century-green",
             description: "Still linked by stable ID.",
             type: "text",
             options: [],
             value: "18 mm"
           }],
+          brands: [{ id: "brand-century-green", name: "Century Green" }],
           priceEntries: [reference]
         }
       }
@@ -2731,6 +2830,7 @@ describe("AI estimator knowledge item service", () => {
       expect.objectContaining({
         id: "spec-referenced",
         name: "Renamed thickness",
+        brandId: "brand-century-green",
         value: "18 mm"
       })
     ]);

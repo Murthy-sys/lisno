@@ -66,6 +66,7 @@ const basket: KnowledgeBasket = {
 
 const item: KnowledgeItemListItem = {
   id: "line-1",
+  completionRequired: false,
   basketId: basket.id,
   basketName: basket.name,
   mainLineId: "line-1",

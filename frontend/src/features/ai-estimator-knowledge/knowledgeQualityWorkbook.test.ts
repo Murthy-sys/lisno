@@ -12,8 +12,15 @@ async function workbook(rows: unknown[][], customize?: (book: ExcelJS.Workbook) 
   return new Uint8Array(bytes).slice().buffer;
 }
 const file = (buffer: ArrayBuffer, name = "quality.xlsx") => ({ name, size: buffer.byteLength, arrayBuffer: async () => buffer }) as File;
+const LEGACY_SIMPLE_WORKBOOK_HEADERS = ["Question", "Answer type", "Options", "Acceptance criteria", "Photo evidence"] as const;
 const headersOf = (sheet: ExcelJS.Worksheet) => (sheet.getRow(1).values as string[]).slice(1);
 const cellFor = (sheet: ExcelJS.Worksheet, row: number, header: string) => sheet.getCell(row, headersOf(sheet).indexOf(header) + 1);
+const frequencyId = "qco_111111111111111111111111";
+const performerId = "qco_222222222222222222222222";
+const qualityOptions = {
+  frequency: [{ id: frequencyId, kind: "frequency", name: "Per room, after first fix", version: 1, createdById: "user-1", updatedById: "user-1", createdAt: "2026-09-20T00:00:00.000Z", updatedAt: "2026-09-20T00:00:00.000Z" }],
+  performer: [{ id: performerId, kind: "performer", name: "Quality lead", version: 1, createdById: "user-1", updatedById: "user-1", createdAt: "2026-09-20T00:00:00.000Z", updatedAt: "2026-09-20T00:00:00.000Z" }]
+} as const;
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe("quality workbook import", () => {
@@ -23,22 +30,25 @@ describe("quality workbook import", () => {
     await book.xlsx.load(buffer);
     expect(book.worksheets.map(sheet => sheet.name)).toEqual(["Quality Parameters", "Instructions", "Example Electrical"]);
     const sheet = book.getWorksheet("Quality Parameters")!;
-    expect(headersOf(sheet)).toEqual(["Question", "Answer type", "Options", "Acceptance criteria", "Photo evidence"]);
-    expect(sheet.columnCount).toBe(5);
+    expect(headersOf(sheet)).toEqual(QUALITY_SIMPLE_WORKBOOK_HEADERS);
+    expect(sheet.columnCount).toBe(11);
     expect(QUALITY_WORKBOOK_HEADERS).not.toContain("Required");
     expect(QUALITY_WORKBOOK_HEADERS).not.toContain("Active");
     expect(QUALITY_WORKBOOK_HEADERS).not.toContain("Category");
     expect(book.getWorksheet("Example Electrical")?.getRow(1).values).toEqual([undefined, ...QUALITY_SIMPLE_WORKBOOK_HEADERS]);
-    expect(book.getWorksheet("Example Electrical")?.columnCount).toBe(5);
-    expect(book.getWorksheet("Instructions")?.rowCount).toBeLessThanOrEqual(8);
+    expect(book.getWorksheet("Example Electrical")?.columnCount).toBe(11);
+    expect(book.getWorksheet("Instructions")?.rowCount).toBeLessThanOrEqual(10);
     for (const row of [2, 201]) {
       expect(sheet.getCell(row, 2).dataValidation).toMatchObject({ type: "list", formulae: ['"text,number,dropdown,radio,checkbox,multi_select,boolean"'] });
-      expect(sheet.getCell(row, 5).dataValidation).toMatchObject({ type: "whole", operator: "between", formulae: [0, 100], showInputMessage: true, prompt: expect.stringContaining("single photo") });
+      expect(sheet.getCell(row, 5).dataValidation).toMatchObject({ type: "list", formulae: ['"Critical,Major,Minor"'] });
+      expect(sheet.getCell(row, 9).dataValidation).toMatchObject({ type: "list", formulae: ['"Per unit,Per room,Per zone,Per batch,Once per project"'] });
+      expect(sheet.getCell(row, 10).dataValidation).toMatchObject({ type: "list", formulae: ['"Site,PM,Procurement,Vendor"'] });
+      expect(sheet.getCell(row, 11).dataValidation).toMatchObject({ type: "whole", operator: "between", formulae: [0, 100], showInputMessage: true, prompt: expect.stringContaining("single photo") });
     }
     const empty = await parseQualityWorkbookBuffer(buffer);
     expect(empty.parameters).toEqual([]);
     expect(empty.issues).toEqual([{ row: null, message: expect.stringContaining("no questions") }]);
-    sheet.getRow(2).values = ["Are the fixtures fixed correctly?", "boolean"];
+    sheet.getRow(2).values = ["Are the fixtures fixed correctly?", "boolean", null, null, "Major", null, null, null, "Per unit", "Site", 0];
     const parsed = await parseQualityWorkbookBuffer(new Uint8Array(await book.xlsx.writeBuffer()).slice().buffer);
     expect(parsed.issues).toEqual([]);
     expect(parsed.parameters).toHaveLength(1);
@@ -46,9 +56,115 @@ describe("quality workbook import", () => {
     expect(parsed.parameters[0]).not.toHaveProperty("defaultValue");
   });
 
-  it.each(["Yes", "yes", true])("requires one photo when a simple worksheet says %s without a photo-count heading", async photos => {
+  it("imports the canonical controls and Number pass range from the visible columns", async () => {
     const result = await parseQualityWorkbookBuffer(await workbook([
       [...QUALITY_SIMPLE_WORKBOOK_HEADERS],
+      ["Is the panel gap within tolerance?", "number", null, "Use the approved detail.", "Critical", "1.25", "2.5", "mm", "Per room", "PM", 2]
+    ]));
+    expect(result.issues).toEqual([]);
+    expect(result.parameters[0]).toMatchObject({
+      type: "number", severity: "critical", minimum: "1.25", maximum: "2.5", unit: "mm", responsibleRole: "pm",
+      sampling: { method: "all", unit: "room" }, evidence: { photos: true, minPhotosPerSample: 2 }
+    });
+  });
+
+  it("round-trips reusable values by label without creating unknown or wrong-kind values", async () => {
+    const result = await parseQualityWorkbookBuffer(await workbook([
+      [...QUALITY_SIMPLE_WORKBOOK_HEADERS],
+      ["Is the first-fix work approved?", "boolean", null, null, "Major", null, null, null, "Per room, after first fix", "Quality lead", 0]
+    ]), qualityOptions);
+    expect(result.issues).toEqual([]);
+    expect(result.parameters[0]).toMatchObject({ responsibleRole: performerId, sampling: { method: "all", unit: frequencyId } });
+
+    const unavailable = await parseQualityWorkbookBuffer(await workbook([
+      [...QUALITY_SIMPLE_WORKBOOK_HEADERS],
+      ["Is the work approved?", "boolean", null, null, "Major", null, null, null, "Every floor", "Quality lead", 0]
+    ]), qualityOptions);
+    expect(unavailable.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ row: 2, column: "Frequency", message: expect.stringContaining("must add it in Lisno") })
+    ]));
+    expect(unavailable.parameters[0]?.sampling).toBeUndefined();
+
+    const wrongKind = await parseQualityWorkbookBuffer(await workbook([
+      [...QUALITY_SIMPLE_WORKBOOK_HEADERS],
+      ["Is the work approved?", "boolean", null, null, "Major", null, null, null, "Quality lead", "Per room, after first fix", 0]
+    ]), qualityOptions);
+    expect(wrongKind.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ column: "Frequency", message: expect.stringContaining("belongs to Performed by") }),
+      expect.objectContaining({ column: "Performed by", message: expect.stringContaining("belongs to Frequency") })
+    ]));
+  });
+
+  it("uses a very-hidden named range when reusable labels cannot fit an inline Excel list", async () => {
+    const longOptions = {
+      ...qualityOptions,
+      frequency: Array.from({ length: 12 }, (_, index) => ({
+        ...qualityOptions.frequency[0],
+        id: `qco_${(index + 10).toString(16).padStart(24, "0")}`,
+        name: `Frequency ${index.toString().padStart(2, "0")} ${"scope".repeat(8)}`
+      }))
+    };
+    const buffer = await createQualityTemplateBuffer(longOptions);
+    const book = new ExcelJS.Workbook();
+    await book.xlsx.load(buffer);
+    const values = book.getWorksheet("_Lisno Quality Lists")!;
+    expect(values.state).toBe("veryHidden");
+    expect(values.getCell(6, 1).value).toBe(`Frequency 00 ${"scope".repeat(8)}`);
+    expect(book.definedNames.getRanges("LisnoQualityFrequencies").ranges).toEqual(["'_Lisno Quality Lists'!$A$1:$A$17"]);
+    expect(book.getWorksheet("Quality Parameters")?.getCell(2, 9).dataValidation.formulae).toEqual(["LisnoQualityFrequencies"]);
+    expect(JSON.stringify(book.model)).not.toContain("qco_");
+  });
+
+  it("reports each missing canonical control when all modern headers are present beside a legacy column", async () => {
+    const result = await parseQualityWorkbookBuffer(await workbook([
+      [...QUALITY_SIMPLE_WORKBOOK_HEADERS, "Stage"],
+      ["Is the finish acceptable?", "boolean", null, null, null, null, null, null, null, null, 0, "Final Finish"]
+    ]));
+    expect(result.parameters).toHaveLength(1);
+    expect(result.issues).toHaveLength(3);
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ row: 2, column: "Severity" }),
+      expect.objectContaining({ row: 2, column: "Frequency" }),
+      expect.objectContaining({ row: 2, column: "Performed by" })
+    ]));
+  });
+
+  it("reports each missing Number pass-range field in a modern eleven-column row", async () => {
+    const result = await parseQualityWorkbookBuffer(await workbook([
+      [...QUALITY_SIMPLE_WORKBOOK_HEADERS],
+      ["Is the panel gap within tolerance?", "number", null, null, "Major", null, null, null, "Per room", "Site", 0]
+    ]));
+    expect(result.parameters).toHaveLength(1);
+    expect(result.issues).toHaveLength(3);
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ row: 2, column: "Minimum" }),
+      expect.objectContaining({ row: 2, column: "Maximum" }),
+      expect.objectContaining({ row: 2, column: "Unit" })
+    ]));
+  });
+
+  it("rejects conflicts between canonical controls and legacy columns", async () => {
+    const result = await parseQualityWorkbookBuffer(await workbook([
+      [...QUALITY_SIMPLE_WORKBOOK_HEADERS, "Responsible role", "Sampling method", "Sample unit"],
+      ["Is the finish acceptable?", "boolean", null, null, "Major", null, null, null, "Per room", "Site", 0, "Vendor", "all", "zone"]
+    ]));
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ row: 2, column: "Performed by", message: expect.stringContaining("conflicts") }),
+      expect.objectContaining({ row: 2, column: "Frequency", message: expect.stringContaining("conflicts") })
+    ]));
+  });
+
+  it("asks AI workbook authors for canonical controls without inventing thresholds", () => {
+    const prompt = qualityAiPrompt("Electrical");
+    expect(prompt).toContain(QUALITY_SIMPLE_WORKBOOK_HEADERS.join(" | "));
+    expect(prompt).toContain("Critical configures a blocking PM sign-off policy");
+    expect(prompt).toContain("do not invent legal, engineering or manufacturer thresholds");
+    expect(prompt).toContain("Minimum, Maximum and Unit are all required");
+  });
+
+  it.each(["Yes", "yes", true])("requires one photo when a simple worksheet says %s without a photo-count heading", async photos => {
+    const result = await parseQualityWorkbookBuffer(await workbook([
+      [...LEGACY_SIMPLE_WORKBOOK_HEADERS],
       ["Is the fixing secure?", "dropdown", "Pass|Fail", "Matches approved details.", photos]
     ]));
     expect(result.issues).toEqual([]);
@@ -60,7 +176,7 @@ describe("quality workbook import", () => {
 
   it.each([0, 1, 2, 100, "0", "1", "2", "100"])("imports Photo evidence count %s directly", async count => {
     const result = await parseQualityWorkbookBuffer(await workbook([
-      [...QUALITY_SIMPLE_WORKBOOK_HEADERS], ["Is the fixing secure?", "boolean", null, null, count]
+      [...LEGACY_SIMPLE_WORKBOOK_HEADERS], ["Is the fixing secure?", "boolean", null, null, count]
     ]));
     expect(result.issues).toEqual([]);
     const photos = Number(count);
@@ -69,14 +185,14 @@ describe("quality workbook import", () => {
 
   it.each([-1, 0.5, 101, "-1", "1.5", "1.0", "101", "100.1", "two", "1e2"])("rejects invalid Photo evidence count %s", async count => {
     const result = await parseQualityWorkbookBuffer(await workbook([
-      [...QUALITY_SIMPLE_WORKBOOK_HEADERS], ["Is the fixing secure?", "boolean", null, null, count]
+      [...LEGACY_SIMPLE_WORKBOOK_HEADERS], ["Is the fixing secure?", "boolean", null, null, count]
     ]));
     expect(result.issues).toEqual(expect.arrayContaining([expect.objectContaining({ row: 2, column: "Photo evidence", message: expect.stringContaining("whole number from 0 to 100") })]));
   });
 
   it("supports inline counts and legacy Yes/No rows in the same workbook", async () => {
     const result = await parseQualityWorkbookBuffer(await workbook([
-      [...QUALITY_SIMPLE_WORKBOOK_HEADERS, "Minimum photos per sample"],
+      [...LEGACY_SIMPLE_WORKBOOK_HEADERS, "Minimum photos per sample"],
       ["Inline count with matching legacy count", "boolean", null, null, 2, 2],
       ["Inline count with blank legacy count", "boolean", null, null, 1, null],
       ["No inline photos with matching legacy zero", "boolean", null, null, 0, 0],
@@ -95,21 +211,21 @@ describe("quality workbook import", () => {
 
   it.each([[2, 3], [0, 2], [1, 0], [100, 99]])("rejects inline photo count %s when a populated legacy count says %s", async (inline, legacy) => {
     const result = await parseQualityWorkbookBuffer(await workbook([
-      [...QUALITY_SIMPLE_WORKBOOK_HEADERS, "Minimum photos per sample"], ["Is the fixing secure?", "boolean", null, null, inline, legacy]
+      [...LEGACY_SIMPLE_WORKBOOK_HEADERS, "Minimum photos per sample"], ["Is the fixing secure?", "boolean", null, null, inline, legacy]
     ]));
     expect(result.issues).toEqual(expect.arrayContaining([expect.objectContaining({ row: 2, column: "Minimum photos per sample", message: expect.stringContaining("must match") })]));
   });
 
   it("rejects an invalid nonblank legacy count even when an inline count is valid", async () => {
     const result = await parseQualityWorkbookBuffer(await workbook([
-      [...QUALITY_SIMPLE_WORKBOOK_HEADERS, "Minimum photos per sample"], ["Is the fixing secure?", "boolean", null, null, 2, "invalid"]
+      [...LEGACY_SIMPLE_WORKBOOK_HEADERS, "Minimum photos per sample"], ["Is the fixing secure?", "boolean", null, null, 2, "invalid"]
     ]));
     expect(result.issues).toEqual(expect.arrayContaining([expect.objectContaining({ row: 2, column: "Minimum photos per sample" })]));
   });
 
   it.each([null, 0, "invalid"])("still rejects the explicit photo-count column when its value is %s", async count => {
     const result = await parseQualityWorkbookBuffer(await workbook([
-      [...QUALITY_SIMPLE_WORKBOOK_HEADERS, "Minimum photos per sample"],
+      [...LEGACY_SIMPLE_WORKBOOK_HEADERS, "Minimum photos per sample"],
       ["Is the fixing secure?", "boolean", null, null, "Yes", count]
     ]));
     expect(result.issues).toEqual(expect.arrayContaining([expect.objectContaining({ row: 2, column: "Minimum photos per sample" })]));
@@ -167,13 +283,14 @@ describe("quality workbook import", () => {
     expect(first.parameters[1]).toMatchObject({ sampling: { method: "all", unit: "circuits" }, evidence: { photos: false, documents: true, video: false } });
   });
 
-  it("continues to import the full legacy 22-column format with explicit advanced settings", async () => {
+  it("continues to import the legacy detailed format when the full modern header set is absent", async () => {
     const values: Record<string, unknown> = {
       Question: "Legacy measured clearance", "Answer type": "number", Stage: "After fixing", Instructions: "Measure the installed clearance.",
       Unit: "mm", Minimum: "0", Maximum: "99.000001", "Default answer": "0", "Sampling method": "fixed_count", "Sample value": 4, "Sample unit": "panels",
       "Photo evidence": true, "Minimum photos per sample": 3, "Document evidence": true, "Video evidence": false
     };
-    const result = await parseQualityWorkbookBuffer(await workbook([[...QUALITY_WORKBOOK_HEADERS], QUALITY_WORKBOOK_HEADERS.map(header => values[header] ?? null)]));
+    const legacyHeaders = QUALITY_WORKBOOK_HEADERS.filter(header => header !== "Frequency" && header !== "Performed by");
+    const result = await parseQualityWorkbookBuffer(await workbook([[...legacyHeaders], legacyHeaders.map(header => values[header] ?? null)]));
     expect(result.issues).toEqual([]);
     expect(result.parameters[0]).toMatchObject({ type: "number", unit: "mm", minimum: "0", maximum: "99.000001", defaultValue: "0", stage: "After fixing", sampling: { method: "fixed_count", value: 4, unit: "panels" }, evidence: { photos: true, minPhotosPerSample: 3, documents: true, video: false } });
   });
@@ -312,23 +429,117 @@ describe("quality workbook import", () => {
 });
 
 describe("saved quality checklist export", () => {
-  const parameter = (type: string, fields: KnowledgeJsonObject = {}): KnowledgeJsonObject => ({ id: `saved-${type}`, label: `${type} check`, type, required: true, active: true, ...fields });
+  const parameter = (type: string, fields: KnowledgeJsonObject = {}): KnowledgeJsonObject => ({
+    id: `saved-${type}`, label: `${type} check`, type, required: true, active: true,
+    severity: "minor", responsibleRole: "site", sampling: { method: "all", unit: "unit" }, ...fields
+  });
   // A visible zero makes an absent photo requirement explicit; both represent no required evidence.
   const explicitNoEvidence = (row: KnowledgeJsonObject): KnowledgeJsonObject => row.evidence === undefined || row.evidence === null ? { ...row, evidence: { photos: false, documents: false, video: false } } : row;
+
+  it("exports canonical controls as labels and round-trips their stored values", async () => {
+    const saved = parameter("number", { severity: "critical", minimum: "1", maximum: "2", unit: "mm", responsibleRole: "pm", sampling: { method: "fixed_count", value: 1, unit: "project" } });
+    const buffer = await createQualityExportBuffer([saved]);
+    const book = new ExcelJS.Workbook();
+    await book.xlsx.load(buffer);
+    const sheet = book.worksheets[0];
+    expect(cellFor(sheet, 2, "Severity").value).toBe("Critical");
+    expect(cellFor(sheet, 2, "Frequency").value).toBe("Once per project");
+    expect(cellFor(sheet, 2, "Performed by").value).toBe("PM");
+    const result = await parseQualityWorkbookBuffer(buffer);
+    expect(result.issues).toEqual([]);
+    expect(result.parameters[0]).toMatchObject({ severity: "critical", responsibleRole: "pm", sampling: { method: "fixed_count", value: 1, unit: "project" } });
+  });
+
+  it("exports reusable labels, reimports their stable references and keeps AI instructions label-only", async () => {
+    const saved = parameter("boolean", { responsibleRole: performerId, sampling: { method: "all", unit: frequencyId } });
+    const buffer = await createQualityExportBuffer([saved], qualityOptions);
+    const book = new ExcelJS.Workbook();
+    await book.xlsx.load(buffer);
+    expect(cellFor(book.worksheets[0], 2, "Frequency").value).toBe("Per room, after first fix");
+    expect(cellFor(book.worksheets[0], 2, "Performed by").value).toBe("Quality lead");
+    expect(JSON.stringify(book.model)).not.toContain("qco_");
+    const imported = await parseQualityWorkbookBuffer(buffer, qualityOptions);
+    expect(imported.issues).toEqual([]);
+    expect(imported.parameters[0]).toMatchObject({ responsibleRole: performerId, sampling: { method: "all", unit: frequencyId } });
+
+    const prompt = qualityAiPrompt("Electrical", qualityOptions);
+    expect(prompt).toContain("Per room, after first fix");
+    expect(prompt).toContain("Quality lead");
+    expect(prompt).not.toContain("qco_");
+    await expect(createQualityExportBuffer([{ ...saved, responsibleRole: "qco_333333333333333333333333" }], qualityOptions))
+      .rejects.toThrow("saved custom performed-by value is unavailable");
+  });
+
+  it("prefers an exact custom display label over a legacy built-in code alias", async () => {
+    const aliasLikeFrequencyId = "qco_444444444444444444444444";
+    const collisionOptions = {
+      ...qualityOptions,
+      frequency: [
+        ...qualityOptions.frequency,
+        { ...qualityOptions.frequency[0], id: aliasLikeFrequencyId, name: "per_room" }
+      ]
+    };
+    const saved = parameter("boolean", {
+      responsibleRole: "site",
+      sampling: { method: "all", unit: aliasLikeFrequencyId }
+    });
+
+    const buffer = await createQualityExportBuffer([saved], collisionOptions);
+    const book = new ExcelJS.Workbook();
+    await book.xlsx.load(buffer);
+    expect(cellFor(book.worksheets[0], 2, "Frequency").value).toBe("per_room");
+
+    const imported = await parseQualityWorkbookBuffer(buffer, collisionOptions);
+    expect(imported.issues).toEqual([]);
+    expect(imported.parameters[0]).toMatchObject({
+      responsibleRole: "site",
+      sampling: { method: "all", unit: aliasLikeFrequencyId }
+    });
+
+    const legacyAlias = await parseQualityWorkbookBuffer(await workbook([
+      [...QUALITY_SIMPLE_WORKBOOK_HEADERS],
+      ["Is the room work approved?", "boolean", null, null, "Major", null, null, null, "per_room", "site", 0]
+    ]));
+    expect(legacyAlias.issues).toEqual([]);
+    expect(legacyAlias.parameters[0]).toMatchObject({
+      responsibleRole: "site",
+      sampling: { method: "all", unit: "room" }
+    });
+
+    const crossKindCollisionOptions = {
+      ...qualityOptions,
+      performer: [
+        ...qualityOptions.performer,
+        { ...qualityOptions.performer[0], id: "qco_555555555555555555555555", name: "per_room" }
+      ]
+    };
+    const wrongKind = await parseQualityWorkbookBuffer(await workbook([
+      [...QUALITY_SIMPLE_WORKBOOK_HEADERS],
+      ["Is the room work approved?", "boolean", null, null, "Major", null, null, null, "per_room", "Site", 0]
+    ]), crossKindCollisionOptions);
+    expect(wrongKind.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        row: 2,
+        column: "Frequency",
+        message: expect.stringContaining("belongs to Performed by")
+      })
+    ]));
+    expect(wrongKind.parameters[0]?.sampling).toBeUndefined();
+  });
 
   it("omits unused advanced columns while retaining configured zero and false defaults", async () => {
     const simpleBook = new ExcelJS.Workbook();
     await simpleBook.xlsx.load(await createQualityExportBuffer([parameter("text")]));
     expect(headersOf(simpleBook.worksheets[0])).toEqual(QUALITY_SIMPLE_WORKBOOK_HEADERS);
-    expect(simpleBook.worksheets[0].columnCount).toBe(5);
+    expect(simpleBook.worksheets[0].columnCount).toBe(11);
     expect(simpleBook.worksheets[0].columns.every(column => !column.hidden)).toBe(true);
-    const configured = [parameter("number", { minimum: "0", defaultValue: "0" }), parameter("boolean", { defaultValue: false })];
+    const configured = [parameter("number", { minimum: "0", maximum: "1", unit: "mm", defaultValue: "0" }), parameter("boolean", { defaultValue: false })];
     const buffer = await createQualityExportBuffer(configured);
     const configuredBook = new ExcelJS.Workbook();
     await configuredBook.xlsx.load(buffer);
     const sheet = configuredBook.worksheets[0];
-    expect(headersOf(sheet)).toEqual([...QUALITY_SIMPLE_WORKBOOK_HEADERS, "Minimum", "Default answer"]);
-    expect(sheet.columns.slice(5).every(column => column.hidden && column.outlineLevel === 1)).toBe(true);
+    expect(headersOf(sheet)).toEqual([...QUALITY_SIMPLE_WORKBOOK_HEADERS, "Default answer"]);
+    expect(sheet.columns.slice(11).every(column => column.hidden && column.outlineLevel === 1)).toBe(true);
     expect(cellFor(sheet, 2, "Minimum").value).toBe("0");
     expect(cellFor(sheet, 2, "Default answer").value).toBe("0");
     expect(cellFor(sheet, 3, "Default answer").value).toBe(false);
@@ -359,7 +570,7 @@ describe("saved quality checklist export", () => {
       parameter("checkbox", { defaultValue: false }),
       parameter("multi_select", { allowedValues: ["Photo", "Measurement", "Document"], defaultValue: ["Document", "Photo"] }),
       parameter("boolean", { defaultValue: false, sampling: { method: "all", unit: "circuits" }, evidence: { photos: false, documents: false, video: true } }),
-      parameter("number", { id: "precise-number", label: "Precise measurement", defaultValue: "9007199254740993.123456", maximum: "9007199254740993.123456" })
+      parameter("number", { id: "precise-number", label: "Precise measurement", minimum: "0", defaultValue: "9007199254740993.123456", maximum: "9007199254740993.123456", unit: "mm" })
     ];
     const before = JSON.stringify(saved);
     const buffer = await createQualityExportBuffer(saved);
@@ -367,17 +578,23 @@ describe("saved quality checklist export", () => {
     await book.xlsx.load(buffer);
     expect(book.worksheets.map(sheet => sheet.name)).toEqual(["Quality Parameters"]);
     const sheet = book.worksheets[0];
-    expect(headersOf(sheet).slice(0, 5)).toEqual(QUALITY_SIMPLE_WORKBOOK_HEADERS);
-    expect(headersOf(sheet).slice(5)).toEqual(QUALITY_WORKBOOK_HEADERS.filter(header => header !== "Minimum photos per sample" && !QUALITY_SIMPLE_WORKBOOK_HEADERS.some(simple => simple === header)));
+    expect(headersOf(sheet).slice(0, QUALITY_SIMPLE_WORKBOOK_HEADERS.length)).toEqual(QUALITY_SIMPLE_WORKBOOK_HEADERS);
+    expect(headersOf(sheet).slice(QUALITY_SIMPLE_WORKBOOK_HEADERS.length)).toEqual(QUALITY_WORKBOOK_HEADERS.filter(header => header !== "Minimum photos per sample" && !QUALITY_SIMPLE_WORKBOOK_HEADERS.some(simple => simple === header)));
     expect(sheet.columns.filter(column => !column.hidden).map(column => sheet.getCell(1, column.number!).value)).toEqual(QUALITY_SIMPLE_WORKBOOK_HEADERS);
-    expect(sheet.columns.slice(5).every(column => column.hidden && column.outlineLevel === 1 && column.collapsed)).toBe(true);
+    expect(sheet.columns.slice(QUALITY_SIMPLE_WORKBOOK_HEADERS.length).every(column => column.hidden && column.outlineLevel === 1 && column.collapsed)).toBe(true);
     expect(sheet.rowCount).toBe(saved.length + 1);
     expect(cellFor(sheet, 3, "Maximum").value).toBe("9007199254740993.123456");
     expect(cellFor(sheet, 3, "Maximum").type).toBe(ExcelJS.ValueType.String);
     expect(cellFor(sheet, 2, "Photo evidence").value).toBe(2);
     expect(cellFor(sheet, 3, "Photo evidence").value).toBe(0);
     const result = await parseQualityWorkbookBuffer(buffer);
-    expect(result.issues).toEqual([]);
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ row: 2, column: "Performed by" }),
+      expect.objectContaining({ row: 2, column: "Frequency" }),
+      expect.objectContaining({ row: 3, column: "Frequency" }),
+      expect.objectContaining({ row: 8, column: "Frequency" })
+    ]));
+    expect(result.issues).toHaveLength(4);
     expect(result.parameters.map(({ id, ...row }) => row)).toEqual(saved.map(({ id, category, ...row }) => explicitNoEvidence(row)));
     expect(result.parameters.every(row => !saved.some(source => source.id === row.id))).toBe(true);
     expect(JSON.stringify(saved)).toBe(before);
@@ -424,8 +641,32 @@ describe("saved quality checklist export", () => {
     await expect(createQualityExportBuffer([parameter("multi_select", { allowedValues: [], defaultValue: [] })])).rejects.toThrow("Add at least one allowed option");
   });
 
-  it("reports sampling precision that the established import format cannot preserve", async () => {
-    await expect(createQualityExportBuffer([parameter("text", { sampling: { method: "percentage", value: 0.0000001, unit: "fixtures" } })])).rejects.toThrow("Sample value. The Excel format supports up to six decimal places");
+  it("round-trips finite legacy sampling values without applying pass-range decimal limits", async () => {
+    const saved = [
+      parameter("text", { severity: "major", responsibleRole: "site", sampling: { method: "percentage", value: 0.0000001, unit: "fixtures" } }),
+      parameter("text", { id: "large-sample", label: "Large sample check", severity: "major", responsibleRole: "site", sampling: { method: "fixed_count", value: 1_000_000, unit: "panels" } })
+    ];
+    const buffer = await createQualityExportBuffer(saved);
+    const book = new ExcelJS.Workbook();
+    await book.xlsx.load(buffer);
+    expect(cellFor(book.worksheets[0], 2, "Sample value").value).toBe(0.0000001);
+    expect(cellFor(book.worksheets[0], 3, "Sample value").value).toBe(1_000_000);
+    const result = await parseQualityWorkbookBuffer(buffer);
+    expect(result.issues).toEqual([
+      expect.objectContaining({ row: 2, column: "Frequency" }),
+      expect.objectContaining({ row: 3, column: "Frequency" })
+    ]);
+    expect(result.parameters.map(row => row.sampling)).toEqual(saved.map(row => row.sampling));
+  });
+
+  it("keeps the six-decimal limit for Number pass bounds", async () => {
+    const result = await parseQualityWorkbookBuffer(await workbook([
+      [...QUALITY_SIMPLE_WORKBOOK_HEADERS],
+      ["Is the tolerance approved?", "number", null, null, "Major", "0.0000001", "1", "mm", "Per unit", "Site", 0]
+    ]));
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ row: 2, column: "Minimum", message: expect.stringContaining("six decimal places") })
+    ]));
   });
 
   it.each([

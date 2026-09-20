@@ -32,8 +32,14 @@ import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { knowledgeSectionPayloadForUpdate } from "./knowledgeSectionPayload";
 import { pendingValuesEqual, type KnowledgePendingChangesCallback } from "./knowledgePendingChanges";
 import { projectKnowledgeModePendingChanges, type KnowledgePendingCalculation } from "./knowledgeModePendingChanges";
-import { KnowledgeSpecificationBuilder } from "./KnowledgeSpecificationBuilder";
-import { parseKnowledgeSpecifications } from "./knowledgeSpecificationConfiguration";
+import {
+  KnowledgeSpecificationBuilder,
+  type KnowledgeSpecificationChange
+} from "./KnowledgeSpecificationBuilder";
+import {
+  parseKnowledgeSpecifications,
+  validateKnowledgeBrands
+} from "./knowledgeSpecificationConfiguration";
 import {
   KnowledgeModeConfigurationBuilder,
   type KnowledgeLegacyModeCatalogState
@@ -185,16 +191,28 @@ export const KnowledgeModePanel = forwardRef<
   const [saving, setSaving] = useState(false);
   const [savingSection, setSavingSection] = useState<ModeSectionKey | null>(null);
   const [conflict, setConflict] = useState<ModeConflict | null>(null);
-  const specificationsRef = useRef<HTMLDivElement>(null);
-  const specificationIssues = [
-    ...parseKnowledgeSpecifications(drafts.pricing.payload.specifications).issues,
+  const pricingValidationSummaryRef = useRef<HTMLDivElement>(null);
+  const pricingConfigurationIssues = [
+    ...validateKnowledgeBrands(drafts.pricing.payload.brands),
+    ...parseKnowledgeSpecifications(
+      drafts.pricing.payload.specifications,
+      drafts.pricing.payload.brands ?? []
+    ).issues,
     ...drafts.pricing.serverIssues
   ];
+  const pricingConfigurationHasRowTarget = pricingIssueTargetsSpecificationRow(
+    drafts.pricing.payload,
+    pricingConfigurationIssues
+  );
   useEffect(() => {
-    if (drafts.pricing.validationAttempt > 0 && !saving) {
-      specificationsRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    if (
+      drafts.pricing.validationAttempt > 0
+      && !saving
+      && !pricingConfigurationHasRowTarget
+    ) {
+      pricingValidationSummaryRef.current?.focus();
     }
-  }, [drafts.pricing.validationAttempt, saving]);
+  }, [drafts.pricing.validationAttempt, pricingConfigurationHasRowTarget, saving]);
   const aggregateBaselineRef = useRef({
     revisionId,
     version: item.version
@@ -308,6 +326,31 @@ export const KnowledgeModePanel = forwardRef<
     },
     []
   );
+  const setPricingSpecificationConfiguration = useCallback(
+    ({ specifications, brands }: KnowledgeSpecificationChange) => {
+      setDrafts((current) => {
+        const payload: Record<string, KnowledgeJsonValue> = {
+          ...current.pricing.payload,
+          specifications: [...specifications]
+        };
+        if (brands.length > 0 || Object.prototype.hasOwnProperty.call(current.pricing.payload, "brands")) {
+          payload.brands = [...brands];
+        }
+        return {
+          ...current,
+          pricing: {
+            ...current.pricing,
+            payload,
+            ...pendingModeStateAfterEdit(current.pricing, payload, "pricing"),
+            dirty: true,
+            error: null,
+            serverIssues: []
+          }
+        };
+      });
+    },
+    []
+  );
   const markDirty = useCallback((sectionKey: ModeSectionKey) => {
     setDrafts((current) => ({
       ...current,
@@ -380,7 +423,11 @@ export const KnowledgeModePanel = forwardRef<
       const draft = snapshot[sectionKey];
       if (draft.envelopeVersion === null || !draft.valid) return true;
       if (sectionKey === "advanced") return false;
-      return parseKnowledgeSpecifications(draft.payload.specifications).issues.length > 0;
+      return validateKnowledgeBrands(draft.payload.brands).length > 0
+        || parseKnowledgeSpecifications(
+          draft.payload.specifications,
+          draft.payload.brands ?? []
+        ).issues.length > 0;
     });
     if (invalidSections.length > 0) {
       setDrafts((current) => Object.fromEntries(
@@ -493,7 +540,7 @@ export const KnowledgeModePanel = forwardRef<
           } else {
             const message = failure instanceof Error ? failure.message : "This block could not be saved.";
             const serverIssues = failure instanceof ApiError
-              ? sectionIssuesFromApiError(failure, sectionKey === "advanced" ? [...ADVANCED_EDITABLE_FIELDS, "modeCalculations"] : ["specifications"])
+              ? sectionIssuesFromApiError(failure, sectionKey === "advanced" ? [...ADVANCED_EDITABLE_FIELDS, "modeCalculations"] : ["specifications", "brands"])
               : [];
             setDrafts((current) => ({
               ...current,
@@ -583,7 +630,10 @@ export const KnowledgeModePanel = forwardRef<
             localVersion={draft.serverReview.localVersion}
             serverVersion={draft.serverReview.server.version}
             payload={sectionKey === "pricing"
-              ? { specifications: draft.serverReview.server.payload.specifications ?? [] }
+              ? {
+                  specifications: draft.serverReview.server.payload.specifications ?? [],
+                  brands: draft.serverReview.server.payload.brands ?? []
+                }
               : draft.serverReview.server.payload}
             masters={masters}
             relationshipBaskets={relationshipBaskets}
@@ -654,27 +704,34 @@ export const KnowledgeModePanel = forwardRef<
       {renderBlock(
         "pricing",
         pricingQuery,
-        <div ref={specificationsRef}>
+        <div>
           <KnowledgeSpecificationBuilder
             value={drafts.pricing.payload.specifications}
+            brands={drafts.pricing.payload.brands}
+            savedValue={drafts.pricing.pendingBaseline?.specifications}
+            savedBrands={drafts.pricing.pendingBaseline?.brands}
             priceEntries={drafts.pricing.payload.priceEntries}
             referencedSpecificationIds={drafts.pricing.specificationReferenceIds}
             readOnly={!editable || saving}
-            issues={specificationIssues}
-            onChange={(specifications) => setPayload("pricing", {
-              ...drafts.pricing.payload,
-              specifications: [...specifications]
-            })}
+            issues={pricingConfigurationIssues}
+            validationAttempt={drafts.pricing.validationAttempt}
+            onChange={setPricingSpecificationConfiguration}
             onDirty={() => markDirty("pricing")}
           />
-          {drafts.pricing.validationAttempt > 0 && specificationIssues.length > 0 ? (
-            <InlineMessage tone="error" role="alert" title="Review Specifications">
-              <ul>
-                {specificationIssues.map((issue, index) => (
-                  <li key={`${issue.path}-${index}`}>{issue.message}</li>
-                ))}
-              </ul>
-            </InlineMessage>
+          {drafts.pricing.validationAttempt > 0 && pricingConfigurationIssues.length > 0 ? (
+            <div
+              ref={pricingValidationSummaryRef}
+              tabIndex={-1}
+              aria-label="Pricing validation errors"
+            >
+              <InlineMessage tone="error" role="alert" title="Review item and Brand details">
+                <ul>
+                  {pricingConfigurationIssues.map((issue, index) => (
+                    <li key={`${issue.path}-${index}`}>{issue.message}</li>
+                  ))}
+                </ul>
+              </InlineMessage>
+            </div>
           ) : null}
         </div>
       )}
@@ -803,10 +860,13 @@ function rebaseDraftAfterConflict(
   server: KnowledgeSectionEnvelope<KnowledgeJsonObject>,
   serverReview: ModeServerReview | null
 ): ModeDraft {
+  const pricingRebase = server.sectionKey === "pricing"
+    ? rebasePricingDraft(draft, server.payload)
+    : null;
   const payload = {
     ...server.payload,
     ...(server.sectionKey === "pricing"
-      ? { specifications: draft.payload.specifications ?? [] }
+      ? pricingRebase!.fields
       : {
           ...Object.fromEntries(draft.editedAdvancedFields.map((field) => [field, draft.payload[field] ?? (field === "modeConfigurations" ? [] : null)])),
           ...(draft.editedCalculationScopes.length ? { modeCalculations: {
@@ -820,7 +880,10 @@ function rebaseDraftAfterConflict(
         const pmc = acceptPendingMarginCounterparts(draft.pendingBaseline ?? {}, draft.pendingPayload, payload, "pmc");
         return acceptPendingMarginCounterparts(pmc.baseline, pmc.payload, payload, "sub_vendor");
       })()
-    : { baseline: draft.pendingBaseline, payload: draft.pendingPayload };
+    : {
+        baseline: pricingRebase!.pendingBaseline,
+        payload: pricingRebase!.pendingPayload
+      };
   return {
     ...draft,
     payload,
@@ -834,9 +897,43 @@ function rebaseDraftAfterConflict(
   };
 }
 
+function rebasePricingDraft(
+  draft: ModeDraft,
+  serverPayload: KnowledgeJsonObject
+): {
+  fields: Pick<KnowledgeJsonObject, "specifications" | "brands">;
+  pendingBaseline: KnowledgeJsonObject;
+  pendingPayload: KnowledgeJsonObject;
+} {
+  const pendingBaseline = { ...(draft.pendingBaseline ?? {}) };
+  const pendingPayload = { ...draft.pendingPayload };
+  const fields: Record<"specifications" | "brands", KnowledgeJsonValue> = {
+    specifications: [],
+    brands: []
+  };
+  for (const field of ["specifications", "brands"] as const) {
+    const serverRows = Array.isArray(serverPayload[field]) ? serverPayload[field] : [];
+    const baselineRows = Array.isArray(draft.pendingBaseline?.[field])
+      ? draft.pendingBaseline[field]
+      : [];
+    const localRows = Array.isArray(draft.pendingPayload[field])
+      ? draft.pendingPayload[field]
+      : [];
+    const merged = applyPendingEdit(serverRows, baselineRows, localRows) ?? [];
+    fields[field] = merged;
+    pendingBaseline[field] = serverRows;
+    pendingPayload[field] = merged;
+  }
+  return {
+    fields,
+    pendingBaseline,
+    pendingPayload
+  };
+}
+
 function sectionIssuesFromApiError(
   failure: ApiError,
-  allowedRootPaths: readonly (AdvancedEditableField | "modeCalculations" | "specifications")[]
+  allowedRootPaths: readonly (AdvancedEditableField | "modeCalculations" | "specifications" | "brands")[]
 ): readonly KnowledgeModeConfigurationIssue[] {
   if (allowedRootPaths.length === 0) return [];
   return Object.entries(failure.fields ?? {}).flatMap(([path, message]) => {
@@ -848,6 +945,27 @@ function sectionIssuesFromApiError(
     )
       ? [{ path: normalizedPath, message }]
       : [];
+  });
+}
+
+function pricingIssueTargetsSpecificationRow(
+  payload: KnowledgeJsonObject,
+  issues: readonly KnowledgeModeConfigurationIssue[]
+): boolean {
+  const specifications = Array.isArray(payload.specifications)
+    ? payload.specifications.filter(pendingObject)
+    : [];
+  const brands = Array.isArray(payload.brands)
+    ? payload.brands.filter(pendingObject)
+    : [];
+  return issues.some((issue) => {
+    if (/^specifications\.\d+(?:\.|$)/u.test(issue.path)) return true;
+    const brandMatch = /^brands\.(\d+)(?:\.|$)/u.exec(issue.path);
+    if (!brandMatch) return false;
+    const brand = brands[Number(brandMatch[1])];
+    return typeof brand?.id === "string" && specifications.some(
+      (specification) => specification.brandId === brand.id
+    );
   });
 }
 
@@ -906,7 +1024,7 @@ function pendingModeStateAfterEdit(draft: ModeDraft, after: KnowledgeJsonObject,
     const acceptedDraft = applyPendingEdit(local, localBaseline, acceptedBaseline);
     return { baseline: acceptedBaseline, payload: applyPendingEdit(acceptedDraft, saved, edited) };
   };
-  const fields = sectionKey === "pricing" ? ["specifications"] : ADVANCED_EDITABLE_FIELDS;
+  const fields = sectionKey === "pricing" ? ["specifications", "brands"] : ADVANCED_EDITABLE_FIELDS;
   const subVendorMarginEdited = sectionKey === "advanced" &&
     (!pendingValuesEqual(before.subVendorMarginBps, after.subVendorMarginBps) ||
       !pendingValuesEqual(before.subVendorMinimumMarginBps, after.subVendorMinimumMarginBps));

@@ -27,8 +27,11 @@ function asymmetricInput(): KnowledgeOverviewSummaryInput {
         surfaceIds: ["surface-wall"]
       },
       pricing: {
+        brands: [
+          { id: "brand-century-green", name: "Century Green" }
+        ],
         specifications: [
-          { id: "spec-fire", name: "Fire-rated board", description: "Two layers" },
+          { id: "spec-fire", name: "Fire-rated board", brandId: "brand-century-green", description: "Two layers" },
           { id: "spec-acoustic", name: "Acoustic board", description: "Perforated" }
         ],
         priceEntries: [
@@ -237,8 +240,10 @@ describe("projectKnowledgeOverviewSummary", () => {
     ]);
     expect(summary.specificationDetails[0]).toEqual({
       option: { id: "spec-fire", label: "Fire-rated board", state: "available" },
+      brand: { id: "brand-century-green", label: "Century Green", state: "available" },
       description: "Two layers"
     });
+    expect(summary.specificationDetails[1]?.brand).toBeNull();
     expect(summary.priceDetails[0]).toMatchObject({
       id: "price-pmc",
       inputAmountPaise: 12_345,
@@ -356,6 +361,33 @@ describe("projectKnowledgeOverviewSummary", () => {
     expect(JSON.stringify(summary.specificationDetails)).not.toContain('"options"');
     expect(JSON.stringify(summary.specificationDetails)).not.toContain('"value"');
     expect(JSON.stringify(summary.specificationDetails)).not.toContain('"prices"');
+  });
+
+  it("resolves Specification Brands by stable ID and does not use the ID as display text", () => {
+    const summary = projectKnowledgeOverviewSummary({
+      sections: {
+        pricing: {
+          brands: [{ id: "private-current-brand-id", name: "Century Green" }],
+          specifications: [
+            { id: "spec-plywood", name: "Plywood", brandId: "private-current-brand-id" },
+            { id: "spec-hinges", name: "Hinges", brandId: "private-missing-brand-id" },
+            { id: "spec-glue", name: "Glue" }
+          ],
+          priceEntries: []
+        }
+      }
+    });
+
+    expect(summary.specificationDetails.map(({ brand }) => brand && ({
+      label: brand.label,
+      state: brand.state
+    }))).toEqual([
+      { label: "Century Green", state: "available" },
+      { label: KNOWLEDGE_OVERVIEW_UNAVAILABLE_LABEL, state: "unavailable" },
+      null
+    ]);
+    expect(summary.specificationDetails[0]?.brand?.label).not.toBe("private-current-brand-id");
+    expect(summary.specificationDetails[1]?.brand?.label).not.toBe("private-missing-brand-id");
   });
 
   it("keeps generic price Mode IDs out of the fixed dynamic selector and quantity-margin values shared", () => {

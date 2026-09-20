@@ -1,4 +1,4 @@
-import { BUDGET_ACTIONS } from "./knowledgeBudgetAlterations";
+import { BUDGET_ACTIONS, recommendationTargetKind } from "./knowledgeBudgetAlterations";
 import {
   pairPendingRows,
   pendingObjectRows,
@@ -189,15 +189,16 @@ export function projectRecommendationPendingChanges({ baseline, payload, baskets
     && (row.targetType === "temporary" ? item.itemType === "temporary" : item.itemType !== "temporary")
     && (!text(row.targetSubBasketId) || item.subBasketId === row.targetSubBasketId));
   const budgetFields: readonly EditableField[] = [
+    { key: "targetKind", label: "Addition type", read: (row) => recommendationTargetKind(row), display: (row) => recommendationTargetKind(row) === "sub_basket" ? "Whole Sub-Basket" : "Line item" },
     { key: "trigger", label: "Trigger", read: (row) => text(row.trigger), display: (row) => row.trigger === "added" ? "The item is added to scope" : row.trigger === "removed" ? "The item is removed from scope" : "" },
     { key: "scopeAction", label: "Scope action", read: (row) => [text(row.action), text(row.requirement)], display: (row) => BUDGET_ACTIONS.find((choice) => choice.action === row.action && choice.requirement === row.requirement)?.label ?? "Choose a scope action",
       includeOnAdd: (row) => Boolean(text(row.action) || text(row.requirement)) },
-    { key: "targetType", label: "Item type", read: (row) => text(row.targetType), display: (row) => row.targetType === "temporary" ? "Temporary item" : row.targetType === "catalog" ? "Catalog item" : "" },
+    { key: "targetType", label: "Item type", read: (row) => text(row.targetType), display: (row) => recommendationTargetKind(row) === "sub_basket" ? "Not applicable" : row.targetType === "temporary" ? "Temporary item" : row.targetType === "catalog" ? "Catalog item" : "" },
     { key: "targetBasketId", label: "Main Basket", read: (row) => text(row.targetBasketId), display: (row) => !text(row.targetBasketId) ? "" : baskets.find((basket) => basket.id === row.targetBasketId)?.name ?? "Selected Main Basket — details unavailable" },
     { key: "targetSubBasketId", label: "Sub Basket", read: (row) => text(row.targetSubBasketId), display: (row) => !text(row.targetSubBasketId) ? "" : relatedItem(row)?.subBasketName
       ?? items.find((item) => item.basketId === row.targetBasketId && item.subBasketId === row.targetSubBasketId)?.subBasketName
       ?? "Selected Sub Basket — details unavailable" },
-    { key: "targetMainLineId", label: "Related item", read: (row) => text(row.targetMainLineId), display: (row) => !text(row.targetMainLineId) ? "" : relatedItem(row)?.mainLineName ?? "Selected related item — details unavailable" },
+    { key: "targetMainLineId", label: "Related item", read: (row) => text(row.targetMainLineId), display: (row) => recommendationTargetKind(row) === "sub_basket" ? "Not applicable" : !text(row.targetMainLineId) ? "" : relatedItem(row)?.mainLineName ?? "Selected related item — details unavailable" },
     textField("reason", "Reason"),
     { key: "active", label: "Enabled", read: (row) => row.active === true, display: (row) => row.active === true ? "Yes" : "No", includeOnAdd: (row) => row.active === false }
   ];
@@ -206,7 +207,9 @@ export function projectRecommendationPendingChanges({ baseline, payload, baskets
     projectRows({ key: "budgetAlterations", label: "Budget Alterations", before: pendingObjectRows(baseline.budgetAlterations), after: pendingObjectRows(payload.budgetAlterations), fields: budgetFields,
       title: (_row, index) => `Rule ${index + 1}`,
       incomplete: (row) => !["added", "removed"].includes(text(row.trigger)) || !BUDGET_ACTIONS.some((choice) => choice.action === row.action && choice.requirement === row.requirement)
-        || !["catalog", "temporary"].includes(text(row.targetType)) || !text(row.targetBasketId).trim() || !text(row.targetMainLineId)
+        || !text(row.targetBasketId).trim() || (recommendationTargetKind(row) === "sub_basket"
+          ? !text(row.targetSubBasketId) || row.targetType !== null || row.targetMainLineId !== null
+          : !["catalog", "temporary"].includes(text(row.targetType)) || !text(row.targetMainLineId))
         || !text(row.reason).trim() || text(row.reason).length > 4000 || typeof row.active !== "boolean" }),
     projectRows({ key: "recommendations", label: "Recommendations", before: pendingObjectRows(baseline.recommendations), after: pendingObjectRows(payload.recommendations),
       fields: [textField("name", "Recommendation"), priority, textField("reason", "Reason")],

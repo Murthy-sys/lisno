@@ -37,7 +37,7 @@ import {
 
 const ARRAY_FIELDS = {
   overview: [],
-  pricing: ["specifications", "brands"],
+  pricing: ["specifications"],
   "quantity-margin": [],
   scope: ["exclusions"],
   recommendations: ["recommendations", "exclusions"],
@@ -48,7 +48,6 @@ const ARRAY_FIELDS = {
 
 const ARRAY_LABELS: Readonly<Record<string, string>> = {
   specifications: "Specifications",
-  brands: "Vendors",
   quantitySlabs: "Quantity slabs",
   exclusions: "Exclusions",
   recommendations: "Recommendations",
@@ -326,13 +325,31 @@ export function KnowledgeSectionEditor({
         <Fragment key={`${specificationScopeKey ?? resetKey}-${field}`}>
           <KnowledgeSpecificationBuilder
             value={payload.specifications}
+            brands={payload.brands}
+            savedValue={savedPayload?.specifications}
+            savedBrands={savedPayload?.brands}
             priceEntries={payload.priceEntries}
             referencedSpecificationIds={specificationReferenceIds}
             slabReferencedSpecificationIds={slabSpecificationReferenceIds}
             readOnly={readOnly}
-            issues={issues.filter((issue) => issue.path === "specifications" || issue.path.startsWith("specifications."))}
+            validationAttempt={validationAttempt}
+            issues={issues.filter((issue) =>
+              issue.path === "specifications"
+              || issue.path.startsWith("specifications.")
+              || issue.path === "brands"
+              || issue.path.startsWith("brands.")
+            )}
             onDirty={onDirty}
-            onChange={(value) => change(field, value)}
+            onChange={({ specifications, brands }) => {
+              const nextPayload: Record<string, KnowledgeJsonValue> = {
+                ...payload,
+                specifications: [...specifications]
+              };
+              if (brands.length > 0 || Object.prototype.hasOwnProperty.call(payload, "brands")) {
+                nextPayload.brands = [...brands];
+              }
+              onChange(nextPayload);
+            }}
           />
           {pricingAfterSpecifications}
         </Fragment>
@@ -457,7 +474,7 @@ function StructuredArrayEditor({ field, label, value, sectionPayload, masters, r
     const values = rows.map((row, rowIndex) => rowIndex === index ? next : row.value);
     onChange(values);
   }
-  return <KnowledgeRepeater label={label} addLabel={field === "brands" ? "Add vendor" : `Add ${singular(label)}`} items={rows} disabled={disabled} showAdd={showAdd} readOnly={hideActions} emptyMessage={`No ${label.toLowerCase()} configured.`}
+  return <KnowledgeRepeater label={label} addLabel={field === "brands" ? "Add brand" : `Add ${singular(label)}`} items={rows} disabled={disabled} showAdd={showAdd} readOnly={hideActions} emptyMessage={`No ${label.toLowerCase()} configured.`}
     onAdd={() => { onDirty(); onChange([...rows.map(({ value: row }) => row), newRow(field)]); }}
     onRemove={(id) => { onDirty(); onChange(rows.filter((row) => row.id !== id).map((row) => row.value)); }}
     onMove={(id, direction) => { onDirty(); const current = [...rows]; const from = current.findIndex((row) => row.id === id); const to = direction === "up" ? from - 1 : from + 1; if (from < 0 || to < 0 || to >= current.length) return; [current[from], current[to]] = [current[to], current[from]]; onChange(current.map((row) => row.value)); }}
@@ -481,7 +498,6 @@ function GuidedRow({ field, index, value, sectionPayload, masters, relationshipB
 }) {
   const prefix = `${field}-${index}`;
   const set = (key: string, next: KnowledgeJsonValue | undefined) => onChange(setObjectValue(value, key, next));
-  if (field === "brands") return <div className="knowledge-form-grid"><RowInput id={`${prefix}-name`} label="Vendor name" value={stringValue(value.name)} disabled={disabled} required onChange={(next) => set("name", next || undefined)} /><RowInput id={`${prefix}-description`} label="Description" value={stringValue(value.description)} disabled={disabled} multiline onChange={(next) => set("description", next || undefined)} /></div>;
   if (field === "quantitySlabs") return <div className="knowledge-form-grid"><RowInput id={`${prefix}-minimum`} label="Minimum quantity" value={stringValue(value.minimumQuantity)} disabled={disabled} required onChange={(next) => set("minimumQuantity", next || undefined)} /><RowInput id={`${prefix}-maximum`} label="Maximum quantity" value={stringValue(value.maximumQuantity)} disabled={disabled} hint="Leave blank for no upper limit." onChange={(next) => set("maximumQuantity", next || null)} /><RowNumber id={`${prefix}-adjustment`} label="Adjustment (basis points)" value={numberValue(value.adjustmentBps)} disabled={disabled} required onChange={(next) => set("adjustmentBps", next)} /></div>;
   if (field === "exclusions" || field === "dependencies") return <RelationshipRow prefix={prefix} kind={field} value={value} baskets={relationshipBaskets} items={relationshipItems} currentMainLineId={currentMainLineId} disabled={disabled} onChange={onChange} />;
   if (field === "recommendations") return <div className="knowledge-form-grid"><MasterRowSelect id={`${prefix}-priority`} label="Priority" value={stringValue(value.priorityId)} masters={masters.priorities ?? []} disabled={disabled} onChange={(next) => set("priorityId", next)} /><RowInput id={`${prefix}-name`} label="Recommendation" value={stringValue(value.name)} disabled={disabled} required onChange={(next) => set("name", next || undefined)} /><RowInput id={`${prefix}-reason`} label="Reason" value={stringValue(value.reason)} disabled={disabled} multiline onChange={(next) => set("reason", next || null)} /></div>;
@@ -702,7 +718,13 @@ function singular(label: string): string {
 
 function validationPathLabel(path: string): string {
   return path.split(".").map((part) => {
-    if (part === "brands") return "Vendors";
+    if (part === "brands") return "Brands";
+    if (part === "specifications") return "Specifications";
+    if (/^\d+$/u.test(part) && path.startsWith("specifications.")) return `Item ${Number(part) + 1}`;
+    if (/^\d+$/u.test(part) && path.startsWith("brands.")) return `Brand ${Number(part) + 1}`;
+    if (part === "name" && path.startsWith("specifications.")) return "Item name";
+    if (part === "name" && path.startsWith("brands.")) return "Brand name";
+    if (part === "brandId") return "Brand";
     if (part === "priceEntries") return "Budgets";
     if (/^\d+$/u.test(part) && path.startsWith("priceEntries.")) return `Budget ${Number(part) + 1}`;
     if (part === "vendorId") return "Vendor";
@@ -718,7 +740,7 @@ function validationPathLabel(path: string): string {
 function sectionHelp(sectionKey: KnowledgeSectionKey): string {
   return ({
     overview: "Set the item identity and compatible reusable values.",
-    pricing: "Maintain Specifications, Vendors, and the unit budgets used by the estimator.",
+    pricing: "Maintain item Specifications, their Brand selections, and the unit budgets used by the estimator.",
     "quantity-margin": "Configure priced Quantity slabs and shared basis-point margins. Legacy adjustment slabs retain their existing calculation behavior.",
     scope: "Define applicable modes, surfaces, and explicit exclusions.",
     recommendations: "Describe related scope changes when this item is added or removed, and explain why each change is required or optional.",

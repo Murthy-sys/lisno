@@ -79,6 +79,7 @@ import { createUserInvitationsRouter } from "./routes/user-invitations.js";
 import { createAuditService } from "./services/audit.service.js";
 import { createAiEstimatorKnowledgeContextService } from "./services/ai-estimator-knowledge-context.service.js";
 import { createAiEstimatorKnowledgeItemService } from "./services/ai-estimator-knowledge-item.service.js";
+import { createAiEstimatorKnowledgeQualityControlOptionService } from "./services/ai-estimator-knowledge-quality-control-option.service.js";
 import { createAiEstimatorKnowledgeReferenceService } from "./services/ai-estimator-knowledge-reference.service.js";
 import { createAccessRequestService } from "./services/access-request.service.js";
 import { createAdminProjectService } from "./services/admin-project.service.js";
@@ -180,17 +181,28 @@ export function createApp(dependencies: AppDependencies) {
   const ocrRetryPolicy =
     dependencies.ocrRetryPolicy ?? defaultExtractionRetryPolicy;
   const auditService = createAuditService(repository);
+  const aiEstimatorKnowledgeQualityControlOptionService =
+    createAiEstimatorKnowledgeQualityControlOptionService({
+      audit: auditService,
+      now: clock
+    });
   const aiEstimatorKnowledgeReferenceService =
     createAiEstimatorKnowledgeReferenceService({
       audit: auditService,
-      now: clock
+      now: clock,
+      qualityControlOptionValidator:
+        aiEstimatorKnowledgeQualityControlOptionService
     });
   const aiEstimatorKnowledgeItemService = createAiEstimatorKnowledgeItemService({
     audit: auditService,
     now: clock
   });
   const aiEstimatorKnowledgeContextService =
-    createAiEstimatorKnowledgeContextService({ now: clock });
+    createAiEstimatorKnowledgeContextService({
+      now: clock,
+      qualityControlOptionResolver:
+        aiEstimatorKnowledgeQualityControlOptionService
+    });
   const authService = createAuthService(repository, dependencies.auth, {
     auditService,
     clock,
@@ -458,7 +470,8 @@ export function createApp(dependencies: AppDependencies) {
     createAiEstimatorKnowledgeAdminRouter(authService, {
       reference: aiEstimatorKnowledgeReferenceService,
       item: aiEstimatorKnowledgeItemService,
-      context: aiEstimatorKnowledgeContextService
+      context: aiEstimatorKnowledgeContextService,
+      qualityControlOptions: aiEstimatorKnowledgeQualityControlOptionService
     })
   );
   app.use(

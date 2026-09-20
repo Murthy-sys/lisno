@@ -267,6 +267,7 @@ describe("knowledge mutation cache synchronization", () => {
     const item: KnowledgeItemDetail = {
       ...actor,
       id: "line-1",
+      completionRequired: false,
       mainLineId: "line-1",
       basketId: "basket-1",
       basketName: "Interiors",

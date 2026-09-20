@@ -1,0 +1,4 @@
+[    2224ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4178/node_modules/.vite/deps/react-dom_client.js?v=2074ae10:20102
+[   95429ms] [WARNING] Couldn't load preload assets:  ProgressEvent @ http://127.0.0.1:4178/node_modules/.vite/deps/axe-core.js?v=2074ae10:29228
+[  220984ms] [LOG] [vite] server connection lost. Polling for restart... @ http://127.0.0.1:4178/@vite/client:963
+[  220986ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:4178/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4178/@vite/client:1034

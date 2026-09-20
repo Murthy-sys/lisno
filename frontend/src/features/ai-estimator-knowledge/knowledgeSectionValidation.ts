@@ -2,7 +2,10 @@ import {
   estimateSlabCostPaise,
   parseScaledQuantity
 } from "./knowledgeSlabRate";
-import { parseKnowledgeSpecifications } from "./knowledgeSpecificationConfiguration";
+import {
+  parseKnowledgeSpecifications,
+  validateKnowledgeBrands
+} from "./knowledgeSpecificationConfiguration";
 import { validateQualityParameters } from "./knowledgeQuality";
 import { budgetAlterationIssues } from "./knowledgeBudgetAlterations";
 import type {
@@ -39,7 +42,10 @@ export function validateKnowledgeSection(
     if (typeof row[key] !== "string" || !row[key].trim()) issues.push({ path: `${path}.${key}`, message: `${label(key)} is required.` });
   };
   if (sectionKey === "pricing") {
-    issues.push(...parseKnowledgeSpecifications(payload.specifications).issues);
+    issues.push(
+      ...validateKnowledgeBrands(payload.brands),
+      ...parseKnowledgeSpecifications(payload.specifications, payload.brands ?? []).issues
+    );
     rows("priceEntries").forEach((row, index) => {
       const path = `priceEntries.${index}`;
       if (row.operation === "reference") {

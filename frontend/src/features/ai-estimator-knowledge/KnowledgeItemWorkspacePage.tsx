@@ -175,6 +175,7 @@ export function KnowledgeItemWorkspacePage() {
 
   const canCreate = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.create");
   const canUpdate = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.update");
+  const canCreateQualityOptions = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.quality_control_options.create");
   const canLifecycle = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.lifecycle");
   const itemQuery = useQuery({
     queryKey: knowledgeQueryKeys.item(mainLineId),
@@ -522,7 +523,7 @@ export function KnowledgeItemWorkspacePage() {
           ? <IconButton className="knowledge-main-line-edit" label="Edit Main Line" tooltip="Edit Main Line" variant="quiet" icon={<Pencil size={18} aria-hidden="true" />}
               onClick={() => guard.requestNavigation(() => setMainLineEditorOpen(true))} />
           : null}
-        metadata={<div className="knowledge-header-metadata">{item.itemType === "temporary" && <span className="knowledge-temporary-badge">Temporary item</span>}<StatusBadge label={KNOWLEDGE_ITEM_STATUS_LABELS[item.status]} tone={item.status === "active" ? "success" : item.status === "draft" ? "warning" : item.status === "archived" ? "danger" : "neutral"} /><span>Updated {formatKnowledgeDateTime(item.updatedAt)}</span></div>}
+        metadata={<div className="knowledge-header-metadata">{item.itemType === "temporary" && <span className="knowledge-temporary-badge">Temporary item · Must be completed</span>}<StatusBadge label={KNOWLEDGE_ITEM_STATUS_LABELS[item.status]} tone={item.status === "active" ? "success" : item.status === "draft" ? "warning" : item.status === "archived" ? "danger" : "neutral"} /><span>Updated {formatKnowledgeDateTime(item.updatedAt)}</span></div>}
         actions={<WorkspaceActions item={item} canCreate={canCreate} canLifecycle={canLifecycle}
           onCommand={(next) => guard.requestNavigation(() => setCommand(next))}
           onLifecycle={(next) => guard.requestNavigation(() => setLifecycleAction(next))} />}
@@ -548,7 +549,7 @@ export function KnowledgeItemWorkspacePage() {
               />
             ) : null}
             {activeSection === "quality" ? (
-              <KnowledgeBasketQualityPanel key={pendingSession.sourceKey} ref={qualityPanelRef} item={item} revisionId={revision?.id} canUpdate={canUpdate} onDirtyChange={setQualityDirty} onSavingChange={setQualitySaving} />
+              <KnowledgeBasketQualityPanel key={pendingSession.sourceKey} ref={qualityPanelRef} item={item} revisionId={revision?.id} canUpdate={canUpdate} canCreateQualityOptions={canCreateQualityOptions} onDirtyChange={setQualityDirty} onSavingChange={setQualitySaving} />
             ) : !revision ? (
               <PageState state="empty" message="This item has no revision to display." />
             ) : activeSection === "mode" ? (

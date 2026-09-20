@@ -20,6 +20,7 @@ import { AiEstimatorKnowledgeMainLineModel } from "./AiEstimatorKnowledgeMainLin
 import { AiEstimatorKnowledgeModeModel } from "./AiEstimatorKnowledgeMode.js";
 import { AiEstimatorKnowledgePriceVersionModel } from "./AiEstimatorKnowledgePriceVersion.js";
 import { AiEstimatorKnowledgePriorityModel } from "./AiEstimatorKnowledgePriority.js";
+import { AiEstimatorKnowledgeQualityControlOptionModel } from "./AiEstimatorKnowledgeQualityControlOption.js";
 import { AiEstimatorKnowledgeRevisionModel } from "./AiEstimatorKnowledgeRevision.js";
 import { AiEstimatorKnowledgeSectionModel } from "./AiEstimatorKnowledgeSection.js";
 import { AiEstimatorKnowledgeSurfaceModel } from "./AiEstimatorKnowledgeSurface.js";
@@ -56,6 +57,7 @@ export async function initializeApplicationIndexes(): Promise<void> {
   await AiEstimatorKnowledgeTaxRuleModel.init();
   await AiEstimatorKnowledgeTaxVersionModel.init();
   await AiEstimatorKnowledgePriorityModel.init();
+  await AiEstimatorKnowledgeQualityControlOptionModel.init();
   await AiEstimatorKnowledgeSurfaceModel.init();
   await AiEstimatorKnowledgeModeModel.init();
 }

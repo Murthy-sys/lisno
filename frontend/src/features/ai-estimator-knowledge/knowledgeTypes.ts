@@ -46,6 +46,9 @@ export type KnowledgeAvailabilityState =
   | "not_applicable"
   | "not_resolvable";
 export type KnowledgeDurationUnit = "minutes" | "hours" | "days" | "weeks";
+export type KnowledgeQualityControlOptionKind = "frequency" | "performer";
+/** Public custom-option reference. Runtime validation requires qco_<24 lowercase hex>. */
+export type KnowledgeQualityControlOptionReference = `qco_${string}`;
 
 export type KnowledgeAllowedAction =
   | "update_section"
@@ -65,6 +68,33 @@ export interface KnowledgeJsonObject {
   readonly [key: string]: KnowledgeJsonValue;
 }
 
+export interface KnowledgeBudgetAlterationBase {
+  readonly id: string;
+  readonly trigger: "added" | "removed";
+  readonly action: "add" | "remove";
+  readonly requirement: "must" | "can";
+  readonly targetBasketId: string;
+  readonly reason: string;
+  readonly active: boolean;
+}
+
+export interface KnowledgeMainLineBudgetAlteration extends KnowledgeBudgetAlterationBase {
+  /** Missing on legacy responses; normalize to main_line before editing. */
+  readonly targetKind?: "main_line";
+  readonly targetType: "catalog" | "temporary";
+  readonly targetSubBasketId: string | null;
+  readonly targetMainLineId: string;
+}
+
+export interface KnowledgeSubBasketBudgetAlteration extends KnowledgeBudgetAlterationBase {
+  readonly targetKind: "sub_basket";
+  readonly targetType: null;
+  readonly targetSubBasketId: string;
+  readonly targetMainLineId: null;
+}
+
+export type KnowledgeBudgetAlteration = KnowledgeMainLineBudgetAlteration | KnowledgeSubBasketBudgetAlteration;
+
 export interface KnowledgeActorMetadata {
   readonly createdById: string;
   readonly updatedById: string;
@@ -75,6 +105,24 @@ export interface KnowledgeActorMetadata {
 export interface KnowledgeVersionedResource extends KnowledgeActorMetadata {
   readonly id: string;
   readonly version: number;
+}
+
+/** Append-only reusable value for a Quality Parameter control. */
+export interface KnowledgeQualityControlOptionSummary {
+  readonly id: string;
+  readonly kind: KnowledgeQualityControlOptionKind;
+  readonly name: string;
+}
+
+export interface KnowledgeQualityControlOption extends KnowledgeVersionedResource, KnowledgeQualityControlOptionSummary {}
+
+export interface KnowledgeQualityControlOptionListResponse {
+  readonly items: readonly KnowledgeQualityControlOptionSummary[];
+}
+
+export interface KnowledgeCreateQualityControlOptionInput {
+  readonly kind: KnowledgeQualityControlOptionKind;
+  readonly name: string;
 }
 
 export interface KnowledgeMaster extends KnowledgeVersionedResource {
@@ -190,6 +238,7 @@ export interface KnowledgePermanentDeleteBasketResult {
 
 export interface KnowledgeMainLine extends KnowledgeVersionedResource {
   readonly itemType?: "main_line" | "temporary";
+  readonly completionRequired: boolean;
   readonly subBasketId?: string | null;
   readonly basketId: string;
   readonly name: string;
@@ -210,12 +259,13 @@ export interface KnowledgeTemporaryMainLineReference {
   status: KnowledgeItemStatus;
   revisionId: string;
   revisionStatus: "draft" | "active";
-  rules: Array<{ id: string; trigger: "added" | "removed"; action: "add" | "remove"; requirement: "must" | "can"; reason: string; active: boolean }>;
+  rules: Array<{ id: string; trigger: "added" | "removed"; action: "add" | "remove"; requirement: "must" | "can"; targetKind?: "main_line" | "sub_basket"; reason: string; active: boolean }>;
 }
 
 export interface KnowledgeItemListItem extends KnowledgeVersionedResource {
   readonly linkedMainLines?: readonly KnowledgeTemporaryMainLineReference[];
   readonly itemType?: "main_line" | "temporary";
+  readonly completionRequired: boolean;
   readonly basketId: string;
   readonly basketName: string;
   readonly subBasketId?: string | null;
@@ -344,11 +394,15 @@ export interface KnowledgePreview {
   readonly modeCalculation?: {
     readonly revisedUnitRatePaise: number;
     readonly revisedAmountPaise: number;
+    /** Rounded selling price at the configured minimum In-house gross margin. */
+    readonly floorPricePaise: number;
+    /** Amount-aware selling-price discount cap for the selected In-house margin. */
+    readonly maximumDiscountBps: number;
+    readonly discountBasis: "selling_price";
     readonly totalPaise: number;
     readonly appliedImpactBps: number;
     readonly discount?: {
       readonly rateBps: number;
-      readonly effectiveMarkupBps: number;
       readonly totalBeforeDiscountPaise: number;
       readonly amountPaise: number;
     };
@@ -406,7 +460,7 @@ export type KnowledgeCalculationScope = "pmc" | "sub_vendor" | "in_house_labor" 
 
 /** Active-revision configuration. Monetary amounts are paise and percentage rates are basis points. */
 export interface KnowledgeConfigurationContext {
-  readonly formulaVersion: "mode-markup-v1";
+  readonly formulaVersion: "mode-margin-v2";
   readonly moneyUnit: "paise";
   readonly percentageUnit: "basis_points";
   readonly selection: {

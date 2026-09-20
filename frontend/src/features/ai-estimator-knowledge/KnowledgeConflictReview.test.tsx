@@ -5,6 +5,21 @@ import { describe, expect, it } from "vitest";
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 
 describe("KnowledgeConflictReview Budgeting projection", () => {
+  it("shows a whole Sub-Basket recommendation without exposing nullable target IDs", () => {
+    render(<KnowledgeConflictReview sectionKey="recommendations" localVersion={2} serverVersion={3}
+      payload={{ budgetAlterations: [{ id: "private-rule", trigger: "added", action: "add", requirement: "must",
+        targetKind: "sub_basket", targetType: null, targetBasketId: "basket-private", targetSubBasketId: "sub-private",
+        targetMainLineId: null, reason: "Add complete lighting scope", active: true }] }}
+      masters={{}}
+      relationshipBaskets={[{ id: "basket-private", name: "Electrical" }] as never}
+      relationshipItems={[{ mainLineId: "light-private", mainLineName: "Lights", basketId: "basket-private",
+        subBasketId: "sub-private", subBasketName: "False ceiling lights" }] as never} />);
+    const review = screen.getByRole("region", { name: "Latest Recommendation & Exclusions server version" });
+    expect(review).toHaveTextContent("Addition typeWhole Sub-Basket");
+    expect(review).toHaveTextContent("False ceiling lights");
+    expect(review).not.toHaveTextContent(/private|null/iu);
+  });
+
   it("shows descriptive Specifications and business Budget values without private metadata", async () => {
     render(
       <KnowledgeConflictReview
@@ -15,10 +30,12 @@ describe("KnowledgeConflictReview Budgeting projection", () => {
           technicalDescription: "Private technical description",
           internalVendorNotes: "Private vendor instructions",
           unknownPricingMetadata: "Private compatibility value",
+          brands: [{ id: "private-brand-id", name: "Century Green" }],
           specifications: [
             {
               id: "private-legacy-specification-id",
               name: "Legacy finish",
+              brandId: "private-brand-id",
               description: "Legacy guidance"
             },
             {
@@ -71,12 +88,13 @@ describe("KnowledgeConflictReview Budgeting projection", () => {
     expect(review).toHaveTextContent("Legacy guidance");
     expect(review).toHaveTextContent("Inspection required");
     expect(review).toHaveTextContent("Confirm after installation");
-    expect(review).toHaveTextContent("Specification 1 · Specification nameLegacy finish");
-    expect(review).toHaveTextContent("Specification 1 · Brief descriptionLegacy guidance");
-    expect(review).toHaveTextContent("Specification 2 · Specification nameInspection required");
-    expect(review).toHaveTextContent("Specification 2 · Brief descriptionConfirm after installation");
-    expect(review).not.toHaveTextContent("Specification 2 · Value");
-    expect(review).not.toHaveTextContent("Specification 3 · Value");
+    expect(review).toHaveTextContent("Item 1 · Item nameLegacy finish");
+    expect(review).toHaveTextContent("Item 1 · Brand nameCentury Green");
+    expect(review).toHaveTextContent("Item 1 · Brief descriptionLegacy guidance");
+    expect(review).toHaveTextContent("Item 2 · Item nameInspection required");
+    expect(review).toHaveTextContent("Item 2 · Brief descriptionConfirm after installation");
+    expect(review).not.toHaveTextContent("Item 2 · Value");
+    expect(review).not.toHaveTextContent("Item 3 · Value");
     expect(review).toHaveTextContent("Budget 1 · VendorUnavailable value");
     expect(review).toHaveTextContent("Budget 1 · Amount before GST₹0.00");
     expect(review).toHaveTextContent("Budget 1 · GST₹0.00");
@@ -95,6 +113,7 @@ describe("KnowledgeConflictReview Budgeting projection", () => {
       "private-legacy-specification-id",
       "private-canonical-specification-id",
       "private-zero-specification-id",
+      "private-brand-id",
       "private-price-entry-id",
       "private-price-version-id",
       "private-vendor-id",
@@ -115,6 +134,31 @@ describe("KnowledgeConflictReview Budgeting projection", () => {
       rules: { "color-contrast": { enabled: false } }
     });
     expect(results.violations).toEqual([]);
+  });
+
+  it("uses an unavailable Brand label for a stale association without exposing its ID", () => {
+    render(
+      <KnowledgeConflictReview
+        sectionKey="pricing"
+        localVersion={2}
+        serverVersion={3}
+        payload={{
+          brands: [{ id: "brand-current", name: "Current Brand" }],
+          specifications: [{
+            id: "spec-plywood",
+            name: "Plywood",
+            brandId: "private-missing-brand-id"
+          }]
+        }}
+        masters={{}}
+        relationshipBaskets={[]}
+        relationshipItems={[]}
+      />
+    );
+
+    const review = screen.getByRole("region", { name: "Latest Budgeting server version" });
+    expect(review).toHaveTextContent("Item 1 · Brand nameUnavailable brand");
+    expect(review).not.toHaveTextContent("private-missing-brand-id");
   });
 
   it("omits Budgeting rows that contain only private identity metadata", () => {

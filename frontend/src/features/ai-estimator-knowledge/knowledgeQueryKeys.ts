@@ -7,6 +7,7 @@ import type {
 } from "./knowledgeApi";
 import type {
   KnowledgeMasterType,
+  KnowledgeQualityControlOptionKind,
   KnowledgeSectionKey
 } from "./knowledgeTypes";
 
@@ -44,6 +45,10 @@ export const knowledgeQueryKeys = {
   subBasketLists: (basketId: string) => ["ai-estimator-knowledge", "sub-baskets", basketId] as const,
   basketQualities: () => ["ai-estimator-knowledge", "basket-quality"] as const,
   basketQuality: (basketId: string) => ["ai-estimator-knowledge", "basket-quality", basketId] as const,
+  qualityControlOptions: (kind?: KnowledgeQualityControlOptionKind) =>
+    kind
+      ? (["ai-estimator-knowledge", "quality-control-options", kind] as const)
+      : (["ai-estimator-knowledge", "quality-control-options"] as const),
   basketLists: () => ["ai-estimator-knowledge", "baskets"] as const,
   basketList: (params: KnowledgeReferenceListParams) =>
     ["ai-estimator-knowledge", "baskets", params] as const,

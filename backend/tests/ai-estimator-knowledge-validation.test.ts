@@ -5,6 +5,7 @@ import {
   validateAcyclicGraph,
   validateEffectiveWindow,
   validateKnowledgeSectionPayload,
+  validateSharedQualityChecklistForSave,
   validateQualityParameter,
   validateQuantitySlabs
 } from "../src/domain/ai-estimator-knowledge-validation.js";
@@ -25,6 +26,83 @@ describe("AI estimator knowledge validation", () => {
       .toContainEqual(expect.objectContaining({ path: "payload.modeCalculation.baseRatePaise", code: "UNSAFE_NUMBER" }));
   });
 
+  it("keeps legacy quality controls structurally readable but rejects them for a new shared save", () => {
+    const legacy = {
+      id: "legacy-check", type: "boolean", label: "Legacy site check",
+      responsibleRole: "Site supervisor",
+      sampling: { method: "percentage", value: 10, unit: "installed fixtures" }
+    };
+    expect(validateKnowledgeSectionPayload("quality", { parameters: [legacy] })).toEqual([]);
+    expect(validateSharedQualityChecklistForSave([legacy])).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "payload.parameters.0.severity", code: "REQUIRED" }),
+      expect.objectContaining({ path: "payload.parameters.0.responsibleRole", code: "NON_CANONICAL_PERFORMER" }),
+      expect.objectContaining({ path: "payload.parameters.0.sampling.method", code: "NON_CANONICAL_FREQUENCY" })
+    ]));
+  });
+
+  it("accepts every canonical shared quality frequency and performer", () => {
+    const frequencies = [
+      { method: "all", unit: "unit" },
+      { method: "all", unit: "room" },
+      { method: "all", unit: "zone" },
+      { method: "all", unit: "batch" },
+      { method: "fixed_count", value: 1, unit: "project" }
+    ];
+    for (const [index, sampling] of frequencies.entries()) {
+      expect(validateSharedQualityChecklistForSave([{
+        id: `canonical-${index}`, type: "boolean", label: "Canonical check",
+        severity: "critical", responsibleRole: ["site", "pm", "procurement", "vendor"][index % 4],
+        sampling
+      }])).toEqual([]);
+    }
+    expect(validateSharedQualityChecklistForSave([])).toEqual([]);
+  });
+
+  it("accepts only the frozen custom reference syntax before database-backed kind validation", () => {
+    expect(validateSharedQualityChecklistForSave([{
+      id: "custom-controls",
+      type: "boolean",
+      label: "Custom control check",
+      severity: "major",
+      responsibleRole: "qco_111111111111111111111111",
+      sampling: { method: "all", unit: "qco_222222222222222222222222" }
+    }])).toEqual([]);
+
+    for (const [field, value] of [
+      ["responsibleRole", "qco_ABC"],
+      ["responsibleRole", "qco_11111111111111111111111"],
+      ["sampling", { method: "all", unit: "qco_22222222222222222222222g" }]
+    ] as const) {
+      const row = {
+        id: "malformed-control",
+        type: "boolean",
+        label: "Malformed custom control",
+        severity: "major",
+        responsibleRole: "site",
+        sampling: { method: "all", unit: "room" },
+        [field]: value
+      };
+      expect(validateSharedQualityChecklistForSave([row])).toContainEqual(expect.objectContaining({
+        code: field === "responsibleRole" ? "NON_CANONICAL_PERFORMER" : "NON_CANONICAL_FREQUENCY"
+      }));
+    }
+  });
+
+  it("requires a complete inclusive pass range on Number checks", () => {
+    const complete = {
+      id: "level-check", type: "number", label: "Measured level", severity: "major",
+      responsibleRole: "pm", sampling: { method: "all", unit: "room" },
+      minimum: "0.5", maximum: "0.5", unit: "mm"
+    };
+    expect(validateSharedQualityChecklistForSave([complete])).toEqual([]);
+    for (const [key, value] of [["minimum", null], ["maximum", null], ["unit", null]] as const) {
+      expect(validateSharedQualityChecklistForSave([{ ...complete, [key]: value }]))
+        .toContainEqual(expect.objectContaining({ path: `payload.parameters.0.${key}`, code: "REQUIRED" }));
+    }
+    expect(validateSharedQualityChecklistForSave([{ ...complete, minimum: "2", maximum: "1" }]))
+      .toContainEqual(expect.objectContaining({ path: "payload.parameters.0.maximum", code: "INVALID_RANGE" }));
+  });
+
   it("validates conditional Budget Alterations with stable catalog or temporary item references", () => {
     const rule = { id: "rule-1", trigger: "removed", action: "remove", requirement: "must", targetType: "catalog", targetBasketId: "basket-electrical", targetSubBasketId: null, targetMainLineId: "line-lights", reason: "Recessed lights require the ceiling.", active: true };
     for (const trigger of ["added", "removed"]) for (const action of ["add", "remove"]) for (const requirement of ["must", "can"]) for (const targetType of ["catalog", "temporary"]) {
@@ -37,6 +115,35 @@ describe("AI estimator knowledge validation", () => {
     expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [rule, { ...rule, id: "rule-2", active: false }] })).toEqual([]);
     expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: Array.from({ length: 101 }, (_, i) => ({ ...rule, id: `rule-${i}`, targetMainLineId: `line-${i}` })) })).toContainEqual(expect.objectContaining({ code: "TOO_MANY_ITEMS" }));
     expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [], exclusions: [{ id: "old-note", name: "Existing exclusion", reason: "Existing reason", active: true }] })).toEqual([]);
+  });
+
+  it("validates legacy, explicit Main-Line and whole Sub-Basket alteration targets", () => {
+    const base = { id: "rule-1", trigger: "added", action: "add", requirement: "must", targetBasketId: "basket-electrical", reason: "Lighting remains required.", active: true };
+    const legacy = { ...base, targetType: "temporary", targetSubBasketId: "sub-basket-lights", targetMainLineId: "line-lights" };
+    const mainLine = { ...legacy, targetKind: "main_line" };
+    const subBasket = { ...base, targetKind: "sub_basket", targetType: null, targetSubBasketId: "sub-basket-lights", targetMainLineId: null };
+    expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [legacy] })).toEqual([]);
+    expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [mainLine] })).toEqual([]);
+    expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [subBasket] })).toEqual([]);
+    for (const [row, field] of [
+      [{ ...subBasket, targetType: "catalog" }, "targetType"],
+      [{ ...subBasket, targetMainLineId: "line-lights" }, "targetMainLineId"],
+      [{ ...subBasket, targetSubBasketId: null }, "targetSubBasketId"],
+      [{ ...mainLine, targetType: null }, "targetType"],
+      [{ ...mainLine, targetMainLineId: null }, "targetMainLineId"],
+      [{ ...mainLine, targetKind: "basket" }, "targetKind"]
+    ] as const) {
+      expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [row] }))
+        .toContainEqual(expect.objectContaining({ path: `payload.budgetAlterations.0.${field}` }));
+    }
+    expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [
+      mainLine,
+      { ...mainLine, id: "rule-2" }
+    ] })).toContainEqual(expect.objectContaining({ code: "DUPLICATE_RULE" }));
+    expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [
+      mainLine,
+      { ...subBasket, id: "rule-2", targetSubBasketId: mainLine.targetMainLineId }
+    ] })).toEqual([]);
   });
 
   it("accepts split Labor and Material costs, requires both keys, and reports precise cost errors", () => {
@@ -53,6 +160,30 @@ describe("AI estimator knowledge validation", () => {
       expect.objectContaining({ path: "payload.modeCalculations.in_house_labor.impactBps" }),
       expect.objectContaining({ path: "payload.modeCalculations.in_house_material.startingMarkupBps" })
     ]));
+  });
+
+  it("caps persisted Gross Margin only for In-house scopes", () => {
+    const settings = { baseRatePaise: 90_000, lowQuantityLimit: "8", impactBps: 525, minimumMarkupBps: 1_200, startingMarkupBps: 3_100 };
+    const hiddenLegacyRates = { ...settings, minimumMarkupBps: 12_000, startingMarkupBps: 15_000 };
+    expect(validateKnowledgeSectionPayload("advanced", {
+      modeCalculation: hiddenLegacyRates,
+      modeCalculations: {
+        pmc: hiddenLegacyRates,
+        sub_vendor: hiddenLegacyRates,
+        in_house_labor: settings,
+        in_house_material: settings
+      }
+    })).toEqual([]);
+    for (const scope of ["in_house", "in_house_labor", "in_house_material"] as const) {
+      const scopes = scope === "in_house"
+        ? { pmc: hiddenLegacyRates, sub_vendor: hiddenLegacyRates, in_house: hiddenLegacyRates }
+        : { pmc: hiddenLegacyRates, sub_vendor: hiddenLegacyRates, in_house_labor: settings, in_house_material: settings, [scope]: hiddenLegacyRates };
+      expect(validateKnowledgeSectionPayload("advanced", { modeCalculations: scopes }))
+        .toEqual(expect.arrayContaining([
+          expect.objectContaining({ path: `payload.modeCalculations.${scope}.minimumMarkupBps` }),
+          expect.objectContaining({ path: `payload.modeCalculations.${scope}.startingMarkupBps` })
+        ]));
+    }
   });
 
   it("validates independent PMC, Sub-Vendor and In-house calculations without requiring unused scopes", () => {
@@ -495,7 +626,12 @@ describe("AI estimator knowledge validation", () => {
     };
     expect(validateKnowledgeSectionPayload("pricing", {
       specifications: [
-        { id: "specification-standard", name: "Standard", description: null },
+        {
+          id: "specification-standard",
+          name: "Standard",
+          description: null,
+          brandId: "brand-expert"
+        },
         { id: "specification-premium", name: "Premium" }
       ],
       brands: [{ id: "brand-expert", name: "Expert", description: "Approved brand" }],
@@ -504,6 +640,68 @@ describe("AI estimator knowledge validation", () => {
       internalVendorNotes: null,
       priceEntries: [append, reference]
     })).toEqual([]);
+  });
+
+  it("accepts optional local Brand associations on descriptive and typed Specification rows", () => {
+    expect(validateKnowledgeSectionPayload("pricing", {
+      specifications: [
+        {
+          id: "specification-plywood",
+          name: "Plywood",
+          brandId: "brand-century-green"
+        },
+        {
+          ...specification("dropdown", "Laminate", ["Matte", "Gloss"], "Matte"),
+          brandId: "brand-century-green"
+        },
+        { id: "specification-glue", name: "Glue" }
+      ],
+      brands: [{ id: "brand-century-green", name: "Century Green" }]
+    })).toEqual([]);
+  });
+
+  it("uses one trimmed 240-character contract for local Brand identities and associations", () => {
+    const maximumBrandId = "b".repeat(240);
+    expect(validateKnowledgeSectionPayload("pricing", {
+      specifications: [{ id: "specification-plywood", name: "Plywood", brandId: maximumBrandId }],
+      brands: [{ id: maximumBrandId, name: "Maximum ID Brand" }]
+    })).toEqual([]);
+
+    const issues = validateKnowledgeSectionPayload("pricing", {
+      specifications: [{ id: "specification-plywood", name: "Plywood", brandId: " brand-century " }],
+      brands: [{ id: " brand-century ", name: "Century Green" }]
+    });
+    expect(issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "payload.specifications.0.brandId", code: "INVALID_REFERENCE" }),
+      expect.objectContaining({ path: "payload.brands.0.id", code: "INVALID_REFERENCE" })
+    ]));
+  });
+
+  it("rejects malformed, dangling, and ambiguous local Brand associations at the Item/part field", () => {
+    const tooLongBrandId = "b".repeat(241);
+    const issues = validateKnowledgeSectionPayload("pricing", {
+      specifications: [
+        { id: "specification-null", name: "Null", brandId: null },
+        { id: "specification-long", name: "Long", brandId: tooLongBrandId },
+        { id: "specification-missing", name: "Missing", brandId: "brand-missing" },
+        { id: "specification-ambiguous", name: "Ambiguous", brandId: "brand-duplicate" }
+      ],
+      brands: [
+        { id: "brand-duplicate", name: "Brand one" },
+        { id: "brand-duplicate", name: "Brand two" }
+      ]
+    });
+
+    for (const index of [0, 1, 2, 3]) {
+      expect(issues).toContainEqual(expect.objectContaining({
+        path: `payload.specifications.${index}.brandId`,
+        code: "INVALID_REFERENCE"
+      }));
+    }
+    expect(issues).toContainEqual(expect.objectContaining({
+      path: "payload.brands.1.id",
+      code: "DUPLICATE_ID"
+    }));
   });
 
   it("accepts business-only Budget commands and rejects every server-owned field", () => {

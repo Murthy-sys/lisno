@@ -22,6 +22,10 @@ import type {
   KnowledgeModeKind,
   KnowledgeExecutionSource,
   KnowledgePreview,
+  KnowledgeCreateQualityControlOptionInput,
+  KnowledgeQualityControlOption,
+  KnowledgeQualityControlOptionKind,
+  KnowledgeQualityControlOptionListResponse,
   KnowledgePermanentDeleteBasketResult,
   KnowledgeSectionEnvelope,
   KnowledgeSectionMutationEnvelope,
@@ -514,6 +518,23 @@ export function createKnowledgeSubBasket(basketId: string, input: { readonly nam
 
 export function getKnowledgeBasketQuality(basketId: string): Promise<KnowledgeBasketQuality> {
   return apiClient.get<KnowledgeBasketQuality>(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/quality`);
+}
+
+export function listKnowledgeQualityControlOptions(
+  kind: KnowledgeQualityControlOptionKind
+): Promise<KnowledgeQualityControlOptionListResponse> {
+  return apiClient.get<KnowledgeQualityControlOptionListResponse>(
+    withQuery(`${ADMIN_PREFIX}/quality-control-options`, { kind })
+  );
+}
+
+export function createKnowledgeQualityControlOption(
+  input: KnowledgeCreateQualityControlOptionInput
+): Promise<KnowledgeQualityControlOption> {
+  return apiClient.post<KnowledgeQualityControlOption>(
+    `${ADMIN_PREFIX}/quality-control-options`,
+    input
+  );
 }
 
 export function updateKnowledgeBasketQuality(basketId: string, input: {

@@ -3,7 +3,9 @@ import mongoose, { type ClientSession } from "mongoose";
 import type {
   KnowledgeAvailability,
   KnowledgeContext,
-  KnowledgePreview
+  KnowledgePreview,
+  KnowledgeQualityControlOptionKind,
+  KnowledgeQualityControlOptionReference
 } from "../contracts/ai-estimator-knowledge.js";
 import {
   calculateKnowledgePreview,
@@ -26,6 +28,8 @@ import {
   findCanonicalKnowledgePriorityById,
   type CanonicalKnowledgePriority
 } from "../domain/ai-estimator-knowledge-priority.js";
+import { isKnowledgeQualityControlOptionReference } from "../domain/ai-estimator-knowledge-quality-control-option.js";
+import { normalizeKnowledgeBudgetAlterationTarget } from "../domain/ai-estimator-knowledge-recommendation.js";
 import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../models/AiEstimatorKnowledgeMainLine.js";
@@ -35,6 +39,7 @@ import { AiEstimatorKnowledgePriorityModel } from "../models/AiEstimatorKnowledg
 import { AiEstimatorKnowledgeRevisionModel } from "../models/AiEstimatorKnowledgeRevision.js";
 import { AiEstimatorKnowledgeSectionModel } from "../models/AiEstimatorKnowledgeSection.js";
 import { AiEstimatorKnowledgeSurfaceModel } from "../models/AiEstimatorKnowledgeSurface.js";
+import { AiEstimatorKnowledgeSubBasketModel } from "../models/AiEstimatorKnowledgeSubBasket.js";
 import { AiEstimatorKnowledgeTaxVersionModel } from "../models/AiEstimatorKnowledgeTaxVersion.js";
 import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
 import type { PublicUser } from "./auth.service.js";
@@ -42,6 +47,10 @@ import {
   aiEstimatorKnowledgeActorGuard,
   type AiEstimatorKnowledgeActorGuard
 } from "./ai-estimator-knowledge-actor.js";
+import {
+  resolveKnowledgeQualityControlOptionReferenceNames,
+  type AiEstimatorKnowledgeQualityControlOptionService
+} from "./ai-estimator-knowledge-quality-control-option.service.js";
 import type { Clock } from "./workflow.js";
 import { systemClock } from "./workflow.js";
 import { mandatoryQualityParameters, readBasketQualityRevision } from "./ai-estimator-knowledge-basket-quality.js";
@@ -73,6 +82,10 @@ export interface AiEstimatorKnowledgeContextService {
 
 export interface AiEstimatorKnowledgeContextServiceDependencies {
   readonly actorGuard?: AiEstimatorKnowledgeActorGuard;
+  readonly qualityControlOptionResolver?: Pick<
+    AiEstimatorKnowledgeQualityControlOptionService,
+    "resolveReferenceNames"
+  >;
   readonly now?: Clock;
 }
 
@@ -80,6 +93,9 @@ export function createAiEstimatorKnowledgeContextService(
   dependencies: AiEstimatorKnowledgeContextServiceDependencies = {}
 ): AiEstimatorKnowledgeContextService {
   const actorGuard = dependencies.actorGuard ?? aiEstimatorKnowledgeActorGuard;
+  const qualityControlOptionResolver = dependencies.qualityControlOptionResolver ?? {
+    resolveReferenceNames: resolveKnowledgeQualityControlOptionReferenceNames
+  };
   const now = dependencies.now ?? systemClock;
 
   return {
@@ -119,7 +135,7 @@ export function createAiEstimatorKnowledgeContextService(
       const result = await mongoose.connection.transaction(
         async (session) => {
           await actorGuard.requireReadActor(actor, session);
-          return resolveContext(input, now(), session);
+          return resolveContext(input, now(), session, qualityControlOptionResolver);
         },
         {
           readConcern: { level: "snapshot" },
@@ -141,7 +157,11 @@ export function createAiEstimatorKnowledgeContextService(
 async function resolveContext(
   input: AiEstimatorKnowledgeContextRequest,
   evaluatedAt: Date,
-  session: ClientSession
+  session: ClientSession,
+  qualityControlOptionResolver: Pick<
+    AiEstimatorKnowledgeQualityControlOptionService,
+    "resolveReferenceNames"
+  >
 ): Promise<KnowledgeContext> {
   assertSingleModeSelector(input);
   const mainLine = asRow(
@@ -310,7 +330,11 @@ async function resolveContext(
   const contentDigest = requiredString(revision.contentDigest);
   if (basketQuality) {
     contextSections.quality = {
-      parameters: mandatoryQualityParameters(basketQuality.parameters),
+      parameters: await resolveQualityControlOptionNames(
+        mandatoryQualityParameters(basketQuality.parameters),
+        qualityControlOptionResolver,
+        session
+      ),
       source: { kind: "main_basket", basketId: input.mainBasketId, revisionId: basketQuality._id,
         revisionNumber: basketQuality.revisionNumber, contentDigest: basketQuality.contentDigest }
     };
@@ -348,6 +372,48 @@ async function resolveContext(
       quantity: input.quantity
     })
   };
+}
+
+async function resolveQualityControlOptionNames(
+  parameters: readonly Row[],
+  resolver: Pick<AiEstimatorKnowledgeQualityControlOptionService, "resolveReferenceNames">,
+  session: ClientSession
+): Promise<Row[]> {
+  const references = parameters.flatMap((parameter) => {
+    const values: KnowledgeQualityControlOptionReference[] = [];
+    if (isKnowledgeQualityControlOptionReference(parameter.responsibleRole)) {
+      values.push(parameter.responsibleRole);
+    }
+    const sampling = asRow(parameter.sampling);
+    if (sampling && isKnowledgeQualityControlOptionReference(sampling.unit)) {
+      values.push(sampling.unit);
+    }
+    return values;
+  });
+  if (references.length === 0) return parameters.map((parameter) => structuredClone(parameter));
+
+  const resolved = await resolver.resolveReferenceNames(references, session);
+  const names = new Map(
+    resolved.map((option) => [`${option.kind}:${option.id}`, option.name] as const)
+  );
+  const nameFor = (
+    kind: KnowledgeQualityControlOptionKind,
+    reference: KnowledgeQualityControlOptionReference
+  ): string | undefined => names.get(`${kind}:${reference}`);
+
+  return parameters.map((parameter) => {
+    const projected = structuredClone(parameter);
+    if (isKnowledgeQualityControlOptionReference(projected.responsibleRole)) {
+      projected.responsibleRole = nameFor("performer", projected.responsibleRole) ??
+        "Unavailable performed-by value";
+    }
+    const sampling = asRow(projected.sampling);
+    if (sampling && isKnowledgeQualityControlOptionReference(sampling.unit)) {
+      sampling.unit = nameFor("frequency", sampling.unit) ??
+        "Unavailable frequency value";
+    }
+    return projected;
+  });
 }
 
 async function resolveConfiguredPriority(
@@ -720,20 +786,57 @@ function filterSpecifications(payload: Row, requested: string | undefined): void
 async function resolveBudgetAlterationTargets(payload: Row, session: ClientSession): Promise<void> {
   const rules = activeRows(payload.budgetAlterations);
   if (!rules.length) return;
-  const targets = await AiEstimatorKnowledgeMainLineModel.find({ _id: { $in: rules.map((rule) => rule.targetMainLineId) } })
-    .select({ _id: 1, name: 1, status: 1, itemType: 1, basketId: 1, subBasketId: 1, activeRevisionId: 1 })
-    .session(session).lean().exec();
+  const normalized = rules.map((rule) => ({ rule, target: normalizeKnowledgeBudgetAlterationTarget(rule) }));
+  const mainLineIds = normalized.flatMap(({ target }) => target?.targetKind === "main_line" && typeof target.targetId === "string" ? [target.targetId] : []);
+  const subBasketIds = normalized.flatMap(({ target }) => target?.targetKind === "sub_basket" && typeof target.targetId === "string" ? [target.targetId] : []);
+  const basketIds = rules.flatMap((rule) => typeof rule.targetBasketId === "string" ? [rule.targetBasketId] : []);
+  const [targets, subBaskets, subBasketChildren, activeBaskets] = await Promise.all([
+    AiEstimatorKnowledgeMainLineModel.find({ _id: { $in: mainLineIds } })
+      .select({ _id: 1, name: 1, status: 1, itemType: 1, basketId: 1, subBasketId: 1, activeRevisionId: 1 })
+      .session(session).lean().exec(),
+    AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: subBasketIds } })
+      .select({ _id: 1, name: 1, basketId: 1 }).session(session).lean().exec(),
+    AiEstimatorKnowledgeMainLineModel.find({
+      subBasketId: { $in: subBasketIds },
+      status: { $in: ["draft", "active"] }
+    }).select({ _id: 1, basketId: 1, subBasketId: 1, itemType: 1, status: 1, activeRevisionId: 1 }).session(session).lean().exec(),
+    AiEstimatorKnowledgeBasketModel.find({ _id: { $in: basketIds }, status: "active" })
+      .select({ _id: 1 }).session(session).lean().exec()
+  ]);
   const byId = new Map(targets.map((target) => [String(target._id), target]));
+  const subBasketById = new Map(subBaskets.map((target) => [String(target._id), target]));
+  const activeBasketIds = new Set(activeBaskets.map((basket) => String(basket._id)));
   payload.budgetAlterations = rules.map((rule) => {
+    const normalizedTarget = normalizeKnowledgeBudgetAlterationTarget(rule);
+    if (normalizedTarget?.targetKind === "sub_basket") {
+      const subBasketId = String(normalizedTarget.targetId ?? "");
+      const target = subBasketById.get(subBasketId);
+      const compatible = target && target.basketId === rule.targetBasketId && activeBasketIds.has(String(rule.targetBasketId));
+      const children = compatible ? subBasketChildren.filter((child) => child.basketId === rule.targetBasketId && child.subBasketId === subBasketId) : [];
+      const temporaryChildCount = children.filter((child) => child.itemType === "temporary").length;
+      const availableChildCount = children.length;
+      const hasIncompleteChild = children.some((child) => child.itemType === "temporary"
+        || child.status !== "active" || typeof child.activeRevisionId !== "string");
+      return { ...rule, target: compatible ? {
+        kind: "sub_basket", subBasketId, name: target.name, basketId: target.basketId,
+        status: availableChildCount > 0 ? "available" : "unavailable",
+        availableChildCount, temporaryChildCount,
+        completionRequired: availableChildCount === 0 || hasIncompleteChild
+      } : {
+        kind: "sub_basket", subBasketId, status: "unavailable",
+        availableChildCount: 0, temporaryChildCount: 0, completionRequired: true
+      } };
+    }
     const target = byId.get(String(rule.targetMainLineId));
     const compatible = target && target.basketId === rule.targetBasketId
       && (target.subBasketId ?? null) === rule.targetSubBasketId
       && (target.itemType === "temporary" ? "temporary" : "catalog") === rule.targetType;
     return { ...rule, target: compatible ? {
-      mainLineId: String(target._id), name: target.name,
+      kind: "main_line", mainLineId: String(target._id), name: target.name,
       itemType: target.itemType === "temporary" ? "temporary" : "main_line",
-      status: target.status, activeRevisionId: target.activeRevisionId ?? null
-    } : { mainLineId: rule.targetMainLineId, status: "unavailable", activeRevisionId: null } };
+      status: target.status, activeRevisionId: target.activeRevisionId ?? null,
+      completionRequired: target.itemType === "temporary"
+    } : { kind: "main_line", mainLineId: rule.targetMainLineId, status: "unavailable", activeRevisionId: null, completionRequired: rule.targetType === "temporary" } };
   });
 }
 
@@ -780,15 +883,21 @@ function sanitizeSectionPayload(sectionKey: KnowledgeSectionKey, payload: Row): 
   if (sectionKey === "advanced") return publicAdvancedPayload(payload);
   if (sectionKey !== "pricing") return structuredClone(payload);
   const safe: Row = {};
+  const publicBrands = Array.isArray(payload.brands)
+    ? payload.brands
+      .map(publicNamedRow)
+      .filter((entry): entry is Row => entry !== null)
+    : [];
+  const brandsById = new Map(
+    publicBrands.map((brand) => [requiredString(brand.id), brand] as const)
+  );
   if (Array.isArray(payload.specifications)) {
     safe.specifications = payload.specifications
-      .map(publicSpecification)
+      .map((specification) => publicSpecification(specification, brandsById))
       .filter((entry): entry is Row => entry !== null);
   }
   if (Array.isArray(payload.brands)) {
-    safe.brands = payload.brands
-      .map(publicNamedRow)
-      .filter((entry): entry is Row => entry !== null);
+    safe.brands = publicBrands;
   }
   if (Object.hasOwn(payload, "technicalDescription")) {
     safe.technicalDescription = structuredClone(payload.technicalDescription);
@@ -856,8 +965,23 @@ function publicModeField(value: unknown): Row | null {
   };
 }
 
-function publicSpecification(value: unknown): Row | null {
-  return publicNamedRow(value);
+function publicSpecification(
+  value: unknown,
+  brandsById: ReadonlyMap<string, Row>
+): Row | null {
+  const row = asRow(value);
+  const safe = publicNamedRow(value);
+  if (!row || !safe) return null;
+  const brandId = optionalString(row.brandId);
+  const brand = brandId ? brandsById.get(brandId) : undefined;
+  if (brandId && brand) {
+    safe.brandId = brandId;
+    safe.brand = {
+      id: requiredString(brand.id),
+      name: requiredString(brand.name)
+    };
+  }
+  return safe;
 }
 
 function publicNamedRow(value: unknown): Row | null {

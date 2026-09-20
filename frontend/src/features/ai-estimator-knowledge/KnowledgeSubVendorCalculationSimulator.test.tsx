@@ -394,7 +394,8 @@ describe("Lisno margin calculation", () => {
     const { subVendorMarginBps, subVendorMarginAmountPaise, ...common } = subVendorResult;
     vi.mocked(previewKnowledge).mockResolvedValueOnce({ ...response(), subVendorCalculation: undefined,
       pmcCalculation: { ...common, pmcMarginBps: subVendorMarginBps, pmcMarginAmountPaise: subVendorMarginAmountPaise },
-      modeCalculation: { revisedUnitRatePaise: 13_888, revisedAmountPaise: 34_720, totalPaise: 46_872, appliedImpactBps: 1_250 } });
+      modeCalculation: { revisedUnitRatePaise: 13_888, revisedAmountPaise: 34_720, floorPricePaise: 46_293,
+        maximumDiscountBps: 1_333, discountBasis: "selling_price", totalPaise: 53_415, appliedImpactBps: 1_250 } });
     await settleCalculation();
     expect(within(dialog).getByRole("alert")).toHaveTextContent("did not return a Sub-Vendor calculation");
     expect(within(dialog).queryByRole("status", { name: "Calculation results" })).not.toBeInTheDocument();

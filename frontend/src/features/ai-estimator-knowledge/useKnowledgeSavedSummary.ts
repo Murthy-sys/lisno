@@ -1,7 +1,7 @@
 import { useQueries, useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import { ApiError } from "../../api/client";
-import { getKnowledgeBasketQuality, getKnowledgeItem, getKnowledgeSection, listKnowledgeSubBaskets } from "./knowledgeApi";
+import { getKnowledgeBasketQuality, getKnowledgeItem, getKnowledgeSection, listKnowledgeQualityControlOptions, listKnowledgeSubBaskets } from "./knowledgeApi";
 import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { projectKnowledgeSavedSummary } from "./knowledgeSavedSummary";
@@ -14,6 +14,7 @@ import {
   type SavedSummarySectionKey
 } from "./knowledgeSavedSummaryTypes";
 import type { KnowledgeItemDetail, KnowledgeJsonObject, KnowledgeJsonValue, KnowledgeMasterType } from "./knowledgeTypes";
+import { isQualityControlOptionReference, type QualityControlOptionCatalog } from "./knowledgeQuality";
 
 interface ReferenceState {
   readonly status: "ready" | "loading" | "error";
@@ -49,6 +50,18 @@ export function useKnowledgeSavedSummary(input: KnowledgeSavedSummaryInput): rea
     enabled: Boolean(item.basketId),
     staleTime: 30_000
   });
+  const frequencyOptionsQuery = useQuery({
+    queryKey: knowledgeQueryKeys.qualityControlOptions("frequency"),
+    queryFn: () => listKnowledgeQualityControlOptions("frequency"),
+    enabled: Boolean(item.basketId),
+    staleTime: 30_000
+  });
+  const performerOptionsQuery = useQuery({
+    queryKey: knowledgeQueryKeys.qualityControlOptions("performer"),
+    queryFn: () => listKnowledgeQualityControlOptions("performer"),
+    enabled: Boolean(item.basketId),
+    staleTime: 30_000
+  });
 
   const sections: Partial<Record<SavedSummarySectionKey, KnowledgeJsonObject>> = {};
   const notices: Record<SavedSummaryGroupKey, SavedSummaryNotice[]> = { overview: [], mode: [], recommendations: [], quality: [] };
@@ -64,6 +77,12 @@ export function useKnowledgeSavedSummary(input: KnowledgeSavedSummaryInput): rea
   const quality = allowedData(qualityQuery);
   const qualityMatches = quality?.basketId === item.basketId;
   notices.quality.push(...sourceNotices("quality", "Shared checklist", qualityQuery, Boolean(qualityMatches), Boolean(quality && !qualityMatches)));
+  const qualityOptions: QualityControlOptionCatalog = {
+    frequency: allowedData(frequencyOptionsQuery)?.items ?? [],
+    performer: allowedData(performerOptionsQuery)?.items ?? []
+  };
+  if (qualityMatches && qualityUsesCustomOption(quality.parameters, "frequency")) notices.quality.push(...sourceNotices("quality-frequency-options", "Frequency values", frequencyOptionsQuery, Boolean(allowedData(frequencyOptionsQuery))));
+  if (qualityMatches && qualityUsesCustomOption(quality.parameters, "performer")) notices.quality.push(...sourceNotices("quality-performer-options", "Performed-by values", performerOptionsQuery, Boolean(allowedData(performerOptionsQuery))));
 
   const rules = ["budgetAlterations", "recommendations", "exclusions"].flatMap((key) => objectRows(sections.recommendations?.[key]));
   const relationshipsDenied = Boolean(referenceStates?.relationships?.denied);
@@ -108,7 +127,7 @@ export function useKnowledgeSavedSummary(input: KnowledgeSavedSummaryInput): rea
   }
   if (rules.length) notices.recommendations.push(...referenceNotices("relationships", "Related item names", referenceStates?.relationships));
 
-  const projected = projectKnowledgeSavedSummary({ sections, quality: qualityMatches ? quality : undefined,
+  const projected = projectKnowledgeSavedSummary({ sections, quality: qualityMatches ? quality : undefined, qualityOptions,
     masters: Object.fromEntries(Object.entries(input.masters).filter(([type]) => !referenceStates?.masters?.[type as KnowledgeMasterType]?.denied)),
     baskets: relationshipsDenied ? [] : input.baskets, items, subBaskets });
   const labels = { overview: "Overview", mode: "Mode", recommendations: "Recommendation & Exclusions", quality: "Quality Parameters" };
@@ -151,4 +170,11 @@ function hasReference(value: KnowledgeJsonValue | undefined, keys: readonly stri
   if (!value || typeof value !== "object") return false;
   if (Array.isArray(value)) return value.some((entry) => hasReference(entry, keys));
   return Object.entries(value).some(([key, entry]) => keys.includes(key) && (typeof entry === "string" && Boolean(entry) || Array.isArray(entry) && entry.length > 0) || hasReference(entry, keys));
+}
+
+function qualityUsesCustomOption(parameters: readonly KnowledgeJsonObject[], kind: "frequency" | "performer"): boolean {
+  return parameters.some(parameter => kind === "performer"
+    ? isQualityControlOptionReference(parameter.responsibleRole)
+    : parameter.sampling !== null && typeof parameter.sampling === "object" && !Array.isArray(parameter.sampling)
+      && isQualityControlOptionReference((parameter.sampling as KnowledgeJsonObject).unit));
 }

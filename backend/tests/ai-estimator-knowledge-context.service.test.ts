@@ -16,16 +16,19 @@ describe("AI estimator knowledge context service", () => {
     const service = createAiEstimatorKnowledgeContextService({ actorGuard: actorGuard() });
     const modeCalculation = { baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
     const input = { modeCalculation, quantity: "1", quantityScale: 0, modeCalculationDiscountBps: 500 };
-    expect(await service.preview(ACTOR, input)).toMatchObject({ modeCalculation: { totalPaise: 214_500, discount: { rateBps: 500, effectiveMarkupBps: 3_000, amountPaise: 8_250 } } });
-    for (const invalid of [{ ...input, modeCalculationDiscountBps: 1_001 }, { ...input, modeCalculationMarkupBasis: "minimum" as const }]) {
-      await expect(service.preview(ACTOR, invalid)).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR", message: expect.stringContaining("below the minimum standard") });
+    expect(await service.preview(ACTOR, input)).toMatchObject({ modeCalculation: {
+      floorPricePaise: 220_000, maximumDiscountBps: 1_333, discountBasis: "selling_price", totalPaise: 241_154,
+      discount: { rateBps: 500, totalBeforeDiscountPaise: 253_846, amountPaise: 12_692 }
+    } });
+    for (const invalid of [{ ...input, modeCalculationDiscountBps: 1_334 }, { ...input, modeCalculationMarkupBasis: "minimum" as const }]) {
+      await expect(service.preview(ACTOR, invalid)).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR", message: expect.stringContaining("minimum gross-margin floor") });
     }
     await expect(service.preview(ACTOR, { quantityScale: 0, modeCalculationDiscountBps: 0 }))
       .rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" });
     expect(await service.preview(ACTOR, { inHouseCalculation: { labor: modeCalculation, material: { ...modeCalculation, baseRatePaise: 50_000 } }, quantity: "1", quantityScale: 0, modeCalculationDiscountBps: 1_000 }))
-      .toMatchObject({ inHouseCalculation: { labor: { totalPaise: 206_250 }, material: { totalPaise: 68_750 }, totalPaise: 275_000 } });
-    await expect(service.preview(ACTOR, { inHouseCalculation: { labor: modeCalculation, material: { ...modeCalculation, minimumMarkupBps: 3_000 } }, quantity: "1", quantityScale: 0, modeCalculationDiscountBps: 501 }))
-      .rejects.toMatchObject({ status: 400, message: expect.stringContaining("below the minimum standard") });
+      .toMatchObject({ inHouseCalculation: { labor: { totalPaise: 228_461 }, material: { totalPaise: 76_153 }, totalPaise: 304_614 } });
+    await expect(service.preview(ACTOR, { inHouseCalculation: { labor: modeCalculation, material: { ...modeCalculation, minimumMarkupBps: 3_000 } }, quantity: "1", quantityScale: 0, modeCalculationDiscountBps: 715 }))
+      .rejects.toMatchObject({ status: 400, message: expect.stringContaining("minimum gross-margin floor") });
   });
 
   it("returns the complete In-house total through the authorized preview service", async () => {
@@ -35,9 +38,13 @@ describe("AI estimator knowledge context service", () => {
     const material = { baseRatePaise: 65_000, lowQuantityLimit: "9", impactBps: 1_275, minimumMarkupBps: 1_800, startingMarkupBps: 3_600 };
     const input = { inHouseCalculation: { labor, material }, quantity: "1", quantityScale: 0 };
     expect(await service.preview(ACTOR, input)).toMatchObject({ inHouseCalculation: {
-      labor: { totalPaise: 55_350 }, material: { totalPaise: 99_672 }, totalPaise: 155_022
+      labor: { floorPricePaise: 48_913, maximumDiscountBps: 1_630, totalPaise: 58_442 },
+      material: { floorPricePaise: 89_376, maximumDiscountBps: 2_195, totalPaise: 114_513 },
+      totalPaise: 172_955
     } });
-    expect(await service.preview(ACTOR, { ...input, modeCalculationMarkupBasis: "minimum" })).toMatchObject({ inHouseCalculation: { totalPaise: 135_080 } });
+    expect(await service.preview(ACTOR, { ...input, modeCalculationMarkupBasis: "minimum" })).toMatchObject({ inHouseCalculation: {
+      labor: { maximumDiscountBps: 0 }, material: { maximumDiscountBps: 0 }, totalPaise: 138_289
+    } });
     expect(requireReadActor).toHaveBeenCalledWith(ACTOR);
     for (const invalid of [
       { ...input, quantity: null }, { ...input, modeCalculation: labor },
@@ -48,7 +55,7 @@ describe("AI estimator knowledge context service", () => {
     await expect(service.preview({ ...ACTOR, id: "other", role: "client" }, input)).rejects.toBe(denial);
   });
 
-  it("calculates additive Mode markup without changing legacy gross-margin results", async () => {
+  it("calculates true In-house margin without changing the separate legacy price preview", async () => {
     const service = createAiEstimatorKnowledgeContextService({ actorGuard: actorGuard() });
     const input = { quantity: "1", quantityScale: 0, unitRatePaise: 165_000, startMarginBps: 3_500 };
     const legacy = await service.preview(ACTOR, input);
@@ -57,17 +64,22 @@ describe("AI estimator knowledge context service", () => {
       baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500
     } });
     expect(preview).toEqual({ ...legacy, modeCalculation: {
-      revisedUnitRatePaise: 165_000, revisedAmountPaise: 165_000, totalPaise: 222_750, appliedImpactBps: 1_000
+      revisedUnitRatePaise: 165_000, revisedAmountPaise: 165_000, floorPricePaise: 220_000,
+      maximumDiscountBps: 1_333, discountBasis: "selling_price", totalPaise: 253_846, appliedImpactBps: 1_000
     } });
     const minimum = await service.preview(ACTOR, { ...input, modeCalculationMarkupBasis: "minimum", modeCalculation: {
       baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500
     } });
-    expect(minimum).toEqual({ ...legacy, modeCalculation: { ...preview.modeCalculation, totalPaise: 206_250 } });
+    expect(minimum).toEqual({ ...legacy, modeCalculation: {
+      revisedUnitRatePaise: 165_000, revisedAmountPaise: 165_000, floorPricePaise: 220_000,
+      maximumDiscountBps: 0, discountBasis: "selling_price", totalPaise: 220_000, appliedImpactBps: 1_000
+    } });
     const customImpact = await service.preview(ACTOR, { ...input, modeCalculation: {
       baseRatePaise: 150_000, lowQuantityLimit: "15", impactBps: 1_250, minimumMarkupBps: 2_500, startingMarkupBps: 3_500
     } });
     expect(customImpact).toEqual({ ...legacy, modeCalculation: {
-      revisedUnitRatePaise: 168_750, revisedAmountPaise: 168_750, totalPaise: 227_813, appliedImpactBps: 1_250
+      revisedUnitRatePaise: 168_750, revisedAmountPaise: 168_750, floorPricePaise: 225_000,
+      maximumDiscountBps: 1_333, discountBasis: "selling_price", totalPaise: 259_615, appliedImpactBps: 1_250
     } });
     await expect(service.preview(ACTOR, { quantityScale: 0, modeCalculation: {
       baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500

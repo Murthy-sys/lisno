@@ -87,13 +87,13 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-09-17.project-procurement.v1"
+      "2026-09-20.quality-control-options.v1"
     );
   });
 
-  it("publishes all 132 unique permissions with project procurement in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(132);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(132);
+  it("publishes all 135 unique permissions with quality option creation in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(135);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(135);
     expect(PERMISSION_CODES).toContain("estimation.design_upload.delete");
     expect(PERMISSION_CODES).toContain("projects.initiate");
     expect(PERMISSION_CODES).toContain("organization.estimators.read");
@@ -107,7 +107,10 @@ describe("frontend authorization contract", () => {
       ...invitationPermissions,
       "access_request.create"
     ]);
-    expect(PERMISSION_CODES.slice(-24)).toEqual([
+    expect(PERMISSION_CODES.slice(-30)).toEqual([
+      "access_request.review.read",
+      "access_request.review.decide",
+      "project_access_grant.revoke",
       "execution.worker_assignment.override",
       ...procurementPermissions,
       ...projectFinancePermissions,
@@ -121,8 +124,14 @@ describe("frontend authorization contract", () => {
       "admin.dashboard.read",
       "chat.read", "chat.send", "chat.issue", "chat.read_state", "chat.participants.manage",
       "procurement.items.read", "procurement.items.manage",
-      "procurement.vendors.read", "procurement.vendors.create"
+      "procurement.vendors.read", "procurement.vendors.create",
+      "procurement.vendor_suggestions.read",
+      "procurement.vendor_suggestions.manage",
+      "ai_estimator_knowledge.quality_control_options.create"
     ]);
+    expect(PERMISSION_CODES.at(-1)).toBe(
+      "ai_estimator_knowledge.quality_control_options.create"
+    );
     expect(
       PERMISSION_CODES.filter((permission) =>
         procurementPermissions.includes(permission as never)
@@ -145,8 +154,8 @@ describe("frontend authorization contract", () => {
     ).toEqual(projectFinancePermissions);
   });
 
-  it("keeps the protected frontend registry at exactly 33 routes", () => {
-    expect(ROUTE_REGISTRY).toHaveLength(33);
+  it("keeps the protected frontend registry at exactly 35 routes", () => {
+    expect(ROUTE_REGISTRY).toHaveLength(35);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).toEqual(
       expect.arrayContaining([
         "/project-messages", "/projects/:projectId/messages",

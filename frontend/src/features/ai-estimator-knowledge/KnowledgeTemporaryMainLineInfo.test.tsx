@@ -25,8 +25,14 @@ describe("temporary item Main Line info", () => {
     expect(screen.getByText("Draft reference")).toBeVisible();
     expect(screen.getAllByText("Active reference")).toHaveLength(2);
     expect(screen.getByText(/Disabled rule/)).toBeVisible();
+    expect(screen.getAllByText(/this temporary item can be added/)).toHaveLength(3);
     expect(screen.getAllByText(reference.rules[0].reason, { exact: false })).toHaveLength(3);
     expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  });
+
+  it("identifies a whole Sub-Basket incoming reference when targetKind is available", () => {
+    setup([{ ...reference, rules: [{ ...reference.rules[0], targetKind: "sub_basket" }] }]);
+    expect(screen.getByText(/this temporary item's whole Sub-Basket can be added/)).toBeVisible();
   });
 
   it("shows compact name and Basket context on cards without repeating all rule explanations", () => {

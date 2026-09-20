@@ -6,6 +6,7 @@ import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoord
 import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeBasketQualityRevisionModel } from "../src/models/AiEstimatorKnowledgeBasketQualityRevision.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnowledgeMainLine.js";
+import { AiEstimatorKnowledgeQualityControlOptionModel } from "../src/models/AiEstimatorKnowledgeQualityControlOption.js";
 import { AiEstimatorKnowledgeRevisionModel } from "../src/models/AiEstimatorKnowledgeRevision.js";
 import { AiEstimatorKnowledgeSectionModel } from "../src/models/AiEstimatorKnowledgeSection.js";
 import { AiEstimatorKnowledgeUomModel } from "../src/models/AiEstimatorKnowledgeUom.js";
@@ -13,6 +14,7 @@ import { UserModel } from "../src/models/User.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { createAiEstimatorKnowledgeContextService } from "../src/services/ai-estimator-knowledge-context.service.js";
 import { createAiEstimatorKnowledgeItemService } from "../src/services/ai-estimator-knowledge-item.service.js";
+import { createAiEstimatorKnowledgeQualityControlOptionService } from "../src/services/ai-estimator-knowledge-quality-control-option.service.js";
 import { createAiEstimatorKnowledgeReferenceService } from "../src/services/ai-estimator-knowledge-reference.service.js";
 import { basketQualityDigest } from "../src/services/ai-estimator-knowledge-basket-quality.js";
 import { createAuditService } from "../src/services/audit.service.js";
@@ -37,6 +39,7 @@ beforeAll(async () => {
   await Promise.all([
     AuditEventModel.syncIndexes(), AiEstimatorKnowledgeBasketModel.syncIndexes(),
     AiEstimatorKnowledgeBasketQualityRevisionModel.syncIndexes(), AiEstimatorKnowledgeMainLineModel.syncIndexes(),
+    AiEstimatorKnowledgeQualityControlOptionModel.syncIndexes(),
     AiEstimatorKnowledgeRevisionModel.syncIndexes(), AiEstimatorKnowledgeSectionModel.syncIndexes(),
     AiEstimatorKnowledgeUomModel.syncIndexes()
   ]);
@@ -108,6 +111,31 @@ describe("Main Basket shared quality checklist replica-set invariants", { timeou
     expect(await item.history(SUPER_ADMIN, line.mainLineId, { limit: 20, offset: 0 })).toEqual(itemHistory);
   });
 
+  it("reads immutable legacy controls without rewriting or silently canonicalizing them", async () => {
+    const { reference } = services();
+    const parameters = [{
+      id: "legacy-controls", type: "boolean", label: "Legacy inspection control",
+      responsibleRole: "Site supervisor",
+      sampling: { method: "percentage", value: 10, unit: "installed fixtures" }
+    }];
+    const revisionId = "legacy-control-quality";
+    const contentDigest = basketQualityDigest(BASKET_ID, parameters);
+    await AiEstimatorKnowledgeBasketQualityRevisionModel.create({
+      _id: revisionId, basketId: BASKET_ID, revisionNumber: 1, parameters,
+      contentDigest, createdById: SUPER_ADMIN.id, createdAt: NOW
+    });
+    await AiEstimatorKnowledgeBasketModel.updateOne({ _id: BASKET_ID }, { $set: { qualityRevisionId: revisionId } });
+
+    expect(await reference.getBasketQuality(SUPER_ADMIN, BASKET_ID)).toMatchObject({
+      revisionId, contentDigest,
+      parameters: [{
+        ...parameters[0], required: true, active: true
+      }]
+    });
+    expect((await AiEstimatorKnowledgeBasketQualityRevisionModel.findById(revisionId).lean())?.parameters)
+      .toEqual(parameters);
+  });
+
   it("distinguishes an unset checklist from an explicitly saved empty checklist", async () => {
     const { reference } = services();
     expect(await reference.getBasketQuality(SUPER_ADMIN, BASKET_ID)).toMatchObject({
@@ -163,13 +191,13 @@ describe("Main Basket shared quality checklist replica-set invariants", { timeou
     const first = await reference.updateBasketQuality(SUPER_ADMIN, BASKET_ID, { expectedVersion: 1, parameters: [electricalCheck()] });
     const historical = await AiEstimatorKnowledgeBasketQualityRevisionModel.findById(first.revisionId).lean();
     const pop = await reference.updateBasketQuality(SUPER_ADMIN, OTHER_BASKET_ID, {
-      expectedVersion: 1, parameters: [electricalCheck({ id: "pop-level", label: "Is the finished ceiling level?", sampling: { method: "all", unit: "ceiling areas" } })]
+      expectedVersion: 1, parameters: [electricalCheck({ id: "pop-level", label: "Is the finished ceiling level?", sampling: { method: "all", unit: "zone" } })]
     });
     const second = await reference.updateBasketQuality(SUPER_ADMIN, BASKET_ID, {
-      expectedVersion: first.version, parameters: [electricalCheck({ sampling: { method: "percentage", value: 10.5, unit: "installed electrical fixtures" } })]
+      expectedVersion: first.version, parameters: [electricalCheck({ sampling: { method: "fixed_count", value: 1, unit: "project" } })]
     });
     expect(second).toMatchObject({ version: 3, revisionNumber: 2 });
-    expect((await reference.getBasketQuality(SUPER_ADMIN, BASKET_ID)).parameters[0]).toMatchObject({ sampling: { value: 10.5 } });
+    expect((await reference.getBasketQuality(SUPER_ADMIN, BASKET_ID)).parameters[0]).toMatchObject({ sampling: { method: "fixed_count", value: 1, unit: "project" } });
     expect(second.revisionId).not.toBe(first.revisionId);
     expect(second.contentDigest).not.toBe(first.contentDigest);
     await expect(AiEstimatorKnowledgeBasketQualityRevisionModel.updateOne({ _id: first.revisionId }, { $set: { parameters: [] } }))
@@ -180,6 +208,188 @@ describe("Main Basket shared quality checklist replica-set invariants", { timeou
     expect(await reference.getBasketQuality(SUPER_ADMIN, OTHER_BASKET_ID)).toEqual(pop);
     expect(await AiEstimatorKnowledgeBasketQualityRevisionModel.countDocuments({ basketId: BASKET_ID })).toBe(2);
     expect(await AiEstimatorKnowledgeBasketQualityRevisionModel.countDocuments({ basketId: OTHER_BASKET_ID })).toBe(1);
+  });
+
+  it("bulk-resolves unequal custom Frequency and Performed by references and rejects missing or swapped kinds atomically", async () => {
+    const performerId = "qco_111111111111111111111111";
+    const frequencyId = "qco_222222222222222222222222";
+    await AiEstimatorKnowledgeQualityControlOptionModel.create([
+      {
+        _id: performerId,
+        kind: "performer",
+        name: "Site engineer",
+        normalizedName: "site engineer",
+        version: 1,
+        createdById: SUPER_ADMIN.id,
+        updatedById: SUPER_ADMIN.id,
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      {
+        _id: frequencyId,
+        kind: "frequency",
+        name: "Per floor",
+        normalizedName: "per floor",
+        version: 1,
+        createdById: SUPER_ADMIN.id,
+        updatedById: SUPER_ADMIN.id,
+        createdAt: NOW,
+        updatedAt: NOW
+      }
+    ]);
+    const { reference } = services();
+    const saved = await reference.updateBasketQuality(SUPER_ADMIN, BASKET_ID, {
+      expectedVersion: 1,
+      parameters: [electricalCheck({
+        responsibleRole: performerId,
+        sampling: { method: "all", unit: frequencyId }
+      })]
+    });
+    expect(saved.parameters[0]).toMatchObject({
+      responsibleRole: performerId,
+      sampling: { method: "all", unit: frequencyId }
+    });
+
+    for (const [label, responsibleRole, unit, expectedFields] of [
+      [
+        "swapped kinds",
+        frequencyId,
+        performerId,
+        {
+          "payload.parameters.0.responsibleRole": "The selected value is not a Performed by option.",
+          "payload.parameters.0.sampling.unit": "The selected value is not a Frequency option."
+        }
+      ],
+      [
+        "missing references",
+        "qco_333333333333333333333333",
+        "qco_444444444444444444444444",
+        {
+          "payload.parameters.0.responsibleRole": "Select an available Performed by value.",
+          "payload.parameters.0.sampling.unit": "Select an available Frequency value."
+        }
+      ]
+    ] as const) {
+      await expect(reference.updateBasketQuality(SUPER_ADMIN, OTHER_BASKET_ID, {
+        expectedVersion: 1,
+        parameters: [electricalCheck({
+          id: `invalid-${label.replace(/\s+/gu, "-")}`,
+          responsibleRole,
+          sampling: { method: "all", unit }
+        })]
+      })).rejects.toMatchObject({
+        status: 400,
+        code: "VALIDATION_ERROR",
+        fields: expectedFields
+      });
+    }
+    expect(await AiEstimatorKnowledgeBasketQualityRevisionModel.countDocuments({ basketId: OTHER_BASKET_ID })).toBe(0);
+    expect(await AuditEventModel.countDocuments({ entityId: OTHER_BASKET_ID })).toBe(0);
+    expect(await AiEstimatorKnowledgeBasketModel.findById(OTHER_BASKET_ID).lean()).toMatchObject({
+      version: 1,
+      qualityRevisionId: null
+    });
+  });
+
+  it("projects custom Quality Control names into context without changing immutable revision lineage", async () => {
+    const performerId = "qco_111111111111111111111111";
+    const frequencyId = "qco_222222222222222222222222";
+    const missingPerformerId = "qco_333333333333333333333333";
+    const missingFrequencyId = "qco_444444444444444444444444";
+    await AiEstimatorKnowledgeQualityControlOptionModel.create([
+      {
+        _id: performerId,
+        kind: "performer",
+        name: "Site engineer",
+        normalizedName: "site engineer",
+        version: 1,
+        createdById: SUPER_ADMIN.id,
+        updatedById: SUPER_ADMIN.id,
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      {
+        _id: frequencyId,
+        kind: "frequency",
+        name: "Per floor",
+        normalizedName: "per floor",
+        version: 1,
+        createdById: SUPER_ADMIN.id,
+        updatedById: SUPER_ADMIN.id,
+        createdAt: NOW,
+        updatedAt: NOW
+      }
+    ]);
+    const { context, item } = services();
+    const line = await activateItem(item, "Context option resolution", "main_line", {
+      configureQuality: false
+    });
+    const parameters = [
+      electricalCheck({
+        id: "resolved-controls",
+        responsibleRole: performerId,
+        sampling: { method: "all", unit: frequencyId }
+      }),
+      electricalCheck({
+        id: "wrong-kind-controls",
+        responsibleRole: frequencyId,
+        sampling: { method: "all", unit: performerId }
+      }),
+      electricalCheck({
+        id: "missing-controls",
+        responsibleRole: missingPerformerId,
+        sampling: { method: "all", unit: missingFrequencyId }
+      })
+    ];
+    const revisionId = "context-custom-control-options";
+    const contentDigest = basketQualityDigest(BASKET_ID, parameters);
+    await AiEstimatorKnowledgeBasketQualityRevisionModel.create({
+      _id: revisionId,
+      basketId: BASKET_ID,
+      revisionNumber: 1,
+      parameters,
+      contentDigest,
+      createdById: SUPER_ADMIN.id,
+      createdAt: NOW
+    });
+    await AiEstimatorKnowledgeBasketModel.updateOne(
+      { _id: BASKET_ID },
+      { $set: { qualityRevisionId: revisionId } }
+    );
+    const storedBefore = await AiEstimatorKnowledgeBasketQualityRevisionModel.findById(revisionId).lean();
+    const historyBefore = await item.history(SUPER_ADMIN, line.mainLineId, { limit: 20, offset: 0 });
+
+    const resolved = await context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID,
+      mainLineId: line.mainLineId
+    });
+    const projected = (resolved.sections.quality as { parameters: KnowledgeQualityParameter[] }).parameters;
+    expect(projected).toEqual([
+      expect.objectContaining({
+        id: "resolved-controls",
+        responsibleRole: "Site engineer",
+        sampling: { method: "all", unit: "Per floor" }
+      }),
+      expect.objectContaining({
+        id: "wrong-kind-controls",
+        responsibleRole: "Unavailable performed-by value",
+        sampling: { method: "all", unit: "Unavailable frequency value" }
+      }),
+      expect.objectContaining({
+        id: "missing-controls",
+        responsibleRole: "Unavailable performed-by value",
+        sampling: { method: "all", unit: "Unavailable frequency value" }
+      })
+    ]);
+    expect(JSON.stringify(resolved.sections.quality)).not.toContain("qco_");
+    expect(resolved.lineage).toMatchObject({
+      basketQualityRevisionId: revisionId,
+      basketQualityContentDigest: contentDigest
+    });
+    expect(await AiEstimatorKnowledgeBasketQualityRevisionModel.findById(revisionId).lean())
+      .toEqual(storedBefore);
+    expect(await item.history(SUPER_ADMIN, line.mainLineId, { limit: 20, offset: 0 }))
+      .toEqual(historyBefore);
   });
 
   it("uses basket version CAS so a competing save has exactly one winner and one committed revision", async () => {
@@ -208,7 +418,14 @@ describe("Main Basket shared quality checklist replica-set invariants", { timeou
     ["photo evidence with missing minimum", [electricalCheck({ evidence: { photos: true, documents: false, video: false } })]],
     ["photo count without photos", [electricalCheck({ evidence: { photos: false, documents: false, video: false, minPhotosPerSample: 1 } })]],
     ["duplicate row identity", [electricalCheck(), electricalCheck()]],
-    ["unknown metadata", [{ ...electricalCheck(), automatedPass: true }]]
+    ["unknown metadata", [{ ...electricalCheck(), automatedPass: true }]],
+    ["missing severity", [electricalCheck({ severity: null })]],
+    ["legacy performer", [electricalCheck({ responsibleRole: "Site supervisor" })]],
+    ["legacy frequency", [electricalCheck({ sampling: { method: "all", unit: "fixtures" } })]],
+    ["malformed performer reference", [electricalCheck({ responsibleRole: "qco_ABC" })]],
+    ["malformed frequency reference", [electricalCheck({ sampling: { method: "all", unit: "qco_123" } })]],
+    ["incomplete number range", [electricalCheck({ type: "number", minimum: "1", maximum: null, unit: "mm" })]],
+    ["reversed number range", [electricalCheck({ type: "number", minimum: "2", maximum: "1", unit: "mm" })]]
   ])("rejects invalid %s without writing data or audit events", async (_name, parameters) => {
     const { reference } = services();
     await expect(reference.updateBasketQuality(SUPER_ADMIN, BASKET_ID, { expectedVersion: 1, parameters }))
@@ -220,14 +437,23 @@ describe("Main Basket shared quality checklist replica-set invariants", { timeou
 
   it("enforces the 200-row and 256 KiB limits, including their valid boundaries", async () => {
     const { reference } = services();
-    const rows = Array.from({ length: 200 }, (_, index) => ({ id: `check-${index}`, type: "checkbox" as const, label: `Quality check ${index}` }));
+    const rows = Array.from({ length: 200 }, (_, index) => ({
+      id: `check-${index}`, type: "checkbox" as const, label: `Quality check ${index}`,
+      severity: "minor" as const, responsibleRole: "site", sampling: { method: "all" as const, unit: "unit" }
+    }));
     const first = await reference.updateBasketQuality(SUPER_ADMIN, BASKET_ID, { expectedVersion: 1, parameters: rows });
     expect(first.parameters).toHaveLength(200);
     await expect(reference.updateBasketQuality(SUPER_ADMIN, BASKET_ID, {
-      expectedVersion: first.version, parameters: [...rows, { id: "check-201", type: "checkbox", label: "One too many" }]
+      expectedVersion: first.version, parameters: [...rows, {
+        id: "check-201", type: "checkbox", label: "One too many", severity: "minor",
+        responsibleRole: "site", sampling: { method: "all", unit: "unit" }
+      }]
     })).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" });
 
-    const largeRows = Array.from({ length: 70 }, (_, index) => ({ id: `large-${index}`, type: "checkbox" as const, label: "Check", instructions: "x", required: true, active: true }));
+    const largeRows = Array.from({ length: 70 }, (_, index) => ({
+      id: `large-${index}`, type: "checkbox" as const, label: "Check", instructions: "x", required: true, active: true,
+      severity: "minor" as const, responsibleRole: "site", sampling: { method: "all" as const, unit: "unit" }
+    }));
     let remainingBytes = 256 * 1024 - Buffer.byteLength(JSON.stringify({ parameters: largeRows }), "utf8");
     for (const row of largeRows) {
       const bytes = Math.min(3999, remainingBytes);
@@ -436,10 +662,23 @@ describe("Main Basket shared quality checklist replica-set invariants", { timeou
 
 function services() {
   const audit = createAuditService(createMemoryRepository());
+  const qualityControlOptions = createAiEstimatorKnowledgeQualityControlOptionService({
+    audit,
+    now: () => NOW
+  });
   return {
-    reference: createAiEstimatorKnowledgeReferenceService({ audit, now: () => NOW, createId: nextId }),
+    reference: createAiEstimatorKnowledgeReferenceService({
+      audit,
+      now: () => NOW,
+      createId: nextId,
+      qualityControlOptionValidator: qualityControlOptions
+    }),
     item: createAiEstimatorKnowledgeItemService({ audit, now: () => NOW, uuid: nextId }),
-    context: createAiEstimatorKnowledgeContextService({ now: () => NOW })
+    context: createAiEstimatorKnowledgeContextService({
+      now: () => NOW,
+      qualityControlOptionResolver: qualityControlOptions
+    }),
+    qualityControlOptions
   };
 }
 
@@ -470,9 +709,9 @@ function electricalCheck(overrides: Partial<KnowledgeQualityParameter> = {}): Kn
     required: true, category: "Installation", active: true,
     instructions: "Photograph the actual installed fixing points at the site.",
     acceptanceCriteria: "Fixings are secure and no exposed conductors are visible.",
-    stage: "After installation", checkMethod: "visual", severity: "major", responsibleRole: "Site supervisor",
+    stage: "After installation", checkMethod: "visual", severity: "major", responsibleRole: "site",
     failureAction: "Record the defect and reinspect after correction.",
-    sampling: { method: "percentage", value: 10, unit: "installed electrical fixtures" },
+    sampling: { method: "all", unit: "unit" },
     evidence: { photos: true, documents: false, video: false, minPhotosPerSample: 1 }, ...overrides
   };
 }

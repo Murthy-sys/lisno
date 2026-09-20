@@ -160,12 +160,66 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
         const validEqual = typeof oldNumber === "string" && typeof currentNumber === "string" ? oldNumber === currentNumber
           : typeof oldNumber === "object" && typeof currentNumber === "object" && oldNumber.status === "valid" && currentNumber.status === "valid" && oldNumber.paise === currentNumber.paise;
         if (baseline[name] === current[name] || (!pending?.invalidFields.includes(name) && validEqual)) return [];
-        const label = name === "lowQuantityLimit" && input.uomLabel && !["Unavailable", "Loading…", "Not set"].includes(input.uomLabel) ? `${calculationFields[name]} (${input.uomLabel})` : calculationFields[name];
+        const inHouseLabel = scope === "in_house_labor" || scope === "in_house_material"
+          ? name === "minimumRate" ? "Min. Gross Margin (%)" : name === "startingRate" ? "Starting Gross Margin (%)" : undefined
+          : undefined;
+        const label = name === "lowQuantityLimit" && input.uomLabel && !["Unavailable", "Loading…", "Not set"].includes(input.uomLabel) ? `${calculationFields[name]} (${input.uomLabel})` : inHouseLabel ?? calculationFields[name];
         return [field(name, label, current[name])];
       });
       if (fields.length) add(`calculation:${scope}`, calculationLabels[scope], [{ key: `calculation:${scope}`, title: "Calculation inputs", kind: "updated", fields, ...(pending?.invalidFields.length ? { incomplete: true } : {}) }]);
     }
   }
-  if (input.pricingBaseline) add("specifications", "Specifications · Shared", rows(pendingObjectRows(input.pricingBaseline.specifications), pendingObjectRows(input.pricingDraft.specifications), "specification", "name", "Specification", { name: "Name", description: "Description" }, { required: ["name"], normalize: (row) => ({ ...row, name: row.name ?? "", description: row.description ?? "" }) }));
+  if (input.pricingBaseline) {
+    add("brands", "Brands · Shared", rows(
+      pendingObjectRows(input.pricingBaseline.brands),
+      pendingObjectRows(input.pricingDraft.brands),
+      "brand",
+      "name",
+      "Brand",
+      {
+        name: "Brand name",
+        description: "Description"
+      },
+      { required: ["name"] }
+    ));
+    const brandNames = new Map(pendingObjectRows(input.pricingDraft.brands).flatMap((brand) => {
+      const id = pendingText(brand.id).trim();
+      const name = pendingText(brand.name).trim();
+      return id && name ? [[id, name] as const] : [];
+    }));
+    add("specifications", "Specifications · Shared", rows(
+      pendingObjectRows(input.pricingBaseline.specifications),
+      pendingObjectRows(input.pricingDraft.specifications),
+      "specification",
+      "name",
+      "Item",
+      {
+        name: "Item name",
+        brandId: "Brand name",
+        description: "Brief description"
+      },
+      {
+        required: ["name"],
+        normalize: (row) => ({
+          ...row,
+          name: row.name ?? "",
+          brandId: row.brandId ?? "",
+          description: row.description ?? ""
+        }),
+        format: (name, value) => name === "brandId"
+          ? resolvePendingBrand(value, brandNames)
+          : value
+      }
+    ));
+  }
   return groups;
+}
+
+function resolvePendingBrand(
+  value: unknown,
+  brandNames: ReadonlyMap<string, string>
+): string {
+  const id = pendingText(value).trim();
+  if (!id) return "Not configured";
+  return brandNames.get(id) ?? "Unavailable brand";
 }

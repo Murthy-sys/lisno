@@ -1,10 +1,74 @@
 import type { KnowledgeValidationIssue } from "./knowledgeSectionValidation";
-import type { KnowledgeJsonObject, KnowledgeJsonValue } from "./knowledgeTypes";
+import type {
+  KnowledgeJsonObject,
+  KnowledgeJsonValue,
+  KnowledgeQualityControlOptionSummary,
+  KnowledgeQualityControlOptionKind,
+  KnowledgeQualityControlOptionReference
+} from "./knowledgeTypes";
 
 export const QUALITY_PARAMETER_TYPES = ["text", "number", "dropdown", "radio", "checkbox", "multi_select", "boolean"] as const;
 export const QUALITY_CHECK_METHODS = ["visual", "measurement", "functional_test", "document_review"] as const;
 export const QUALITY_SEVERITIES = ["critical", "major", "minor"] as const;
 export const QUALITY_SAMPLING_METHODS = ["all", "percentage", "fixed_count"] as const;
+export const QUALITY_PERFORMERS = ["site", "pm", "procurement", "vendor"] as const;
+export const QUALITY_FREQUENCIES = ["per_unit", "per_room", "per_zone", "per_batch", "once_per_project"] as const;
+export type QualitySeverity = typeof QUALITY_SEVERITIES[number];
+export type QualityPerformer = typeof QUALITY_PERFORMERS[number];
+export type QualityFrequency = typeof QUALITY_FREQUENCIES[number];
+export type QualityControlSelection = QualityFrequency | QualityPerformer | KnowledgeQualityControlOptionReference;
+export type QualityControlOptionCatalog = Readonly<Record<KnowledgeQualityControlOptionKind, readonly KnowledgeQualityControlOptionSummary[]>>;
+export const EMPTY_QUALITY_CONTROL_OPTION_CATALOG: QualityControlOptionCatalog = Object.freeze({ frequency: Object.freeze([]), performer: Object.freeze([]) });
+const QUALITY_CONTROL_OPTION_REFERENCE = /^qco_[a-f0-9]{24}$/u;
+export const QUALITY_SEVERITY_OPTIONS: readonly { readonly value: QualitySeverity; readonly label: string; readonly meaning: string }[] = [
+  { value: "critical", label: "Critical", meaning: "Blocking; PM sign-off policy applies." },
+  { value: "major", label: "Major", meaning: "Rectify before the next stage." },
+  { value: "minor", label: "Minor", meaning: "Observation; non-blocking." }
+];
+export const QUALITY_PERFORMER_OPTIONS: readonly { readonly value: QualityPerformer; readonly label: string }[] = [
+  { value: "site", label: "Site" }, { value: "pm", label: "PM" },
+  { value: "procurement", label: "Procurement" }, { value: "vendor", label: "Vendor" }
+];
+export const QUALITY_FREQUENCY_OPTIONS: readonly { readonly value: QualityFrequency; readonly label: string; readonly sampling: KnowledgeJsonObject }[] = [
+  { value: "per_unit", label: "Per unit", sampling: { method: "all", unit: "unit" } },
+  { value: "per_room", label: "Per room", sampling: { method: "all", unit: "room" } },
+  { value: "per_zone", label: "Per zone", sampling: { method: "all", unit: "zone" } },
+  { value: "per_batch", label: "Per batch", sampling: { method: "all", unit: "batch" } },
+  { value: "once_per_project", label: "Once per project", sampling: { method: "fixed_count", value: 1, unit: "project" } }
+];
+
+export function isQualityControlOptionReference(value: unknown): value is KnowledgeQualityControlOptionReference {
+  return typeof value === "string" && QUALITY_CONTROL_OPTION_REFERENCE.test(value);
+}
+
+export function normalizeQualityControlOptionName(value: string): string {
+  return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase("en-US");
+}
+
+export function qualityControlOptionByReference(
+  catalog: QualityControlOptionCatalog | undefined,
+  kind: KnowledgeQualityControlOptionKind,
+  reference: unknown
+): KnowledgeQualityControlOptionSummary | undefined {
+  if (!isQualityControlOptionReference(reference)) return undefined;
+  return catalog?.[kind].find(option => option.kind === kind && option.id === reference);
+}
+
+export function qualityControlSelectOptions(
+  kind: KnowledgeQualityControlOptionKind,
+  catalog: QualityControlOptionCatalog | undefined
+): readonly { readonly value: string; readonly label: string; readonly custom: boolean }[] {
+  const builtIns: { value: string; label: string; custom: boolean }[] = kind === "frequency"
+    ? QUALITY_FREQUENCY_OPTIONS.map(option => ({ value: option.value, label: option.label, custom: false }))
+    : QUALITY_PERFORMER_OPTIONS.map(option => ({ value: option.value, label: option.label, custom: false }));
+  const seen = new Set(builtIns.map(option => option.value));
+  const custom = (catalog?.[kind] ?? [])
+    .filter(option => option.kind === kind && isQualityControlOptionReference(option.id) && !seen.has(option.id))
+    .map(option => ({ value: option.id, label: option.name.trim(), custom: true }))
+    .filter(option => option.label)
+    .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }) || left.value.localeCompare(right.value));
+  return [...builtIns, ...custom];
+}
 export const QUALITY_MAX_PARAMETERS = 200;
 export const QUALITY_MAX_PAYLOAD_BYTES = 256 * 1024;
 
@@ -20,6 +84,40 @@ export function createQualityParameter(): KnowledgeJsonObject {
 /** Compatibility flags are fixed for current checklists; never mutate a saved snapshot. */
 export function mandatoryQualityParameters(rows: readonly KnowledgeJsonObject[]): KnowledgeJsonObject[] {
   return rows.map(row => ({ ...row, required: true, active: true }));
+}
+
+export function qualityFrequencyFromSampling(value: KnowledgeJsonValue | undefined): QualityFrequency | null {
+  if (!object(value)) return null;
+  return QUALITY_FREQUENCY_OPTIONS.find(option => {
+    const expected = option.sampling;
+    return value.method === expected.method && value.unit === expected.unit
+      && (expected.value === undefined ? value.value === undefined || value.value === null : value.value === expected.value);
+  })?.value ?? null;
+}
+
+export function qualityFrequencySelectionFromSampling(value: KnowledgeJsonValue | undefined): QualityFrequency | KnowledgeQualityControlOptionReference | null {
+  const builtIn = qualityFrequencyFromSampling(value);
+  if (builtIn) return builtIn;
+  if (!object(value) || value.method !== "all" || value.value !== undefined && value.value !== null) return null;
+  return isQualityControlOptionReference(value.unit) ? value.unit : null;
+}
+
+export function qualitySamplingForFrequency(value: QualityFrequency | KnowledgeQualityControlOptionReference | "" | null | undefined): KnowledgeJsonObject | undefined {
+  const option = QUALITY_FREQUENCY_OPTIONS.find(candidate => candidate.value === value);
+  if (option) return { ...option.sampling };
+  return isQualityControlOptionReference(value) ? { method: "all", unit: value } : undefined;
+}
+
+export function qualityPerformer(value: KnowledgeJsonValue | undefined): QualityPerformer | null {
+  return typeof value === "string" && QUALITY_PERFORMERS.includes(value as QualityPerformer) ? value as QualityPerformer : null;
+}
+
+export function qualityPerformerSelection(value: KnowledgeJsonValue | undefined): QualityPerformer | KnowledgeQualityControlOptionReference | null {
+  return qualityPerformer(value) ?? (isQualityControlOptionReference(value) ? value : null);
+}
+
+export function qualitySeverity(value: KnowledgeJsonValue | undefined): QualitySeverity | null {
+  return typeof value === "string" && QUALITY_SEVERITIES.includes(value as QualitySeverity) ? value as QualitySeverity : null;
 }
 
 export function validateQualityParameters(value: KnowledgeJsonValue | undefined): readonly KnowledgeValidationIssue[] {
@@ -130,6 +228,40 @@ export function validateQualityParameters(value: KnowledgeJsonValue | undefined)
     }
   });
   return issues;
+}
+
+/** New shared revisions require canonical controls; historical revisions remain structurally readable. */
+export function validateQualityParametersForSave(
+  value: KnowledgeJsonValue | undefined,
+  catalog?: QualityControlOptionCatalog
+): readonly KnowledgeValidationIssue[] {
+  const issues = [...validateQualityParameters(value)];
+  if (!Array.isArray(value)) return issues;
+  const existing = new Set(issues.map(issue => issue.path));
+  const add = (path: string, message: string) => { if (!existing.has(path)) { existing.add(path); issues.push({ path, message }); } };
+  value.forEach((candidate, index) => {
+    if (!object(candidate)) return;
+    const path = `parameters.${index}`;
+    if (!qualitySeverity(candidate.severity)) add(`${path}.severity`, "Choose Critical, Major or Minor.");
+    const performer = qualityPerformerSelection(candidate.responsibleRole);
+    if (!performer || isQualityControlOptionReference(performer) && !qualityControlOptionByReference(catalog, "performer", performer)) {
+      add(`${path}.responsibleRole`, "Choose an available Performed by value.");
+    }
+    const frequency = qualityFrequencySelectionFromSampling(candidate.sampling);
+    if (!frequency || isQualityControlOptionReference(frequency) && !qualityControlOptionByReference(catalog, "frequency", frequency)) {
+      add(`${path}.sampling`, "Choose an available Frequency value.");
+    }
+    if (candidate.type === "number") {
+      if (candidate.minimum === undefined || candidate.minimum === null || candidate.minimum === "") add(`${path}.minimum`, "Enter the inclusive minimum for this Number check.");
+      if (candidate.maximum === undefined || candidate.maximum === null || candidate.maximum === "") add(`${path}.maximum`, "Enter the inclusive maximum for this Number check.");
+      if (typeof candidate.unit !== "string" || !candidate.unit.trim()) add(`${path}.unit`, "Enter the measurement unit for this Number check.");
+    }
+  });
+  return issues;
+}
+
+export function qualityParameterNeedsCompletion(value: KnowledgeJsonObject, catalog?: QualityControlOptionCatalog): boolean {
+  return validateQualityParametersForSave([value], catalog).some(issue => issue.path.startsWith("parameters.0."));
 }
 
 export function qualityImportIssues(existing: readonly KnowledgeJsonObject[], incoming: readonly KnowledgeJsonObject[]): readonly KnowledgeValidationIssue[] {

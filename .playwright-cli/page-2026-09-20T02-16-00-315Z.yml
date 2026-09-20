@@ -1,0 +1,37 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - link "Skip to main content" [ref=e4] [cursor=pointer]:
+        - /url: "#main-content"
+      - complementary "Application sidebar" [ref=e5]:
+        - generic [ref=e6]:
+          - generic [ref=e8]:
+            - paragraph [ref=e9]: Signed in as
+            - strong [ref=e10]: Super Admin
+          - navigation "Primary navigation" [ref=e11]:
+            - link "Dashboard" [ref=e12] [cursor=pointer]:
+              - /url: /admin/dashboard
+            - link "All Projects" [ref=e21] [cursor=pointer]:
+              - /url: /admin/projects
+            - link "Users" [ref=e27] [cursor=pointer]:
+              - /url: /admin/users
+            - link "Configuration" [ref=e35] [cursor=pointer]:
+              - /url: /admin/configuration/estimation
+            - link "Procurement" [ref=e42] [cursor=pointer]:
+              - /url: /admin/procurement
+            - link "Client responses" [ref=e50] [cursor=pointer]:
+              - /url: /admin/client-responses
+            - link "Design approvals" [ref=e58] [cursor=pointer]:
+              - /url: /admin/design-approvals
+            - link "Access requests" [ref=e68] [cursor=pointer]:
+              - /url: /admin/access-requests
+            - link "Finance" [ref=e76] [cursor=pointer]:
+              - /url: /finance
+          - button "Synthetic workspace reviewer" [ref=e84] [cursor=pointer]:
+            - generic [aria-hidden] [ref=e85]: SW
+      - main [ref=e89]:
+        - button "Notifications" [ref=e91] [cursor=pointer]
+    - status "Application announcements" [ref=e98]
+    - region "Notifications"
+  - status "Content status":
+    - generic: Loading estimation item workspace…

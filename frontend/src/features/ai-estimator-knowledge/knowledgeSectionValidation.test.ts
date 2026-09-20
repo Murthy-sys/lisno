@@ -81,6 +81,35 @@ describe("knowledge section client validation", () => {
     })).toEqual([]);
   });
 
+  it("validates local Brands and Specification Brand references together", () => {
+    expect(validateKnowledgeSection("pricing", {
+      brands: [{ id: "brand-century", name: "Century Green" }],
+      specifications: [{ id: "spec-plywood", name: "Plywood", brandId: "brand-century" }]
+    })).toEqual([]);
+
+    const issues = validateKnowledgeSection("pricing", {
+      brands: [
+        { id: "brand-century", name: "Century Green" },
+        { id: "brand-century", name: " century   green " }
+      ],
+      specifications: [{ id: "spec-plywood", name: "Plywood", brandId: "brand-century" }]
+    });
+    expect(issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "brands.1.id" }),
+      expect.objectContaining({ path: "brands.1.name" }),
+      expect.objectContaining({ path: "specifications.0.brandId" })
+    ]));
+  });
+
+  it("treats a missing Pricing Brand list as empty for referential validation", () => {
+    expect(validateKnowledgeSection("pricing", {
+      specifications: [{ id: "spec-plywood", name: "Plywood", brandId: "brand-missing" }]
+    })).toContainEqual({
+      path: "specifications.0.brandId",
+      message: "Choose a configured Brand."
+    });
+  });
+
   it("validates priced slabs against live Specifications, UOM scale, uniqueness, and derived totals", () => {
     const context = {
       specifications: [{ id: "spec-1", name: "Plywood" }],

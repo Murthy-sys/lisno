@@ -5,14 +5,16 @@ import { Button } from "../../components/ui/Button";
 import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
-import { qualityImportIssues, qualitySamplingSummary, validateQualityParameters } from "./knowledgeQuality";
+import { EMPTY_QUALITY_CONTROL_OPTION_CATALOG, qualityImportIssues, qualityParameterNeedsCompletion, validateQualityParametersForSave, type QualityControlOptionCatalog } from "./knowledgeQuality";
+import { qualityFrequencyPresentation, qualityPassRange, qualityPerformerPresentation, qualitySeverityPresentation } from "./knowledgeQualityPresentation";
 import { readQualityWorkbook, type QualityImportResult } from "./knowledgeQualityWorkbook";
 import type { KnowledgeJsonObject } from "./knowledgeTypes";
 
-export function KnowledgeQualityImportDialog({ basketName, currentParameters, disabled, onImport, onClose }: {
+export function KnowledgeQualityImportDialog({ basketName, currentParameters, disabled, qualityOptions = EMPTY_QUALITY_CONTROL_OPTION_CATALOG, onImport, onClose }: {
   readonly basketName: string;
   readonly currentParameters: readonly KnowledgeJsonObject[];
   readonly disabled: boolean;
+  readonly qualityOptions?: QualityControlOptionCatalog;
   readonly onImport: (parameters: readonly KnowledgeJsonObject[]) => void;
   readonly onClose: () => void;
 }) {
@@ -25,10 +27,10 @@ export function KnowledgeQualityImportDialog({ basketName, currentParameters, di
   useEffect(() => () => reader.current?.abort(), []);
   const mergeIssues = useMemo(() => result && !result.issues.length
     ? qualityImportIssues(currentParameters, result.parameters) : [], [currentParameters, result]);
-  const existingQuestionNumbers = useMemo(() => [...new Set(validateQualityParameters([...currentParameters]).flatMap(issue => {
+  const existingQuestionNumbers = useMemo(() => [...new Set(validateQualityParametersForSave([...currentParameters], qualityOptions).flatMap(issue => {
     const match = /^parameters\.(\d+)(?:\.|$)/u.exec(issue.path);
     return match ? [Number(match[1]) + 1] : [];
-  }))].sort((a, b) => a - b), [currentParameters]);
+  }))].sort((a, b) => a - b), [currentParameters, qualityOptions]);
   async function read(file: File | undefined) {
     reader.current?.abort();
     const controller = new AbortController();
@@ -39,7 +41,7 @@ export function KnowledgeQualityImportDialog({ basketName, currentParameters, di
     if (!file) { setReading(false); return; }
     setReading(true);
     try {
-      const next = await readQualityWorkbook(file, controller.signal);
+      const next = await readQualityWorkbook(file, controller.signal, qualityOptions);
       if (!controller.signal.aborted) setResult(next);
     } catch {
       if (!controller.signal.aborted) setResult({ parameters: [], issues: [{ row: null, message: "The workbook could not be read. Choose the file again." }] });
@@ -60,7 +62,7 @@ export function KnowledgeQualityImportDialog({ basketName, currentParameters, di
       </div>)}>
     <div className="knowledge-quality-import">
       <div className="knowledge-quality-import__body">
-        <Field id="quality-workbook" label="Excel workbook" hint="Columns: Question, Answer type, Options, Acceptance criteria and Photo evidence.">
+        <Field id="quality-workbook" label="Excel workbook" hint="Includes severity, numeric pass range, frequency, performed-by role and photo evidence.">
           {(props) => <div className="knowledge-quality-import__upload" data-selected={Boolean(fileName)}>
             <input {...props} ref={fileInput} className="knowledge-quality-import__file-input" tabIndex={-1} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={disabled} onChange={(event) => {
               const file = event.target.files?.[0];
@@ -91,13 +93,16 @@ export function KnowledgeQualityImportDialog({ basketName, currentParameters, di
             {result.parameters.map((row, index) => <li key={String(row.id)}>
               <div className="knowledge-quality-import__question-heading">
                 <span className="knowledge-quality-import__number" aria-hidden="true">{index + 1}</span>
-                <strong>{String(row.label)}</strong>
+                <strong>{String(row.label)}</strong>{qualityParameterNeedsCompletion(row, qualityOptions) ? <span className="knowledge-quality-status knowledge-quality-status--invalid">Needs completion</span> : null}
               </div>
               <span className="knowledge-quality-import__answer-type">{String(row.type).replaceAll("_", " ")}{row.stage ? ` · ${row.stage}` : ""}</span>
               <dl>
                 {Array.isArray(row.allowedValues) && row.allowedValues.length ? <div><dt>Options</dt><dd>{row.allowedValues.map(String).join(" · ")}</dd></div> : null}
                 {row.acceptanceCriteria ? <div><dt>Acceptance criteria</dt><dd>{String(row.acceptanceCriteria)}</dd></div> : null}
-                {row.sampling ? <div><dt>Inspection coverage</dt><dd>{qualitySamplingSummary(row)}</dd></div> : null}
+                <div><dt>Severity</dt><dd>{qualitySeverityPresentation(row.severity).label}</dd></div>
+                <div><dt>Frequency</dt><dd>{qualityFrequencyPresentation(row.sampling, qualityOptions).label}</dd></div>
+                <div><dt>Performed by</dt><dd>{qualityPerformerPresentation(row.responsibleRole, qualityOptions).label}</dd></div>
+                {qualityPassRange(row) ? <div><dt>Pass range</dt><dd>{qualityPassRange(row)}</dd></div> : null}
                 {row.evidence && typeof row.evidence === "object" && !Array.isArray(row.evidence) ? <div><dt>Evidence</dt><dd>{[
                   (row.evidence as KnowledgeJsonObject).photos ? `${(row.evidence as KnowledgeJsonObject).minPhotosPerSample} ${(row.evidence as KnowledgeJsonObject).minPhotosPerSample === 1 ? "photo" : "photos"} per ${row.sampling ? "sampled" : "checked"} unit` : null,
                   (row.evidence as KnowledgeJsonObject).documents ? "documents / test reports" : null,

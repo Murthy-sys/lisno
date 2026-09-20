@@ -201,6 +201,47 @@ describe("OpenAPI and Swagger UI", () => {
     expect(properties.pmcMarginBps).not.toHaveProperty("enum");
   });
 
+  it("documents the authoritative In-house true-margin and selling-price discount contract", () => {
+    const schemas = componentSchemas();
+    expect(schemas.KnowledgeInHouseModeCalculationSettings).toMatchObject({
+      additionalProperties: false,
+      required: ["baseRatePaise", "lowQuantityLimit", "minimumMarkupBps", "startingMarkupBps"],
+      properties: {
+        minimumMarkupBps: { minimum: 0, maximum: 9_999 },
+        startingMarkupBps: { minimum: 0, maximum: 9_999 }
+      },
+      description: expect.stringContaining("divided by one minus the selected gross margin")
+    });
+    expect(schemas.KnowledgeModeCalculationPreview!.required).toEqual([
+      "revisedUnitRatePaise", "revisedAmountPaise", "floorPricePaise", "maximumDiscountBps",
+      "discountBasis", "totalPaise", "appliedImpactBps"
+    ]);
+    expect(schemas.KnowledgeModeCalculationPreview!.properties).toMatchObject({
+      floorPricePaise: { description: expect.stringContaining("minimum gross margin") },
+      maximumDiscountBps: { maximum: 10_000, description: expect.stringContaining("floor division") },
+      discountBasis: { enum: ["selling_price"] },
+      discount: {
+        required: ["rateBps", "totalBeforeDiscountPaise", "amountPaise"],
+        additionalProperties: false
+      }
+    });
+    expect((schemas.KnowledgeModeCalculationPreview!.properties as OpenApiObject).discount)
+      .not.toHaveProperty("properties.effectiveMarkupBps");
+    expect((schemas.KnowledgePreviewRequest!.properties as OpenApiObject).modeCalculation)
+      .toEqual({ $ref: "#/components/schemas/KnowledgeInHouseModeCalculationSettings" });
+    const calculationMaps = schemas.KnowledgeModeCalculations!.oneOf as OpenApiObject[];
+    const splitMap = calculationMaps[0]!.properties as OpenApiObject;
+    const legacyMap = calculationMaps[1]!.properties as OpenApiObject;
+    expect(splitMap.in_house_labor).toEqual({ allOf: [{ $ref: "#/components/schemas/KnowledgeInHouseModeCalculationSettings" }], nullable: true });
+    expect(splitMap.in_house_material).toEqual({ allOf: [{ $ref: "#/components/schemas/KnowledgeInHouseModeCalculationSettings" }], nullable: true });
+    expect(splitMap.in_house).toMatchObject({ allOf: [{ $ref: "#/components/schemas/KnowledgeInHouseModeCalculationSettings" }], nullable: true, deprecated: true });
+    expect(legacyMap.in_house).toEqual({ allOf: [{ $ref: "#/components/schemas/KnowledgeInHouseModeCalculationSettings" }], nullable: true });
+    expect(splitMap.pmc).toEqual({ allOf: [{ $ref: "#/components/schemas/KnowledgeModeCalculationSettings" }], nullable: true });
+    expect(splitMap.sub_vendor).toEqual({ allOf: [{ $ref: "#/components/schemas/KnowledgeModeCalculationSettings" }], nullable: true });
+    expect((schemas.KnowledgeConfigurationContext!.properties as OpenApiObject).formulaVersion)
+      .toMatchObject({ enum: ["mode-margin-v2"], description: expect.stringContaining("In-house") });
+  });
+
   it("documents scope lists only for canonical PMC and In-house configurations", () => {
     const schemas = componentSchemas();
     expect(schemas.KnowledgeModeScopeItem).toMatchObject({
@@ -398,7 +439,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 234 routes without versioning paths twice", () => {
+  it("contains all 236 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -407,7 +448,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 13);
-    expect(operationCount).toBe(234);
+    expect(operationCount).toBe(236);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -417,7 +458,7 @@ describe("OpenAPI and Swagger UI", () => {
     const knowledgeOperations = HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability }) => availability === "ai_estimator_knowledge"
     );
-    expect(knowledgeOperations).toHaveLength(48);
+    expect(knowledgeOperations).toHaveLength(50);
 
     for (const registered of knowledgeOperations) {
       const { method, path } = splitHumanOperationKey(registered.key);
@@ -503,6 +544,29 @@ describe("OpenAPI and Swagger UI", () => {
         aggregateVersion: { type: "integer", minimum: 1 }
       }
     });
+    const sectionPayloads = componentSchemas().KnowledgeSectionPayload!.anyOf as OpenApiObject[];
+    const recommendationPayload = sectionPayloads.find((schema) =>
+      (schema.properties as Record<string, unknown>).budgetAlterations
+    )!;
+    const budgetAlterations = (recommendationPayload.properties as Record<string, OpenApiObject>).budgetAlterations!;
+    const targetShapes = (budgetAlterations.items as OpenApiObject).oneOf as OpenApiObject[];
+    expect(targetShapes).toHaveLength(2);
+    expect(targetShapes[0]).toMatchObject({ additionalProperties: false,
+      properties: { targetKind: { enum: ["main_line"] }, targetType: { enum: ["catalog", "temporary"] } } });
+    expect(targetShapes[0]!.required).not.toContain("targetKind");
+    expect(targetShapes[1]).toMatchObject({ additionalProperties: false,
+      required: expect.arrayContaining(["targetKind", "targetType", "targetSubBasketId", "targetMainLineId"]),
+      properties: { targetKind: { enum: ["sub_basket"] }, targetType: { enum: [null] }, targetMainLineId: { enum: [null] } } });
+    expect(componentSchemas().KnowledgeItemListItem).toMatchObject({
+      required: expect.arrayContaining(["completionRequired"]),
+      properties: { completionRequired: { type: "boolean" } }
+    });
+    expect(componentSchemas().KnowledgeMainLine).toMatchObject({
+      required: expect.arrayContaining(["completionRequired"]),
+      properties: { completionRequired: { type: "boolean" } }
+    });
+    expect(componentSchemas().KnowledgeTemporaryMainLineReference)
+      .toHaveProperty("properties.rules.items.properties.targetKind.enum", ["main_line", "sub_basket"]);
 
     const previewRequest = componentSchemas().KnowledgePreviewRequest as {
       additionalProperties?: boolean;
@@ -766,6 +830,11 @@ describe("OpenAPI and Swagger UI", () => {
           maxItems: 50,
           items: { $ref: "#/components/schemas/KnowledgeSpecification" }
         },
+        brands: {
+          type: "array",
+          items: { $ref: "#/components/schemas/KnowledgeBrand" },
+          description: expect.stringContaining("separate from reusable procurement Vendor masters")
+        },
         priceEntries: {
           type: "array",
           items: { $ref: "#/components/schemas/KnowledgePriceEntryCommand" },
@@ -774,7 +843,7 @@ describe("OpenAPI and Swagger UI", () => {
       }
     });
     expect(componentSchemas().KnowledgeSpecification).toEqual({
-      description: "A descriptive Specification row for current writes, or an unchanged stored typed row retained for compatibility.",
+      description: "An Item/part row with an optional stable local Brand association, or an unchanged stored typed row retained for compatibility.",
       oneOf: [
         { $ref: "#/components/schemas/KnowledgeDescriptiveSpecification" },
         { $ref: "#/components/schemas/KnowledgeCanonicalSpecification" }
@@ -784,9 +853,18 @@ describe("OpenAPI and Swagger UI", () => {
       type: "object",
       additionalProperties: false,
       required: ["id", "name"],
+      properties: expect.objectContaining({
+        brandId: expect.objectContaining({
+          type: "string",
+          maxLength: 240,
+          pattern: "^(?:\\S(?:.*\\S)?)$",
+          description: expect.stringContaining("not a reusable Vendor master ID")
+        })
+      }),
       example: {
         id: "specification-plywood",
         name: "Plywood",
+        brandId: "brand-century-green",
         description: "18 mm BWP-grade plywood for the cabinet carcass."
       }
     });
@@ -801,6 +879,7 @@ describe("OpenAPI and Swagger UI", () => {
       example: {
         id: "specification-finish",
         name: "Finish",
+        brandId: "brand-century-green",
         description: "Choose the approved finish.",
         type: "dropdown",
         options: ["Matte", "Gloss"],
@@ -811,6 +890,7 @@ describe("OpenAPI and Swagger UI", () => {
           required: ["id", "name", "type", "options", "value"],
           properties: expect.objectContaining({
             type: { type: "string", enum: ["number"] },
+            brandId: expect.objectContaining({ type: "string" }),
             value: expect.objectContaining({
               pattern: "^(0|[1-9][0-9]*)(\\.[0-9]{1,6})?$"
             })
@@ -837,6 +917,47 @@ describe("OpenAPI and Swagger UI", () => {
           })
         })
       ])
+    });
+    expect(componentSchemas().KnowledgeBrand).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "name"],
+      properties: {
+        id: expect.objectContaining({
+          type: "string",
+          maxLength: 240,
+          pattern: "^(?:\\S(?:.*\\S)?)$"
+        })
+      },
+      description: expect.stringContaining("distinct from reusable procurement Vendor masters")
+    });
+    expect(componentSchemas().KnowledgeSpecificationContext).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "name"],
+      properties: {
+        brandId: expect.objectContaining({ type: "string" }),
+        brand: { $ref: "#/components/schemas/KnowledgeSpecificationBrandIdentity" }
+      }
+    });
+    expect(componentSchemas().KnowledgeSpecificationBrandIdentity).toMatchObject({
+      properties: {
+        id: {
+          type: "string",
+          minLength: 1,
+          maxLength: 240,
+          pattern: "^(?:\\S(?:.*\\S)?)$"
+        }
+      }
+    });
+    expect(componentSchemas().KnowledgeContext).toMatchObject({
+      properties: {
+        sections: {
+          properties: {
+            pricing: { $ref: "#/components/schemas/KnowledgePricingContext" }
+          }
+        }
+      }
     });
     expect(componentSchemas().KnowledgeBudgetSetCommand).toMatchObject({
       type: "object",
@@ -1118,6 +1239,76 @@ describe("OpenAPI and Swagger UI", () => {
     expect(basketResponse.properties.displayOrder).toMatchObject({
       maximum: Number.MAX_SAFE_INTEGER
     });
+
+    const qualitySave = componentSchemas().KnowledgeBasketQualityUpdateRequest as {
+      properties: Record<string, { description?: string }>;
+    };
+    const qualityParameter = componentSchemas().KnowledgeQualityParameter as {
+      properties: Record<string, { description?: string; enum?: unknown[] }>;
+    };
+    expect(qualitySave.properties.parameters.description).toContain("fixed_count/1/project");
+    expect(qualityParameter.properties.severity.enum).toEqual(["critical", "major", "minor", null]);
+    expect(qualityParameter.properties.responsibleRole.description).toContain("site, pm, procurement, or vendor");
+    expect(qualityParameter.properties.sampling.description).toContain("all/unit, all/room, all/zone, all/batch");
+    expect(qualityParameter.properties.minimum.description).toContain("inclusive");
+
+    const optionCreate = componentSchemas().KnowledgeQualityControlOptionCreateRequest as {
+      additionalProperties?: boolean;
+      description?: string;
+      required?: string[];
+      properties: Record<string, { enum?: string[]; maxLength?: number }>;
+    };
+    const option = componentSchemas().KnowledgeQualityControlOption as {
+      additionalProperties?: boolean;
+      required?: string[];
+      properties: Record<string, { pattern?: string; enum?: string[] }>;
+    };
+    const optionList = componentSchemas().KnowledgeQualityControlOptionList as {
+      additionalProperties?: boolean;
+      required?: string[];
+    };
+    expect(optionCreate).toMatchObject({
+      additionalProperties: false,
+      required: ["kind", "name"],
+      properties: {
+        kind: { enum: ["frequency", "performer"] },
+        name: { maxLength: 80 }
+      }
+    });
+    expect(optionCreate.description).toContain("409 QUALITY_CONTROL_OPTION_EXISTS");
+    expect(option).toMatchObject({
+      additionalProperties: false,
+      required: [
+        "id", "kind", "name", "version", "createdById", "updatedById",
+        "createdAt", "updatedAt"
+      ],
+      properties: {
+        id: { pattern: "^qco_[0-9a-f]{24}$" },
+        kind: { enum: ["frequency", "performer"] }
+      }
+    });
+    expect(optionList).toMatchObject({
+      additionalProperties: false,
+      required: ["items"]
+    });
+    expect(openApiDocument.paths["/admin/ai-estimator-knowledge/quality-control-options"]?.get?.parameters)
+      .toContainEqual(expect.objectContaining({
+        name: "kind",
+        in: "query",
+        required: true,
+        schema: { type: "string", enum: ["frequency", "performer"] }
+      }));
+    expect(openApiDocument.paths["/admin/ai-estimator-knowledge/quality-control-options"]?.post)
+      .toMatchObject({
+        "x-lisno-permission": "ai_estimator_knowledge.quality_control_options.create",
+        requestBody: {
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/KnowledgeQualityControlOptionCreateRequest" }
+            }
+          }
+        }
+      });
 
     const permanentDeleteRequest = componentSchemas()
       .KnowledgePermanentDeleteBasketRequest as {

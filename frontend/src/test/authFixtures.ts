@@ -36,6 +36,7 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "ai_estimator_knowledge.configuration.create",
     "ai_estimator_knowledge.configuration.update",
     "ai_estimator_knowledge.configuration.lifecycle",
+    "ai_estimator_knowledge.quality_control_options.create",
     "ai_estimator_knowledge.context.read",
     "admin.dashboard.read",
     "procurement.vendor_suggestions.read",

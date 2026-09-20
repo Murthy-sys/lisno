@@ -12,6 +12,7 @@ const basket: KnowledgeBasket = { ...metadata, id: "basket-private", name: "Fini
 const subBasket: KnowledgeSubBasket = { ...metadata, id: "sub-private", basketId: basket.id, name: "Wall work", displayOrder: 0 };
 const item: KnowledgeItemListItem = {
   ...metadata, id: "item-private", mainLineId: "line-private", mainLineName: "Acoustic panels", basketId: basket.id, basketName: basket.name,
+  completionRequired: false,
   subBasketId: subBasket.id, subBasketName: subBasket.name, description: null, status: "active", activeRevisionId: "revision-private", draftRevisionId: null,
   revisionNumber: 1, uomId: null, priorityId: null, modeIds: [], surfaceIds: [], vendorIds: [],
   completeness: { percentage: 0, sections: [], blockers: [], warnings: [] }, allowedActions: []
@@ -101,6 +102,23 @@ describe("projectKnowledgeSavedSummary", () => {
     ]);
     expect(result.preview).toEqual(result.details);
     expect(values(result)).not.toMatch(/description|Transport|Base Rate|Margin|Impact|private/iu);
+  });
+
+  it("does not apply the In-house below-100% rule to hidden PMC or Sub-Vendor legacy fields", () => {
+    const hiddenLegacyRates = settings(10_000, 0, 12_000, 15_000);
+    const result = projectKnowledgeSavedSummary(input({ sections: { advanced: {
+      modeCalculations: {
+        pmc: hiddenLegacyRates,
+        sub_vendor: hiddenLegacyRates,
+        in_house_labor: hiddenLegacyRates,
+        in_house_material: settings(20_000, 0, 1_000, 2_000)
+      },
+      pmcMinimumMarginBps: 1_000,
+      pmcMarginBps: 2_000,
+      subVendorMinimumMarginBps: 1_500,
+      subVendorMarginBps: 2_000
+    } } })).mode;
+    expect(result.details.map(row => row.value)).toEqual(["Configured", "Configured", "Not configured"]);
   });
 
   it.each([
@@ -195,7 +213,8 @@ describe("projectKnowledgeSavedSummary", () => {
       targetBasketId: "missing-basket-private", targetSubBasketId: subBasket.id, targetMainLineId: item.mainLineId,
       reason: "Related scope", active: true
     }], recommendations: [{ id: "rec", name: "Essential", priorityId: "missing-priority-private", active: true }] } } })).recommendations;
-    expect(values(result)).toContain("Name unavailable · Must be removed");
+    expect(values(result)).toContain("Name unavailable · Must be completed · Must be removed");
+    expect(values(result)).toContain("Completion: Temporary item · Must be completed");
     expect(values(result)).toContain("Related Main Basket: Name unavailable");
     expect(values(result)).toContain("Related Sub-Basket: Name unavailable");
     expect(values(result)).toContain("Essential · Priority: Name unavailable");
@@ -211,6 +230,45 @@ describe("projectKnowledgeSavedSummary", () => {
     expect(values(result)).not.toContain("private");
   });
 
+  it("summarizes a whole Sub-Basket target without requiring or exposing a Main Line ID", () => {
+    const temporaryChild: KnowledgeItemListItem = {
+      ...item,
+      id: "temporary-child-private",
+      mainLineId: "temporary-line-private",
+      mainLineName: "Lights",
+      itemType: "temporary"
+    };
+    const result = projectKnowledgeSavedSummary(input({ items: [temporaryChild], sections: { recommendations: { budgetAlterations: [{
+      id: "whole-private", trigger: "added", action: "add", requirement: "must", targetKind: "sub_basket", targetType: null,
+      targetBasketId: basket.id, targetSubBasketId: subBasket.id, targetMainLineId: null, reason: "Add the complete lighting scope", active: true
+    }] } } })).recommendations;
+    const detail = values(result);
+    expect(detail).toContain("Addition type: Whole Sub-Basket");
+    expect(detail).toContain("Whole Sub-Basket: Wall work");
+    expect(detail).toContain("Completion: Temporary item · Must be completed");
+    expect(result.preview[0]?.value).toBe("Wall work · Must be completed · Must be added");
+    expect(detail).not.toMatch(/Related Main Line|whole-private|targetMainLineId/iu);
+  });
+
+  it.each([
+    ["active catalog children", [item], false, null],
+    ["draft-only catalog children", [{ ...item, id: "draft-child", mainLineId: "draft-child", status: "draft" as const, activeRevisionId: null, draftRevisionId: "draft-revision" }], true, "Incomplete item · Must be completed"],
+    ["inactive-only catalog children", [{ ...item, id: "inactive-child", mainLineId: "inactive-child", status: "inactive" as const }], true, "Sub-Basket · Must be completed"],
+    ["active children without an active revision", [{ ...item, id: "unactivated-child", mainLineId: "unactivated-child", activeRevisionId: null }], true, "Incomplete item · Must be completed"],
+    ["temporary children", [{ ...item, id: "temporary-child", mainLineId: "temporary-child", itemType: "temporary" as const, completionRequired: true }], true, "Temporary item · Must be completed"],
+    ["mixed active and draft children", [item, { ...item, id: "mixed-draft", mainLineId: "mixed-draft", status: "draft" as const, activeRevisionId: null, draftRevisionId: "mixed-draft-revision" }], true, "Incomplete item · Must be completed"],
+    ["no applicable children", [], true, "Sub-Basket · Must be completed"]
+  ])("derives whole Sub-Basket completion from %s", (_label, children, completionRequired, completionLabel) => {
+    const result = projectKnowledgeSavedSummary(input({ items: children, sections: { recommendations: { budgetAlterations: [{
+      id: "whole-completion", trigger: "added", action: "add", requirement: "must", targetKind: "sub_basket", targetType: null,
+      targetBasketId: basket.id, targetSubBasketId: subBasket.id, targetMainLineId: null, reason: "Add the complete scope", active: true
+    }] } } })).recommendations;
+    const detail = values(result);
+    if (completionLabel) expect(detail).toContain(`Completion: ${completionLabel}`);
+    else expect(detail).not.toMatch(/Completion: .*Must be completed/u);
+    expect(result.preview[0]?.value.includes("Must be completed")).toBe(completionRequired);
+  });
+
   it("covers every saved Quality question, answer and inspection/sampling/evidence field without defaults", () => {
     const result = projectKnowledgeSavedSummary(input({ quality: quality([
       { id: "quality-private", type: "number", label: "Panel gap", unit: "mm", minimum: "0", maximum: "6.5", defaultValue: "0", required: false, active: false,
@@ -222,9 +280,9 @@ describe("projectKnowledgeSavedSummary", () => {
     const detail = values(result);
     // Checklist covers knowledgeQuality ROW_KEYS plus nested sampling/evidence.
     for (const expected of [
-      "Question 1 · Inactive: Panel gap", "Panel gap · Answer type: Number", "Panel gap · Unit: mm", "Panel gap · Minimum: 0", "Panel gap · Maximum: 6.5", "Panel gap · Default answer: 0", "Panel gap · Required: No", "Panel gap · Enabled: No",
-      "Panel gap · Category: Finish", "Panel gap · Instructions: Measure each edge", "Panel gap · Acceptance criteria: Gap must be even", "Panel gap · Stage: Handover", "Panel gap · Check method: Measurement", "Panel gap · Severity: Major", "Panel gap · Responsible role: Site engineer", "Panel gap · Failure action: Refit panel",
-      "Panel gap · Sampling: Percentage", "Panel gap · Sample percentage (%): 15", "Panel gap · Sample unit: panels",
+      "Question 1 · Inactive: Panel gap", "Panel gap · Answer type: Number", "Panel gap · Pass range: 0–6.5 mm", "Panel gap · Default answer: 0", "Panel gap · Required: No", "Panel gap · Enabled: No",
+      "Panel gap · Category: Finish", "Panel gap · Instructions: Measure each edge", "Panel gap · Acceptance criteria: Gap must be even", "Panel gap · Stage: Handover", "Panel gap · Check method: Measurement", "Panel gap · Severity: Major · Rectify before the next stage.", "Panel gap · Performed by: Legacy responsible role: Site engineer", "Panel gap · Failure action: Refit panel",
+      "Panel gap · Frequency: Legacy custom frequency: percentage 15 · panels",
       "Panel gap · Photo evidence: Yes", "Panel gap · Document evidence: No", "Panel gap · Video evidence: No", "Panel gap · Required photos per checked unit: 2", "Panel gap · Evidence instructions: Include scale",
       "Finish approval · Answer type: Multiple choice", "Finish approval · Options: Texture, Colour", "Finish approval · Default answer: Colour", "Protected · Default answer: No", "Protected · Photo evidence: No"
     ]) expect(detail).toContain(expected);
@@ -234,9 +292,34 @@ describe("projectKnowledgeSavedSummary", () => {
     expect(detail).not.toContain("Protected · Required:");
   });
 
+  it("resolves reusable Quality controls and hides unavailable reference identifiers", () => {
+    const frequencyId = "qco_111111111111111111111111";
+    const performerId = "qco_222222222222222222222222";
+    const qualityOptions = {
+      frequency: [{ id: frequencyId, kind: "frequency", name: "Per elevation", version: 1, createdById: "user-1", updatedById: "user-1", createdAt: "2026-09-20T00:00:00.000Z", updatedAt: "2026-09-20T00:00:00.000Z" }],
+      performer: [{ id: performerId, kind: "performer", name: "Quality lead", version: 1, createdById: "user-1", updatedById: "user-1", createdAt: "2026-09-20T00:00:00.000Z", updatedAt: "2026-09-20T00:00:00.000Z" }]
+    } as const;
+    const resolved = projectKnowledgeSavedSummary(input({
+      qualityOptions,
+      quality: quality([{ id: "q", label: "Check finish", type: "boolean", severity: "minor", responsibleRole: performerId, sampling: { method: "all", unit: frequencyId } }])
+    })).quality;
+    expect(values(resolved)).toContain("Check finish · Frequency: Per elevation");
+    expect(values(resolved)).toContain("Check finish · Performed by: Quality lead");
+    expect(values(resolved)).not.toContain("qco_");
+
+    const unavailable = projectKnowledgeSavedSummary(input({
+      qualityOptions,
+      quality: quality([{ id: "q", label: "Check finish", type: "boolean", severity: "minor", responsibleRole: "qco_333333333333333333333333", sampling: { method: "all", unit: "qco_444444444444444444444444" } }])
+    })).quality;
+    expect(values(unavailable)).toContain("Unavailable frequency value");
+    expect(values(unavailable)).toContain("Unavailable performed-by value");
+    expect(values(unavailable)).toContain("needs review");
+    expect(values(unavailable)).not.toContain("qco_");
+  });
+
   it.each([
-    [{ method: "all", unit: "rooms" }, "Sampling: All units"],
-    [{ method: "fixed_count", value: 3, unit: "panels" }, "Sample count: 3"]
+    [{ method: "all", unit: "rooms" }, "Frequency: Legacy custom frequency: all · rooms"],
+    [{ method: "fixed_count", value: 3, unit: "panels" }, "Frequency: Legacy custom frequency: fixed count 3 · panels"]
   ] as const)("preserves alternate sampling settings", (sampling, expected) => {
     const result = projectKnowledgeSavedSummary(input({ quality: quality([{ id: "q", label: "Check", type: "text", sampling }]) })).quality;
     expect(values(result)).toContain(expected);

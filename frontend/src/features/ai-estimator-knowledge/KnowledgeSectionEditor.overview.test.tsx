@@ -130,7 +130,7 @@ describe("knowledge Overview and primary UOM editors", () => {
           sectionKey="pricing"
           payload={{
             technicalDescription: "Technical detail",
-            specifications: [{ id: "spec-1", name: "Premium", description: "Specification detail" }],
+            specifications: [{ id: "spec-1", name: "Premium", brandId: "brand-1", description: "Specification detail" }],
             brands: [{ id: "brand-1", name: "Example brand", description: "Brand detail" }]
           }}
         />
@@ -182,8 +182,10 @@ describe("knowledge Overview and primary UOM editors", () => {
 
     expect(within(pricingEditor as HTMLElement).getByRole("textbox", { name: "Brief description" }))
       .toHaveValue("Specification detail");
-    expect(within(pricingEditor as HTMLElement).getByRole("textbox", { name: "Description" }))
-      .toHaveValue("Brand detail");
+    expect(within(pricingEditor as HTMLElement).getByRole("combobox", { name: "Brand name" }))
+      .toHaveValue("brand-1");
+    expect(within(pricingEditor as HTMLElement).queryByRole("textbox", { name: "Description" }))
+      .not.toBeInTheDocument();
     expect(within(recommendationsEditor as HTMLElement).getByRole("textbox", { name: "Reason" })).toHaveValue("Recommendation reason");
     expect(within(executionEditor as HTMLElement).getByRole("textbox", { name: "Description" })).toHaveValue("Execution detail");
     expect(within(advancedEditor as HTMLElement).getByRole("textbox", { name: "Override description" })).toHaveValue("Mode override detail");

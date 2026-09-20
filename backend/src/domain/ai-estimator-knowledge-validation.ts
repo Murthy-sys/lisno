@@ -1,7 +1,9 @@
 import type {
+  KnowledgeQualityPerformer,
   KnowledgeQualityParameter,
   KnowledgeQuantitySlab
 } from "../contracts/ai-estimator-knowledge.js";
+import { isKnowledgeQualityControlOptionReference } from "./ai-estimator-knowledge-quality-control-option.js";
 import {
   AI_ESTIMATOR_KNOWLEDGE_BASIS_POINTS,
   AI_ESTIMATOR_KNOWLEDGE_DURATION_UNITS,
@@ -29,6 +31,7 @@ import {
   type KnowledgeSectionKey
 } from "./ai-estimator-knowledge.js";
 import { parseScaledDecimal } from "./ai-estimator-knowledge-calculation.js";
+import { normalizeKnowledgeBudgetAlterationTarget } from "./ai-estimator-knowledge-recommendation.js";
 
 export type { KnowledgeCompletenessSectionInput } from "./ai-estimator-knowledge-completeness.js";
 
@@ -40,6 +43,117 @@ export interface KnowledgeValidationIssue {
   path: string;
   code: string;
   message: string;
+}
+
+export const SHARED_QUALITY_PERFORMERS = ["site", "pm", "procurement", "vendor"] as const satisfies readonly KnowledgeQualityPerformer[];
+
+/**
+ * Strict completeness rules for a new shared Main Basket checklist revision.
+ *
+ * Keep this separate from validateKnowledgeSectionPayload: the latter is the
+ * compatibility validator used when reading immutable historical revisions,
+ * which may predate these controls or contain an older custom role/frequency.
+ */
+export function validateSharedQualityChecklistForSave(
+  parameters: unknown
+): KnowledgeValidationIssue[] {
+  const issues = validateKnowledgeSectionPayload("quality", { parameters });
+  if (!Array.isArray(parameters)) return issues;
+
+  parameters.forEach((value, index) => {
+    if (value === null || Array.isArray(value) || typeof value !== "object") return;
+    const row = value as Record<string, unknown>;
+    const path = `payload.parameters.${index}`;
+
+    if (row.severity === undefined || row.severity === null || row.severity === "") {
+      issues.push({
+        path: `${path}.severity`,
+        code: "REQUIRED",
+        message: "Select Critical, Major, or Minor."
+      });
+    }
+
+    if (
+      typeof row.responsibleRole !== "string" ||
+      (!SHARED_QUALITY_PERFORMERS.includes(row.responsibleRole as KnowledgeQualityPerformer) &&
+        !isKnowledgeQualityControlOptionReference(row.responsibleRole))
+    ) {
+      issues.push({
+        path: `${path}.responsibleRole`,
+        code: row.responsibleRole === undefined || row.responsibleRole === null || row.responsibleRole === ""
+          ? "REQUIRED"
+          : "NON_CANONICAL_PERFORMER",
+        message: "Select an available Performed by value."
+      });
+    }
+
+    validateCanonicalSharedQualityFrequency(row.sampling, `${path}.sampling`, issues);
+
+    if (row.type === "number") {
+      if (row.minimum === undefined || row.minimum === null || row.minimum === "") {
+        issues.push({ path: `${path}.minimum`, code: "REQUIRED", message: "Enter the inclusive minimum accepted value." });
+      }
+      if (row.maximum === undefined || row.maximum === null || row.maximum === "") {
+        issues.push({ path: `${path}.maximum`, code: "REQUIRED", message: "Enter the inclusive maximum accepted value." });
+      }
+      if (typeof row.unit !== "string" || row.unit.trim().length === 0) {
+        issues.push({ path: `${path}.unit`, code: "REQUIRED", message: "Enter the pass-range measurement unit." });
+      }
+    }
+  });
+
+  return issues;
+}
+
+function validateCanonicalSharedQualityFrequency(
+  value: unknown,
+  path: string,
+  issues: KnowledgeValidationIssue[]
+): void {
+  if (value === undefined || value === null) {
+    issues.push({ path, code: "REQUIRED", message: "Select a frequency." });
+    return;
+  }
+  if (Array.isArray(value) || typeof value !== "object") return;
+
+  const sampling = value as Record<string, unknown>;
+  if (sampling.method === "all") {
+    if (
+      !["unit", "room", "zone", "batch"].includes(String(sampling.unit)) &&
+      !isKnowledgeQualityControlOptionReference(sampling.unit)
+    ) {
+      issues.push({
+        path: `${path}.unit`,
+        code: "NON_CANONICAL_FREQUENCY",
+        message: "Select an available Frequency value."
+      });
+    }
+    return;
+  }
+  if (sampling.method === "fixed_count") {
+    if (sampling.value !== 1) {
+      issues.push({
+        path: `${path}.value`,
+        code: "NON_CANONICAL_FREQUENCY",
+        message: "Once per project must use a sample count of 1."
+      });
+    }
+    if (sampling.unit !== "project") {
+      issues.push({
+        path: `${path}.unit`,
+        code: "NON_CANONICAL_FREQUENCY",
+        message: "Once per project must use the project scope."
+      });
+    }
+    return;
+  }
+  if (typeof sampling.method === "string") {
+    issues.push({
+      path: `${path}.method`,
+      code: "NON_CANONICAL_FREQUENCY",
+      message: "Select Per unit, Per room, Per zone, Per batch, or Once per project."
+    });
+  }
 }
 
 export class KnowledgeValidationError extends Error {
@@ -393,8 +507,9 @@ function validatePricingPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
   const issues: KnowledgeValidationIssue[] = [];
+  const brandIdCounts = pricingBrandIdCounts(record.brands);
   if ("specifications" in record) {
-    validateSpecificationRows(record.specifications, issues);
+    validateSpecificationRows(record.specifications, brandIdCounts, issues);
   }
   if ("brands" in record) {
     validateNamedPricingRows(record.brands, "payload.brands", issues);
@@ -426,8 +541,26 @@ function validatePricingPayload(
   return issues;
 }
 
+function pricingBrandIdCounts(value: unknown): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  if (!Array.isArray(value)) return counts;
+  value.forEach((candidate) => {
+    if (candidate === null || Array.isArray(candidate) || typeof candidate !== "object") return;
+    const brandId = (candidate as Record<string, unknown>).id;
+    if (
+      typeof brandId !== "string"
+      || brandId.length === 0
+      || brandId.length > 240
+      || brandId !== brandId.trim()
+    ) return;
+    counts.set(brandId, (counts.get(brandId) ?? 0) + 1);
+  });
+  return counts;
+}
+
 function validateSpecificationRows(
   value: unknown,
+  brandIdCounts: ReadonlyMap<string, number>,
   issues: KnowledgeValidationIssue[]
 ): void {
   const path = "payload.specifications";
@@ -450,8 +583,8 @@ function validateSpecificationRows(
     validateExactRowKeys(
       row,
       isCanonical
-        ? ["id", "name", "description", "type", "options", "value"]
-        : ["id", "name", "description"],
+        ? ["id", "name", "description", "brandId", "type", "options", "value"]
+        : ["id", "name", "description", "brandId"],
       isCanonical
         ? ["id", "name", "type", "options", "value"]
         : ["id", "name"],
@@ -459,6 +592,23 @@ function validateSpecificationRows(
       issues
     );
     validateNamedPricingRow(row, rowPath, ids, names, issues);
+    if ("brandId" in row) {
+      const brandPath = `${rowPath}.brandId`;
+      validatePricingBrandId(row.brandId, brandPath, issues);
+      if (
+        typeof row.brandId === "string" &&
+        row.brandId.length > 0 &&
+        row.brandId.length <= 240 &&
+        row.brandId === row.brandId.trim() &&
+        brandIdCounts.get(row.brandId) !== 1
+      ) {
+        issues.push({
+          path: brandPath,
+          code: "INVALID_REFERENCE",
+          message: "Select a Brand configured in this Pricing section."
+        });
+      }
+    }
     if (isCanonical) {
       validateCanonicalSpecification(row, rowPath, issues);
     }
@@ -482,7 +632,7 @@ function validateNamedPricingRows(
       rowPath,
       issues
     );
-    validateNamedPricingRow(row, rowPath, ids, names, issues);
+    validateNamedPricingRow(row, rowPath, ids, names, issues, true);
   });
 }
 
@@ -491,9 +641,11 @@ function validateNamedPricingRow(
   path: string,
   ids: Set<string>,
   names: Set<string>,
-  issues: KnowledgeValidationIssue[]
+  issues: KnowledgeValidationIssue[],
+  requireTrimmedId = false
 ): void {
-  validateStableId(row.id, `${path}.id`, issues);
+  if (requireTrimmedId) validatePricingBrandId(row.id, `${path}.id`, issues);
+  else validateStableId(row.id, `${path}.id`, issues);
   validateText(
     row.name,
     `${path}.name`,
@@ -517,6 +669,25 @@ function validateNamedPricingRow(
       "DUPLICATE_NAME",
       issues
     );
+  }
+}
+
+function validatePricingBrandId(
+  value: unknown,
+  path: string,
+  issues: KnowledgeValidationIssue[]
+): void {
+  if (
+    typeof value !== "string"
+    || value.length === 0
+    || value.length > 240
+    || value !== value.trim()
+  ) {
+    issues.push({
+      path,
+      code: "INVALID_REFERENCE",
+      message: "Brand references require a trimmed stable ID up to 240 characters."
+    });
   }
 }
 
@@ -1034,22 +1205,34 @@ function validateBudgetAlterations(value: unknown, issues: KnowledgeValidationIs
   const targets = new Set<string>();
   rows.forEach((row, index) => {
     const path = `payload.budgetAlterations.${index}`;
-    const keys = ["id", "trigger", "action", "requirement", "targetType", "targetBasketId", "targetSubBasketId", "targetMainLineId", "reason", "active"];
-    validateExactRowKeys(row, keys, keys, path, issues);
+    const keys = ["id", "trigger", "action", "requirement", "targetKind", "targetType", "targetBasketId", "targetSubBasketId", "targetMainLineId", "reason", "active"];
+    const normalizedTarget = normalizeKnowledgeBudgetAlterationTarget(row);
+    const requiredKeys = normalizedTarget?.targetKind === "sub_basket" ? keys : keys.filter((key) => key !== "targetKind");
+    validateExactRowKeys(row, keys, requiredKeys, path, issues);
     validateStableId(row.id, `${path}.id`, issues);
     addUniqueString(row.id, ids, `${path}.id`, "DUPLICATE_ID", issues);
     validateClosedEnum(row.trigger, ["added", "removed"], `${path}.trigger`, issues);
     validateClosedEnum(row.action, ["add", "remove"], `${path}.action`, issues);
     validateClosedEnum(row.requirement, ["must", "can"], `${path}.requirement`, issues);
-    validateClosedEnum(row.targetType, ["catalog", "temporary"], `${path}.targetType`, issues);
+    if ("targetKind" in row) {
+      validateClosedEnum(row.targetKind, ["main_line", "sub_basket"], `${path}.targetKind`, issues);
+    }
     validateStableId(row.targetBasketId, `${path}.targetBasketId`, issues);
-    validateNullableStableId(row.targetSubBasketId, `${path}.targetSubBasketId`, issues);
     validateText(row.reason, `${path}.reason`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT);
     validateBoolean(row.active, `${path}.active`, issues);
-    validateStableId(row.targetMainLineId, `${path}.targetMainLineId`, issues);
+    if (normalizedTarget?.targetKind === "sub_basket") {
+      validateStableId(row.targetSubBasketId, `${path}.targetSubBasketId`, issues);
+      if (row.targetType !== null) issues.push({ path: `${path}.targetType`, code: "INVALID_NULL", message: "Whole Sub-Basket targets require targetType to be null." });
+      if (row.targetMainLineId !== null) issues.push({ path: `${path}.targetMainLineId`, code: "INVALID_NULL", message: "Whole Sub-Basket targets require targetMainLineId to be null." });
+    } else {
+      validateClosedEnum(row.targetType, ["catalog", "temporary"], `${path}.targetType`, issues);
+      validateNullableStableId(row.targetSubBasketId, `${path}.targetSubBasketId`, issues);
+      validateStableId(row.targetMainLineId, `${path}.targetMainLineId`, issues);
+    }
     if (row.active === false) return;
-    const targetKey = JSON.stringify([row.trigger, row.targetMainLineId]);
-    if (targets.has(targetKey)) issues.push({ path, code: "DUPLICATE_RULE", message: "Use one active rule per related item and trigger; combine its explanation instead of adding conflicting actions." });
+    if (!normalizedTarget || typeof normalizedTarget.targetId !== "string") return;
+    const targetKey = JSON.stringify([row.trigger, normalizedTarget.targetKind, normalizedTarget.targetId]);
+    if (targets.has(targetKey)) issues.push({ path, code: "DUPLICATE_RULE", message: "Use one active rule per target and trigger; combine its explanation instead of adding conflicting actions." });
     targets.add(targetKey);
   });
 }
@@ -1392,7 +1575,12 @@ function validateProductivityRows(
   });
 }
 
-function validateModeCalculationSettings(row: unknown, path: string, issues: KnowledgeValidationIssue[]): void {
+function validateModeCalculationSettings(
+  row: unknown,
+  path: string,
+  issues: KnowledgeValidationIssue[],
+  options: { readonly grossMargin?: boolean } = {}
+): void {
   if (row === null) return;
   if (!row || typeof row !== "object" || Array.isArray(row)) {
     issues.push(invalidTypeIssue(path, "a calculation settings object or null"));
@@ -1405,10 +1593,13 @@ function validateModeCalculationSettings(row: unknown, path: string, issues: Kno
   validateInteger(settings.baseRatePaise, `${path}.baseRatePaise`, issues, 0, Number.MAX_SAFE_INTEGER);
   validateCanonicalDecimal(settings.lowQuantityLimit, `${path}.lowQuantityLimit`, issues);
   for (const key of ["minimumMarkupBps", "startingMarkupBps"] as const) {
-    validateInteger(settings[key], `${path}.${key}`, issues, 0, Number.MAX_SAFE_INTEGER - 10_000);
+    validateInteger(settings[key], `${path}.${key}`, issues, 0,
+      options.grossMargin ? 9_999 : Number.MAX_SAFE_INTEGER - 10_000);
   }
   if (typeof settings.minimumMarkupBps === "number" && typeof settings.startingMarkupBps === "number" && settings.startingMarkupBps < settings.minimumMarkupBps) {
-    issues.push({ path: `${path}.startingMarkupBps`, code: "INVALID_MARKUP", message: "Starting markup must be at least the minimum markup." });
+    issues.push({ path: `${path}.startingMarkupBps`, code: "INVALID_MARKUP", message: options.grossMargin
+      ? "Starting Gross Margin must be at least Min. Gross Margin."
+      : "Starting markup must be at least the minimum markup." });
   }
 }
 
@@ -1430,7 +1621,12 @@ function validateAdvancedPayload(
         ? ["pmc", "sub_vendor", "in_house_labor", "in_house_material"] : ["pmc", "sub_vendor", "in_house"];
       validateExactRowKeys(settings, scopes, required, "payload.modeCalculations", issues);
       for (const scope of scopes) {
-        if (Object.hasOwn(settings, scope)) validateModeCalculationSettings(settings[scope], `payload.modeCalculations.${scope}`, issues);
+        if (Object.hasOwn(settings, scope)) validateModeCalculationSettings(
+          settings[scope],
+          `payload.modeCalculations.${scope}`,
+          issues,
+          { grossMargin: scope === "in_house" || scope === "in_house_labor" || scope === "in_house_material" }
+        );
       }
     }
   }

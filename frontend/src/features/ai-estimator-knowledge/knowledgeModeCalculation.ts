@@ -68,16 +68,6 @@ export function calculationScopeForIssue(path: string): ModeCalculationScope | u
   return MODE_CALCULATION_SCOPES.find((scope) => path === `modeCalculations.${scope}` || path.startsWith(`modeCalculations.${scope}.`));
 }
 
-export function maximumModeDiscountBps(draft: Pick<KnowledgeModeCalculationDraft, "minimumRate" | "startingRate">): number | undefined {
-  const minimum = parseRupeeInputToPaise(draft.minimumRate);
-  const starting = parseRupeeInputToPaise(draft.startingRate);
-  if (minimum.status !== "valid" || starting.status !== "valid"
-    || minimum.paise > Number.MAX_SAFE_INTEGER - 10_000 || starting.paise > Number.MAX_SAFE_INTEGER - 10_000
-    || starting.paise < minimum.paise) return undefined;
-  // Percentage inputs use the same exact hundredths parser as rupee inputs.
-  return starting.paise - minimum.paise;
-}
-
 export function parseModeQuantity(text: string, scale: number): string | undefined {
   const match = /^(\d+)(?:\.(\d+))?$/u.exec(text.trim());
   if (!match || text.length > 64) return undefined;
@@ -101,11 +91,20 @@ export function modeCalculationIssues(value: KnowledgeJsonValue | undefined, roo
       issues.push(issue(key, "Enter a supported non-negative value."));
     }
   }
+  if (rootPath.startsWith("modeCalculations.in_house")) {
+    for (const key of ["minimumMarkupBps", "startingMarkupBps"] as const) {
+      if (typeof row[key] === "number" && Number.isSafeInteger(row[key]) && row[key] >= 10_000) {
+        issues.push(issue(key, "Gross Margin must be less than 100%."));
+      }
+    }
+  }
   if (typeof row.lowQuantityLimit !== "string" || !/^(0|[1-9]\d*)(?:\.\d+)?$/u.test(row.lowQuantityLimit) || row.lowQuantityLimit.length > 64) {
     issues.push(issue("lowQuantityLimit", "Enter a valid Low Quantity Limit."));
   }
   if (typeof row.startingMarkupBps === "number" && typeof row.minimumMarkupBps === "number" && row.startingMarkupBps < row.minimumMarkupBps) {
-    issues.push(issue("startingMarkupBps", "Starting markup must be at least the minimum markup."));
+    issues.push(issue("startingMarkupBps", rootPath.startsWith("modeCalculations.in_house")
+      ? "Starting Gross Margin must be at least Min. Gross Margin."
+      : "Starting markup must be at least the minimum markup."));
   }
   return issues;
 }
@@ -120,7 +119,7 @@ export function modeCalculationDraft(value: KnowledgeJsonValue | undefined): Kno
   };
 }
 
-export function parseModeCalculationDraft(draft: KnowledgeModeCalculationDraft, scale: number) {
+export function parseModeCalculationDraft(draft: KnowledgeModeCalculationDraft, scale: number, enforceGrossMargin = true) {
   const errors: Partial<Record<keyof KnowledgeModeCalculationDraft, string>> = {};
   const base = parseRupeeInputToPaise(draft.baseRate);
   const minimum = parseRupeeInputToPaise(draft.minimumRate);
@@ -131,8 +130,14 @@ export function parseModeCalculationDraft(draft: KnowledgeModeCalculationDraft, 
   for (const [field, parsed] of [["minimumRate", minimum], ["startingRate", starting], ["impactRate", impact]] as const) {
     if (parsed.status !== "valid" || parsed.paise > Number.MAX_SAFE_INTEGER - 10_000) errors[field] = "Enter a supported non-negative percentage with up to two decimal places.";
   }
+  if (enforceGrossMargin && minimum.status === "valid" && minimum.paise >= 10_000) errors.minimumRate = "Gross Margin must be less than 100%.";
+  if (enforceGrossMargin && starting.status === "valid" && starting.paise >= 10_000) errors.startingRate = "Gross Margin must be less than 100%.";
   if (limit === undefined) errors.lowQuantityLimit = `Enter a non-negative limit with up to ${scale} decimal places.`;
-  if (minimum.status === "valid" && starting.status === "valid" && starting.paise < minimum.paise) errors.startingRate = "Starting markup must be at least the minimum markup.";
+  if (minimum.status === "valid" && starting.status === "valid" && starting.paise < minimum.paise) {
+    errors.startingRate = enforceGrossMargin
+      ? "Starting Gross Margin must be at least Min. Gross Margin."
+      : "Starting markup must be at least the minimum markup.";
+  }
   const settings: ModeCalculationSettings | undefined = Object.keys(errors).length || base.status !== "valid" || minimum.status !== "valid" || starting.status !== "valid" || impact.status !== "valid" || limit === undefined
     ? undefined
     : { baseRatePaise: base.paise, lowQuantityLimit: limit, impactBps: impact.paise, minimumMarkupBps: minimum.paise, startingMarkupBps: starting.paise };

@@ -47,7 +47,8 @@ export function KnowledgeModeCalculationEditor({ value, uom, readOnly, validatio
   const previousValue = useRef(JSON.stringify(value));
   const rootRef = useRef<HTMLDivElement>(null);
   const scale = uom.decimalScale ?? 6;
-  const parsed = parseModeCalculationDraft(draft, scale);
+  const enforceGrossMargin = scope !== "pmc" && scope !== "sub_vendor";
+  const parsed = parseModeCalculationDraft(draft, scale, enforceGrossMargin);
   const valid = !touched || Boolean(parsed.settings);
 
   useEffect(() => {
@@ -89,7 +90,7 @@ export function KnowledgeModeCalculationEditor({ value, uom, readOnly, validatio
     setLocallyEdited(true);
     setTouched(true);
     onDirty();
-    const settings = parseModeCalculationDraft(next, scale).settings;
+    const settings = parseModeCalculationDraft(next, scale, enforceGrossMargin).settings;
     if (settings) {
       previousValue.current = JSON.stringify(settings);
       onChange(settings);

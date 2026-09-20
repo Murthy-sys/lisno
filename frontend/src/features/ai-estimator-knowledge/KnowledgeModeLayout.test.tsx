@@ -51,6 +51,7 @@ describe("Knowledge Mode toolbar layout", () => {
     expect(baseModeToolbar.get("position")).toBe("static");
     expect(baseModeToolbar.get("inset-block-start")).toBe("auto");
     expect(baseModeToolbar.get("z-index")).toBe("auto");
+    expect(baseModeToolbar.get("flex-wrap")).toBe("nowrap");
     expect(baseModeToolbar.get("margin")).toBe("0");
 
     expect(professionalWorkspaceStart).toBeGreaterThan(-1);

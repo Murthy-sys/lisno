@@ -23,6 +23,10 @@ import {
   AI_ESTIMATOR_KNOWLEDGE_VERSION_STATUSES
 } from "../domain/ai-estimator-knowledge.js";
 import { AI_ESTIMATOR_KNOWLEDGE_PRIORITY_SEMANTIC_TIERS } from "../domain/ai-estimator-knowledge-priority.js";
+import {
+  AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_KINDS,
+  AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_NAME_MAX_LENGTH
+} from "../domain/ai-estimator-knowledge-quality-control-option.js";
 
 type OpenApiObject = Readonly<Record<string, unknown>>;
 
@@ -37,6 +41,7 @@ const admin = "/admin/ai-estimator-knowledge";
 const masterFamilies = ["uoms", "vendors", "taxes", "priorities", "surfaces", "modes"] as const;
 
 export const AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES: Readonly<Record<string, OpenApiObject>> = {
+  [`POST ${admin}/quality-control-options`]: jsonRequest("KnowledgeQualityControlOptionCreateRequest"),
   [`POST ${admin}/baskets`]: jsonRequest("KnowledgeBasketCreateRequest"),
   [`PATCH ${admin}/baskets/:basketId`]: jsonRequest("KnowledgeBasketUpdateRequest"),
   [`PUT ${admin}/baskets/:basketId/quality`]: jsonRequest("KnowledgeBasketQualityUpdateRequest"),
@@ -76,6 +81,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES: Readonly<Record<string, Open
 };
 
 export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, string>> = {
+  [`GET ${admin}/quality-control-options`]: "KnowledgeQualityControlOptionList",
+  [`POST ${admin}/quality-control-options`]: "KnowledgeQualityControlOption",
   [`GET ${admin}/baskets/:basketId/sub-baskets`]: "KnowledgeSubBasketPage",
   [`POST ${admin}/baskets/:basketId/sub-baskets`]: "KnowledgeSubBasket",
   [`GET ${admin}/baskets`]: "KnowledgeBasketPage",
@@ -121,6 +128,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, st
 };
 
 export const AI_ESTIMATOR_KNOWLEDGE_OPERATION_SUMMARIES: Readonly<Record<string, string>> = {
+  [`GET ${admin}/quality-control-options`]: "List reusable Quality Control values by kind",
+  [`POST ${admin}/quality-control-options`]: "Create an append-only reusable Quality Control value",
   [`GET ${admin}/baskets/:basketId/sub-baskets`]: "List a Main Basket’s Sub Baskets",
   [`POST ${admin}/baskets/:basketId/sub-baskets`]: "Create a Sub Basket",
   [`GET ${admin}/baskets`]: "List knowledge Baskets",
@@ -184,6 +193,13 @@ const masterStatusParameter = {
 export const AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS: Readonly<
   Record<string, readonly OpenApiObject[]>
 > = {
+  [`GET ${admin}/quality-control-options`]: [{
+    name: "kind",
+    in: "query",
+    required: true,
+    schema: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_KINDS] },
+    description: "Returns only custom reusable values of this kind. Built-in values remain code-defined."
+  }],
   [`GET ${admin}/baskets/:basketId/sub-baskets`]: [searchParameter],
   [`GET ${admin}/baskets`]: [searchParameter, masterStatusParameter, includeArchivedParameter],
   [`GET ${admin}/baskets/:basketId/main-lines`]: [searchParameter, includeArchivedParameter],
@@ -209,6 +225,16 @@ export const AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS: Readonly<
 };
 
 const id = { type: "string", minLength: 1, maxLength: 128 } as const;
+const pricingBrandId = {
+  type: "string",
+  minLength: 1,
+  maxLength: 240,
+  pattern: "^(?:\\S(?:.*\\S)?)$"
+} as const;
+const specificationBrandId = {
+  ...pricingBrandId,
+  description: "Stable reference to one local Brand in this Pricing payload's brands array. This is not a reusable Vendor master ID."
+} as const;
 const shortText = { type: "string", minLength: 1, maxLength: 240 } as const;
 const version = { type: "integer", minimum: 1 } as const;
 const dateTime = { type: "string", format: "date-time" } as const;
@@ -305,6 +331,42 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     type: "string",
     enum: [...AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS]
   },
+  KnowledgeQualityControlOptionCreateRequest: {
+    ...strictObject(["kind", "name"], {
+      kind: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_KINDS] },
+      name: {
+        type: "string",
+        minLength: 1,
+        maxLength: AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_NAME_MAX_LENGTH,
+        description: "Trimmed display name. Internal whitespace is collapsed and uniqueness is case-insensitive within the selected kind."
+      }
+    }),
+    description: "Super Admin-only append. A normalized duplicate returns 409 QUALITY_CONTROL_OPTION_EXISTS with existingOptionName and, for a custom match, existingOptionId. Built-in labels are reserved within their kind. Values cannot be renamed, archived, reordered, or deleted in this API."
+  },
+  KnowledgeQualityControlOption: {
+    ...strictObject(
+      ["id", "kind", "name", "version", ...Object.keys(actorMetadata)],
+      {
+        id: { type: "string", pattern: "^qco_[0-9a-f]{24}$" },
+        kind: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_KINDS] },
+        name: {
+          type: "string",
+          minLength: 1,
+          maxLength: AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_NAME_MAX_LENGTH
+        },
+        version: { type: "integer", enum: [1] },
+        ...actorMetadata
+      }
+    ),
+    description: "Append-only custom value. Built-in Frequency and Performed by values are intentionally not stored in this collection."
+  },
+  KnowledgeQualityControlOptionList: strictObject(["items"], {
+    items: {
+      type: "array",
+      items: ref("KnowledgeQualityControlOption"),
+      description: "Custom values sorted by normalized display name and stable ID."
+    }
+  }),
   KnowledgeArchiveRequest: strictObject(["expectedVersion", "reason"], {
     expectedVersion: version,
     reason: { type: "string", minLength: 1, maxLength: 1_000 }
@@ -336,7 +398,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
   }),
   KnowledgeBasketQualityUpdateRequest: strictObject(["expectedVersion", "parameters"], {
     expectedVersion: version,
-    parameters: { type: "array", maxItems: 200, items: ref("KnowledgeQualityParameter"), description: "Full replacement, including an intentional empty list. Combined payload limit 256 KiB. Validated before any writes." }
+    parameters: { type: "array", maxItems: 200, items: ref("KnowledgeQualityParameter"), description: "Full replacement, including an intentional empty list. Every saved row requires severity, a built-in or existing correct-kind custom Performed by value, and a built-in or existing correct-kind custom Frequency. Built-in Once per project retains fixed_count/1/project; custom values use qco_<24 lowercase hex> references. Number rows also require an inclusive minimum, maximum, and unit. Combined payload limit 256 KiB. Validated before any writes." }
   }),
   KnowledgeBasketQuality: strictObject(["basketId", "basketName", "basketStatus", "version", "revisionId", "revisionNumber", "contentDigest", "parameters", "updatedAt"], {
     basketId: id, basketName: masterProperties.name, basketStatus: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_MASTER_STATUSES] },
@@ -348,19 +410,19 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     id, type: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_QUALITY_PARAMETER_TYPES] },
     label: masterProperties.name, unit: { ...masterProperties.name, nullable: true }, category: { ...masterProperties.name, nullable: true },
     allowedValues: { type: "array", items: { type: "string", maxLength: 240 }, maxItems: 200 },
-    minimum: { type: "string", nullable: true, description: "Canonical nonnegative decimal string." },
-    maximum: { type: "string", nullable: true, description: "Canonical nonnegative decimal string." },
+    minimum: { type: "string", nullable: true, description: "Canonical nonnegative decimal string. Required on a shared-checklist save when type=number; the pass range is inclusive." },
+    maximum: { type: "string", nullable: true, description: "Canonical nonnegative decimal string. Required on a shared-checklist save when type=number, and must be greater than or equal to minimum." },
     defaultValue: { description: "Value compatible with the parameter type, or null." },
     required: { type: "boolean", description: "Compatibility field. Current quality parameters are always required; shared saves and effective reads normalize this to true." },
     active: { type: "boolean", description: "Compatibility field. Every listed quality parameter is active; shared saves and effective reads normalize this to true." },
     instructions: description, acceptanceCriteria: description, stage: { ...masterProperties.name, nullable: true },
     checkMethod: { type: "string", nullable: true, enum: ["visual", "measurement", "functional_test", "document_review", null] },
-    severity: { type: "string", nullable: true, enum: ["critical", "major", "minor", null] },
-    responsibleRole: { ...masterProperties.name, nullable: true }, failureAction: description,
+    severity: { type: "string", nullable: true, enum: ["critical", "major", "minor", null], description: "Required for new shared-checklist revisions. Nullable only for compatibility reads of immutable legacy revisions." },
+    responsibleRole: { ...masterProperties.name, nullable: true, description: "New shared-checklist revisions require one of site, pm, procurement, or vendor, or an existing performer option reference matching ^qco_[0-9a-f]{24}$. Other strings remain readable only in immutable legacy revisions." }, failureAction: description,
     sampling: { ...strictObject(["method", "unit"], {
       method: { type: "string", enum: ["all", "percentage", "fixed_count"] }, unit: masterProperties.name,
       value: { type: "number", nullable: true, description: "Percentage >0 and <=100; fixed count integer 1..1,000,000; absent/null for all. Runtime validation is authoritative." }
-    }), nullable: true },
+    }), nullable: true, description: "New shared-checklist revisions require one canonical frequency: all/unit, all/room, all/zone, all/batch, fixed_count with value 1 and unit project, or all with an existing frequency option reference matching ^qco_[0-9a-f]{24}$. Other structurally valid sampling remains readable only in immutable legacy revisions." },
     evidence: { ...strictObject(["photos", "documents", "video"], {
       photos: { type: "boolean" }, documents: { type: "boolean" }, video: { type: "boolean" },
       minPhotosPerSample: { type: "integer", minimum: 1, maximum: 100, nullable: true, description: "Required when photos=true, otherwise absent or null." },
@@ -474,12 +536,14 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       {
         id,
         name: { type: "string", minLength: 1, maxLength: 240 },
-        description
+        description,
+        brandId: specificationBrandId
       }
     ),
     example: {
       id: "specification-plywood",
       name: "Plywood",
+      brandId: "brand-century-green",
       description: "18 mm BWP-grade plywood for the cabinet carcass."
     }
   },
@@ -498,6 +562,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
           id,
           name: { type: "string", minLength: 1, maxLength: 240 },
           description,
+          brandId: specificationBrandId,
           type: { type: "string", enum: [type] },
           options: { type: "array", maxItems: 0, items: { type: "string" } },
           value: { type: "string", maxLength: 4_000, nullable: true }
@@ -509,6 +574,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
           id,
           name: { type: "string", minLength: 1, maxLength: 240 },
           description,
+          brandId: specificationBrandId,
           type: { type: "string", enum: ["number"] },
           options: { type: "array", maxItems: 0, items: { type: "string" } },
           value: {
@@ -525,6 +591,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
           id,
           name: { type: "string", minLength: 1, maxLength: 240 },
           description,
+          brandId: specificationBrandId,
           type: { type: "string", enum: [type] },
           options: {
             type: "array",
@@ -548,6 +615,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
           id,
           name: { type: "string", minLength: 1, maxLength: 240 },
           description,
+          brandId: specificationBrandId,
           type: { type: "string", enum: ["checkbox"] },
           options: { type: "array", maxItems: 0, items: { type: "string" } },
           value: { type: "boolean" }
@@ -558,6 +626,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     example: {
       id: "specification-finish",
       name: "Finish",
+      brandId: "brand-century-green",
       description: "Choose the approved finish.",
       type: "dropdown",
       options: ["Matte", "Gloss"],
@@ -565,11 +634,65 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     }
   },
   KnowledgeSpecification: {
-    description: "A descriptive Specification row for current writes, or an unchanged stored typed row retained for compatibility.",
+    description: "An Item/part row with an optional stable local Brand association, or an unchanged stored typed row retained for compatibility.",
     oneOf: [
       ref("KnowledgeDescriptiveSpecification"),
       ref("KnowledgeCanonicalSpecification")
     ]
+  },
+  KnowledgeBrand: {
+    ...strictObject(
+      ["id", "name"],
+      {
+        id: pricingBrandId,
+        name: { type: "string", minLength: 1, maxLength: 240 },
+        description
+      }
+    ),
+    description: "A Brand local to one Pricing payload. It is distinct from reusable procurement Vendor masters.",
+    example: {
+      id: "brand-century-green",
+      name: "Century Green"
+    }
+  },
+  KnowledgeSpecificationBrandIdentity: strictObject(
+    ["id", "name"],
+    {
+      id: pricingBrandId,
+      name: { type: "string", minLength: 1, maxLength: 240 }
+    }
+  ),
+  KnowledgeSpecificationContext: {
+    ...strictObject(
+      ["id", "name"],
+      {
+        id,
+        name: { type: "string", minLength: 1, maxLength: 240 },
+        description,
+        brandId: specificationBrandId,
+        brand: ref("KnowledgeSpecificationBrandIdentity")
+      }
+    ),
+    description: "Public Item/part context. When brandId is present, brand contains the identity resolved by that stable local ID."
+  },
+  KnowledgePricingContext: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      specifications: {
+        type: "array",
+        maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELDS,
+        items: ref("KnowledgeSpecificationContext")
+      },
+      brands: {
+        type: "array",
+        maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS,
+        items: ref("KnowledgeBrand")
+      },
+      technicalDescription: description,
+      qualityLevel: { type: "string", minLength: 1, maxLength: 240, nullable: true }
+    },
+    description: "Public Pricing context. Private Vendor notes and immutable price records are excluded."
   },
   KnowledgeBudgetSetCommand: {
     ...strictObject(
@@ -917,39 +1040,57 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       minimumMarkupBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000 },
       startingMarkupBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000 }
     }),
-    description: "Settings for one Mode calculation. Starting markup must be at least minimum markup. Markup is added to cost; the configured Impact applies strictly below the quantity limit. UOM, test quantity, and derived amounts are not stored here."
+    description: "Stored settings for one Mode calculation. minimumMarkupBps and startingMarkupBps are legacy transport names retained for compatibility. In-house preview interprets them as gross margins; PMC and Sub-Vendor simulators use their separate margin fields. UOM, test quantity, and derived amounts are not stored here."
+  },
+  KnowledgeInHouseModeCalculationSettings: {
+    ...strictObject(["baseRatePaise", "lowQuantityLimit", "minimumMarkupBps", "startingMarkupBps"], {
+      baseRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      lowQuantityLimit: decimal,
+      impactBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000, default: 1_000,
+        description: "Low-quantity Impact in basis points. It applies when quantity is at or below the limit; 0 disables the uplift." },
+      minimumMarkupBps: { type: "integer", minimum: 0, maximum: 9_999,
+        description: "Legacy transport name for the In-house minimum gross margin." },
+      startingMarkupBps: { type: "integer", minimum: 0, maximum: 9_999,
+        description: "Legacy transport name for the In-house starting gross margin; it must be at least the minimum." }
+    }),
+    description: "In-house simulator settings. Selling price is adjusted cost divided by one minus the selected gross margin. Impact applies at or below the low-quantity limit."
   },
   KnowledgeModeCalculations: {
     oneOf: [
       strictObject(["pmc", "sub_vendor", "in_house_labor", "in_house_material"], {
         pmc: nullableRef("KnowledgeModeCalculationSettings"),
         sub_vendor: nullableRef("KnowledgeModeCalculationSettings"),
-        in_house_labor: nullableRef("KnowledgeModeCalculationSettings"),
-        in_house_material: nullableRef("KnowledgeModeCalculationSettings"),
-        in_house: { ...nullableRef("KnowledgeModeCalculationSettings"), deprecated: true,
+        in_house_labor: nullableRef("KnowledgeInHouseModeCalculationSettings"),
+        in_house_material: nullableRef("KnowledgeInHouseModeCalculationSettings"),
+        in_house: { ...nullableRef("KnowledgeInHouseModeCalculationSettings"), deprecated: true,
           description: "Preserved legacy In-house snapshot. Split costs do not inherit subsequent edits." }
       }),
       { ...strictObject(["pmc", "sub_vendor", "in_house"], {
         pmc: nullableRef("KnowledgeModeCalculationSettings"),
         sub_vendor: nullableRef("KnowledgeModeCalculationSettings"),
-        in_house: nullableRef("KnowledgeModeCalculationSettings")
+        in_house: nullableRef("KnowledgeInHouseModeCalculationSettings")
       }), deprecated: true }
     ],
     description: "Independent PMC, Sub-Vendor, In-house Labor cost, and In-house Material cost settings. Null means unconfigured. Older maps without split costs remain accepted; their In-house values seed both costs once on the next calculation edit. Maps never inherit from the root legacy modeCalculation."
   },
-  KnowledgeModeCalculationPreview: strictObject(["revisedUnitRatePaise", "revisedAmountPaise", "totalPaise", "appliedImpactBps"], {
+  KnowledgeModeCalculationPreview: strictObject(["revisedUnitRatePaise", "revisedAmountPaise", "floorPricePaise", "maximumDiscountBps", "discountBasis", "totalPaise", "appliedImpactBps"], {
     revisedUnitRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
     revisedAmountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+    floorPricePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER,
+      description: "Rounded selling price at the configured minimum gross margin." },
+    maximumDiscountBps: { type: "integer", minimum: 0, maximum: 10_000,
+      description: "Maximum selling-price discount derived with floor division from rounded selected and floor prices." },
+    discountBasis: { type: "string", enum: ["selling_price"] },
     totalPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
     appliedImpactBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000 },
-    discount: strictObject(["rateBps", "effectiveMarkupBps", "totalBeforeDiscountPaise", "amountPaise"], {
-      rateBps: { type: "integer", minimum: 0 }, effectiveMarkupBps: { type: "integer", minimum: 0 },
+    discount: strictObject(["rateBps", "totalBeforeDiscountPaise", "amountPaise"], {
+      rateBps: { type: "integer", minimum: 0, maximum: 10_000 },
       totalBeforeDiscountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
       amountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }
     })
   }),
   KnowledgeInHouseCalculationSettings: strictObject(["labor", "material"], {
-    labor: ref("KnowledgeModeCalculationSettings"), material: ref("KnowledgeModeCalculationSettings")
+    labor: ref("KnowledgeInHouseModeCalculationSettings"), material: ref("KnowledgeInHouseModeCalculationSettings")
   }),
   KnowledgePmcCalculationSettings: {
     ...strictObject(["baseRatePaise", "lowQuantityLimit", "pmcMarginBps"], {
@@ -1019,7 +1160,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       labor: ref("KnowledgeModeCalculationPreview"), material: ref("KnowledgeModeCalculationPreview"),
       totalPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }
     }),
-    description: "Sum of the independently rounded Labor and Material final amounts, after each cost's own Impact and chosen additive markup. Both use the same test quantity and markup basis."
+    description: "Sum of independently rounded Labor and Material final amounts. Each component applies its own Impact, true gross margin, selling-price discount, and minimum-margin floor. Both use the same test quantity and selected margin basis."
   },
   KnowledgePreviewRequest: strictObject(["quantityScale"], {
     priceVersionId: { ...id, nullable: true },
@@ -1035,17 +1176,17 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     bottomMarginBps: { type: "integer", minimum: 0, maximum: 9_999, nullable: true },
     pmcMarkupBps: { type: "integer", minimum: 0, nullable: true },
     duration: { allOf: [ref("KnowledgeDurationPreviewRequest")], nullable: true },
-    modeCalculation: ref("KnowledgeModeCalculationSettings"),
+    modeCalculation: ref("KnowledgeInHouseModeCalculationSettings"),
     inHouseCalculation: { ...ref("KnowledgeInHouseCalculationSettings"), description: "Combined simulator settings. Cannot be supplied together with modeCalculation, pmcCalculation or subVendorCalculation." },
     pmcCalculation: { ...ref("KnowledgePmcCalculationSettings"), description: "PMC simulator settings. Cannot be combined with modeCalculation, inHouseCalculation, subVendorCalculation or modeCalculationMarkupBasis." },
     subVendorCalculation: { ...ref("KnowledgeSubVendorCalculationSettings"), description: "Sub-Vendor simulator settings. Cannot be combined with modeCalculation, inHouseCalculation, pmcCalculation or modeCalculationMarkupBasis." },
     modeCalculationMarkupBasis: {
       type: "string", enum: ["starting", "minimum"], default: "starting",
-      description: "Simulator-only choice of additive markup. Requires modeCalculation or inHouseCalculation. Never persisted with Mode settings."
+      description: "Legacy transport field for the simulator-only choice of starting or minimum In-house gross margin. Requires modeCalculation or inHouseCalculation and is never persisted."
     },
     modeCalculationDiscountBps: {
       type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000, default: 0,
-      description: "Simulator-only discount. For Mode and In-house, it reduces markup percentage points and cannot exceed chosen markup minus minimum markup (0 when using minimum); both In-house costs must satisfy that limit. For PMC, the 0–10000-bps rate discounts only the pre-discount PMC charge and preserves adjusted cost. For Sub-Vendor, the same rate continues to discount the rounded selling subtotal. Neither margin preview has a margin-based cap. Never persisted."
+      description: "Simulator-only discount. For generic/In-house preview, it is a percentage of the rounded selected selling price and cannot exceed the returned amount-aware cap (0 when using minimum); both In-house costs independently preserve their minimum-margin floors. For PMC, the 0–10000-bps rate discounts only the pre-discount PMC charge and preserves adjusted cost. For Sub-Vendor, the same rate continues to discount the rounded selling subtotal. Neither PMC nor Sub-Vendor has an In-house margin-floor cap. Never persisted."
     }
   }),
   KnowledgeDurationPreviewRequest: strictObject(["productivity", "productivityScale", "unit"], {
@@ -1153,11 +1294,12 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
   KnowledgePriorityPage: pageSchema("KnowledgePriority"),
   KnowledgeSurfacePage: pageSchema("KnowledgeSurface"),
   KnowledgeMainLine: strictObject(
-    ["id", "basketId", "name", "description", "displayOrder", "status", "activeRevisionId", "draftRevisionId", "version", ...Object.keys(actorMetadata)],
+    ["id", "basketId", "name", "description", "displayOrder", "status", "activeRevisionId", "draftRevisionId", "completionRequired", "version", ...Object.keys(actorMetadata)],
     {
       id,
       basketId: id,
       itemType: { type: "string", enum: ["main_line", "temporary"] },
+      completionRequired: { type: "boolean", description: "True for temporary catalog placeholders until a future explicit resolution workflow completes them." },
       subBasketId: { ...id, nullable: true },
       name: masterProperties.name,
       description,
@@ -1197,16 +1339,19 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       revisionStatus: { type: "string", enum: ["draft", "active"] },
       rules: { type: "array", items: strictObject(["id", "trigger", "action", "requirement", "reason", "active"], {
         id, trigger: { type: "string", enum: ["added", "removed"] }, action: { type: "string", enum: ["add", "remove"] },
-        requirement: { type: "string", enum: ["must", "can"] }, reason: { type: "string" }, active: { type: "boolean" }
+        requirement: { type: "string", enum: ["must", "can"] },
+        targetKind: { type: "string", enum: ["main_line", "sub_basket"], description: "Absent means a legacy Main-Line rule." },
+        reason: { type: "string" }, active: { type: "boolean" }
       }) }
     }
   ),
   KnowledgeItemListItem: strictObject(
-    ["id", "basketId", "basketName", "mainLineId", "mainLineName", "description", "status", "activeRevisionId", "draftRevisionId", "revisionNumber", "uomId", "priorityId", "modeIds", "surfaceIds", "vendorIds", "completeness", "allowedActions", "version", ...Object.keys(actorMetadata)],
+    ["id", "basketId", "basketName", "mainLineId", "mainLineName", "description", "status", "activeRevisionId", "draftRevisionId", "revisionNumber", "uomId", "priorityId", "modeIds", "surfaceIds", "vendorIds", "completionRequired", "completeness", "allowedActions", "version", ...Object.keys(actorMetadata)],
     {
       id,
       basketId: id,
       itemType: { type: "string", enum: ["main_line", "temporary"] },
+      completionRequired: { type: "boolean", description: "True for temporary catalog placeholders until a future explicit resolution workflow completes them." },
       linkedMainLines: { type: "array", items: ref("KnowledgeTemporaryMainLineReference") },
       basketName: { type: "string" },
       subBasketId: { ...id, nullable: true },
@@ -1231,11 +1376,12 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
   ),
   KnowledgeItemPage: pageSchema("KnowledgeItemListItem"),
   KnowledgeItemDetail: strictObject(
-    ["id", "basketId", "basketName", "mainLineId", "mainLineName", "description", "status", "activeRevisionId", "draftRevisionId", "revisionNumber", "uomId", "priorityId", "modeIds", "surfaceIds", "vendorIds", "completeness", "allowedActions", "version", ...Object.keys(actorMetadata), "activeRevision", "draftRevision", "blockers", "warnings"],
+    ["id", "basketId", "basketName", "mainLineId", "mainLineName", "description", "status", "activeRevisionId", "draftRevisionId", "revisionNumber", "uomId", "priorityId", "modeIds", "surfaceIds", "vendorIds", "completionRequired", "completeness", "allowedActions", "version", ...Object.keys(actorMetadata), "activeRevision", "draftRevision", "blockers", "warnings"],
     {
       id,
       basketId: id,
       itemType: { type: "string", enum: ["main_line", "temporary"] },
+      completionRequired: { type: "boolean", description: "True for temporary catalog placeholders until a future explicit resolution workflow completes them." },
       linkedMainLines: { type: "array", items: ref("KnowledgeTemporaryMainLineReference") },
       basketName: { type: "string" },
       subBasketId: { ...id, nullable: true },
@@ -1359,7 +1505,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
   KnowledgeConfigurationContext: strictObject(
     ["formulaVersion", "moneyUnit", "percentageUnit", "selection", "uom", "shared", "state", "issues", "calculations"],
     {
-      formulaVersion: { type: "string", enum: ["mode-markup-v1"] },
+      formulaVersion: { type: "string", enum: ["mode-margin-v2"],
+        description: "Configuration formula contract. Version 2 identifies true gross-margin and selling-price-discount semantics for In-house scopes while retaining the established PMC/Sub-Vendor compatibility projection." },
       moneyUnit: { type: "string", enum: ["paise"] },
       percentageUnit: { type: "string", enum: ["basis_points"] },
       selection: strictObject(["modeKind", "executionSource"], {
@@ -1387,7 +1534,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
           baseRatePaise: { type: "integer", minimum: 0 }, lowQuantityLimit: decimal,
           impactBps: { type: "integer", minimum: 0 }, minimumMarkupBps: { type: "integer", minimum: 0 }, startingMarkupBps: { type: "integer", minimum: 0 }
         }), nullable: true },
-        maximumDiscountBps: { type: "integer", minimum: 0, nullable: true, description: "Starting markup minus minimum markup, in basis points. This is not a discount percentage on selling price." }
+        maximumDiscountBps: { type: "integer", minimum: 0, nullable: true, description: "For In-house with valid quantity and UOM, the exact maximum selling-price discount from rounded prices. Null when that amount-aware cap cannot be derived. PMC/Sub-Vendor retain their legacy rate-difference projection." }
       }) }
     }
   ),
@@ -1415,7 +1562,14 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     sections: {
       type: "object",
       additionalProperties: false,
-      properties: Object.fromEntries(AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map((key) => [key, key === "quality" ? ref("KnowledgeQualityContext") : {}]))
+      properties: Object.fromEntries(AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map((key) => [
+        key,
+        key === "quality"
+          ? ref("KnowledgeQualityContext")
+          : key === "pricing"
+            ? ref("KnowledgePricingContext")
+            : {}
+      ]))
     },
     preview: { ...nullableRef("KnowledgePreview"), description: "Legacy price-version preview only. For independent Mode cost settings use configuration; do not combine these pricing systems." },
     configuration: ref("KnowledgeConfigurationContext")
@@ -1456,20 +1610,36 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
     sectionPayloadKeys(sectionKey).map((key) => [key, {}])
   );
   if (sectionKey === "recommendations") {
+    const commonBudgetAlterationProperties = {
+      id: { type: "string" }, trigger: { type: "string", enum: ["added", "removed"] },
+      action: { type: "string", enum: ["add", "remove"] }, requirement: { type: "string", enum: ["must", "can"] },
+      targetBasketId: { type: "string" },
+      reason: { type: "string", minLength: 1, maxLength: 4000 }, active: { type: "boolean" }
+    };
     properties.budgetAlterations = {
       type: "array", maxItems: 100,
-      description: "Conditional scope guidance for this Main Line. Must/can actions are proposals, not automatic estimate mutations. Temporary items have their own Overview, Mode and Quality configuration. Catalog targets use stable Basket, Sub Basket and Main Line identities.",
-      items: { type: "object", additionalProperties: false,
-        required: ["id", "trigger", "action", "requirement", "targetType", "targetBasketId", "targetSubBasketId", "targetMainLineId", "reason", "active"],
-        properties: {
-          id: { type: "string" }, trigger: { type: "string", enum: ["added", "removed"] },
-          action: { type: "string", enum: ["add", "remove"] }, requirement: { type: "string", enum: ["must", "can"] },
-          targetType: { type: "string", enum: ["catalog", "temporary"] },
-          targetBasketId: { type: "string" }, targetSubBasketId: { type: "string", nullable: true },
-          targetMainLineId: { type: "string" },
-          reason: { type: "string", minLength: 1, maxLength: 4000 }, active: { type: "boolean" }
+      description: "Conditional scope guidance for this Main Line. Absent targetKind is the legacy main_line shape. New writes identify either one Main Line or a whole non-empty Sub Basket. Must/can actions are proposals, not automatic estimate mutations.",
+      items: { oneOf: [
+        { type: "object", additionalProperties: false,
+          required: ["id", "trigger", "action", "requirement", "targetType", "targetBasketId", "targetSubBasketId", "targetMainLineId", "reason", "active"],
+          properties: {
+            ...commonBudgetAlterationProperties,
+            targetKind: { type: "string", enum: ["main_line"], description: "Optional only for legacy-compatible Main-Line rows; new writes include it." },
+            targetType: { type: "string", enum: ["catalog", "temporary"] },
+            targetSubBasketId: { type: "string", nullable: true }, targetMainLineId: { type: "string" }
+          }
+        },
+        { type: "object", additionalProperties: false,
+          required: ["id", "trigger", "action", "requirement", "targetKind", "targetType", "targetBasketId", "targetSubBasketId", "targetMainLineId", "reason", "active"],
+          properties: {
+            ...commonBudgetAlterationProperties,
+            targetKind: { type: "string", enum: ["sub_basket"] },
+            targetType: { type: "string", nullable: true, enum: [null] },
+            targetSubBasketId: { type: "string" },
+            targetMainLineId: { type: "string", nullable: true, enum: [null] }
+          }
         }
-      }
+      ] }
     };
   }
   if (sectionKey === "advanced") {
@@ -1503,6 +1673,12 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
       type: "array",
       maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELDS,
       items: ref("KnowledgeSpecification")
+    };
+    properties.brands = {
+      type: "array",
+      maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS,
+      description: "Brands local to this Pricing payload. These identities are separate from reusable procurement Vendor masters.",
+      items: ref("KnowledgeBrand")
     };
     properties.priceEntries = {
       type: "array",

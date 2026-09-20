@@ -3,7 +3,7 @@ import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 
 import { ROLE_CODES } from "../src/domain/roles.js";
-import { errorHandler } from "../src/middleware/errors.js";
+import { ApiError, errorHandler } from "../src/middleware/errors.js";
 import {
   createAiEstimatorKnowledgeAdminRouter,
   type AiEstimatorKnowledgeAdminRouterServices
@@ -11,6 +11,7 @@ import {
 import { createAiEstimatorKnowledgeContextRouter } from "../src/routes/ai-estimator-knowledge-context.js";
 import { createAiEstimatorKnowledgeContextService, type AiEstimatorKnowledgeContextService } from "../src/services/ai-estimator-knowledge-context.service.js";
 import type { AiEstimatorKnowledgeItemService } from "../src/services/ai-estimator-knowledge-item.service.js";
+import type { AiEstimatorKnowledgeQualityControlOptionService } from "../src/services/ai-estimator-knowledge-quality-control-option.service.js";
 import type { AiEstimatorKnowledgeReferenceService } from "../src/services/ai-estimator-knowledge-reference.service.js";
 import type { AuthService, PublicUser } from "../src/services/auth.service.js";
 
@@ -92,7 +93,31 @@ function services() {
       preview: null
     }))
   } as unknown as AiEstimatorKnowledgeContextService;
-  return { reference, item, context };
+  const qualityControlOptions = {
+    list: vi.fn(async (_actor, kind) => ({
+      items: [{
+        id: "qco_aaaaaaaaaaaaaaaaaaaaaaaa",
+        kind,
+        name: kind === "frequency" ? "Per floor" : "Site engineer",
+        version: 1,
+        createdById: superAdmin.id,
+        updatedById: superAdmin.id,
+        createdAt: "2026-09-20T00:00:00.000Z",
+        updatedAt: "2026-09-20T00:00:00.000Z"
+      }]
+    })),
+    create: vi.fn(async (_actor, input) => ({
+      id: "qco_bbbbbbbbbbbbbbbbbbbbbbbb",
+      ...input,
+      version: 1,
+      createdById: superAdmin.id,
+      updatedById: superAdmin.id,
+      createdAt: "2026-09-20T00:00:00.000Z",
+      updatedAt: "2026-09-20T00:00:00.000Z"
+    })),
+    validateReferences: vi.fn(async () => [])
+  } as unknown as AiEstimatorKnowledgeQualityControlOptionService;
+  return { reference, item, context, qualityControlOptions };
 }
 
 function appFor(testServices: AiEstimatorKnowledgeAdminRouterServices, actor?: PublicUser) {
@@ -106,6 +131,90 @@ function appFor(testServices: AiEstimatorKnowledgeAdminRouterServices, actor?: P
 }
 
 describe("AI Estimator Knowledge HTTP routes", () => {
+  it("lists and creates normalized reusable Quality Control values", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/quality-control-options";
+
+    const listed = await request(app)
+      .get(path)
+      .query({ kind: "frequency" })
+      .set("Authorization", "Bearer super-admin-token");
+    expect(listed.status).toBe(200);
+    expect(listed.body.data.items).toMatchObject([{ kind: "frequency", name: "Per floor" }]);
+    expect(testServices.qualityControlOptions.list).toHaveBeenCalledWith(superAdmin, "frequency");
+
+    const created = await request(app)
+      .post(path)
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ kind: "performer", name: "  Site   engineer  " });
+    expect(created.status).toBe(201);
+    expect(created.body.data).toMatchObject({ kind: "performer", name: "Site engineer" });
+    expect(testServices.qualityControlOptions.create).toHaveBeenCalledWith(superAdmin, {
+      kind: "performer",
+      name: "Site engineer"
+    });
+  });
+
+  it("strictly validates Quality Control option kind and name before calling the service", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/quality-control-options";
+    for (const query of [{}, { kind: "severity" }, { kind: "frequency", extra: "x" }]) {
+      expect((await request(app).get(path).query(query).set("Authorization", "Bearer super-admin-token")).status).toBe(400);
+    }
+    for (const body of [
+      { kind: "frequency", name: " " },
+      { kind: "frequency", name: "x".repeat(81) },
+      { kind: "frequency", name: "Per floor", extra: true },
+      { kind: "severity", name: "Critical" }
+    ]) {
+      expect((await request(app).post(path).set("Authorization", "Bearer super-admin-token").send(body)).status).toBe(400);
+    }
+    expect(testServices.qualityControlOptions.list).not.toHaveBeenCalled();
+    expect(testServices.qualityControlOptions.create).not.toHaveBeenCalled();
+  });
+
+  it.each(ROLE_CODES.filter((role) => role !== "super_admin"))(
+    "denies direct reusable Quality Control option creation for %s before service execution",
+    async (role) => {
+      const testServices = services();
+      const app = appFor(testServices, { ...admin, role });
+      const response = await request(app)
+        .post("/api/v1/admin/ai-estimator-knowledge/quality-control-options")
+        .set("Authorization", "Bearer staff-token")
+        .send({ kind: "frequency", name: "Per floor" });
+      expect(response.status).toBe(403);
+      expect(response.body.error.code).toBe("FORBIDDEN");
+      expect(testServices.qualityControlOptions.create).not.toHaveBeenCalled();
+    }
+  );
+
+  it("preserves the catalog duplicate conflict response", async () => {
+    const testServices = services();
+    vi.mocked(testServices.qualityControlOptions.create).mockRejectedValueOnce(new ApiError(
+      409,
+      "QUALITY_CONTROL_OPTION_EXISTS",
+      "A Quality Control option with this name already exists.",
+      {
+        existingOptionId: "qco_aaaaaaaaaaaaaaaaaaaaaaaa",
+        existingOptionName: "Per floor"
+      }
+    ));
+    const response = await request(appFor(testServices))
+      .post("/api/v1/admin/ai-estimator-knowledge/quality-control-options")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ kind: "frequency", name: "per floor" });
+    expect(response.status).toBe(409);
+    expect(response.body.error).toMatchObject({
+      code: "QUALITY_CONTROL_OPTION_EXISTS",
+      fields: {
+        existingOptionId: "qco_aaaaaaaaaaaaaaaaaaaaaaaa",
+        existingOptionName: "Per floor"
+      }
+    });
+  });
+
   it.each(ROLE_CODES.filter((role) => role !== "super_admin"))(
     "preserves direct related-item read, create and rule-save denial for %s",
     async (role) => {
@@ -166,21 +275,37 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     const app = appFor(testServices);
     const path = "/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/quality";
     const parameter = { id: "fixture-inspection", type: "boolean", label: "Installed fixtures checked?",
-      sampling: { method: "percentage", value: 10, unit: "installed electrical fixtures" },
+      severity: "major", responsibleRole: "site", sampling: { method: "all", unit: "room" },
       evidence: { photos: true, documents: false, video: false, minPhotosPerSample: 1 } };
     const input = { expectedVersion: 1, parameters: [parameter] };
     expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send(input)).status).toBe(200);
     expect(testServices.reference.updateBasketQuality).toHaveBeenCalledWith(superAdmin, "basket-1", input);
+    const customInput = {
+      expectedVersion: 1,
+      parameters: [{
+        ...parameter,
+        responsibleRole: "qco_111111111111111111111111",
+        sampling: { method: "all", unit: "qco_222222222222222222222222" }
+      }]
+    };
+    expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send(customInput)).status).toBe(200);
+    expect(testServices.reference.updateBasketQuality).toHaveBeenCalledWith(superAdmin, "basket-1", customInput);
     for (const invalid of [
       { ...input, expectedVersion: 0 }, { ...input, extra: true }, { expectedVersion: 1 },
       { ...input, parameters: [{ ...parameter, sampling: { method: "percentage", value: 101, unit: "fixtures" } }] },
       { ...input, parameters: [{ ...parameter, evidence: { photos: true, documents: false, video: false } }] },
       { ...input, parameters: [{ ...parameter, severity: "optional" }] },
+      { ...input, parameters: [{ ...parameter, severity: null }] },
+      { ...input, parameters: [{ ...parameter, responsibleRole: "Site supervisor" }] },
+      { ...input, parameters: [{ ...parameter, responsibleRole: "qco_ABC" }] },
+      { ...input, parameters: [{ ...parameter, sampling: { method: "all", unit: "ceiling areas" } }] },
+      { ...input, parameters: [{ ...parameter, sampling: { method: "all", unit: "qco_123" } }] },
+      { ...input, parameters: [{ ...parameter, type: "number", minimum: "1", maximum: "2", unit: null }] },
       { ...input, parameters: Array.from({ length: 201 }, (_, index) => ({ ...parameter, id: `check-${index}` })) }
     ]) {
       expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send(invalid)).status).toBe(400);
     }
-    expect(testServices.reference.updateBasketQuality).toHaveBeenCalledTimes(1);
+    expect(testServices.reference.updateBasketQuality).toHaveBeenCalledTimes(2);
   });
 
   it("validates Budget Alterations before the section mutation", async () => {
@@ -189,8 +314,11 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     const path = "/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/recommendations";
     const rule = { id: "rule-1", trigger: "removed", action: "remove", requirement: "must", targetType: "temporary", targetBasketId: "basket-1", targetSubBasketId: null, targetMainLineId: "line-2", reason: "Ceiling fixtures require support.", active: true };
     expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send({ expectedVersion: 1, expectedAggregateVersion: 1, payload: { budgetAlterations: [rule] } })).status).toBe(200);
+    const subBasketRule = { ...rule, id: "rule-2", targetKind: "sub_basket", targetType: null, targetSubBasketId: "sub-basket-1", targetMainLineId: null };
+    expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send({ expectedVersion: 1, expectedAggregateVersion: 1, payload: { budgetAlterations: [subBasketRule] } })).status).toBe(200);
     expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send({ expectedVersion: 1, expectedAggregateVersion: 1, payload: { budgetAlterations: [{ ...rule, reason: " " }] } })).status).toBe(400);
-    expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
+    expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send({ expectedVersion: 1, expectedAggregateVersion: 1, payload: { budgetAlterations: [{ ...subBasketRule, targetMainLineId: "line-2" }] } })).status).toBe(400);
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(2);
   });
 
   it("accepts a Sub Basket text name and rejects blank or ambiguous mappings", async () => {
@@ -791,15 +919,20 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     expect(testServices.item.updateSection).toHaveBeenLastCalledWith(superAdmin, "line-1", "revision-1", "advanced", {
       expectedVersion: 3, expectedAggregateVersion: 7, payload: { modeCalculations }
     });
+    const hiddenLegacyRates = { ...settings, minimumMarkupBps: 12_000, startingMarkupBps: 15_000 };
+    expect((await send({ ...modeCalculations, pmc: hiddenLegacyRates, sub_vendor: hiddenLegacyRates })).status).toBe(200);
     for (const scope of ["in_house_labor", "in_house_material"]) {
       const rejected = await send({ ...modeCalculations, [scope]: { ...settings, impactBps: -1 } });
       expect(rejected.status).toBe(400);
       expect(rejected.body.error.fields).toMatchObject({ [`payload.modeCalculations.${scope}.impactBps`]: expect.any(String) });
+      const impossibleMargin = await send({ ...modeCalculations, [scope]: { ...settings, startingMarkupBps: 10_000 } });
+      expect(impossibleMargin.status).toBe(400);
+      expect(impossibleMargin.body.error.fields).toMatchObject({ [`payload.modeCalculations.${scope}.startingMarkupBps`]: expect.any(String) });
     }
     const { in_house_material: _material, ...partial } = modeCalculations;
     expect((await send({ ...partial, in_house: settings })).status).toBe(400);
     expect((await send({ pmc: settings, execution: settings })).status).toBe(400);
-    expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(2);
   });
 
   it("validates the PMC margin before persisting a Mode section", async () => {
@@ -999,6 +1132,7 @@ describe("AI Estimator Knowledge HTTP routes", () => {
       { quantityScale: 0, modeCalculationMarkupBasis: "minimum" },
       { ...input, quantity: null }, { modeCalculation, quantityScale: 0 },
       { ...input, modeCalculation: { ...modeCalculation, startingMarkupBps: 2_000 } },
+      { ...input, modeCalculation: { ...modeCalculation, minimumMarkupBps: 9_999, startingMarkupBps: 10_000 } },
       ...[-1, 1.5, null, "10", Number.MAX_SAFE_INTEGER].map((impactBps) => ({ ...input, modeCalculation: { ...modeCalculation, impactBps } })),
       { ...input, modeCalculation: { ...modeCalculation, uomId: "invented" } }
     ]) expect((await send(invalid)).status).toBe(400);
@@ -1030,6 +1164,39 @@ describe("AI Estimator Knowledge HTTP routes", () => {
       expect(response.body.error.fields).toMatchObject({ [path]: expect.any(String) });
     }
     expect(testServices.context.preview).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns corrected In-house prices through authenticated read-only preview without a business write", async () => {
+    const testServices = services();
+    const requireReadActor = vi.fn().mockResolvedValue({ id: superAdmin.id, role: superAdmin.role });
+    const requireMutationActor = vi.fn();
+    testServices.context = createAiEstimatorKnowledgeContextService({ actorGuard: { requireReadActor, requireMutationActor } });
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/preview";
+    const settings = { baseRatePaise: 3_000, lowQuantityLimit: "1", impactBps: 0, minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+    const input = { inHouseCalculation: { labor: settings, material: settings }, quantity: "1", quantityScale: 0,
+      modeCalculationMarkupBasis: "starting", modeCalculationDiscountBps: 1_332 };
+
+    const response = await request(app).post(path).set("Authorization", "Bearer super-admin-token").send(input);
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({ formulaVersion: "knowledge-preview-v1", inHouseCalculation: {
+      labor: { revisedUnitRatePaise: 3_000, revisedAmountPaise: 3_000, floorPricePaise: 4_000,
+        maximumDiscountBps: 1_332, discountBasis: "selling_price", totalPaise: 4_000,
+        discount: { rateBps: 1_332, totalBeforeDiscountPaise: 4_615, amountPaise: 615 } },
+      material: { revisedUnitRatePaise: 3_000, revisedAmountPaise: 3_000, floorPricePaise: 4_000,
+        maximumDiscountBps: 1_332, discountBasis: "selling_price", totalPaise: 4_000,
+        discount: { rateBps: 1_332, totalBeforeDiscountPaise: 4_615, amountPaise: 615 } },
+      totalPaise: 8_000
+    } });
+    expect(response.body.data).not.toHaveProperty("pmcCalculation");
+    expect(response.body.data).not.toHaveProperty("subVendorCalculation");
+    expect((await request(app).post(path).send(input)).status).toBe(401);
+    expect((await request(app).post(path).set("Authorization", "Bearer admin-token").send(input)).status).toBe(403);
+    expect(requireReadActor).toHaveBeenCalledOnce();
+    expect(requireReadActor).toHaveBeenCalledWith(superAdmin);
+    expect(requireMutationActor).not.toHaveBeenCalled();
+    for (const operation of Object.values(testServices.item)) expect(operation).not.toHaveBeenCalled();
+    for (const operation of Object.values(testServices.reference)) expect(operation).not.toHaveBeenCalled();
   });
 
   it("accepts simulator-only discount basis points and rejects malformed or unrelated discounts", async () => {

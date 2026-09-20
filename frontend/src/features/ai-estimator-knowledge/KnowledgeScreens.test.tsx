@@ -49,6 +49,8 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     getKnowledgeHistory: vi.fn(),
     getKnowledgeSection: vi.fn(),
     getKnowledgeBasketQuality: vi.fn(),
+    listKnowledgeQualityControlOptions: vi.fn(),
+    createKnowledgeQualityControlOption: vi.fn(),
     updateKnowledgeBasketQuality: vi.fn(),
     updateKnowledgeSection: vi.fn(),
     previewKnowledge: vi.fn()
@@ -77,6 +79,7 @@ const revision: KnowledgeRevision = {
 };
 const item: KnowledgeItemDetail = {
   id: "line-1",
+  completionRequired: false,
   mainLineId: "line-1",
   mainLineName: "Wall panelling",
   basketId: "basket-1",
@@ -224,6 +227,12 @@ async function openQualityEditor(user: ReturnType<typeof userEvent.setup>, index
   await user.click(await screen.findByRole("button", { name: new RegExp(`^(Edit|View) parameter ${index}:`) }));
 }
 
+async function completeQualityControls(user: ReturnType<typeof userEvent.setup>) {
+  await user.selectOptions(screen.getByRole("combobox", { name: "Severity" }), "major");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Frequency" }), "per_unit");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Performed by" }), "site");
+}
+
 function renderRoute(element: React.ReactElement, path: string, route: string) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -278,7 +287,7 @@ function expectModeRegionsInOrder(container: HTMLElement) {
 
 async function findPricingSpecificationName() {
   const specifications = await screen.findByRole("region", { name: "Specifications" });
-  return within(specifications).getByRole("textbox", { name: "Specification name" });
+  return within(specifications).getByRole("textbox", { name: "Item name" });
 }
 
 async function editPmcMargin(user: ReturnType<typeof userEvent.setup>) {
@@ -313,6 +322,7 @@ beforeEach(() => {
   vi.mocked(knowledgeApi.listKnowledgeMasters).mockResolvedValue({ items: [], pagination: page });
   vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [], pagination: page });
   vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockResolvedValue({ items: [], pagination: page });
+  vi.mocked(knowledgeApi.listKnowledgeQualityControlOptions).mockResolvedValue({ items: [] });
   vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({ items: [], pagination: { ...page, limit: 20 } });
   vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue(item);
   vi.mocked(knowledgeApi.getKnowledgeHistory).mockResolvedValue({ items: [revision], pagination: page });
@@ -670,6 +680,7 @@ describe("temporary item workspace", () => {
     expect(screen.getByRole("link", { name: "Wall panelling" })).toBeVisible();
     const temporaryCard = screen.getByRole("link", { name: "Temporary pendant" }).closest("article")!;
     expect(temporaryCard).toHaveAttribute("data-item-type", "temporary");
+    expect(within(temporaryCard).getByText("Temporary item · Must be completed")).toBeVisible();
     expect(within(temporaryCard).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
     expect(within(temporaryCard).queryByRole("heading", { name: "Main Line info" })).not.toBeInTheDocument();
     expect(screen.queryByText("Overview · Mode · Quality Parameters")).not.toBeInTheDocument();
@@ -704,7 +715,7 @@ describe("temporary item workspace", () => {
     await user.type(reason, "Recessed lights need the false ceiling.");
     await doneFocusedEditing(user);
     await user.click(screen.getByRole("button", { name: "Save Recommendation & Exclusions" }));
-    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith("line-1", "revision-1", "recommendations", expect.objectContaining({ expectedVersion: 2, expectedAggregateVersion: 4, payload: { budgetAlterations: [{ ...budgetRule, reason: "Recessed lights need the false ceiling." }], exclusions: notes } })));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith("line-1", "revision-1", "recommendations", expect.objectContaining({ expectedVersion: 2, expectedAggregateVersion: 4, payload: { budgetAlterations: [{ ...budgetRule, targetKind: "main_line", reason: "Recessed lights need the false ceiling." }], exclusions: notes } })));
   });
 
   it("exposes only Overview, Mode and Quality without changing regular Main Line navigation", async () => {
@@ -712,6 +723,7 @@ describe("temporary item workspace", () => {
     const user = userEvent.setup();
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
     await screen.findByRole("heading", { name: "Wall panelling" });
+    expect(screen.getByText("Temporary item · Must be completed")).toBeVisible();
     expect(screen.queryByRole("tab", { name: "Recommendation & Exclusions" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("tab")).toHaveLength(3);
     await doneFocusedEditing(user);
@@ -973,6 +985,7 @@ describe("AI estimator knowledge screens", () => {
     await user.type(screen.getByRole("textbox", { name: "Question / check" }), "Check the completed finish");
     expect(screen.getByRole("region", { name: "Quality Parameters saved summary" })).not.toHaveTextContent("Check the completed finish");
     await user.selectOptions(screen.getByRole("combobox", { name: "Answer type" }), "boolean");
+    await completeQualityControls(user);
     await doneFocusedEditing(user);
     await user.click(screen.getByRole("tab", { name: "Overview" }));
     const guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
@@ -1024,6 +1037,7 @@ describe("AI estimator knowledge screens", () => {
     const question = await screen.findByRole("textbox", { name: "Question / check" });
     await user.clear(question);
     await user.type(question, "Unsaved finish check");
+    await completeQualityControls(user);
     await doneFocusedEditing(user);
     await user.click(screen.getByRole("button", { name: "Save shared checklist" }));
     expect(await screen.findByText("Checklist save unavailable")).toBeVisible();

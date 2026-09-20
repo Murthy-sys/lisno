@@ -43,6 +43,7 @@ const actorMetadata = {
 
 const item: KnowledgeItemDetail = {
   id: "line-1",
+  completionRequired: false,
   mainLineId: "line-1",
   mainLineName: "Wall panelling",
   basketId: "basket-1",
@@ -272,7 +273,8 @@ describe("Knowledge Mode section-state removal", () => {
       effectiveUnitRatePaise: null, adjustedUnitRate: null, requiredQuantity: "1", procurementQuantity: null,
       vendorPreTax: null, vendorTax: null, vendorTotal: null, startMargin: null, bottomMargin: null,
       pmcMarkup: null, duration: null,
-      modeCalculation: { revisedUnitRatePaise: 165_000, revisedAmountPaise: 165_000, totalPaise: 222_750, appliedImpactBps: 1_000 },
+      modeCalculation: { revisedUnitRatePaise: 165_000, revisedAmountPaise: 165_000, floorPricePaise: 220_000,
+        maximumDiscountBps: 1_333, discountBasis: "selling_price", totalPaise: 253_846, appliedImpactBps: 1_000 },
       pmcCalculation: { baseAmountPaise: 150_000, lowQuantityImpactAmountPaise: 15_000,
         revisedUnitRatePaise: 165_000, revisedAmountPaise: 165_000, totalPaise: 194_118,
         appliedImpactBps: 1_000, pmcMarginBps: 1_500, pmcMarginAmountPaise: 29_118,
@@ -376,7 +378,7 @@ describe("Knowledge Mode section-state removal", () => {
     const calculations = screen.getByRole("region", { name: "PMC calculations" });
     expect(within(calculations).getAllByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveLength(1);
     expect(screen.getAllByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveLength(1);
-    expect(within(calculations).queryByRole("group", { name: "Gross margin markup" })).not.toBeInTheDocument();
+    expect(within(calculations).queryByRole("group", { name: "Gross margin" })).not.toBeInTheDocument();
     expect(within(calculations).queryByRole("status", { name: "Max Discount" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Inclusions" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Exclusions" })).not.toBeInTheDocument();
@@ -393,7 +395,7 @@ describe("Knowledge Mode section-state removal", () => {
     expect(simulator.getByRole("textbox", { name: "Min. PMC Margin (%)" })).toHaveValue("15.00");
     expect(simulator.getByRole("textbox", { name: "Max. PMC Margin (%)" })).toHaveValue("15.00");
     expect(simulator.getByRole("radio", { name: "Max. PMC Margin" })).toBeChecked();
-    expect(simulator.queryByRole("textbox", { name: /Gross Margin Markup/ })).not.toBeInTheDocument();
+    expect(simulator.queryByRole("textbox", { name: /Gross Margin/ })).not.toBeInTheDocument();
     fireEvent.change(simulator.getByRole("textbox", { name: "Quantity" }), { target: { value: "14.25" } });
     fireEvent.change(simulator.getByRole("textbox", { name: "Discount (%)" }), { target: { value: "2" } });
     vi.mocked(knowledgeApi.previewKnowledge).mockResolvedValueOnce({
@@ -752,7 +754,7 @@ describe("Knowledge Mode section-state removal", () => {
     expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(12.25);
   });
 
-  it("keeps PMC and Sub-Vendor margins separate from In-house markups through validation, save and reload", async () => {
+  it("keeps PMC and Sub-Vendor margins separate from In-house Gross Margins through validation, save and reload", async () => {
     const user = userEvent.setup();
     const ref = createRef<KnowledgeModePanelHandle>();
     const legacy = { baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
@@ -768,10 +770,10 @@ describe("Knowledge Mode section-state removal", () => {
     const cases = [
       { scope: "pmc", label: "PMC", inputs: ["2100", "12", "7.25"], settings: { ...legacy, baseRatePaise: 210_000, lowQuantityLimit: "12", impactBps: 725 } },
       { scope: "sub_vendor", label: "Sub-Vendor", inputs: ["800", "8", "5.25"], settings: { ...legacy, baseRatePaise: 80_000, lowQuantityLimit: "8", impactBps: 525 } },
-      { scope: "in_house_labor", label: "Labor cost", inputs: ["450", "4", "0", "8", "23"], discount: "15.00%", settings: { baseRatePaise: 45_000, lowQuantityLimit: "4", impactBps: 0, minimumMarkupBps: 800, startingMarkupBps: 2_300 } },
-      { scope: "in_house_material", label: "Material cost", inputs: ["650", "9", "12.75", "18", "36"], discount: "18.00%", settings: { baseRatePaise: 65_000, lowQuantityLimit: "9", impactBps: 1_275, minimumMarkupBps: 1_800, startingMarkupBps: 3_600 } }
+      { scope: "in_house_labor", label: "Labor cost", inputs: ["450", "4", "0", "8", "23"], settings: { baseRatePaise: 45_000, lowQuantityLimit: "4", impactBps: 0, minimumMarkupBps: 800, startingMarkupBps: 2_300 } },
+      { scope: "in_house_material", label: "Material cost", inputs: ["650", "9", "12.75", "18", "36"], settings: { baseRatePaise: 65_000, lowQuantityLimit: "9", impactBps: 1_275, minimumMarkupBps: 1_800, startingMarkupBps: 3_600 } }
     ] as const;
-    const labels = ["Base Rate (₹)", "Low Quantity Limit", "Impact (%)", "Min. Gross Margin Markup (%)", "Starting Gross Margin Markup (%)"];
+    const labels = ["Base Rate (₹)", "Low Quantity Limit", "Impact (%)", "Min. Gross Margin (%)", "Starting Gross Margin (%)"];
     async function select(label: string) {
       const pmc = screen.getByRole("checkbox", { name: "PMC" });
       const execution = screen.getByRole("checkbox", { name: "Execution" });
@@ -791,7 +793,7 @@ describe("Knowledge Mode section-state removal", () => {
       } else if (scenario.scope === "sub_vendor") {
         expect(region.queryByRole("status", { name: "Max Discount" })).not.toBeInTheDocument();
         expect(region.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" })).toHaveValue(20);
-      } else expect(region.getByRole("status", { name: "Max Discount" })).toHaveTextContent(scenario.discount);
+      } else expect(region.queryByRole("status", { name: "Max Discount" })).not.toBeInTheDocument();
       if (scenario.scope === "sub_vendor") fireEvent.change(region.getByRole("textbox", { name: "Impact (%)" }), { target: { value: "5." } });
     }
     await act(async () => { expect(await ref.current?.save()).toBe(false); });
@@ -810,7 +812,7 @@ describe("Knowledge Mode section-state removal", () => {
       editableLabels.forEach((name, index) => expect(Number((region.getByRole("textbox", { name }) as HTMLInputElement).value)).toBe(Number(scenario.inputs[index])));
       if (scenario.scope === "pmc") expect(region.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(17.5);
       else if (scenario.scope === "sub_vendor") expect(region.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" })).toHaveValue(20);
-      else expect(region.getByRole("status", { name: "Max Discount" })).toHaveTextContent(scenario.discount);
+      else expect(region.queryByRole("status", { name: "Max Discount" })).not.toBeInTheDocument();
       await user.click(region.getByRole("button", { name: "Test calculations" }));
       expect(screen.getByText(`${scenario.label} calculation simulator`)).toBeVisible();
       if (scenario.scope === "pmc") vi.mocked(knowledgeApi.previewKnowledge).mockResolvedValueOnce({
@@ -867,8 +869,10 @@ describe("Knowledge Mode section-state removal", () => {
       formulaVersion: "knowledge-preview-v1", effectivePriceVersionId: null, taxVersionId: null, effectiveUnitRatePaise: null,
       adjustedUnitRate: null, requiredQuantity: "1", procurementQuantity: null, vendorPreTax: null, vendorTax: null, vendorTotal: null,
       startMargin: null, bottomMargin: null, pmcMarkup: null, duration: null,
-      inHouseCalculation: { labor: { revisedUnitRatePaise: 45_000, revisedAmountPaise: 45_000, totalPaise: 55_350, appliedImpactBps: 0 },
-        material: { revisedUnitRatePaise: 73_288, revisedAmountPaise: 73_288, totalPaise: 99_672, appliedImpactBps: 1_275 }, totalPaise: 155_022 }
+      inHouseCalculation: { labor: { revisedUnitRatePaise: 45_000, revisedAmountPaise: 45_000, floorPricePaise: 48_913,
+        maximumDiscountBps: 1_630, discountBasis: "selling_price", totalPaise: 58_442, appliedImpactBps: 0 },
+        material: { revisedUnitRatePaise: 73_288, revisedAmountPaise: 73_288, floorPricePaise: 89_376,
+          maximumDiscountBps: 2_195, discountBasis: "selling_price", totalPaise: 114_513, appliedImpactBps: 1_275 }, totalPaise: 172_955 }
     });
     const { props } = renderPanel(ref);
     await user.click(await screen.findByRole("checkbox", { name: "PMC" }));
@@ -880,9 +884,9 @@ describe("Knowledge Mode section-state removal", () => {
     expect(screen.getByRole("region", { name: "Execution" })).toContainElement(materialSection);
     expect(materialSection.compareDocumentPosition(total) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await user.click(within(total).getByRole("button", { name: "Test In-house total" }));
-    expect(await within(screen.getByRole("dialog")).findByLabelText("Subtotal")).toHaveTextContent("₹1,550.22");
+    expect(await within(screen.getByRole("dialog")).findByLabelText("Subtotal")).toHaveTextContent("₹1,729.55");
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Close" }));
-    expect(within(total).getByLabelText("Subtotal")).toHaveTextContent("₹1,550.22");
+    expect(within(total).getByLabelText("Subtotal")).toHaveTextContent("₹1,729.55");
     expect(knowledgeApi.previewKnowledge).toHaveBeenCalledWith({ inHouseCalculation: { labor, material }, quantity: "1", quantityScale: 2, modeCalculationMarkupBasis: "starting" }, automaticPreviewOptions);
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
     expect(props.onDirtyChange).toHaveBeenLastCalledWith(false);
@@ -975,7 +979,7 @@ describe("Knowledge Mode section-state removal", () => {
     });
     renderPanel(createRef<KnowledgeModePanelHandle>());
     await screen.findByText("Could not load the UOM saved in Overview.");
-    expect(screen.queryByLabelText("Total with starting markup")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Total with Starting Gross Margin")).not.toBeInTheDocument();
     expect(knowledgeApi.previewKnowledge).not.toHaveBeenCalled();
     vi.mocked(knowledgeApi.getKnowledgeSection).mockResolvedValueOnce(section("overview", "configured", { uomId: uoms[0]!.id }));
     await userEvent.click(screen.getByRole("button", { name: "Retry UOM" }));
@@ -1287,7 +1291,7 @@ describe("Knowledge Mode section-state removal", () => {
     const ref = createRef<KnowledgeModePanelHandle>();
     renderPanel(ref);
     await user.click(await screen.findByRole("button", { name: "Add Specification" }));
-    await user.type(screen.getByRole("textbox", { name: "Specification name" }), "Plywood");
+    await user.type(screen.getByRole("textbox", { name: "Item name" }), "Plywood");
     await act(async () => { expect(await ref.current?.save()).toBe(true); });
     expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledOnce();
     const call = vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[0]!;
@@ -1322,7 +1326,7 @@ describe("Knowledge Mode section-state removal", () => {
     await user.type(screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" }), "15");
     await user.type(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" }), "15");
     await user.click(screen.getByRole("button", { name: "Add Specification" }));
-    await user.type(screen.getByRole("textbox", { name: "Specification name" }), "Plywood");
+    await user.type(screen.getByRole("textbox", { name: "Item name" }), "Plywood");
 
     await act(async () => {
       expect(await ref.current?.save()).toBe(true);
@@ -1365,7 +1369,7 @@ describe("Knowledge Mode section-state removal", () => {
     await user.type(screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" }), "15");
     await user.type(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" }), "15");
     await user.click(screen.getByRole("button", { name: "Add Specification" }));
-    await user.type(screen.getByRole("textbox", { name: "Specification name" }), "Plywood");
+    await user.type(screen.getByRole("textbox", { name: "Item name" }), "Plywood");
 
     const invalidationNeverSettles = new Promise<void>(() => undefined);
     const invalidateSpy = vi
@@ -1547,7 +1551,7 @@ describe("Knowledge Mode section-state removal", () => {
     await user.type(screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" }), "15");
     await user.type(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" }), "15");
     await user.click(screen.getByRole("button", { name: "Add Specification" }));
-    await user.type(screen.getByRole("textbox", { name: "Specification name" }), "Plywood");
+    await user.type(screen.getByRole("textbox", { name: "Item name" }), "Plywood");
 
     await act(async () => {
       expect(await ref.current?.save()).toBe(false);
@@ -1772,7 +1776,7 @@ describe("Knowledge Mode section-state removal", () => {
     await user.type(screen.getByRole("spinbutton", { name: "Min. Lisno Margin (%)" }), "15");
     await user.type(margin, "15");
     await user.click(screen.getByRole("button", { name: "Add Specification" }));
-    await user.type(screen.getByRole("textbox", { name: "Specification name" }), "Plywood");
+    await user.type(screen.getByRole("textbox", { name: "Item name" }), "Plywood");
 
     await act(async () => {
       expect(await ref.current?.save()).toBe(false);

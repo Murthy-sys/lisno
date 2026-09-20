@@ -1,0 +1,273 @@
+- generic [ref=f1e1]:
+  - generic [ref=f1e2]:
+    - generic [ref=f1e3]:
+      - link "Skip to main content" [ref=f1e4] [cursor=pointer]:
+        - /url: "#main-content"
+      - complementary "Application sidebar" [ref=f1e5]:
+        - generic [ref=f1e6]:
+          - generic [ref=f1e8]:
+            - paragraph [ref=f1e9]: Signed in as
+            - strong [ref=f1e10]: Super Admin
+          - navigation "Primary navigation" [ref=f1e11]:
+            - link "Dashboard" [ref=f1e12] [cursor=pointer]:
+              - /url: /admin/dashboard
+            - link "All Projects" [ref=f1e21] [cursor=pointer]:
+              - /url: /admin/projects
+            - link "Users" [ref=f1e27] [cursor=pointer]:
+              - /url: /admin/users
+            - link "Configuration" [ref=f1e35] [cursor=pointer]:
+              - /url: /admin/configuration/estimation
+            - link "Procurement" [ref=f1e42] [cursor=pointer]:
+              - /url: /admin/procurement
+            - link "Client responses" [ref=f1e50] [cursor=pointer]:
+              - /url: /admin/client-responses
+            - link "Design approvals" [ref=f1e58] [cursor=pointer]:
+              - /url: /admin/design-approvals
+            - link "Access requests" [ref=f1e68] [cursor=pointer]:
+              - /url: /admin/access-requests
+            - link "Finance" [ref=f1e76] [cursor=pointer]:
+              - /url: /finance
+          - button "Synthetic workspace reviewer" [ref=f1e84] [cursor=pointer]:
+            - generic [aria-hidden] [ref=f1e85]: SW
+      - main [ref=f1e89]:
+        - button "Notifications" [ref=f1e91] [cursor=pointer]
+        - generic [ref=f1e95]:
+          - generic [ref=f1e96]:
+            - button "Back to Main Baskets" [ref=f1e98] [cursor=pointer]
+            - generic [ref=f1e105]:
+              - generic [ref=f1e106]: Main Basket · Carpentry
+              - generic [ref=f1e107]:
+                - heading "Wall panelling" [level=1] [ref=f1e108]
+                - button "Edit Main Line" [ref=f1e111] [cursor=pointer]
+              - generic [ref=f1e116]:
+                - generic [ref=f1e117]: Draft
+                - generic [ref=f1e120]: Updated 28 Aug 2026, 1:30 pm
+            - group "Page actions" [ref=f1e121]:
+              - button "Review and activate" [ref=f1e122] [cursor=pointer]
+              - button "Duplicate" [ref=f1e130] [cursor=pointer]
+              - button "Delete" [ref=f1e138] [cursor=pointer]
+          - region "Knowledge base isolation notice" [ref=f1e146]:
+            - generic [ref=f1e147]: Knowledge-base changes do not modify current estimates or the existing Sales estimate builder.
+          - region "Workspace status" [ref=f1e152]:
+            - generic [ref=f1e153]:
+              - generic [ref=f1e154]:
+                - generic [ref=f1e155]: Configuration completeness
+                - strong [ref=f1e156]: 50%
+              - progressbar "Configuration completeness" [ref=f1e157]
+          - generic [ref=f1e159]:
+            - generic [ref=f1e161]:
+              - tablist "Configuration sections" [ref=f1e163]:
+                - tab "Overview" [ref=f1e164] [cursor=pointer]
+                - tab "Mode" [ref=f1e165] [cursor=pointer]
+                - tab "Recommendation & Exclusions" [ref=f1e166] [cursor=pointer]
+                - tab "Quality Parameter" [selected] [ref=f1e167] [cursor=pointer]
+              - tabpanel "Quality Parameter" [ref=f1e269]:
+                - generic [ref=f1e270]:
+                  - generic [ref=f1e271]:
+                    - generic [ref=f1e272]:
+                      - heading "Quality Parameters" [level=2] [ref=f1e273]
+                      - paragraph [ref=f1e274]: Define the quality checks, acceptance criteria and evidence for this checklist.
+                      - paragraph [ref=f1e275]: Shared with all items in Carpentry
+                    - generic [ref=f1e276]:
+                      - button "Download Excel template" [ref=f1e277] [cursor=pointer]
+                      - button "Import Excel" [ref=f1e281] [cursor=pointer]
+                      - button "Add Parameter" [ref=f1e285] [cursor=pointer]
+                  - generic "shared checklist commands" [ref=f1e291]:
+                    - generic [ref=f1e292]: No shared checklist saved
+                    - status [ref=f1e294]: Unsaved changes
+                    - button "Save shared checklist" [ref=f1e295] [cursor=pointer]
+                  - generic [ref=f1e304]:
+                    - group "Filter quality parameters by stage" [ref=f1e305]:
+                      - button "All Stages, 1 parameters" [pressed] [ref=f1e388] [cursor=pointer]:
+                        - generic [ref=f1e309]:
+                          - text: All Stages
+                          - generic [ref=f1e310]: "1"
+                      - button "Material, 0 parameters" [ref=f1e311] [cursor=pointer]:
+                        - generic [ref=f1e314]:
+                          - text: Material
+                          - generic [ref=f1e315]: "0"
+                      - button "Pre-Installation, 0 parameters" [ref=f1e316] [cursor=pointer]:
+                        - generic [ref=f1e319]:
+                          - text: Pre-Installation
+                          - generic [ref=f1e320]: "0"
+                      - button "During Installation, 0 parameters" [ref=f1e321] [cursor=pointer]:
+                        - generic [ref=f1e324]:
+                          - text: During Installation
+                          - generic [ref=f1e325]: "0"
+                      - button "Pre-Closure, 0 parameters" [ref=f1e326] [cursor=pointer]:
+                        - generic [ref=f1e329]:
+                          - text: Pre-Closure
+                          - generic [ref=f1e330]: "0"
+                      - button "Final Finish, 0 parameters" [ref=f1e331] [cursor=pointer]:
+                        - generic [ref=f1e334]:
+                          - text: Final Finish
+                          - generic [ref=f1e335]: "0"
+                      - button "Unassigned, 1 parameters" [ref=f1e389] [cursor=pointer]:
+                        - generic [ref=f1e392]:
+                          - text: Unassigned
+                          - generic [ref=f1e393]: "1"
+                    - heading "1 of 1 parameters · Current checklist draft" [level=3] [ref=f1e394]:
+                      - text: 1 of 1 parameters
+                      - generic [ref=f1e395]: · Current checklist draft
+                    - region "Quality parameters table" [ref=f1e337]:
+                      - table [ref=f1e338]:
+                        - caption [ref=f1e339]: Quality parameters shared with all items in Carpentry
+                        - rowgroup [ref=f1e340]:
+                          - row [ref=f1e341]:
+                            - columnheader "#" [ref=f1e342]
+                            - columnheader "Parameter" [ref=f1e343]
+                            - columnheader "Stage" [ref=f1e344]
+                            - columnheader "Type" [ref=f1e345]
+                            - columnheader "Controls" [ref=f1e346]
+                            - columnheader "Acceptance criteria" [ref=f1e347]
+                            - columnheader "Evidence required" [ref=f1e348]
+                            - columnheader "Status" [ref=f1e349]
+                            - columnheader "Actions" [ref=f1e350]
+                        - rowgroup [ref=f1e396]:
+                          - row [ref=f1e397]:
+                            - cell "1" [ref=f1e398]
+                            - rowheader [ref=f1e399]:
+                              - strong [ref=f1e400]: New quality check
+                            - cell "Unassigned" [ref=f1e401]
+                            - cell "Text" [ref=f1e403]
+                            - cell "Severity Not configured Performed by Not configured Frequency Not configured" [ref=f1e404]:
+                              - generic [ref=f1e405]:
+                                - generic [ref=f1e406]:
+                                  - term [ref=f1e407]: Severity
+                                  - definition [ref=f1e408]:
+                                    - generic [ref=f1e409]: Not configured
+                                - generic [ref=f1e410]:
+                                  - term [ref=f1e411]: Performed by
+                                  - definition [ref=f1e412]: Not configured
+                                - generic [ref=f1e413]:
+                                  - term [ref=f1e414]: Frequency
+                                  - definition [ref=f1e415]: Not configured
+                            - cell "Not specified" [ref=f1e416]
+                            - cell "Not required" [ref=f1e417]
+                            - cell "Needs completion" [ref=f1e418]
+                            - cell [ref=f1e420]:
+                              - generic [ref=f1e421]:
+                                - 'button "Edit parameter 1: New quality check" [ref=f1e422] [cursor=pointer]':
+                                  - generic [ref=f1e423]: Edit
+                                - group [ref=f1e430]:
+                                  - generic "More actions for parameter 1" [ref=f1e431] [cursor=pointer]
+                  - group [ref=f1e354]:
+                    - generic "Previous item-specific quality parameters" [ref=f1e355] [cursor=pointer]
+            - complementary "Quality checklist context" [ref=f1e356]:
+              - region [ref=f1e357]:
+                - heading "Shared checklist" [level=2] [ref=f1e358]
+                - generic [ref=f1e363]:
+                  - generic [ref=f1e364]:
+                    - term [ref=f1e365]: Main Basket
+                    - definition [ref=f1e366]: Carpentry
+                  - generic [ref=f1e367]:
+                    - term [ref=f1e368]: Saved version
+                    - definition [ref=f1e369]: Not saved yet
+                  - generic [ref=f1e370]:
+                    - term [ref=f1e371]: Saved parameters
+                    - definition [ref=f1e372]: "0"
+              - region [ref=f1e373]:
+                - heading "Checklist information" [level=2] [ref=f1e374]
+                - list [ref=f1e377]:
+                  - listitem [ref=f1e378]: Every listed check is required and active.
+                  - listitem [ref=f1e379]: All items in this Main Basket share the saved checklist.
+                  - listitem [ref=f1e380]: Use the Excel template to prepare checks, then review and import them.
+                - paragraph [ref=f1e381]: Excel downloads contain the saved checklist. Save edits first to include them.
+              - status [ref=f1e382]:
+                - generic [ref=f1e385]: You have unsaved checklist changes.
+              - group [ref=f1e386]:
+                - generic "Saved details & revision history" [ref=f1e387] [cursor=pointer]
+                - text: ": : :"
+    - status "Application announcements" [ref=f1e268]
+    - region "Notifications"
+  - generic [ref=f1e436]:
+    - button "Close edit quality parameter" [ref=f1e437] [cursor=pointer]
+    - dialog [ref=f1e438]:
+      - generic [ref=f1e439]:
+        - generic [ref=f1e440]:
+          - paragraph [ref=f1e441]: Parameter 1 · Carpentry
+          - heading "Edit quality parameter" [level=2] [ref=f1e442]
+          - paragraph [ref=f1e443]: Changes stay in your checklist draft. Use Save shared checklist after reviewing your parameters.
+        - button "Close edit quality parameter" [ref=f1e444] [cursor=pointer]
+      - generic [ref=f1e450]:
+        - generic [ref=f1e451]:
+          - generic [ref=f1e452]: Question / check*
+          - textbox "Question / check" [active] [ref=f1e453]
+        - generic [ref=f1e454]:
+          - generic [ref=f1e455]: Instructions
+          - textbox "Instructions" [ref=f1e456]
+          - paragraph [ref=f1e457]: Explain how the site team should perform this check.
+        - generic [ref=f1e458]:
+          - generic [ref=f1e459]: Stage
+          - combobox "Stage" [ref=f1e460]
+          - paragraph [ref=f1e461]: Choose a suggested stage or keep your existing stage name.
+        - generic [ref=f1e462]:
+          - generic [ref=f1e463]:
+            - generic [ref=f1e464]: Answer type*
+            - combobox "Answer type" [ref=f1e465] [cursor=pointer]:
+              - option "Select"
+              - option "Yes / No"
+              - option "Text" [selected]
+              - option "Number"
+              - option "Single choice"
+              - option "Multiple choice"
+              - option "Single choice (radio)"
+              - option "Checkbox"
+          - generic [ref=f1e466]:
+            - generic [ref=f1e467]: Check method
+            - combobox "Check method" [ref=f1e468] [cursor=pointer]:
+              - option "Not specified" [selected]
+              - option "Visual Check"
+              - option "Measurement"
+              - option "Functional Test"
+              - option "Document Review"
+        - group "Inspection controls" [ref=f1e469]:
+          - generic [ref=f1e471]:
+            - generic [ref=f1e472]:
+              - generic [ref=f1e473]: Severity*
+              - combobox "Severity" [ref=f1e474] [cursor=pointer]:
+                - option "Select severity" [selected]
+                - option "Critical"
+                - option "Major"
+                - option "Minor"
+              - paragraph [ref=f1e475]: Critical blocks the check; Major needs correction before the next stage; Minor is an observation.
+            - generic [ref=f1e476]:
+              - generic [ref=f1e477]: Frequency*
+              - generic [ref=f1e478]:
+                - combobox "Frequency" [ref=f1e479] [cursor=pointer]:
+                  - option "Select frequency" [selected]
+                  - option "Per unit"
+                  - option "Per room"
+                  - option "Per zone"
+                  - option "Per batch"
+                  - option "Once per project"
+                - button "Add frequency" [ref=f1e480] [cursor=pointer]
+              - paragraph [ref=f1e486]: Defines how often this check repeats.
+            - generic [ref=f1e487]:
+              - generic [ref=f1e488]: Performed by*
+              - generic [ref=f1e489]:
+                - combobox "Performed by" [ref=f1e490] [cursor=pointer]:
+                  - option "Select role" [selected]
+                  - option "Site"
+                  - option "PM"
+                  - option "Procurement"
+                  - option "Vendor"
+                - button "Add performed by" [ref=f1e491] [cursor=pointer]
+              - paragraph [ref=f1e497]: Role family responsible for performing or recording the check.
+        - generic [ref=f1e498]:
+          - generic [ref=f1e499]:
+            - generic [ref=f1e500]: Acceptance criteria
+            - textbox "Acceptance criteria" [ref=f1e501]
+            - paragraph [ref=f1e502]: Describe what a passing result should look like.
+          - generic [ref=f1e503]:
+            - generic [ref=f1e505]:
+              - checkbox "Photo evidence" [ref=f1e506] [cursor=pointer]
+              - generic [ref=f1e507]: Photo evidence
+            - paragraph [ref=f1e508]: Require photos for each checked unit.
+        - generic [ref=f1e509]:
+          - generic [ref=f1e510]: Evidence instructions
+          - textbox "Evidence instructions" [ref=f1e511]
+          - paragraph [ref=f1e512]: Describe what the evidence should show.
+      - generic [ref=f1e514]:
+        - generic [ref=f1e515]: Closing keeps your draft changes
+        - button "Done" [ref=f1e516] [cursor=pointer]

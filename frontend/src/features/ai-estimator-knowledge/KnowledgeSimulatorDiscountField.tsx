@@ -9,7 +9,7 @@ export function KnowledgeSimulatorDiscountField({ value, onChange, maximumBps, a
   readonly maximumBps: number | undefined;
   readonly attempted: boolean;
   readonly combined?: boolean;
-  readonly basis?: "markup" | "pmc" | "sub_vendor";
+  readonly basis?: "in_house" | "markup" | "pmc" | "sub_vendor";
 }) {
   const id = useId();
   const parsed = parseSimulatorDiscount(value, maximumBps, basis);
@@ -17,8 +17,8 @@ export function KnowledgeSimulatorDiscountField({ value, onChange, maximumBps, a
   return <Field id={`${id}-discount`} label="Discount (%)"
     hint={basis === "sub_vendor" ? "Discount applies to the selling price before discount. Enter your custom percentage."
       : basis === "pmc" ? "Discount applies only to the PMC charge. Enter your custom percentage."
-      : maximumBps === undefined ? "Complete the markup values to see the allowed discount."
-      : `Maximum allowed: ${formatKnowledgePercentage(maximumBps)}. Discount reduces the selected markup.${combined ? " Both Labor and Material must stay at or above their minimum markup." : ""}`}
+      : maximumBps === undefined ? "The calculation will return the amount-aware maximum selling-price discount."
+      : `Maximum selling-price discount: ${formatKnowledgePercentage(maximumBps)}. Discount applies to the In-house selling price and preserves ${combined ? "both Labor and Material" : "the"} minimum Gross Margin.`}
     error={error ? <span role="alert">{error}</span> : undefined}>
     {(props) => <Input {...props} inputMode="decimal" autoComplete="off" maxLength={64} value={value}
       onChange={(event) => onChange(event.target.value)} />}

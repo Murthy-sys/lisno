@@ -68,6 +68,23 @@ describe("recommendation pending changes", () => {
     expect(entry.kind).toBe("updated");
   });
 
+  it("presents a whole Sub-Basket target without exposing its stable IDs", () => {
+    const entry = project(saved, changedRule({
+      targetKind: "sub_basket",
+      targetType: null,
+      targetBasketId: "electrical-id",
+      targetSubBasketId: "lighting-id",
+      targetMainLineId: null
+    }))[0]!.entries[0]!;
+    expect(entry.fields).toEqual([
+      { key: "targetKind", label: "Addition type", value: "Whole Sub-Basket" },
+      { key: "targetType", label: "Item type", value: "Not applicable", cleared: true },
+      { key: "targetMainLineId", label: "Related item", value: "Not applicable", cleared: true }
+    ]);
+    expect(entry.incomplete).toBeUndefined();
+    expect(JSON.stringify(entry)).not.toMatch(/electrical-id|lighting-id|light-id/);
+  });
+
   it("uses readable unavailable references without leaking IDs or another basket's labels", () => {
     const entry = project(saved, changedRule({ targetBasketId: "missing-basket", targetSubBasketId: "missing-sub", targetMainLineId: "gypsum-light-id" }))[0]!.entries[0]!;
     expect(entry.fields.map((field) => field.value)).toEqual([
@@ -101,7 +118,7 @@ describe("recommendation pending changes", () => {
     const blank = { id: "blank-id", trigger: "removed", action: "remove", requirement: "must", targetType: "catalog", targetBasketId: "", targetSubBasketId: null, targetMainLineId: null, reason: "", active: true };
     const entry = project(saved, { ...saved, budgetAlterations: [rule, blank] })[0]!.entries[0]!;
     expect(entry).toMatchObject({ title: "Rule 2", kind: "added", incomplete: true });
-    expect(entry.fields.map((field) => field.label)).toEqual(["Trigger", "Scope action", "Item type"]);
+    expect(entry.fields.map((field) => field.label)).toEqual(["Addition type", "Trigger", "Scope action", "Item type"]);
     expect(project(saved, saved)).toEqual([]);
     expect(project({}, { budgetAlterations: [] })).toEqual([]);
   });

@@ -65,7 +65,8 @@ const AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS = [
   "ai_estimator_knowledge.configuration.create",
   "ai_estimator_knowledge.configuration.update",
   "ai_estimator_knowledge.configuration.lifecycle",
-  "ai_estimator_knowledge.context.read"
+  "ai_estimator_knowledge.context.read",
+  "ai_estimator_knowledge.quality_control_options.create"
 ] as const;
 
 describe("frontend authorization contract parity", () => {
@@ -84,15 +85,15 @@ describe("frontend authorization contract parity", () => {
     expect(FRONTEND_POLICY_VERSION).toBe(AUTHORIZATION_POLICY_VERSION);
   });
 
-  it("publishes the 134-code project procurement policy on both sides", () => {
-    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-09-18.vendor-procurement.v1");
-    expect(FRONTEND_POLICY_VERSION).toBe("2026-09-18.vendor-procurement.v1");
-    expect(PERMISSION_CODES).toHaveLength(134);
-    expect(FRONTEND_PERMISSION_CODES).toHaveLength(134);
-    expect(new Set(PERMISSION_CODES).size).toBe(134);
-    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(134);
-    expect(PERMISSION_CODES.at(-1)).toBe("procurement.vendor_suggestions.manage");
-    expect(FRONTEND_PERMISSION_CODES.at(-1)).toBe("procurement.vendor_suggestions.manage");
+  it("publishes the 135-code Quality Control option policy on both sides", () => {
+    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-09-20.quality-control-options.v1");
+    expect(FRONTEND_POLICY_VERSION).toBe("2026-09-20.quality-control-options.v1");
+    expect(PERMISSION_CODES).toHaveLength(135);
+    expect(FRONTEND_PERMISSION_CODES).toHaveLength(135);
+    expect(new Set(PERMISSION_CODES).size).toBe(135);
+    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(135);
+    expect(PERMISSION_CODES.at(-1)).toBe("ai_estimator_knowledge.quality_control_options.create");
+    expect(FRONTEND_PERMISSION_CODES.at(-1)).toBe("ai_estimator_knowledge.quality_control_options.create");
     for (const permission of STAFF_INVITATION_PERMISSIONS) {
       expect(PERMISSION_CODES).toContain(permission);
       expect(FRONTEND_PERMISSION_CODES).toContain(permission);

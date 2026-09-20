@@ -1,5 +1,5 @@
 import { Surface } from "../../components/ui/Surface";
-import { BUDGET_ACTIONS, budgetAlterationRows } from "./knowledgeBudgetAlterations";
+import { BUDGET_ACTIONS, budgetAlterationRows, recommendationTargetKind } from "./knowledgeBudgetAlterations";
 import { pmcMarginRange, subVendorMarginRange } from "./knowledgePmcMargin";
 import {
   KNOWLEDGE_SECTION_LABELS,
@@ -106,12 +106,17 @@ export function KnowledgeConflictReview({
 function recommendationValues(payload: KnowledgeJsonObject, context: ProjectionContext): readonly ConflictReviewValue[] {
   const { budgetAlterations, ...notes } = payload;
   return [...budgetAlterationRows(budgetAlterations).flatMap((rule, index) => {
+    const targetKind = recommendationTargetKind(rule);
     const item = context.relationshipItems.find((candidate) => candidate.mainLineId === rule.targetMainLineId);
     const basket = context.relationshipBaskets.find((candidate) => candidate.id === rule.targetBasketId);
+    const subBasketName = context.relationshipItems.find((candidate) => candidate.basketId === rule.targetBasketId
+      && candidate.subBasketId === rule.targetSubBasketId)?.subBasketName;
     const action = BUDGET_ACTIONS.find((candidate) => candidate.action === rule.action && candidate.requirement === rule.requirement);
+    const target = targetKind === "sub_basket" ? subBasketName ?? "Unavailable Sub-Basket" : item?.mainLineName ?? "Unavailable item";
     return [
-      { label: `Budget rule ${index + 1}`, value: `When this item is ${rule.trigger === "added" ? "added" : "removed"}: ${item?.mainLineName ?? "Unavailable item"} ${action?.label.toLowerCase() ?? "needs review"}.` },
-      { label: `Budget rule ${index + 1} · Location`, value: [basket?.name ?? "Unavailable Main Basket", item?.subBasketName].filter(Boolean).join(" → ") },
+      { label: `Budget rule ${index + 1}`, value: `When this item is ${rule.trigger === "added" ? "added" : "removed"}: ${target} ${action?.label.toLowerCase() ?? "needs review"}.` },
+      { label: `Budget rule ${index + 1} · Addition type`, value: targetKind === "sub_basket" ? "Whole Sub-Basket" : "Line item" },
+      { label: `Budget rule ${index + 1} · Location`, value: [basket?.name ?? "Unavailable Main Basket", targetKind === "sub_basket" ? subBasketName : item?.subBasketName].filter(Boolean).join(" → ") },
       { label: `Budget rule ${index + 1} · Why`, value: typeof rule.reason === "string" ? rule.reason : "Not provided" },
       { label: `Budget rule ${index + 1} · Status`, value: rule.active === false ? "Disabled" : "Enabled" }
     ];
@@ -254,13 +259,22 @@ function pricingValues(
 ): readonly ConflictReviewValue[] {
   const values: ConflictReviewValue[] = [];
   const specifications = objectArray(payload.specifications);
+  const brands = objectArray(payload.brands);
 
   specifications.forEach((specification, index) => {
-    const prefix = `Specification ${index + 1}`;
+    const prefix = `Item ${index + 1}`;
     const label = meaningfulText(specification.name);
+    const brandId = meaningfulText(specification.brandId);
     const description = meaningfulText(specification.description);
     if (label) {
-      values.push({ label: `${prefix} · Specification name`, value: label });
+      values.push({ label: `${prefix} · Item name`, value: label });
+    }
+    if (brandId) {
+      const brand = brands.find((candidate) => stringValue(candidate.id) === brandId);
+      values.push({
+        label: `${prefix} · Brand name`,
+        value: meaningfulText(brand?.name) ?? "Unavailable brand"
+      });
     }
     if (description) {
       values.push({ label: `${prefix} · Brief description`, value: description });
@@ -329,7 +343,7 @@ function projectValues(
   for (const [key, value] of Object.entries(payload)) {
     if (!hasMeaningfulValue(value) || isAlwaysInternalKey(key)) continue;
 
-    const currentPath = [...path, displayLabel(key)];
+    const currentPath = [...path, displayLabel(key, path)];
     const resolvedReference = resolveReference(key, value, context);
     if (resolvedReference !== null) {
       values.push({ label: currentPath.join(" · "), value: resolvedReference });
@@ -491,7 +505,10 @@ function formatPrimitive(key: string, value: string | number | boolean | null): 
   return "Not configured";
 }
 
-function displayLabel(key: string): string {
+function displayLabel(key: string, path: readonly string[] = []): string {
+  const inHouseCalculation = path.includes("Labor cost") || path.includes("Material cost") || path.includes("In-house");
+  if (inHouseCalculation && key === "minimumMarkupBps") return "Min. Gross Margin";
+  if (inHouseCalculation && key === "startingMarkupBps") return "Starting Gross Margin";
   const known: Readonly<Record<string, string>> = {
     uomId: "Unit of measure (UOM)",
     uomIds: "Units of measure (UOM)",
