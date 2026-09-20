@@ -5,10 +5,12 @@ import {
   createKnowledgeSurface,
   createKnowledgeSubBasket,
   createKnowledgeMainLine,
+  createKnowledgeQualityControlOption,
   listKnowledgeSubBaskets,
   getKnowledgeBasketDeletionImpact,
   listKnowledgeSurfaces,
   listKnowledgeItems,
+  listKnowledgeQualityControlOptions,
   permanentlyDeleteKnowledgeBasket,
   previewKnowledge,
   resolveKnowledgeContext,
@@ -56,6 +58,22 @@ describe("knowledge API", () => {
 
     expect(get).toHaveBeenCalledWith(
       "/admin/ai-estimator-knowledge/items?modeId=mode%2Fsite&search=wall+%26+ceiling&status=active"
+    );
+  });
+
+  it("uses the dedicated kind-scoped Quality Control option endpoints", async () => {
+    const get = vi.spyOn(apiClient, "get").mockResolvedValue({ items: [] });
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue({});
+
+    await listKnowledgeQualityControlOptions("frequency");
+    await createKnowledgeQualityControlOption({ kind: "performer", name: "  Site engineer  " });
+
+    expect(get).toHaveBeenCalledWith(
+      "/admin/ai-estimator-knowledge/quality-control-options?kind=frequency"
+    );
+    expect(post).toHaveBeenCalledWith(
+      "/admin/ai-estimator-knowledge/quality-control-options",
+      { kind: "performer", name: "  Site engineer  " }
     );
   });
 

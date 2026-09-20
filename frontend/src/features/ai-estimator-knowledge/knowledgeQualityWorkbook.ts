@@ -1,20 +1,31 @@
 import type { Cell, CellValue, Workbook, Worksheet } from "exceljs";
-import { createQualityParameter, qualityImportIssues, validateQualityParameters, QUALITY_PARAMETER_TYPES, QUALITY_CHECK_METHODS, QUALITY_SEVERITIES, QUALITY_SAMPLING_METHODS } from "./knowledgeQuality";
-import type { KnowledgeJsonObject, KnowledgeJsonValue } from "./knowledgeTypes";
+import {
+  createQualityParameter, qualityImportIssues,
+  isQualityControlOptionReference, normalizeQualityControlOptionName, qualityControlOptionByReference,
+  qualityControlSelectOptions, qualityFrequencySelectionFromSampling, qualityPerformerSelection,
+  qualitySamplingForFrequency, qualitySeverity, validateQualityParameters, validateQualityParametersForSave,
+  QUALITY_CHECK_METHODS,
+  QUALITY_FREQUENCY_OPTIONS, QUALITY_PARAMETER_TYPES, QUALITY_PERFORMER_OPTIONS,
+  QUALITY_SEVERITIES, QUALITY_SEVERITY_OPTIONS, QUALITY_SAMPLING_METHODS,
+  EMPTY_QUALITY_CONTROL_OPTION_CATALOG, type QualityControlOptionCatalog, type QualityFrequency
+} from "./knowledgeQuality";
+import type { KnowledgeJsonObject, KnowledgeJsonValue, KnowledgeQualityControlOptionKind, KnowledgeQualityControlOptionReference } from "./knowledgeTypes";
 
 export interface QualityImportIssue { row: number | null; column?: string; message: string }
 export interface QualityImportResult { parameters: KnowledgeJsonObject[]; issues: QualityImportIssue[] }
 
-export const QUALITY_SIMPLE_WORKBOOK_HEADERS = ["Question", "Answer type", "Options", "Acceptance criteria", "Photo evidence"] as const;
+export const QUALITY_SIMPLE_WORKBOOK_HEADERS = [
+  "Question", "Answer type", "Options", "Acceptance criteria", "Severity", "Minimum", "Maximum", "Unit", "Frequency", "Performed by", "Photo evidence"
+] as const;
 export const QUALITY_WORKBOOK_HEADERS = [
-  "Question", "Answer type", "Stage", "Instructions", "Acceptance criteria",
-  "Check method", "Severity", "Responsible role", "Failure action",
-  "Unit", "Options", "Minimum", "Maximum", "Default answer", "Sampling method", "Sample value",
-  "Sample unit", "Photo evidence", "Minimum photos per sample", "Document evidence", "Video evidence", "Evidence instructions"
+  ...QUALITY_SIMPLE_WORKBOOK_HEADERS,
+  "Stage", "Instructions", "Check method", "Responsible role", "Failure action", "Default answer",
+  "Sampling method", "Sample value", "Sample unit", "Minimum photos per sample", "Document evidence", "Video evidence", "Evidence instructions"
 ] as const;
 const LEGACY_WORKBOOK_HEADERS = ["Required", "Active", "Category"] as const;
 type Header = typeof QUALITY_WORKBOOK_HEADERS[number] | typeof LEGACY_WORKBOOK_HEADERS[number];
 const WORKSHEET = "Quality Parameters";
+const VALIDATION_WORKSHEET = "_Lisno Quality Lists";
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_UNCOMPRESSED_BYTES = 32 * 1024 * 1024;
 const MAX_PARSE_MS = 20_000;
@@ -23,7 +34,7 @@ const canonicalHeaders = new Map([...QUALITY_WORKBOOK_HEADERS, ...LEGACY_WORKBOO
 const failure = (message: string): QualityImportResult => ({ parameters: [], issues: [{ row: null, message }] });
 
 /** The selected file is parsed off the UI thread. Neither preview nor parsing saves any data. */
-export async function readQualityWorkbook(file: File, signal?: AbortSignal): Promise<QualityImportResult> {
+export async function readQualityWorkbook(file: File, signal?: AbortSignal, qualityOptions: QualityControlOptionCatalog = EMPTY_QUALITY_CONTROL_OPTION_CATALOG): Promise<QualityImportResult> {
   if (!/\.xlsx$/iu.test(file.name)) return failure("Choose an .xlsx workbook. Macro-enabled workbooks and CSV files are not supported.");
   if (file.size > MAX_FILE_BYTES) return failure("The workbook must be 5 MiB or smaller.");
   if (signal?.aborted) return failure("Import cancelled.");
@@ -31,7 +42,7 @@ export async function readQualityWorkbook(file: File, signal?: AbortSignal): Pro
   try { buffer = await file.arrayBuffer(); }
   catch { return failure("The workbook could not be read. Choose the file again."); }
   if (signal?.aborted) return failure("Import cancelled.");
-  if (typeof Worker === "undefined") return parseQualityWorkbookBuffer(buffer);
+  if (typeof Worker === "undefined") return parseQualityWorkbookBuffer(buffer, qualityOptions);
   return new Promise(resolve => {
     let worker: Worker;
     try { worker = new Worker(new URL("./knowledgeQualityWorkbook.worker.ts", import.meta.url), { type: "module" }); }
@@ -50,7 +61,7 @@ export async function readQualityWorkbook(file: File, signal?: AbortSignal): Pro
     signal?.addEventListener("abort", cancel, { once: true });
     worker.onmessage = (event: MessageEvent<QualityImportResult>) => finish(event.data);
     worker.onerror = () => finish(failure("The workbook could not be read. Download the template and copy your values into it."));
-    worker.postMessage(buffer, [buffer]);
+    worker.postMessage({ buffer, qualityOptions }, [buffer]);
   });
 }
 
@@ -105,7 +116,45 @@ function scalar(cell: Cell, issues: QualityImportIssue[], row: number, column: s
   return null;
 }
 
-export async function parseQualityWorkbookBuffer(buffer: ArrayBuffer): Promise<QualityImportResult> {
+function resolveQualityControlLabel(
+  entry: string,
+  kind: KnowledgeQualityControlOptionKind,
+  catalog: QualityControlOptionCatalog
+): { readonly value: string; readonly label: string } | { readonly issue: string } {
+  const normalized = normalizeQualityControlOptionName(entry);
+  const options = qualityControlSelectOptions(kind, catalog);
+  const uniqueMatches = (matches: typeof options) =>
+    [...new Map(matches.map(option => [option.value, option])).values()];
+  // Display labels are the workbook contract. Legacy internal codes remain
+  // readable only when no display label claims the same text; otherwise a
+  // valid custom label such as `per_room` would collide with the built-in code.
+  const displayMatches = uniqueMatches(options.filter(option =>
+    normalizeQualityControlOptionName(option.label) === normalized
+  ));
+  if (displayMatches.length === 1) return displayMatches[0]!;
+  if (displayMatches.length > 1) return { issue: `“${entry}” matches more than one ${kind === "frequency" ? "Frequency" : "Performed by"} value. Rename the duplicate catalog value before importing.` };
+  const otherKind = kind === "frequency" ? "performer" : "frequency";
+  const otherOptions = qualityControlSelectOptions(otherKind, catalog);
+  const wrongKindDisplay = otherOptions.some(option =>
+    normalizeQualityControlOptionName(option.label) === normalized
+  );
+  if (wrongKindDisplay) {
+    return { issue: `“${entry}” belongs to ${otherKind === "frequency" ? "Frequency" : "Performed by"}, not this column.` };
+  }
+  const legacyCodeMatches = uniqueMatches(options.filter(option =>
+    !option.custom && normalizeQualityControlOptionName(option.value) === normalized
+  ));
+  if (legacyCodeMatches.length === 1) return legacyCodeMatches[0]!;
+  if (legacyCodeMatches.length > 1) return { issue: `“${entry}” matches more than one ${kind === "frequency" ? "Frequency" : "Performed by"} value. Rename the duplicate catalog value before importing.` };
+  const wrongKindAlias = otherOptions.some(option =>
+    !option.custom && normalizeQualityControlOptionName(option.value) === normalized
+  );
+  return { issue: wrongKindAlias
+    ? `“${entry}” belongs to ${otherKind === "frequency" ? "Frequency" : "Performed by"}, not this column.`
+    : `“${entry}” is not an available ${kind === "frequency" ? "Frequency" : "Performed by"} value. A Super Admin must add it in Lisno before importing.` };
+}
+
+export async function parseQualityWorkbookBuffer(buffer: ArrayBuffer, qualityOptions: QualityControlOptionCatalog = EMPTY_QUALITY_CONTROL_OPTION_CATALOG): Promise<QualityImportResult> {
   try { inspectArchive(buffer); }
   catch (error) { return failure(error instanceof Error ? error.message : "The workbook is invalid."); }
   let book: Workbook;
@@ -120,7 +169,10 @@ export async function parseQualityWorkbookBuffer(buffer: ArrayBuffer): Promise<Q
   const issues: QualityImportIssue[] = [];
   // No worksheet's formulas, cached formula results or links are evaluated or accepted.
   for (const candidate of book.worksheets) {
-    if (candidate.rowCount > 201 || candidate.columnCount > 30) return failure("Each worksheet must contain at most 201 rows and 30 columns, including its header.");
+    const generatedValidationList = candidate.name === VALIDATION_WORKSHEET && candidate.state === "veryHidden";
+    if (generatedValidationList ? candidate.rowCount > 10_000 || candidate.columnCount > 2 : candidate.rowCount > 201 || candidate.columnCount > 30) return failure(generatedValidationList
+      ? "The generated Quality value list is too large. Download a fresh template."
+      : "Each worksheet must contain at most 201 rows and 30 columns, including its header.");
     candidate.eachRow(row => row.eachCell(cell => {
       const value = cell.value;
       if (value && typeof value === "object" && ("formula" in value || "sharedFormula" in value || "hyperlink" in value || "error" in value)) issues.push({ row: candidate === sheet ? row.number : null, column: candidate === sheet ? cell.address : undefined, message: `Remove formulas, cell errors and hyperlinks from worksheet "${candidate.name}". Paste values only.` });
@@ -142,6 +194,7 @@ export async function parseQualityWorkbookBuffer(buffer: ArrayBuffer): Promise<Q
   }
   for (const heading of ["Question", "Answer type"] as const) if (!columns.has(heading)) issues.push({ row: 1, column: heading, message: `The ${heading} heading is required.` });
   if (issues.length) return { parameters: [], issues };
+  const modernSimpleWorkbook = QUALITY_SIMPLE_WORKBOOK_HEADERS.every(header => columns.has(header));
   const parameters: KnowledgeJsonObject[] = [];
   const sourceRows: number[] = [];
   for (let rowIndex = 2; rowIndex <= sheet.rowCount; rowIndex++) {
@@ -184,6 +237,31 @@ export async function parseQualityWorkbookBuffer(buffer: ArrayBuffer): Promise<Q
       if (!/^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/u.test(result)) { issues.push({ row: rowIndex, column: header, message: "Use a non-negative decimal with at most six decimal places, without commas or leading zeros." }); return null; }
       return result;
     };
+    const samplingNumber = (header: Header, percentage = false): number | null => {
+      const entry = value(header);
+      if (entry === null || typeof entry === "string" && !entry.trim()) return null;
+      let result: number;
+      if (typeof entry === "number") {
+        const format = (row.getCell(columns.get(header)!).numFmt ?? "").replace(/"[^"]*"|\\.|\[[^\]]*\]/gu, "");
+        const formattedPercent = percentage && format.includes("%");
+        result = formattedPercent ? Number((entry * 100).toPrecision(15)) : entry;
+      } else if (typeof entry === "string") {
+        const plain = entry.trim().replace(percentage ? /%$/u : /$^/u, "").trim();
+        if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(plain)) {
+          issues.push({ row: rowIndex, column: header, message: "Use a non-negative finite number without commas." });
+          return null;
+        }
+        result = Number(plain);
+      } else {
+        issues.push({ row: rowIndex, column: header, message: "Enter a non-negative number." });
+        return null;
+      }
+      if (!Number.isFinite(result) || result < 0) {
+        issues.push({ row: rowIndex, column: header, message: "Use a non-negative finite number without commas." });
+        return null;
+      }
+      return result;
+    };
     const type = enumeration("Answer type", QUALITY_PARAMETER_TYPES);
     const question = text("Question");
     // Older templates may contain these flags. Validate their values, but every check is now mandatory and active.
@@ -192,7 +270,7 @@ export async function parseQualityWorkbookBuffer(buffer: ArrayBuffer): Promise<Q
     const legacyCategory = text("Category");
     if (legacyCategory !== null && legacyCategory.length > 240) issues.push({ row: rowIndex, column: "Category", message: "Enter nonempty text up to 240 characters." });
     const entry: Record<string, KnowledgeJsonValue> = { ...createQualityParameter(), label: question ?? "", type: type ?? "", required: true, active: true };
-    for (const [header, key] of [["Stage", "stage"], ["Instructions", "instructions"], ["Acceptance criteria", "acceptanceCriteria"], ["Responsible role", "responsibleRole"], ["Failure action", "failureAction"], ["Unit", "unit"]] as const) {
+    for (const [header, key] of [["Stage", "stage"], ["Instructions", "instructions"], ["Acceptance criteria", "acceptanceCriteria"], ["Failure action", "failureAction"], ["Unit", "unit"]] as const) {
       const content = text(header);
       if (content !== null) entry[key] = content;
     }
@@ -200,6 +278,15 @@ export async function parseQualityWorkbookBuffer(buffer: ArrayBuffer): Promise<Q
     const severity = enumeration("Severity", QUALITY_SEVERITIES);
     if (checkMethod) entry.checkMethod = checkMethod;
     if (severity) entry.severity = severity;
+    const performerText = text("Performed by");
+    const performerResult = performerText ? resolveQualityControlLabel(performerText, "performer", qualityOptions) : null;
+    if (performerResult && "issue" in performerResult) issues.push({ row: rowIndex, column: "Performed by", message: performerResult.issue });
+    const performer = performerResult && "value" in performerResult ? performerResult.value : null;
+    const legacyPerformer = text("Responsible role");
+    const performerLabel = performerResult && "label" in performerResult ? performerResult.label : null;
+    if (performer && legacyPerformer && normalizeQualityControlOptionName(legacyPerformer) !== normalizeQualityControlOptionName(performerLabel ?? "")) issues.push({ row: rowIndex, column: "Performed by", message: "Performed by conflicts with the legacy Responsible role column. Keep one value or make them match." });
+    if (performer) entry.responsibleRole = performer;
+    else if (legacyPerformer) entry.responsibleRole = legacyPerformer;
     const options = text("Options");
     if (options !== null) entry.allowedValues = options.split("|").map(v => v.trim());
     for (const [header, key] of [["Minimum", "minimum"], ["Maximum", "maximum"]] as const) {
@@ -213,9 +300,19 @@ export async function parseQualityWorkbookBuffer(buffer: ArrayBuffer): Promise<Q
       else entry.defaultValue = text("Default answer");
     }
     const method = enumeration("Sampling method", QUALITY_SAMPLING_METHODS);
-    const sampleValue = numeric("Sample value", method === "percentage");
+    const sampleValue = samplingNumber("Sample value", method === "percentage");
     const sampleUnit = text("Sample unit");
-    if (method !== null || sampleValue !== null || sampleUnit !== null) entry.sampling = { method: method ?? "", unit: sampleUnit ?? "", ...(sampleValue !== null ? { value: Number(sampleValue) } : {}) };
+    const frequencyText = text("Frequency");
+    const frequencyResult = frequencyText ? resolveQualityControlLabel(frequencyText, "frequency", qualityOptions) : null;
+    if (frequencyResult && "issue" in frequencyResult) issues.push({ row: rowIndex, column: "Frequency", message: frequencyResult.issue });
+    const frequency = frequencyResult && "value" in frequencyResult ? frequencyResult.value as QualityFrequency | KnowledgeQualityControlOptionReference : null;
+    const canonicalSampling = frequency ? qualitySamplingForFrequency(frequency) : undefined;
+    const legacySampling = method !== null || sampleValue !== null || sampleUnit !== null
+      ? { method: method ?? "", unit: sampleUnit ?? "", ...(sampleValue !== null ? { value: sampleValue } : {}) }
+      : undefined;
+    if (canonicalSampling && legacySampling && qualityFrequencySelectionFromSampling(legacySampling) !== frequency) issues.push({ row: rowIndex, column: "Frequency", message: "Frequency conflicts with the legacy sampling columns. Keep one value or make them match." });
+    if (canonicalSampling) entry.sampling = canonicalSampling;
+    else if (legacySampling) entry.sampling = legacySampling;
     const photoValue = value("Photo evidence");
     let photos: boolean | null = null;
     let inlinePhotoCount: number | null = null;
@@ -237,16 +334,26 @@ export async function parseQualityWorkbookBuffer(buffer: ArrayBuffer): Promise<Q
     parameters.push(entry);
     sourceRows.push(rowIndex);
   }
-  for (const issue of qualityImportIssues([], parameters)) {
+  const compatibilityIssues = qualityImportIssues([], parameters);
+  for (const issue of compatibilityIssues) {
     const match = /^parameters\.(\d+)(?:\.(.+))?$/u.exec(issue.path);
     issues.push({ row: match ? sourceRows[Number(match[1])] : null, column: match?.[2] ? columnForField(match[2]) : undefined, message: issue.message });
+  }
+  if (modernSimpleWorkbook) {
+    const compatibilityPaths = new Set(compatibilityIssues.map(issue => issue.path));
+    for (const issue of validateQualityParametersForSave(parameters, qualityOptions)) {
+      if (compatibilityPaths.has(issue.path)) continue;
+      const match = /^parameters\.(\d+)(?:\.(.+))?$/u.exec(issue.path);
+      const mapped = { row: match ? sourceRows[Number(match[1])] : null, column: match?.[2] ? columnForField(match[2]) : undefined, message: issue.message };
+      if (!issues.some(existing => existing.row === mapped.row && existing.column === mapped.column)) issues.push(mapped);
+    }
   }
   if (!parameters.length) issues.push({ row: null, message: "The Quality Parameters worksheet has no questions. Add rows below the headings." });
   return { parameters, issues };
 }
 
 function columnForField(field: string): string {
-  const mapping: Record<string, Header> = { label: "Question", type: "Answer type", category: "Category", stage: "Stage", instructions: "Instructions", acceptanceCriteria: "Acceptance criteria", checkMethod: "Check method", severity: "Severity", responsibleRole: "Responsible role", failureAction: "Failure action", required: "Required", active: "Active", unit: "Unit", allowedValues: "Options", minimum: "Minimum", maximum: "Maximum", defaultValue: "Default answer", "sampling.method": "Sampling method", "sampling.value": "Sample value", "sampling.unit": "Sample unit", "evidence.photos": "Photo evidence", "evidence.minPhotosPerSample": "Minimum photos per sample", "evidence.documents": "Document evidence", "evidence.video": "Video evidence", "evidence.instructions": "Evidence instructions" };
+  const mapping: Record<string, Header> = { label: "Question", type: "Answer type", category: "Category", stage: "Stage", instructions: "Instructions", acceptanceCriteria: "Acceptance criteria", checkMethod: "Check method", severity: "Severity", responsibleRole: "Performed by", failureAction: "Failure action", required: "Required", active: "Active", unit: "Unit", allowedValues: "Options", minimum: "Minimum", maximum: "Maximum", defaultValue: "Default answer", sampling: "Frequency", "sampling.method": "Sampling method", "sampling.value": "Sample value", "sampling.unit": "Sample unit", "evidence.photos": "Photo evidence", "evidence.minPhotosPerSample": "Minimum photos per sample", "evidence.documents": "Document evidence", "evidence.video": "Video evidence", "evidence.instructions": "Evidence instructions" };
   return mapping[field] ?? mapping[field.replace(/\.\d+$/u, "")] ?? field;
 }
 
@@ -254,27 +361,47 @@ function styleEssentialWorksheet(sheet: Worksheet): void {
   sheet.addRow([...QUALITY_SIMPLE_WORKBOOK_HEADERS]);
   sheet.views = [{ state: "frozen", ySplit: 1 }];
   sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: QUALITY_SIMPLE_WORKBOOK_HEADERS.length } };
-  [55, 20, 34, 60, 20].forEach((width, index) => { sheet.getColumn(index + 1).width = width; });
+  [55, 20, 34, 60, 16, 14, 14, 14, 22, 20, 20].forEach((width, index) => { sheet.getColumn(index + 1).width = width; });
   sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
   sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF221D40" } };
   sheet.getRow(1).alignment = { wrapText: true, vertical: "middle" };
   sheet.getRow(1).height = 34;
 }
 
-function addEssentialValidation(sheet: Worksheet): void {
-  for (let row = 2; row <= 201; row++) {
+function validationListFormula(book: Workbook, values: readonly string[], name: string, column: number): string {
+  const inline = `"${values.join(",")}"`;
+  if (inline.length <= 255 && values.every(value => !/[,"\r\n]/u.test(value))) return inline;
+  const listSheet = book.getWorksheet(VALIDATION_WORKSHEET) ?? book.addWorksheet(VALIDATION_WORKSHEET, { state: "veryHidden" });
+  listSheet.state = "veryHidden";
+  values.forEach((value, index) => {
+    const cell = listSheet.getCell(index + 1, column);
+    cell.value = value;
+    cell.numFmt = "@";
+  });
+  const letter = listSheet.getColumn(column).letter;
+  book.definedNames.add(`'${VALIDATION_WORKSHEET}'!$${letter}$1:$${letter}$${Math.max(1, values.length)}`, name);
+  return name;
+}
+
+function addEssentialValidation(book: Workbook, sheet: Worksheet, qualityOptions: QualityControlOptionCatalog, lastRow = 201): void {
+  const frequencyFormula = validationListFormula(book, qualityControlSelectOptions("frequency", qualityOptions).map(option => option.label), "LisnoQualityFrequencies", 1);
+  const performerFormula = validationListFormula(book, qualityControlSelectOptions("performer", qualityOptions).map(option => option.label), "LisnoQualityPerformers", 2);
+  for (let row = 2; row <= lastRow; row++) {
     sheet.getCell(row, 2).dataValidation = { type: "list", allowBlank: true, formulae: [`"${QUALITY_PARAMETER_TYPES.join(",")}"`], showErrorMessage: true, errorStyle: "stop", errorTitle: "Choose an answer type", error: "Choose one of the answer types in the dropdown." };
-    sheet.getCell(row, 5).dataValidation = { type: "whole", operator: "between", allowBlank: true, formulae: [0, 100], showErrorMessage: true, errorStyle: "stop", errorTitle: "Enter 0 to 100 photos", error: "Enter a whole number from 0 to 100.", showInputMessage: true, promptTitle: "Required photo count", prompt: "0 = no photos; 1 = a single photo; 2–100 = multiple photos per checked unit." };
+    sheet.getCell(row, 5).dataValidation = { type: "list", allowBlank: true, formulae: [`"${QUALITY_SEVERITY_OPTIONS.map(option => option.label).join(",")}"`], showErrorMessage: true, errorStyle: "stop", errorTitle: "Choose a severity", error: "Choose Critical, Major or Minor." };
+    sheet.getCell(row, 9).dataValidation = { type: "list", allowBlank: true, formulae: [frequencyFormula], showErrorMessage: true, errorStyle: "stop", errorTitle: "Choose a frequency", error: "Choose an available checklist frequency." };
+    sheet.getCell(row, 10).dataValidation = { type: "list", allowBlank: true, formulae: [performerFormula], showErrorMessage: true, errorStyle: "stop", errorTitle: "Choose who performs the check", error: "Choose an available performed-by value." };
+    sheet.getCell(row, 11).dataValidation = { type: "whole", operator: "between", allowBlank: true, formulae: [0, 100], showErrorMessage: true, errorStyle: "stop", errorTitle: "Enter 0 to 100 photos", error: "Enter a whole number from 0 to 100.", showInputMessage: true, promptTitle: "Required photo count", prompt: "0 = no photos; 1 = a single photo; 2–100 = multiple photos per checked scope." };
   }
 }
 
-export async function createQualityTemplateBuffer(): Promise<ArrayBuffer> {
+export async function createQualityTemplateBuffer(qualityOptions: QualityControlOptionCatalog = EMPTY_QUALITY_CONTROL_OPTION_CATALOG): Promise<ArrayBuffer> {
   const ExcelJS = await import("exceljs");
   const book = new ExcelJS.default.Workbook();
   book.creator = "Lisno";
   const sheet = book.addWorksheet(WORKSHEET);
   styleEssentialWorksheet(sheet);
-  addEssentialValidation(sheet);
+  addEssentialValidation(book, sheet, qualityOptions);
   const instructions = book.addWorksheet("Instructions");
   instructions.getColumn(1).width = 120;
   const notes = [
@@ -282,18 +409,20 @@ export async function createQualityTemplateBuffer(): Promise<ArrayBuffer> {
     "Question and Answer type are required. Write a clear question (up to 240 characters) and choose an answer type from the dropdown.",
     "Options: for dropdown, radio or multi_select only; separate distinct options with |, for example Pass|Fail|Not applicable.",
     "Acceptance criteria: describe what a pass looks like (up to 4000 characters). Use approved project details and have a qualified professional review them.",
-    "Photo evidence: enter a whole number from 0 to 100. 0 or blank means no photos; 1 means a single photo; 2–100 means multiple required photos per checked unit. Existing sampling rules apply the count per sampled unit.",
-    "Use at most 200 checks and a 5 MiB .xlsx file. Keep these five headings. Enter plain values only; no formulas, links, macros, embedded objects or images.",
+    "Severity, Frequency and Performed by are required before saving. Use the dropdown values supplied by Lisno; workbook import never creates new values. Critical is a blocking policy requiring PM sign-off when operational inspections exist; it does not record a completed sign-off.",
+    "Number answers require Minimum, Maximum and Unit. Use approved thresholds only; if none is available, choose a non-numeric answer type or leave the row for human completion.",
+    "Photo evidence: enter a whole number from 0 to 100. 0 or blank means no photos; 1 means a single photo; 2–100 means multiple required photos per checked frequency scope.",
+    "Use at most 200 checks and a 5 MiB .xlsx file. Keep these eleven headings. Enter plain values only; no formulas, links, macros, embedded objects or images.",
     "Example Electrical is guidance only and is not imported. Import previews new checks before they are added; it does not save or replace existing checks.",
     "Saved downloads retain other existing settings in grouped, hidden columns. Older Yes/No values remain supported. A numeric Photo evidence value replaces a blank legacy photo-count cell; if both counts are filled, they must match."
   ];
   notes.forEach(note => { const row = instructions.addRow([note]); row.alignment = { wrapText: true, vertical: "top" }; row.height = 34; });
   const example = book.addWorksheet("Example Electrical");
   styleEssentialWorksheet(example);
-  example.addRow(["Are the electrical fixtures securely fixed and visibly undamaged?", "dropdown", "Pass|Fail|Not applicable", "Fixings match the approved project detail; fixtures are secure and visibly undamaged.", 2]);
+  example.addRow(["Are the electrical fixtures securely fixed and visibly undamaged?", "dropdown", "Pass|Fail|Not applicable", "Fixings match the approved project detail; fixtures are secure and visibly undamaged.", "Major", null, null, null, "Per room", "Site", 2]);
   example.getRow(2).alignment = { wrapText: true, vertical: "top" };
   example.getRow(2).height = 60;
-  addEssentialValidation(example);
+  addEssentialValidation(book, example, qualityOptions);
   const output = await book.xlsx.writeBuffer();
   return new Uint8Array(output).slice().buffer;
 }
@@ -314,7 +443,7 @@ function exportList(value: KnowledgeJsonValue | undefined, index: number, column
   return result;
 }
 
-export async function createQualityExportBuffer(parameters: readonly KnowledgeJsonObject[]): Promise<ArrayBuffer> {
+export async function createQualityExportBuffer(parameters: readonly KnowledgeJsonObject[], qualityOptions: QualityControlOptionCatalog = EMPTY_QUALITY_CONTROL_OPTION_CATALOG): Promise<ArrayBuffer> {
   if (!parameters.length) throw new Error("There are no saved quality parameters to download.");
   const validation = validateQualityParameters([...parameters]);
   if (validation.length) {
@@ -326,16 +455,28 @@ export async function createQualityExportBuffer(parameters: readonly KnowledgeJs
   const rows = parameters.map((parameter, index) => {
     const sampling = object(parameter.sampling) ? parameter.sampling : undefined;
     const evidence = object(parameter.evidence) ? parameter.evidence : undefined;
-    if (sampling?.value !== undefined && sampling.value !== null && !/^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/u.test(String(sampling.value))) throw exportIssue(index, "Sample value", "The Excel format supports up to six decimal places. Update the sampling value before downloading.");
+    const frequency = qualityFrequencySelectionFromSampling(parameter.sampling);
+    const performer = qualityPerformerSelection(parameter.responsibleRole);
+    const frequencyLabel = frequency && isQualityControlOptionReference(frequency)
+      ? qualityControlOptionByReference(qualityOptions, "frequency", frequency)?.name
+      : frequency ? QUALITY_FREQUENCY_OPTIONS.find(option => option.value === frequency)?.label : null;
+    const performerLabel = performer && isQualityControlOptionReference(performer)
+      ? qualityControlOptionByReference(qualityOptions, "performer", performer)?.name
+      : performer ? QUALITY_PERFORMER_OPTIONS.find(option => option.value === performer)?.label : null;
+    if (frequency && !frequencyLabel) throw exportIssue(index, "Frequency", "The saved custom frequency is unavailable. Restore it in Lisno or choose another value before downloading.");
+    if (performer && !performerLabel) throw exportIssue(index, "Performed by", "The saved custom performed-by value is unavailable. Restore it in Lisno or choose another value before downloading.");
+    const severity = qualitySeverity(parameter.severity);
     const values: Partial<Record<Header, KnowledgeJsonValue>> = {
       Question: parameter.label, "Answer type": parameter.type, Stage: parameter.stage,
       Instructions: parameter.instructions, "Acceptance criteria": parameter.acceptanceCriteria,
-      "Check method": parameter.checkMethod, Severity: parameter.severity,
-      "Responsible role": parameter.responsibleRole, "Failure action": parameter.failureAction,
+      "Check method": parameter.checkMethod, Severity: severity ? QUALITY_SEVERITY_OPTIONS.find(option => option.value === severity)?.label : null,
+      Frequency: frequencyLabel,
+      "Performed by": performerLabel,
+      "Responsible role": performer ? null : parameter.responsibleRole, "Failure action": parameter.failureAction,
       Unit: parameter.unit, Options: exportList(parameter.allowedValues, index, "Options"),
       Minimum: parameter.minimum, Maximum: parameter.maximum,
       "Default answer": parameter.type === "multi_select" ? exportList(parameter.defaultValue, index, "Default answer") : parameter.defaultValue,
-      "Sampling method": sampling?.method, "Sample value": sampling?.value, "Sample unit": sampling?.unit,
+      "Sampling method": frequency ? null : sampling?.method, "Sample value": frequency ? null : sampling?.value, "Sample unit": frequency ? null : sampling?.unit,
       "Photo evidence": evidence?.photos === true ? evidence.minPhotosPerSample : 0,
       "Document evidence": evidence?.documents, "Video evidence": evidence?.video,
       "Evidence instructions": evidence?.instructions
@@ -374,6 +515,7 @@ export async function createQualityExportBuffer(parameters: readonly KnowledgeJs
     row.height = 60;
     row.eachCell(cell => { if (typeof cell.value === "string") cell.numFmt = "@"; });
   });
+  addEssentialValidation(book, sheet, qualityOptions, parameters.length + 1);
   const output = await book.xlsx.writeBuffer();
   return new Uint8Array(output).slice().buffer;
 }
@@ -392,21 +534,22 @@ function downloadWorkbook(buffer: ArrayBuffer, filename: string): void {
   }
 }
 
-export async function downloadQualityTemplate(): Promise<void> {
-  downloadWorkbook(await createQualityTemplateBuffer(), "Lisno-quality-checklist-template.xlsx");
+export async function downloadQualityTemplate(qualityOptions: QualityControlOptionCatalog = EMPTY_QUALITY_CONTROL_OPTION_CATALOG): Promise<void> {
+  downloadWorkbook(await createQualityTemplateBuffer(qualityOptions), "Lisno-quality-checklist-template.xlsx");
 }
 
-export async function downloadQualityChecklist(basketName: string, parameters: readonly KnowledgeJsonObject[]): Promise<void> {
+export async function downloadQualityChecklist(basketName: string, parameters: readonly KnowledgeJsonObject[], qualityOptions: QualityControlOptionCatalog = EMPTY_QUALITY_CONTROL_OPTION_CATALOG): Promise<void> {
   const safeBasketName = basketName.normalize("NFKC").replace(/[^\p{L}\p{N} -]/gu, "-").replace(/[ -]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, 80).replace(/-+$/gu, "") || "Main-Basket";
-  downloadWorkbook(await createQualityExportBuffer(parameters), `Lisno-${safeBasketName}-quality-checklist.xlsx`);
+  downloadWorkbook(await createQualityExportBuffer(parameters, qualityOptions), `Lisno-${safeBasketName}-quality-checklist.xlsx`);
 }
 
-export function qualityAiPrompt(basketName: string): string {
+export function qualityAiPrompt(basketName: string, qualityOptions: QualityControlOptionCatalog = EMPTY_QUALITY_CONTROL_OPTION_CATALOG): string {
   return `Create an editable interior fit-out quality checklist for the Main Basket ${JSON.stringify(basketName)}. It will be shared by all Main Lines and temporary items in that basket. Tailor questions to this basket; do not generate a catalog of every basket.
 Return an .xlsx workbook with one worksheet named "Quality Parameters" and exactly these columns in row 1:
 ${QUALITY_SIMPLE_WORKBOOK_HEADERS.join(" | ")}
 Use at most 200 questions and a 5 MiB file. Write plain values only: no formulas, macros, links, images, embedded objects, IDs or additional columns. All quality checks are mandatory and active.
-Every row needs a clear Question (up to 240 characters) and Answer type: ${QUALITY_PARAMETER_TYPES.join(", ")}. Options are needed only for dropdown, radio or multi_select; separate distinct options with |, such as Pass|Fail|Not applicable. Leave Options blank for other answer types.
-Acceptance criteria describes what a pass looks like (up to 4000 characters). Refer to approved project details for professional review; do not invent legal or engineering thresholds. Do not prefill inspection answers or add severity, sampling, stage or other fields.
-Photo evidence: enter a whole number from 0 to 100. Use 0 for no photos, 1 for a single photo, or 2–100 for multiple required photos per checked unit. Do not add a separate count column or embed photos in the workbook. Avoid duplicate questions and keep the checklist focused on practical, important checks for this basket.`;
+Every row needs a clear Question (up to 240 characters), Answer type (${QUALITY_PARAMETER_TYPES.join(", ")}), Severity (${QUALITY_SEVERITY_OPTIONS.map(option => option.label).join(", ")}), Frequency (${qualityControlSelectOptions("frequency", qualityOptions).map(option => option.label).join(", ")}) and Performed by (${qualityControlSelectOptions("performer", qualityOptions).map(option => option.label).join(", ")}). Use these supplied labels exactly; do not invent or create reusable values in the workbook. Options are needed only for dropdown, radio or multi_select; separate distinct options with |, such as Pass|Fail|Not applicable. Leave Options blank for other answer types.
+Acceptance criteria describes what a pass looks like (up to 4000 characters). Critical configures a blocking PM sign-off policy; it does not record or dispatch a sign-off. Refer to approved project details for professional review and do not invent legal, engineering or manufacturer thresholds.
+For Number answers, Minimum, Maximum and Unit are all required and the range is inclusive. Use an approved numeric threshold only. If no approved threshold is available, use a suitable non-numeric answer type or leave the numeric controls blank for human completion; incomplete rows cannot be saved silently.
+Photo evidence: enter a whole number from 0 to 100. Use 0 for no photos, 1 for a single photo, or 2–100 for multiple required photos per checked frequency scope. Do not add a separate count column or embed photos in the workbook. Avoid duplicate questions and keep the checklist focused on practical, important checks for this basket.`;
 }

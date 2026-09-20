@@ -263,9 +263,9 @@ describe("projectKnowledgeSavedSummary", () => {
     const detail = values(result);
     // Checklist covers knowledgeQuality ROW_KEYS plus nested sampling/evidence.
     for (const expected of [
-      "Question 1 · Inactive: Panel gap", "Panel gap · Answer type: Number", "Panel gap · Unit: mm", "Panel gap · Minimum: 0", "Panel gap · Maximum: 6.5", "Panel gap · Default answer: 0", "Panel gap · Required: No", "Panel gap · Enabled: No",
-      "Panel gap · Category: Finish", "Panel gap · Instructions: Measure each edge", "Panel gap · Acceptance criteria: Gap must be even", "Panel gap · Stage: Handover", "Panel gap · Check method: Measurement", "Panel gap · Severity: Major", "Panel gap · Responsible role: Site engineer", "Panel gap · Failure action: Refit panel",
-      "Panel gap · Sampling: Percentage", "Panel gap · Sample percentage (%): 15", "Panel gap · Sample unit: panels",
+      "Question 1 · Inactive: Panel gap", "Panel gap · Answer type: Number", "Panel gap · Pass range: 0–6.5 mm", "Panel gap · Default answer: 0", "Panel gap · Required: No", "Panel gap · Enabled: No",
+      "Panel gap · Category: Finish", "Panel gap · Instructions: Measure each edge", "Panel gap · Acceptance criteria: Gap must be even", "Panel gap · Stage: Handover", "Panel gap · Check method: Measurement", "Panel gap · Severity: Major · Rectify before the next stage.", "Panel gap · Performed by: Legacy responsible role: Site engineer", "Panel gap · Failure action: Refit panel",
+      "Panel gap · Frequency: Legacy custom frequency: percentage 15 · panels",
       "Panel gap · Photo evidence: Yes", "Panel gap · Document evidence: No", "Panel gap · Video evidence: No", "Panel gap · Required photos per checked unit: 2", "Panel gap · Evidence instructions: Include scale",
       "Finish approval · Answer type: Multiple choice", "Finish approval · Options: Texture, Colour", "Finish approval · Default answer: Colour", "Protected · Default answer: No", "Protected · Photo evidence: No"
     ]) expect(detail).toContain(expected);
@@ -275,9 +275,34 @@ describe("projectKnowledgeSavedSummary", () => {
     expect(detail).not.toContain("Protected · Required:");
   });
 
+  it("resolves reusable Quality controls and hides unavailable reference identifiers", () => {
+    const frequencyId = "qco_111111111111111111111111";
+    const performerId = "qco_222222222222222222222222";
+    const qualityOptions = {
+      frequency: [{ id: frequencyId, kind: "frequency", name: "Per elevation", version: 1, createdById: "user-1", updatedById: "user-1", createdAt: "2026-09-20T00:00:00.000Z", updatedAt: "2026-09-20T00:00:00.000Z" }],
+      performer: [{ id: performerId, kind: "performer", name: "Quality lead", version: 1, createdById: "user-1", updatedById: "user-1", createdAt: "2026-09-20T00:00:00.000Z", updatedAt: "2026-09-20T00:00:00.000Z" }]
+    } as const;
+    const resolved = projectKnowledgeSavedSummary(input({
+      qualityOptions,
+      quality: quality([{ id: "q", label: "Check finish", type: "boolean", severity: "minor", responsibleRole: performerId, sampling: { method: "all", unit: frequencyId } }])
+    })).quality;
+    expect(values(resolved)).toContain("Check finish · Frequency: Per elevation");
+    expect(values(resolved)).toContain("Check finish · Performed by: Quality lead");
+    expect(values(resolved)).not.toContain("qco_");
+
+    const unavailable = projectKnowledgeSavedSummary(input({
+      qualityOptions,
+      quality: quality([{ id: "q", label: "Check finish", type: "boolean", severity: "minor", responsibleRole: "qco_333333333333333333333333", sampling: { method: "all", unit: "qco_444444444444444444444444" } }])
+    })).quality;
+    expect(values(unavailable)).toContain("Unavailable frequency value");
+    expect(values(unavailable)).toContain("Unavailable performed-by value");
+    expect(values(unavailable)).toContain("needs review");
+    expect(values(unavailable)).not.toContain("qco_");
+  });
+
   it.each([
-    [{ method: "all", unit: "rooms" }, "Sampling: All units"],
-    [{ method: "fixed_count", value: 3, unit: "panels" }, "Sample count: 3"]
+    [{ method: "all", unit: "rooms" }, "Frequency: Legacy custom frequency: all · rooms"],
+    [{ method: "fixed_count", value: 3, unit: "panels" }, "Frequency: Legacy custom frequency: fixed count 3 · panels"]
   ] as const)("preserves alternate sampling settings", (sampling, expected) => {
     const result = projectKnowledgeSavedSummary(input({ quality: quality([{ id: "q", label: "Check", type: "text", sampling }]) })).quality;
     expect(values(result)).toContain(expected);

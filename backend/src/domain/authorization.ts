@@ -178,7 +178,8 @@ export const PERMISSION_CODES = [
   "procurement.vendors.read",
   "procurement.vendors.create",
   "procurement.vendor_suggestions.read",
-  "procurement.vendor_suggestions.manage"
+  "procurement.vendor_suggestions.manage",
+  "ai_estimator_knowledge.quality_control_options.create"
 ] as const;
 
 export type PermissionCode = (typeof PERMISSION_CODES)[number];

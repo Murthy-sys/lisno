@@ -42,6 +42,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     getKnowledgeBasketQuality: vi.fn(),
     getKnowledgeItem: vi.fn(),
     getKnowledgeSection: vi.fn(),
+    listKnowledgeQualityControlOptions: vi.fn(),
     listKnowledgeBaskets: vi.fn(),
     listKnowledgeItems: vi.fn(),
     listKnowledgeMasters: vi.fn()
@@ -163,6 +164,7 @@ beforeEach(() => {
   vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [], pagination });
   vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({ items: [], pagination: { ...pagination, limit: 20 } });
   vi.mocked(knowledgeApi.listKnowledgeMasters).mockResolvedValue({ items: [], pagination });
+  vi.mocked(knowledgeApi.listKnowledgeQualityControlOptions).mockResolvedValue({ items: [] });
   vi.mocked(knowledgeMutationSync.syncKnowledgeLifecycleMutation).mockResolvedValue();
   vi.mocked(knowledgeMutationSync.syncKnowledgeMainLineDeletion).mockResolvedValue();
 });

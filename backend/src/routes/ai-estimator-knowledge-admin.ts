@@ -4,6 +4,10 @@ import { z } from "zod";
 import { KNOWLEDGE_CUSTOM_DISCOUNT_MESSAGE, type CalculateKnowledgePreviewInput } from "../domain/ai-estimator-knowledge-calculation.js";
 import { KNOWLEDGE_PMC_MAX_IMPACT_BPS } from "../domain/ai-estimator-knowledge-mode-calculation.js";
 import {
+  AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_KINDS,
+  AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_NAME_MAX_LENGTH
+} from "../domain/ai-estimator-knowledge-quality-control-option.js";
+import {
   AI_ESTIMATOR_KNOWLEDGE_DURATION_UNITS,
   AI_ESTIMATOR_KNOWLEDGE_ITEM_STATUSES,
   AI_ESTIMATOR_KNOWLEDGE_MASTER_STATUSES,
@@ -13,13 +17,17 @@ import {
   AI_ESTIMATOR_KNOWLEDGE_VERSION_STATUSES,
   type KnowledgeSectionKey
 } from "../domain/ai-estimator-knowledge.js";
-import { validateKnowledgeSectionPayload } from "../domain/ai-estimator-knowledge-validation.js";
+import {
+  validateKnowledgeSectionPayload,
+  validateSharedQualityChecklistForSave
+} from "../domain/ai-estimator-knowledge-validation.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
 import { ApiError } from "../middleware/errors.js";
 import { validateBody, validateQuery } from "../middleware/validate.js";
 import type { AiEstimatorKnowledgeContextService } from "../services/ai-estimator-knowledge-context.service.js";
 import type { AiEstimatorKnowledgeItemService } from "../services/ai-estimator-knowledge-item.service.js";
+import type { AiEstimatorKnowledgeQualityControlOptionService } from "../services/ai-estimator-knowledge-quality-control-option.service.js";
 import type {
   AiEstimatorKnowledgeMasterType,
   AiEstimatorKnowledgeReferenceService
@@ -28,13 +36,23 @@ import type { AuthService } from "../services/auth.service.js";
 
 const stableIdSchema = z.string().trim().min(1).max(128);
 const shortTextSchema = z.string().trim().min(1).max(240);
+const qualityControlOptionNameSchema = z.string().transform((value) =>
+  value.normalize("NFKC").trim().replace(/\s+/gu, " ")
+).pipe(z.string().min(1).max(AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_NAME_MAX_LENGTH));
+const qualityControlOptionListQuerySchema = z.object({
+  kind: z.enum(AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_KINDS)
+}).strict();
+const qualityControlOptionCreateSchema = z.object({
+  kind: z.enum(AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_KINDS),
+  name: qualityControlOptionNameSchema
+}).strict();
 const optionalDescriptionSchema = z.string().trim().min(1).max(4_000).nullable().optional();
 const expectedVersionSchema = z.number().int().min(1);
 const basketQualityUpdateSchema = z.object({
   expectedVersion: expectedVersionSchema,
   parameters: z.array(z.record(z.string(), z.unknown())).max(200)
 }).strict().superRefine((value, context) => {
-  for (const issue of validateKnowledgeSectionPayload("quality", { parameters: value.parameters })) {
+  for (const issue of validateSharedQualityChecklistForSave(value.parameters)) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: issue.path.replace(/^payload\./u, "").split("."), message: issue.message });
   }
 });
@@ -340,6 +358,7 @@ export interface AiEstimatorKnowledgeAdminRouterServices {
   readonly reference: AiEstimatorKnowledgeReferenceService;
   readonly item: AiEstimatorKnowledgeItemService;
   readonly context: AiEstimatorKnowledgeContextService;
+  readonly qualityControlOptions: AiEstimatorKnowledgeQualityControlOptionService;
 }
 
 const masterRoutes = [
@@ -358,6 +377,27 @@ export function createAiEstimatorKnowledgeAdminRouter(
   const router = Router();
   const protectedRoute = authenticate(auth);
   const prefix = "/admin/ai-estimator-knowledge";
+
+  router.get(
+    `${prefix}/quality-control-options`,
+    protectedRoute,
+    requireOperation("GET /admin/ai-estimator-knowledge/quality-control-options"),
+    validateQuery(qualityControlOptionListQuerySchema),
+    handler(async (request, response) => services.qualityControlOptions.list(
+      request.authenticatedUser!,
+      response.locals.validatedQuery.kind
+    ))
+  );
+  router.post(
+    `${prefix}/quality-control-options`,
+    protectedRoute,
+    requireOperation("POST /admin/ai-estimator-knowledge/quality-control-options"),
+    validateBody(qualityControlOptionCreateSchema),
+    handler(async (request) => services.qualityControlOptions.create(
+      request.authenticatedUser!,
+      request.body
+    ), 201)
+  );
 
   router.get(
     `${prefix}/baskets`,

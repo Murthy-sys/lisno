@@ -1,9 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { createQualityParameter, mandatoryQualityParameters, qualityImportIssues, qualitySamplingSummary, validateQualityParameters } from "./knowledgeQuality";
+import {
+  createQualityParameter,
+  isQualityControlOptionReference,
+  mandatoryQualityParameters,
+  normalizeQualityControlOptionName,
+  qualityControlSelectOptions,
+  qualityFrequencyFromSampling,
+  qualityFrequencySelectionFromSampling,
+  qualityImportIssues,
+  qualityParameterNeedsCompletion,
+  qualityPerformerSelection,
+  qualitySamplingForFrequency,
+  qualitySamplingSummary,
+  validateQualityParameters,
+  validateQualityParametersForSave
+} from "./knowledgeQuality";
 import type { KnowledgeJsonObject } from "./knowledgeTypes";
 
 const parameter = (change: KnowledgeJsonObject = {}): KnowledgeJsonObject => ({ id: "quality-1", type: "text", label: "Are the fixings secure?", ...change });
 const paths = (row: KnowledgeJsonObject) => validateQualityParameters([row]).map(issue => issue.path);
+const frequencyId = "qco_111111111111111111111111";
+const performerId = "qco_222222222222222222222222";
+const qualityOptions = {
+  frequency: [{ id: frequencyId, kind: "frequency", name: "Per elevation", version: 1, createdById: "user-1", updatedById: "user-1", createdAt: "2026-09-20T00:00:00.000Z", updatedAt: "2026-09-20T00:00:00.000Z" }],
+  performer: [{ id: performerId, kind: "performer", name: "Quality lead", version: 1, createdById: "user-1", updatedById: "user-1", createdAt: "2026-09-20T00:00:00.000Z", updatedAt: "2026-09-20T00:00:00.000Z" }]
+} as const;
 
 describe("quality checklist validation", () => {
   it("creates independent row identities without prefilled inspection answers", () => {
@@ -26,6 +47,65 @@ describe("quality checklist validation", () => {
     expect(validateQualityParameters(undefined)).toEqual([]);
     expect(paths(parameter({ label: " ", required: "true", injected: true }))).toEqual(expect.arrayContaining(["parameters.0.label", "parameters.0.required", "parameters.0.injected"]));
     expect(validateQualityParameters([null, "x"]).map(issue => issue.path)).toEqual(["parameters.0", "parameters.1"]);
+  });
+
+  it("keeps legacy revisions readable while requiring canonical controls for a new shared save", () => {
+    const legacy = parameter({ responsibleRole: "Site engineer", sampling: { method: "percentage", value: 10, unit: "rooms" } });
+    expect(validateQualityParameters([legacy])).toEqual([]);
+    expect(validateQualityParametersForSave([legacy]).map(issue => issue.path)).toEqual([
+      "parameters.0.severity", "parameters.0.responsibleRole", "parameters.0.sampling"
+    ]);
+    const complete = parameter({ severity: "critical", responsibleRole: "pm", sampling: { method: "fixed_count", value: 1, unit: "project" } });
+    expect(validateQualityParametersForSave([complete])).toEqual([]);
+  });
+
+  it("round-trips every supported frequency without accepting lookalike legacy sampling", () => {
+    for (const frequency of ["per_unit", "per_room", "per_zone", "per_batch", "once_per_project"] as const) {
+      expect(qualityFrequencyFromSampling(qualitySamplingForFrequency(frequency))).toBe(frequency);
+    }
+    expect(qualityFrequencyFromSampling({ method: "all", unit: "rooms" })).toBeNull();
+    expect(qualityFrequencyFromSampling({ method: "fixed_count", value: 2, unit: "project" })).toBeNull();
+  });
+
+  it("accepts only frozen custom references and resolves them in their own catalog kind", () => {
+    expect(isQualityControlOptionReference(frequencyId)).toBe(true);
+    expect(isQualityControlOptionReference("qco_ABCDEF111111111111111111")).toBe(false);
+    expect(isQualityControlOptionReference("qco_1111")).toBe(false);
+    expect(qualityFrequencySelectionFromSampling({ method: "all", unit: frequencyId })).toBe(frequencyId);
+    expect(qualityPerformerSelection(performerId)).toBe(performerId);
+
+    const custom = parameter({ severity: "major", responsibleRole: performerId, sampling: { method: "all", unit: frequencyId } });
+    expect(validateQualityParametersForSave([custom], qualityOptions)).toEqual([]);
+    expect(qualityParameterNeedsCompletion(custom, qualityOptions)).toBe(false);
+
+    const wrongKind = parameter({ severity: "major", responsibleRole: frequencyId, sampling: { method: "all", unit: performerId } });
+    expect(validateQualityParametersForSave([wrongKind], qualityOptions).map(issue => issue.path)).toEqual([
+      "parameters.0.responsibleRole",
+      "parameters.0.sampling"
+    ]);
+    expect(qualityParameterNeedsCompletion(wrongKind, qualityOptions)).toBe(true);
+  });
+
+  it("matches backend name normalization and keeps built-ins before alphabetized custom values", () => {
+    expect(normalizeQualityControlOptionName("  Ｐｅｒ\t  Floor  ")).toBe("per floor");
+    const options = qualityControlSelectOptions("performer", {
+      ...qualityOptions,
+      performer: [
+        { ...qualityOptions.performer[0], name: "Zone lead" },
+        { ...qualityOptions.performer[0], id: "qco_333333333333333333333333", name: "area lead" }
+      ]
+    });
+    expect(options.slice(0, 4).map(option => option.label)).toEqual(["Site", "PM", "Procurement", "Vendor"]);
+    expect(options.slice(4).map(option => option.label)).toEqual(["area lead", "Zone lead"]);
+  });
+
+  it("requires the full inclusive pass range only for Number answers", () => {
+    const controls = { severity: "minor", responsibleRole: "vendor", sampling: { method: "all", unit: "batch" } };
+    expect(validateQualityParametersForSave([parameter({ type: "number", ...controls })]).map(issue => issue.path)).toEqual([
+      "parameters.0.minimum", "parameters.0.maximum", "parameters.0.unit"
+    ]);
+    expect(validateQualityParametersForSave([parameter({ type: "number", minimum: "1", maximum: "1.5", unit: "mm", ...controls })])).toEqual([]);
+    expect(validateQualityParametersForSave([parameter({ type: "text", ...controls })])).toEqual([]);
   });
 
   it("validates all response shapes and range boundaries without floating point rounding", () => {

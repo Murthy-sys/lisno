@@ -398,7 +398,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 234 routes without versioning paths twice", () => {
+  it("contains all 236 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -407,7 +407,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 13);
-    expect(operationCount).toBe(234);
+    expect(operationCount).toBe(236);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -417,7 +417,7 @@ describe("OpenAPI and Swagger UI", () => {
     const knowledgeOperations = HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability }) => availability === "ai_estimator_knowledge"
     );
-    expect(knowledgeOperations).toHaveLength(48);
+    expect(knowledgeOperations).toHaveLength(50);
 
     for (const registered of knowledgeOperations) {
       const { method, path } = splitHumanOperationKey(registered.key);
@@ -1198,6 +1198,76 @@ describe("OpenAPI and Swagger UI", () => {
     expect(basketResponse.properties.displayOrder).toMatchObject({
       maximum: Number.MAX_SAFE_INTEGER
     });
+
+    const qualitySave = componentSchemas().KnowledgeBasketQualityUpdateRequest as {
+      properties: Record<string, { description?: string }>;
+    };
+    const qualityParameter = componentSchemas().KnowledgeQualityParameter as {
+      properties: Record<string, { description?: string; enum?: unknown[] }>;
+    };
+    expect(qualitySave.properties.parameters.description).toContain("fixed_count/1/project");
+    expect(qualityParameter.properties.severity.enum).toEqual(["critical", "major", "minor", null]);
+    expect(qualityParameter.properties.responsibleRole.description).toContain("site, pm, procurement, or vendor");
+    expect(qualityParameter.properties.sampling.description).toContain("all/unit, all/room, all/zone, all/batch");
+    expect(qualityParameter.properties.minimum.description).toContain("inclusive");
+
+    const optionCreate = componentSchemas().KnowledgeQualityControlOptionCreateRequest as {
+      additionalProperties?: boolean;
+      description?: string;
+      required?: string[];
+      properties: Record<string, { enum?: string[]; maxLength?: number }>;
+    };
+    const option = componentSchemas().KnowledgeQualityControlOption as {
+      additionalProperties?: boolean;
+      required?: string[];
+      properties: Record<string, { pattern?: string; enum?: string[] }>;
+    };
+    const optionList = componentSchemas().KnowledgeQualityControlOptionList as {
+      additionalProperties?: boolean;
+      required?: string[];
+    };
+    expect(optionCreate).toMatchObject({
+      additionalProperties: false,
+      required: ["kind", "name"],
+      properties: {
+        kind: { enum: ["frequency", "performer"] },
+        name: { maxLength: 80 }
+      }
+    });
+    expect(optionCreate.description).toContain("409 QUALITY_CONTROL_OPTION_EXISTS");
+    expect(option).toMatchObject({
+      additionalProperties: false,
+      required: [
+        "id", "kind", "name", "version", "createdById", "updatedById",
+        "createdAt", "updatedAt"
+      ],
+      properties: {
+        id: { pattern: "^qco_[0-9a-f]{24}$" },
+        kind: { enum: ["frequency", "performer"] }
+      }
+    });
+    expect(optionList).toMatchObject({
+      additionalProperties: false,
+      required: ["items"]
+    });
+    expect(openApiDocument.paths["/admin/ai-estimator-knowledge/quality-control-options"]?.get?.parameters)
+      .toContainEqual(expect.objectContaining({
+        name: "kind",
+        in: "query",
+        required: true,
+        schema: { type: "string", enum: ["frequency", "performer"] }
+      }));
+    expect(openApiDocument.paths["/admin/ai-estimator-knowledge/quality-control-options"]?.post)
+      .toMatchObject({
+        "x-lisno-permission": "ai_estimator_knowledge.quality_control_options.create",
+        requestBody: {
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/KnowledgeQualityControlOptionCreateRequest" }
+            }
+          }
+        }
+      });
 
     const permanentDeleteRequest = componentSchemas()
       .KnowledgePermanentDeleteBasketRequest as {

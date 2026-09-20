@@ -143,7 +143,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS = [
   "ai_estimator_knowledge_tax_version_rolled_over",
   "ai_estimator_knowledge_revision_created",
   "ai_estimator_knowledge_revision_activated",
-  "ai_estimator_knowledge_lifecycle_blocked"
+  "ai_estimator_knowledge_lifecycle_blocked",
+  "ai_estimator_knowledge_quality_control_option_created"
 ] as const;
 
 export const PROJECT_CHAT_AUDIT_ACTIONS = [

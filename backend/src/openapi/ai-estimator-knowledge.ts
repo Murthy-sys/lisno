@@ -23,6 +23,10 @@ import {
   AI_ESTIMATOR_KNOWLEDGE_VERSION_STATUSES
 } from "../domain/ai-estimator-knowledge.js";
 import { AI_ESTIMATOR_KNOWLEDGE_PRIORITY_SEMANTIC_TIERS } from "../domain/ai-estimator-knowledge-priority.js";
+import {
+  AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_KINDS,
+  AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_NAME_MAX_LENGTH
+} from "../domain/ai-estimator-knowledge-quality-control-option.js";
 
 type OpenApiObject = Readonly<Record<string, unknown>>;
 
@@ -37,6 +41,7 @@ const admin = "/admin/ai-estimator-knowledge";
 const masterFamilies = ["uoms", "vendors", "taxes", "priorities", "surfaces", "modes"] as const;
 
 export const AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES: Readonly<Record<string, OpenApiObject>> = {
+  [`POST ${admin}/quality-control-options`]: jsonRequest("KnowledgeQualityControlOptionCreateRequest"),
   [`POST ${admin}/baskets`]: jsonRequest("KnowledgeBasketCreateRequest"),
   [`PATCH ${admin}/baskets/:basketId`]: jsonRequest("KnowledgeBasketUpdateRequest"),
   [`PUT ${admin}/baskets/:basketId/quality`]: jsonRequest("KnowledgeBasketQualityUpdateRequest"),
@@ -76,6 +81,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES: Readonly<Record<string, Open
 };
 
 export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, string>> = {
+  [`GET ${admin}/quality-control-options`]: "KnowledgeQualityControlOptionList",
+  [`POST ${admin}/quality-control-options`]: "KnowledgeQualityControlOption",
   [`GET ${admin}/baskets/:basketId/sub-baskets`]: "KnowledgeSubBasketPage",
   [`POST ${admin}/baskets/:basketId/sub-baskets`]: "KnowledgeSubBasket",
   [`GET ${admin}/baskets`]: "KnowledgeBasketPage",
@@ -121,6 +128,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, st
 };
 
 export const AI_ESTIMATOR_KNOWLEDGE_OPERATION_SUMMARIES: Readonly<Record<string, string>> = {
+  [`GET ${admin}/quality-control-options`]: "List reusable Quality Control values by kind",
+  [`POST ${admin}/quality-control-options`]: "Create an append-only reusable Quality Control value",
   [`GET ${admin}/baskets/:basketId/sub-baskets`]: "List a Main Basket’s Sub Baskets",
   [`POST ${admin}/baskets/:basketId/sub-baskets`]: "Create a Sub Basket",
   [`GET ${admin}/baskets`]: "List knowledge Baskets",
@@ -184,6 +193,13 @@ const masterStatusParameter = {
 export const AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS: Readonly<
   Record<string, readonly OpenApiObject[]>
 > = {
+  [`GET ${admin}/quality-control-options`]: [{
+    name: "kind",
+    in: "query",
+    required: true,
+    schema: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_KINDS] },
+    description: "Returns only custom reusable values of this kind. Built-in values remain code-defined."
+  }],
   [`GET ${admin}/baskets/:basketId/sub-baskets`]: [searchParameter],
   [`GET ${admin}/baskets`]: [searchParameter, masterStatusParameter, includeArchivedParameter],
   [`GET ${admin}/baskets/:basketId/main-lines`]: [searchParameter, includeArchivedParameter],
@@ -315,6 +331,42 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     type: "string",
     enum: [...AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS]
   },
+  KnowledgeQualityControlOptionCreateRequest: {
+    ...strictObject(["kind", "name"], {
+      kind: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_KINDS] },
+      name: {
+        type: "string",
+        minLength: 1,
+        maxLength: AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_NAME_MAX_LENGTH,
+        description: "Trimmed display name. Internal whitespace is collapsed and uniqueness is case-insensitive within the selected kind."
+      }
+    }),
+    description: "Super Admin-only append. A normalized duplicate returns 409 QUALITY_CONTROL_OPTION_EXISTS with existingOptionName and, for a custom match, existingOptionId. Built-in labels are reserved within their kind. Values cannot be renamed, archived, reordered, or deleted in this API."
+  },
+  KnowledgeQualityControlOption: {
+    ...strictObject(
+      ["id", "kind", "name", "version", ...Object.keys(actorMetadata)],
+      {
+        id: { type: "string", pattern: "^qco_[0-9a-f]{24}$" },
+        kind: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_KINDS] },
+        name: {
+          type: "string",
+          minLength: 1,
+          maxLength: AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_NAME_MAX_LENGTH
+        },
+        version: { type: "integer", enum: [1] },
+        ...actorMetadata
+      }
+    ),
+    description: "Append-only custom value. Built-in Frequency and Performed by values are intentionally not stored in this collection."
+  },
+  KnowledgeQualityControlOptionList: strictObject(["items"], {
+    items: {
+      type: "array",
+      items: ref("KnowledgeQualityControlOption"),
+      description: "Custom values sorted by normalized display name and stable ID."
+    }
+  }),
   KnowledgeArchiveRequest: strictObject(["expectedVersion", "reason"], {
     expectedVersion: version,
     reason: { type: "string", minLength: 1, maxLength: 1_000 }
@@ -346,7 +398,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
   }),
   KnowledgeBasketQualityUpdateRequest: strictObject(["expectedVersion", "parameters"], {
     expectedVersion: version,
-    parameters: { type: "array", maxItems: 200, items: ref("KnowledgeQualityParameter"), description: "Full replacement, including an intentional empty list. Combined payload limit 256 KiB. Validated before any writes." }
+    parameters: { type: "array", maxItems: 200, items: ref("KnowledgeQualityParameter"), description: "Full replacement, including an intentional empty list. Every saved row requires severity, a built-in or existing correct-kind custom Performed by value, and a built-in or existing correct-kind custom Frequency. Built-in Once per project retains fixed_count/1/project; custom values use qco_<24 lowercase hex> references. Number rows also require an inclusive minimum, maximum, and unit. Combined payload limit 256 KiB. Validated before any writes." }
   }),
   KnowledgeBasketQuality: strictObject(["basketId", "basketName", "basketStatus", "version", "revisionId", "revisionNumber", "contentDigest", "parameters", "updatedAt"], {
     basketId: id, basketName: masterProperties.name, basketStatus: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_MASTER_STATUSES] },
@@ -358,19 +410,19 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     id, type: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_QUALITY_PARAMETER_TYPES] },
     label: masterProperties.name, unit: { ...masterProperties.name, nullable: true }, category: { ...masterProperties.name, nullable: true },
     allowedValues: { type: "array", items: { type: "string", maxLength: 240 }, maxItems: 200 },
-    minimum: { type: "string", nullable: true, description: "Canonical nonnegative decimal string." },
-    maximum: { type: "string", nullable: true, description: "Canonical nonnegative decimal string." },
+    minimum: { type: "string", nullable: true, description: "Canonical nonnegative decimal string. Required on a shared-checklist save when type=number; the pass range is inclusive." },
+    maximum: { type: "string", nullable: true, description: "Canonical nonnegative decimal string. Required on a shared-checklist save when type=number, and must be greater than or equal to minimum." },
     defaultValue: { description: "Value compatible with the parameter type, or null." },
     required: { type: "boolean", description: "Compatibility field. Current quality parameters are always required; shared saves and effective reads normalize this to true." },
     active: { type: "boolean", description: "Compatibility field. Every listed quality parameter is active; shared saves and effective reads normalize this to true." },
     instructions: description, acceptanceCriteria: description, stage: { ...masterProperties.name, nullable: true },
     checkMethod: { type: "string", nullable: true, enum: ["visual", "measurement", "functional_test", "document_review", null] },
-    severity: { type: "string", nullable: true, enum: ["critical", "major", "minor", null] },
-    responsibleRole: { ...masterProperties.name, nullable: true }, failureAction: description,
+    severity: { type: "string", nullable: true, enum: ["critical", "major", "minor", null], description: "Required for new shared-checklist revisions. Nullable only for compatibility reads of immutable legacy revisions." },
+    responsibleRole: { ...masterProperties.name, nullable: true, description: "New shared-checklist revisions require one of site, pm, procurement, or vendor, or an existing performer option reference matching ^qco_[0-9a-f]{24}$. Other strings remain readable only in immutable legacy revisions." }, failureAction: description,
     sampling: { ...strictObject(["method", "unit"], {
       method: { type: "string", enum: ["all", "percentage", "fixed_count"] }, unit: masterProperties.name,
       value: { type: "number", nullable: true, description: "Percentage >0 and <=100; fixed count integer 1..1,000,000; absent/null for all. Runtime validation is authoritative." }
-    }), nullable: true },
+    }), nullable: true, description: "New shared-checklist revisions require one canonical frequency: all/unit, all/room, all/zone, all/batch, fixed_count with value 1 and unit project, or all with an existing frequency option reference matching ^qco_[0-9a-f]{24}$. Other structurally valid sampling remains readable only in immutable legacy revisions." },
     evidence: { ...strictObject(["photos", "documents", "video"], {
       photos: { type: "boolean" }, documents: { type: "boolean" }, video: { type: "boolean" },
       minPhotosPerSample: { type: "integer", minimum: 1, maximum: 100, nullable: true, description: "Required when photos=true, otherwise absent or null." },

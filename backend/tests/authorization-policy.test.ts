@@ -231,8 +231,8 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(134);
-    expect(new Set(PERMISSION_CODES).size).toBe(134);
+    expect(PERMISSION_CODES).toHaveLength(135);
+    expect(new Set(PERMISSION_CODES).size).toBe(135);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
@@ -242,6 +242,14 @@ describe("authorization policy", () => {
         expect(hasPermission(role, permission), `${role} ${permission}`).toBe(true);
       }
       expect(hasPermission(role, "chat.participants.manage"), role).toBe(["admin", "super_admin"].includes(role));
+    }
+  });
+
+  it("restricts reusable Quality Control option creation to Super Admin", () => {
+    const permission = "ai_estimator_knowledge.quality_control_options.create" as const;
+    expect(PERMISSION_CODES.at(-1)).toBe(permission);
+    for (const role of ROLE_CODES) {
+      expect(hasPermission(role, permission), role).toBe(role === "super_admin");
     }
   });
 
@@ -469,7 +477,8 @@ describe("authorization policy", () => {
       "ai_estimator_knowledge_tax_version_rolled_over",
       "ai_estimator_knowledge_revision_created",
       "ai_estimator_knowledge_revision_activated",
-      "ai_estimator_knowledge_lifecycle_blocked"
+      "ai_estimator_knowledge_lifecycle_blocked",
+      "ai_estimator_knowledge_quality_control_option_created"
     ]);
     expect(AUDIT_ACTIONS.slice(-AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS.length)).toEqual(
       AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS

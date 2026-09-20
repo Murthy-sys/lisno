@@ -1,18 +1,21 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { StrictMode } from "react";
+import { createRef, StrictMode, type RefObject } from "react";
 import axe from "axe-core";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/client";
-import { KnowledgeBasketQualityPanel } from "./KnowledgeBasketQualityPanel";
+import { KnowledgeBasketQualityPanel, type KnowledgeBasketQualityPanelHandle } from "./KnowledgeBasketQualityPanel";
 import type { KnowledgePendingChangesSnapshot } from "./knowledgePendingChanges";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import * as api from "./knowledgeApi";
 import * as workbook from "./knowledgeQualityWorkbook";
 import type { KnowledgeBasketQuality, KnowledgeItemDetail, KnowledgeJsonObject } from "./knowledgeTypes";
 
-vi.mock("./knowledgeApi", () => ({ getKnowledgeBasketQuality: vi.fn(), updateKnowledgeBasketQuality: vi.fn(), getKnowledgeSection: vi.fn() }));
+vi.mock("./knowledgeApi", () => ({
+  getKnowledgeBasketQuality: vi.fn(), updateKnowledgeBasketQuality: vi.fn(), getKnowledgeSection: vi.fn(),
+  listKnowledgeQualityControlOptions: vi.fn(), createKnowledgeQualityControlOption: vi.fn()
+}));
 vi.mock("./knowledgeQualityWorkbook", async (importOriginal) => ({
   ...await importOriginal<typeof import("./knowledgeQualityWorkbook")>(),
   readQualityWorkbook: vi.fn(),
@@ -20,11 +23,29 @@ vi.mock("./knowledgeQualityWorkbook", async (importOriginal) => ({
   downloadQualityTemplate: vi.fn()
 }));
 const item = { id: "electrical-point", mainLineId: "electrical-point", mainLineName: "Electrical points", basketId: "electrical", basketName: "Electrical", status: "active", itemType: "main_line" } as KnowledgeItemDetail;
-const saved: KnowledgeBasketQuality = { basketId: "electrical", basketName: "Electrical", basketStatus: "active", version: 7, revisionId: "quality-v2", revisionNumber: 2, contentDigest: "digest-v2", updatedAt: "2026-09-08T00:00:00Z", parameters: [{ id: "check-photo", type: "boolean", label: "Are installed fittings aligned?", required: true, active: true }] };
+const controls: KnowledgeJsonObject = { severity: "major", responsibleRole: "site", sampling: { method: "all", unit: "unit" } };
+const saved: KnowledgeBasketQuality = { basketId: "electrical", basketName: "Electrical", basketStatus: "active", version: 7, revisionId: "quality-v2", revisionNumber: 2, contentDigest: "digest-v2", updatedAt: "2026-09-08T00:00:00Z", parameters: [{ id: "check-photo", type: "boolean", label: "Are installed fittings aligned?", required: true, active: true, ...controls }] };
+const customFrequency = {
+  id: "qco_111111111111111111111111", kind: "frequency" as const, name: "Per elevation", version: 1,
+  createdById: "super-admin", updatedById: "super-admin", createdAt: "2026-09-20T00:00:00.000Z", updatedAt: "2026-09-20T00:00:00.000Z"
+};
+const customPerformer = {
+  id: "qco_222222222222222222222222", kind: "performer" as const, name: "Quality lead", version: 1,
+  createdById: "super-admin", updatedById: "super-admin", createdAt: "2026-09-20T00:00:00.000Z", updatedAt: "2026-09-20T00:00:00.000Z"
+};
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
 const callbacks = { onDirtyChange: vi.fn(), onSavingChange: vi.fn(), onPendingChanges: vi.fn<(snapshot: KnowledgePendingChangesSnapshot) => void>() };
-function setup(canUpdate = true) {
+function setup(canUpdate = true, canCreateQualityOptions = false, panelRef?: RefObject<KnowledgeBasketQualityPanelHandle | null>) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  const view = render(<QueryClientProvider client={client}><main><KnowledgeBasketQualityPanel item={item} revisionId="item-revision" canUpdate={canUpdate} pendingChangesSourceKey="electrical-session" {...callbacks} /></main></QueryClientProvider>);
+  const view = render(<QueryClientProvider client={client}><main><KnowledgeBasketQualityPanel ref={panelRef} item={item} revisionId="item-revision" canUpdate={canUpdate} canCreateQualityOptions={canCreateQualityOptions} pendingChangesSourceKey="electrical-session" {...callbacks} /></main></QueryClientProvider>);
   return { ...view, client };
 }
 async function openParameter(user: ReturnType<typeof userEvent.setup>, index = 1, readOnly = false) {
@@ -39,6 +60,27 @@ async function doneEditing(user: ReturnType<typeof userEvent.setup>) {
   const done = screen.queryByRole("button", { name: "Done" });
   if (done) await user.click(done);
 }
+async function completeControls(user: ReturnType<typeof userEvent.setup>, severity = "major", frequency = "per_unit", performer = "site") {
+  await user.selectOptions(screen.getByRole("combobox", { name: "Severity" }), severity);
+  await user.selectOptions(screen.getByRole("combobox", { name: "Frequency" }), frequency);
+  await user.selectOptions(screen.getByRole("combobox", { name: "Performed by" }), performer);
+}
+const addFrequencyOptionLabel = "＋ Add frequency…";
+const addPerformerOptionLabel = "＋ Add performed by…";
+async function openFrequencyCreator(user: ReturnType<typeof userEvent.setup>) {
+  const select = screen.getByRole("combobox", { name: "Frequency" });
+  const selectedValue = (select as HTMLSelectElement).value;
+  await user.selectOptions(select, within(select).getByRole("option", { name: addFrequencyOptionLabel }));
+  expect(select).toHaveValue(selectedValue);
+  return screen.findByRole("dialog", { name: "Add frequency" });
+}
+async function openPerformerCreator(user: ReturnType<typeof userEvent.setup>) {
+  const select = screen.getByRole("combobox", { name: "Performed by" });
+  const selectedValue = (select as HTMLSelectElement).value;
+  await user.selectOptions(select, within(select).getByRole("option", { name: addPerformerOptionLabel }));
+  expect(select).toHaveValue(selectedValue);
+  return screen.findByRole("dialog", { name: "Add performed-by value" });
+}
 async function saveChecklist(user: ReturnType<typeof userEvent.setup>) {
   await doneEditing(user);
   await user.click(screen.getByRole("button", { name: "Save shared checklist" }));
@@ -48,7 +90,12 @@ async function removeParameter(user: ReturnType<typeof userEvent.setup>, index: 
   await user.click(screen.getByLabelText(`More actions for parameter ${index}`));
   await user.click(screen.getByRole("button", { name: `Remove Quality parameters entry ${index}` }));
 }
-beforeEach(() => { vi.resetAllMocks(); vi.mocked(api.getKnowledgeBasketQuality).mockResolvedValue(saved); vi.mocked(api.updateKnowledgeBasketQuality).mockImplementation(async (_id, input) => ({ ...saved, version: 8, revisionId: "quality-v3", revisionNumber: 3, parameters: input.parameters })); });
+beforeEach(() => {
+  vi.resetAllMocks();
+  vi.mocked(api.getKnowledgeBasketQuality).mockResolvedValue(saved);
+  vi.mocked(api.listKnowledgeQualityControlOptions).mockResolvedValue({ items: [] });
+  vi.mocked(api.updateKnowledgeBasketQuality).mockImplementation(async (_id, input) => ({ ...saved, version: 8, revisionId: "quality-v3", revisionNumber: 3, parameters: input.parameters }));
+});
 
 describe("shared Main Basket quality checklist", () => {
   it("imports the painting check beside two incomplete drafts, then requires completing or deleting them before saving", async () => {
@@ -56,6 +103,7 @@ describe("shared Main Basket quality checklist", () => {
     const painting: KnowledgeJsonObject = {
       id: "imported-painting", label: "is Painting done", type: "radio", allowedValues: ["Pass", "Fail", "Not applicable"],
       acceptanceCriteria: "photos to be uploaded after painting", required: true, active: true,
+      ...controls,
       evidence: { photos: true, documents: false, video: false, minPhotosPerSample: 1 }
     };
     vi.mocked(workbook.readQualityWorkbook).mockResolvedValue({ parameters: [painting], issues: [] });
@@ -95,14 +143,14 @@ describe("shared Main Basket quality checklist", () => {
     expect(screen.getByText("Download Excel uses the saved checklist. Save your changes to include them.")).toBeVisible();
     await doneEditing(user);
     await user.click(screen.getByRole("button", { name: "Download Excel" }));
-    expect(workbook.downloadQualityChecklist).toHaveBeenLastCalledWith("Electrical", saved.parameters);
+    expect(workbook.downloadQualityChecklist).toHaveBeenLastCalledWith("Electrical", saved.parameters, { frequency: [], performer: [] });
     expect(api.updateKnowledgeBasketQuality).not.toHaveBeenCalled();
     expect(screen.getByText("Unsaved inspection question")).toBeVisible();
 
     await saveChecklist(user);
     await screen.findByText("Shared checklist saved for all items in Electrical.");
     await user.click(screen.getByRole("button", { name: "Download Excel" }));
-    expect(workbook.downloadQualityChecklist).toHaveBeenLastCalledWith("Electrical", [expect.objectContaining({ label: "Unsaved inspection question" })]);
+    expect(workbook.downloadQualityChecklist).toHaveBeenLastCalledWith("Electrical", [expect.objectContaining({ label: "Unsaved inspection question" })], { frequency: [], performer: [] });
   });
 
   it.each([null, "empty-revision"])("shows the saved download only after saving rows when the prior revision is %s", async revisionId => {
@@ -113,6 +161,7 @@ describe("shared Main Basket quality checklist", () => {
     await user.click(screen.getByRole("button", { name: "Add Parameter" }));
     await user.type(screen.getByRole("textbox", { name: "Question / check" }), "Is the finish acceptable?");
     await user.selectOptions(screen.getByRole("combobox", { name: "Answer type" }), "boolean");
+    await completeControls(user);
     expect(screen.queryByRole("button", { name: "Download Excel" })).not.toBeInTheDocument();
     await saveChecklist(user);
     expect(await screen.findByRole("button", { name: "Download Excel" })).toBeVisible();
@@ -147,9 +196,38 @@ describe("shared Main Basket quality checklist", () => {
     expect(api.updateKnowledgeBasketQuality).not.toHaveBeenCalled();
   });
 
+  it("keeps workbook actions unavailable until both reusable-value catalogs are loaded", async () => {
+    const frequency = deferred<{ items: (typeof customFrequency)[] }>();
+    vi.mocked(api.listKnowledgeQualityControlOptions).mockImplementation(kind =>
+      kind === "frequency" ? frequency.promise : Promise.resolve({ items: [customPerformer] })
+    );
+    const user = userEvent.setup();
+    setup();
+
+    const download = await screen.findByRole("button", { name: "Download Excel" });
+    const template = screen.getByRole("button", { name: "Download Excel template" });
+    const importButton = screen.getByRole("button", { name: "Import Excel" });
+    expect(download).toBeDisabled();
+    expect(template).toBeDisabled();
+    expect(importButton).toBeDisabled();
+    expect(screen.getByText(/Loading reusable Quality Parameter values/iu)).toBeVisible();
+    expect(workbook.downloadQualityChecklist).not.toHaveBeenCalled();
+    expect(workbook.downloadQualityTemplate).not.toHaveBeenCalled();
+
+    await act(async () => frequency.resolve({ items: [customFrequency] }));
+    await waitFor(() => expect(template).toBeEnabled());
+    expect(download).toBeEnabled();
+    expect(importButton).toBeEnabled();
+    await user.click(template);
+    expect(workbook.downloadQualityTemplate).toHaveBeenCalledWith({
+      frequency: [customFrequency],
+      performer: [customPerformer]
+    });
+  });
+
   it("saves every existing row as mandatory and active when a previously optional checklist is edited", async () => {
     const parameters: KnowledgeJsonObject[] = [{ ...saved.parameters[0], required: false, active: false },
-      { id: "check-second", type: "boolean", label: "Is the fixing secure?" }];
+      { id: "check-second", type: "boolean", label: "Is the fixing secure?", ...controls }];
     vi.mocked(api.getKnowledgeBasketQuality).mockResolvedValue({ ...saved, parameters });
     const user = userEvent.setup(); setup();
     await screen.findByRole("button", { name: /^Edit parameter 1:/ });
@@ -184,6 +262,322 @@ describe("shared Main Basket quality checklist", () => {
     expect(await screen.findByText("Shared checklist saved for all items in Electrical.")).toBeVisible();
     expect(api.getKnowledgeSection).not.toHaveBeenCalled();
     expect(callbacks.onDirtyChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("edits canonical controls and a Number pass range through one focused form", async () => {
+    const user = userEvent.setup(); setup();
+    await openParameter(user);
+    expect(screen.getByRole("combobox", { name: "Severity" })).toHaveValue("major");
+    expect(screen.getByRole("combobox", { name: "Frequency" })).toHaveValue("per_unit");
+    expect(screen.getByRole("combobox", { name: "Performed by" })).toHaveValue("site");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Answer type" }), "number");
+    await user.type(screen.getByRole("textbox", { name: "Minimum" }), "1.25");
+    await user.type(screen.getByRole("textbox", { name: "Maximum" }), "2.5");
+    await user.type(screen.getByRole("textbox", { name: "Unit" }), "mm");
+    await completeControls(user, "critical", "once_per_project", "pm");
+    expect(screen.getByText(/Critical policy:/u).closest("p")).toHaveTextContent("PM sign-off is required when operational inspections are introduced");
+    await saveChecklist(user);
+    await waitFor(() => expect(api.updateKnowledgeBasketQuality).toHaveBeenCalledWith("electrical", {
+      expectedVersion: 7,
+      parameters: [expect.objectContaining({
+        type: "number", minimum: "1.25", maximum: "2.5", unit: "mm", severity: "critical", responsibleRole: "pm",
+        sampling: { method: "fixed_count", value: 1, unit: "project" }
+      })]
+    }));
+    expect(screen.getByText("1.25–2.5 mm")).toBeVisible();
+    expect(screen.getByText("Once per project")).toBeVisible();
+  });
+
+  it("lets only an authorized Super Admin create and immediately select a reusable frequency", async () => {
+    let created = false;
+    vi.mocked(api.createKnowledgeQualityControlOption).mockImplementation(async input => {
+      created = true;
+      expect(input).toEqual({ kind: "frequency", name: "Per elevation" });
+      return customFrequency;
+    });
+    vi.mocked(api.listKnowledgeQualityControlOptions).mockImplementation(async kind => ({
+      items: created && kind === "frequency" ? [customFrequency] : []
+    }));
+    const user = userEvent.setup();
+    setup(true, true);
+    await openParameter(user);
+    expect(within(screen.getByRole("combobox", { name: "Frequency" })).getByRole("option", { name: addFrequencyOptionLabel })).toBeInTheDocument();
+    expect(within(screen.getByRole("combobox", { name: "Performed by" })).getByRole("option", { name: addPerformerOptionLabel })).toBeInTheDocument();
+    const dialog = await openFrequencyCreator(user);
+    expect(within(dialog).getByRole("textbox", { name: "Name" })).toHaveFocus();
+    expect(within(dialog).getByText(/saved to the shared catalog immediately/iu)).toBeVisible();
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Per elevation");
+    await user.click(within(dialog).getByRole("button", { name: "Add frequency" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add frequency" })).not.toBeInTheDocument());
+    expect(screen.getByRole("combobox", { name: "Frequency" })).toHaveValue(customFrequency.id);
+    expect(screen.getByText("Per elevation added and selected. Save the shared checklist to apply this draft change.")).toBeVisible();
+    expect(api.updateKnowledgeBasketQuality).not.toHaveBeenCalled();
+    expect(vi.mocked(api.listKnowledgeQualityControlOptions).mock.calls.filter(([kind]) => kind === "frequency")).toHaveLength(2);
+    expect(vi.mocked(api.listKnowledgeQualityControlOptions).mock.calls.filter(([kind]) => kind === "performer")).toHaveLength(1);
+    expect(api.getKnowledgeBasketQuality).toHaveBeenCalledTimes(1);
+    await saveChecklist(user);
+    await waitFor(() => expect(api.updateKnowledgeBasketQuality).toHaveBeenCalledWith("electrical", {
+      expectedVersion: 7,
+      parameters: [expect.objectContaining({ sampling: { method: "all", unit: customFrequency.id } })]
+    }));
+  });
+
+  it("selects a created value immediately without waiting for a slow catalog refresh", async () => {
+    const create = deferred<typeof customFrequency>();
+    const refresh = deferred<{ items: (typeof customFrequency)[] }>();
+    let frequencyReads = 0;
+    vi.mocked(api.createKnowledgeQualityControlOption).mockReturnValue(create.promise);
+    vi.mocked(api.listKnowledgeQualityControlOptions).mockImplementation(kind => {
+      if (kind === "performer") return Promise.resolve({ items: [] });
+      frequencyReads += 1;
+      return frequencyReads === 1 ? Promise.resolve({ items: [] }) : refresh.promise;
+    });
+    const user = userEvent.setup();
+    setup(true, true);
+    await openParameter(user);
+    const frequency = screen.getByRole("combobox", { name: "Frequency" });
+    const dialog = await openFrequencyCreator(user);
+    const input = within(dialog).getByRole("textbox", { name: "Name" });
+    await user.type(input, customFrequency.name);
+    await user.click(within(dialog).getByRole("button", { name: "Add frequency" }));
+    expect(input).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+
+    await act(async () => create.resolve(customFrequency));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add frequency" })).not.toBeInTheDocument());
+    expect(frequency).toHaveValue(customFrequency.id);
+    expect(frequency).toHaveFocus();
+    await waitFor(() => expect(frequencyReads).toBe(2));
+    expect(screen.getByText(/added and selected/iu)).toBeVisible();
+
+    await act(async () => refresh.resolve({ items: [customFrequency] }));
+  });
+
+  it("creates a performed-by catalog value into responsibleRole without saving the checklist early", async () => {
+    let created = false;
+    vi.mocked(api.createKnowledgeQualityControlOption).mockImplementation(async input => {
+      created = true;
+      expect(input).toEqual({ kind: "performer", name: "Quality lead" });
+      return customPerformer;
+    });
+    vi.mocked(api.listKnowledgeQualityControlOptions).mockImplementation(async kind => ({
+      items: created && kind === "performer" ? [customPerformer] : []
+    }));
+    const user = userEvent.setup();
+    setup(true, true);
+    await openParameter(user);
+    const dialog = await openPerformerCreator(user);
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Quality lead");
+    await user.click(within(dialog).getByRole("button", { name: "Add performed-by value" }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Performed by" })).toHaveValue(customPerformer.id));
+    expect(api.updateKnowledgeBasketQuality).not.toHaveBeenCalled();
+    await saveChecklist(user);
+    await waitFor(() => expect(api.updateKnowledgeBasketQuality).toHaveBeenCalledWith("electrical", {
+      expectedVersion: 7,
+      parameters: [expect.objectContaining({ responsibleRole: customPerformer.id })]
+    }));
+  });
+
+  it("keeps an immediately created catalog option after the checklist draft is discarded", async () => {
+    let created = false;
+    vi.mocked(api.createKnowledgeQualityControlOption).mockImplementation(async () => {
+      created = true;
+      return customFrequency;
+    });
+    vi.mocked(api.listKnowledgeQualityControlOptions).mockImplementation(async kind => ({
+      items: created && kind === "frequency" ? [customFrequency] : []
+    }));
+    const panelRef = createRef<KnowledgeBasketQualityPanelHandle>();
+    const user = userEvent.setup();
+    setup(true, true, panelRef);
+    await openParameter(user);
+    const dialog = await openFrequencyCreator(user);
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), customFrequency.name);
+    await user.click(within(dialog).getByRole("button", { name: "Add frequency" }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Frequency" })).toHaveValue(customFrequency.id));
+    await doneEditing(user);
+    act(() => panelRef.current?.discard());
+    await openParameter(user);
+    const frequency = screen.getByRole("combobox", { name: "Frequency" });
+    expect(frequency).toHaveValue("per_unit");
+    expect(within(frequency).getByRole("option", { name: customFrequency.name })).toHaveValue(customFrequency.id);
+    expect(api.createKnowledgeQualityControlOption).toHaveBeenCalledTimes(1);
+    expect(api.updateKnowledgeBasketQuality).not.toHaveBeenCalled();
+  });
+
+  it("keeps add actions hidden for editors without catalog-create permission", async () => {
+    const user = userEvent.setup();
+    setup(true, false);
+    await openParameter(user);
+    const frequency = screen.getByRole("combobox", { name: "Frequency" });
+    const performer = screen.getByRole("combobox", { name: "Performed by" });
+    expect(within(frequency).queryByRole("option", { name: addFrequencyOptionLabel })).not.toBeInTheDocument();
+    expect(within(performer).queryByRole("option", { name: addPerformerOptionLabel })).not.toBeInTheDocument();
+    expect(frequency).toBeEnabled();
+    expect(performer).toBeEnabled();
+  });
+
+  it("keeps the checklist usable through catalog failure and resolves labels after retry", async () => {
+    vi.mocked(api.getKnowledgeBasketQuality).mockResolvedValue({
+      ...saved,
+      parameters: [{ ...saved.parameters[0], responsibleRole: customPerformer.id, sampling: { method: "all", unit: customFrequency.id } }]
+    });
+    let recovered = false;
+    vi.mocked(api.listKnowledgeQualityControlOptions).mockImplementation(async kind => {
+      if (!recovered) throw new Error("Catalog offline");
+      return { items: kind === "frequency" ? [customFrequency] : [customPerformer] };
+    });
+    const user = userEvent.setup();
+    setup(true, false);
+    expect(await screen.findByText("Are installed fittings aligned?")).toBeVisible();
+    expect(await screen.findByText(/Some reusable Quality Parameter values could not be loaded/iu)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Download Excel" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Download Excel template" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Import Excel" })).toBeDisabled();
+    expect(document.body.textContent).not.toContain("qco_");
+    recovered = true;
+    await user.click(screen.getByRole("button", { name: "Retry values" }));
+    expect(await screen.findByText(customFrequency.name)).toBeVisible();
+    expect(screen.getByText(customPerformer.name)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Download Excel" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Download Excel template" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Import Excel" })).toBeEnabled();
+    await openParameter(user);
+    expect(screen.getByRole("combobox", { name: "Frequency" })).toHaveValue(customFrequency.id);
+    expect(screen.getByRole("combobox", { name: "Performed by" })).toHaveValue(customPerformer.id);
+  });
+
+  it("keeps workbook actions usable with cached catalogs after a background refresh fails", async () => {
+    let failRefresh = false;
+    vi.mocked(api.listKnowledgeQualityControlOptions).mockImplementation(async kind => {
+      if (failRefresh) throw new Error("Catalog refresh failed");
+      return { items: kind === "frequency" ? [customFrequency] : [customPerformer] };
+    });
+    const user = userEvent.setup();
+    const { client } = setup(true, false);
+    const template = await screen.findByRole("button", { name: "Download Excel template" });
+    await waitFor(() => expect(template).toBeEnabled());
+    failRefresh = true;
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: knowledgeQueryKeys.qualityControlOptions("frequency"), exact: true });
+    });
+    expect(await screen.findByText(/could not be refreshed/iu)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Download Excel" })).toBeEnabled();
+    expect(template).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Import Excel" })).toBeEnabled();
+    await user.click(template);
+    expect(workbook.downloadQualityTemplate).toHaveBeenCalledWith({
+      frequency: [customFrequency],
+      performer: [customPerformer]
+    });
+  });
+
+  it("reconciles a duplicate built-in without creating a second value", async () => {
+    vi.mocked(api.createKnowledgeQualityControlOption).mockRejectedValue(new ApiError(
+      409,
+      "QUALITY_CONTROL_OPTION_EXISTS",
+      "A Quality Control option with this name already exists.",
+      { existingOptionName: "Per room" }
+    ));
+    const user = userEvent.setup();
+    setup(true, true);
+    await openParameter(user);
+    const dialog = await openFrequencyCreator(user);
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "  PER   ROOM ");
+    await user.click(within(dialog).getByRole("button", { name: "Add frequency" }));
+    expect(await within(dialog).findByText(/already exists/iu)).toHaveTextContent("Per room");
+    await user.click(within(dialog).getByRole("button", { name: "Use existing value" }));
+    expect(screen.getByRole("combobox", { name: "Frequency" })).toHaveValue("per_room");
+    expect(api.createKnowledgeQualityControlOption).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses a duplicate custom value from the conflict response when catalog refresh fails", async () => {
+    let conflictReturned = false;
+    vi.mocked(api.listKnowledgeQualityControlOptions).mockImplementation(async () => {
+      if (conflictReturned) throw new Error("Catalog refresh failed");
+      return { items: [] };
+    });
+    vi.mocked(api.createKnowledgeQualityControlOption).mockImplementation(async () => {
+      conflictReturned = true;
+      throw new ApiError(
+        409,
+        "QUALITY_CONTROL_OPTION_EXISTS",
+        "A Quality Control option with this name already exists.",
+        { existingOptionId: customFrequency.id, existingOptionName: customFrequency.name }
+      );
+    });
+    const user = userEvent.setup();
+    setup(true, true);
+    await openParameter(user);
+    const dialog = await openFrequencyCreator(user);
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), customFrequency.name);
+    await user.click(within(dialog).getByRole("button", { name: "Add frequency" }));
+
+    const useExisting = await within(dialog).findByRole("button", { name: "Use existing value" });
+    expect(within(dialog).getByText(/already exists/iu)).toHaveTextContent(customFrequency.name);
+    await user.click(useExisting);
+    const frequency = screen.getByRole("combobox", { name: "Frequency" });
+    expect(frequency).toHaveValue(customFrequency.id);
+    expect(within(frequency).getByRole("option", { name: customFrequency.name })).toHaveValue(customFrequency.id);
+    await saveChecklist(user);
+    await waitFor(() => expect(api.updateKnowledgeBasketQuality).toHaveBeenCalledWith("electrical", {
+      expectedVersion: 7,
+      parameters: [expect.objectContaining({ sampling: { method: "all", unit: customFrequency.id } })]
+    }));
+  });
+
+  it("ignores a late duplicate refresh after the submitted name changes", async () => {
+    const refresh = deferred<{ items: (typeof customFrequency)[] }>();
+    let conflictReturned = false;
+    vi.mocked(api.listKnowledgeQualityControlOptions).mockImplementation(async kind => {
+      if (kind === "frequency" && conflictReturned) return refresh.promise;
+      return { items: [] };
+    });
+    vi.mocked(api.createKnowledgeQualityControlOption).mockImplementation(async () => {
+      conflictReturned = true;
+      throw new ApiError(
+        409,
+        "QUALITY_CONTROL_OPTION_EXISTS",
+        "A Quality Control option with this name already exists.",
+        { existingOptionId: customFrequency.id, existingOptionName: customFrequency.name }
+      );
+    });
+    const user = userEvent.setup();
+    setup(true, true);
+    await openParameter(user);
+    const dialog = await openFrequencyCreator(user);
+    const input = within(dialog).getByRole("textbox", { name: "Name" });
+    await user.type(input, customFrequency.name);
+    await user.click(within(dialog).getByRole("button", { name: "Add frequency" }));
+    expect(await within(dialog).findByRole("button", { name: "Use existing value" })).toBeEnabled();
+
+    await user.clear(input);
+    await user.type(input, "Per facade");
+    expect(within(dialog).queryByRole("button", { name: "Use existing value" })).not.toBeInTheDocument();
+    await act(async () => refresh.resolve({ items: [customFrequency] }));
+    await waitFor(() => expect(input).toHaveValue("Per facade"));
+    expect(within(dialog).queryByRole("button", { name: "Use existing value" })).not.toBeInTheDocument();
+  });
+
+  it("preserves quick-add input on error and confirms discard before returning focus", async () => {
+    vi.mocked(api.createKnowledgeQualityControlOption).mockRejectedValue(new ApiError(403, "FORBIDDEN", "You cannot add reusable Quality values."));
+    const user = userEvent.setup();
+    setup(true, true);
+    await openParameter(user);
+    const frequency = screen.getByRole("combobox", { name: "Frequency" });
+    const dialog = await openFrequencyCreator(user);
+    const input = within(dialog).getByRole("textbox", { name: "Name" });
+    await user.type(input, "Daily check");
+    await user.click(within(dialog).getByRole("button", { name: "Add frequency" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("You cannot add reusable Quality values.");
+    expect(input).toHaveValue("Daily check");
+    expect((await axe.run(dialog, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    const confirmation = await screen.findByRole("alertdialog", { name: "Discard unsaved changes?" });
+    await user.click(within(confirmation).getByRole("button", { name: "Discard changes" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add frequency" })).not.toBeInTheDocument());
+    expect(frequency).toHaveFocus();
+    expect(frequency).toHaveValue("per_unit");
   });
 
   it("saves a multiple-photo requirement and can change it back to a single photo", async () => {
@@ -229,6 +623,7 @@ describe("shared Main Basket quality checklist", () => {
     await user.click(screen.getByRole("button", { name: "Add Parameter" }));
     await user.type(screen.getByRole("textbox", { name: "Question / check" }), "Are switches labelled?");
     await user.selectOptions(screen.getByRole("combobox", { name: "Answer type" }), "boolean");
+    await completeControls(user);
     await user.click(screen.getByRole("checkbox", { name: "Photo evidence" }));
     await removeParameter(user, 2);
     expect(screen.getAllByRole("button", { name: /^Edit parameter/u })).toHaveLength(2);
@@ -283,15 +678,21 @@ describe("shared Main Basket quality checklist", () => {
 
   it("hides mutation actions when the actor cannot update configuration", async () => {
     const user = userEvent.setup();
-    setup(false);
+    setup(false, true);
     await openParameter(user, 1, true);
     expect(screen.getByRole("textbox", { name: "Question / check" })).toBeDisabled();
+    const frequency = screen.getByRole("combobox", { name: "Frequency" });
+    const performer = screen.getByRole("combobox", { name: "Performed by" });
+    expect(frequency).toBeDisabled();
+    expect(performer).toBeDisabled();
+    expect(within(frequency).queryByRole("option", { name: addFrequencyOptionLabel })).not.toBeInTheDocument();
+    expect(within(performer).queryByRole("option", { name: addPerformerOptionLabel })).not.toBeInTheDocument();
     await doneEditing(user);
     expect(screen.queryByRole("button", { name: "Import Excel" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save shared checklist" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add Parameter" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Download Excel" }));
-    expect(workbook.downloadQualityChecklist).toHaveBeenCalledWith("Electrical", saved.parameters);
+    expect(workbook.downloadQualityChecklist).toHaveBeenCalledWith("Electrical", saved.parameters, { frequency: [], performer: [] });
     expect(api.updateKnowledgeBasketQuality).not.toHaveBeenCalled();
     const accessibility = await axe.run(screen.getByRole("main"), { rules: { "color-contrast": { enabled: false } } });
     expect(accessibility.violations).toEqual([]);
@@ -454,9 +855,9 @@ describe("shared checklist session-only publication", () => {
 
 describe("reference quality workspace", () => {
   it("filters canonical, legacy and unassigned stages without dropping rows or detailed settings from save", async () => {
-    const detailed: KnowledgeJsonObject = { ...saved.parameters[0], stage: "Material", type: "number", unit: "mm", minimum: "1", maximum: "12", defaultValue: "6", instructions: "Measure three positions", checkMethod: "measurement", severity: "major", failureAction: "Rectify", sampling: { method: "percentage", value: 10, unit: "boards" }, evidence: { photos: true, documents: true, video: true, minPhotosPerSample: 3, instructions: "Show the scale" } };
-    const legacy: KnowledgeJsonObject = { id: "legacy-stage", label: "Before delivery inspection", type: "dropdown", allowedValues: ["Pass", "Fail"], defaultValue: "Pass", stage: "Before delivery" };
-    const unassigned: KnowledgeJsonObject = { id: "no-stage", label: "Final observation", type: "text" };
+    const detailed: KnowledgeJsonObject = { ...saved.parameters[0], stage: "Material", type: "number", unit: "mm", minimum: "1", maximum: "12", defaultValue: "6", instructions: "Measure three positions", checkMethod: "measurement", severity: "major", failureAction: "Rectify", evidence: { photos: true, documents: true, video: true, minPhotosPerSample: 3, instructions: "Show the scale" } };
+    const legacy: KnowledgeJsonObject = { id: "legacy-stage", label: "Before delivery inspection", type: "dropdown", allowedValues: ["Pass", "Fail"], defaultValue: "Pass", stage: "Before delivery", ...controls };
+    const unassigned: KnowledgeJsonObject = { id: "no-stage", label: "Final observation", type: "text", ...controls };
     vi.mocked(api.getKnowledgeBasketQuality).mockResolvedValue({ ...saved, parameters: [detailed, legacy, unassigned] });
     const user = userEvent.setup(); setup();
     await user.click(await screen.findByRole("button", { name: "Material, 1 parameters" }));
@@ -519,8 +920,8 @@ describe("reference quality workspace", () => {
 
   it("requires All Stages before reordering and retains every stable ID", async () => {
     const first = { ...saved.parameters[0], stage: "Material" };
-    const middle = { id: "hidden-middle", label: "Legacy check", type: "boolean", stage: "Legacy stage" };
-    const last = { id: "last-material", label: "Material certificate", type: "text", stage: "Material" };
+    const middle = { id: "hidden-middle", label: "Legacy check", type: "boolean", stage: "Legacy stage", ...controls };
+    const last = { id: "last-material", label: "Material certificate", type: "text", stage: "Material", ...controls };
     vi.mocked(api.getKnowledgeBasketQuality).mockResolvedValue({ ...saved, parameters: [first, middle, last] });
     const user = userEvent.setup(); setup();
     await user.click(await screen.findByRole("button", { name: "Material, 2 parameters" }));

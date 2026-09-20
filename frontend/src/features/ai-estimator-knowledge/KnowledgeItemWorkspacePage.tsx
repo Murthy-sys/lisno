@@ -175,6 +175,7 @@ export function KnowledgeItemWorkspacePage() {
 
   const canCreate = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.create");
   const canUpdate = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.update");
+  const canCreateQualityOptions = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.quality_control_options.create");
   const canLifecycle = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.lifecycle");
   const itemQuery = useQuery({
     queryKey: knowledgeQueryKeys.item(mainLineId),
@@ -548,7 +549,7 @@ export function KnowledgeItemWorkspacePage() {
               />
             ) : null}
             {activeSection === "quality" ? (
-              <KnowledgeBasketQualityPanel key={pendingSession.sourceKey} ref={qualityPanelRef} item={item} revisionId={revision?.id} canUpdate={canUpdate} onDirtyChange={setQualityDirty} onSavingChange={setQualitySaving} />
+              <KnowledgeBasketQualityPanel key={pendingSession.sourceKey} ref={qualityPanelRef} item={item} revisionId={revision?.id} canUpdate={canUpdate} canCreateQualityOptions={canCreateQualityOptions} onDirtyChange={setQualityDirty} onSavingChange={setQualitySaving} />
             ) : !revision ? (
               <PageState state="empty" message="This item has no revision to display." />
             ) : activeSection === "mode" ? (

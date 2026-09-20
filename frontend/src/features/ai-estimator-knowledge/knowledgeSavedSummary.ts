@@ -1,7 +1,8 @@
 import { BUDGET_ACTIONS, budgetAlterationIssues, recommendationItemRequiresCompletion, recommendationTargetKind } from "./knowledgeBudgetAlterations";
 import { modeCalculationIssues } from "./knowledgeModeCalculation";
 import { pmcMarginRange, pmcMarginRangeIssues, subVendorMarginRange, subVendorMarginRangeIssues } from "./knowledgePmcMargin";
-import { validateQualityParameters } from "./knowledgeQuality";
+import { validateQualityParametersForSave } from "./knowledgeQuality";
+import { qualityFrequencyPresentation, qualityPassRange, qualityPerformerPresentation, qualitySeverityPresentation } from "./knowledgeQualityPresentation";
 import type { KnowledgeJsonObject, KnowledgeJsonValue, KnowledgeMasterType } from "./knowledgeTypes";
 import type {
   SavedSummaryContent,
@@ -211,10 +212,9 @@ function quality(input: SavedSummaryProjectionInput): SavedSummaryContent {
   const details: SavedSummaryRow[] = [];
   const parameters = objectRows(input.quality.parameters, details, "quality", "Quality parameters");
   const fields = [
-    ["unit", "Unit"], ["allowedValues", "Options"], ["minimum", "Minimum"], ["maximum", "Maximum"],
-    ["defaultValue", "Default answer"], ["required", "Required"], ["category", "Category"],
+    ["allowedValues", "Options"], ["defaultValue", "Default answer"], ["required", "Required"], ["category", "Category"],
     ["instructions", "Instructions"], ["acceptanceCriteria", "Acceptance criteria"], ["stage", "Stage"],
-    ["responsibleRole", "Responsible role"], ["failureAction", "Failure action"]
+    ["failureAction", "Failure action"]
   ] as const;
   parameters.forEach((parameter, index) => {
     const key = `parameter-${index}`;
@@ -222,19 +222,15 @@ function quality(input: SavedSummaryProjectionInput): SavedSummaryContent {
     const label = `Question ${index + 1}${parameter.active === false ? " · Inactive" : ""}`;
     details.push(row(key, label, name));
     details.push(row(`${key}-type`, `${name} · Answer type`, QUALITY_TYPES[text(parameter.type) ?? ""] || (present(parameter.type) ? NEEDS_REVIEW : NOT_CONFIGURED)));
+    const severity = qualitySeverityPresentation(parameter.severity);
+    details.push(row(`${key}-severity`, `${name} · Severity`, severity.meaning ? `${severity.label} · ${severity.meaning}` : severity.label));
+    details.push(row(`${key}-frequency`, `${name} · Frequency`, qualityFrequencyPresentation(parameter.sampling, input.qualityOptions).label));
+    details.push(row(`${key}-performer`, `${name} · Performed by`, qualityPerformerPresentation(parameter.responsibleRole, input.qualityOptions).label));
+    const range = qualityPassRange(parameter);
+    if (range) details.push(row(`${key}-range`, `${name} · Pass range`, range));
     for (const [field, fieldLabel] of fields) add(details, `${key}-${field}`, `${name} · ${fieldLabel}`, parameter[field]);
     add(details, `${key}-enabled`, `${name} · Enabled`, parameter.active);
     if (present(parameter.checkMethod)) details.push(row(`${key}-method`, `${name} · Check method`, QUALITY_METHODS[text(parameter.checkMethod) ?? ""] || NEEDS_REVIEW));
-    if (present(parameter.severity)) details.push(row(`${key}-severity`, `${name} · Severity`, ({ critical: "Critical", major: "Major", minor: "Minor" } as Record<string, string>)[text(parameter.severity) ?? ""] || NEEDS_REVIEW));
-    if (present(parameter.sampling)) {
-      if (object(parameter.sampling)) {
-        const sampling = parameter.sampling;
-        const methods: Record<string, string> = { all: "All units", percentage: "Percentage", fixed_count: "Fixed count" };
-        details.push(row(`${key}-sampling-method`, `${name} · Sampling`, methods[text(sampling.method) ?? ""] || (present(sampling.method) ? NEEDS_REVIEW : NOT_CONFIGURED)));
-        add(details, `${key}-sampling-value`, `${name} · Sample ${sampling.method === "percentage" ? "percentage (%)" : "count"}`, sampling.value);
-        add(details, `${key}-sampling-unit`, `${name} · Sample unit`, sampling.unit);
-      } else review(details, `${key}-sampling-review`, `${name} · Sampling`);
-    }
     if (present(parameter.evidence)) {
       if (object(parameter.evidence)) {
         for (const [field, fieldLabel] of [["photos", "Photo evidence"], ["documents", "Document evidence"], ["video", "Video evidence"], ["minPhotosPerSample", "Required photos per checked unit"], ["instructions", "Evidence instructions"]] as const) {
@@ -243,7 +239,7 @@ function quality(input: SavedSummaryProjectionInput): SavedSummaryContent {
       } else review(details, `${key}-evidence-review`, `${name} · Evidence`);
     }
   });
-  if (validateQualityParameters(input.quality.parameters).length && !details.some(item => item.key === "quality-review")) review(details, "quality-review", "Quality parameters");
+  if (validateQualityParametersForSave(input.quality.parameters, input.qualityOptions).length && !details.some(item => item.key === "quality-review")) review(details, "quality-review", "Quality parameters");
   const preview = parameters.length ? [
     row("parameters", `Parameters (${parameters.length})`, namesPreview(parameters.map(parameter => `${text(parameter.label) || NAME_UNAVAILABLE}${parameter.active === false ? " (Inactive)" : ""}`)))
   ] : [...details];

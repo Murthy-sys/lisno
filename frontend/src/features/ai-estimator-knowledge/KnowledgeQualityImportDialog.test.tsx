@@ -41,7 +41,7 @@ describe("Main Basket quality Excel preview", () => {
     expect(applyButton()).toBeDisabled();
     await user.upload(screen.getByLabelText("Excel workbook"), workbook());
     expect(await within(dialog).findByText(String(imported.label))).toBeVisible();
-    expect(within(dialog).getByText(/10% of installed fixtures, rounded up/u)).toBeVisible();
+    expect(within(dialog).getByText("Legacy custom frequency: percentage 10 · installed fixtures")).toBeVisible();
     expect(within(dialog).getByText("1 photo per sampled unit")).toBeVisible();
     expect(within(dialog).getByText("Acceptance criteria")).toBeVisible();
     expect(within(dialog).getByText("Pass · Fail")).toBeVisible();
@@ -146,7 +146,7 @@ describe("Main Basket quality Excel preview", () => {
     expect(onImport).toHaveBeenCalledExactlyOnceWith([painting]);
     expect(JSON.stringify(existing)).toBe(before);
     view.rerender(<KnowledgeQualityImportDialog {...props} currentParameters={existing.map((row, index) => ({ ...row, label: `Existing check ${index + 1}`, type: "boolean" }))} />);
-    expect(screen.queryByText(/Existing questions 1, 2 need attention/u)).not.toBeInTheDocument();
+    expect(screen.getByText(/Existing questions 1, 2 need attention/u)).toBeVisible();
     expect(applyButton()).toBeEnabled();
   });
 

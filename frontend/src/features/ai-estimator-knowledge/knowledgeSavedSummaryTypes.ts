@@ -7,6 +7,7 @@ import type {
   KnowledgeMasterType,
   KnowledgeSubBasket
 } from "./knowledgeTypes";
+import type { QualityControlOptionCatalog } from "./knowledgeQuality";
 
 export const SAVED_SUMMARY_SECTION_KEYS = ["overview", "advanced", "recommendations"] as const;
 export type SavedSummarySectionKey = (typeof SAVED_SUMMARY_SECTION_KEYS)[number] | "pricing";
@@ -42,6 +43,7 @@ export interface SavedSummaryGroup extends SavedSummaryContent {
 export interface SavedSummaryProjectionInput {
   readonly sections: Readonly<Partial<Record<SavedSummarySectionKey, KnowledgeJsonObject>>>;
   readonly quality?: KnowledgeBasketQuality;
+  readonly qualityOptions?: QualityControlOptionCatalog;
   readonly masters: Readonly<Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>>;
   readonly baskets: readonly KnowledgeBasket[];
   readonly items: readonly KnowledgeItemListItem[];

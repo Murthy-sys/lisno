@@ -16,6 +16,7 @@ import {
 } from "../domain/ai-estimator-knowledge.js";
 import {
   findOverlappingEffectiveWindows,
+  validateSharedQualityChecklistForSave,
   validateKnowledgeSectionPayload,
   validateEffectiveWindow
 } from "../domain/ai-estimator-knowledge-validation.js";
@@ -34,6 +35,10 @@ import { AiEstimatorKnowledgeSubBasketModel } from "../models/AiEstimatorKnowled
 import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeBasketQualityRevisionModel } from "../models/AiEstimatorKnowledgeBasketQualityRevision.js";
 import { basketQualityDigest, basketQualityDto, mandatoryQualityParameters, readBasketQualityRevision, type AiEstimatorKnowledgeBasketQualityDto } from "./ai-estimator-knowledge-basket-quality.js";
+import {
+  validateKnowledgeQualityControlOptionReferences,
+  type AiEstimatorKnowledgeQualityControlOptionService
+} from "./ai-estimator-knowledge-quality-control-option.service.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../models/AiEstimatorKnowledgeMainLine.js";
 import { cascadeDeleteMainLines, stripReferencesToDeleted } from "./ai-estimator-knowledge-cascade.js";
 import { AiEstimatorKnowledgeModeModel } from "../models/AiEstimatorKnowledgeMode.js";
@@ -294,6 +299,10 @@ type TransactionStarter = () => Promise<ClientSession>;
 export interface AiEstimatorKnowledgeReferenceServiceDependencies {
   readonly audit: Pick<AuditService, "appendInMongoTransaction">;
   readonly actorGuard?: AiEstimatorKnowledgeActorGuard;
+  readonly qualityControlOptionValidator?: Pick<
+    AiEstimatorKnowledgeQualityControlOptionService,
+    "validateReferences"
+  >;
   readonly now?: Clock;
   readonly createId?: () => string;
   readonly startSession?: TransactionStarter;
@@ -315,6 +324,9 @@ export function createAiEstimatorKnowledgeReferenceService(
   const now = dependencies.now ?? systemClock;
   const createId = dependencies.createId ?? randomUUID;
   const startSession = dependencies.startSession ?? (() => mongoose.startSession());
+  const qualityControlOptionValidator = dependencies.qualityControlOptionValidator ?? {
+    validateReferences: validateKnowledgeQualityControlOptionReferences
+  };
 
   return {
     async listSubBaskets(actor, basketId, filters, pagination) {
@@ -487,16 +499,21 @@ export function createAiEstimatorKnowledgeReferenceService(
       return withMongoTransaction(startSession, async (session) => {
         const authorized = await actorGuard.requireMutationActor(actor, session);
         validateExpectedVersion(input.expectedVersion);
-        const issues = validateKnowledgeSectionPayload("quality", { parameters: input.parameters });
+        const issues = validateSharedQualityChecklistForSave(input.parameters);
         if (issues.length) {
           throw new ApiError(400, "VALIDATION_ERROR", "Quality checklist contains invalid parameters.",
             Object.fromEntries(issues.map((issue) => [issue.path, issue.message])));
         }
         const parameters = mandatoryQualityParameters(input.parameters);
-        const normalizedIssues = validateKnowledgeSectionPayload("quality", { parameters });
+        const normalizedIssues = validateSharedQualityChecklistForSave(parameters);
         if (normalizedIssues.length) {
           throw new ApiError(400, "VALIDATION_ERROR", "Quality checklist contains invalid parameters.",
             Object.fromEntries(normalizedIssues.map((issue) => [issue.path, issue.message])));
+        }
+        const optionIssues = await qualityControlOptionValidator.validateReferences(parameters, session);
+        if (optionIssues.length) {
+          throw new ApiError(400, "VALIDATION_ERROR", "Quality checklist contains invalid parameters.",
+            Object.fromEntries(optionIssues.map((issue) => [issue.path, issue.message])));
         }
         const current = await AiEstimatorKnowledgeBasketModel.findById(basketId).session(session).lean().exec() as Row | null;
         requireCurrent(current, input.expectedVersion);

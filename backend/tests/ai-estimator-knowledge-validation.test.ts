@@ -5,6 +5,7 @@ import {
   validateAcyclicGraph,
   validateEffectiveWindow,
   validateKnowledgeSectionPayload,
+  validateSharedQualityChecklistForSave,
   validateQualityParameter,
   validateQuantitySlabs
 } from "../src/domain/ai-estimator-knowledge-validation.js";
@@ -23,6 +24,83 @@ describe("AI estimator knowledge validation", () => {
     const cost = { baseRatePaise: 150000.5, lowQuantityLimit: "15", impactBps: 1000, minimumMarkupBps: 2500, startingMarkupBps: 3500 };
     expect(validateKnowledgeSectionPayload("advanced", { modeCalculation: cost }))
       .toContainEqual(expect.objectContaining({ path: "payload.modeCalculation.baseRatePaise", code: "UNSAFE_NUMBER" }));
+  });
+
+  it("keeps legacy quality controls structurally readable but rejects them for a new shared save", () => {
+    const legacy = {
+      id: "legacy-check", type: "boolean", label: "Legacy site check",
+      responsibleRole: "Site supervisor",
+      sampling: { method: "percentage", value: 10, unit: "installed fixtures" }
+    };
+    expect(validateKnowledgeSectionPayload("quality", { parameters: [legacy] })).toEqual([]);
+    expect(validateSharedQualityChecklistForSave([legacy])).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "payload.parameters.0.severity", code: "REQUIRED" }),
+      expect.objectContaining({ path: "payload.parameters.0.responsibleRole", code: "NON_CANONICAL_PERFORMER" }),
+      expect.objectContaining({ path: "payload.parameters.0.sampling.method", code: "NON_CANONICAL_FREQUENCY" })
+    ]));
+  });
+
+  it("accepts every canonical shared quality frequency and performer", () => {
+    const frequencies = [
+      { method: "all", unit: "unit" },
+      { method: "all", unit: "room" },
+      { method: "all", unit: "zone" },
+      { method: "all", unit: "batch" },
+      { method: "fixed_count", value: 1, unit: "project" }
+    ];
+    for (const [index, sampling] of frequencies.entries()) {
+      expect(validateSharedQualityChecklistForSave([{
+        id: `canonical-${index}`, type: "boolean", label: "Canonical check",
+        severity: "critical", responsibleRole: ["site", "pm", "procurement", "vendor"][index % 4],
+        sampling
+      }])).toEqual([]);
+    }
+    expect(validateSharedQualityChecklistForSave([])).toEqual([]);
+  });
+
+  it("accepts only the frozen custom reference syntax before database-backed kind validation", () => {
+    expect(validateSharedQualityChecklistForSave([{
+      id: "custom-controls",
+      type: "boolean",
+      label: "Custom control check",
+      severity: "major",
+      responsibleRole: "qco_111111111111111111111111",
+      sampling: { method: "all", unit: "qco_222222222222222222222222" }
+    }])).toEqual([]);
+
+    for (const [field, value] of [
+      ["responsibleRole", "qco_ABC"],
+      ["responsibleRole", "qco_11111111111111111111111"],
+      ["sampling", { method: "all", unit: "qco_22222222222222222222222g" }]
+    ] as const) {
+      const row = {
+        id: "malformed-control",
+        type: "boolean",
+        label: "Malformed custom control",
+        severity: "major",
+        responsibleRole: "site",
+        sampling: { method: "all", unit: "room" },
+        [field]: value
+      };
+      expect(validateSharedQualityChecklistForSave([row])).toContainEqual(expect.objectContaining({
+        code: field === "responsibleRole" ? "NON_CANONICAL_PERFORMER" : "NON_CANONICAL_FREQUENCY"
+      }));
+    }
+  });
+
+  it("requires a complete inclusive pass range on Number checks", () => {
+    const complete = {
+      id: "level-check", type: "number", label: "Measured level", severity: "major",
+      responsibleRole: "pm", sampling: { method: "all", unit: "room" },
+      minimum: "0.5", maximum: "0.5", unit: "mm"
+    };
+    expect(validateSharedQualityChecklistForSave([complete])).toEqual([]);
+    for (const [key, value] of [["minimum", null], ["maximum", null], ["unit", null]] as const) {
+      expect(validateSharedQualityChecklistForSave([{ ...complete, [key]: value }]))
+        .toContainEqual(expect.objectContaining({ path: `payload.parameters.0.${key}`, code: "REQUIRED" }));
+    }
+    expect(validateSharedQualityChecklistForSave([{ ...complete, minimum: "2", maximum: "1" }]))
+      .toContainEqual(expect.objectContaining({ path: "payload.parameters.0.maximum", code: "INVALID_RANGE" }));
   });
 
   it("validates conditional Budget Alterations with stable catalog or temporary item references", () => {

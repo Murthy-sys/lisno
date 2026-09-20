@@ -33,6 +33,7 @@ import {
   createAiEstimatorKnowledgeItemService,
   type AiEstimatorKnowledgeItemService
 } from "../src/services/ai-estimator-knowledge-item.service.js";
+import { createAiEstimatorKnowledgeQualityControlOptionService } from "../src/services/ai-estimator-knowledge-quality-control-option.service.js";
 import {
   createAiEstimatorKnowledgeReferenceService
 } from "../src/services/ai-estimator-knowledge-reference.service.js";
@@ -4091,10 +4092,15 @@ async function lisnoPersistenceSnapshot() {
 
 function createServices() {
   const audit = createAuditService(createMemoryRepository());
+  const qualityControlOptions = createAiEstimatorKnowledgeQualityControlOptionService({
+    audit,
+    now: () => NOW
+  });
   const reference = createAiEstimatorKnowledgeReferenceService({
     audit,
     now: () => NOW,
-    createId: nextId
+    createId: nextId,
+    qualityControlOptionValidator: qualityControlOptions
   });
   const item = createAiEstimatorKnowledgeItemService({
     audit,
@@ -4104,6 +4110,7 @@ function createServices() {
   return {
     reference,
     item,
+    qualityControlOptions,
     context: createAiEstimatorKnowledgeContextService({ now: () => NOW })
   };
 }

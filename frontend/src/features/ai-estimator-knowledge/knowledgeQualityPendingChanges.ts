@@ -2,9 +2,9 @@ import {
   pairPendingRows, pendingRowsReordered, pendingValuesEqual,
   type KnowledgePendingChangeEntry, type KnowledgePendingChangeField, type KnowledgePendingChangesSnapshot
 } from "./knowledgePendingChanges";
-import { QUALITY_METHOD_LABELS } from "./knowledgeQualityPresentation";
-import { QUALITY_PARAMETER_TYPES } from "./knowledgeQuality";
-import type { KnowledgeJsonObject } from "./knowledgeTypes";
+import { QUALITY_METHOD_LABELS, qualityFrequencyPresentation, qualityPerformerPresentation, qualitySeverityPresentation } from "./knowledgeQualityPresentation";
+import { QUALITY_PARAMETER_TYPES, isQualityControlOptionReference, qualityControlOptionByReference, qualityFrequencySelectionFromSampling, qualityPerformerSelection, qualitySeverity, type QualityControlOptionCatalog } from "./knowledgeQuality";
+import type { KnowledgeJsonObject, KnowledgeJsonValue } from "./knowledgeTypes";
 
 const answerTypes: Readonly<Record<string, string>> = {
   boolean: "Yes / No", text: "Text", number: "Number", dropdown: "Single choice",
@@ -12,6 +12,8 @@ const answerTypes: Readonly<Record<string, string>> = {
 };
 const fields = [
   ["label", "Question / check"], ["type", "Answer type"], ["allowedValues", "Answer options"],
+  ["severity", "Severity"], ["minimum", "Minimum"], ["maximum", "Maximum"], ["unit", "Unit"],
+  ["sampling", "Frequency"], ["responsibleRole", "Performed by"],
   ["acceptanceCriteria", "Acceptance criteria"], ["photos", "Photo evidence"], ["photoCount", "Required photos"],
   ["stage", "Stage"], ["instructions", "Instructions"], ["checkMethod", "Check method"], ["evidenceInstructions", "Evidence instructions"]
 ] as const;
@@ -25,6 +27,12 @@ function editableRow(row: KnowledgeJsonObject): KnowledgeJsonObject {
     ...(typeof row.id === "string" && row.id ? { id: row.id } : {}),
     label: text(row.label), type: text(row.type),
     allowedValues: Array.isArray(row.allowedValues) ? row.allowedValues : [],
+    severity: text(row.severity),
+    minimum: row.type === "number" ? text(row.minimum) : "",
+    maximum: row.type === "number" ? text(row.maximum) : "",
+    unit: row.type === "number" ? text(row.unit) : "",
+    sampling: row.sampling ?? null,
+    responsibleRole: text(row.responsibleRole),
     acceptanceCriteria: text(row.acceptanceCriteria), photos,
     photoCount: photos ? evidence.minPhotosPerSample ?? null : null,
     stage: text(row.stage), instructions: text(row.instructions), checkMethod: text(row.checkMethod), evidenceInstructions: text(evidence.instructions)
@@ -64,23 +72,32 @@ export function qualityPendingRowState(parameters: readonly KnowledgeJsonObject[
 function displayRow(row: KnowledgeJsonObject, baseline?: KnowledgeJsonObject): string {
   return text(row.label) || text(baseline?.label) || "New quality check";
 }
-function incomplete(row: KnowledgeJsonObject): boolean {
+function incomplete(row: KnowledgeJsonObject, qualityOptions?: QualityControlOptionCatalog): boolean {
   if (!text(row.label).trim() || !QUALITY_PARAMETER_TYPES.includes(row.type as typeof QUALITY_PARAMETER_TYPES[number])) return true;
   if (["dropdown", "radio", "multi_select"].includes(text(row.type))) {
     const options = row.allowedValues as readonly unknown[];
     if (!options.length || options.some(option => typeof option !== "string" || !option.trim())) return true;
   }
+  const performer = qualityPerformerSelection(row.responsibleRole);
+  const frequency = qualityFrequencySelectionFromSampling(row.sampling);
+  if (!qualitySeverity(row.severity) || !performer || !frequency) return true;
+  if (isQualityControlOptionReference(performer) && !qualityControlOptionByReference(qualityOptions, "performer", performer)) return true;
+  if (isQualityControlOptionReference(frequency) && !qualityControlOptionByReference(qualityOptions, "frequency", frequency)) return true;
+  if (row.type === "number" && (!text(row.minimum) || !text(row.maximum) || !text(row.unit))) return true;
   return row.photos === true && (typeof row.photoCount !== "number" || !Number.isInteger(row.photoCount) || row.photoCount < 1 || row.photoCount > 100);
 }
-function displayField(key: typeof fields[number][0], value: unknown): string {
+function displayField(key: typeof fields[number][0], value: unknown, qualityOptions?: QualityControlOptionCatalog): string {
   if (key === "type") return answerTypes[text(value)] ?? text(value);
   if (key === "checkMethod") return QUALITY_METHOD_LABELS[text(value)] ?? text(value);
+  if (key === "severity") return qualitySeverityPresentation(value as KnowledgeJsonValue | undefined).label;
+  if (key === "responsibleRole") return qualityPerformerPresentation(value as KnowledgeJsonValue | undefined, qualityOptions).label;
+  if (key === "sampling") return qualityFrequencyPresentation(value as KnowledgeJsonValue | undefined, qualityOptions).label;
   if (key === "photos") return value ? "Required" : "Not required";
   if (Array.isArray(value)) return value.map(text).join(", ");
   return value === null || value === undefined ? "" : String(value);
 }
 
-export function qualityPendingChanges({ sourceKey, basketId, basketName, baseline, parameters, baselineRows, parameterRows }: {
+export function qualityPendingChanges({ sourceKey, basketId, basketName, baseline, parameters, baselineRows, parameterRows, qualityOptions }: {
   readonly sourceKey: string;
   readonly basketId: string;
   readonly basketName: string;
@@ -88,6 +105,7 @@ export function qualityPendingChanges({ sourceKey, basketId, basketName, baselin
   readonly parameters: readonly KnowledgeJsonObject[];
   readonly baselineRows?: QualityPendingRowState;
   readonly parameterRows?: QualityPendingRowState;
+  readonly qualityOptions?: QualityControlOptionCatalog;
 }): KnowledgePendingChangesSnapshot {
   const before = baselineRows ? baselineRows.rows.map(row => ({ ...row.value, id: row.identity })) : baseline.map(editableRow);
   const after = parameterRows ? parameterRows.rows.map(row => ({ ...row.value, id: row.identity })) : parameters.map(editableRow);
@@ -104,10 +122,10 @@ export function qualityPendingChanges({ sourceKey, basketId, basketName, baselin
       if (pair.before && pendingValuesEqual(pair.before[key], value)) continue;
       // A new check needs entered content only, without unchecked/default scaffolding.
       if (!pair.before && (value === "" || value === null || value === false || Array.isArray(value) && !value.length)) continue;
-      const formatted = displayField(key, value);
+      const formatted = displayField(key, value, qualityOptions);
       changedFields.push({ key, label, value: formatted, ...(!formatted ? { cleared: true } : {}) });
     }
-    if (!pair.before || changedFields.length) entries.push({ key: pair.key, title: displayRow(pair.after, pair.before), kind: pair.before ? "updated" : "added", fields: changedFields, incomplete: incomplete(pair.after) });
+    if (!pair.before || changedFields.length) entries.push({ key: pair.key, title: displayRow(pair.after, pair.before), kind: pair.before ? "updated" : "added", fields: changedFields, incomplete: incomplete(pair.after, qualityOptions) });
   }
   if (pendingRowsReordered(pairs)) entries.push({ key: "check-order", title: "Checklist order", kind: "reordered", fields: [] });
   return { sourceKey, groups: entries.length ? [{ key: `quality:${basketId}`, label: `Shared checklist · ${basketName}`, entries }] : [] };

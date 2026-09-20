@@ -49,6 +49,8 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     getKnowledgeHistory: vi.fn(),
     getKnowledgeSection: vi.fn(),
     getKnowledgeBasketQuality: vi.fn(),
+    listKnowledgeQualityControlOptions: vi.fn(),
+    createKnowledgeQualityControlOption: vi.fn(),
     updateKnowledgeBasketQuality: vi.fn(),
     updateKnowledgeSection: vi.fn(),
     previewKnowledge: vi.fn()
@@ -225,6 +227,12 @@ async function openQualityEditor(user: ReturnType<typeof userEvent.setup>, index
   await user.click(await screen.findByRole("button", { name: new RegExp(`^(Edit|View) parameter ${index}:`) }));
 }
 
+async function completeQualityControls(user: ReturnType<typeof userEvent.setup>) {
+  await user.selectOptions(screen.getByRole("combobox", { name: "Severity" }), "major");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Frequency" }), "per_unit");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Performed by" }), "site");
+}
+
 function renderRoute(element: React.ReactElement, path: string, route: string) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -314,6 +322,7 @@ beforeEach(() => {
   vi.mocked(knowledgeApi.listKnowledgeMasters).mockResolvedValue({ items: [], pagination: page });
   vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [], pagination: page });
   vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockResolvedValue({ items: [], pagination: page });
+  vi.mocked(knowledgeApi.listKnowledgeQualityControlOptions).mockResolvedValue({ items: [] });
   vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({ items: [], pagination: { ...page, limit: 20 } });
   vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue(item);
   vi.mocked(knowledgeApi.getKnowledgeHistory).mockResolvedValue({ items: [revision], pagination: page });
@@ -976,6 +985,7 @@ describe("AI estimator knowledge screens", () => {
     await user.type(screen.getByRole("textbox", { name: "Question / check" }), "Check the completed finish");
     expect(screen.getByRole("region", { name: "Quality Parameters saved summary" })).not.toHaveTextContent("Check the completed finish");
     await user.selectOptions(screen.getByRole("combobox", { name: "Answer type" }), "boolean");
+    await completeQualityControls(user);
     await doneFocusedEditing(user);
     await user.click(screen.getByRole("tab", { name: "Overview" }));
     const guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
@@ -1027,6 +1037,7 @@ describe("AI estimator knowledge screens", () => {
     const question = await screen.findByRole("textbox", { name: "Question / check" });
     await user.clear(question);
     await user.type(question, "Unsaved finish check");
+    await completeQualityControls(user);
     await doneFocusedEditing(user);
     await user.click(screen.getByRole("button", { name: "Save shared checklist" }));
     expect(await screen.findByText("Checklist save unavailable")).toBeVisible();

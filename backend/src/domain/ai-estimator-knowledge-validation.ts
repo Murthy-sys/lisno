@@ -1,7 +1,9 @@
 import type {
+  KnowledgeQualityPerformer,
   KnowledgeQualityParameter,
   KnowledgeQuantitySlab
 } from "../contracts/ai-estimator-knowledge.js";
+import { isKnowledgeQualityControlOptionReference } from "./ai-estimator-knowledge-quality-control-option.js";
 import {
   AI_ESTIMATOR_KNOWLEDGE_BASIS_POINTS,
   AI_ESTIMATOR_KNOWLEDGE_DURATION_UNITS,
@@ -41,6 +43,117 @@ export interface KnowledgeValidationIssue {
   path: string;
   code: string;
   message: string;
+}
+
+export const SHARED_QUALITY_PERFORMERS = ["site", "pm", "procurement", "vendor"] as const satisfies readonly KnowledgeQualityPerformer[];
+
+/**
+ * Strict completeness rules for a new shared Main Basket checklist revision.
+ *
+ * Keep this separate from validateKnowledgeSectionPayload: the latter is the
+ * compatibility validator used when reading immutable historical revisions,
+ * which may predate these controls or contain an older custom role/frequency.
+ */
+export function validateSharedQualityChecklistForSave(
+  parameters: unknown
+): KnowledgeValidationIssue[] {
+  const issues = validateKnowledgeSectionPayload("quality", { parameters });
+  if (!Array.isArray(parameters)) return issues;
+
+  parameters.forEach((value, index) => {
+    if (value === null || Array.isArray(value) || typeof value !== "object") return;
+    const row = value as Record<string, unknown>;
+    const path = `payload.parameters.${index}`;
+
+    if (row.severity === undefined || row.severity === null || row.severity === "") {
+      issues.push({
+        path: `${path}.severity`,
+        code: "REQUIRED",
+        message: "Select Critical, Major, or Minor."
+      });
+    }
+
+    if (
+      typeof row.responsibleRole !== "string" ||
+      (!SHARED_QUALITY_PERFORMERS.includes(row.responsibleRole as KnowledgeQualityPerformer) &&
+        !isKnowledgeQualityControlOptionReference(row.responsibleRole))
+    ) {
+      issues.push({
+        path: `${path}.responsibleRole`,
+        code: row.responsibleRole === undefined || row.responsibleRole === null || row.responsibleRole === ""
+          ? "REQUIRED"
+          : "NON_CANONICAL_PERFORMER",
+        message: "Select an available Performed by value."
+      });
+    }
+
+    validateCanonicalSharedQualityFrequency(row.sampling, `${path}.sampling`, issues);
+
+    if (row.type === "number") {
+      if (row.minimum === undefined || row.minimum === null || row.minimum === "") {
+        issues.push({ path: `${path}.minimum`, code: "REQUIRED", message: "Enter the inclusive minimum accepted value." });
+      }
+      if (row.maximum === undefined || row.maximum === null || row.maximum === "") {
+        issues.push({ path: `${path}.maximum`, code: "REQUIRED", message: "Enter the inclusive maximum accepted value." });
+      }
+      if (typeof row.unit !== "string" || row.unit.trim().length === 0) {
+        issues.push({ path: `${path}.unit`, code: "REQUIRED", message: "Enter the pass-range measurement unit." });
+      }
+    }
+  });
+
+  return issues;
+}
+
+function validateCanonicalSharedQualityFrequency(
+  value: unknown,
+  path: string,
+  issues: KnowledgeValidationIssue[]
+): void {
+  if (value === undefined || value === null) {
+    issues.push({ path, code: "REQUIRED", message: "Select a frequency." });
+    return;
+  }
+  if (Array.isArray(value) || typeof value !== "object") return;
+
+  const sampling = value as Record<string, unknown>;
+  if (sampling.method === "all") {
+    if (
+      !["unit", "room", "zone", "batch"].includes(String(sampling.unit)) &&
+      !isKnowledgeQualityControlOptionReference(sampling.unit)
+    ) {
+      issues.push({
+        path: `${path}.unit`,
+        code: "NON_CANONICAL_FREQUENCY",
+        message: "Select an available Frequency value."
+      });
+    }
+    return;
+  }
+  if (sampling.method === "fixed_count") {
+    if (sampling.value !== 1) {
+      issues.push({
+        path: `${path}.value`,
+        code: "NON_CANONICAL_FREQUENCY",
+        message: "Once per project must use a sample count of 1."
+      });
+    }
+    if (sampling.unit !== "project") {
+      issues.push({
+        path: `${path}.unit`,
+        code: "NON_CANONICAL_FREQUENCY",
+        message: "Once per project must use the project scope."
+      });
+    }
+    return;
+  }
+  if (typeof sampling.method === "string") {
+    issues.push({
+      path: `${path}.method`,
+      code: "NON_CANONICAL_FREQUENCY",
+      message: "Select Per unit, Per room, Per zone, Per batch, or Once per project."
+    });
+  }
 }
 
 export class KnowledgeValidationError extends Error {

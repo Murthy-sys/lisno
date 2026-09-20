@@ -17,6 +17,7 @@ import { createMemoryRepository } from "../src/repositories/memory.js";
 import { createAiEstimatorKnowledgeAdminRouter } from "../src/routes/ai-estimator-knowledge-admin.js";
 import { createAiEstimatorKnowledgeContextService } from "../src/services/ai-estimator-knowledge-context.service.js";
 import { createAiEstimatorKnowledgeItemService } from "../src/services/ai-estimator-knowledge-item.service.js";
+import { createAiEstimatorKnowledgeQualityControlOptionService } from "../src/services/ai-estimator-knowledge-quality-control-option.service.js";
 import { createAiEstimatorKnowledgeReferenceService } from "../src/services/ai-estimator-knowledge-reference.service.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import type { AuthService, PublicUser } from "../src/services/auth.service.js";
@@ -238,9 +239,11 @@ describe("Related item catalog and rule persistence", { timeout: 30_000 }, () =>
 function createServices() {
   const audit = createAuditService(createMemoryRepository());
   const createId = () => `related-item-${++sequence}`;
+  const qualityControlOptions = createAiEstimatorKnowledgeQualityControlOptionService({ audit, now: () => NOW });
   return {
     item: createAiEstimatorKnowledgeItemService({ audit, now: () => NOW, uuid: createId }),
-    reference: createAiEstimatorKnowledgeReferenceService({ audit, now: () => NOW, createId }),
+    reference: createAiEstimatorKnowledgeReferenceService({ audit, now: () => NOW, createId, qualityControlOptionValidator: qualityControlOptions }),
+    qualityControlOptions,
     context: createAiEstimatorKnowledgeContextService({ now: () => NOW })
   };
 }

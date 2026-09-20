@@ -46,6 +46,9 @@ export type KnowledgeAvailabilityState =
   | "not_applicable"
   | "not_resolvable";
 export type KnowledgeDurationUnit = "minutes" | "hours" | "days" | "weeks";
+export type KnowledgeQualityControlOptionKind = "frequency" | "performer";
+/** Public custom-option reference. Runtime validation requires qco_<24 lowercase hex>. */
+export type KnowledgeQualityControlOptionReference = `qco_${string}`;
 
 export type KnowledgeAllowedAction =
   | "update_section"
@@ -102,6 +105,24 @@ export interface KnowledgeActorMetadata {
 export interface KnowledgeVersionedResource extends KnowledgeActorMetadata {
   readonly id: string;
   readonly version: number;
+}
+
+/** Append-only reusable value for a Quality Parameter control. */
+export interface KnowledgeQualityControlOptionSummary {
+  readonly id: string;
+  readonly kind: KnowledgeQualityControlOptionKind;
+  readonly name: string;
+}
+
+export interface KnowledgeQualityControlOption extends KnowledgeVersionedResource, KnowledgeQualityControlOptionSummary {}
+
+export interface KnowledgeQualityControlOptionListResponse {
+  readonly items: readonly KnowledgeQualityControlOptionSummary[];
+}
+
+export interface KnowledgeCreateQualityControlOptionInput {
+  readonly kind: KnowledgeQualityControlOptionKind;
+  readonly name: string;
 }
 
 export interface KnowledgeMaster extends KnowledgeVersionedResource {

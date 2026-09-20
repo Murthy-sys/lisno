@@ -24,6 +24,11 @@ export type KnowledgeStableId = string;
 export type KnowledgeCanonicalDecimal = string;
 export type KnowledgePaise = number;
 export type KnowledgeBasisPoints = number;
+export type KnowledgeQualitySeverity = "critical" | "major" | "minor";
+export type KnowledgeQualityPerformer = "site" | "pm" | "procurement" | "vendor";
+export type KnowledgeQualityControlOptionKind = "frequency" | "performer";
+/** Public custom-option reference. Runtime validation requires qco_<24 lowercase hex>. */
+export type KnowledgeQualityControlOptionReference = `qco_${string}`;
 
 export interface KnowledgeActorMetadata {
   createdById: KnowledgeStableId;
@@ -35,6 +40,21 @@ export interface KnowledgeActorMetadata {
 export interface KnowledgeVersionedResource extends KnowledgeActorMetadata {
   id: KnowledgeStableId;
   version: number;
+}
+
+/** Append-only reusable value for a Quality Parameter control. */
+export interface KnowledgeQualityControlOption extends KnowledgeVersionedResource {
+  kind: KnowledgeQualityControlOptionKind;
+  name: string;
+}
+
+export interface KnowledgeQualityControlOptionListResponse {
+  items: KnowledgeQualityControlOption[];
+}
+
+export interface KnowledgeCreateQualityControlOptionInput {
+  kind: KnowledgeQualityControlOptionKind;
+  name: string;
 }
 
 export interface KnowledgeMaster extends KnowledgeVersionedResource {
@@ -324,9 +344,20 @@ export interface KnowledgeQualityParameter {
   acceptanceCriteria?: string | null;
   stage?: string | null;
   checkMethod?: "visual" | "measurement" | "functional_test" | "document_review" | null;
-  severity?: "critical" | "major" | "minor" | null;
+  severity?: KnowledgeQualitySeverity | null;
+  /**
+   * Shared-checklist saves use a built-in KnowledgeQualityPerformer code or a
+   * stable, correct-kind quality-control-option reference. Historical immutable
+   * revisions may contain another string and remain readable.
+   */
   responsibleRole?: string | null;
   failureAction?: string | null;
+  /**
+   * Shared-checklist saves use a canonical built-in frequency mapping or
+   * { method: "all", unit: qco_<reference> } for a reusable custom frequency,
+   * both validated at the PUT boundary. Other structurally valid values remain
+   * readable for immutable legacy revisions.
+   */
   sampling?: { method: "all" | "percentage" | "fixed_count"; value?: number | null; unit: string } | null;
   evidence?: { photos: boolean; documents: boolean; video: boolean; minPhotosPerSample?: number | null; instructions?: string | null } | null;
 }

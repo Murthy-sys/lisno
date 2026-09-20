@@ -14,7 +14,7 @@ import type { KnowledgeBasketQuality, KnowledgeJsonObject, KnowledgeSectionEnvel
 vi.mock("./knowledgeApi", async (original) => ({
   ...await original<typeof import("./knowledgeApi")>(),
   getKnowledgeSection: vi.fn(), getKnowledgeBasketQuality: vi.fn(), getKnowledgeItem: vi.fn(),
-  listKnowledgeSubBaskets: vi.fn(), previewKnowledge: vi.fn(), updateKnowledgeSection: vi.fn()
+  listKnowledgeSubBaskets: vi.fn(), listKnowledgeQualityControlOptions: vi.fn(), previewKnowledge: vi.fn(), updateKnowledgeSection: vi.fn()
 }));
 
 const checklist: KnowledgeBasketQuality = { basketId: item.basketId, basketName: item.basketName, basketStatus: "active",
@@ -49,6 +49,7 @@ beforeEach(() => {
   vi.mocked(api.getKnowledgeBasketQuality).mockImplementation(async (basketId) => ({ ...checklist, basketId }));
   vi.mocked(api.getKnowledgeItem).mockRejectedValue(new Error("Related item unavailable"));
   vi.mocked(api.listKnowledgeSubBaskets).mockResolvedValue({ items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } });
+  vi.mocked(api.listKnowledgeQualityControlOptions).mockResolvedValue({ items: [] });
 });
 
 describe("saved summary queries", () => {
@@ -67,6 +68,43 @@ describe("saved summary queries", () => {
     expect(api.getKnowledgeSection).toHaveBeenCalledTimes(3);
     expect(api.previewKnowledge).not.toHaveBeenCalled();
     expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
+  });
+
+  it("resolves reusable Quality controls through shared catalog queries without exposing references", async () => {
+    const frequencyId = "qco_111111111111111111111111";
+    const performerId = "qco_222222222222222222222222";
+    vi.mocked(api.getKnowledgeBasketQuality).mockResolvedValue({
+      ...checklist,
+      parameters: [{ id: "q-1", label: "Saved basket alignment", type: "boolean", severity: "minor", responsibleRole: performerId, sampling: { method: "all", unit: frequencyId } }]
+    });
+    vi.mocked(api.listKnowledgeQualityControlOptions).mockImplementation(async kind => ({ items: [{
+      id: kind === "frequency" ? frequencyId : performerId,
+      kind,
+      name: kind === "frequency" ? "Per elevation" : "Quality lead",
+      version: 1, createdById: "user-1", updatedById: "user-1",
+      createdAt: "2026-09-20T00:00:00.000Z", updatedAt: "2026-09-20T00:00:00.000Z"
+    }] }));
+    const { result } = setup();
+    await waitFor(() => expect(JSON.stringify(result.current[3])).toContain("Per elevation"));
+    expect(JSON.stringify(result.current[3])).toContain("Quality lead");
+    expect(JSON.stringify(result.current[3])).not.toContain("qco_");
+    expect(result.current[3].notices).toEqual([]);
+    expect(api.listKnowledgeQualityControlOptions).toHaveBeenCalledWith("frequency");
+    expect(api.listKnowledgeQualityControlOptions).toHaveBeenCalledWith("performer");
+  });
+
+  it("keeps saved Quality readable when a reusable-value catalog cannot load", async () => {
+    const unavailableId = "qco_333333333333333333333333";
+    vi.mocked(api.getKnowledgeBasketQuality).mockResolvedValue({
+      ...checklist,
+      parameters: [{ id: "q-1", label: "Saved basket alignment", type: "boolean", severity: "minor", responsibleRole: unavailableId, sampling: { method: "all", unit: unavailableId } }]
+    });
+    vi.mocked(api.listKnowledgeQualityControlOptions).mockRejectedValue(new Error("Catalog offline"));
+    const { result } = setup();
+    await waitFor(() => expect(result.current[3].notices.filter(notice => notice.tone === "error")).toHaveLength(2));
+    expect(JSON.stringify(result.current[3])).toContain("Unavailable frequency value");
+    expect(JSON.stringify(result.current[3])).toContain("Unavailable performed-by value");
+    expect(JSON.stringify(result.current[3])).not.toContain("qco_");
   });
 
   it("updates from confirmed section and shared Quality cache writes without mixing local buffers", async () => {

@@ -77,6 +77,7 @@ import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnow
 import { AiEstimatorKnowledgeModeModel } from "../src/models/AiEstimatorKnowledgeMode.js";
 import { AiEstimatorKnowledgePriceVersionModel } from "../src/models/AiEstimatorKnowledgePriceVersion.js";
 import { AiEstimatorKnowledgePriorityModel } from "../src/models/AiEstimatorKnowledgePriority.js";
+import { AiEstimatorKnowledgeQualityControlOptionModel } from "../src/models/AiEstimatorKnowledgeQualityControlOption.js";
 import { AiEstimatorKnowledgeRevisionModel } from "../src/models/AiEstimatorKnowledgeRevision.js";
 import { AiEstimatorKnowledgeSectionModel } from "../src/models/AiEstimatorKnowledgeSection.js";
 import { AiEstimatorKnowledgeSurfaceModel } from "../src/models/AiEstimatorKnowledgeSurface.js";
@@ -522,6 +523,10 @@ describe("production server bootstrap", () => {
       events.push("ai-estimator-knowledge-priority-index");
       return AiEstimatorKnowledgePriorityModel as never;
     });
+    vi.spyOn(AiEstimatorKnowledgeQualityControlOptionModel, "init").mockImplementation(async () => {
+      events.push("ai-estimator-knowledge-quality-control-option-index");
+      return AiEstimatorKnowledgeQualityControlOptionModel as never;
+    });
     vi.spyOn(AiEstimatorKnowledgeSurfaceModel, "init").mockImplementation(async () => {
       events.push("ai-estimator-knowledge-surface-index");
       return AiEstimatorKnowledgeSurfaceModel as never;
@@ -582,6 +587,7 @@ describe("production server bootstrap", () => {
       "ai-estimator-knowledge-tax-rule-index",
       "ai-estimator-knowledge-tax-version-index",
       "ai-estimator-knowledge-priority-index",
+      "ai-estimator-knowledge-quality-control-option-index",
       "ai-estimator-knowledge-surface-index",
       "ai-estimator-knowledge-mode-index",
       "repository",

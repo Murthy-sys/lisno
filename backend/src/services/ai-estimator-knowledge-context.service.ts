@@ -3,7 +3,9 @@ import mongoose, { type ClientSession } from "mongoose";
 import type {
   KnowledgeAvailability,
   KnowledgeContext,
-  KnowledgePreview
+  KnowledgePreview,
+  KnowledgeQualityControlOptionKind,
+  KnowledgeQualityControlOptionReference
 } from "../contracts/ai-estimator-knowledge.js";
 import {
   calculateKnowledgePreview,
@@ -26,6 +28,7 @@ import {
   findCanonicalKnowledgePriorityById,
   type CanonicalKnowledgePriority
 } from "../domain/ai-estimator-knowledge-priority.js";
+import { isKnowledgeQualityControlOptionReference } from "../domain/ai-estimator-knowledge-quality-control-option.js";
 import { normalizeKnowledgeBudgetAlterationTarget } from "../domain/ai-estimator-knowledge-recommendation.js";
 import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
@@ -44,6 +47,10 @@ import {
   aiEstimatorKnowledgeActorGuard,
   type AiEstimatorKnowledgeActorGuard
 } from "./ai-estimator-knowledge-actor.js";
+import {
+  resolveKnowledgeQualityControlOptionReferenceNames,
+  type AiEstimatorKnowledgeQualityControlOptionService
+} from "./ai-estimator-knowledge-quality-control-option.service.js";
 import type { Clock } from "./workflow.js";
 import { systemClock } from "./workflow.js";
 import { mandatoryQualityParameters, readBasketQualityRevision } from "./ai-estimator-knowledge-basket-quality.js";
@@ -75,6 +82,10 @@ export interface AiEstimatorKnowledgeContextService {
 
 export interface AiEstimatorKnowledgeContextServiceDependencies {
   readonly actorGuard?: AiEstimatorKnowledgeActorGuard;
+  readonly qualityControlOptionResolver?: Pick<
+    AiEstimatorKnowledgeQualityControlOptionService,
+    "resolveReferenceNames"
+  >;
   readonly now?: Clock;
 }
 
@@ -82,6 +93,9 @@ export function createAiEstimatorKnowledgeContextService(
   dependencies: AiEstimatorKnowledgeContextServiceDependencies = {}
 ): AiEstimatorKnowledgeContextService {
   const actorGuard = dependencies.actorGuard ?? aiEstimatorKnowledgeActorGuard;
+  const qualityControlOptionResolver = dependencies.qualityControlOptionResolver ?? {
+    resolveReferenceNames: resolveKnowledgeQualityControlOptionReferenceNames
+  };
   const now = dependencies.now ?? systemClock;
 
   return {
@@ -121,7 +135,7 @@ export function createAiEstimatorKnowledgeContextService(
       const result = await mongoose.connection.transaction(
         async (session) => {
           await actorGuard.requireReadActor(actor, session);
-          return resolveContext(input, now(), session);
+          return resolveContext(input, now(), session, qualityControlOptionResolver);
         },
         {
           readConcern: { level: "snapshot" },
@@ -143,7 +157,11 @@ export function createAiEstimatorKnowledgeContextService(
 async function resolveContext(
   input: AiEstimatorKnowledgeContextRequest,
   evaluatedAt: Date,
-  session: ClientSession
+  session: ClientSession,
+  qualityControlOptionResolver: Pick<
+    AiEstimatorKnowledgeQualityControlOptionService,
+    "resolveReferenceNames"
+  >
 ): Promise<KnowledgeContext> {
   assertSingleModeSelector(input);
   const mainLine = asRow(
@@ -312,7 +330,11 @@ async function resolveContext(
   const contentDigest = requiredString(revision.contentDigest);
   if (basketQuality) {
     contextSections.quality = {
-      parameters: mandatoryQualityParameters(basketQuality.parameters),
+      parameters: await resolveQualityControlOptionNames(
+        mandatoryQualityParameters(basketQuality.parameters),
+        qualityControlOptionResolver,
+        session
+      ),
       source: { kind: "main_basket", basketId: input.mainBasketId, revisionId: basketQuality._id,
         revisionNumber: basketQuality.revisionNumber, contentDigest: basketQuality.contentDigest }
     };
@@ -350,6 +372,48 @@ async function resolveContext(
       quantity: input.quantity
     })
   };
+}
+
+async function resolveQualityControlOptionNames(
+  parameters: readonly Row[],
+  resolver: Pick<AiEstimatorKnowledgeQualityControlOptionService, "resolveReferenceNames">,
+  session: ClientSession
+): Promise<Row[]> {
+  const references = parameters.flatMap((parameter) => {
+    const values: KnowledgeQualityControlOptionReference[] = [];
+    if (isKnowledgeQualityControlOptionReference(parameter.responsibleRole)) {
+      values.push(parameter.responsibleRole);
+    }
+    const sampling = asRow(parameter.sampling);
+    if (sampling && isKnowledgeQualityControlOptionReference(sampling.unit)) {
+      values.push(sampling.unit);
+    }
+    return values;
+  });
+  if (references.length === 0) return parameters.map((parameter) => structuredClone(parameter));
+
+  const resolved = await resolver.resolveReferenceNames(references, session);
+  const names = new Map(
+    resolved.map((option) => [`${option.kind}:${option.id}`, option.name] as const)
+  );
+  const nameFor = (
+    kind: KnowledgeQualityControlOptionKind,
+    reference: KnowledgeQualityControlOptionReference
+  ): string | undefined => names.get(`${kind}:${reference}`);
+
+  return parameters.map((parameter) => {
+    const projected = structuredClone(parameter);
+    if (isKnowledgeQualityControlOptionReference(projected.responsibleRole)) {
+      projected.responsibleRole = nameFor("performer", projected.responsibleRole) ??
+        "Unavailable performed-by value";
+    }
+    const sampling = asRow(projected.sampling);
+    if (sampling && isKnowledgeQualityControlOptionReference(sampling.unit)) {
+      sampling.unit = nameFor("frequency", sampling.unit) ??
+        "Unavailable frequency value";
+    }
+    return projected;
+  });
 }
 
 async function resolveConfiguredPriority(

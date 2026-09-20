@@ -4,6 +4,7 @@ import type { KnowledgeJsonObject } from "./knowledgeTypes";
 
 const saved: KnowledgeJsonObject = {
   id: "check-1", label: "Are fittings aligned?", type: "boolean", required: true, active: true,
+  severity: "major", responsibleRole: "site", sampling: { method: "all", unit: "unit" },
   acceptanceCriteria: "Match the approved detail.", evidence: { photos: true, documents: false, video: false, minPhotosPerSample: 2 }
 };
 const project = (baseline: readonly KnowledgeJsonObject[], parameters: readonly KnowledgeJsonObject[]) => qualityPendingChanges({ sourceKey: "item:revision:quality", basketId: "electrical", basketName: "Electrical", baseline, parameters });
@@ -12,7 +13,7 @@ const entries = (baseline: readonly KnowledgeJsonObject[], parameters: readonly 
 describe("quality pending changes", () => {
   it("omits a saved checklist and all untouched hidden metadata", () => {
     expect(entries([saved], [structuredClone(saved)])).toEqual([]);
-    expect(entries([{ ...saved, required: false, active: false, severity: "critical", instructions: "Saved instructions" }], [{ ...saved, severity: "minor", instructions: "Saved instructions" }])).toEqual([]);
+    expect(entries([{ ...saved, required: false, active: false, instructions: "Saved instructions" }], [{ ...saved, instructions: "Saved instructions" }])).toEqual([]);
   });
 
   it("publishes metadata-only edits and clears a complete revert without altering the raw baseline", () => {
@@ -71,9 +72,12 @@ describe("quality pending changes", () => {
     });
   });
 
-  it("ignores type-driven changes to hidden defaults, bounds and units", () => {
+  it("shows type-driven clearing of the now-visible numeric pass range", () => {
     expect(entries([{ ...saved, type: "number", minimum: "0", maximum: "10", defaultValue: "5", unit: "mm" }], [{ ...saved, defaultValue: null }])[0]?.fields).toEqual([
-      { key: "type", label: "Answer type", value: "Yes / No" }
+      { key: "type", label: "Answer type", value: "Yes / No" },
+      { key: "minimum", label: "Minimum", value: "", cleared: true },
+      { key: "maximum", label: "Maximum", value: "", cleared: true },
+      { key: "unit", label: "Unit", value: "", cleared: true }
     ]);
   });
 
@@ -109,7 +113,43 @@ describe("quality pending changes", () => {
   });
 
   it("shows imported entered fields but excludes hidden workbook metadata", () => {
-    expect(entries([], [{ ...saved, category: "Saved import category", sampling: { method: "all", unit: "fittings" } }])[0]?.fields.map(field => field.key)).toEqual(["label", "type", "acceptanceCriteria", "photos", "photoCount"]);
+    expect(entries([], [{ ...saved, category: "Saved import category", sampling: { method: "all", unit: "fittings" } }])[0]?.fields.map(field => field.key)).toEqual(["label", "type", "severity", "sampling", "responsibleRole", "acceptanceCriteria", "photos", "photoCount"]);
+  });
+
+  it("uses labels for changed controls and marks legacy replacements complete", () => {
+    const next = { ...saved, severity: "critical", responsibleRole: "pm", sampling: { method: "fixed_count", value: 1, unit: "project" } };
+    expect(entries([saved], [next])[0]).toMatchObject({ incomplete: false, fields: [
+      { key: "severity", label: "Severity", value: "Critical" },
+      { key: "sampling", label: "Frequency", value: "Once per project" },
+      { key: "responsibleRole", label: "Performed by", value: "PM" }
+    ] });
+  });
+
+  it("uses reusable labels for changed controls and treats unavailable references as incomplete", () => {
+    const frequencyId = "qco_111111111111111111111111";
+    const performerId = "qco_222222222222222222222222";
+    const qualityOptions = {
+      frequency: [{ id: frequencyId, kind: "frequency", name: "Per elevation", version: 1, createdById: "user-1", updatedById: "user-1", createdAt: "2026-09-20T00:00:00.000Z", updatedAt: "2026-09-20T00:00:00.000Z" }],
+      performer: [{ id: performerId, kind: "performer", name: "Quality lead", version: 1, createdById: "user-1", updatedById: "user-1", createdAt: "2026-09-20T00:00:00.000Z", updatedAt: "2026-09-20T00:00:00.000Z" }]
+    } as const;
+    const changed = { ...saved, responsibleRole: performerId, sampling: { method: "all", unit: frequencyId } };
+    const pending = qualityPendingChanges({
+      sourceKey: "custom", basketId: "electrical", basketName: "Electrical",
+      baseline: [saved], parameters: [changed], qualityOptions
+    }).groups[0]?.entries[0];
+    expect(pending).toMatchObject({ incomplete: false, fields: [
+      { key: "sampling", label: "Frequency", value: "Per elevation" },
+      { key: "responsibleRole", label: "Performed by", value: "Quality lead" }
+    ] });
+
+    const unavailable = qualityPendingChanges({
+      sourceKey: "custom", basketId: "electrical", basketName: "Electrical", baseline: [saved],
+      parameters: [{ ...saved, responsibleRole: "qco_333333333333333333333333", sampling: { method: "all", unit: "qco_444444444444444444444444" } }],
+      qualityOptions
+    }).groups[0]?.entries[0];
+    expect(unavailable?.incomplete).toBe(true);
+    expect(unavailable?.fields.map(field => field.value)).toEqual(["Unavailable frequency value", "Unavailable performed-by value"]);
+    expect(JSON.stringify(unavailable)).not.toContain("qco_");
   });
 
   it("shows minimal removal identity and no saved row fields", () => {
