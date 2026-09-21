@@ -75,7 +75,9 @@ const deletableUpload: EstimateDesignUpload = {
   failureCode: null,
   failureMessage: null,
   canRetry: false,
-  canDelete: true
+  canDelete: true,
+  purpose: "ordinary",
+  requestReplacement: null
 };
 
 class FakeXMLHttpRequest {
@@ -112,6 +114,32 @@ afterEach(() => {
 });
 
 describe("EstimateDesignUploads", () => {
+  it("keeps ordinary uploads behind an explicit new-page action while a plan request is open", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(response({ uploads: [], pages: [], drawings: [], revisions: [] }));
+    const user = userEvent.setup();
+    renderWithQuery(
+      <EstimateDesignUploads
+        estimateId="estimate-1"
+        rooms={rooms}
+        scopes={scopes}
+        items={[]}
+        variant="designer"
+        planChangeRequestState="open"
+      />
+    );
+
+    expect(await screen.findByText("Client-requested revisions belong in the request panel.")).toBeVisible();
+    expect(screen.queryByLabelText("Design plan file")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("New design page file")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add a new design page" }));
+
+    expect(screen.getByLabelText("New design page file")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Upload new design page" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Cancel new page" }));
+    expect(screen.queryByLabelText("New design page file")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add a new design page" })).toBeVisible();
+  });
+
   it("names the uploaded file and cancels deletion without sending a request", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(response({
       uploads: [deletableUpload], pages: [], drawings: [], revisions: []

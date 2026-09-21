@@ -1293,6 +1293,25 @@ export interface EstimateDesignUpload {
   canRetry: boolean;
   canDelete: boolean;
   deleteBlockedReason?: string;
+  purpose: "ordinary" | "drawing_replacement" | "plan_request_replacement";
+  requestReplacement: EstimateDesignRequestReplacementSummary | null;
+}
+
+export interface EstimateDesignRequestReplacementSummary {
+  requestId: string;
+  requestVersion: number;
+  sourcePageId: string;
+  targetCount: number;
+  matches: Array<{
+    drawingId: string;
+    requestedRevisionId: string;
+    detectedTitle: string;
+    resultRevisionId: string | null;
+    matchReason: "normalized_title" | "mapping_tuple" | null;
+    pageNumber: number | null;
+  }>;
+  ignoredPageNumbers: number[];
+  ignoredPageCount: number;
 }
 
 export interface EstimateDesignSourcePage {

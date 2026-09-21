@@ -13,6 +13,156 @@ export const estimateDesignExtractionStatuses = [
 export type EstimateDesignExtractionStatus =
   (typeof estimateDesignExtractionStatuses)[number];
 
+export const estimateDesignUploadPurposes = [
+  "ordinary",
+  "drawing_replacement",
+  "plan_request_replacement"
+] as const;
+
+export type EstimateDesignUploadPurpose =
+  (typeof estimateDesignUploadPurposes)[number];
+
+export type PlanRequestReplacementMappingSnapshot = {
+  roomId: string | null;
+  scopeSectionId: string | null;
+  catalogueId: string | null;
+};
+
+export type PlanRequestReplacementTargetSnapshot = {
+  drawingId: string;
+  requestedRevisionId: string;
+  detectedTitle: string;
+  normalizedTitle: string;
+  mapping: PlanRequestReplacementMappingSnapshot;
+};
+
+export type PlanRequestReplacementCandidate = {
+  pageNumber: number;
+  detectedTitle: string;
+  normalizedTitle: string;
+  mapping: PlanRequestReplacementMappingSnapshot;
+};
+
+export type PlanRequestReplacementMatch = {
+  target: PlanRequestReplacementTargetSnapshot;
+  candidate: PlanRequestReplacementCandidate;
+  reason: "normalized_title" | "mapping_tuple";
+};
+
+export class PlanRequestReplacementMatchError extends Error {
+  constructor(
+    readonly code:
+      | "PLAN_REPLACEMENT_TARGET_MISSING"
+      | "PLAN_REPLACEMENT_MATCH_AMBIGUOUS",
+    message: string
+  ) {
+    super(message);
+    this.name = "PlanRequestReplacementMatchError";
+  }
+}
+
+export function deriveEstimateDesignUploadPurpose(upload: {
+  purpose?: unknown;
+  replacementDrawingId?: unknown;
+  replacesRevisionId?: unknown;
+}): EstimateDesignUploadPurpose {
+  if (estimateDesignUploadPurposes.includes(upload.purpose as EstimateDesignUploadPurpose)) {
+    return upload.purpose as EstimateDesignUploadPurpose;
+  }
+  return upload.replacementDrawingId || upload.replacesRevisionId
+    ? "drawing_replacement"
+    : "ordinary";
+}
+
+export function normalizeEstimateDesignTitle(value: string) {
+  return value
+    .normalize("NFKC")
+    .toLocaleLowerCase("en")
+    .replace(/[\p{P}\p{S}]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+export function matchPlanRequestReplacementPages(
+  targets: readonly PlanRequestReplacementTargetSnapshot[],
+  candidates: readonly PlanRequestReplacementCandidate[]
+): { matches: PlanRequestReplacementMatch[]; ignoredPageNumbers: number[] } {
+  const remainingTargets = new Map(targets.map((target) => [target.drawingId, target]));
+  const remainingCandidates = new Map(candidates.map((candidate) => [candidate.pageNumber, candidate]));
+  if (remainingTargets.size !== targets.length || remainingCandidates.size !== candidates.length) {
+    throw new PlanRequestReplacementMatchError(
+      "PLAN_REPLACEMENT_MATCH_AMBIGUOUS",
+      "Replacement targets and OCR page numbers must be unique."
+    );
+  }
+  const matches: PlanRequestReplacementMatch[] = [];
+
+  const titleTargetCount = countBy(targets, (target) => target.normalizedTitle);
+  const titleCandidateCount = countBy(candidates, (candidate) => candidate.normalizedTitle);
+  for (const target of [...targets].sort((left, right) => left.drawingId.localeCompare(right.drawingId))) {
+    if (!target.normalizedTitle || titleTargetCount.get(target.normalizedTitle) !== 1) continue;
+    if (titleCandidateCount.get(target.normalizedTitle) !== 1) continue;
+    const candidate = candidates.find((value) => value.normalizedTitle === target.normalizedTitle)!;
+    if (!remainingCandidates.has(candidate.pageNumber)) continue;
+    matches.push({ target, candidate, reason: "normalized_title" });
+    remainingTargets.delete(target.drawingId);
+    remainingCandidates.delete(candidate.pageNumber);
+  }
+
+  const completeTuple = (mapping: PlanRequestReplacementMappingSnapshot) =>
+    Boolean(mapping.roomId && mapping.scopeSectionId && mapping.catalogueId);
+  const tupleKey = (mapping: PlanRequestReplacementMappingSnapshot) =>
+    `${mapping.roomId}\u0000${mapping.scopeSectionId}\u0000${mapping.catalogueId}`;
+  const fallbackTargets = [...remainingTargets.values()].filter((target) => completeTuple(target.mapping));
+  const fallbackCandidates = [...remainingCandidates.values()].filter((candidate) => completeTuple(candidate.mapping));
+  const targetTupleCount = countBy(fallbackTargets, (target) => tupleKey(target.mapping));
+  const candidateTupleCount = countBy(fallbackCandidates, (candidate) => tupleKey(candidate.mapping));
+  for (const target of fallbackTargets.sort((left, right) => left.drawingId.localeCompare(right.drawingId))) {
+    const key = tupleKey(target.mapping);
+    if (targetTupleCount.get(key) !== 1 || candidateTupleCount.get(key) !== 1) continue;
+    const candidate = fallbackCandidates.find((value) => tupleKey(value.mapping) === key)!;
+    if (!remainingCandidates.has(candidate.pageNumber)) continue;
+    matches.push({ target, candidate, reason: "mapping_tuple" });
+    remainingTargets.delete(target.drawingId);
+    remainingCandidates.delete(candidate.pageNumber);
+  }
+
+  if (remainingTargets.size > 0) {
+    const remaining = [...remainingTargets.values()];
+    const hasAmbiguity = remaining.some((target) =>
+      (target.normalizedTitle && (titleTargetCount.get(target.normalizedTitle) ?? 0) > 1) ||
+      (target.normalizedTitle && (titleCandidateCount.get(target.normalizedTitle) ?? 0) > 1) ||
+      (completeTuple(target.mapping) && (
+        (targetTupleCount.get(tupleKey(target.mapping)) ?? 0) > 1 ||
+        (candidateTupleCount.get(tupleKey(target.mapping)) ?? 0) > 1
+      ))
+    );
+    throw new PlanRequestReplacementMatchError(
+      hasAmbiguity
+        ? "PLAN_REPLACEMENT_MATCH_AMBIGUOUS"
+        : "PLAN_REPLACEMENT_TARGET_MISSING",
+      hasAmbiguity
+        ? "The revised file contains duplicate or ambiguous requested pages."
+        : "The revised file does not contain every requested page."
+    );
+  }
+
+  return {
+    matches: matches.sort((left, right) => left.target.drawingId.localeCompare(right.target.drawingId)),
+    ignoredPageNumbers: [...remainingCandidates.keys()].sort((left, right) => left - right)
+  };
+}
+
+function countBy<T>(values: readonly T[], key: (value: T) => string) {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    const candidate = key(value);
+    if (!candidate) continue;
+    counts.set(candidate, (counts.get(candidate) ?? 0) + 1);
+  }
+  return counts;
+}
+
 export const estimateDesignReviewStatuses = [
   "draft",
   "submitted",

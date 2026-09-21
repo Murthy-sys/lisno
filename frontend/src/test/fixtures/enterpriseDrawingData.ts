@@ -80,7 +80,9 @@ EstimateDesignWorkspace {
       failureCode: null,
       failureMessage: null,
       canRetry: false,
-      canDelete: false
+      canDelete: false,
+      purpose: "ordinary",
+      requestReplacement: null
     }],
     pages: [{
       id: `page-${estimateId}`,

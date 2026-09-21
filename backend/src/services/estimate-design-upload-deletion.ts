@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ClientSession } from "mongoose";
+import { deriveEstimateDesignUploadPurpose } from "../domain/estimate-design.js";
 import { derivePlanRequestStatus } from "../domain/estimate-plan-review.js";
 
 import { ApiError } from "../middleware/errors.js";
@@ -37,6 +38,11 @@ export function uploadDeleteAvailability(
     reason = "Only the assigned Designer who uploaded this file can delete it.";
   } else if (upload.deletedAt || String(estimate.status) !== "client_approved") {
     reason = "This design is read-only.";
+  } else if (
+    deriveEstimateDesignUploadPurpose(upload) === "plan_request_replacement" &&
+    !["queued", "processing", "processing_failed"].includes(String(upload.extractionStatus))
+  ) {
+    reason = "Completed replacement history cannot be deleted.";
   } else {
     const sourceIds = new Set(pages.filter((page) => String(page.uploadId) === String(upload._id)).map((page) => String(page._id)));
     const drawingIds = new Set(drawings.filter((drawing) => String(drawing.uploadId) === String(upload._id)).map((drawing) => String(drawing._id)));
@@ -77,6 +83,69 @@ export async function deleteEstimateDesignUpload(input: {
     // Every drawing approval and final on-behalf approval writes this same Estimate.
     // Transaction retries therefore re-read approval and source lineage before deletion.
     await input.guardLifecycle(estimate, session);
+    if (deriveEstimateDesignUploadPurpose(upload) === "plan_request_replacement") {
+      const removed = await EstimateDesignUploadModel.updateOne(
+        { _id: upload._id, deletedAt: null },
+        { $set: { deletedAt: input.occurredAt, deletedById: input.user.id } },
+        { session }
+      );
+      if (removed.modifiedCount !== 1) {
+        throw new ApiError(409, "ESTIMATE_DESIGN_UPLOAD_CONFLICT", "The uploaded design changed. Refresh and try again.");
+      }
+      await EstimateDesignExtractionJobModel.updateMany(
+        { uploadId: upload._id, status: { $in: ["queued", "processing"] } },
+        {
+          $set: {
+            status: "processing_failed",
+            nextAttemptAt: null,
+            completedAt: input.occurredAt,
+            claimId: null,
+            leaseExpiresAt: null,
+            workerResultId: null,
+            ...deletedFailure
+          },
+          $inc: { claimGeneration: 1 }
+        },
+        { session }
+      );
+      await EstimateDesignUploadModel.updateOne(
+        { _id: upload._id, extractionStatus: { $in: ["queued", "processing"] } },
+        { $set: { extractionStatus: "processing_failed", ...deletedFailure } },
+        { session }
+      );
+      const targets = Array.isArray(upload.planRequestReplacement?.targets)
+        ? upload.planRequestReplacement.targets
+        : [];
+      if (targets.length) {
+        await EstimateDesignRevisionModel.updateMany(
+          {
+            _id: { $in: targets.map((target: Row) => target.requestedRevisionId) },
+            replacementUploadId: upload._id,
+            reviewStatus: "changes_requested"
+          },
+          { $set: { replacementUploadId: null } },
+          { session }
+        );
+      }
+      await input.audit.appendInMongoTransaction({
+        actorId: input.user.id,
+        action: "estimate_design_upload_deleted",
+        entityType: "estimate_plan_change_request",
+        entityId: String(upload.planRequestReplacement?.requestId),
+        occurredAt: input.occurredAt.toISOString(),
+        oldValues: {
+          uploadId: input.uploadId,
+          extractionStatus: upload.extractionStatus
+        },
+        newValues: {
+          uploadId: input.uploadId,
+          deleted: true,
+          originalPagePreserved: true,
+          releasedTargetCount: targets.length
+        }
+      }, session);
+      return;
+    }
     const pageIds = new Set(pages.map((page) => String(page._id)));
     const latest = new Map<string, Row>();
     for (const revision of revisions) {
@@ -95,7 +164,16 @@ export async function deleteEstimateDesignUpload(input: {
       { $set: { active: false, deletedAt: input.occurredAt, deletedById: input.user.id } },
       { session }
     );
-    const dependentUploads = await EstimateDesignUploadModel.find({ replacementDrawingId: { $in: affectedIds }, deletedAt: null }).session(session).lean();
+    const dependentUploads = await EstimateDesignUploadModel.find({
+      deletedAt: null,
+      $or: [
+        { replacementDrawingId: { $in: affectedIds } },
+        {
+          purpose: "plan_request_replacement",
+          "planRequestReplacement.targets.drawingId": { $in: affectedIds }
+        }
+      ]
+    }).session(session).lean();
     const cancelledUploadIds = [input.uploadId, ...dependentUploads.map((row) => String(row._id))];
     await EstimateDesignExtractionJobModel.updateMany(
       { uploadId: { $in: cancelledUploadIds }, status: { $in: ["queued", "processing"] } },

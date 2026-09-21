@@ -6,8 +6,10 @@ import { z } from "zod";
 import { annotationDocumentSchema } from "../domain/estimate-design.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
+import { uploadSingleFile } from "../middleware/upload.js";
 import { validateBody } from "../middleware/validate.js";
 import type { AuthService } from "../services/auth.service.js";
+import type { EstimateDesignService } from "../services/estimate-design.service.js";
 import type { createEstimatePlanReviewService } from "../services/estimate-plan-review.service.js";
 
 type EstimatePlanReviewService = ReturnType<typeof createEstimatePlanReviewService>;
@@ -38,8 +40,17 @@ const resolvePageSchema = z.object({
   version: z.number().int().positive(),
   note: z.string().trim().min(1).max(1_000)
 }).strict();
+const replacementUploadSchema = z.object({
+  version: z.coerce.number().int().positive(),
+  idempotencyKey: z.string().trim().min(8).max(128)
+}).strict();
 
-export function createEstimatePlanReviewRouter(auth: AuthService, plans: EstimatePlanReviewService) {
+export function createEstimatePlanReviewRouter(
+  auth: AuthService,
+  plans: EstimatePlanReviewService,
+  estimateDesigns: EstimateDesignService,
+  maxUploadBytes: number
+) {
   const router = Router();
   const protectedRoute = authenticate(auth);
   router.get("/client/estimates/:estimateId/plan-review", protectedRoute, requireOperation("GET /client/estimates/:estimateId/plan-review"), async (request, response, next) => {
@@ -71,6 +82,30 @@ export function createEstimatePlanReviewRouter(auth: AuthService, plans: Estimat
   router.get("/estimate-plan-change-requests/:requestId", protectedRoute, requireOperation("GET /estimate-plan-change-requests/:requestId"), async (request, response, next) => {
     try { response.json({ data: await plans.getStaff(request.authenticatedUser!, request.params.requestId as string) }); } catch (error) { next(error); }
   });
+  router.post(
+    "/estimate-plan-change-requests/:requestId/replacement-upload",
+    protectedRoute,
+    requireOperation("POST /estimate-plan-change-requests/:requestId/replacement-upload"),
+    uploadSingleFile(maxUploadBytes, 2),
+    validateBody(replacementUploadSchema),
+    async (request, response, next) => {
+      try {
+        response.status(201).json({
+          data: await estimateDesigns.uploadPlanRequestReplacement(
+            request.authenticatedUser!,
+            request.params.requestId as string,
+            {
+              version: request.body.version,
+              idempotencyKey: request.body.idempotencyKey,
+              file: request.validatedUpload!
+            }
+          )
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
   router.put("/estimate-plan-change-requests/:requestId/targets", protectedRoute, requireOperation("PUT /estimate-plan-change-requests/:requestId/targets"), validateBody(targetSchema), async (request, response, next) => {
     try { response.json({ data: await plans.updateTargets(request.authenticatedUser!, request.params.requestId as string, request.body) }); } catch (error) { next(error); }
   });

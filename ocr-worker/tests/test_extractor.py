@@ -30,6 +30,11 @@ SUPPLIED_BLUEPRINT_SHA256 = (
     "980c69b279fb2d283ff33836f5539264d117cdff76928252177863c2ffc3e65c"
 )
 
+ESTIMATE_DIMENSIONAL_TITLE_CASES = (
+    "LIVING ROOM FLOOR PLAN",
+    "LIVING ROOM 3D PERSPECTIVE",
+)
+
 
 SUPPLIED_BLUEPRINT_OCR = [
     ((34, 32, 247, 60), "BLUEPRINT 01", 0.9613800644874573),
@@ -441,6 +446,87 @@ def test_pdf_title_blocks_emit_one_full_page_section_and_preserve_taxonomy(tmp_p
         for section in page.sections
     )
     assert ocr.calls == 2
+
+
+def test_embedded_pdf_preserves_explicit_2d_and_3d_titles_as_full_page_drawings(
+    tmp_path,
+):
+    source = write_estimate_pdf(tmp_path, list(ESTIMATE_DIMENSIONAL_TITLE_CASES))
+    taxonomy = EstimateTaxonomy(
+        rooms=(TaxonomyTerm("room-living", "Living Room", ()),),
+        scopes=(TaxonomyTerm("FL", "Flooring", ("floor plan",)),),
+    )
+
+    pages = Extractor(
+        ocr_engine=OcrMustNotStart(),
+        render_scale=1,
+        estimate_taxonomy=taxonomy,
+    ).extract(source, mode="estimate_design")
+
+    assert [page.page_number for page in pages] == [1, 2]
+    assert [
+        section.label
+        for page in pages
+        for section in page.sections
+    ] == list(ESTIMATE_DIMENSIONAL_TITLE_CASES)
+    assert [
+        section.proposal.detected_title
+        for page in pages
+        for section in page.sections
+        if section.proposal is not None
+    ] == list(ESTIMATE_DIMENSIONAL_TITLE_CASES)
+    assert all(len(page.sections) == 1 for page in pages)
+    assert all(
+        section.crop == Crop(0, 0, page.width, page.height)
+        and section.image_base64 == page.image_base64
+        for page in pages
+        for section in page.sections
+    )
+    assert pages[0].sections[0].proposal is not None
+    assert pages[0].sections[0].proposal.room.id == "room-living"
+    assert pages[0].sections[0].proposal.scope.id == "FL"
+    assert pages[1].sections[0].proposal is not None
+    assert pages[1].sections[0].proposal.room.id == "room-living"
+    assert pages[1].sections[0].proposal.scope.id is None
+
+
+@pytest.mark.parametrize("title", ESTIMATE_DIMENSIONAL_TITLE_CASES)
+def test_raster_title_band_preserves_explicit_2d_and_3d_titles_as_full_page_drawings(
+    tmp_path,
+    title,
+):
+    source = tmp_path / f"{title.casefold().replace(' ', '-')}.png"
+    image = Image.new("RGB", (900, 700), "white")
+    try:
+        image.save(source)
+    finally:
+        image.close()
+
+    taxonomy = EstimateTaxonomy(
+        rooms=(TaxonomyTerm("room-living", "Living Room", ()),),
+        scopes=(TaxonomyTerm("FL", "Flooring", ("floor plan",)),),
+    )
+    ocr = FakePaddleOCR3([{
+        "rec_boxes": [(50, 20, 520, 48)],
+        "rec_texts": [f"TITLE : {title}"],
+        "rec_scores": [0.98],
+    }])
+
+    page = Extractor(
+        ocr_engine=ocr,
+        estimate_taxonomy=taxonomy,
+    ).extract(source, mode="estimate_design")[0]
+
+    assert len(page.sections) == 1
+    section = page.sections[0]
+    assert section.label == title
+    assert section.proposal is not None
+    assert section.proposal.detected_title == title
+    assert section.proposal.room.id == "room-living"
+    assert section.proposal.scope.id == ("FL" if title.endswith("FLOOR PLAN") else None)
+    assert section.crop == Crop(0, 0, page.width, page.height)
+    assert section.image_base64 == page.image_base64
+    assert ocr.calls == 1
 
 
 def test_six_page_estimate_pdf_opens_once_and_emits_one_full_page_drawing(

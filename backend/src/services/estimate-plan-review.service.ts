@@ -162,6 +162,95 @@ export async function advancePlanPageForDrawingRevision(
   return current;
 }
 
+export async function advancePlanPageForDrawingRevisions(input: {
+  estimateId: string;
+  sourcePageId: string;
+  replacements: Array<{
+    drawingId: string;
+    requestedRevisionId: string;
+    resultRevisionId: string;
+    crop: { x: number; y: number; width: number; height: number };
+  }>;
+  createdBy: string;
+  session: mongoose.ClientSession;
+}) {
+  if (input.replacements.length === 0) throw new Error("At least one page replacement is required.");
+  const replacementByDrawing = new Map(
+    input.replacements.map((replacement) => [replacement.drawingId, replacement])
+  );
+  if (replacementByDrawing.size !== input.replacements.length) {
+    throw new Error("Plan page replacements require unique drawing IDs.");
+  }
+  const page = await EstimateDesignSourcePageModel.findById(input.sourcePageId)
+    .session(input.session)
+    .lean();
+  if (!page || dtoId(page.uploadId) === "") throw notFound();
+  const current = await EstimatePlanPageRevisionModel.findOne({
+    estimateId: input.estimateId,
+    sourcePageId: input.sourcePageId
+  }).sort({ revisionNumber: -1 }).session(input.session).lean();
+
+  let patches: Array<{
+    drawingId: string;
+    drawingRevisionId: string;
+    crop: { x: number; y: number; width: number; height: number };
+    order: number;
+  }>;
+  if (current) {
+    patches = current.patches.map((patch: Record<string, any>) => {
+      const replacement = replacementByDrawing.get(dtoId(patch.drawingId));
+      return {
+        drawingId: dtoId(patch.drawingId),
+        drawingRevisionId: replacement?.resultRevisionId ?? dtoId(patch.drawingRevisionId),
+        crop: { ...patch.crop },
+        order: Number(patch.order)
+      };
+    });
+  } else {
+    const drawings = await EstimateDesignDrawingModel.find({
+      estimateId: input.estimateId,
+      sourcePageId: input.sourcePageId,
+      active: true
+    }).sort({ _id: 1 }).session(input.session).lean();
+    patches = [];
+    for (const drawing of drawings) {
+      const replacement = replacementByDrawing.get(dtoId(drawing._id));
+      const latest = replacement
+        ? await EstimateDesignRevisionModel.findById(replacement.resultRevisionId).session(input.session).lean()
+        : await EstimateDesignRevisionModel.findOne({ drawingId: drawing._id })
+            .sort({ revisionNumber: -1 }).session(input.session).lean();
+      if (!latest) continue;
+      patches.push({
+        drawingId: dtoId(drawing._id),
+        drawingRevisionId: dtoId(latest._id),
+        crop: { ...(replacement?.crop ?? latest.crop) },
+        order: patches.length
+      });
+    }
+  }
+  for (const replacement of input.replacements) {
+    if (patches.some((patch) => patch.drawingId === replacement.drawingId)) continue;
+    patches.push({
+      drawingId: replacement.drawingId,
+      drawingRevisionId: replacement.resultRevisionId,
+      crop: { ...replacement.crop },
+      order: patches.length
+    });
+  }
+  const [created] = await EstimatePlanPageRevisionModel.create([{
+    _id: `plan-page-revision-${randomUUID()}`,
+    estimateId: input.estimateId,
+    sourcePageId: input.sourcePageId,
+    revisionNumber: current ? Number(current.revisionNumber) + 1 : 1,
+    basePageReference: current?.basePageReference ?? page.normalizedFileReference,
+    status: "revised",
+    patches,
+    previousRevisionId: current?._id ?? null,
+    createdBy: input.createdBy
+  }], { session: input.session });
+  return created!.toObject();
+}
+
 export async function ensureEstimatePlanReviewCollections() {
   await Promise.all([
     EstimatePlanPageRevisionModel.createCollection(),
@@ -335,8 +424,14 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
     const uploads = await EstimateDesignUploadModel.find({
       estimateId,
       deletedAt: null,
-      replacementDrawingId: null,
-      replacesRevisionId: null
+      $or: [
+        { purpose: "ordinary" },
+        {
+          purpose: null,
+          replacementDrawingId: null,
+          replacesRevisionId: null
+        }
+      ]
     }).sort({ uploadedAt: 1, _id: 1 }).lean();
     const uploadOrder = new Map(uploads.map((upload, index) => [dtoId(upload._id), index]));
     const pages = await EstimateDesignSourcePageModel.find({ uploadId: { $in: uploads.map((upload) => upload._id) } }).lean();

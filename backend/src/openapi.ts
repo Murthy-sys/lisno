@@ -149,6 +149,9 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   "POST /estimate-design-drawings/:drawingId/replacement": multipartRequest(
     "DrawingReplacementRequest"
   ),
+  "POST /estimate-plan-change-requests/:requestId/replacement-upload": multipartRequest(
+    "PlanRequestReplacementUploadRequest"
+  ),
   "POST /admin/estimate-client-response-tasks/:roundId/decision":
     multipartRequest("EstimateProxyDecisionRequest"),
   "POST /admin/design-plan-response-tasks/:roundId/decision":
@@ -207,6 +210,7 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "GET /auth/me": "PublicUser",
   "DELETE /estimate-design-uploads/:uploadId": "EstimateDesignUploadDeleted",
   "POST /estimates/:estimateId/design-uploads": "EstimateDesignUpload",
+  "POST /estimate-plan-change-requests/:requestId/replacement-upload": "EstimateDesignUpload",
   "POST /estimate-design-uploads/:uploadId/retry": "EstimateDesignUpload",
   "GET /estimates/:estimateId/design-uploads": "EstimateDesignWorkspace",
   "GET /auth/authorization": "AuthorizationSnapshot",
@@ -278,6 +282,7 @@ const multipartOperations = new Set<string>([
   "POST /estimates/:estimateId/design-uploads",
   "POST /tasks/:taskId/design-versions",
   "POST /estimate-design-drawings/:drawingId/replacement",
+  "POST /estimate-plan-change-requests/:requestId/replacement-upload",
   "POST /admin/estimate-client-response-tasks/:roundId/decision",
   "POST /admin/design-plan-response-tasks/:roundId/decision",
   "POST /procurement/projects/:projectId/expenses"
@@ -354,6 +359,8 @@ const operationSummaries: Readonly<Record<string, string>> = {
     "Download a Finance ledger supporting document",
   "POST /estimates/:estimateId/design-uploads":
     "Upload a design plan for extraction",
+  "POST /estimate-plan-change-requests/:requestId/replacement-upload":
+    "Upload revised pages for an open Client plan-change request",
   "GET /estimates/:estimateId/design-uploads":
     "Read design uploads and extracted drawings",
   "DELETE /estimate-design-uploads/:uploadId": "Delete an uploaded design before Client approval (assigned Designer uploader only)",
@@ -1849,6 +1856,16 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         version: { type: "integer", minimum: 1 }
       }
     },
+    PlanRequestReplacementUploadRequest: {
+      type: "object",
+      additionalProperties: false,
+      required: ["file", "version", "idempotencyKey"],
+      properties: {
+        file: { type: "string", format: "binary" },
+        version: { type: "integer", minimum: 1 },
+        idempotencyKey: { type: "string", minLength: 8, maxLength: 128 }
+      }
+    },
     EstimateProxyDecisionRequest: proofDecisionSchema("version"),
     DesignPlanProxyDecisionRequest: proofDecisionSchema("expectedVersion"),
     DesignPlanEmailRetryRequest: {
@@ -2004,12 +2021,43 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     },
     EstimateDesignUpload: {
       type: "object",
-      required: ["id", "estimateId", "leadId", "originalFilename", "mimeType", "sizeBytes", "uploaderId", "uploadedAt", "extractionStatus", "failureCode", "failureMessage", "canRetry", "canDelete"],
+      required: ["id", "estimateId", "leadId", "originalFilename", "mimeType", "sizeBytes", "uploaderId", "uploadedAt", "extractionStatus", "purpose", "requestReplacement", "failureCode", "failureMessage", "canRetry", "canDelete"],
       properties: {
         id, estimateId: id, leadId: id, uploaderId: id,
         originalFilename: { type: "string" }, mimeType: { type: "string" },
         sizeBytes: { type: "integer", minimum: 0 }, uploadedAt: dateTime,
         extractionStatus: { type: "string" },
+        purpose: { type: "string", enum: ["ordinary", "drawing_replacement", "plan_request_replacement"] },
+        requestReplacement: {
+          type: "object",
+          nullable: true,
+          additionalProperties: false,
+          required: ["requestId", "requestVersion", "sourcePageId", "targetCount", "matches", "ignoredPageNumbers", "ignoredPageCount"],
+          properties: {
+            requestId: id,
+            requestVersion: { type: "integer", minimum: 1 },
+            sourcePageId: id,
+            targetCount: { type: "integer", minimum: 1 },
+            matches: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["drawingId", "requestedRevisionId", "detectedTitle", "resultRevisionId", "matchReason", "pageNumber"],
+                properties: {
+                  drawingId: id,
+                  requestedRevisionId: id,
+                  detectedTitle: { type: "string" },
+                  resultRevisionId: { ...id, nullable: true },
+                  matchReason: { type: "string", enum: ["normalized_title", "mapping_tuple"], nullable: true },
+                  pageNumber: { type: "integer", minimum: 1, nullable: true }
+                }
+              }
+            },
+            ignoredPageNumbers: { type: "array", items: { type: "integer", minimum: 1 } },
+            ignoredPageCount: { type: "integer", minimum: 0 }
+          }
+        },
         failureCode: { type: "string", nullable: true }, failureMessage: { type: "string", nullable: true },
         canRetry: { type: "boolean" },
         canDelete: { type: "boolean", description: "True only for the assigned Designer uploader before this source or the final Design plan is approved." },

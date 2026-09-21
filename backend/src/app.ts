@@ -508,7 +508,15 @@ export function createApp(dependencies: AppDependencies) {
     "/api/v1",
     createEstimateDesignsRouter(authService, estimateDesignService, maxUploadBytes)
   );
-  app.use("/api/v1", createEstimatePlanReviewRouter(authService, estimatePlanReviewService));
+  app.use(
+    "/api/v1",
+    createEstimatePlanReviewRouter(
+      authService,
+      estimatePlanReviewService,
+      estimateDesignService,
+      maxUploadBytes
+    )
+  );
   app.use(
     "/api/v1",
     createEstimateClientResponsesRouter(

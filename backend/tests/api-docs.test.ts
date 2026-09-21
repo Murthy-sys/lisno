@@ -26,6 +26,41 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents request-scoped plan replacement uploads with their exact multipart and response contract", () => {
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const operation = paths["/estimate-plan-change-requests/{requestId}/replacement-upload"]!.post!;
+    expect(operation).toMatchObject({
+      summary: "Upload revised pages for an open Client plan-change request",
+      "x-lisno-permission": "estimation.drawing.replace",
+      "x-lisno-operation-class": "personal",
+      "x-lisno-super-admin-behavior": "deny_personal"
+    });
+    expect(operation.requestBody).toHaveProperty(
+      "content.multipart/form-data.schema.$ref",
+      "#/components/schemas/PlanRequestReplacementUploadRequest"
+    );
+    expect(operation.responses).toHaveProperty(
+      "2XX.content.application/json.schema.properties.data.$ref",
+      "#/components/schemas/EstimateDesignUpload"
+    );
+    expect(componentSchemas().PlanRequestReplacementUploadRequest).toMatchObject({
+      additionalProperties: false,
+      required: ["file", "version", "idempotencyKey"],
+      properties: {
+        file: { type: "string", format: "binary" },
+        version: { type: "integer", minimum: 1 },
+        idempotencyKey: { type: "string", minLength: 8, maxLength: 128 }
+      }
+    });
+    expect(componentSchemas().EstimateDesignUpload!.required).toEqual(
+      expect.arrayContaining(["purpose", "requestReplacement"])
+    );
+    expect(componentSchemas().EstimateDesignUpload).toHaveProperty(
+      "properties.requestReplacement.properties.matches.items.required",
+      ["drawingId", "requestedRevisionId", "detectedTitle", "resultRevisionId", "matchReason", "pageNumber"]
+    );
+  });
+
   it("documents scoped vendor suggestions, request replay and honest KPI placeholders", () => {
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
     const route = paths["/procurement/projects/{projectId}/vendor-suggestions"]!;
@@ -490,7 +525,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 236 routes without versioning paths twice", () => {
+  it("contains all 237 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -499,7 +534,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 13);
-    expect(operationCount).toBe(236);
+    expect(operationCount).toBe(237);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
