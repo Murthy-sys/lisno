@@ -300,3 +300,211 @@
 {"_e":"metro:server_log","_t":1789825997196,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
 {"_e":"metro:server_log","_t":1789826366867,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
 {"_e":"metro:server_log","_t":1789827319936,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"root:init","_t":1790000551765,"format":"v0-jsonl","version":"57.0.26"}
+{"_e":"devserver:start","_t":1790000551777,"mode":"development","web":true,"baseUrl":"","asyncRoutes":false,"routerRoot":"../../../src/app","serverComponents":false,"serverActions":false,"serverRendering":false,"apiRoutes":false,"exporting":false}
+{"_e":"metro:config","_t":1790000551981,"serverRoot":"../../..","projectRoot":"../../..","exporting":false,"flags":{"autolinkingModuleResolution":false,"serverActions":false,"serverComponents":false,"reactCompiler":true,"optimizeGraph":false,"treeshaking":false,"logbox":false}}
+{"_e":"expo:dev-tools-plugin:load","_t":1790000552117,"plugins":[]}
+{"_e":"metro:instantiate","_t":1790000552445,"atlas":false,"workers":7,"host":"::","port":8081}
+{"_e":"metro:bundling:started","_t":1790000555453,"id":"1","platform":"android","environment":null,"entry":"node_modules/expo-router/entry.js"}
+{"_e":"metro:bundling:progress","_t":1790000555453,"id":"1","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:progress","_t":1790000555455,"id":"1","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:progress","_t":1790000555739,"id":"1","progress":0.010000000000000002,"total":1,"current":1}
+{"_e":"metro:bundling:progress","_t":1790000555840,"id":"1","progress":0.026014568158168574,"total":31,"current":5}
+{"_e":"metro:bundling:progress","_t":1790000555958,"id":"1","progress":0.026014568158168574,"total":44,"current":7}
+{"_e":"metro:bundling:progress","_t":1790000556058,"id":"1","progress":0.026014568158168574,"total":190,"current":24}
+{"_e":"metro:bundling:progress","_t":1790000556158,"id":"1","progress":0.026014568158168574,"total":222,"current":34}
+{"_e":"metro:bundling:progress","_t":1790000556261,"id":"1","progress":0.041367423154266024,"total":236,"current":48}
+{"_e":"metro:bundling:progress","_t":1790000556361,"id":"1","progress":0.06112389537179505,"total":271,"current":67}
+{"_e":"metro:bundling:progress","_t":1790000556461,"id":"1","progress":0.1211744912674251,"total":316,"current":110}
+{"_e":"metro:bundling:progress","_t":1790000556561,"id":"1","progress":0.18748007227122968,"total":388,"current":168}
+{"_e":"metro:bundling:progress","_t":1790000556662,"id":"1","progress":0.21978957104867614,"total":465,"current":218}
+{"_e":"metro:bundling:progress","_t":1790000556763,"id":"1","progress":0.21978957104867614,"total":538,"current":234}
+{"_e":"metro:bundling:progress","_t":1790000556863,"id":"1","progress":0.21978957104867614,"total":609,"current":278}
+{"_e":"metro:bundling:progress","_t":1790000556963,"id":"1","progress":0.2581175547547745,"total":683,"current":347}
+{"_e":"metro:bundling:progress","_t":1790000557063,"id":"1","progress":0.2581175547547745,"total":776,"current":392}
+{"_e":"metro:bundling:progress","_t":1790000557163,"id":"1","progress":0.29436396559529193,"total":846,"current":459}
+{"_e":"metro:bundling:progress","_t":1790000557263,"id":"1","progress":0.29436396559529193,"total":958,"current":506}
+{"_e":"metro:bundling:progress","_t":1790000557363,"id":"1","progress":0.29436396559529193,"total":976,"current":527}
+{"_e":"metro:bundling:progress","_t":1790000557463,"id":"1","progress":0.29436396559529193,"total":1013,"current":541}
+{"_e":"metro:bundling:progress","_t":1790000557564,"id":"1","progress":0.29436396559529193,"total":1027,"current":552}
+{"_e":"metro:bundling:progress","_t":1790000557664,"id":"1","progress":0.3134270508787883,"total":1036,"current":580}
+{"_e":"metro:bundling:progress","_t":1790000557764,"id":"1","progress":0.34175804912605356,"total":1052,"current":615}
+{"_e":"metro:bundling:progress","_t":1790000557865,"id":"1","progress":0.3963035668562473,"total":1077,"current":678}
+{"_e":"metro:bundling:progress","_t":1790000557965,"id":"1","progress":0.41805967348470635,"total":1095,"current":708}
+{"_e":"metro:bundling:progress","_t":1790000558069,"id":"1","progress":0.459516015349675,"total":1130,"current":766}
+{"_e":"metro:bundling:progress","_t":1790000558169,"id":"1","progress":0.5167570132062594,"total":1156,"current":831}
+{"_e":"metro:bundling:progress","_t":1790000558269,"id":"1","progress":0.5656556740343196,"total":1190,"current":895}
+{"_e":"metro:bundling:progress","_t":1790000558369,"id":"1","progress":0.5697814776274714,"total":1240,"current":936}
+{"_e":"metro:bundling:progress","_t":1790000558470,"id":"1","progress":0.5794163510804188,"total":1273,"current":969}
+{"_e":"metro:bundling:progress","_t":1790000558570,"id":"1","progress":0.5972665005339978,"total":1325,"current":1024}
+{"_e":"metro:bundling:progress","_t":1790000558671,"id":"1","progress":0.6191883902176833,"total":1342,"current":1056}
+{"_e":"metro:bundling:progress","_t":1790000558771,"id":"1","progress":0.6237608898965101,"total":1351,"current":1067}
+{"_e":"metro:bundling:progress","_t":1790000558805,"id":"1","progress":0.6249306240792111,"total":1351,"current":1068}
+{"_e":"metro:bundling:progress","_t":1790000558905,"id":"1","progress":0.6285309079797725,"total":1361,"current":1079}
+{"_e":"metro:bundling:progress","_t":1790000559005,"id":"1","progress":0.6428121533331657,"total":1367,"current":1096}
+{"_e":"metro:bundling:progress","_t":1790000559105,"id":"1","progress":0.6428121533331657,"total":1442,"current":1154}
+{"_e":"metro:bundling:progress","_t":1790000559207,"id":"1","progress":0.6428121533331657,"total":1514,"current":1208}
+{"_e":"metro:bundling:progress","_t":1790000559307,"id":"1","progress":0.6532182398198536,"total":1533,"current":1239}
+{"_e":"metro:bundling:progress","_t":1790000559408,"id":"1","progress":0.6640403849980624,"total":1545,"current":1259}
+{"_e":"metro:bundling:progress","_t":1790000559507,"id":"1","progress":0.6790783376204335,"total":1546,"current":1274}
+{"_e":"metro:bundling:progress","_t":1790000559608,"id":"1","progress":0.7039566566009166,"total":1553,"current":1303}
+{"_e":"metro:bundling:progress","_t":1790000559735,"id":"1","progress":0.7144789084320484,"total":1564,"current":1322}
+{"_e":"metro:bundling:progress","_t":1790000559836,"id":"1","progress":0.7144789084320484,"total":1671,"current":1358}
+{"_e":"metro:bundling:progress","_t":1790000559937,"id":"1","progress":0.7144789084320484,"total":1684,"current":1377}
+{"_e":"metro:bundling:progress","_t":1790000560036,"id":"1","progress":0.7144789084320484,"total":1700,"current":1401}
+{"_e":"metro:bundling:progress","_t":1790000560137,"id":"1","progress":0.7144789084320484,"total":1725,"current":1444}
+{"_e":"metro:bundling:progress","_t":1790000560237,"id":"1","progress":0.7144789084320484,"total":1824,"current":1500}
+{"_e":"metro:bundling:progress","_t":1790000560338,"id":"1","progress":0.7144789084320484,"total":1841,"current":1530}
+{"_e":"metro:bundling:progress","_t":1790000560439,"id":"1","progress":0.719104,"total":1875,"current":1590}
+{"_e":"metro:bundling:progress","_t":1790000560539,"id":"1","progress":0.7732829428067522,"total":1890,"current":1662}
+{"_e":"metro:bundling:progress","_t":1790000560639,"id":"1","progress":0.791562942261194,"total":1922,"current":1710}
+{"_e":"metro:bundling:progress","_t":1790000560741,"id":"1","progress":0.7918446927069336,"total":1952,"current":1737}
+{"_e":"metro:bundling:progress","_t":1790000560840,"id":"1","progress":0.7918446927069336,"total":1987,"current":1759}
+{"_e":"metro:bundling:progress","_t":1790000560940,"id":"1","progress":0.8215456329250344,"total":1987,"current":1801}
+{"_e":"metro:bundling:progress","_t":1790000561041,"id":"1","progress":0.8425595901091557,"total":2010,"current":1845}
+{"_e":"metro:bundling:progress","_t":1790000561142,"id":"1","progress":0.8663524502159244,"total":2037,"current":1896}
+{"_e":"metro:bundling:progress","_t":1790000561242,"id":"1","progress":0.8747905626076861,"total":2133,"current":1995}
+{"_e":"metro:bundling:progress","_t":1790000561342,"id":"1","progress":0.9219555898491083,"total":2160,"current":2074}
+{"_e":"metro:bundling:progress","_t":1790000561442,"id":"1","progress":0.9511728317131675,"total":2225,"current":2170}
+{"_e":"metro:bundling:progress","_t":1790000561551,"id":"1","progress":0.999,"total":2251,"current":2251}
+{"_e":"metro:bundling:done","_t":1790000561801,"id":"1","total":2251,"ms":6347.440792}
+{"_e":"metro:client_log","_t":1790000564272,"level":"error","data":["[Error: The route files \"./index.tsx\" and \"./index.js\" conflict on the route \"/index\". Remove or rename one of these files.]","\n\n\u001b[1mCode: getRoutesCore.js\u001b[22m\n\u001b[0m \u001b[90m 396 |\u001b[39m                     \u001b[90m// In production, use the first route found\u001b[39m\n \u001b[90m 397 |\u001b[39m                     \u001b[36mif\u001b[39m (process\u001b[33m.\u001b[39menv\u001b[33m.\u001b[39m\u001b[33mNODE_ENV\u001b[39m \u001b[33m!==\u001b[39m \u001b[32m'production'\u001b[39m) {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 398 |\u001b[39m                         \u001b[36mthrow\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mError\u001b[39m(\u001b[32m`The route files \"${filePath}\" and \"${existing.contextKey}\" conflict on the route \"/${route}\". Remove or rename one of these files.`\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                                        \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 399 |\u001b[39m                     }\n \u001b[90m 400 |\u001b[39m                 }\n \u001b[90m 401 |\u001b[39m                 \u001b[36melse\u001b[39m {\u001b[0m\n\u001b[1mCall Stack\u001b[22m\n\u001b[2m\u001b[90m  getDirectoryTree (\u001b]8;;node_modules/expo-router/build/getRoutesCore.js:398:40\u0007node_modules/expo-router/build/getRoutesCore.js:398:40\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  getDirectoryTree (\u001b]8;;node_modules/expo-router/build/getRoutesCore.js:216:39\u0007node_modules/expo-router/build/getRoutesCore.js:216:39\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  getRoutes (\u001b]8;;node_modules/expo-router/build/getRoutesCore.js:23:43\u0007node_modules/expo-router/build/getRoutesCore.js:23:43\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  getRoutes (\u001b]8;;node_modules/expo-router/build/getRoutes.js:20:41\u0007node_modules/expo-router/build/getRoutes.js:20:41\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  useStore (\u001b]8;;node_modules/expo-router/build/global-state/useStore.js:28:48\u0007node_modules/expo-router/build/global-state/useStore.js:28:48\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  ContextNavigator (\u001b]8;;node_modules/expo-router/build/ExpoRoot.js:122:46\u0007node_modules/expo-router/build/ExpoRoot.js:122:46\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  callComponent.react_stack_bottom_frame (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:17130:29\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:17130:29\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  renderWithHooks (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:5648:40\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:5648:40\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  updateFunctionComponent (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:8081:34\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:8081:34\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  beginWork (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:9340:41\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:9340:41\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  run (\u001b]8;;<native>\u0007<native>\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  runWithFiberInDEV (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:697:33\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:697:33\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  performUnitOfWork (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:14134:39\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:14134:39\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  workLoopSync (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:13966:58\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:13966:58\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  renderRootSync (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:13947:23\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:13947:23\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  performWorkOnRoot (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:13160:43\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:13160:43\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  performWorkOnRootViaSchedulerTask (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:3673:24\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:3673:24\u001b]8;;\u0007)\u001b[39m\u001b[22m","\n\n\u001b[1mCode: ExpoRoot.js\u001b[22m\n\u001b[0m \u001b[90m 83 |\u001b[39m                     initialMetrics\u001b[33m:\u001b[39m \u001b[33mINITIAL_METRICS\u001b[39m\u001b[33m,\u001b[39m children\u001b[33m:\u001b[39m children }) }) }))\u001b[33m;\u001b[39m\n \u001b[90m 84 |\u001b[39m     }\u001b[33m,\u001b[39m [\u001b[33mParentWrapper\u001b[39m])\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 85 |\u001b[39m     \u001b[36mreturn\u001b[39m (\u001b[35m0\u001b[39m\u001b[33m,\u001b[39m jsx_runtime_1\u001b[33m.\u001b[39mjsx)(\u001b[33mContextNavigator\u001b[39m\u001b[33m,\u001b[39m { \u001b[33m...\u001b[39mprops\u001b[33m,\u001b[39m wrapper\u001b[33m:\u001b[39m wrapper })\u001b[33m;\u001b[39m\n \u001b[90m    |\u001b[39m                                 \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 86 |\u001b[39m }\n \u001b[90m 87 |\u001b[39m \u001b[36mconst\u001b[39m initialUrl \u001b[33m=\u001b[39m react_native_1\u001b[33m.\u001b[39m\u001b[33mPlatform\u001b[39m\u001b[33m.\u001b[39m\u001b[33mOS\u001b[39m \u001b[33m===\u001b[39m \u001b[32m'web'\u001b[39m \u001b[33m&&\u001b[39m \u001b[36mtypeof\u001b[39m window \u001b[33m!==\u001b[39m \u001b[32m'undefined'\u001b[39m\n \u001b[90m 88 |\u001b[39m     \u001b[33m?\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mURL\u001b[39m(window\u001b[33m.\u001b[39mlocation\u001b[33m.\u001b[39mhref)\u001b[0m\n\u001b[1mCall Stack\u001b[22m\n\u001b[2m\u001b[90m  ExpoRoot (\u001b]8;;node_modules/expo-router/build/ExpoRoot.js:85:33\u0007node_modules/expo-router/build/ExpoRoot.js:85:33\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  App (\u001b]8;;node_modules/expo-router/build/qualified-entry.js:20:91\u0007node_modules/expo-router/build/qualified-entry.js:20:91\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  WithDevTools (\u001b]8;;node_modules/expo/src/launch/withDevTools.tsx:21:12\u0007node_modules/expo/src/launch/withDevTools.tsx:21:12\u001b]8;;\u0007)\u001b[39m\u001b[22m"]}
+{"_e":"metro:bundling:started","_t":1790000613815,"id":"6","platform":"android","environment":null,"entry":"node_modules/expo-router/entry.js"}
+{"_e":"metro:bundling:progress","_t":1790000613815,"id":"6","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790000613880,"id":"6","total":1,"ms":65.200209}
+{"_e":"metro:client_log","_t":1790000616500,"level":"error","data":["[Error: The route files \"./index.tsx\" and \"./index.js\" conflict on the route \"/index\". Remove or rename one of these files.]","\n\n\u001b[1mCode: getRoutesCore.js\u001b[22m\n\u001b[0m \u001b[90m 396 |\u001b[39m                     \u001b[90m// In production, use the first route found\u001b[39m\n \u001b[90m 397 |\u001b[39m                     \u001b[36mif\u001b[39m (process\u001b[33m.\u001b[39menv\u001b[33m.\u001b[39m\u001b[33mNODE_ENV\u001b[39m \u001b[33m!==\u001b[39m \u001b[32m'production'\u001b[39m) {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 398 |\u001b[39m                         \u001b[36mthrow\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mError\u001b[39m(\u001b[32m`The route files \"${filePath}\" and \"${existing.contextKey}\" conflict on the route \"/${route}\". Remove or rename one of these files.`\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                                        \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 399 |\u001b[39m                     }\n \u001b[90m 400 |\u001b[39m                 }\n \u001b[90m 401 |\u001b[39m                 \u001b[36melse\u001b[39m {\u001b[0m\n\u001b[1mCall Stack\u001b[22m\n\u001b[2m\u001b[90m  getDirectoryTree (\u001b]8;;node_modules/expo-router/build/getRoutesCore.js:398:40\u0007node_modules/expo-router/build/getRoutesCore.js:398:40\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  getDirectoryTree (\u001b]8;;node_modules/expo-router/build/getRoutesCore.js:216:39\u0007node_modules/expo-router/build/getRoutesCore.js:216:39\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  getRoutes (\u001b]8;;node_modules/expo-router/build/getRoutesCore.js:23:43\u0007node_modules/expo-router/build/getRoutesCore.js:23:43\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  getRoutes (\u001b]8;;node_modules/expo-router/build/getRoutes.js:20:41\u0007node_modules/expo-router/build/getRoutes.js:20:41\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  useStore (\u001b]8;;node_modules/expo-router/build/global-state/useStore.js:28:48\u0007node_modules/expo-router/build/global-state/useStore.js:28:48\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  ContextNavigator (\u001b]8;;node_modules/expo-router/build/ExpoRoot.js:122:46\u0007node_modules/expo-router/build/ExpoRoot.js:122:46\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  callComponent.react_stack_bottom_frame (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:17130:29\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:17130:29\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  renderWithHooks (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:5648:40\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:5648:40\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  updateFunctionComponent (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:8081:34\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:8081:34\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  beginWork (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:9340:41\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:9340:41\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  run (\u001b]8;;<native>\u0007<native>\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  runWithFiberInDEV (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:697:33\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:697:33\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  performUnitOfWork (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:14134:39\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:14134:39\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  workLoopSync (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:13966:58\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:13966:58\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  renderRootSync (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:13947:23\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:13947:23\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  performWorkOnRoot (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:13160:43\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:13160:43\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  performWorkOnRootViaSchedulerTask (\u001b]8;;node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:3673:24\u0007node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-dev.js:3673:24\u001b]8;;\u0007)\u001b[39m\u001b[22m","\n\n\u001b[1mCode: ExpoRoot.js\u001b[22m\n\u001b[0m \u001b[90m 83 |\u001b[39m                     initialMetrics\u001b[33m:\u001b[39m \u001b[33mINITIAL_METRICS\u001b[39m\u001b[33m,\u001b[39m children\u001b[33m:\u001b[39m children }) }) }))\u001b[33m;\u001b[39m\n \u001b[90m 84 |\u001b[39m     }\u001b[33m,\u001b[39m [\u001b[33mParentWrapper\u001b[39m])\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 85 |\u001b[39m     \u001b[36mreturn\u001b[39m (\u001b[35m0\u001b[39m\u001b[33m,\u001b[39m jsx_runtime_1\u001b[33m.\u001b[39mjsx)(\u001b[33mContextNavigator\u001b[39m\u001b[33m,\u001b[39m { \u001b[33m...\u001b[39mprops\u001b[33m,\u001b[39m wrapper\u001b[33m:\u001b[39m wrapper })\u001b[33m;\u001b[39m\n \u001b[90m    |\u001b[39m                                 \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 86 |\u001b[39m }\n \u001b[90m 87 |\u001b[39m \u001b[36mconst\u001b[39m initialUrl \u001b[33m=\u001b[39m react_native_1\u001b[33m.\u001b[39m\u001b[33mPlatform\u001b[39m\u001b[33m.\u001b[39m\u001b[33mOS\u001b[39m \u001b[33m===\u001b[39m \u001b[32m'web'\u001b[39m \u001b[33m&&\u001b[39m \u001b[36mtypeof\u001b[39m window \u001b[33m!==\u001b[39m \u001b[32m'undefined'\u001b[39m\n \u001b[90m 88 |\u001b[39m     \u001b[33m?\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mURL\u001b[39m(window\u001b[33m.\u001b[39mlocation\u001b[33m.\u001b[39mhref)\u001b[0m\n\u001b[1mCall Stack\u001b[22m\n\u001b[2m\u001b[90m  ExpoRoot (\u001b]8;;node_modules/expo-router/build/ExpoRoot.js:85:33\u0007node_modules/expo-router/build/ExpoRoot.js:85:33\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  App (\u001b]8;;node_modules/expo-router/build/qualified-entry.js:20:91\u0007node_modules/expo-router/build/qualified-entry.js:20:91\u001b]8;;\u0007)\u001b[39m\u001b[22m\n\u001b[2m\u001b[90m  WithDevTools (\u001b]8;;node_modules/expo/src/launch/withDevTools.tsx:21:12\u0007node_modules/expo/src/launch/withDevTools.tsx:21:12\u001b]8;;\u0007)\u001b[39m\u001b[22m"]}
+{"_e":"metro:server_log","_t":1790000888057,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790001231378,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"root:init","_t":1790001708597,"format":"v0-jsonl","version":"57.0.26"}
+{"_e":"env:mode","_t":1790001708598,"nodeEnv":"development","babelEnv":"development","mode":"development"}
+{"_e":"env:load","_t":1790001708599,"mode":"development","files":["../../../.env.local"],"env":{"EXPO_PUBLIC_API_ENV":"local","EXPO_PUBLIC_LOCAL_API_URL":"http://10.0.2.2:3000/api/v1","LISNO_ALLOW_LOCAL_HTTP":"1","LISNO_APP_VARIANT":"development"}}
+{"_e":"root:init","_t":1790001784835,"format":"v0-jsonl","version":"57.0.26"}
+{"_e":"env:mode","_t":1790001784836,"nodeEnv":"development","babelEnv":"development","mode":"development"}
+{"_e":"env:load","_t":1790001784837,"mode":"development","files":["../../../.env.local"],"env":{"EXPO_PUBLIC_API_ENV":"local","EXPO_PUBLIC_LOCAL_API_URL":"http://10.0.2.2:3000/api/v1","LISNO_ALLOW_LOCAL_HTTP":"1","LISNO_APP_VARIANT":"development"}}
+{"_e":"root:init","_t":1790001863990,"format":"v0-jsonl","version":"57.0.26"}
+{"_e":"env:mode","_t":1790001863991,"nodeEnv":"development","babelEnv":"development","mode":"development"}
+{"_e":"env:load","_t":1790001863992,"mode":"development","files":["../../../.env.local"],"env":{"EXPO_PUBLIC_API_ENV":"local","EXPO_PUBLIC_LOCAL_API_URL":"http://10.0.2.2:3000/api/v1","LISNO_ALLOW_LOCAL_HTTP":"1","LISNO_APP_VARIANT":"development"}}
+{"_e":"devserver:start","_t":1790001864295,"mode":"development","web":true,"baseUrl":"","asyncRoutes":false,"routerRoot":"../../../src/app","serverComponents":false,"serverActions":false,"serverRendering":false,"apiRoutes":false,"exporting":false}
+{"_e":"metro:config","_t":1790001864414,"serverRoot":"../../..","projectRoot":"../../..","exporting":false,"flags":{"autolinkingModuleResolution":false,"serverActions":false,"serverComponents":false,"reactCompiler":true,"optimizeGraph":false,"treeshaking":false,"logbox":false}}
+{"_e":"expo:dev-tools-plugin:load","_t":1790001864538,"plugins":[]}
+{"_e":"metro:instantiate","_t":1790001865009,"atlas":false,"workers":7,"host":"::","port":8081}
+{"_e":"metro:bundling:started","_t":1790001994055,"id":"1","platform":"android","environment":null,"entry":"node_modules/expo-router/entry.js"}
+{"_e":"metro:bundling:progress","_t":1790001994055,"id":"1","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:progress","_t":1790001994059,"id":"1","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:progress","_t":1790001994279,"id":"1","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:progress","_t":1790001994286,"id":"1","progress":0.010000000000000002,"total":1,"current":1}
+{"_e":"metro:bundling:progress","_t":1790001994389,"id":"1","progress":0.08650519031141869,"total":17,"current":5}
+{"_e":"metro:bundling:progress","_t":1790001994494,"id":"1","progress":0.1371742112482853,"total":27,"current":10}
+{"_e":"metro:bundling:progress","_t":1790001994595,"id":"1","progress":0.1371742112482853,"total":177,"current":22}
+{"_e":"metro:bundling:progress","_t":1790001994631,"id":"1","progress":0.1371742112482853,"total":177,"current":22}
+{"_e":"metro:bundling:progress","_t":1790001994631,"id":"1","progress":0.1371742112482853,"total":177,"current":22}
+{"_e":"metro:bundling:progress","_t":1790001994631,"id":"1","progress":0.1371742112482853,"total":177,"current":22}
+{"_e":"metro:bundling:progress","_t":1790001994631,"id":"1","progress":0.1371742112482853,"total":177,"current":22}
+{"_e":"metro:bundling:progress","_t":1790001994631,"id":"1","progress":0.1371742112482853,"total":177,"current":22}
+{"_e":"metro:bundling:progress","_t":1790001994655,"id":"1","progress":0.1371742112482853,"total":177,"current":22}
+{"_e":"metro:bundling:progress","_t":1790001994695,"id":"1","progress":0.1371742112482853,"total":237,"current":43}
+{"_e":"metro:bundling:progress","_t":1790001994795,"id":"1","progress":0.1371742112482853,"total":277,"current":90}
+{"_e":"metro:bundling:progress","_t":1790001994896,"id":"1","progress":0.14002081165452654,"total":310,"current":116}
+{"_e":"metro:bundling:progress","_t":1790001994996,"id":"1","progress":0.23523821544446838,"total":367,"current":178}
+{"_e":"metro:bundling:progress","_t":1790001995096,"id":"1","progress":0.2534601664684899,"total":435,"current":219}
+{"_e":"metro:bundling:progress","_t":1790001995197,"id":"1","progress":0.3103762635491424,"total":499,"current":278}
+{"_e":"metro:bundling:progress","_t":1790001995298,"id":"1","progress":0.35734807532577173,"total":542,"current":324}
+{"_e":"metro:bundling:progress","_t":1790001995397,"id":"1","progress":0.4258115484056306,"total":590,"current":385}
+{"_e":"metro:bundling:progress","_t":1790001995498,"id":"1","progress":0.4316650245389649,"total":656,"current":431}
+{"_e":"metro:bundling:progress","_t":1790001995598,"id":"1","progress":0.49119731171013215,"total":702,"current":492}
+{"_e":"metro:bundling:progress","_t":1790001995698,"id":"1","progress":0.5447845804988662,"total":714,"current":527}
+{"_e":"metro:bundling:progress","_t":1790001995799,"id":"1","progress":0.6308150857762198,"total":729,"current":579}
+{"_e":"metro:bundling:progress","_t":1790001995899,"id":"1","progress":0.6717238813901584,"total":776,"current":636}
+{"_e":"metro:bundling:progress","_t":1790001996003,"id":"1","progress":0.6717238813901584,"total":824,"current":658}
+{"_e":"metro:bundling:progress","_t":1790001996103,"id":"1","progress":0.6717238813901584,"total":858,"current":688}
+{"_e":"metro:bundling:progress","_t":1790001996204,"id":"1","progress":0.6854126361313948,"total":889,"current":736}
+{"_e":"metro:bundling:progress","_t":1790001996308,"id":"1","progress":0.6854126361313948,"total":950,"current":780}
+{"_e":"metro:bundling:progress","_t":1790001996406,"id":"1","progress":0.6854126361313948,"total":1016,"current":822}
+{"_e":"metro:bundling:progress","_t":1790001996506,"id":"1","progress":0.6854126361313948,"total":1030,"current":834}
+{"_e":"metro:bundling:progress","_t":1790001996608,"id":"1","progress":0.6854126361313948,"total":1110,"current":869}
+{"_e":"metro:bundling:progress","_t":1790001996711,"id":"1","progress":0.6854126361313948,"total":1144,"current":910}
+{"_e":"metro:bundling:progress","_t":1790001996811,"id":"1","progress":0.7080081893760507,"total":1173,"current":987}
+{"_e":"metro:bundling:progress","_t":1790001996911,"id":"1","progress":0.711871363241489,"total":1235,"current":1042}
+{"_e":"metro:bundling:progress","_t":1790001997011,"id":"1","progress":0.711871363241489,"total":1297,"current":1076}
+{"_e":"metro:bundling:progress","_t":1790001997111,"id":"1","progress":0.711871363241489,"total":1331,"current":1095}
+{"_e":"metro:bundling:progress","_t":1790001997211,"id":"1","progress":0.711871363241489,"total":1347,"current":1127}
+{"_e":"metro:bundling:progress","_t":1790001997312,"id":"1","progress":0.711871363241489,"total":1355,"current":1136}
+{"_e":"metro:bundling:progress","_t":1790001997413,"id":"1","progress":0.711871363241489,"total":1370,"current":1150}
+{"_e":"metro:bundling:progress","_t":1790001997512,"id":"1","progress":0.7279690261762478,"total":1417,"current":1209}
+{"_e":"metro:bundling:progress","_t":1790001997613,"id":"1","progress":0.7471589416400825,"total":1460,"current":1262}
+{"_e":"metro:bundling:progress","_t":1790001997713,"id":"1","progress":0.7471589416400825,"total":1481,"current":1280}
+{"_e":"metro:bundling:progress","_t":1790001997816,"id":"1","progress":0.7471589416400825,"total":1539,"current":1320}
+{"_e":"metro:bundling:progress","_t":1790001997916,"id":"1","progress":0.759709053069719,"total":1550,"current":1351}
+{"_e":"metro:bundling:progress","_t":1790001998016,"id":"1","progress":0.759709053069719,"total":1563,"current":1358}
+{"_e":"metro:bundling:progress","_t":1790001998131,"id":"1","progress":0.759709053069719,"total":1577,"current":1367}
+{"_e":"metro:bundling:progress","_t":1790001998231,"id":"1","progress":0.759709053069719,"total":1594,"current":1386}
+{"_e":"metro:bundling:progress","_t":1790001998331,"id":"1","progress":0.7683414250441786,"total":1612,"current":1413}
+{"_e":"metro:bundling:progress","_t":1790001998434,"id":"1","progress":0.7683414250441786,"total":1657,"current":1442}
+{"_e":"metro:bundling:progress","_t":1790001998536,"id":"1","progress":0.7683414250441786,"total":1726,"current":1483}
+{"_e":"metro:bundling:progress","_t":1790001998636,"id":"1","progress":0.7683414250441786,"total":1750,"current":1507}
+{"_e":"metro:bundling:progress","_t":1790001998736,"id":"1","progress":0.7683414250441786,"total":1761,"current":1519}
+{"_e":"metro:bundling:progress","_t":1790001998836,"id":"1","progress":0.7683414250441786,"total":1761,"current":1537}
+{"_e":"metro:bundling:progress","_t":1790001998937,"id":"1","progress":0.7780804997287166,"total":1781,"current":1571}
+{"_e":"metro:bundling:progress","_t":1790001999040,"id":"1","progress":0.7822024696346053,"total":1791,"current":1584}
+{"_e":"metro:bundling:progress","_t":1790001999145,"id":"1","progress":0.7822024696346053,"total":1810,"current":1596}
+{"_e":"metro:bundling:progress","_t":1790001999245,"id":"1","progress":0.7822024696346053,"total":1890,"current":1620}
+{"_e":"metro:bundling:progress","_t":1790001999346,"id":"1","progress":0.7822024696346053,"total":1906,"current":1676}
+{"_e":"metro:bundling:progress","_t":1790001999446,"id":"1","progress":0.8128149414062501,"total":1920,"current":1731}
+{"_e":"metro:bundling:progress","_t":1790001999546,"id":"1","progress":0.8344662567707598,"total":1942,"current":1774}
+{"_e":"metro:bundling:progress","_t":1790001999648,"id":"1","progress":0.8344662567707598,"total":1983,"current":1803}
+{"_e":"metro:bundling:progress","_t":1790001999748,"id":"1","progress":0.845511702002761,"total":1988,"current":1828}
+{"_e":"metro:bundling:progress","_t":1790001999849,"id":"1","progress":0.8800855940471803,"total":1988,"current":1865}
+{"_e":"metro:bundling:progress","_t":1790001999948,"id":"1","progress":0.8945618675532043,"total":2030,"current":1920}
+{"_e":"metro:bundling:progress","_t":1790002000048,"id":"1","progress":0.9007501215943012,"total":2062,"current":1957}
+{"_e":"metro:bundling:progress","_t":1790002000148,"id":"1","progress":0.9007501215943012,"total":2129,"current":2010}
+{"_e":"metro:bundling:progress","_t":1790002000248,"id":"1","progress":0.9179985552514661,"total":2173,"current":2082}
+{"_e":"metro:bundling:progress","_t":1790002000348,"id":"1","progress":0.9441972232111072,"total":2226,"current":2163}
+{"_e":"metro:bundling:progress","_t":1790002000448,"id":"1","progress":0.9937846987377028,"total":2249,"current":2242}
+{"_e":"metro:bundling:progress","_t":1790002000549,"id":"1","progress":0.999,"total":2250,"current":2250}
+{"_e":"metro:bundling:done","_t":1790002000751,"id":"1","total":2250,"ms":6695.566583}
+{"_e":"metro:bundling:started","_t":1790002247248,"id":"2","platform":"android","environment":null,"entry":"node_modules/expo-router/entry.js"}
+{"_e":"metro:bundling:progress","_t":1790002247248,"id":"2","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790002247321,"id":"2","total":1,"ms":73.343583}
+{"_e":"metro:bundling:started","_t":1790002261359,"id":"3","platform":"android","environment":null,"entry":"node_modules/expo-router/entry.js"}
+{"_e":"metro:bundling:progress","_t":1790002261359,"id":"3","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790002261429,"id":"3","total":1,"ms":70.135042}
+{"_e":"root:init","_t":1790002280684,"format":"v0-jsonl","version":"57.0.26"}
+{"_e":"metro:bundling:started","_t":1790002283710,"id":"4","platform":"android","environment":null,"entry":"node_modules/expo-router/entry.js"}
+{"_e":"metro:bundling:progress","_t":1790002283710,"id":"4","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790002283783,"id":"4","total":1,"ms":73.187584}
+{"_e":"root:init","_t":1790002477498,"format":"v0-jsonl","version":"57.0.26"}
+{"_e":"metro:bundling:started","_t":1790002480185,"id":"5","platform":"android","environment":null,"entry":"node_modules/expo-router/entry.js"}
+{"_e":"metro:bundling:progress","_t":1790002480185,"id":"5","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790002480258,"id":"5","total":1,"ms":73.079708}
+{"_e":"metro:server_log","_t":1790003718749,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790003982323,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790004846268,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790005370117,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790005689064,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790006982326,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790007936326,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790009878328,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790010642343,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790011517056,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:bundling:started","_t":1790014132541,"id":"c","platform":"android","environment":null,"entry":"node_modules/expo-router/entry.js"}
+{"_e":"metro:bundling:progress","_t":1790014132541,"id":"c","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790014132625,"id":"c","total":1,"ms":83.473667}
+{"_e":"metro:bundling:started","_t":1790014659139,"id":"d","platform":"android","environment":null,"entry":"node_modules/expo-router/entry.js"}
+{"_e":"metro:bundling:progress","_t":1790014659139,"id":"d","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790014659223,"id":"d","total":1,"ms":83.718083}
+{"_e":"metro:bundling:started","_t":1790015026562,"id":"e","platform":"android","environment":null,"entry":"node_modules/expo-router/entry.js"}
+{"_e":"metro:bundling:progress","_t":1790015026562,"id":"e","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790015026650,"id":"e","total":1,"ms":88.443584}
+{"_e":"metro:server_log","_t":1790015932554,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790016197340,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790017077345,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790017254235,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790017933177,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"root:init","_t":1790018844151,"format":"v0-jsonl","version":"57.0.26"}
+{"_e":"metro:bundling:started","_t":1790018847831,"id":"f","platform":"android","environment":null,"entry":"node_modules/expo-router/entry.js"}
+{"_e":"metro:bundling:progress","_t":1790018847831,"id":"f","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790018847898,"id":"f","total":1,"ms":67.628042}
+{"_e":"root:init","_t":1790019155269,"format":"v0-jsonl","version":"57.0.26"}
+{"_e":"metro:bundling:started","_t":1790019158479,"id":"g","platform":"android","environment":null,"entry":"node_modules/expo-router/entry.js"}
+{"_e":"metro:bundling:progress","_t":1790019158479,"id":"g","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790019158552,"id":"g","total":1,"ms":72.526833}

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 import mongoose from "mongoose";
 import sharp, { type Metadata } from "sharp";
@@ -448,8 +448,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       }
       const uploadId = randomUUID();
       const uploadedAt = now();
+      let persisted: Awaited<ReturnType<typeof persistPlanRequestReplacementUploadAndJob>>;
       try {
-        const persisted = await persistPlanRequestReplacementUploadAndJob({
+        persisted = await persistPlanRequestReplacementUploadAndJob({
           uploadId,
           requestId,
           requestVersion: requestInput.version,
@@ -461,10 +462,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           uploadedAt,
           audit: input.audit
         });
-        if (!persisted.created) await cleanupReferences(input.storage, [stored.reference]);
-        return uploadDto(persisted.upload, false, user.role === "designer");
       } catch (error) {
-        await cleanupReferences(input.storage, [stored.reference]);
+        await cleanupUploadedReferenceOrThrow(input.storage, stored.reference);
         const concurrentReplay = await EstimateDesignUploadModel.findOne({
           purpose: "plan_request_replacement",
           "planRequestReplacement.requestId": requestId,
@@ -475,6 +474,10 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         }
         throw error;
       }
+      if (!persisted.created) {
+        await cleanupUploadedReferenceOrThrow(input.storage, stored.reference);
+      }
+      return uploadDto(persisted.upload, false, user.role === "designer");
     },
 
     async listEstimator(user, estimateId) {
@@ -1170,15 +1173,26 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
     async completeWorkerJob(jobId, claimToken, processedAt, result) {
       const job = await EstimateDesignExtractionJobModel.findById(jobId).lean();
       if (!job) throw estimateNotFound();
-      requireEstimateClaim(job, claimToken, processedAt);
       const upload = await EstimateDesignUploadModel.findById(job.uploadId).lean();
+      if (
+        upload &&
+        !upload.deletedAt &&
+        deriveEstimateDesignUploadPurpose(upload) === "plan_request_replacement" &&
+        job.status === "estimator_review" &&
+        String(job.workerResultId) === result.resultId &&
+        workerResultClaimMatches(job.workerResultClaimDigest, claimToken)
+      ) {
+        return workerJobDto(job);
+      }
+      requireEstimateClaim(job, claimToken, processedAt);
+      if (!upload || upload.deletedAt) throw estimateNotFound();
+      const purpose = deriveEstimateDesignUploadPurpose(upload);
       const estimate = upload
         ? await EstimateModel.findById(upload.estimateId).lean()
         : null;
-      if (!upload || upload.deletedAt || !estimate) throw estimateNotFound();
+      if (!estimate) throw estimateNotFound();
       const taxonomy = taxonomyForEstimate(estimate);
       const mappingContext = mappingContextForEstimate(estimate);
-      const purpose = deriveEstimateDesignUploadPurpose(upload);
       const resultMode: EstimateResultMode = purpose === "plan_request_replacement"
         ? "plan_request_replacement"
         : purpose === "drawing_replacement"
@@ -2183,7 +2197,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         }
         const resetJob = await EstimateDesignExtractionJobModel.updateOne(
           { _id: job._id, uploadId, status: "processing_failed" },
-          { $set: { status: "queued", queuedAt, startedAt: null, completedAt: null, leaseExpiresAt: null, claimId: null, failureCode: null, failureMessage: null, workerResultId: null } },
+          { $set: { status: "queued", queuedAt, startedAt: null, completedAt: null, leaseExpiresAt: null, claimId: null, failureCode: null, failureMessage: null, workerResultId: null, workerResultClaimDigest: null } },
           { session }
         );
         requireTransition(resetJob, extractionStateConflict);
@@ -2973,7 +2987,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           claimId: null,
           failureCode: code,
           failureMessage: message,
-          workerResultId: null
+          workerResultId: null,
+          workerResultClaimDigest: null
         }
       }, { session });
       requireTransition(completed, staleClaim);
@@ -3017,7 +3032,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         claimId: null,
         failureCode: code,
         failureMessage: message,
-        workerResultId: null
+        workerResultId: null,
+        workerResultClaimDigest: null
       };
     });
     if (!failedJob) throw new Error("Plan request replacement failure transaction did not complete.");
@@ -3228,7 +3244,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             claimId: null,
             failureCode: null,
             failureMessage: null,
-            workerResultId: resultId
+            workerResultId: resultId,
+            workerResultClaimDigest: workerResultClaimDigest(claimToken)
           }
         }, { session });
         requireTransition(completed, staleClaim);
@@ -3260,7 +3277,12 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             sourcePageId: String(snapshot.sourcePageId),
             targetCount: matchResults.length,
             ignoredPageCount: resolved.ignoredPageNumbers.length,
-            revisionIds: matchResults.map((match) => match.resultRevisionId)
+            matches: matchResults.map((match) => ({
+              drawingId: match.drawingId,
+              resultRevisionId: match.resultRevisionId,
+              matchReason: match.matchReason,
+              pageNumber: match.pageNumber
+            }))
           }
         });
         completedJob = {
@@ -3269,7 +3291,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           completedAt: new Date(processedAt),
           leaseExpiresAt: null,
           claimId: null,
-          workerResultId: resultId
+          workerResultId: resultId,
+          workerResultClaimDigest: workerResultClaimDigest(claimToken)
         };
       });
       if (!completedJob) throw new Error("Plan request replacement transaction did not complete.");
@@ -3783,7 +3806,11 @@ async function persistPlanRequestReplacementUploadAndJob(input: {
         ) {
           throw new ApiError(409, "PLAN_REPLACEMENT_TARGET_STALE", "A requested drawing changed or already has a replacement in progress.");
         }
-        const detectedTitle = String(drawing.detectedTitle || latest.label).replace(/\s+/gu, " ").trim();
+        // The current revision label contains the Designer's latest title
+        // correction. Original OCR is only a compatibility fallback.
+        const detectedTitle = String(
+          latest.label || drawing.displayTitle || drawing.detectedTitle
+        ).replace(/\s+/gu, " ").trim();
         snapshots.push({
           drawingId: String(drawing._id),
           requestedRevisionId: String(latest._id),
@@ -3858,7 +3885,11 @@ async function persistPlanRequestReplacementUploadAndJob(input: {
           sourcePageId: String(request.sourcePageId),
           uploadId: input.uploadId,
           requestVersion: input.requestVersion,
-          targetCount: snapshots.length
+          targetCount: snapshots.length,
+          targets: snapshots.map((target) => ({
+            drawingId: target.drawingId,
+            requestedRevisionId: target.requestedRevisionId
+          }))
         }
       });
       saved = created!.toObject();
@@ -4212,6 +4243,18 @@ function requireEstimateClaim(job: Record<string, any>, claimToken: string, now:
   }
 }
 
+function workerResultClaimDigest(claimToken: string) {
+  return createHash("sha256").update(claimToken, "utf8").digest("hex");
+}
+
+function workerResultClaimMatches(storedDigest: unknown, claimToken: string) {
+  if (typeof storedDigest !== "string" || !/^[a-f0-9]{64}$/u.test(storedDigest)) return false;
+  return timingSafeEqual(
+    Buffer.from(storedDigest, "hex"),
+    Buffer.from(workerResultClaimDigest(claimToken), "hex")
+  );
+}
+
 function requireAnnotationDimensions(
   revision: Record<string, any>,
   annotations: AnnotationDocumentV1
@@ -4452,7 +4495,8 @@ async function terminallyCancelFrozenWorkerJob(
         claimId: null,
         failureCode: frozenEstimateJobFailure.code,
         failureMessage: frozenEstimateJobFailure.message,
-        workerResultId: null
+        workerResultId: null,
+        workerResultClaimDigest: null
       }
     },
     { new: true, runValidators: true, session }
@@ -4723,6 +4767,18 @@ async function withMongoTransaction(operation: (session: mongoose.ClientSession)
 
 async function cleanupReferences(storage: Storage, references: string[]) {
   await Promise.allSettled(references.map((reference) => storage.delete(reference)));
+}
+
+async function cleanupUploadedReferenceOrThrow(storage: Storage, reference: string) {
+  try {
+    await storage.delete(reference);
+  } catch {
+    throw new ApiError(
+      500,
+      "FILE_CLEANUP_ERROR",
+      "File metadata could not be saved and the stored file could not be cleaned up."
+    );
+  }
 }
 
 async function saveGeneratedImage(storage: Storage, data: Buffer) {

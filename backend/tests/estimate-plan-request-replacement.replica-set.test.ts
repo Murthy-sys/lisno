@@ -29,6 +29,7 @@ class TestStorage {
   sequence = 0;
   objects = new Map<string, Buffer>();
   deleted: string[] = [];
+  failDelete = false;
 
   async save(input: { data: Buffer; extension: string }) {
     const reference = `source-${++this.sequence}${input.extension}`;
@@ -54,6 +55,7 @@ class TestStorage {
   }
 
   async delete(reference: string) {
+    if (this.failDelete) throw new Error("injected cleanup failure");
     this.deleted.push(reference);
     this.objects.delete(reference);
   }
@@ -87,7 +89,11 @@ afterAll(async () => {
   await replica.stop();
 });
 
-async function setup() {
+async function setup(options: {
+  detectedTitle?: string;
+  displayTitle?: string;
+  revisionLabel?: string;
+} = {}) {
   const storage = new TestStorage();
   storage.objects.set("original-page.png", png);
   const audit = {
@@ -190,8 +196,8 @@ async function setup() {
     estimateId: "estimate-request-replacement",
     active: true,
     verified: true,
-    detectedTitle: "LIVING ROOM FLOOR PLAN",
-    displayTitle: "Living Room Floor Plan",
+    detectedTitle: options.detectedTitle ?? "LIVING ROOM FLOOR PLAN",
+    displayTitle: options.displayTitle ?? "Living Room Floor Plan",
     source: "ocr",
     mappingStatus: "misc"
   });
@@ -202,7 +208,7 @@ async function setup() {
     sourcePageId: "original-page",
     crop: { x: 0, y: 0, width: 100, height: 100 },
     croppedFileReference: "original-page.png",
-    label: "Living Room Floor Plan",
+    label: options.revisionLabel ?? "Living Room Floor Plan",
     mappingStatus: "misc",
     reviewStatus: "changes_requested",
     replacementUploadId: null
@@ -300,6 +306,32 @@ async function queueAndClaim(service: ReturnType<typeof createEstimateDesignServ
 }
 
 describe("request-scoped estimate plan replacement", () => {
+  it("matches a corrected 3D revision title when original OCR and mapping are unusable", async () => {
+    const { service } = await setup({
+      detectedTitle: "UNREADABLE OCR TITLE",
+      displayTitle: "LIVING ROOM 3D PERSPECTIVE",
+      revisionLabel: "LIVING ROOM 3D PERSPECTIVE"
+    });
+
+    const { queued, jobId, claimId } = await queueAndClaim(service);
+    expect(queued.requestReplacement).toMatchObject({
+      matches: [{
+        drawingId: "requested-drawing",
+        detectedTitle: "LIVING ROOM 3D PERSPECTIVE"
+      }]
+    });
+    await expect(service.completeWorkerJob(jobId, claimId, NOW.toISOString(), {
+      resultId: "corrected-3d-title-result",
+      pages: [workerPage(1, "LIVING ROOM 3D PERSPECTIVE")]
+    })).resolves.toMatchObject({ status: "estimator_review" });
+
+    expect(await EstimateDesignRevisionModel.countDocuments({ drawingId: "requested-drawing" })).toBe(2);
+    expect(await EstimatePlanChangeRequestModel.findById("plan-request").lean()).toMatchObject({
+      version: 2,
+      targets: [{ status: "replacement_submitted" }]
+    });
+  });
+
   it("keeps the explicit ordinary upload path append-only while a Client request is open", async () => {
     const { service } = await setup();
     const queued = await service.upload(designer, "estimate-request-replacement", uploadInput().file);
@@ -349,8 +381,29 @@ describe("request-scoped estimate plan replacement", () => {
     });
   });
 
-  it("queues idempotently, ignores unrelated PDF pages, and advances the original page once", async () => {
+  it("surfaces a checked cleanup failure for a concurrent queue loser", async () => {
     const { service, storage } = await setup();
+    storage.failDelete = true;
+    const outcomes = await Promise.allSettled([
+      service.uploadPlanRequestReplacement(designer, "plan-request", uploadInput()),
+      service.uploadPlanRequestReplacement(designer, "plan-request", uploadInput())
+    ]);
+    const fulfilled = outcomes.filter((outcome) => outcome.status === "fulfilled");
+    const rejected = outcomes.filter((outcome) => outcome.status === "rejected") as PromiseRejectedResult[];
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.reason).toMatchObject({
+      status: 500,
+      code: "FILE_CLEANUP_ERROR"
+    });
+    expect(String(rejected[0]!.reason.message)).not.toContain("source-");
+    expect(await EstimateDesignUploadModel.countDocuments({ purpose: "plan_request_replacement" })).toBe(1);
+    expect(await EstimateDesignExtractionJobModel.countDocuments()).toBe(2);
+  });
+
+  it("queues idempotently, ignores unrelated PDF pages, and advances the original page once", async () => {
+    const { service, storage, audit } = await setup();
     await EstimateDesignDrawingModel.create({
       _id: "requested-drawing-2",
       uploadId: "ordinary-upload",
@@ -407,13 +460,13 @@ describe("request-scoped estimate plan replacement", () => {
           {
             drawingId: "requested-drawing",
             requestedRevisionId: "requested-revision",
-            detectedTitle: "LIVING ROOM FLOOR PLAN",
+            detectedTitle: "Living Room Floor Plan",
             resultRevisionId: null
           },
           {
             drawingId: "requested-drawing-2",
             requestedRevisionId: "requested-revision-2",
-            detectedTitle: "BEDROOM FLOOR PLAN",
+            detectedTitle: "Bedroom Floor Plan",
             resultRevisionId: null
           }
         ]
@@ -431,19 +484,86 @@ describe("request-scoped estimate plan replacement", () => {
       NOW.toISOString(),
       new Date(NOW.getTime() + 60_000).toISOString()
     );
+    const claimId = (claimed as { claimId: string }).claimId;
+    const workerResult = {
+      resultId: "replacement-result",
+      pages: [
+        workerPage(1, "Living Room Floor Plan"),
+        workerPage(2, "Bedroom Floor Plan"),
+        workerPage(3, "UNCHANGED KITCHEN PLAN")
+      ]
+    };
     await service.completeWorkerJob(
       String(job!._id),
-      (claimed as { claimId: string }).claimId,
+      claimId,
       NOW.toISOString(),
-      {
-        resultId: "replacement-result",
-        pages: [
-          workerPage(1, "Living Room Floor Plan"),
-          workerPage(2, "Bedroom Floor Plan"),
-          workerPage(3, "UNCHANGED KITCHEN PLAN")
+      workerResult
+    );
+
+    const beforeReplay = {
+      pageCount: await EstimateDesignSourcePageModel.countDocuments({ uploadId: first.id }),
+      revisionCount: await EstimateDesignRevisionModel.countDocuments({
+        drawingId: { $in: ["requested-drawing", "requested-drawing-2"] }
+      }),
+      planPageCount: await EstimatePlanPageRevisionModel.countDocuments({ sourcePageId: "original-page" }),
+      auditCount: audit.appendInMongoTransaction.mock.calls.length
+    };
+    await expect(service.completeWorkerJob(
+      String(job!._id),
+      "wrong-claim-token",
+      NOW.toISOString(),
+      workerResult
+    )).rejects.toMatchObject({ code: "STALE_EXTRACTION_CLAIM" });
+    await expect(service.completeWorkerJob(
+      String(job!._id),
+      claimId,
+      NOW.toISOString(),
+      { ...workerResult, resultId: "different-result" }
+    )).rejects.toMatchObject({ code: "STALE_EXTRACTION_CLAIM" });
+    const replayed = await service.completeWorkerJob(
+      String(job!._id),
+      claimId,
+      NOW.toISOString(),
+      workerResult
+    );
+    expect(replayed).toMatchObject({ status: "estimator_review" });
+    expect(replayed).not.toHaveProperty("workerResultClaimDigest");
+    expect({
+      pageCount: await EstimateDesignSourcePageModel.countDocuments({ uploadId: first.id }),
+      revisionCount: await EstimateDesignRevisionModel.countDocuments({
+        drawingId: { $in: ["requested-drawing", "requested-drawing-2"] }
+      }),
+      planPageCount: await EstimatePlanPageRevisionModel.countDocuments({ sourcePageId: "original-page" }),
+      auditCount: audit.appendInMongoTransaction.mock.calls.length
+    }).toEqual(beforeReplay);
+    const completedJob = await EstimateDesignExtractionJobModel.findById(job!._id).lean();
+    expect(completedJob!.workerResultClaimDigest).toMatch(/^[a-f0-9]{64}$/u);
+    expect(completedJob!.workerResultClaimDigest).not.toContain(claimId);
+
+    const auditEvents = audit.appendInMongoTransaction.mock.calls.map(([event]) => event);
+    expect(auditEvents.find((event) => event.action === "estimate_design_replacement_queued")).toMatchObject({
+      newValues: {
+        targets: [
+          { drawingId: "requested-drawing", requestedRevisionId: "requested-revision" },
+          { drawingId: "requested-drawing-2", requestedRevisionId: "requested-revision-2" }
         ]
       }
-    );
+    });
+    expect(auditEvents.find((event) => event.action === "estimate_design_replacement_created")).toMatchObject({
+      newValues: {
+        ignoredPageCount: 1,
+        matches: [
+          { drawingId: "requested-drawing", matchReason: "normalized_title", pageNumber: 1 },
+          { drawingId: "requested-drawing-2", matchReason: "normalized_title", pageNumber: 2 }
+        ]
+      }
+    });
+    const safeAuditJson = JSON.stringify(auditEvents.filter((event) =>
+      ["estimate_design_replacement_queued", "estimate_design_replacement_created"].includes(event.action)
+    ));
+    expect(safeAuditJson).not.toContain("Living Room");
+    expect(safeAuditJson).not.toContain("source-");
+    expect(safeAuditJson).not.toContain(claimId);
 
     expect(await EstimateDesignDrawingModel.countDocuments({ estimateId: "estimate-request-replacement" })).toBe(2);
     expect(await EstimateDesignRevisionModel.countDocuments({ drawingId: "requested-drawing" })).toBe(2);
@@ -515,10 +635,18 @@ describe("request-scoped estimate plan replacement", () => {
       replacementUploadId: null
     });
 
+    await EstimateDesignExtractionJobModel.updateOne(
+      { _id: jobId },
+      { $set: { workerResultClaimDigest: "a".repeat(64) } }
+    );
+
     await expect(service.retryUpload(designer, queued.id)).resolves.toMatchObject({
       id: queued.id,
       extractionStatus: "queued",
       purpose: "plan_request_replacement"
+    });
+    expect(await EstimateDesignExtractionJobModel.findById(jobId).lean()).toMatchObject({
+      workerResultClaimDigest: null
     });
     expect(await EstimateDesignRevisionModel.findById("requested-revision").lean()).toMatchObject({
       replacementUploadId: queued.id

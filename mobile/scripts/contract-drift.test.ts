@@ -20,22 +20,42 @@ function quotedArray(code: string, constant: string): readonly string[] {
   return [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]!);
 }
 
+function quotedStringConstant(code: string, constant: string): string {
+  const match = code.match(
+    new RegExp(
+      `export\\s+const\\s+${constant}\\s*=\\s*["']([^"']+)["']\\s+as\\s+const\\s*;`
+    )
+  );
+  if (!match?.[1]) throw new Error(`Unable to read ${constant}`);
+  return match[1];
+}
+
 describe("mobile contract provenance", () => {
   const frontendAuthorization = source("frontend/src/api/authorization-contract.ts");
   const backendRoles = source("backend/src/domain/roles.ts");
   const backendAuthorization = source("backend/src/domain/authorization.ts");
+  const backendAuthService = source("backend/src/services/auth.service.ts");
   const backendOperations = source("backend/src/domain/route-operations.ts");
 
   it("tracks canonical roles, permissions and policy", () => {
     const canonicalRoles = quotedArray(backendRoles, "ROLE_CODES");
     const canonicalPermissions = quotedArray(backendAuthorization, "PERMISSION_CODES");
+    const canonicalPolicyVersion = quotedStringConstant(
+      backendAuthService,
+      "AUTHORIZATION_POLICY_VERSION"
+    );
+    const frontendPolicyVersion = quotedStringConstant(
+      frontendAuthorization,
+      "AUTHORIZATION_POLICY_VERSION"
+    );
     expect(ROLE_CODES).toEqual(canonicalRoles);
     expect(PERMISSION_CODES).toEqual(canonicalPermissions);
     expect(quotedArray(frontendAuthorization, "ROLE_CODES")).toEqual(canonicalRoles);
     expect(quotedArray(frontendAuthorization, "PERMISSION_CODES")).toEqual(canonicalPermissions);
-    expect(PERMISSION_CODES).toHaveLength(134);
-    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-09-18.vendor-procurement.v1");
-    expect(frontendAuthorization).toContain(`"${AUTHORIZATION_POLICY_VERSION}" as const`);
+    expect(PERMISSION_CODES).toHaveLength(135);
+    expect(canonicalPolicyVersion).toBe("2026-09-20.quality-control-options.v1");
+    expect(AUTHORIZATION_POLICY_VERSION).toBe(canonicalPolicyVersion);
+    expect(frontendPolicyVersion).toBe(canonicalPolicyVersion);
   });
 
   it("tracks every protected operation, permission and Super Admin behavior", () => {
@@ -48,7 +68,7 @@ describe("mobile contract provenance", () => {
       permission: entry[2]!,
       superAdminBehavior: entry[3]!
     }));
-    expect(canonical).toHaveLength(221);
+    expect(canonical).toHaveLength(224);
     expect(PROTECTED_OPERATIONS).toEqual(canonical);
   });
 

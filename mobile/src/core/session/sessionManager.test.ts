@@ -2,6 +2,7 @@ import { AUTHORIZATION_POLICY_VERSION } from "../../contracts/authorization";
 import { CleanupRegistry } from "../config/cleanupRegistry";
 import type { EnvironmentSnapshot } from "../config/environmentManager";
 import { JsonApiClient } from "../http/apiClient";
+import { InvalidAuthorizationSnapshotError } from "./authorization";
 import { SessionManager } from "./sessionManager";
 import { SessionTokenState } from "./tokenState";
 import {
@@ -142,6 +143,29 @@ describe("SessionManager", () => {
     });
     expect(harness.storage.values.has(TOKEN_KEY)).toBe(false);
     expect(harness.tokenState.getRequestToken()).toBeNull();
+  });
+
+  it("clears a newly issued login token when authorization policy validation fails", async () => {
+    const fetchImplementation = authenticatedRoutes({
+      authorization: {
+        ...authorization,
+        policyVersion: "2026-09-18.vendor-procurement.v1"
+      }
+    });
+    const harness = createHarness(fetchImplementation);
+
+    await expect(
+      harness.manager.login({ email: user.email, password: "password" })
+    ).rejects.toBeInstanceOf(InvalidAuthorizationSnapshotError);
+
+    expect(fetchImplementation).toHaveBeenCalledTimes(3);
+    expect(harness.storage.values.has(TOKEN_KEY)).toBe(false);
+    expect(harness.tokenState.getRequestToken()).toBeNull();
+    expect(harness.manager.getSnapshot()).toMatchObject({
+      status: "unauthenticated",
+      failure: "invalid_session",
+      session: null
+    });
   });
 
   it("preserves the secure token but exposes no protected session on transient restore failure", async () => {

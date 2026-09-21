@@ -20,4 +20,13 @@ describe("mobile authorization policy", () => {
     expect(parseAuthorizationSnapshot({ ...current, policyVersion: "future-policy" }, "designer")).toBeNull();
     expect(parseAuthorizationSnapshot(current, "client")).toBeNull();
   });
+
+  it("rejects a malformed authorization snapshot", () => {
+    expect(
+      parseAuthorizationSnapshot(
+        { ...current, permissions: "projects.list" },
+        "designer"
+      )
+    ).toBeNull();
+  });
 });

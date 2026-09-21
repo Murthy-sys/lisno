@@ -102,6 +102,7 @@ export async function deleteEstimateDesignUpload(input: {
             claimId: null,
             leaseExpiresAt: null,
             workerResultId: null,
+            workerResultClaimDigest: null,
             ...deletedFailure
           },
           $inc: { claimGeneration: 1 }
@@ -177,7 +178,7 @@ export async function deleteEstimateDesignUpload(input: {
     const cancelledUploadIds = [input.uploadId, ...dependentUploads.map((row) => String(row._id))];
     await EstimateDesignExtractionJobModel.updateMany(
       { uploadId: { $in: cancelledUploadIds }, status: { $in: ["queued", "processing"] } },
-      { $set: { status: "processing_failed", nextAttemptAt: null, completedAt: input.occurredAt, claimId: null, leaseExpiresAt: null, workerResultId: null, ...deletedFailure }, $inc: { claimGeneration: 1 } },
+      { $set: { status: "processing_failed", nextAttemptAt: null, completedAt: input.occurredAt, claimId: null, leaseExpiresAt: null, workerResultId: null, workerResultClaimDigest: null, ...deletedFailure }, $inc: { claimGeneration: 1 } },
       { session }
     );
     await EstimateDesignUploadModel.updateMany(
