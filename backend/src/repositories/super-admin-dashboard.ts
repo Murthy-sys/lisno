@@ -1,4 +1,7 @@
 import type {
+  DashboardClientMetrics,
+  DashboardComparison,
+  DashboardComparisonBucket,
   DashboardDataQuality,
   DashboardFactorDistributionItem,
   DashboardFinanceMetrics,
@@ -15,6 +18,7 @@ import type {
   SuperAdminDashboardOverview
 } from "../contracts/super-admin-dashboard.js";
 import {
+  dashboardComparisonMetric,
   dashboardFactorDistribution,
   dashboardRatio,
   dashboardTaskRiskFactor,
@@ -43,7 +47,9 @@ import type { PipelineStage } from "mongoose";
 import { AccessRequestModel } from "../models/AccessRequest.js";
 import { EstimateModel } from "../models/Estimate.js";
 import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
+import { EstimateClientResponseProofModel } from "../models/EstimateClientResponseProof.js";
 import { DesignPlanReviewRoundModel } from "../models/DesignPlanReviewRound.js";
+import { DesignPlanResponseProofModel } from "../models/DesignPlanResponseProof.js";
 import { FinanceLedgerEntryModel } from "../models/FinanceLedgerEntry.js";
 import { LeadModel } from "../models/Lead.js";
 import { ProjectModel } from "../models/Project.js";
@@ -54,6 +60,7 @@ import { UserInvitationModel } from "../models/UserInvitation.js";
 import { UserModel } from "../models/User.js";
 import {
   readProjectFinanceDashboardProjects,
+  readProjectFinanceExpenseActivity,
   readProjectFinancePortfolioReport,
   type ProjectFinanceBucketDto
 } from "../services/project-finance.service.js";
@@ -74,11 +81,24 @@ import type {
 
 export function memorySuperAdminDashboardOverview(
   state: SeedData,
-  input: { observedAt: string; startAt: string; endAt: string; periodDays: 7 | 30 | 90 }
+  input: {
+    observedAt: string;
+    startAt: string;
+    endAt: string;
+    previousStartAt?: string;
+    previousEndAt?: string;
+    periodDays: 7 | 30 | 90;
+  }
 ): SuperAdminDashboardOverview {
   const observedAt = new Date(input.observedAt);
   const startAt = new Date(input.startAt);
   const endAt = new Date(input.endAt);
+  const previousStartAt = input.previousStartAt
+    ? new Date(input.previousStartAt)
+    : shiftUtcDays(startAt, -input.periodDays);
+  const previousEndAt = input.previousEndAt
+    ? new Date(input.previousEndAt)
+    : shiftUtcDays(endAt, -input.periodDays);
   const projects = state.projects;
   const rows = memoryProjectRows(state, input.observedAt);
   const estimates = canonicalEstimatesByProject(state);
@@ -129,7 +149,6 @@ export function memorySuperAdminDashboardOverview(
   }));
   const riskDistribution = { gray: 0, green: 0, yellow: 0, red: 0 };
   for (const row of rows) riskDistribution[row.risk.level] += 1;
-  const trends = trendBuckets(input.periodDays, startAt, projects, estimateStatuses);
   const statusCount = (status: ProjectRecord["status"]) =>
     projects.filter((project) => project.status === status).length;
   const clientChanges = estimateStatuses.filter(
@@ -139,6 +158,20 @@ export function memorySuperAdminDashboardOverview(
     (estimate) => estimate.designPlanStatus === "changes_requested"
   ).length;
   const activeProjectTasks = state.tasks.filter((task) => task.status !== "completed");
+  const clients = memoryDashboardClients(state, startAt, endAt);
+  const comparison = memoryDashboardComparison(
+    state,
+    {
+      ...input,
+      previousStartAt: previousStartAt.toISOString(),
+      previousEndAt: previousEndAt.toISOString()
+    },
+    startAt,
+    endAt,
+    previousStartAt,
+    previousEndAt
+  );
+  const trends = comparisonTrendBuckets(comparison.currentBuckets);
 
   return {
     observedAt: input.observedAt,
@@ -146,6 +179,9 @@ export function memorySuperAdminDashboardOverview(
     projects: {
       total: projects.length,
       createdInPeriod: projects.filter((project) => within(project.createdAt, startAt, endAt)).length,
+      completedInPeriod: projects.filter((project) =>
+        project.status === "completed" && project.actualEndAt !== null && within(project.actualEndAt, startAt, endAt)
+      ).length,
       planning: statusCount("planning"),
       active: statusCount("active"),
       onHold: statusCount("on_hold"),
@@ -160,6 +196,7 @@ export function memorySuperAdminDashboardOverview(
       completionRate: dashboardRatio(statusCount("completed"), projects.length),
       atRisk: rows.filter((row) => row.risk.level === "red" || row.risk.level === "yellow").length
     },
+    clients,
     estimation: {
       eligibleProjects: projects.length,
       trackedProjects: estimateStatuses.length,
@@ -260,6 +297,7 @@ export function memorySuperAdminDashboardOverview(
         }))
     },
     trends,
+    comparison,
     dataQuality: unavailableDataQuality([
       "design.oldestPendingReviewAgeDays", "design.failedDeliveryCount",
       "design.disabledDeliveryCount",
@@ -285,6 +323,8 @@ export function memorySuperAdminDashboardOverview(
       "governance.failedDesignDeliveries", "governance.disabledDesignDeliveries",
       "trends.designPlansApproved", "trends.workflowTasksCompleted",
       "trends.ledgerExpensesPostedPaise",
+      "comparison.execution_tasks_completed", "comparison.estimates_approved",
+      "comparison.design_plans_approved", "comparison.recorded_expenses_paise",
       "risk.projectDistribution", "risk.factorDistribution", "risk.topProjects",
       "projects.atRisk",
       ...(memoryRiskFactorsMayBeTruncated(state)
@@ -544,91 +584,969 @@ async function mongoCanonicalProcurementMetrics(): Promise<MongoRow> {
   return row ?? {};
 }
 
-async function mongoCanonicalApprovalTrends(
+async function mongoDashboardClients(
   startAt: Date,
   endAt: Date
-): Promise<MongoRow[]> {
-  return EstimateModel.aggregate<MongoRow>([
-    {
-      $lookup: {
-        from: LeadModel.collection.name,
-        localField: "leadId",
-        foreignField: "_id",
-        as: "lead"
+): Promise<DashboardClientMetrics> {
+  const [accountsResult, relationshipsResult] = await Promise.allSettled([
+    UserModel.aggregate<MongoRow>([
+      { $match: { role: "client" } },
+      {
+        $group: {
+          _id: null,
+          registeredAccounts: { $sum: 1 },
+          activeAccounts: { $sum: { $cond: ["$active", 1, 0] } },
+          inactiveAccounts: { $sum: { $cond: ["$active", 0, 1] } },
+          accountsCreatedInPeriod: {
+            $sum: {
+              $cond: [
+                { $and: [{ $gte: ["$createdAt", startAt] }, { $lt: ["$createdAt", endAt] }] },
+                1,
+                0
+              ]
+            }
+          }
+        }
       }
-    },
-    { $set: { lead: { $arrayElemAt: ["$lead", 0] } } },
+    ]).exec(),
+    ProjectModel.aggregate<MongoRow>([
+      {
+        $lookup: {
+          from: UserModel.collection.name,
+          localField: "clientId",
+          foreignField: "_id",
+          as: "client"
+        }
+      },
+      { $set: { client: { $arrayElemAt: ["$client", 0] } } },
+      {
+        $set: {
+          validClientLink: {
+            $and: [
+              { $ne: [{ $ifNull: ["$clientId", null] }, null] },
+              { $eq: ["$client.role", "client"] }
+            ]
+          }
+        }
+      },
+      {
+        $facet: {
+          linkedClients: [
+            { $match: { validClientLink: true } },
+            { $group: { _id: "$clientId" } },
+            { $count: "value" }
+          ],
+          activeLinkedClients: [
+            { $match: { validClientLink: true, status: "active" } },
+            { $group: { _id: "$clientId" } },
+            { $count: "value" }
+          ],
+          projectIntegrity: [
+            {
+              $group: {
+                _id: null,
+                unlinkedProjects: {
+                  $sum: { $cond: [{ $eq: [{ $ifNull: ["$clientId", null] }, null] }, 1, 0] }
+                },
+                invalidProjectClientLinks: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $and: [
+                          { $ne: [{ $ifNull: ["$clientId", null] }, null] },
+                          { $not: ["$validClientLink"] }
+                        ]
+                      },
+                      1,
+                      0
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]).exec()
+  ]);
+  const accountReason = "Client account data is unavailable.";
+  const relationshipReason = "Client project relationship data is unavailable.";
+  const account = accountsResult.status === "fulfilled" ? accountsResult.value[0] ?? {} : null;
+  const relationship = relationshipsResult.status === "fulfilled"
+    ? relationshipsResult.value[0] ?? {}
+    : null;
+  const relationshipIntegrity = relationship?.projectIntegrity?.[0] ?? {};
+  return {
+    accountsStatus: account ? "available" : "unavailable",
+    relationshipsStatus: relationship ? "available" : "unavailable",
+    accountsUnavailableReason: account ? null : accountReason,
+    relationshipsUnavailableReason: relationship ? null : relationshipReason,
+    registeredAccounts: account ? Number(account.registeredAccounts ?? 0) : null,
+    activeAccounts: account ? Number(account.activeAccounts ?? 0) : null,
+    inactiveAccounts: account ? Number(account.inactiveAccounts ?? 0) : null,
+    accountsCreatedInPeriod: account ? Number(account.accountsCreatedInPeriod ?? 0) : null,
+    clientsWithProjects: relationship ? Number(relationship.linkedClients?.[0]?.value ?? 0) : null,
+    clientsWithActiveProjects: relationship ? Number(relationship.activeLinkedClients?.[0]?.value ?? 0) : null,
+    unlinkedProjects: relationship ? Number(relationshipIntegrity.unlinkedProjects ?? 0) : null,
+    invalidProjectClientLinks: relationship ? Number(relationshipIntegrity.invalidProjectClientLinks ?? 0) : null
+  };
+}
+
+type DashboardComparisonSeries = keyof Omit<DashboardComparisonBucket, "dayIndex" | "date">;
+type DashboardComparisonSeriesAvailability = Record<DashboardComparisonSeries, boolean>;
+
+interface DashboardComparisonSideProjection {
+  maps: Record<DashboardComparisonSeries, Map<string, number>>;
+  availability: DashboardComparisonSeriesAvailability;
+}
+
+function mongoDashboardExecutionLineageStages(): PipelineStage[] {
+  return [
+    { $lookup: { from: ProjectModel.collection.name, localField: "projectId", foreignField: "_id", as: "project" } },
+    { $lookup: { from: EstimateModel.collection.name, localField: "estimateId", foreignField: "_id", as: "estimate" } },
+    { $set: { estimate: { $arrayElemAt: ["$estimate", 0] } } },
     {
       $set: {
-        resolvedProjectId: { $ifNull: ["$projectId", "$lead.projectId"] },
-        lineageValid: {
-          $or: [
-            { $eq: [{ $ifNull: ["$projectId", null] }, null] },
-            { $eq: ["$projectId", "$lead.projectId"] }
+        approvedEstimateVersion: {
+          $cond: [
+            { $gt: ["$estimate.version", 1] },
+            { $subtract: ["$estimate.version", 1] },
+            1
           ]
         }
       }
     },
+    { $lookup: { from: LeadModel.collection.name, localField: "estimate.leadId", foreignField: "_id", as: "leadRows" } },
+    { $set: { lead: { $arrayElemAt: ["$leadRows", 0] } } },
     {
-      $lookup: {
-        from: ProjectModel.collection.name,
-        localField: "resolvedProjectId",
-        foreignField: "_id",
-        as: "project"
+      $set: {
+        matchingTradeSourceCount: {
+          $size: {
+            $filter: {
+              input: { $range: [0, { $size: { $ifNull: ["$estimate.lineItems", []] } }] },
+              as: "lineIndex",
+              cond: {
+                $let: {
+                  vars: {
+                    line: { $arrayElemAt: [{ $ifNull: ["$estimate.lineItems", []] }, "$$lineIndex"] }
+                  },
+                  in: {
+                    $let: {
+                      vars: {
+                        lineId: {
+                          $cond: [
+                            { $eq: [{ $type: "$$line.id" }, "string"] },
+                            { $trim: { input: "$$line.id" } },
+                            ""
+                          ]
+                        },
+                        catalogueId: {
+                          $toUpper: {
+                            $trim: {
+                              input: { $convert: { input: "$$line.catalogueId", to: "string", onError: "", onNull: "" } }
+                            }
+                          }
+                        }
+                      },
+                      in: {
+                        $and: [
+                          { $eq: ["$$line.included", true] },
+                          { $eq: ["$sourceSectionId", { $substrCP: ["$$catalogueId", 0, 2] }] },
+                          {
+                            $eq: [
+                              "$sourceLineItemKey",
+                              {
+                                $cond: [
+                                  { $gt: [{ $strLenCP: "$$lineId" }, 0] },
+                                  "$$lineId",
+                                  {
+                                    $concat: [
+                                      "legacy-estimate-line:", "$estimate._id", ":",
+                                      { $toString: "$approvedEstimateVersion" }, ":", { $toString: "$$lineIndex" }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
-    { $match: { lineageValid: true, "project.0": { $exists: true } } },
     {
-      $project: {
-        events: {
-          $concatArrays: [
+      $set: {
+        lineageValid: {
+          $and: [
+            { $eq: [{ $size: "$project" }, 1] },
+            { $ne: [{ $ifNull: ["$estimate._id", null] }, null] },
+            { $eq: [{ $size: "$leadRows" }, 1] },
+            { $eq: ["$estimate.leadId", "$lead._id"] },
+            { $eq: ["$lead.projectId", "$projectId"] },
             {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: ["$status", "client_approved"] },
-                    { $gte: ["$clientDecisionAt", startAt] },
-                    { $lte: ["$clientDecisionAt", endAt] }
-                  ]
-                },
-                [{ type: "estimate", at: "$clientDecisionAt" }],
-                []
+              $or: [
+                { $eq: [{ $ifNull: ["$estimate.projectId", null] }, null] },
+                { $eq: ["$estimate.projectId", "$projectId"] }
               ]
             },
+            { $in: [{ $type: "$designPlanVersion" }, ["int", "long", "double", "decimal"]] },
+            { $gte: ["$designPlanVersion", 1] },
+            { $eq: ["$designPlanVersion", { $trunc: "$designPlanVersion" }] },
+            { $lte: ["$designPlanVersion", "$estimate.designPlanVersion"] },
             {
-              $cond: [
+              $or: [
                 {
                   $and: [
-                    { $eq: ["$designPlanStatus", "approved"] },
-                    { $gte: ["$designPlanApprovedAt", startAt] },
-                    { $lte: ["$designPlanApprovedAt", endAt] }
+                    { $eq: ["$kind", "site_execution"] },
+                    { $eq: [{ $ifNull: ["$sourceSectionId", null] }, null] },
+                    { $eq: [{ $ifNull: ["$sourceLineItemKey", null] }, null] }
                   ]
                 },
-                [{ type: "design", at: "$designPlanApprovedAt" }],
-                []
+                {
+                  $and: [
+                    { $eq: ["$kind", "trade_execution"] },
+                    { $eq: ["$matchingTradeSourceCount", 1] }
+                  ]
+                }
               ]
             }
           ]
         }
       }
-    },
-    { $unwind: "$events" },
-    {
-      $group: {
-        _id: {
-          type: "$events.type",
-          day: { $dateToString: { format: "%Y-%m-%d", date: "$events.at", timezone: "UTC" } }
-        },
-        count: { $sum: 1 }
-      }
     }
-  ] as PipelineStage[]).exec();
+  ];
+}
+
+async function mongoDashboardComparisonSide(input: {
+  startAt: Date;
+  endAt: Date;
+}): Promise<DashboardComparisonSideProjection> {
+  const executionKinds = ["site_execution", "trade_execution"];
+  const results = await Promise.allSettled([
+    ProjectModel.aggregate<MongoRow>([
+      {
+        $project: {
+          events: {
+            $concatArrays: [
+              {
+                $cond: [
+                  { $and: [{ $gte: ["$createdAt", input.startAt] }, { $lt: ["$createdAt", input.endAt] }] },
+                  [{ type: "projectsCreated", at: "$createdAt" }],
+                  []
+                ]
+              },
+              {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$status", "completed"] },
+                      { $gte: ["$actualEndAt", input.startAt] },
+                      { $lt: ["$actualEndAt", input.endAt] }
+                    ]
+                  },
+                  [{ type: "projectsCompleted", at: "$actualEndAt" }],
+                  []
+                ]
+              }
+            ]
+          }
+        }
+      },
+      { $unwind: "$events" },
+      {
+        $group: {
+          _id: {
+            type: "$events.type",
+            day: { $dateToString: { format: "%Y-%m-%d", date: "$events.at", timezone: "UTC" } }
+          },
+          value: { $sum: 1 }
+        }
+      }
+    ]).exec(),
+    UserModel.aggregate<MongoRow>([
+      { $match: { role: "client", createdAt: { $gte: input.startAt, $lt: input.endAt } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone: "UTC" } },
+          value: { $sum: 1 }
+        }
+      }
+    ]).exec(),
+    ProjectWorkflowTaskModel.aggregate<MongoRow>([
+      {
+        $match: {
+          kind: { $in: executionKinds },
+          status: "completed",
+          completedAt: { $gte: input.startAt, $lt: input.endAt }
+        }
+      },
+      { $lookup: { from: ProjectModel.collection.name, localField: "projectId", foreignField: "_id", as: "project" } },
+      { $lookup: { from: EstimateModel.collection.name, localField: "estimateId", foreignField: "_id", as: "estimate" } },
+      { $set: { estimate: { $arrayElemAt: ["$estimate", 0] } } },
+      {
+        $set: {
+          approvedEstimateVersion: {
+            $cond: [
+              { $gt: ["$estimate.version", 1] },
+              { $subtract: ["$estimate.version", 1] },
+              1
+            ]
+          }
+        }
+      },
+      { $lookup: { from: LeadModel.collection.name, localField: "estimate.leadId", foreignField: "_id", as: "leadRows" } },
+      { $set: { lead: { $arrayElemAt: ["$leadRows", 0] } } },
+      {
+        $set: {
+          matchingTradeSourceCount: {
+            $size: {
+              $filter: {
+                input: { $range: [0, { $size: { $ifNull: ["$estimate.lineItems", []] } }] },
+                as: "lineIndex",
+                cond: {
+                  $let: {
+                    vars: {
+                      line: { $arrayElemAt: [{ $ifNull: ["$estimate.lineItems", []] }, "$$lineIndex"] }
+                    },
+                    in: {
+                      $let: {
+                        vars: {
+                          lineId: {
+                            $cond: [
+                              { $eq: [{ $type: "$$line.id" }, "string"] },
+                              { $trim: { input: "$$line.id" } },
+                              ""
+                            ]
+                          },
+                          catalogueId: {
+                            $toUpper: {
+                              $trim: {
+                                input: { $convert: { input: "$$line.catalogueId", to: "string", onError: "", onNull: "" } }
+                              }
+                            }
+                          }
+                        },
+                        in: {
+                          $and: [
+                            { $eq: ["$$line.included", true] },
+                            { $eq: ["$sourceSectionId", { $substrCP: ["$$catalogueId", 0, 2] }] },
+                            {
+                              $eq: [
+                                "$sourceLineItemKey",
+                                {
+                                  $cond: [
+                                    { $gt: [{ $strLenCP: "$$lineId" }, 0] },
+                                    "$$lineId",
+                                    {
+                                      $concat: [
+                                        "legacy-estimate-line:", "$estimate._id", ":",
+                                        { $toString: "$approvedEstimateVersion" }, ":", { $toString: "$$lineIndex" }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        $set: {
+          lineageValid: {
+            $and: [
+              { $eq: [{ $size: "$project" }, 1] },
+              { $ne: [{ $ifNull: ["$estimate._id", null] }, null] },
+              { $eq: [{ $size: "$leadRows" }, 1] },
+              { $eq: ["$estimate.leadId", "$lead._id"] },
+              { $eq: ["$lead.projectId", "$projectId"] },
+              {
+                $or: [
+                  { $eq: [{ $ifNull: ["$estimate.projectId", null] }, null] },
+                  { $eq: ["$estimate.projectId", "$projectId"] }
+                ]
+              },
+              { $in: [{ $type: "$designPlanVersion" }, ["int", "long", "double", "decimal"]] },
+              { $gte: ["$designPlanVersion", 1] },
+              { $eq: ["$designPlanVersion", { $trunc: "$designPlanVersion" }] },
+              { $lte: ["$designPlanVersion", "$estimate.designPlanVersion"] },
+              {
+                $or: [
+                  {
+                    $and: [
+                      { $eq: ["$kind", "site_execution"] },
+                      { $eq: [{ $ifNull: ["$sourceSectionId", null] }, null] },
+                      { $eq: [{ $ifNull: ["$sourceLineItemKey", null] }, null] }
+                    ]
+                  },
+                  {
+                    $and: [
+                      { $eq: ["$kind", "trade_execution"] },
+                      { $eq: ["$matchingTradeSourceCount", 1] }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        $facet: {
+          invalid: [{ $match: { lineageValid: false } }, { $count: "value" }],
+          rows: [
+            { $match: { lineageValid: true } },
+            {
+              $group: {
+                _id: { $dateToString: { format: "%Y-%m-%d", date: "$completedAt", timezone: "UTC" } },
+                value: { $sum: 1 }
+              }
+            }
+          ]
+        }
+      }
+    ]).exec(),
+    EstimateClientReviewRoundModel.aggregate<MongoRow>([
+      { $set: { eventType: "estimatesApproved" } },
+      {
+        $unionWith: {
+          coll: DesignPlanReviewRoundModel.collection.name,
+          pipeline: [{ $set: { eventType: "designPlansApproved" } }]
+        }
+      },
+      {
+        $match: {
+          status: "approved",
+          decision: "approve",
+          decidedAt: { $gte: input.startAt, $lt: input.endAt }
+        }
+      },
+      { $lookup: { from: EstimateModel.collection.name, localField: "estimateId", foreignField: "_id", as: "estimateRows" } },
+      { $set: { estimate: { $arrayElemAt: ["$estimateRows", 0] } } },
+      {
+        $set: {
+          resolvedProjectId: {
+            $cond: [
+              { $eq: ["$eventType", "estimatesApproved"] },
+              { $ifNull: ["$projectId", "$estimate.projectId"] },
+              "$projectId"
+            ]
+          }
+        }
+      },
+      { $lookup: { from: ProjectModel.collection.name, localField: "resolvedProjectId", foreignField: "_id", as: "project" } },
+      { $lookup: { from: LeadModel.collection.name, localField: "estimate.leadId", foreignField: "_id", as: "leadRows" } },
+      { $set: { lead: { $arrayElemAt: ["$leadRows", 0] } } },
+      { $lookup: { from: UserModel.collection.name, localField: "decidedById", foreignField: "_id", as: "deciderRows" } },
+      { $set: { decider: { $arrayElemAt: ["$deciderRows", 0] } } },
+      { $lookup: { from: EstimateClientResponseProofModel.collection.name, localField: "_id", foreignField: "reviewRoundId", as: "estimateProofRows" } },
+      { $lookup: { from: DesignPlanResponseProofModel.collection.name, localField: "_id", foreignField: "reviewRoundId", as: "designProofRows" } },
+      {
+        $set: {
+          approvalVersion: {
+            $cond: [{ $eq: ["$eventType", "estimatesApproved"] }, "$estimateVersion", "$designPlanVersion"]
+          },
+          canonicalVersion: {
+            $cond: [{ $eq: ["$eventType", "estimatesApproved"] }, "$estimate.version", "$estimate.designPlanVersion"]
+          },
+          proofRows: {
+            $cond: [{ $eq: ["$eventType", "estimatesApproved"] }, "$estimateProofRows", "$designProofRows"]
+          }
+        }
+      },
+      {
+        $set: {
+          approvalVersionNumber: {
+            $convert: { input: "$approvalVersion", to: "double", onError: null, onNull: null }
+          },
+          proof: { $arrayElemAt: ["$proofRows", 0] }
+        }
+      },
+      {
+        $set: {
+          decisionEvidenceValid: {
+            $and: [
+              { $eq: [{ $type: "$decidedAt" }, "date"] },
+              { $eq: [{ $type: "$decisionNote" }, "string"] },
+              { $eq: [{ $type: "$decidedById" }, "string"] },
+              { $eq: [{ $size: "$deciderRows" }, 1] },
+              {
+                $or: [
+                  {
+                    $and: [
+                      { $eq: ["$decisionSource", "client_portal"] },
+                      {
+                        $or: [
+                          { $eq: ["$eventType", "estimatesApproved"] },
+                          {
+                            $and: [
+                              { $eq: ["$decidedByRole", "client"] },
+                              { $eq: [{ $type: "$decidedByName" }, "string"] }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    $and: [
+                      { $eq: ["$decisionSource", "admin_proof"] },
+                      { $eq: [{ $size: "$proofRows" }, 1] },
+                      { $eq: ["$proof.estimateId", "$estimateId"] },
+                      { $eq: ["$proof.uploadedById", "$decidedById"] },
+                      {
+                        $or: [
+                          { $eq: ["$eventType", "estimatesApproved"] },
+                          {
+                            $and: [
+                              { $in: ["$decidedByRole", ["admin", "super_admin"]] },
+                              { $eq: [{ $type: "$decidedByName" }, "string"] }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        $set: {
+          lineageValid: {
+            $and: [
+              { $eq: [{ $size: "$project" }, 1] },
+              { $eq: [{ $size: "$estimateRows" }, 1] },
+              { $eq: [{ $size: "$leadRows" }, 1] },
+              { $eq: ["$lead._id", "$estimate.leadId"] },
+              { $eq: ["$leadId", "$estimate.leadId"] },
+              { $eq: ["$lead.projectId", "$resolvedProjectId"] },
+              { $eq: ["$estimate.projectId", "$resolvedProjectId"] },
+              {
+                $or: [
+                  {
+                    $and: [
+                      { $eq: ["$eventType", "estimatesApproved"] },
+                      {
+                        $or: [
+                          { $eq: [{ $ifNull: ["$projectId", null] }, null] },
+                          { $eq: ["$projectId", "$resolvedProjectId"] }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    $and: [
+                      { $eq: ["$eventType", "designPlansApproved"] },
+                      { $eq: ["$projectId", "$resolvedProjectId"] }
+                    ]
+                  }
+                ]
+              },
+              { $in: [{ $type: "$approvalVersion" }, ["int", "long", "double", "decimal"]] },
+              { $gte: ["$approvalVersionNumber", 1] },
+              { $eq: ["$approvalVersionNumber", { $trunc: "$approvalVersionNumber" }] },
+              { $lte: ["$approvalVersionNumber", "$canonicalVersion"] },
+              "$decisionEvidenceValid"
+            ]
+          }
+        }
+      },
+      {
+        $group: {
+          _id: { eventType: "$eventType", estimateId: "$estimateId", version: "$approvalVersion" },
+          lineageInvalid: { $max: { $cond: ["$lineageValid", 0, 1] } },
+          projectIds: { $addToSet: "$resolvedProjectId" },
+          decidedAts: { $addToSet: "$decidedAt" },
+          decidedByIds: { $addToSet: "$decidedById" },
+          decisionSources: { $addToSet: "$decisionSource" },
+          decidedAt: { $min: "$decidedAt" }
+        }
+      },
+      {
+        $set: {
+          eventType: "$_id.eventType",
+          sourceInvalid: {
+            $or: [
+              { $gt: ["$lineageInvalid", 0] },
+              { $ne: [{ $size: "$projectIds" }, 1] },
+              { $ne: [{ $size: "$decidedAts" }, 1] },
+              { $ne: [{ $size: "$decidedByIds" }, 1] },
+              { $ne: [{ $size: "$decisionSources" }, 1] }
+            ]
+          }
+        }
+      },
+      {
+        $facet: {
+          invalid: [
+            { $match: { sourceInvalid: true } },
+            { $group: { _id: "$eventType", value: { $sum: 1 } } }
+          ],
+          rows: [
+            { $match: { sourceInvalid: false } },
+            {
+              $group: {
+                _id: {
+                  type: "$eventType",
+                  day: { $dateToString: { format: "%Y-%m-%d", date: "$decidedAt", timezone: "UTC" } }
+                },
+                value: { $sum: 1 }
+              }
+            }
+          ]
+        }
+      }
+    ]).exec(),
+    readProjectFinanceExpenseActivity(input.startAt, input.endAt),
+    EstimateModel.aggregate<MongoRow>([
+      {
+        $match: {
+          $or: [
+            { status: "client_approved", clientDecisionAt: { $gte: input.startAt, $lt: input.endAt } },
+            { designPlanStatus: "approved", designPlanApprovedAt: { $gte: input.startAt, $lt: input.endAt } }
+          ]
+        }
+      },
+      {
+        $set: {
+          approvalReviews: {
+            $filter: {
+              input: { $ifNull: ["$reviews", []] },
+              as: "review",
+              cond: { $eq: ["$$review.action", "client_approved"] }
+            }
+          }
+        }
+      },
+      {
+        $set: {
+          events: {
+            $concatArrays: [
+              {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$status", "client_approved"] },
+                      { $gte: ["$clientDecisionAt", input.startAt] },
+                      { $lt: ["$clientDecisionAt", input.endAt] }
+                    ]
+                  },
+                  [{
+                    type: "estimatesApproved",
+                    at: "$clientDecisionAt",
+                    version: { $cond: [{ $gt: ["$version", 1] }, { $subtract: ["$version", 1] }, 1] },
+                    actorId: { $arrayElemAt: ["$approvalReviews.actorId", 0] },
+                    reviewAt: { $arrayElemAt: ["$approvalReviews.occurredAt", 0] },
+                    reviewCount: { $size: "$approvalReviews" },
+                    source: "legacy_estimate_review"
+                  }],
+                  []
+                ]
+              },
+              {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$designPlanStatus", "approved"] },
+                      { $gte: ["$designPlanApprovedAt", input.startAt] },
+                      { $lt: ["$designPlanApprovedAt", input.endAt] }
+                    ]
+                  },
+                  [{
+                    type: "designPlansApproved",
+                    at: "$designPlanApprovedAt",
+                    version: "$designPlanVersion",
+                    actorId: "$designPlanApprovedById",
+                    reviewAt: "$designPlanApprovedAt",
+                    reviewCount: 1,
+                    source: "$designPlanApprovalSource"
+                  }],
+                  []
+                ]
+              }
+            ]
+          }
+        }
+      },
+      { $unwind: "$events" },
+      { $lookup: { from: ProjectModel.collection.name, localField: "projectId", foreignField: "_id", as: "projectRows" } },
+      { $lookup: { from: LeadModel.collection.name, localField: "leadId", foreignField: "_id", as: "leadRows" } },
+      { $lookup: { from: UserModel.collection.name, localField: "events.actorId", foreignField: "_id", as: "actorRows" } },
+      { $set: { lead: { $arrayElemAt: ["$leadRows", 0] }, actor: { $arrayElemAt: ["$actorRows", 0] } } },
+      {
+        $lookup: {
+          from: EstimateClientReviewRoundModel.collection.name,
+          let: { estimateId: "$_id", version: "$events.version" },
+          pipeline: [{
+            $match: {
+              $expr: { $and: [{ $eq: ["$estimateId", "$$estimateId"] }, { $eq: ["$estimateVersion", "$$version"] }] }
+            }
+          }],
+          as: "estimateRounds"
+        }
+      },
+      {
+        $lookup: {
+          from: DesignPlanReviewRoundModel.collection.name,
+          let: { estimateId: "$_id", version: "$events.version" },
+          pipeline: [{
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ["$estimateId", "$$estimateId"] },
+                  { $eq: ["$designPlanVersion", "$$version"] }
+                ]
+              }
+            }
+          }],
+          as: "designRounds"
+        }
+      },
+      {
+        $set: {
+          matchingRounds: {
+            $cond: [{ $eq: ["$events.type", "estimatesApproved"] }, "$estimateRounds", "$designRounds"]
+          }
+        }
+      },
+      { $match: { $expr: { $eq: [{ $size: "$matchingRounds" }, 0] } } },
+      {
+        $set: {
+          legacyValid: {
+            $and: [
+              { $eq: [{ $size: "$projectRows" }, 1] },
+              { $eq: [{ $size: "$leadRows" }, 1] },
+              { $eq: ["$lead.projectId", "$projectId"] },
+              { $eq: [{ $size: "$actorRows" }, 1] },
+              { $in: [{ $type: "$events.version" }, ["int", "long", "double", "decimal"]] },
+              { $gte: ["$events.version", 1] },
+              { $eq: ["$events.version", { $trunc: "$events.version" }] },
+              {
+                $cond: [
+                  { $eq: ["$events.type", "estimatesApproved"] },
+                  {
+                    $and: [
+                      { $eq: ["$events.reviewCount", 1] },
+                      { $eq: ["$events.reviewAt", "$events.at"] }
+                    ]
+                  },
+                  {
+                    $or: [
+                      {
+                        $and: [
+                          { $eq: ["$events.source", "client_portal"] },
+                          { $eq: ["$actor.role", "client"] }
+                        ]
+                      },
+                      false
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        $facet: {
+          invalid: [
+            { $match: { legacyValid: false } },
+            { $group: { _id: "$events.type", value: { $sum: 1 } } }
+          ],
+          rows: [
+            { $match: { legacyValid: true } },
+            {
+              $group: {
+                _id: {
+                  type: "$events.type",
+                  day: { $dateToString: { format: "%Y-%m-%d", date: "$events.at", timezone: "UTC" } }
+                },
+                value: { $sum: 1 }
+              }
+            }
+          ]
+        }
+      }
+    ]).exec()
+  ]);
+
+  const projectsAvailable = results[0]?.status === "fulfilled";
+  const clientsAvailable = results[1]?.status === "fulfilled";
+  const executionFacet = results[2]?.status === "fulfilled" ? results[2].value[0] : null;
+  const approvalFacet = results[3]?.status === "fulfilled" ? results[3].value[0] : null;
+  const ledgerRows = results[4]?.status === "fulfilled" ? results[4].value : null;
+  const legacyApprovalFacet = results[5]?.status === "fulfilled" ? results[5].value[0] : null;
+  const approvalAvailable = (type: "estimatesApproved" | "designPlansApproved") =>
+    approvalFacet !== null &&
+    legacyApprovalFacet !== null &&
+    !approvalFacet.invalid?.some((row: MongoRow) => row._id === type && Number(row.value) > 0) &&
+    !legacyApprovalFacet.invalid?.some((row: MongoRow) => row._id === type && Number(row.value) > 0);
+  const executionAvailable = executionFacet !== null && Number(executionFacet.invalid?.[0]?.value ?? 0) === 0;
+  const ledgerAvailable = ledgerRows !== null;
+  const projectRows: MongoRow[] = results[0]?.status === "fulfilled" ? results[0].value : [];
+  const clientRows: MongoRow[] = results[1]?.status === "fulfilled" ? results[1].value : [];
+  const executionRows: MongoRow[] = executionFacet?.rows ?? [];
+  const approvalRows: MongoRow[] = approvalFacet?.rows ?? [];
+  const legacyApprovalRows: MongoRow[] = legacyApprovalFacet?.rows ?? [];
+  const approvalMap = (type: "estimatesApproved" | "designPlansApproved") => {
+    const map = comparisonMap(approvalRows.filter((row: MongoRow) => row._id?.type === type), true);
+    for (const [day, value] of comparisonMap(
+      legacyApprovalRows.filter((row: MongoRow) => row._id?.type === type),
+      true
+    )) map.set(day, (map.get(day) ?? 0) + value);
+    return map;
+  };
+  return {
+    maps: {
+      projectsCreated: comparisonMap(projectRows.filter((row) => row._id?.type === "projectsCreated"), true),
+      clientsCreated: comparisonMap(clientRows),
+      projectsCompleted: comparisonMap(projectRows.filter((row) => row._id?.type === "projectsCompleted"), true),
+      executionTasksCompleted: comparisonMap(executionRows),
+      estimatesApproved: approvalMap("estimatesApproved"),
+      designPlansApproved: approvalMap("designPlansApproved"),
+      recordedExpensesPaise: new Map((ledgerRows ?? []).map((row) => [row.date, row.amountPaise]))
+    },
+    availability: {
+      projectsCreated: projectsAvailable,
+      clientsCreated: clientsAvailable,
+      projectsCompleted: projectsAvailable,
+      executionTasksCompleted: executionAvailable,
+      estimatesApproved: approvalAvailable("estimatesApproved"),
+      designPlansApproved: approvalAvailable("designPlansApproved"),
+      recordedExpensesPaise: ledgerAvailable
+    }
+  };
+}
+
+async function mongoDashboardComparison(input: {
+  periodDays: 7 | 30 | 90;
+  startAt: Date;
+  endAt: Date;
+  previousStartAt: Date;
+  previousEndAt: Date;
+}): Promise<DashboardComparison> {
+  const [current, previous, approvalCrossWindowRows] = await Promise.all([
+    mongoDashboardComparisonSide({ startAt: input.startAt, endAt: input.endAt }),
+    mongoDashboardComparisonSide({ startAt: input.previousStartAt, endAt: input.previousEndAt }),
+    EstimateClientReviewRoundModel.aggregate<MongoRow>([
+      { $set: { eventType: "estimatesApproved", approvalVersion: "$estimateVersion" } },
+      {
+        $unionWith: {
+          coll: DesignPlanReviewRoundModel.collection.name,
+          pipeline: [{ $set: { eventType: "designPlansApproved", approvalVersion: "$designPlanVersion" } }]
+        }
+      },
+      {
+        $match: {
+          status: "approved",
+          decision: "approve",
+          decidedAt: { $gte: input.previousStartAt, $lt: input.endAt }
+        }
+      },
+      {
+        $group: {
+          _id: { eventType: "$eventType", estimateId: "$estimateId", version: "$approvalVersion" },
+          currentCount: {
+            $sum: {
+              $cond: [
+                { $and: [{ $gte: ["$decidedAt", input.startAt] }, { $lt: ["$decidedAt", input.endAt] }] },
+                1,
+                0
+              ]
+            }
+          },
+          previousCount: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $gte: ["$decidedAt", input.previousStartAt] },
+                    { $lt: ["$decidedAt", input.previousEndAt] }
+                  ]
+                },
+                1,
+                0
+              ]
+            }
+          }
+        }
+      },
+      { $match: { currentCount: { $gt: 0 }, previousCount: { $gt: 0 } } },
+      { $group: { _id: "$_id.eventType" } }
+    ]).exec().catch(() => null)
+  ]);
+  const crossWindowTypes = approvalCrossWindowRows === null
+    ? new Set(["estimatesApproved", "designPlansApproved"])
+    : new Set(approvalCrossWindowRows.map((row) => String(row._id)));
+  if (crossWindowTypes.has("estimatesApproved")) {
+    current.availability.estimatesApproved = false;
+    previous.availability.estimatesApproved = false;
+  }
+  if (crossWindowTypes.has("designPlansApproved")) {
+    current.availability.designPlansApproved = false;
+    previous.availability.designPlansApproved = false;
+  }
+  const reason = "This matched-period event source is unavailable.";
+  const currentBuckets = comparisonBuckets(input.periodDays, input.startAt, current.maps, current.availability);
+  const previousBuckets = comparisonBuckets(input.periodDays, input.previousStartAt, previous.maps, previous.availability);
+  const metric = (
+    unit: "count" | "paise",
+    key: DashboardComparisonSeries,
+    bucketKey: DashboardComparisonSeries
+  ) => dashboardComparisonMetric({
+    unit,
+    current: current.availability[key] ? sumComparisonBuckets(currentBuckets, bucketKey) : null,
+    previous: previous.availability[key] ? sumComparisonBuckets(previousBuckets, bucketKey) : null,
+    currentUnavailableReason: reason,
+    previousUnavailableReason: reason
+  });
+  return {
+    window: {
+      timezone: "UTC",
+      current: { days: input.periodDays, startAt: input.startAt.toISOString(), endAt: input.endAt.toISOString() },
+      previous: {
+        days: input.periodDays,
+        startAt: input.previousStartAt.toISOString(),
+        endAt: input.previousEndAt.toISOString()
+      },
+      partialFinalDay: true
+    },
+    metrics: {
+      projects_created: metric("count", "projectsCreated", "projectsCreated"),
+      clients_created: metric("count", "clientsCreated", "clientsCreated"),
+      projects_completed: metric("count", "projectsCompleted", "projectsCompleted"),
+      execution_tasks_completed: metric("count", "executionTasksCompleted", "executionTasksCompleted"),
+      estimates_approved: metric("count", "estimatesApproved", "estimatesApproved"),
+      design_plans_approved: metric("count", "designPlansApproved", "designPlansApproved"),
+      recorded_expenses_paise: metric("paise", "recordedExpensesPaise", "recordedExpensesPaise")
+    },
+    currentBuckets,
+    previousBuckets
+  };
 }
 
 export async function mongoSuperAdminDashboardOverview(input: {
   observedAt: string;
   startAt: string;
   endAt: string;
+  previousStartAt?: string;
+  previousEndAt?: string;
   periodDays: 7 | 30 | 90;
   /** Repository-only deterministic failure seam used to prove partial-read isolation. */
   failureInjection?: readonly DashboardOverviewSource[];
@@ -636,6 +1554,12 @@ export async function mongoSuperAdminDashboardOverview(input: {
   const observedAt = new Date(input.observedAt);
   const startAt = new Date(input.startAt);
   const endAt = new Date(input.endAt);
+  const previousStartAt = input.previousStartAt
+    ? new Date(input.previousStartAt)
+    : shiftUtcDays(startAt, -input.periodDays);
+  const previousEndAt = input.previousEndAt
+    ? new Date(input.previousEndAt)
+    : shiftUtcDays(endAt, -input.periodDays);
   const executionKinds = ["site_execution", "trade_execution"];
   const effortExpression = {
     $cond: [
@@ -677,7 +1601,8 @@ export async function mongoSuperAdminDashboardOverview(input: {
       $group: {
         _id: null,
         total: { $sum: 1 },
-        createdInPeriod: { $sum: { $cond: [{ $and: [{ $gte: ["$createdAt", startAt] }, { $lte: ["$createdAt", endAt] }] }, 1, 0] } },
+        createdInPeriod: { $sum: { $cond: [{ $and: [{ $gte: ["$createdAt", startAt] }, { $lt: ["$createdAt", endAt] }] }, 1, 0] } },
+        completedInPeriod: { $sum: { $cond: [{ $and: [{ $eq: ["$status", "completed"] }, { $gte: ["$actualEndAt", startAt] }, { $lt: ["$actualEndAt", endAt] }] }, 1, 0] } },
         planning: { $sum: { $cond: [{ $eq: ["$status", "planning"] }, 1, 0] } },
         active: { $sum: { $cond: [{ $eq: ["$status", "active"] }, 1, 0] } },
         onHold: { $sum: { $cond: [{ $eq: ["$status", "on_hold"] }, 1, 0] } },
@@ -688,15 +1613,15 @@ export async function mongoSuperAdminDashboardOverview(input: {
     }]).exec(),
     ProjectWorkflowTaskModel.aggregate<MongoRow>([
       { $match: { kind: { $in: executionKinds } } },
-      { $lookup: { from: ProjectModel.collection.name, localField: "projectId", foreignField: "_id", as: "_dashboardProject" } },
-      { $match: { "_dashboardProject.0": { $exists: true } } },
+      ...mongoDashboardExecutionLineageStages(),
+      { $match: { lineageValid: true } },
       { $group: {
         _id: null,
         total: { $sum: 1 },
         open: { $sum: { $cond: [{ $eq: ["$status", "open"] }, 1, 0] } },
         inProgress: { $sum: { $cond: [{ $eq: ["$status", "in_progress"] }, 1, 0] } },
         completed: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
-        completedInPeriod: { $sum: { $cond: [{ $and: [{ $eq: ["$status", "completed"] }, { $gte: ["$completedAt", startAt] }, { $lte: ["$completedAt", endAt] }] }, 1, 0] } },
+        completedInPeriod: { $sum: { $cond: [{ $and: [{ $eq: ["$status", "completed"] }, { $gte: ["$completedAt", startAt] }, { $lt: ["$completedAt", endAt] }] }, 1, 0] } },
         overdue: { $sum: { $cond: [{ $and: [{ $ne: ["$status", "completed"] }, { $lt: [dueAtExpression, observedAt] }] }, 1, 0] } },
         unassigned: { $sum: { $cond: [{ $and: [{ $ne: ["$status", "completed"] }, { $eq: [{ $ifNull: ["$assigneeUserId", null] }, null] }] }, 1, 0] } },
         overdueUnassigned: { $sum: { $cond: [{ $and: [{ $ne: ["$status", "completed"] }, { $eq: [{ $ifNull: ["$assigneeUserId", null] }, null] }, { $lt: [dueAtExpression, observedAt] }] }, 1, 0] } },
@@ -704,20 +1629,20 @@ export async function mongoSuperAdminDashboardOverview(input: {
         progressDenominator: { $sum: { $multiply: [100, effortExpression] } },
         fallbackTaskCount: { $sum: { $cond: [{ $gt: ["$plannedEffort", 0] }, 0, 1] } },
         activeAssignedTaskCount: { $sum: { $cond: [{ $and: [{ $ne: ["$status", "completed"] }, { $ne: [{ $ifNull: ["$assigneeUserId", null] }, null] }] }, 1, 0] } },
-        completedInPeriodTaskCount: { $sum: { $cond: [{ $and: [{ $eq: ["$status", "completed"] }, { $gte: ["$completedAt", startAt] }, { $lte: ["$completedAt", endAt] }] }, 1, 0] } }
+        completedInPeriodTaskCount: { $sum: { $cond: [{ $and: [{ $eq: ["$status", "completed"] }, { $gte: ["$completedAt", startAt] }, { $lt: ["$completedAt", endAt] }] }, 1, 0] } }
       } }
     ]).exec(),
     ProjectWorkflowTaskModel.aggregate<MongoRow>([
       { $match: { kind: { $in: executionKinds } } },
-      { $lookup: { from: ProjectModel.collection.name, localField: "projectId", foreignField: "_id", as: "_dashboardProject" } },
-      { $match: { "_dashboardProject.0": { $exists: true } } },
+      ...mongoDashboardExecutionLineageStages(),
+      { $match: { lineageValid: true } },
       { $group: { _id: "$projectId", taskCount: { $sum: 1 } } },
       { $sort: { taskCount: -1, _id: 1 } }, { $limit: 51 }
     ]).exec(),
     ProjectWorkflowTaskModel.aggregate<MongoRow>([
       { $match: { kind: { $in: executionKinds } } },
-      { $lookup: { from: ProjectModel.collection.name, localField: "projectId", foreignField: "_id", as: "_dashboardProject" } },
-      { $match: { "_dashboardProject.0": { $exists: true } } },
+      ...mongoDashboardExecutionLineageStages(),
+      { $match: { lineageValid: true } },
       { $group: { _id: "$assigneeRole", taskCount: { $sum: 1 } } },
       { $sort: { _id: 1 } }
     ]).exec(),
@@ -731,18 +1656,36 @@ export async function mongoSuperAdminDashboardOverview(input: {
     }]).exec(),
     AccessRequestModel.countDocuments({ status: "pending" }).exec(),
     EstimateClientReviewRoundModel.aggregate<MongoRow>([
-      { $lookup: { from: ProjectModel.collection.name, localField: "projectId", foreignField: "_id", as: "project" } },
       { $lookup: { from: EstimateModel.collection.name, localField: "estimateId", foreignField: "_id", as: "estimate" } },
       { $set: { estimate: { $arrayElemAt: ["$estimate", 0] } } },
       { $lookup: { from: LeadModel.collection.name, localField: "estimate.leadId", foreignField: "_id", as: "lead" } },
       { $set: { lead: { $arrayElemAt: ["$lead", 0] } } },
       {
+        $set: {
+          resolvedProjectId: { $ifNull: ["$projectId", { $ifNull: ["$estimate.projectId", "$lead.projectId"] }] }
+        }
+      },
+      { $lookup: { from: ProjectModel.collection.name, localField: "resolvedProjectId", foreignField: "_id", as: "project" } },
+      {
         $match: {
-          "project.0": { $exists: true },
           "estimate._id": { $exists: true },
           $expr: {
             $and: [
-              { $eq: [{ $ifNull: ["$estimate.projectId", "$lead.projectId"] }, "$projectId"] },
+              { $eq: ["$leadId", "$estimate.leadId"] },
+              { $eq: ["$lead._id", "$estimate.leadId"] },
+              { $eq: [{ $ifNull: ["$estimate.projectId", "$lead.projectId"] }, "$resolvedProjectId"] },
+              {
+                $or: [
+                  { $eq: [{ $ifNull: ["$resolvedProjectId", null] }, null] },
+                  { $eq: [{ $size: "$project" }, 1] }
+                ]
+              },
+              {
+                $or: [
+                  { $eq: [{ $ifNull: ["$projectId", null] }, null] },
+                  { $eq: ["$projectId", "$resolvedProjectId"] }
+                ]
+              },
               { $lte: ["$estimateVersion", "$estimate.version"] }
             ]
           }
@@ -782,21 +1725,7 @@ export async function mongoSuperAdminDashboardOverview(input: {
         disabled: { $sum: { $cond: [{ $eq: ["$deliveryStatus", "disabled"] }, 1, 0] } },
         oldestPendingAt: { $min: { $cond: [{ $eq: ["$status", "pending"] }, "$submittedAt", null] } }
       }
-    }]).exec(),
-    ProjectModel.aggregate<MongoRow>([
-      { $match: { $or: [{ createdAt: { $gte: startAt, $lte: endAt } }, { actualEndAt: { $gte: startAt, $lte: endAt } }] } },
-      { $project: { createdDay: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone: "UTC" } }, completedDay: { $cond: [{ $ne: ["$actualEndAt", null] }, { $dateToString: { format: "%Y-%m-%d", date: "$actualEndAt", timezone: "UTC" } }, null] } } },
-      { $group: { _id: null, createdDays: { $push: "$createdDay" }, completedDays: { $push: "$completedDay" } } }
-    ]).exec(),
-    ProjectWorkflowTaskModel.aggregate<MongoRow>([
-      { $match: { status: "completed", completedAt: { $gte: startAt, $lte: endAt } } },
-      { $lookup: { from: ProjectModel.collection.name, localField: "projectId", foreignField: "_id", as: "_dashboardProject" } },
-      { $match: { "_dashboardProject.0": { $exists: true } } },
-      { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$completedAt", timezone: "UTC" } }, count: { $sum: 1 } } }
-    ]).exec(),
-    FinanceLedgerEntryModel.aggregate<MongoRow>([
-      { $match: { status: "posted", incurredAt: { $gte: startAt, $lte: endAt } } },
-      { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$incurredAt", timezone: "UTC" } }, amountPaise: { $sum: "$amountPaise" } } }
+      }
     ]).exec()
   ]);
   const baseProjectResult = moduleResults[0];
@@ -823,18 +1752,21 @@ export async function mongoSuperAdminDashboardOverview(input: {
   const pendingAccessRequests = moduleValue<number>(5, "governanceAccess", DASHBOARD_SOURCE_DEPENDENCIES.governanceAccess, 0);
   const clientDeliveryRows = moduleValue<MongoRow[]>(6, "governanceClientResponses", DASHBOARD_SOURCE_DEPENDENCIES.governanceClientResponses, []);
   const designDeliveryRows = moduleValue<MongoRow[]>(7, "governanceDesignResponses", DASHBOARD_SOURCE_DEPENDENCIES.governanceDesignResponses, []);
-  const projectTrendRows = moduleValue<MongoRow[]>(8, "projectTrend", DASHBOARD_SOURCE_DEPENDENCIES.projectTrend, []);
-  const workflowTrendRows = moduleValue<MongoRow[]>(9, "workflowTrend", DASHBOARD_SOURCE_DEPENDENCIES.workflowTrend, []);
-  const ledgerTrendRows = moduleValue<MongoRow[]>(10, "ledgerTrend", DASHBOARD_SOURCE_DEPENDENCIES.ledgerTrend, []);
-
   const derivedResults = await Promise.allSettled([
     readProjectFinancePortfolioReport(observedAt),
     mongoWorkforceOverview(input),
     mongoProjectRiskOverview(input.observedAt),
     mongoCanonicalModuleMetrics(),
     readProcurementDashboardPortfolioReport(),
-    mongoCanonicalApprovalTrends(startAt, endAt),
-    mongoDashboardLineageDataQuality()
+    mongoDashboardLineageDataQuality(),
+    mongoDashboardClients(startAt, endAt),
+    mongoDashboardComparison({
+      periodDays: input.periodDays,
+      startAt,
+      endAt,
+      previousStartAt,
+      previousEndAt
+    })
   ]);
   const derivedValue = <T>(index: number, source: DashboardOverviewSource, metricKeys: readonly string[], fallback: T): T => {
     const result = derivedResults[index];
@@ -847,12 +1779,27 @@ export async function mongoSuperAdminDashboardOverview(input: {
   const riskOverview = derivedValue(2, "risk", DASHBOARD_SOURCE_DEPENDENCIES.risk, emptyRiskOverview());
   const canonicalModules = derivedValue<MongoRow>(3, "canonicalModules", DASHBOARD_SOURCE_DEPENDENCIES.canonicalModules, {});
   const canonicalProcurement = derivedValue<MongoRow>(4, "procurement", DASHBOARD_SOURCE_DEPENDENCIES.procurement, {});
-  const approvalTrendRows = derivedValue<MongoRow[]>(5, "approvalTrend", DASHBOARD_SOURCE_DEPENDENCIES.approvalTrend, []);
   const lineageQuality = derivedValue<DashboardDataQuality>(
-    6,
+    5,
     "lineage",
     DASHBOARD_SOURCE_DEPENDENCIES.lineage,
     unavailableDataQuality(["dataQuality.lineage"])
+  );
+  const clients = derivedValue<DashboardClientMetrics>(
+    6,
+    "clients",
+    DASHBOARD_SOURCE_DEPENDENCIES.clients,
+    unavailableClientMetrics("Client account and project relationship data is unavailable.")
+  );
+  const comparison = derivedValue<DashboardComparison>(
+    7,
+    "comparison",
+    DASHBOARD_SOURCE_DEPENDENCIES.comparison,
+    unavailableDashboardComparison({
+      ...input,
+      previousStartAt: previousStartAt.toISOString(),
+      previousEndAt: previousEndAt.toISOString()
+    }, "Matched-period event data is unavailable.")
   );
   const project = projectRows[0] ?? {};
   const estimate = canonicalModules;
@@ -870,6 +1817,8 @@ export async function mongoSuperAdminDashboardOverview(input: {
     ]),
     lineageQuality,
     riskOverview.dataQuality,
+    dashboardClientAvailabilityDataQuality(clients),
+    dashboardComparisonAvailabilityDataQuality(comparison),
     ...moduleFailureQualities
   );
   return {
@@ -877,12 +1826,14 @@ export async function mongoSuperAdminDashboardOverview(input: {
     period: period(input),
     projects: {
       total: Number(project.total ?? 0), createdInPeriod: Number(project.createdInPeriod ?? 0),
+      completedInPeriod: Number(project.completedInPeriod ?? 0),
       planning: Number(project.planning ?? 0), active: Number(project.active ?? 0),
       onHold: Number(project.onHold ?? 0), completed: Number(project.completed ?? 0),
       liveOverdue: Number(project.liveOverdue ?? 0), completedLate: Number(project.completedLate ?? 0),
       completionRate: dashboardRatio(Number(project.completed ?? 0), Number(project.total ?? 0)),
       atRisk: riskOverview.distribution.red + riskOverview.distribution.yellow
     },
+    clients,
     estimation: {
       eligibleProjects: Number(project.total ?? 0), trackedProjects: Number(estimate.tracked ?? 0),
       unavailableProjects: Math.max(0, Number(project.total ?? 0) - Number(estimate.tracked ?? 0)),
@@ -957,14 +1908,8 @@ export async function mongoSuperAdminDashboardOverview(input: {
       factorDistribution: riskOverview.factorDistribution,
       topProjects: riskOverview.topProjects
     },
-    trends: mongoTrendBuckets(
-      input.periodDays,
-      startAt,
-      projectTrendRows[0],
-      workflowTrendRows,
-      ledgerTrendRows,
-      approvalTrendRows
-    ),
+    trends: comparisonTrendBuckets(comparison.currentBuckets),
+    comparison,
     dataQuality
   };
 }
@@ -1518,7 +2463,13 @@ function period(input: { periodDays: 7 | 30 | 90; startAt: string; endAt: string
 
 function within(value: string, startAt: Date, endAt: Date): boolean {
   const time = new Date(value).getTime();
-  return time >= startAt.getTime() && time <= endAt.getTime();
+  return time >= startAt.getTime() && time < endAt.getTime();
+}
+
+function shiftUtcDays(value: Date, days: number): Date {
+  const shifted = new Date(value);
+  shifted.setUTCDate(shifted.getUTCDate() + days);
+  return shifted;
 }
 
 function elapsedDays(startAt: string, endAt: string): number {
@@ -1554,26 +2505,157 @@ function boundedProjectRisk(risk: DashboardProjectRow["risk"]): DashboardProject
   return { ...risk, factors: risk.factors.slice(0, 50) };
 }
 
-function trendBuckets(
+function memoryDashboardClients(
+  state: SeedData,
+  startAt: Date,
+  endAt: Date
+): DashboardClientMetrics {
+  const clientUsers = state.users.filter((user) => user.role === "client");
+  const clientIds = new Set(clientUsers.map((user) => user.id));
+  const linkedClientIds = new Set<string>();
+  const activeLinkedClientIds = new Set<string>();
+  let unlinkedProjects = 0;
+  let invalidProjectClientLinks = 0;
+  for (const project of state.projects) {
+    if (project.clientId === null) {
+      unlinkedProjects += 1;
+      continue;
+    }
+    if (!clientIds.has(project.clientId)) {
+      invalidProjectClientLinks += 1;
+      continue;
+    }
+    linkedClientIds.add(project.clientId);
+    if (project.status === "active") activeLinkedClientIds.add(project.clientId);
+  }
+  const activeAccounts = clientUsers.filter((user) => user.active).length;
+  return {
+    accountsStatus: "available",
+    relationshipsStatus: "available",
+    accountsUnavailableReason: null,
+    relationshipsUnavailableReason: null,
+    registeredAccounts: clientUsers.length,
+    activeAccounts,
+    inactiveAccounts: clientUsers.length - activeAccounts,
+    accountsCreatedInPeriod: clientUsers.filter((user) => within(user.createdAt, startAt, endAt)).length,
+    clientsWithProjects: linkedClientIds.size,
+    clientsWithActiveProjects: activeLinkedClientIds.size,
+    unlinkedProjects,
+    invalidProjectClientLinks
+  };
+}
+
+function memoryDashboardComparison(
+  state: SeedData,
+  input: {
+    periodDays: 7 | 30 | 90;
+    startAt: string;
+    endAt: string;
+    previousStartAt: string;
+    previousEndAt: string;
+  },
+  currentStartAt: Date,
+  currentEndAt: Date,
+  previousStartAt: Date,
+  previousEndAt: Date
+): DashboardComparison {
+  const clients = state.users.filter((user) => user.role === "client");
+  const currentBuckets = memoryComparisonBuckets(
+    input.periodDays,
+    currentStartAt,
+    currentEndAt,
+    state.projects,
+    clients
+  );
+  const previousBuckets = memoryComparisonBuckets(
+    input.periodDays,
+    previousStartAt,
+    previousEndAt,
+    state.projects,
+    clients
+  );
+  const sum = (
+    buckets: readonly DashboardComparisonBucket[],
+    key: "projectsCreated" | "clientsCreated" | "projectsCompleted"
+  ) => buckets.reduce((total, bucket) => total + (bucket[key] ?? 0), 0);
+  const unavailable = "This event history is unavailable in the in-memory repository.";
+  return {
+    window: {
+      timezone: "UTC",
+      current: { days: input.periodDays, startAt: input.startAt, endAt: input.endAt },
+      previous: {
+        days: input.periodDays,
+        startAt: input.previousStartAt,
+        endAt: input.previousEndAt
+      },
+      partialFinalDay: true
+    },
+    metrics: {
+      projects_created: dashboardComparisonMetric({
+        unit: "count",
+        current: sum(currentBuckets, "projectsCreated"),
+        previous: sum(previousBuckets, "projectsCreated")
+      }),
+      clients_created: dashboardComparisonMetric({
+        unit: "count",
+        current: sum(currentBuckets, "clientsCreated"),
+        previous: sum(previousBuckets, "clientsCreated")
+      }),
+      projects_completed: dashboardComparisonMetric({
+        unit: "count",
+        current: sum(currentBuckets, "projectsCompleted"),
+        previous: sum(previousBuckets, "projectsCompleted")
+      }),
+      execution_tasks_completed: dashboardComparisonMetric({
+        unit: "count", current: null, previous: null,
+        currentUnavailableReason: unavailable, previousUnavailableReason: unavailable
+      }),
+      estimates_approved: dashboardComparisonMetric({
+        unit: "count", current: null, previous: null,
+        currentUnavailableReason: unavailable, previousUnavailableReason: unavailable
+      }),
+      design_plans_approved: dashboardComparisonMetric({
+        unit: "count", current: null, previous: null,
+        currentUnavailableReason: unavailable, previousUnavailableReason: unavailable
+      }),
+      recorded_expenses_paise: dashboardComparisonMetric({
+        unit: "paise", current: null, previous: null,
+        currentUnavailableReason: unavailable, previousUnavailableReason: unavailable
+      })
+    },
+    currentBuckets,
+    previousBuckets
+  };
+}
+
+function memoryComparisonBuckets(
   days: number,
   startAt: Date,
+  endAt: Date,
   projects: readonly ProjectRecord[],
-  estimates: readonly EstimateSummaryRecord[]
-): DashboardTrendBucket[] {
-  return Array.from({ length: days }, (_, index) => {
+  clients: readonly UserRecord[]
+): DashboardComparisonBucket[] {
+  return Array.from({ length: days }, (_, dayIndex) => {
     const date = new Date(startAt);
-    date.setUTCDate(date.getUTCDate() + index);
+    date.setUTCDate(date.getUTCDate() + dayIndex);
     const key = date.toISOString().slice(0, 10);
     return {
+      dayIndex,
       date: key,
-      projectsCreated: projects.filter((project) => project.createdAt.startsWith(key)).length,
-      projectsCompleted: projects.filter((project) => project.actualEndAt?.startsWith(key)).length,
-      estimatesApproved: estimates.filter((estimate) =>
-        estimate.status === "client_approved" && estimate.clientDecisionAt?.startsWith(key)
+      projectsCreated: projects.filter((project) =>
+        project.createdAt.startsWith(key) && within(project.createdAt, startAt, endAt)
       ).length,
-      designPlansApproved: 0,
-      workflowTasksCompleted: 0,
-      ledgerExpensesPostedPaise: 0
+      clientsCreated: clients.filter((client) =>
+        client.createdAt.startsWith(key) && within(client.createdAt, startAt, endAt)
+      ).length,
+      projectsCompleted: projects.filter((project) =>
+        project.status === "completed" && project.actualEndAt?.startsWith(key) &&
+        within(project.actualEndAt, startAt, endAt)
+      ).length,
+      executionTasksCompleted: null,
+      estimatesApproved: null,
+      designPlansApproved: null,
+      recordedExpensesPaise: null
     };
   });
 }
@@ -2051,6 +3133,189 @@ function mongoTrendBuckets(
   });
 }
 
+function comparisonTrendBuckets(
+  buckets: readonly DashboardComparisonBucket[]
+): DashboardTrendBucket[] {
+  return buckets.map((bucket) => ({
+    date: bucket.date,
+    projectsCreated: bucket.projectsCreated ?? 0,
+    projectsCompleted: bucket.projectsCompleted ?? 0,
+    estimatesApproved: bucket.estimatesApproved ?? 0,
+    designPlansApproved: bucket.designPlansApproved ?? 0,
+    workflowTasksCompleted: bucket.executionTasksCompleted ?? 0,
+    ledgerExpensesPostedPaise: bucket.recordedExpensesPaise ?? 0
+  }));
+}
+
+function comparisonMap(rows: readonly MongoRow[], nestedId = false): Map<string, number> {
+  return new Map(rows.map((row) => [
+    String(nestedId ? row._id?.day : row._id),
+    Number(row.value ?? 0)
+  ]));
+}
+
+type ComparisonBucketMaps = Record<
+  keyof Omit<DashboardComparisonBucket, "dayIndex" | "date">,
+  Map<string, number>
+>;
+
+function comparisonBuckets(
+  days: number,
+  startAt: Date,
+  maps: ComparisonBucketMaps,
+  availability: Record<keyof ComparisonBucketMaps, boolean>
+): DashboardComparisonBucket[] {
+  return Array.from({ length: days }, (_, dayIndex) => {
+    const date = new Date(startAt);
+    date.setUTCDate(date.getUTCDate() + dayIndex);
+    const key = date.toISOString().slice(0, 10);
+    const value = (metric: keyof ComparisonBucketMaps) =>
+      availability[metric] ? maps[metric].get(key) ?? 0 : null;
+    return {
+      dayIndex,
+      date: key,
+      projectsCreated: value("projectsCreated"),
+      clientsCreated: value("clientsCreated"),
+      projectsCompleted: value("projectsCompleted"),
+      executionTasksCompleted: value("executionTasksCompleted"),
+      estimatesApproved: value("estimatesApproved"),
+      designPlansApproved: value("designPlansApproved"),
+      recordedExpensesPaise: value("recordedExpensesPaise")
+    };
+  });
+}
+
+function sumComparisonBuckets(
+  buckets: readonly DashboardComparisonBucket[],
+  key: keyof Omit<DashboardComparisonBucket, "dayIndex" | "date">
+): number {
+  return buckets.reduce((total, bucket) => total + (bucket[key] ?? 0), 0);
+}
+
+function unavailableClientMetrics(reason: string): DashboardClientMetrics {
+  return {
+    accountsStatus: "unavailable",
+    relationshipsStatus: "unavailable",
+    accountsUnavailableReason: reason,
+    relationshipsUnavailableReason: reason,
+    registeredAccounts: null,
+    activeAccounts: null,
+    inactiveAccounts: null,
+    accountsCreatedInPeriod: null,
+    clientsWithProjects: null,
+    clientsWithActiveProjects: null,
+    unlinkedProjects: null,
+    invalidProjectClientLinks: null
+  };
+}
+
+function dashboardClientAvailabilityDataQuality(
+  clients: DashboardClientMetrics
+): DashboardDataQuality {
+  const keys = [
+    ...(clients.accountsStatus === "unavailable"
+      ? [
+          "clients.registeredAccounts", "clients.activeAccounts",
+          "clients.inactiveAccounts", "clients.accountsCreatedInPeriod"
+        ]
+      : []),
+    ...(clients.relationshipsStatus === "unavailable"
+      ? [
+          "clients.clientsWithProjects", "clients.clientsWithActiveProjects",
+          "clients.unlinkedProjects", "clients.invalidProjectClientLinks"
+        ]
+      : [])
+  ];
+  return keys.length === 0
+    ? completeDataQuality()
+    : sourceFailureDataQuality("clients", keys);
+}
+
+function dashboardComparisonAvailabilityDataQuality(
+  comparison: DashboardComparison
+): DashboardDataQuality {
+  const currentTrendMetric: Partial<Record<keyof DashboardComparison["metrics"], string>> = {
+    projects_created: "trends.projectsCreated",
+    projects_completed: "trends.projectsCompleted",
+    execution_tasks_completed: "trends.workflowTasksCompleted",
+    estimates_approved: "trends.estimatesApproved",
+    design_plans_approved: "trends.designPlansApproved",
+    recorded_expenses_paise: "trends.ledgerExpensesPostedPaise"
+  };
+  const keys = Object.entries(comparison.metrics).flatMap(([metricKey, metric]) => [
+    ...(metric.currentStatus === "unavailable"
+      ? [
+          `comparison.${metricKey}.current`,
+          ...(currentTrendMetric[metricKey as keyof DashboardComparison["metrics"]]
+            ? [currentTrendMetric[metricKey as keyof DashboardComparison["metrics"]]!]
+            : [])
+        ]
+      : []),
+    ...(metric.previousStatus === "unavailable" ? [`comparison.${metricKey}.previous`] : [])
+  ]);
+  return keys.length === 0
+    ? completeDataQuality()
+    : sourceFailureDataQuality("comparison", keys);
+}
+
+function unavailableDashboardComparison(
+  input: {
+    periodDays: 7 | 30 | 90;
+    startAt: string;
+    endAt: string;
+    previousStartAt: string;
+    previousEndAt: string;
+  },
+  reason: string
+): DashboardComparison {
+  const unavailable = (unit: "count" | "paise") => dashboardComparisonMetric({
+    unit,
+    current: null,
+    previous: null,
+    currentUnavailableReason: reason,
+    previousUnavailableReason: reason
+  });
+  const blankBuckets = (startAt: string): DashboardComparisonBucket[] =>
+    Array.from({ length: input.periodDays }, (_, dayIndex) => {
+      const date = new Date(startAt);
+      date.setUTCDate(date.getUTCDate() + dayIndex);
+      return {
+        dayIndex,
+        date: date.toISOString().slice(0, 10),
+        projectsCreated: null,
+        clientsCreated: null,
+        projectsCompleted: null,
+        executionTasksCompleted: null,
+        estimatesApproved: null,
+        designPlansApproved: null,
+        recordedExpensesPaise: null
+      };
+    });
+  return {
+    window: {
+      timezone: "UTC",
+      current: { days: input.periodDays, startAt: input.startAt, endAt: input.endAt },
+      previous: {
+        days: input.periodDays,
+        startAt: input.previousStartAt,
+        endAt: input.previousEndAt
+      },
+      partialFinalDay: true
+    },
+    metrics: {
+      projects_created: unavailable("count"),
+      clients_created: unavailable("count"),
+      projects_completed: unavailable("count"),
+      execution_tasks_completed: unavailable("count"),
+      estimates_approved: unavailable("count"),
+      design_plans_approved: unavailable("count"),
+      recorded_expenses_paise: unavailable("paise")
+    },
+    currentBuckets: blankBuckets(input.startAt),
+    previousBuckets: blankBuckets(input.previousStartAt)
+  };
+}
+
 function unavailableDataQuality(metricKeys: string[]): DashboardDataQuality {
   const unique = [...new Set(metricKeys)].sort();
   return {
@@ -2068,6 +3333,18 @@ function unavailableDataQuality(metricKeys: string[]): DashboardDataQuality {
 }
 
 const DASHBOARD_SOURCE_DEPENDENCIES = {
+  clients: [
+    "clients.registeredAccounts", "clients.activeAccounts", "clients.inactiveAccounts",
+    "clients.accountsCreatedInPeriod", "clients.clientsWithProjects",
+    "clients.clientsWithActiveProjects", "clients.unlinkedProjects",
+    "clients.invalidProjectClientLinks"
+  ],
+  comparison: [
+    "comparison.projects_created", "comparison.clients_created",
+    "comparison.projects_completed", "comparison.execution_tasks_completed",
+    "comparison.estimates_approved", "comparison.design_plans_approved",
+    "comparison.recorded_expenses_paise"
+  ],
   finance: [
     "finance.projectCount", "finance.approvedContractTotalPaise", "finance.approvedGstPaise",
     "finance.approvedSubtotalPaise", "finance.targetProfitPaise", "finance.costBudgetPaise",
@@ -2107,10 +3384,6 @@ const DASHBOARD_SOURCE_DEPENDENCIES = {
     "workforce.kpiUnavailableWorkers", "workforce.averageKpi", "workforce.roleDistribution"
   ],
   risk: ["projects.atRisk", "risk.projectDistribution", "risk.factorDistribution", "risk.topProjects"],
-  projectTrend: ["trends.projectsCreated", "trends.projectsCompleted"],
-  workflowTrend: ["trends.workflowTasksCompleted"],
-  ledgerTrend: ["trends.ledgerExpensesPostedPaise"],
-  approvalTrend: ["trends.estimatesApproved", "trends.designPlansApproved"],
   lineage: [
     "estimation.trackedProjects", "estimation.unavailableProjects", "estimation.noEstimate",
     "estimation.draftInternal", "estimation.readyToSend", "estimation.awaitingClient",
@@ -2344,7 +3617,12 @@ async function mongoDashboardLineageDataQuality(
         $match: {
           $expr: {
             $or: [
-              { $eq: [{ $size: "$project" }, 0] },
+              {
+                $and: [
+                  { $ne: [{ $ifNull: ["$resolvedProjectId", null] }, null] },
+                  { $eq: [{ $size: "$project" }, 0] }
+                ]
+              },
               { $eq: [{ $ifNull: ["$estimate._id", null] }, null] },
               { $ne: [{ $ifNull: ["$estimate.projectId", "$lead.projectId"] }, "$projectId"] },
               { $ne: ["$estimateVersion", "$approvedEstimateVersion"] },
@@ -2389,6 +3667,17 @@ async function mongoDashboardLineageDataQuality(
         }
       },
       { $set: { estimate: { $arrayElemAt: ["$estimate", 0] }, resolvedProjectId: "$projectId" } },
+      {
+        $set: {
+          approvedEstimateVersion: {
+            $cond: [
+              { $gt: ["$estimate.version", 1] },
+              { $subtract: ["$estimate.version", 1] },
+              1
+            ]
+          }
+        }
+      },
       ...(scopedProjectIds ? [{ $match: scopeMatch }] : []),
       {
         $lookup: {
@@ -2399,6 +3688,68 @@ async function mongoDashboardLineageDataQuality(
         }
       },
       { $set: { lead: { $arrayElemAt: ["$lead", 0] } } },
+      {
+        $set: {
+          matchingTradeSourceCount: {
+            $size: {
+              $filter: {
+                input: { $range: [0, { $size: { $ifNull: ["$estimate.lineItems", []] } }] },
+                as: "lineIndex",
+                cond: {
+                  $let: {
+                    vars: {
+                      line: { $arrayElemAt: [{ $ifNull: ["$estimate.lineItems", []] }, "$$lineIndex"] }
+                    },
+                    in: {
+                      $let: {
+                        vars: {
+                          lineId: {
+                            $cond: [
+                              { $eq: [{ $type: "$$line.id" }, "string"] },
+                              { $trim: { input: "$$line.id" } },
+                              ""
+                            ]
+                          },
+                          catalogueId: {
+                            $toUpper: {
+                              $trim: {
+                                input: { $convert: { input: "$$line.catalogueId", to: "string", onError: "", onNull: "" } }
+                              }
+                            }
+                          }
+                        },
+                        in: {
+                          $and: [
+                            { $eq: ["$$line.included", true] },
+                            { $eq: ["$sourceSectionId", { $substrCP: ["$$catalogueId", 0, 2] }] },
+                            {
+                              $eq: [
+                                "$sourceLineItemKey",
+                                {
+                                  $cond: [
+                                    { $gt: [{ $strLenCP: "$$lineId" }, 0] },
+                                    "$$lineId",
+                                    {
+                                      $concat: [
+                                        "legacy-estimate-line:", "$estimate._id", ":",
+                                        { $toString: "$approvedEstimateVersion" }, ":", { $toString: "$$lineIndex" }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       {
         $lookup: {
           from: UserModel.collection.name,
@@ -2419,7 +3770,36 @@ async function mongoDashboardLineageDataQuality(
                       { $eq: [{ $size: "$project" }, 0] },
                       { $eq: [{ $ifNull: ["$estimate._id", null] }, null] },
                       { $ne: [{ $ifNull: ["$estimate.projectId", { $arrayElemAt: ["$lead.projectId", 0] }] }, "$projectId"] },
-                      { $gt: ["$designPlanVersion", "$estimate.designPlanVersion"] }
+                      { $gt: ["$designPlanVersion", "$estimate.designPlanVersion"] },
+                      {
+                        $and: [
+                          { $in: ["$kind", ["site_execution", "trade_execution"]] },
+                          {
+                            $or: [
+                              { $not: [{ $in: [{ $type: "$designPlanVersion" }, ["int", "long", "double", "decimal"]] }] },
+                              { $lt: ["$designPlanVersion", 1] },
+                              { $ne: ["$designPlanVersion", { $trunc: "$designPlanVersion" }] },
+                              {
+                                $and: [
+                                  { $eq: ["$kind", "site_execution"] },
+                                  {
+                                    $or: [
+                                      { $ne: [{ $ifNull: ["$sourceSectionId", null] }, null] },
+                                      { $ne: [{ $ifNull: ["$sourceLineItemKey", null] }, null] }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                $and: [
+                                  { $eq: ["$kind", "trade_execution"] },
+                                  { $ne: ["$matchingTradeSourceCount", 1] }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
                     ]
                   },
                   { $cond: [{ $eq: ["$kind", "procurement"] }, ["procurement"], ["task"]] },
@@ -2451,26 +3831,49 @@ async function mongoDashboardLineageDataQuality(
       }
     ] as PipelineStage[]).exec(),
     EstimateClientReviewRoundModel.aggregate<MongoRow>([
-      { $set: { reviewKind: "estimate", resolvedProjectId: "$projectId" } },
+      { $set: { reviewKind: "estimate" } },
       {
         $unionWith: {
           coll: DesignPlanReviewRoundModel.collection.name,
-          pipeline: [{ $set: { reviewKind: "design", resolvedProjectId: "$projectId" } }]
+          pipeline: [{ $set: { reviewKind: "design" } }]
         }
       },
-      ...(scopedProjectIds ? [{ $match: scopeMatch }] : []),
-      { $lookup: { from: ProjectModel.collection.name, localField: "projectId", foreignField: "_id", as: "project" } },
       { $lookup: { from: EstimateModel.collection.name, localField: "estimateId", foreignField: "_id", as: "estimate" } },
       { $set: { estimate: { $arrayElemAt: ["$estimate", 0] } } },
       { $lookup: { from: LeadModel.collection.name, localField: "estimate.leadId", foreignField: "_id", as: "lead" } },
       { $set: { lead: { $arrayElemAt: ["$lead", 0] } } },
       {
+        $set: {
+          resolvedProjectId: {
+            $cond: [
+              { $eq: ["$reviewKind", "estimate"] },
+              { $ifNull: ["$projectId", { $ifNull: ["$estimate.projectId", "$lead.projectId"] }] },
+              "$projectId"
+            ]
+          }
+        }
+      },
+      ...(scopedProjectIds ? [{ $match: scopeMatch }] : []),
+      { $lookup: { from: ProjectModel.collection.name, localField: "resolvedProjectId", foreignField: "_id", as: "project" } },
+      {
         $match: {
           $expr: {
             $or: [
-              { $eq: [{ $size: "$project" }, 0] },
+              {
+                $and: [
+                  { $ne: [{ $ifNull: ["$resolvedProjectId", null] }, null] },
+                  { $eq: [{ $size: "$project" }, 0] }
+                ]
+              },
               { $eq: [{ $ifNull: ["$estimate._id", null] }, null] },
-              { $ne: [{ $ifNull: ["$estimate.projectId", "$lead.projectId"] }, "$projectId"] },
+              { $ne: [{ $ifNull: ["$estimate.projectId", "$lead.projectId"] }, "$resolvedProjectId"] },
+              { $ne: ["$leadId", "$estimate.leadId"] },
+              {
+                $and: [
+                  { $ne: [{ $ifNull: ["$projectId", null] }, null] },
+                  { $ne: ["$projectId", "$resolvedProjectId"] }
+                ]
+              },
               {
                 $cond: [
                   { $eq: ["$reviewKind", "estimate"] },
@@ -2491,15 +3894,13 @@ async function mongoDashboardLineageDataQuality(
     ] as PipelineStage[]).exec()
   ]);
   const qualities: DashboardDataQuality[] = [];
-  const lineageMetricKeys = scopedProjectIds
-    ? DASHBOARD_PROJECT_LINEAGE_DEPENDENCIES
-    : DASHBOARD_SOURCE_DEPENDENCIES.lineage;
   const append = (
     result: MongoRow[],
     code: "estimate_project_lineage_mismatch" | "finance_project_lineage_mismatch",
     issueMetricKey: string,
     entityType: "estimate" | "finance_bucket",
-    message: string
+    message: string,
+    metricKeys: readonly string[]
   ) => {
     const facet = result[0] ?? {};
     const total = Number(facet.count?.[0]?.value ?? 0);
@@ -2507,7 +3908,7 @@ async function mongoDashboardLineageDataQuality(
     qualities.push({
       status: "partial",
       totalIssueCount: total,
-      unavailableMetricKeys: [...lineageMetricKeys],
+      unavailableMetricKeys: [...metricKeys],
       issues: (facet.items ?? []).map((item: MongoRow) => ({
         code, metricKey: issueMetricKey, message, entityType, entityId: String(item._id)
       }))
@@ -2518,33 +3919,66 @@ async function mongoDashboardLineageDataQuality(
     "estimate_project_lineage_mismatch",
     scopedProjectIds ? "estimation.rows" : "estimation.trackedProjects",
     "estimate",
-    "Estimate Project/Lead lineage is inconsistent."
+    "Estimate Project/Lead lineage is inconsistent.",
+    scopedProjectIds
+      ? DASHBOARD_PROJECT_LINEAGE_DEPENDENCIES
+      : [
+          ...DASHBOARD_SOURCE_DEPENDENCIES.canonicalModules,
+          ...DASHBOARD_SOURCE_DEPENDENCIES.finance,
+          ...DASHBOARD_SOURCE_DEPENDENCIES.procurement
+        ]
   );
   append(
     bucketResult,
     "finance_project_lineage_mismatch",
     scopedProjectIds ? "finance.rows" : "finance.projectCount",
     "finance_bucket",
-    "Finance bucket approved-baseline lineage is inconsistent."
+    "Finance bucket approved-baseline lineage is inconsistent.",
+    scopedProjectIds
+      ? DASHBOARD_PROJECT_FINANCE_KEYS
+      : [
+          ...DASHBOARD_SOURCE_DEPENDENCIES.finance,
+          ...DASHBOARD_SOURCE_DEPENDENCIES.procurement
+        ]
   );
   append(
     reviewResult,
     "estimate_project_lineage_mismatch",
     scopedProjectIds ? "estimation.reviewRoundId" : "trends.estimatesApproved",
     "estimate",
-    "Immutable review Project/Estimate identity is inconsistent."
+    "Immutable review Project/Estimate identity is inconsistent.",
+    scopedProjectIds
+      ? DASHBOARD_PROJECT_LINEAGE_DEPENDENCIES
+      : [
+          "trends.estimatesApproved", "trends.designPlansApproved",
+          ...DASHBOARD_SOURCE_DEPENDENCIES.governanceClientResponses,
+          ...DASHBOARD_SOURCE_DEPENDENCIES.governanceDesignResponses
+        ]
   );
   const taskFacet = taskResult[0] ?? {};
-  const taskTotal = (taskFacet.count ?? []).reduce(
-    (sum: number, row: MongoRow) => sum + Number(row.value ?? 0),
-    0
-  );
-  if (taskTotal > 0) {
+  for (const issueKind of ["task", "procurement", "assignee"] as const) {
+    const taskTotal = Number(
+      (taskFacet.count ?? []).find((row: MongoRow) => row._id === issueKind)?.value ?? 0
+    );
+    if (taskTotal === 0) continue;
+    const metricKeys = scopedProjectIds
+      ? DASHBOARD_PROJECT_LINEAGE_DEPENDENCIES
+      : issueKind === "task"
+        ? DASHBOARD_SOURCE_DEPENDENCIES.execution
+        : issueKind === "procurement"
+          ? DASHBOARD_SOURCE_DEPENDENCIES.procurement
+          : [
+              "workforce.inactiveAssigneeTaskCount",
+              "risk.projectDistribution", "risk.factorDistribution", "risk.topProjects",
+              "projects.atRisk"
+            ];
     qualities.push({
       status: "partial",
       totalIssueCount: taskTotal,
-      unavailableMetricKeys: [...lineageMetricKeys],
-      issues: (taskFacet.items ?? []).map((item: MongoRow) => ({
+      unavailableMetricKeys: [...metricKeys],
+      issues: (taskFacet.items ?? [])
+        .filter((item: MongoRow) => item.issue === issueKind)
+        .map((item: MongoRow) => ({
         code: item.issue === "assignee"
           ? "assignee_identity_mismatch" as const
           : "task_project_lineage_mismatch" as const,
@@ -3532,18 +4966,25 @@ async function mongoRiskFactorDistribution(
       $unionWith: {
         coll: model.collection.name,
         pipeline: [
-          {
-            $lookup: {
-              from: ProjectModel.collection.name,
-              localField: "projectId",
-              foreignField: "_id",
-              as: "project"
-            }
-          },
           { $lookup: { from: EstimateModel.collection.name, localField: "estimateId", foreignField: "_id", as: "estimate" } },
           { $set: { estimate: { $arrayElemAt: ["$estimate", 0] } } },
           { $lookup: { from: LeadModel.collection.name, localField: "estimate.leadId", foreignField: "_id", as: "lead" } },
           { $set: { lead: { $arrayElemAt: ["$lead", 0] } } },
+          {
+            $set: {
+              resolvedProjectId: index === 0
+                ? { $ifNull: ["$projectId", { $ifNull: ["$estimate.projectId", "$lead.projectId"] }] }
+                : "$projectId"
+            }
+          },
+          {
+            $lookup: {
+              from: ProjectModel.collection.name,
+              localField: "resolvedProjectId",
+              foreignField: "_id",
+              as: "project"
+            }
+          },
           {
             $match: {
               "project.0": { $exists: true },
@@ -3551,7 +4992,15 @@ async function mongoRiskFactorDistribution(
               deliveryStatus: { $in: ["failed", "disabled"] },
               $expr: {
                 $and: [
-                  { $eq: [{ $ifNull: ["$estimate.projectId", "$lead.projectId"] }, "$projectId"] },
+                  { $eq: [{ $ifNull: ["$estimate.projectId", "$lead.projectId"] }, "$resolvedProjectId"] },
+                  index === 0
+                    ? {
+                        $or: [
+                          { $eq: [{ $ifNull: ["$projectId", null] }, null] },
+                          { $eq: ["$projectId", "$resolvedProjectId"] }
+                        ]
+                      }
+                    : { $eq: ["$projectId", "$resolvedProjectId"] },
                   index === 0
                     ? { $lte: ["$estimateVersion", "$estimate.version"] }
                     : { $eq: ["$designPlanVersion", "$estimate.designPlanVersion"] }
@@ -3561,7 +5010,7 @@ async function mongoRiskFactorDistribution(
           },
           {
             $project: {
-              projectId: 1,
+              projectId: "$resolvedProjectId",
               kind: { $literal: "workflow" },
               level: { $literal: "yellow" },
               reasonCode: {

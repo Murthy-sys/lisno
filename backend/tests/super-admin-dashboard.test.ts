@@ -56,6 +56,22 @@ describe("Super Admin dashboard routes", () => {
         startAt: "2026-08-01T00:00:00.000Z",
         endAt: "2026-08-30T12:34:56.000Z"
       },
+      comparison: {
+        window: {
+          timezone: "UTC",
+          current: {
+            days: 30,
+            startAt: "2026-08-01T00:00:00.000Z",
+            endAt: "2026-08-30T12:34:56.000Z"
+          },
+          previous: {
+            days: 30,
+            startAt: "2026-07-02T00:00:00.000Z",
+            endAt: "2026-07-31T12:34:56.000Z"
+          },
+          partialFinalDay: true
+        }
+      },
       workforce: {
         overCapacityWorkers: null,
         capacityAvailable: false
@@ -66,6 +82,11 @@ describe("Super Admin dashboard routes", () => {
       }
     });
     expect(response.body.data.projects.total).toBe(demoSeedData.projects.length);
+    expect(response.body.data.clients.registeredAccounts).toBe(
+      demoSeedData.users.filter((user) => user.role === "client").length
+    );
+    expect(response.body.data.comparison.currentBuckets).toHaveLength(30);
+    expect(response.body.data.comparison.previousBuckets).toHaveLength(30);
     expect(JSON.stringify(response.body)).not.toMatch(
       /passwordHash|tokenHash|storageReference|clientEmail|clientMobile|privateUrl/i
     );

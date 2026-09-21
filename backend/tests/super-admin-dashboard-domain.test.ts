@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  dashboardComparisonMetric,
+  dashboardComparisonWindow,
   dashboardFactorDistribution,
   dashboardRatio,
   dashboardTaskRiskFactor,
@@ -12,6 +14,43 @@ import {
 import { resolveEstimateReviewRoundId } from "../src/domain/estimate-client-review.js";
 
 describe("Super Admin dashboard domain", () => {
+  it("builds matched UTC event windows with aligned partial final days", () => {
+    expect(dashboardComparisonWindow(new Date("2026-09-21T10:30:00.000Z"), 30)).toEqual({
+      timezone: "UTC",
+      current: {
+        days: 30,
+        startAt: "2026-08-23T00:00:00.000Z",
+        endAt: "2026-09-21T10:30:00.000Z"
+      },
+      previous: {
+        days: 30,
+        startAt: "2026-07-24T00:00:00.000Z",
+        endAt: "2026-08-22T10:30:00.000Z"
+      },
+      partialFinalDay: true
+    });
+  });
+
+  it("reports percentage, new, no-change, and unavailable comparison states", () => {
+    expect(dashboardComparisonMetric({ unit: "count", current: 1, previous: 3 }))
+      .toMatchObject({ delta: -2, changeBps: -6_667, changeKind: "percentage" });
+    expect(dashboardComparisonMetric({ unit: "count", current: 2, previous: 0 }))
+      .toMatchObject({ delta: 2, changeBps: null, changeKind: "new" });
+    expect(dashboardComparisonMetric({ unit: "count", current: 0, previous: 0 }))
+      .toMatchObject({ delta: 0, changeBps: null, changeKind: "no_change" });
+    expect(dashboardComparisonMetric({
+      unit: "paise",
+      current: 100,
+      previous: null,
+      previousUnavailableReason: "Historical ledger unavailable."
+    })).toMatchObject({
+      currentStatus: "available",
+      previousStatus: "unavailable",
+      changeKind: "unavailable",
+      previousUnavailableReason: "Historical ledger unavailable."
+    });
+  });
+
   it("resolves Estimate review identity from the current workflow state", () => {
     const rounds = [
       {

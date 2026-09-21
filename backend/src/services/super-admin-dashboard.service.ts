@@ -10,6 +10,7 @@ import { ApiError } from "../middleware/errors.js";
 import type { AppRepository, DashboardPageResult } from "../repositories/types.js";
 import type { PublicUser } from "./auth.service.js";
 import type { Clock } from "./workflow.js";
+import { dashboardComparisonWindow } from "../domain/super-admin-dashboard.js";
 
 export interface SuperAdminDashboardService {
   overview(actor: PublicUser, periodDays: 7 | 30 | 90): Promise<SuperAdminDashboardOverview>;
@@ -33,11 +34,13 @@ export function createSuperAdminDashboardService(
     async overview(actor, periodDays) {
       await requireSoleActiveSuperAdmin(repository, actor);
       const observedAt = clock();
-      const reportingPeriod = dashboardPeriod(observedAt, periodDays);
+      const comparisonWindow = dashboardComparisonWindow(observedAt, periodDays);
       return repository.readSuperAdminDashboardOverview({
         observedAt: observedAt.toISOString(),
-        startAt: reportingPeriod.startAt,
-        endAt: reportingPeriod.endAt,
+        startAt: comparisonWindow.current.startAt,
+        endAt: comparisonWindow.current.endAt,
+        previousStartAt: comparisonWindow.previous.startAt,
+        previousEndAt: comparisonWindow.previous.endAt,
         periodDays
       });
     },

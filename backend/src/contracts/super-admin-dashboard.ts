@@ -5,6 +5,18 @@ export const SUPER_ADMIN_DASHBOARD_PERIOD_DAYS = [7, 30, 90] as const;
 export type SuperAdminDashboardPeriodDays =
   (typeof SUPER_ADMIN_DASHBOARD_PERIOD_DAYS)[number];
 
+export const DASHBOARD_COMPARISON_METRIC_KEYS = [
+  "projects_created",
+  "clients_created",
+  "projects_completed",
+  "execution_tasks_completed",
+  "estimates_approved",
+  "design_plans_approved",
+  "recorded_expenses_paise"
+] as const;
+export type DashboardComparisonMetricKey =
+  (typeof DASHBOARD_COMPARISON_METRIC_KEYS)[number];
+
 export const DASHBOARD_RISK_LEVELS = ["gray", "green", "yellow", "red"] as const;
 export type DashboardRiskLevel = (typeof DASHBOARD_RISK_LEVELS)[number];
 
@@ -119,6 +131,46 @@ export interface DashboardPeriod {
   endAt: string;
 }
 
+export interface DashboardComparisonWindow {
+  timezone: "UTC";
+  current: DashboardPeriod;
+  previous: DashboardPeriod;
+  partialFinalDay: boolean;
+}
+
+export interface DashboardComparisonMetric {
+  unit: "count" | "paise";
+  timeBasis: "event_window";
+  current: number | null;
+  previous: number | null;
+  delta: number | null;
+  changeBps: number | null;
+  changeKind: "percentage" | "new" | "no_change" | "unavailable";
+  currentStatus: "available" | "unavailable";
+  previousStatus: "available" | "unavailable";
+  currentUnavailableReason: string | null;
+  previousUnavailableReason: string | null;
+}
+
+export interface DashboardComparisonBucket {
+  dayIndex: number;
+  date: string;
+  projectsCreated: number | null;
+  clientsCreated: number | null;
+  projectsCompleted: number | null;
+  executionTasksCompleted: number | null;
+  estimatesApproved: number | null;
+  designPlansApproved: number | null;
+  recordedExpensesPaise: number | null;
+}
+
+export interface DashboardComparison {
+  window: DashboardComparisonWindow;
+  metrics: Record<DashboardComparisonMetricKey, DashboardComparisonMetric>;
+  currentBuckets: DashboardComparisonBucket[];
+  previousBuckets: DashboardComparisonBucket[];
+}
+
 export interface DashboardRiskSource {
   entityType: "project" | "task" | "estimate" | "design_plan" | "lead" | "delivery";
   entityId: string;
@@ -164,6 +216,7 @@ export interface DashboardModuleCoverage {
 export interface DashboardProjectsMetrics {
   total: number;
   createdInPeriod: number;
+  completedInPeriod: number;
   planning: number;
   active: number;
   onHold: number;
@@ -172,6 +225,21 @@ export interface DashboardProjectsMetrics {
   completedLate: number;
   completionRate: DashboardRatio;
   atRisk: number;
+}
+
+export interface DashboardClientMetrics {
+  accountsStatus: "available" | "unavailable";
+  relationshipsStatus: "available" | "unavailable";
+  accountsUnavailableReason: string | null;
+  relationshipsUnavailableReason: string | null;
+  registeredAccounts: number | null;
+  activeAccounts: number | null;
+  inactiveAccounts: number | null;
+  accountsCreatedInPeriod: number | null;
+  clientsWithProjects: number | null;
+  clientsWithActiveProjects: number | null;
+  unlinkedProjects: number | null;
+  invalidProjectClientLinks: number | null;
 }
 
 export interface DashboardEstimationMetrics extends DashboardModuleCoverage {
@@ -316,6 +384,7 @@ export interface SuperAdminDashboardOverview {
   observedAt: string;
   period: DashboardPeriod;
   projects: DashboardProjectsMetrics;
+  clients: DashboardClientMetrics;
   estimation: DashboardEstimationMetrics;
   design: DashboardDesignMetrics;
   procurement: DashboardProcurementMetrics;
@@ -325,6 +394,7 @@ export interface SuperAdminDashboardOverview {
   governance: DashboardGovernanceMetrics;
   risk: DashboardRiskMetrics;
   trends: DashboardTrendBucket[];
+  comparison: DashboardComparison;
   dataQuality: DashboardDataQuality;
 }
 

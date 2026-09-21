@@ -20,7 +20,7 @@ import {
   WorkerRoleChart,
   WorkforceAssignmentChart,
   WorkforceKpiMeter
-} from "./dashboardCharts";
+} from "./echarts/DashboardModuleECharts";
 import type { DashboardTab, SuperAdminDashboardOverview } from "./superAdminDashboardApi";
 
 /*

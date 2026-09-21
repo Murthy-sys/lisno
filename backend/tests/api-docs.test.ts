@@ -371,6 +371,57 @@ describe("OpenAPI and Swagger UI", () => {
     expect(schemas.SuperAdminDashboardOverview?.properties?.projects).toEqual({
       $ref: "#/components/schemas/DashboardProjectsMetrics"
     });
+    expect(schemas.SuperAdminDashboardOverview?.properties?.clients).toEqual({
+      $ref: "#/components/schemas/DashboardClientMetrics"
+    });
+    expect(schemas.SuperAdminDashboardOverview?.properties?.comparison).toEqual({
+      $ref: "#/components/schemas/DashboardComparison"
+    });
+    const clientMetrics = schemas.DashboardClientMetrics as {
+      required?: string[];
+      properties?: Record<string, { enum?: string[]; nullable?: boolean }>;
+    };
+    expect(clientMetrics.required).toEqual(expect.arrayContaining([
+      "accountsStatus",
+      "relationshipsStatus",
+      "registeredAccounts",
+      "clientsWithProjects",
+      "invalidProjectClientLinks"
+    ]));
+    expect(clientMetrics.properties?.accountsStatus?.enum).toEqual(["available", "unavailable"]);
+    expect(clientMetrics.properties?.registeredAccounts?.nullable).toBe(true);
+    expect(clientMetrics.properties?.relationshipsUnavailableReason?.nullable).toBe(true);
+    const comparison = schemas.DashboardComparison as {
+      required?: string[];
+      properties?: Record<string, {
+        maxItems?: number;
+        properties?: Record<string, unknown>;
+        required?: string[];
+      }>;
+    };
+    expect(comparison.required).toEqual(["window", "metrics", "currentBuckets", "previousBuckets"]);
+    expect(comparison.properties?.metrics?.required).toEqual([
+      "projects_created",
+      "clients_created",
+      "projects_completed",
+      "execution_tasks_completed",
+      "estimates_approved",
+      "design_plans_approved",
+      "recorded_expenses_paise"
+    ]);
+    expect(comparison.properties?.currentBuckets?.maxItems).toBe(90);
+    expect(comparison.properties?.previousBuckets?.maxItems).toBe(90);
+    const comparisonMetric = schemas.DashboardComparisonMetric as {
+      properties?: Record<string, { enum?: string[]; nullable?: boolean }>;
+    };
+    expect(comparisonMetric.properties?.changeKind?.enum).toEqual([
+      "percentage",
+      "new",
+      "no_change",
+      "unavailable"
+    ]);
+    expect(comparisonMetric.properties?.changeBps?.nullable).toBe(true);
+    expect(comparisonMetric.properties?.previousUnavailableReason?.nullable).toBe(true);
     expect(schemas.SuperAdminDashboardProjectPage?.properties?.items).toEqual({
       type: "array",
       items: { $ref: "#/components/schemas/DashboardProjectRow" }

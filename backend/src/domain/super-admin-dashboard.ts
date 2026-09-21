@@ -1,5 +1,7 @@
 import type { KpiTask } from "../contracts/domain.js";
 import type {
+  DashboardComparisonMetric,
+  DashboardComparisonWindow,
   DashboardFactorDistributionItem,
   DashboardProjectRisk,
   DashboardRatio,
@@ -17,6 +19,113 @@ const RISK_RANK: Readonly<Record<DashboardRiskLevel, number>> = {
   yellow: 2,
   red: 3
 };
+
+export function dashboardComparisonWindow(
+  observedAt: Date,
+  days: 7 | 30 | 90
+): DashboardComparisonWindow {
+  if (Number.isNaN(observedAt.getTime())) {
+    throw new TypeError("Dashboard observation time must be valid.");
+  }
+  const currentStart = new Date(Date.UTC(
+    observedAt.getUTCFullYear(),
+    observedAt.getUTCMonth(),
+    observedAt.getUTCDate()
+  ));
+  currentStart.setUTCDate(currentStart.getUTCDate() - (days - 1));
+  const previousStart = new Date(currentStart);
+  previousStart.setUTCDate(previousStart.getUTCDate() - days);
+  const previousEnd = new Date(observedAt);
+  previousEnd.setUTCDate(previousEnd.getUTCDate() - days);
+  return {
+    timezone: "UTC",
+    current: {
+      days,
+      startAt: currentStart.toISOString(),
+      endAt: observedAt.toISOString()
+    },
+    previous: {
+      days,
+      startAt: previousStart.toISOString(),
+      endAt: previousEnd.toISOString()
+    },
+    partialFinalDay: true
+  };
+}
+
+export function dashboardComparisonMetric(input: {
+  unit: "count" | "paise";
+  current: number | null;
+  previous: number | null;
+  currentUnavailableReason?: string | null;
+  previousUnavailableReason?: string | null;
+}): DashboardComparisonMetric {
+  if (input.current !== null) {
+    assertSafeNonNegativeInteger(input.current, "Current comparison value");
+  }
+  if (input.previous !== null) {
+    assertSafeNonNegativeInteger(input.previous, "Previous comparison value");
+  }
+  const currentStatus = input.current === null ? "unavailable" : "available";
+  const previousStatus = input.previous === null ? "unavailable" : "available";
+  if (input.current === null || input.previous === null) {
+    return {
+      unit: input.unit,
+      timeBasis: "event_window",
+      current: input.current,
+      previous: input.previous,
+      delta: null,
+      changeBps: null,
+      changeKind: "unavailable",
+      currentStatus,
+      previousStatus,
+      currentUnavailableReason: input.current === null
+        ? input.currentUnavailableReason ?? "Current-period data is unavailable."
+        : null,
+      previousUnavailableReason: input.previous === null
+        ? input.previousUnavailableReason ?? "Previous-period data is unavailable."
+        : null
+    };
+  }
+  const delta = input.current - input.previous;
+  if (input.previous === 0) {
+    return {
+      unit: input.unit,
+      timeBasis: "event_window",
+      current: input.current,
+      previous: input.previous,
+      delta,
+      changeBps: null,
+      changeKind: input.current === 0 ? "no_change" : "new",
+      currentStatus,
+      previousStatus,
+      currentUnavailableReason: null,
+      previousUnavailableReason: null
+    };
+  }
+  const numerator = BigInt(delta) * 10_000n;
+  const denominator = BigInt(input.previous);
+  const magnitude = numerator < 0n ? -numerator : numerator;
+  const roundedMagnitude = (magnitude + denominator / 2n) / denominator;
+  const signed = numerator < 0n ? -roundedMagnitude : roundedMagnitude;
+  const changeBps = signed <= BigInt(Number.MAX_SAFE_INTEGER) &&
+    signed >= BigInt(Number.MIN_SAFE_INTEGER)
+    ? Number(signed)
+    : null;
+  return {
+    unit: input.unit,
+    timeBasis: "event_window",
+    current: input.current,
+    previous: input.previous,
+    delta,
+    changeBps,
+    changeKind: delta === 0 ? "no_change" : "percentage",
+    currentStatus,
+    previousStatus,
+    currentUnavailableReason: null,
+    previousUnavailableReason: null
+  };
+}
 
 export function dashboardRatio(
   numerator: number,

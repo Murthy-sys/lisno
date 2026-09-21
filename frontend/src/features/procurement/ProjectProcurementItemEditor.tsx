@@ -7,6 +7,7 @@ import { Button } from "../../components/ui/Button";
 import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field, Input, Select } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
+import { dashboardKeys } from "../admin/dashboard/superAdminDashboardApi";
 import {
   createProjectProcurementItem,
   getProjectProcurementItem,
@@ -71,7 +72,11 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
       ? updateProjectProcurementItem(projectId, baseItem.id, { ...input, expectedVersion: baseItem.version })
       : createProjectProcurementItem(projectId, input as ProjectProcurementItemInput & ProcurementParentSource),
     onSuccess: async (saved) => {
-      await queryClient.invalidateQueries({ queryKey: projectProcurementKeys.lists(projectId) });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: projectProcurementKeys.lists(projectId) }),
+        queryClient.invalidateQueries({ queryKey: procurementKeys.projects }),
+        queryClient.invalidateQueries({ queryKey: dashboardKeys.all })
+      ]);
       onSaved(saved);
     },
     onError: (error) => {

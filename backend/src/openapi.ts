@@ -22,6 +22,7 @@ import {
 } from "./domain/project-finance.js";
 import { ROLE_CODES, WORKER_ROLES } from "./domain/roles.js";
 import {
+  DASHBOARD_COMPARISON_METRIC_KEYS,
   DASHBOARD_KPI_AVAILABILITY,
   DASHBOARD_PROJECT_MODULES,
   DASHBOARD_PROJECT_MODULE_STATUSES,
@@ -1367,15 +1368,85 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         endAt: dateTime
       }
     },
+    DashboardComparisonWindow: {
+      type: "object", additionalProperties: false,
+      required: ["timezone", "current", "previous", "partialFinalDay"],
+      properties: {
+        timezone: { type: "string", enum: ["UTC"] },
+        current: { $ref: "#/components/schemas/DashboardPeriod" },
+        previous: { $ref: "#/components/schemas/DashboardPeriod" },
+        partialFinalDay: { type: "boolean" }
+      }
+    },
+    DashboardComparisonMetric: {
+      type: "object", additionalProperties: false,
+      required: ["unit", "timeBasis", "current", "previous", "delta", "changeBps", "changeKind", "currentStatus", "previousStatus", "currentUnavailableReason", "previousUnavailableReason"],
+      properties: {
+        unit: { type: "string", enum: ["count", "paise"] },
+        timeBasis: { type: "string", enum: ["event_window"] },
+        current: { type: "integer", minimum: 0, nullable: true },
+        previous: { type: "integer", minimum: 0, nullable: true },
+        delta: { type: "integer", nullable: true },
+        changeBps: { type: "integer", nullable: true },
+        changeKind: { type: "string", enum: ["percentage", "new", "no_change", "unavailable"] },
+        currentStatus: { type: "string", enum: ["available", "unavailable"] },
+        previousStatus: { type: "string", enum: ["available", "unavailable"] },
+        currentUnavailableReason: { type: "string", nullable: true },
+        previousUnavailableReason: { type: "string", nullable: true }
+      }
+    },
+    DashboardComparisonBucket: {
+      type: "object", additionalProperties: false,
+      required: ["dayIndex", "date", "projectsCreated", "clientsCreated", "projectsCompleted", "executionTasksCompleted", "estimatesApproved", "designPlansApproved", "recordedExpensesPaise"],
+      properties: {
+        dayIndex: { type: "integer", minimum: 0, maximum: 89 },
+        date: { type: "string", format: "date" },
+        projectsCreated: { type: "integer", minimum: 0, nullable: true },
+        clientsCreated: { type: "integer", minimum: 0, nullable: true },
+        projectsCompleted: { type: "integer", minimum: 0, nullable: true },
+        executionTasksCompleted: { type: "integer", minimum: 0, nullable: true },
+        estimatesApproved: { type: "integer", minimum: 0, nullable: true },
+        designPlansApproved: { type: "integer", minimum: 0, nullable: true },
+        recordedExpensesPaise: { type: "integer", minimum: 0, nullable: true }
+      }
+    },
+    DashboardComparison: {
+      type: "object", additionalProperties: false,
+      required: ["window", "metrics", "currentBuckets", "previousBuckets"],
+      properties: {
+        window: { $ref: "#/components/schemas/DashboardComparisonWindow" },
+        metrics: {
+          type: "object", additionalProperties: false,
+          required: [...DASHBOARD_COMPARISON_METRIC_KEYS],
+          properties: Object.fromEntries(DASHBOARD_COMPARISON_METRIC_KEYS.map((key) => [key, { $ref: "#/components/schemas/DashboardComparisonMetric" }]))
+        },
+        currentBuckets: { type: "array", maxItems: 90, items: { $ref: "#/components/schemas/DashboardComparisonBucket" } },
+        previousBuckets: { type: "array", maxItems: 90, items: { $ref: "#/components/schemas/DashboardComparisonBucket" } }
+      }
+    },
     DashboardProjectsMetrics: {
       type: "object", additionalProperties: false,
-      required: ["total", "createdInPeriod", "planning", "active", "onHold", "completed", "liveOverdue", "completedLate", "completionRate", "atRisk"],
+      required: ["total", "createdInPeriod", "completedInPeriod", "planning", "active", "onHold", "completed", "liveOverdue", "completedLate", "completionRate", "atRisk"],
       properties: {
-        total: { type: "integer", minimum: 0 }, createdInPeriod: { type: "integer", minimum: 0 },
+        total: { type: "integer", minimum: 0 }, createdInPeriod: { type: "integer", minimum: 0 }, completedInPeriod: { type: "integer", minimum: 0 },
         planning: { type: "integer", minimum: 0 }, active: { type: "integer", minimum: 0 },
         onHold: { type: "integer", minimum: 0 }, completed: { type: "integer", minimum: 0 },
         liveOverdue: { type: "integer", minimum: 0 }, completedLate: { type: "integer", minimum: 0 },
         completionRate: { $ref: "#/components/schemas/DashboardRatio" }, atRisk: { type: "integer", minimum: 0 }
+      }
+    },
+    DashboardClientMetrics: {
+      type: "object", additionalProperties: false,
+      required: ["accountsStatus", "relationshipsStatus", "accountsUnavailableReason", "relationshipsUnavailableReason", "registeredAccounts", "activeAccounts", "inactiveAccounts", "accountsCreatedInPeriod", "clientsWithProjects", "clientsWithActiveProjects", "unlinkedProjects", "invalidProjectClientLinks"],
+      properties: {
+        accountsStatus: { type: "string", enum: ["available", "unavailable"] },
+        relationshipsStatus: { type: "string", enum: ["available", "unavailable"] },
+        accountsUnavailableReason: { type: "string", nullable: true },
+        relationshipsUnavailableReason: { type: "string", nullable: true },
+        ...Object.fromEntries([
+          "registeredAccounts", "activeAccounts", "inactiveAccounts", "accountsCreatedInPeriod",
+          "clientsWithProjects", "clientsWithActiveProjects", "unlinkedProjects", "invalidProjectClientLinks"
+        ].map((key) => [key, { type: "integer", minimum: 0, nullable: true }]))
       }
     },
     DashboardEstimationMetrics: {
@@ -1475,11 +1546,12 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     SuperAdminDashboardOverview: {
       type: "object",
       additionalProperties: false,
-      required: ["observedAt", "period", "projects", "estimation", "design", "procurement", "finance", "execution", "workforce", "governance", "risk", "trends", "dataQuality"],
+      required: ["observedAt", "period", "projects", "clients", "estimation", "design", "procurement", "finance", "execution", "workforce", "governance", "risk", "trends", "comparison", "dataQuality"],
       properties: {
         observedAt: dateTime,
         period: { $ref: "#/components/schemas/DashboardPeriod" },
         projects: { $ref: "#/components/schemas/DashboardProjectsMetrics" },
+        clients: { $ref: "#/components/schemas/DashboardClientMetrics" },
         estimation: { $ref: "#/components/schemas/DashboardEstimationMetrics" },
         design: { $ref: "#/components/schemas/DashboardDesignMetrics" },
         procurement: { $ref: "#/components/schemas/DashboardProcurementMetrics" },
@@ -1489,6 +1561,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         governance: { $ref: "#/components/schemas/DashboardGovernanceMetrics" },
         risk: { $ref: "#/components/schemas/DashboardRiskMetrics" },
         trends: { type: "array", maxItems: 90, items: { $ref: "#/components/schemas/DashboardTrendBucket" } },
+        comparison: { $ref: "#/components/schemas/DashboardComparison" },
         dataQuality: { $ref: "#/components/schemas/DashboardDataQuality" }
       }
     },

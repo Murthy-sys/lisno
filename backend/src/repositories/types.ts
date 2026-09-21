@@ -1073,6 +1073,8 @@ export interface AppRepository {
     observedAt: string;
     startAt: string;
     endAt: string;
+    previousStartAt: string;
+    previousEndAt: string;
     periodDays: 7 | 30 | 90;
   }): Promise<SuperAdminDashboardOverview>;
   pageSuperAdminDashboardProjects(

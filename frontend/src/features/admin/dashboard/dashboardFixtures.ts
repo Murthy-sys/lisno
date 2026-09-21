@@ -12,6 +12,11 @@ const period = {
   startAt: "2026-08-01T00:00:00.000Z",
   endAt: observedAt
 };
+const previousPeriod = {
+  days: 30 as const,
+  startAt: "2026-07-02T00:00:00.000Z",
+  endAt: "2026-07-31T12:30:00.000Z"
+};
 const completeQuality = {
   status: "complete" as const,
   totalIssueCount: 0,
@@ -19,10 +24,73 @@ const completeQuality = {
   unavailableMetricKeys: []
 };
 
+function comparisonBuckets(
+  startAt: string,
+  last: {
+    projectsCreated: number;
+    clientsCreated: number;
+    projectsCompleted: number;
+    executionTasksCompleted: number;
+    estimatesApproved: number;
+    designPlansApproved: number;
+    recordedExpensesPaise: number;
+  }
+) {
+  const start = new Date(startAt);
+  return Array.from({ length: 30 }, (_, dayIndex) => {
+    const date = new Date(start);
+    date.setUTCDate(date.getUTCDate() + dayIndex);
+    const values = dayIndex === 29 ? last : {
+      projectsCreated: 0,
+      clientsCreated: 0,
+      projectsCompleted: 0,
+      executionTasksCompleted: 0,
+      estimatesApproved: 0,
+      designPlansApproved: 0,
+      recordedExpensesPaise: 0
+    };
+    return { dayIndex, date: date.toISOString().slice(0, 10), ...values };
+  });
+}
+
+const comparisonMetric = (
+  current: number,
+  previous: number,
+  unit: "count" | "paise"
+) => ({
+  unit,
+  timeBasis: "event_window" as const,
+  current,
+  previous,
+  delta: current - previous,
+  changeBps: previous > 0 ? Math.round((current - previous) * 10_000 / previous) : null,
+  changeKind: previous === 0
+    ? current === 0 ? "no_change" as const : "new" as const
+    : "percentage" as const,
+  currentStatus: "available" as const,
+  previousStatus: "available" as const,
+  currentUnavailableReason: null,
+  previousUnavailableReason: null
+});
+
 export const superAdminDashboardOverviewFixture: SuperAdminDashboardOverview = {
   observedAt,
   period,
-  projects: { total: 2, createdInPeriod: 1, planning: 0, active: 1, onHold: 0, completed: 1, liveOverdue: 1, completedLate: 0, completionRate: { numerator: 1, denominator: 2, rateBps: 5000 }, atRisk: 1 },
+  projects: { total: 2, createdInPeriod: 1, completedInPeriod: 0, planning: 0, active: 1, onHold: 0, completed: 1, liveOverdue: 1, completedLate: 0, completionRate: { numerator: 1, denominator: 2, rateBps: 5000 }, atRisk: 1 },
+  clients: {
+    accountsStatus: "available",
+    relationshipsStatus: "available",
+    accountsUnavailableReason: null,
+    relationshipsUnavailableReason: null,
+    registeredAccounts: 3,
+    activeAccounts: 2,
+    inactiveAccounts: 1,
+    accountsCreatedInPeriod: 1,
+    clientsWithProjects: 2,
+    clientsWithActiveProjects: 1,
+    unlinkedProjects: 0,
+    invalidProjectClientLinks: 0
+  },
   estimation: { eligibleProjects: 2, trackedProjects: 2, unavailableProjects: 0, noEstimate: 0, draftInternal: 0, readyToSend: 0, awaitingClient: 1, changesRequested: 0, clientApproved: 1, approvedSubtotalPaise: 10_000_000, approvedGstPaise: 1_800_000, approvedContractTotalPaise: 11_800_000, medianWaitingAgeDays: 3, oldestWaitingAgeDays: 6 },
   design: { eligibleProjects: 2, trackedProjects: 2, unavailableProjects: 0, pendingAssignment: 0, assigned: 0, inProgress: 1, readyForClient: 0, changesRequested: 0, approved: 1, approvalRate: { numerator: 1, denominator: 2, rateBps: 5000 }, oldestPendingReviewAgeDays: 2, failedDeliveryCount: 1, disabledDeliveryCount: 0 },
   procurement: { eligibleProjects: 2, trackedProjects: 1, unavailableProjects: 1, notStarted: 1, open: 0, inProgress: 1, completed: 0, plannedAmountPaise: 3_000_000, postedSpendPaise: 1_200_000, variancePaise: 1_800_000, averageProgress: { numerator: 65, denominator: 1, rateBps: 6500 } },
@@ -36,6 +104,36 @@ export const superAdminDashboardOverviewFixture: SuperAdminDashboardOverview = {
     topProjects: [{ projectId: "project-risk", projectName: "North Residence", projectStatus: "active", risk: { level: "red", factors: [{ kind: "schedule", level: "red", reasonCode: "project_deadline_overdue", reason: "Project is past its planned deadline.", source: { entityType: "project", entityId: "project-risk" }, observedValue: 8, threshold: 0, drillDownTarget: "/admin/projects/project-risk" }] } }]
   },
   trends: [{ date: "2026-08-30", projectsCreated: 1, projectsCompleted: 0, estimatesApproved: 1, designPlansApproved: 0, workflowTasksCompleted: 2, ledgerExpensesPostedPaise: 250_000 }],
+  comparison: {
+    window: { timezone: "UTC", current: period, previous: previousPeriod, partialFinalDay: true },
+    metrics: {
+      projects_created: comparisonMetric(1, 2, "count"),
+      clients_created: comparisonMetric(1, 0, "count"),
+      projects_completed: comparisonMetric(0, 1, "count"),
+      execution_tasks_completed: comparisonMetric(2, 1, "count"),
+      estimates_approved: comparisonMetric(1, 0, "count"),
+      design_plans_approved: comparisonMetric(0, 1, "count"),
+      recorded_expenses_paise: comparisonMetric(250_000, 150_000, "paise")
+    },
+    currentBuckets: comparisonBuckets(period.startAt, {
+      projectsCreated: 1,
+      clientsCreated: 1,
+      projectsCompleted: 0,
+      executionTasksCompleted: 2,
+      estimatesApproved: 1,
+      designPlansApproved: 0,
+      recordedExpensesPaise: 250_000
+    }),
+    previousBuckets: comparisonBuckets(previousPeriod.startAt, {
+      projectsCreated: 2,
+      clientsCreated: 0,
+      projectsCompleted: 1,
+      executionTasksCompleted: 1,
+      estimatesApproved: 0,
+      designPlansApproved: 1,
+      recordedExpensesPaise: 150_000
+    })
+  },
   dataQuality: completeQuality
 };
 
