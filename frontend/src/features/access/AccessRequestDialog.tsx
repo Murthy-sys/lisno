@@ -109,7 +109,7 @@ export function AccessRequestDialog({
       className="administration-context-panel"
       footer={({ requestClose }) => (
         <div className="access-request-dialog__actions">
-          <Button variant="quiet" size="compact" disabled={mutation.isPending} onClick={requestClose}>
+          <Button variant="destructive-outline" size="compact" disabled={mutation.isPending} onClick={requestClose}>
             Cancel
           </Button>
           <Button type="submit" form="access-request-form" size="compact" busy={mutation.isPending} busyLabel="Submitting…">

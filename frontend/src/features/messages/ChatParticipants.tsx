@@ -56,7 +56,7 @@ function ParticipantDialog({ projectId, participant, onClose }: { projectId: str
       </>}
       <Field id={`${id}-reason`} label="Reason" required>{props => <Textarea {...props} rows={3} maxLength={1000} value={reason} onChange={event => setReason(event.target.value)} />}</Field>
       {mutation.error ? <p role="alert" className="project-chat-error">{mutation.error}</p> : null}
-      <div className="project-chat-form__actions"><Button variant="secondary" onClick={onClose} disabled={mutation.busy}>Cancel</Button><Button type="submit" variant={participant ? "destructive" : "primary"} busy={mutation.busy} disabled={!reason.trim() || (!participant && !userId)}>{participant ? "Remove selection" : "Add participant"}</Button></div>
+      <div className="project-chat-form__actions"><Button variant="destructive-outline" onClick={onClose} disabled={mutation.busy}>Cancel</Button><Button type="submit" variant={participant ? "destructive" : "primary"} busy={mutation.busy} disabled={!reason.trim() || (!participant && !userId)}>{participant ? "Remove selection" : "Add participant"}</Button></div>
     </form>
   </Dialog>;
 }

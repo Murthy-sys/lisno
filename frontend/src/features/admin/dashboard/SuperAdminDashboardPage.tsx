@@ -5,7 +5,7 @@ import { useSearchParams } from "react-router-dom";
 
 import type { WorkerRole } from "../../../api/authorization-contract";
 import type { ProjectStatus } from "../../../api/types";
-import { Button } from "../../../components/ui/Button";
+import { IconButton } from "../../../components/ui/IconButton";
 import { InlineMessage } from "../../../components/ui/InlineMessage";
 import { MetricCard } from "../../../components/ui/MetricCard";
 import { PageHeader } from "../../../components/ui/PageHeader";
@@ -352,7 +352,7 @@ export function SuperAdminDashboardPage() {
 
   return (
     <section className="super-admin-dashboard" aria-labelledby="super-admin-dashboard-title">
-      <PageHeader id="super-admin-dashboard-title" eyebrow="Super Admin" title="Organization overview" description="Projects, Client accounts, approved finance, and operational attention." metadata={<div className="dashboard-freshness"><span>Updated {formatDashboardTimestamp(data.observedAt)}</span>{refreshing ? <span role="status">Refreshing dashboard…</span> : null}</div>} actions={<><label className="dashboard-period"><span>Reporting period</span><select aria-label="Reporting period" value={periodDays} onChange={(event) => setQuery({ periodDays: event.target.value, offset: undefined })}><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label><label className="dashboard-comparison-toggle"><input type="checkbox" checked={showComparison} onChange={(event) => setQuery({ comparison: event.target.checked ? undefined : "off" })} /><span>Compare with previous period</span></label><Button variant="secondary" disabled={manualRefresh} aria-label="Refresh dashboard" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />{manualRefresh ? "Refreshing…" : "Refresh"}</Button></>} />
+      <PageHeader id="super-admin-dashboard-title" eyebrow="Super Admin" title="Organization overview" description="Projects, Client accounts, approved finance, and operational attention." metadata={<div className="dashboard-freshness"><span>Updated {formatDashboardTimestamp(data.observedAt)}</span>{refreshing ? <span role="status">Refreshing dashboard…</span> : null}</div>} actions={<><label className="dashboard-period"><span>Reporting period</span><select aria-label="Reporting period" value={periodDays} onChange={(event) => setQuery({ periodDays: event.target.value, offset: undefined })}><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label><label className="dashboard-comparison-toggle"><input type="checkbox" checked={showComparison} onChange={(event) => setQuery({ comparison: event.target.checked ? undefined : "off" })} /><span>Compare with previous period</span></label><IconButton variant="secondary" label="Refresh dashboard" tooltip="Refresh" icon={<RefreshCw aria-hidden="true" />} busy={manualRefresh} onClick={() => void refresh()} /></>} />
       <p className="sr-only" aria-live="polite">{announcement}</p>
       {data.dataQuality.status === "partial" ? <InlineMessage tone="warning"><strong>Some dashboard metrics are unavailable.</strong> {data.dataQuality.issues.map((issue) => issue.message).join(" ")}</InlineMessage> : null}
       {overview.isError && overview.data ? <InlineMessage tone="error">The latest refresh failed. Showing the last successfully observed dashboard.</InlineMessage> : null}

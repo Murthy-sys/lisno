@@ -211,6 +211,25 @@ export interface KnowledgeSubBasket extends Omit<KnowledgeBasket, "description" 
 
 export interface KnowledgeSubBasketListResponse extends KnowledgePageEnvelope<KnowledgeSubBasket> {}
 
+export interface KnowledgeSubBasketDeletionImpact {
+  readonly basketId: string;
+  readonly subBasketId: string;
+  readonly subBasketName: string;
+  readonly version: number;
+  readonly mainLineCount: number;
+  readonly referenceCount: number;
+  readonly impactToken: string;
+}
+
+export interface KnowledgePermanentDeleteSubBasketResult {
+  readonly basketId: string;
+  readonly subBasketId: string;
+  readonly deleted: true;
+  readonly deletedAt: string;
+  readonly deletedMainLineIds: readonly string[];
+  readonly deletedReferenceCount: number;
+}
+
 export interface KnowledgeBasketDeletionImpact {
   readonly basketId: string;
   readonly basketName: string;

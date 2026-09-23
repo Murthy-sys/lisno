@@ -81,7 +81,7 @@ export function DesignUploadDialog({
       busy={mutation.isPending}
       footer={({ requestClose }) => (
         <div className="task-panel__actions">
-          <Button variant="secondary" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
+          <Button variant="destructive-outline" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
           <Button type="submit" form={`design-upload-form-${task.id}`} busy={mutation.isPending} busyLabel="Uploading…">Upload file</Button>
         </div>
       )}

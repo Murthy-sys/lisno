@@ -49,7 +49,7 @@ import {
 import {
   dashboardColors as color,
   dashboardLayout,
-  dashboardShadow,
+  dashboardRadii as radius,
   dashboardSpacing as space,
   dashboardTypography as type
 } from "./dashboardTheme";
@@ -176,12 +176,11 @@ function KpiCard({
       ]}
       testID={`dashboard-kpi-${item.id}`}
     >
-      <View style={[styles.kpiAccent, accent]} />
       <View style={styles.kpiTopline}>
         <View accessibilityElementsHidden style={[styles.kpiIcon, icon]}>
-          <Text style={[styles.kpiGlyph, accent]}>{item.glyph}</Text>
+          <Text allowFontScaling={false} style={[styles.kpiGlyph, accent]}>{item.glyph}</Text>
         </View>
-        <Text numberOfLines={2} style={styles.kpiLabel}>{item.label}</Text>
+        <Text style={styles.kpiLabel}>{item.label}</Text>
       </View>
       <Text
         adjustsFontSizeToFit
@@ -247,7 +246,7 @@ function ExactRows({
         >
           <View style={[styles.exactMark, { backgroundColor: value.available ? tones[index] ?? color.sage : color.unavailable }]} />
           <View style={styles.exactCopy}>
-            <Text numberOfLines={2} style={styles.exactLabel}>{value.label}</Text>
+            <Text style={styles.exactLabel}>{value.label}</Text>
             {!value.available ? <Text style={styles.exactReason}>{value.unavailableReason}</Text> : null}
           </View>
           <Text style={[styles.exactValue, !value.available ? styles.unavailableValue : null]}>{value.displayValue}</Text>
@@ -314,7 +313,7 @@ function FinanceDayNavigator({
         onPress={onPrevious}
         style={({ pressed }) => [styles.dayStep, previousDisabled ? styles.controlDisabled : null, pressed ? styles.pressed : null]}
       >
-        <Text style={styles.dayStepText}>‹</Text>
+        <Text accessibilityElementsHidden allowFontScaling={false} style={styles.dayStepText}>‹</Text>
       </Pressable>
       <View accessibilityLiveRegion="polite" style={styles.dayReadout}>
         <Text style={styles.dayLabel}>SELECTED UTC DAY</Text>
@@ -331,7 +330,7 @@ function FinanceDayNavigator({
         onPress={onNext}
         style={({ pressed }) => [styles.dayStep, nextDisabled ? styles.controlDisabled : null, pressed ? styles.pressed : null]}
       >
-        <Text style={styles.dayStepText}>›</Text>
+        <Text accessibilityElementsHidden allowFontScaling={false} style={styles.dayStepText}>›</Text>
       </Pressable>
     </View>
   );
@@ -372,8 +371,6 @@ function PriorityProject({
   return (
     <View style={styles.priorityBody}>
       <View style={styles.priorityVisual}>
-        <View style={styles.priorityVisualRing} />
-        <View style={styles.priorityVisualBar} />
         <View style={styles.priorityVisualCopy}>
           <Text style={styles.priorityVisualLabel}>PRIORITY REVIEW</Text>
           <Text style={styles.priorityVisualValue}>{project.risk.level.toUpperCase()} RISK</Text>
@@ -485,7 +482,7 @@ function ModuleProgress({
     <View style={styles.moduleBody}>
       <View style={styles.moduleHighlights}>
         <View style={styles.countProgress}>
-          <View>
+          <View style={styles.countProgressCopy}>
             <Text style={styles.progressLabel}>Estimate · awaiting client</Text>
             <Text style={styles.countProgressBasis}>Current workflow snapshot</Text>
           </View>
@@ -901,46 +898,43 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     gap: 8,
     padding: 16,
-    borderRadius: 17,
+    borderRadius: radius.surface,
     borderWidth: 1,
     borderColor: color.stageEdge,
-    backgroundColor: color.stage,
-    ...dashboardShadow
+    backgroundColor: color.stage
   },
   kpiHalf: { flexBasis: "47%", flexGrow: 1 },
   kpiWide: { flexBasis: "100%", flexGrow: 1 },
   kpiSingle: { flexBasis: "100%", flexGrow: 1 },
-  kpiAccent: { position: "absolute", top: 0, right: 0, left: 0, height: 3 },
   accentSage: { backgroundColor: color.sageSoft, color: color.violetBright },
   accentSand: { backgroundColor: color.sandSoft, color: color.warning },
-  accentBlue: { backgroundColor: color.blueSoft, color: color.cyan },
-  accentPlum: { backgroundColor: color.plumSoft, color: color.plum },
-  accentDanger: { backgroundColor: "#F8EDEC", color: color.danger },
+  accentBlue: { backgroundColor: color.blueSoft, color: color.text },
+  accentPlum: { backgroundColor: color.plumSoft, color: color.text },
+  accentDanger: { backgroundColor: color.dangerSoft, color: color.dangerInk },
   iconSage: { backgroundColor: color.sageSoft },
   iconSand: { backgroundColor: color.sandSoft },
   iconBlue: { backgroundColor: color.blueSoft },
   iconPlum: { backgroundColor: color.plumSoft },
-  iconDanger: { backgroundColor: "#F8EDEC" },
+  iconDanger: { backgroundColor: color.dangerSoft },
   kpiTopline: { minHeight: 38, flexDirection: "row", alignItems: "center", gap: 9 },
-  kpiIcon: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 18 },
+  kpiIcon: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: radius.control },
   kpiGlyph: { fontFamily: type.semibold, fontSize: 15 },
-  kpiLabel: { flex: 1, color: color.textMuted, fontFamily: type.medium, fontSize: 11, lineHeight: 16 },
-  kpiValue: { color: color.text, fontFamily: type.semibold, fontSize: 24, lineHeight: 30, letterSpacing: -0.6 },
-  kpiSupporting: { color: color.textDim, fontFamily: type.regular, fontSize: 9, lineHeight: 14 },
+  kpiLabel: { flex: 1, minWidth: 0, color: color.textMuted, ...type.metadata, fontFamily: type.medium },
+  kpiValue: { color: color.text, ...type.pageTitle },
+  kpiSupporting: { color: color.textDim, fontFamily: type.regular, fontSize: 12, lineHeight: 18 },
   panel: {
     minWidth: 0,
     overflow: "hidden",
-    borderRadius: 18,
+    borderRadius: radius.surface,
     borderWidth: 1,
     borderColor: color.stageEdge,
-    backgroundColor: color.stage,
-    ...dashboardShadow
+    backgroundColor: color.stage
   },
   panelHeader: { flexDirection: "row", alignItems: "flex-start", gap: space.sm, padding: 18, paddingBottom: 8 },
   panelHeading: { flex: 1, minWidth: 0, gap: 3 },
-  panelEyebrow: { color: color.warning, fontFamily: type.semibold, fontSize: 9, letterSpacing: 1.4 },
-  panelTitle: { color: color.text, fontFamily: type.semibold, fontSize: 19, lineHeight: 25, letterSpacing: -0.3 },
-  panelSubtitle: { color: color.textMuted, fontFamily: type.regular, fontSize: 10, lineHeight: 16 },
+  panelEyebrow: { color: color.warning, fontFamily: type.semibold, fontSize: 12, lineHeight: 18, letterSpacing: 0.5 },
+  panelTitle: { color: color.text, ...type.sectionTitle },
+  panelSubtitle: { color: color.textMuted, ...type.body },
   panelAction: { alignItems: "flex-end" },
   splitRow: { gap: space.scene },
   splitRowTablet: { flexDirection: "row", alignItems: "flex-start" },
@@ -956,14 +950,14 @@ const styles = StyleSheet.create({
   },
   exactMark: { width: 7, height: 7, borderRadius: 4 },
   exactCopy: { flex: 1, minWidth: 0, paddingVertical: 7 },
-  exactLabel: { color: color.textMuted, fontFamily: type.regular, fontSize: 10, lineHeight: 15 },
-  exactReason: { color: color.unavailable, fontFamily: type.regular, fontSize: 8, lineHeight: 12 },
-  exactValue: { maxWidth: "42%", color: color.text, fontFamily: type.semibold, fontSize: 11, textAlign: "right" },
-  unavailableValue: { color: color.unavailable },
-  unavailableText: { color: color.unavailable },
-  chartAvailability: { gap: 3, marginHorizontal: 18, marginBottom: 10, padding: 10, borderRadius: 10, backgroundColor: color.goldSoft },
-  chartAvailabilityTitle: { color: color.warning, fontFamily: type.semibold, fontSize: 8, letterSpacing: 1.1 },
-  chartAvailabilityText: { color: color.textMuted, fontFamily: type.regular, fontSize: 9, lineHeight: 14 },
+  exactLabel: { color: color.textMuted, ...type.body },
+  exactReason: { color: color.textMuted, ...type.metadata },
+  exactValue: { maxWidth: "42%", flexShrink: 1, color: color.text, ...type.body, fontFamily: type.semibold, textAlign: "right" },
+  unavailableValue: { color: color.textMuted },
+  unavailableText: { color: color.textMuted },
+  chartAvailability: { gap: 3, marginHorizontal: 18, marginBottom: 10, padding: 10, borderRadius: radius.control, backgroundColor: color.goldSoft },
+  chartAvailabilityTitle: { color: color.warning, fontFamily: type.semibold, fontSize: 12, lineHeight: 18, letterSpacing: 0.5 },
+  chartAvailabilityText: { color: color.textMuted, fontFamily: type.regular, fontSize: 12, lineHeight: 18 },
   dayNavigator: {
     minHeight: 72,
     flexDirection: "row",
@@ -975,11 +969,11 @@ const styles = StyleSheet.create({
     borderTopColor: color.stageLine
   },
   dayStep: {
-    width: 44,
-    height: 44,
+    width: 48,
+    height: 48,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 22,
+    borderRadius: radius.control,
     borderWidth: 1,
     borderColor: color.stageEdge,
     backgroundColor: color.stageRaised
@@ -987,106 +981,96 @@ const styles = StyleSheet.create({
   controlDisabled: { opacity: 0.36 },
   dayStepText: { color: color.text, fontFamily: type.medium, fontSize: 24, lineHeight: 27 },
   dayReadout: { flex: 1, minWidth: 0, alignItems: "center", gap: 1 },
-  dayLabel: { color: color.textDim, fontFamily: type.semibold, fontSize: 7, letterSpacing: 1.2 },
-  dayDate: { color: color.textMuted, fontFamily: type.medium, fontSize: 10 },
-  dayValue: { color: color.text, fontFamily: type.semibold, fontSize: 15 },
+  dayLabel: { color: color.textDim, fontFamily: type.semibold, fontSize: 12, lineHeight: 18, letterSpacing: 0.5 },
+  dayDate: { color: color.textMuted, ...type.metadata, fontFamily: type.medium },
+  dayValue: { color: color.text, ...type.cardTitle, textAlign: "center" },
   priorityBody: { padding: 18, paddingTop: 8, gap: 16 },
   priorityVisual: {
     minHeight: 116,
     overflow: "hidden",
     justifyContent: "flex-end",
     padding: 16,
-    borderRadius: 15,
+    borderRadius: radius.surface,
     backgroundColor: color.sageSoft
   },
-  priorityVisualRing: {
-    position: "absolute",
-    width: 128,
-    height: 128,
-    top: -46,
-    right: -18,
-    borderRadius: 64,
-    borderWidth: 26,
-    borderColor: "rgba(95, 128, 108, 0.16)"
-  },
-  priorityVisualBar: { position: "absolute", width: 112, height: 2, top: 25, left: -18, backgroundColor: color.sand, transform: [{ rotate: "-13deg" }] },
   priorityVisualCopy: { gap: 3 },
-  priorityVisualLabel: { color: color.violetBright, fontFamily: type.semibold, fontSize: 8, letterSpacing: 1.4 },
-  priorityVisualValue: { color: color.text, fontFamily: type.semibold, fontSize: 20, letterSpacing: -0.3 },
+  priorityVisualLabel: { color: color.violetBright, fontFamily: type.semibold, fontSize: 12, lineHeight: 18, letterSpacing: 0.5 },
+  priorityVisualValue: { color: color.text, ...type.sectionTitle },
   priorityCopy: { gap: 6 },
-  priorityStatus: { color: color.warning, fontFamily: type.semibold, fontSize: 8, letterSpacing: 1.2 },
-  priorityName: { color: color.text, fontFamily: type.semibold, fontSize: 20, lineHeight: 27 },
-  priorityMeta: { color: color.textMuted, fontFamily: type.medium, fontSize: 10 },
-  priorityReason: { color: color.textMuted, fontFamily: type.regular, fontSize: 11, lineHeight: 17 },
-  inlineAction: { minHeight: 44, flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: 8, paddingRight: 10 },
-  inlineActionText: { color: color.violetBright, fontFamily: type.semibold, fontSize: 10, letterSpacing: 1.1 },
+  priorityStatus: { color: color.warning, fontFamily: type.semibold, fontSize: 12, lineHeight: 18, letterSpacing: 0.5 },
+  priorityName: { color: color.text, ...type.sectionTitle },
+  priorityMeta: { color: color.textMuted, fontFamily: type.medium, fontSize: 12, lineHeight: 18 },
+  priorityReason: { color: color.textMuted, ...type.body },
+  inlineAction: { minHeight: 48, flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.control, borderWidth: 1, borderColor: color.violet },
+  inlineActionText: { color: color.violetBright, ...type.button },
   inlineActionArrow: { color: color.violetBright, fontFamily: type.medium, fontSize: 16 },
-  emptyState: { minHeight: 176, justifyContent: "center", gap: 7, padding: 20, margin: 18, marginTop: 8, borderRadius: 15, backgroundColor: color.stageRaised },
-  emptyTitle: { color: color.text, fontFamily: type.semibold, fontSize: 15, lineHeight: 21 },
-  emptyDetail: { color: color.textMuted, fontFamily: type.regular, fontSize: 11, lineHeight: 17 },
+  emptyState: { minHeight: 176, justifyContent: "center", gap: 7, padding: 20, margin: 18, marginTop: 8, borderRadius: radius.surface, backgroundColor: color.stageRaised },
+  emptyTitle: { color: color.text, ...type.cardTitle },
+  emptyDetail: { color: color.textMuted, ...type.body },
   queueList: { paddingHorizontal: 18, paddingBottom: 14 },
   queueRow: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: 11, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.stageLine },
-  queueIndex: { minWidth: 38, height: 30, alignItems: "center", justifyContent: "center", paddingHorizontal: 7, borderRadius: 15, backgroundColor: color.stageRaised },
+  queueIndex: { minWidth: 38, minHeight: 30, alignItems: "center", justifyContent: "center", paddingHorizontal: 7, paddingVertical: 4, borderRadius: radius.control, backgroundColor: color.stageRaised },
   queueIndexAttention: { backgroundColor: color.goldSoft },
-  queueIndexText: { color: color.textMuted, fontFamily: type.semibold, fontSize: 11 },
+  queueIndexText: { color: color.textMuted, fontFamily: type.semibold, fontSize: 12, lineHeight: 18 },
   queueIndexTextAttention: { color: color.warning },
   queueCopy: { flex: 1, minWidth: 0, gap: 2, paddingVertical: 8 },
-  queueLabel: { color: color.text, fontFamily: type.medium, fontSize: 11 },
-  queueState: { color: color.textDim, fontFamily: type.regular, fontSize: 8, lineHeight: 13 },
-  budgetStatus: { marginHorizontal: 18, marginBottom: 10, padding: 11, borderRadius: 10, backgroundColor: color.sageSoft },
-  budgetStatusDanger: { backgroundColor: "#F8EDEC" },
-  budgetStatusText: { color: color.violetBright, fontFamily: type.medium, fontSize: 10, lineHeight: 15 },
-  budgetStatusDangerText: { color: color.danger },
+  queueLabel: { color: color.text, ...type.body, fontFamily: type.medium },
+  queueState: { color: color.textDim, fontFamily: type.regular, fontSize: 12, lineHeight: 18 },
+  budgetStatus: { marginHorizontal: 18, marginBottom: 10, padding: 11, borderRadius: radius.control, backgroundColor: color.sageSoft },
+  budgetStatusDanger: { backgroundColor: color.dangerSoft },
+  budgetStatusText: { color: color.violetBright, fontFamily: type.medium, fontSize: 12, lineHeight: 18 },
+  budgetStatusDangerText: { color: color.dangerInk },
   moduleBody: { gap: 16, paddingTop: 8, paddingBottom: 16 },
   moduleHighlights: { gap: 15, paddingHorizontal: 18 },
   countProgress: { minHeight: 54, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, padding: 12, borderRadius: 12, backgroundColor: color.sageSoft },
-  countProgressBasis: { color: color.textDim, fontFamily: type.regular, fontSize: 8, marginTop: 2 },
-  countProgressValue: { color: color.violetBright, fontFamily: type.semibold, fontSize: 20 },
+  countProgressCopy: { flex: 1, minWidth: 0 },
+  countProgressBasis: { color: color.textDim, fontFamily: type.regular, fontSize: 12, lineHeight: 18, marginTop: 2 },
+  countProgressValue: { maxWidth: "40%", color: color.violetBright, ...type.sectionTitle, textAlign: "right" },
   progressItem: { gap: 6 },
   progressTopline: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 10 },
-  progressLabel: { flex: 1, color: color.textMuted, fontFamily: type.medium, fontSize: 10 },
-  progressValue: { color: color.text, fontFamily: type.semibold, fontSize: 11 },
+  progressLabel: { flex: 1, color: color.textMuted, ...type.body, fontFamily: type.medium },
+  progressValue: { maxWidth: "40%", color: color.text, ...type.body, fontFamily: type.semibold },
   progressTrack: { height: 7, overflow: "hidden", borderRadius: 4, backgroundColor: color.canvasDeep },
   progressFill: { height: "100%", borderRadius: 4 },
-  progressReason: { color: color.unavailable, fontFamily: type.regular, fontSize: 8, lineHeight: 12 },
-  moduleExactHeader: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 10, paddingHorizontal: 18 },
-  moduleExactTitle: { color: color.text, fontFamily: type.semibold, fontSize: 12 },
-  moduleExactMeta: { color: color.textDim, fontFamily: type.regular, fontSize: 8 },
+  progressReason: { color: color.textMuted, ...type.metadata },
+  moduleExactHeader: { flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", justifyContent: "space-between", gap: 10, paddingHorizontal: 18 },
+  moduleExactTitle: { flexShrink: 1, color: color.text, ...type.cardTitle },
+  moduleExactMeta: { color: color.textDim, fontFamily: type.regular, fontSize: 12, lineHeight: 18 },
   workforceBody: { padding: 18, paddingTop: 8, gap: 17 },
   workforceStats: { flexDirection: "row", flexWrap: "wrap", gap: 9 },
   workforceStat: { minWidth: 112, flexGrow: 1, flexBasis: "45%", gap: 2, padding: 12, borderRadius: 12, backgroundColor: color.stageRaised },
-  workforceValue: { color: color.text, fontFamily: type.semibold, fontSize: 18 },
-  workforceLabel: { color: color.textMuted, fontFamily: type.regular, fontSize: 9 },
-  kpiCoverage: { gap: 3, paddingVertical: 11, paddingHorizontal: 13, borderLeftWidth: 3, borderColor: color.plum, backgroundColor: color.plumSoft },
-  kpiCoverageTitle: { color: color.plum, fontFamily: type.semibold, fontSize: 8, letterSpacing: 1.1 },
-  kpiCoverageText: { color: color.textMuted, fontFamily: type.medium, fontSize: 10 },
+  workforceValue: { color: color.text, ...type.sectionTitle },
+  workforceLabel: { color: color.textMuted, fontFamily: type.regular, fontSize: 12, lineHeight: 18 },
+  kpiCoverage: { gap: 3, paddingVertical: 11, paddingHorizontal: 13, borderRadius: radius.control, backgroundColor: color.plumSoft },
+  kpiCoverageTitle: { color: color.text, fontFamily: type.semibold, fontSize: 12, lineHeight: 18, letterSpacing: 0.5 },
+  kpiCoverageText: { color: color.textMuted, fontFamily: type.medium, fontSize: 12, lineHeight: 18 },
   roleList: { gap: 11 },
   roleRow: { gap: 5 },
   roleTopline: { flexDirection: "row", justifyContent: "space-between", gap: 8 },
-  roleLabel: { flex: 1, color: color.textMuted, fontFamily: type.regular, fontSize: 10 },
-  roleValue: { color: color.text, fontFamily: type.semibold, fontSize: 10 },
+  roleLabel: { flex: 1, color: color.textMuted, ...type.body },
+  roleValue: { maxWidth: "40%", color: color.text, ...type.body, fontFamily: type.semibold },
   roleTrack: { height: 6, overflow: "hidden", borderRadius: 3, backgroundColor: color.canvasDeep },
   roleFill: { height: "100%", borderRadius: 3 },
   chartFailureRow: { gap: space.sm },
-  retryGraphic: { minHeight: 44, alignSelf: "flex-start", justifyContent: "center", paddingHorizontal: 14, borderRadius: 22, borderWidth: 1, borderColor: color.stageEdge, backgroundColor: color.stage },
-  retryGraphicText: { color: color.violetBright, fontFamily: type.semibold, fontSize: 9, letterSpacing: 1 },
-  ledgerAction: { minHeight: 96, flexDirection: "row", alignItems: "center", gap: 14, padding: 16, borderRadius: 17, borderWidth: 1, borderColor: color.stageEdge, backgroundColor: color.stage, ...dashboardShadow },
+  retryGraphic: { minHeight: 48, alignSelf: "flex-start", justifyContent: "center", paddingHorizontal: 14, paddingVertical: 8, borderRadius: radius.control, borderWidth: 1, borderColor: color.stageEdge, backgroundColor: color.stage },
+  retryGraphicText: { color: color.violetBright, ...type.button },
+  ledgerAction: { minHeight: 96, flexDirection: "row", alignItems: "center", gap: 14, padding: 16, borderRadius: radius.surface, borderWidth: 1, borderColor: color.stageEdge, backgroundColor: color.stage },
   ledgerActionPressed: { borderColor: color.violet, backgroundColor: color.sageSoft },
-  ledgerMark: { width: 42, height: 42, justifyContent: "center", gap: 5, paddingHorizontal: 10, borderRadius: 21, backgroundColor: color.sageSoft },
+  ledgerMark: { width: 42, height: 42, justifyContent: "center", gap: 5, paddingHorizontal: 10, borderRadius: radius.control, backgroundColor: color.sageSoft },
   ledgerMarkLine: { height: 2, borderRadius: 1, backgroundColor: color.violetBright },
   ledgerMarkLineShort: { width: "64%" },
   ledgerCopy: { flex: 1, minWidth: 0, gap: 2 },
-  ledgerEyebrow: { color: color.warning, fontFamily: type.semibold, fontSize: 8, letterSpacing: 1.2 },
-  ledgerTitle: { color: color.text, fontFamily: type.semibold, fontSize: 15 },
-  ledgerDetail: { color: color.textMuted, fontFamily: type.regular, fontSize: 9, lineHeight: 14 },
+  ledgerEyebrow: { color: color.warning, fontFamily: type.semibold, fontSize: 12, lineHeight: 18, letterSpacing: 0.5 },
+  ledgerTitle: { color: color.text, ...type.cardTitle },
+  ledgerDetail: { color: color.textMuted, fontFamily: type.regular, fontSize: 12, lineHeight: 18 },
   ledgerArrow: { color: color.violetBright, fontFamily: type.medium, fontSize: 19 },
-  disclaimer: { color: color.textDim, fontFamily: type.regular, fontSize: 8, lineHeight: 14, paddingHorizontal: 4 },
+  disclaimer: { color: color.textDim, fontFamily: type.regular, fontSize: 12, lineHeight: 18, paddingHorizontal: 4 },
   failure: { flex: 1, justifyContent: "center", alignItems: "center", gap: space.md, paddingHorizontal: space.xxl, backgroundColor: color.canvas },
   failureMark: { width: 16, height: 16, borderRadius: 8, backgroundColor: color.warning },
   failureMarkDenied: { backgroundColor: color.unavailable },
-  failureTitle: { color: color.text, fontFamily: type.semibold, fontSize: 23, lineHeight: 30, textAlign: "center" },
-  failureMessage: { maxWidth: 420, color: color.textMuted, fontFamily: type.regular, fontSize: 13, lineHeight: 21, textAlign: "center" },
-  failureAction: { minHeight: 48, justifyContent: "center", paddingHorizontal: 22, borderRadius: 24, backgroundColor: color.violet },
-  failureActionText: { color: "#FFFFFF", fontFamily: type.semibold, fontSize: 10, letterSpacing: 1.1 },
+  failureTitle: { color: color.text, ...type.pageTitle, textAlign: "center" },
+  failureMessage: { maxWidth: 420, color: color.textMuted, ...type.body, textAlign: "center" },
+  failureAction: { minHeight: 48, justifyContent: "center", paddingHorizontal: 22, paddingVertical: 10, borderRadius: radius.control, backgroundColor: color.violet },
+  failureActionText: { color: color.primaryInk, ...type.button },
   pressed: { opacity: 0.72 }
 });

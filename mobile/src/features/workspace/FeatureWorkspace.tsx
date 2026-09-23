@@ -12,7 +12,7 @@ import type { FeatureDestination } from "../../navigation/registry";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { BrandLoader } from "../../ui/brand";
 import { StateView } from "../../ui/primitives";
-import { colors, fonts, radii, spacing } from "../../ui/tokens";
+import { colors, fonts, radii, spacing, typography } from "../../ui/tokens";
 import { FEATURE_DEFINITIONS } from "./featureDefinitions";
 import { dashboardMetrics, extractRecords, recordId, recordSubtitle, recordTitle } from "./recordPresentation";
 import { OperationalTaskAction } from "../operations/OperationalTaskAction";
@@ -178,7 +178,7 @@ const styles = StyleSheet.create({
   content: { flexGrow: 1, width: "100%", maxWidth: 980, alignSelf: "center", padding: spacing.lg, paddingBottom: spacing.huge, gap: spacing.xl },
   headingBlock: { gap: spacing.xs },
   eyebrow: { color: colors.violet, fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1.4 },
-  title: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 28, lineHeight: 36 },
+  title: { color: colors.ink, ...typography.pageTitle },
   description: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 14, lineHeight: 22, maxWidth: 680 },
   updating: { color: colors.info, fontFamily: fonts.medium, fontSize: 12 },
   metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
@@ -190,7 +190,7 @@ const styles = StyleSheet.create({
   recordHeader: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: spacing.md },
   recordPressed: { opacity: 0.72, borderColor: colors.violet },
   recordCopy: { flex: 1, gap: 4 },
-  recordTitle: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 15 },
+  recordTitle: { color: colors.ink, ...typography.cardTitle },
   recordSubtitle: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 12 },
   chevron: { color: colors.violet, fontFamily: fonts.regular, fontSize: 30 }
 });

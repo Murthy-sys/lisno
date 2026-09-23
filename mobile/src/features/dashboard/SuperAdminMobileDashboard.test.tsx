@@ -147,12 +147,12 @@ describe("SuperAdminMobileDashboard", () => {
     expect(view.getByText(/Previous project activity is temporarily unavailable/)).toBeTruthy();
   });
 
-  it("provides 44-point native finance day stepping with exact UTC values", async () => {
+  it("provides 48-point native finance day stepping with exact UTC values", async () => {
     const view = await render(<SuperAdminMobileDashboard session={session} />);
 
     expect(view.getByLabelText(/Selected UTC day 2026-09-22/)).toBeTruthy();
     expect(view.getByRole("button", { name: "Next finance day" }).props.accessibilityState).toEqual({ disabled: true });
-    expect(StyleSheet.flatten(view.getByRole("button", { name: "Previous finance day" }).props.style).height).toBe(44);
+    expect(StyleSheet.flatten(view.getByRole("button", { name: "Previous finance day" }).props.style)).toEqual(expect.objectContaining({ width: 48, height: 48 }));
 
     await fireEvent.press(view.getByRole("button", { name: "Previous finance day" }));
     expect(view.getByLabelText(/Selected UTC day 2026-09-21/)).toBeTruthy();

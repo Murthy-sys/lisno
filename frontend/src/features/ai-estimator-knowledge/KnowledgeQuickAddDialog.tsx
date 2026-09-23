@@ -46,7 +46,7 @@ export function KnowledgeQuickAddDialog({
       dirty={dirty}
       footer={({ requestClose }) => (
         <div className="knowledge-dialog-actions">
-          <Button type="button" variant="quiet" onClick={requestClose} disabled={busy}>
+          <Button type="button" variant="destructive-outline" onClick={requestClose} disabled={busy}>
             Cancel
           </Button>
           <Button type="submit" form={formId} busy={busy} busyLabel={busyLabel ?? `Adding ${submitLabel}…`}>

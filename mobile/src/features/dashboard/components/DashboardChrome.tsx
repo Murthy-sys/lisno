@@ -13,7 +13,7 @@ import {
 import type { DashboardPeriod } from "../data";
 import {
   dashboardColors as color,
-  dashboardShadow,
+  dashboardRadii as radius,
   dashboardSpacing as space,
   dashboardTypography as type
 } from "../dashboardTheme";
@@ -86,7 +86,7 @@ export function OperationsHeader({
           {refreshing ? (
             <ActivityIndicator color={color.text} size="small" />
           ) : (
-            <Text accessibilityElementsHidden style={styles.refreshGlyph}>↻</Text>
+            <Text accessibilityElementsHidden allowFontScaling={false} style={styles.refreshGlyph}>↻</Text>
           )}
         </Pressable>
       </View>
@@ -128,7 +128,7 @@ export function OperationsHeader({
           <View style={[styles.switchTrack, comparisonEnabled ? styles.switchTrackSelected : null]}>
             <View style={[styles.switchThumb, comparisonEnabled ? styles.switchThumbSelected : null]} />
           </View>
-          <Text style={styles.compareText}>COMPARE</Text>
+          <Text style={styles.compareText}>Compare</Text>
         </Pressable>
       </View>
 
@@ -154,7 +154,6 @@ export function FactRail({
   headline,
   headlineLabel,
   facts,
-  accent = "violet",
   style
 }: {
   readonly title: string;
@@ -164,10 +163,8 @@ export function FactRail({
   readonly accent?: "violet" | "cyan";
   readonly style?: StyleProp<ViewStyle>;
 }) {
-  const accentColor = accent === "cyan" ? color.cyan : color.violet;
   return (
     <View style={[styles.factRail, style]}>
-      <View style={[styles.factAccent, { backgroundColor: accentColor }]} />
       <View style={styles.factHeader}>
         <Text style={styles.factTitle}>{title.toUpperCase()}</Text>
         <Text adjustsFontSizeToFit minimumFontScale={0.72} numberOfLines={1} style={styles.factHeadline}>{headline}</Text>
@@ -176,7 +173,7 @@ export function FactRail({
       <View style={styles.factList}>
         {facts.map((fact) => (
           <View key={fact.label} style={styles.factItem}>
-            <Text numberOfLines={1} style={styles.factItemLabel}>{fact.label}</Text>
+            <Text style={styles.factItemLabel}>{fact.label}</Text>
             <Text style={[styles.factItemValue, factToneStyle(fact.tone)]}>{fact.value}</Text>
           </View>
         ))}
@@ -267,7 +264,6 @@ export function SceneFrame({
 }) {
   return (
     <View style={[styles.scene, compact ? styles.sceneCompact : null, style]} testID={testID}>
-      <View pointerEvents="none" style={styles.sceneDepthPlane} />
       <View style={styles.sceneHeader}>
         <View style={styles.sceneCopy}>
           <Text style={styles.sceneEyebrow}>{eyebrow}</Text>
@@ -335,59 +331,60 @@ const styles = StyleSheet.create({
   headerTopline: { minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   liveLabel: { flexDirection: "row", alignItems: "center", gap: 8 },
   liveMark: { width: 7, height: 7, borderRadius: 4, backgroundColor: color.violet },
-  eyebrow: { color: color.warning, fontFamily: type.semibold, fontSize: 10, letterSpacing: 1.8 },
+  eyebrow: { color: color.warning, fontFamily: type.semibold, fontSize: 12, lineHeight: 18, letterSpacing: 0.5 },
   refreshButton: {
-    width: 46,
-    height: 46,
+    width: 48,
+    height: 48,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 23,
+    borderRadius: radius.control,
     borderWidth: 1,
     borderColor: color.stageEdge,
     backgroundColor: color.stage
   },
   refreshGlyph: { color: color.text, fontFamily: type.medium, fontSize: 24, lineHeight: 28 },
   headerCopy: { gap: 5, maxWidth: 620 },
-  title: { color: color.text, fontFamily: type.semibold, fontSize: 31, lineHeight: 38, letterSpacing: -0.8 },
-  subtitle: { color: color.textMuted, fontFamily: type.regular, fontSize: 14, lineHeight: 22 },
-  periodRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: space.sm },
+  title: { color: color.text, ...type.pageTitle },
+  subtitle: { color: color.textMuted, ...type.body },
+  periodRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: space.sm },
   periodControl: {
     flexDirection: "row",
     minHeight: 48,
     padding: 3,
-    borderRadius: 16,
+    borderRadius: radius.control,
     borderWidth: 1,
     borderColor: color.stageEdge,
     backgroundColor: color.stage
   },
-  periodButton: { minWidth: 54, minHeight: 42, alignItems: "center", justifyContent: "center", borderRadius: 12 },
+  periodButton: { minWidth: 54, minHeight: 48, alignItems: "center", justifyContent: "center", borderRadius: radius.control, paddingHorizontal: 8, paddingVertical: 8 },
   periodButtonSelected: { backgroundColor: color.violet },
-  periodText: { color: color.textMuted, fontFamily: type.semibold, fontSize: 12, letterSpacing: 0.8 },
-  periodTextSelected: { color: "#FFFFFF" },
+  periodText: { color: color.textMuted, ...type.button },
+  periodTextSelected: { color: color.primaryInk },
   compareControl: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 4 },
-  compareText: { color: color.textMuted, fontFamily: type.semibold, fontSize: 10, letterSpacing: 1.4 },
+  compareText: { color: color.textMuted, ...type.button },
   switchTrack: { width: 42, height: 24, borderRadius: 12, padding: 3, backgroundColor: color.unavailable },
-  switchTrackSelected: { backgroundColor: color.violetDeep },
+  switchTrackSelected: { backgroundColor: color.violet },
   switchThumb: { width: 18, height: 18, borderRadius: 9, backgroundColor: color.textMuted },
-  switchThumbSelected: { alignSelf: "flex-end", backgroundColor: "#FFFFFF" },
-  metaRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", gap: space.sm },
-  metaCopy: { flex: 1, gap: 2 },
-  observed: { color: color.text, fontFamily: type.medium, fontSize: 12 },
-  range: { color: color.textDim, fontFamily: type.regular, fontSize: 10, lineHeight: 16 },
+  switchThumbSelected: { alignSelf: "flex-end", backgroundColor: color.primaryInk },
+  metaRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: space.sm },
+  metaCopy: { flex: 1, minWidth: 180, gap: 2 },
+  observed: { color: color.text, ...type.metadata, fontFamily: type.medium },
+  range: { color: color.textDim, fontFamily: type.regular, fontSize: 12, lineHeight: 18 },
   quality: {
     minHeight: 34,
-    maxWidth: 150,
+    maxWidth: "100%",
     flexDirection: "row",
     alignItems: "center",
     gap: 7,
     paddingHorizontal: 10,
-    borderRadius: 17,
+    paddingVertical: 6,
+    borderRadius: radius.control,
     borderWidth: 1,
     borderColor: color.stageEdge,
     backgroundColor: color.stage
   },
   qualityDot: { width: 7, height: 7, borderRadius: 4 },
-  qualityText: { flexShrink: 1, color: color.textMuted, fontFamily: type.medium, fontSize: 10 },
+  qualityText: { flexShrink: 1, color: color.textMuted, fontFamily: type.medium, fontSize: 12, lineHeight: 18 },
   factRail: {
     minWidth: 0,
     flex: 1,
@@ -400,67 +397,54 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderColor: color.stageEdge
   },
-  factAccent: { position: "absolute", left: 0, top: 20, bottom: 20, width: 2, borderRadius: 1 },
   factHeader: { minWidth: 96, flex: 0.9, gap: 2 },
-  factTitle: { color: color.textDim, fontFamily: type.semibold, fontSize: 9, letterSpacing: 1.5 },
-  factHeadline: { color: color.text, fontFamily: type.semibold, fontSize: 29, lineHeight: 35, letterSpacing: -0.8 },
-  factHeadlineLabel: { color: color.textMuted, fontFamily: type.regular, fontSize: 9, lineHeight: 13 },
+  factTitle: { color: color.textDim, fontFamily: type.semibold, fontSize: 12, lineHeight: 18, letterSpacing: 0.5 },
+  factHeadline: { color: color.text, ...type.pageTitle },
+  factHeadlineLabel: { color: color.textMuted, fontFamily: type.regular, fontSize: 12, lineHeight: 18 },
   factList: { minWidth: 72, flex: 1, justifyContent: "space-between", gap: 6 },
-  factItem: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 5 },
-  factItemLabel: { flex: 1, color: color.textDim, fontFamily: type.regular, fontSize: 9 },
-  factItemValue: { color: color.text, fontFamily: type.semibold, fontSize: 11 },
+  factItem: { flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", justifyContent: "space-between", gap: 5 },
+  factItemLabel: { flexGrow: 1, flexShrink: 1, color: color.textDim, ...type.metadata },
+  factItemValue: { flexShrink: 1, color: color.text, ...type.body, fontFamily: type.semibold },
   factPositive: { color: color.success },
   factWarning: { color: color.warning },
-  factDanger: { color: color.danger },
-  factUnavailable: { color: color.unavailable },
+  factDanger: { color: color.dangerInk },
+  factUnavailable: { color: color.textMuted },
   selector: { flexGrow: 0, marginHorizontal: -space.lg },
   selectorContent: { paddingHorizontal: space.lg, gap: 8 },
   selectorButton: {
-    minHeight: 44,
+    minHeight: 48,
     justifyContent: "center",
     paddingHorizontal: 15,
-    borderRadius: 22,
+    borderRadius: radius.control,
     borderWidth: 1,
     borderColor: color.stageEdge,
     backgroundColor: color.stage
   },
   selectorButtonCompact: { paddingHorizontal: 13 },
   selectorButtonSelected: { borderColor: color.violet, backgroundColor: color.violetDeep },
-  selectorButtonDisabled: { opacity: 0.42 },
-  selectorText: { color: color.textMuted, fontFamily: type.medium, fontSize: 11 },
+  selectorButtonDisabled: { backgroundColor: color.stageRaised },
+  selectorText: { color: color.textMuted, ...type.button, fontFamily: type.medium },
   selectorTextSelected: { color: color.violetBright, fontFamily: type.semibold },
   scene: {
     position: "relative",
     overflow: "hidden",
     gap: space.md,
-    borderRadius: 18,
+    borderRadius: radius.surface,
     borderWidth: 1,
     borderColor: color.stageEdge,
     backgroundColor: color.stage,
-    paddingTop: space.xl,
-    ...dashboardShadow
+    paddingTop: space.xl
   },
-  sceneCompact: { borderRadius: 18 },
-  sceneDepthPlane: {
-    position: "absolute",
-    width: 190,
-    height: 92,
-    top: -44,
-    right: -42,
-    borderWidth: 1,
-    borderColor: color.stageEdge,
-    backgroundColor: color.sageSoft,
-    transform: [{ rotate: "-13deg" }, { skewX: "-18deg" }]
-  },
+  sceneCompact: { borderRadius: radius.surface },
   sceneHeader: { paddingHorizontal: space.lg, flexDirection: "row", alignItems: "flex-start", gap: space.sm },
   sceneCopy: { flex: 1, gap: 3 },
-  sceneEyebrow: { color: color.warning, fontFamily: type.semibold, fontSize: 9, letterSpacing: 1.5 },
-  sceneTitle: { color: color.text, fontFamily: type.semibold, fontSize: 20, lineHeight: 27, letterSpacing: -0.35 },
-  sceneSubtitle: { color: color.textMuted, fontFamily: type.regular, fontSize: 11, lineHeight: 17, maxWidth: 620 },
+  sceneEyebrow: { color: color.warning, fontFamily: type.semibold, fontSize: 12, lineHeight: 18, letterSpacing: 0.5 },
+  sceneTitle: { color: color.text, ...type.sectionTitle },
+  sceneSubtitle: { color: color.textMuted, ...type.body, maxWidth: 620 },
   sceneActions: { alignItems: "flex-end" },
   sceneBody: { minHeight: 40 },
   sceneFooter: {
-    minHeight: 44,
+    minHeight: 48,
     justifyContent: "center",
     paddingHorizontal: space.lg,
     paddingVertical: space.sm,
@@ -473,26 +457,27 @@ const styles = StyleSheet.create({
     gap: space.sm,
     paddingVertical: space.sm,
     paddingHorizontal: space.md,
-    borderLeftWidth: 1,
-    borderColor: color.warning,
+    borderWidth: 1,
+    borderRadius: radius.control,
+    borderColor: color.stageEdge,
     backgroundColor: color.goldSoft
   },
   availabilityMark: { width: 5, height: 5, borderRadius: 3, marginTop: 7, backgroundColor: color.warning },
   availabilityMarkUnavailable: { backgroundColor: color.unavailable },
   availabilityCopy: { flex: 1, gap: 2 },
-  availabilityTitle: { color: color.text, fontFamily: type.semibold, fontSize: 11 },
-  availabilityMessage: { color: color.textMuted, fontFamily: type.regular, fontSize: 10, lineHeight: 16 },
+  availabilityTitle: { color: color.text, ...type.body, fontFamily: type.semibold },
+  availabilityMessage: { color: color.textMuted, ...type.metadata },
   skeleton: { gap: space.lg, paddingTop: space.xl },
   skeletonHeader: { width: "64%", height: 42, borderRadius: 8, backgroundColor: color.stageRaised },
   skeletonMeta: { width: "46%", height: 14, borderRadius: 7, backgroundColor: color.stage },
   skeletonFacts: { flexDirection: "row", flexWrap: "wrap", gap: space.sm },
-  skeletonFact: { flexBasis: "47%", flexGrow: 1, height: 112, borderRadius: 16, backgroundColor: color.stage },
+  skeletonFact: { flexBasis: "47%", flexGrow: 1, height: 112, borderRadius: radius.surface, backgroundColor: color.stage },
   skeletonFactWide: { flexBasis: "100%" },
   skeletonStage: {
     height: 250,
     position: "relative",
     overflow: "hidden",
-    borderRadius: 18,
+    borderRadius: radius.surface,
     borderWidth: 1,
     borderColor: color.stageEdge,
     backgroundColor: color.stage

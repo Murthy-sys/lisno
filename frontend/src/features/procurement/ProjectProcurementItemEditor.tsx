@@ -162,7 +162,7 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
       fallbackFocusRef={fallbackFocusRef}
       footer={({ requestClose }) => (
         <div className="project-procurement-items-editor__actions">
-          <Button variant="secondary" onClick={requestClose} disabled={busy}>Cancel</Button>
+          <Button variant="destructive-outline" onClick={requestClose} disabled={busy}>Cancel</Button>
           <Button type="submit" form="project-procurement-items-form" busy={save.isPending}
             busyLabel="Saving…" disabled={busy || conflict || sourceConflict || (!unchangedUom && (!uoms.data?.length || uoms.isError))}>
             {baseItem ? "Save changes" : "Add item"}

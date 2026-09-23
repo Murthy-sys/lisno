@@ -379,6 +379,71 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/*
+ * Asymmetric on purpose: unequal role counts (two Designers, one Site Manager,
+ * one Super Admin) and one inactive account, so an off-by-one or a status that
+ * is only rendered as colour cannot pass. `summary` is the directory-wide,
+ * filter-independent aggregate the backend now returns.
+ */
+const accessibleDirectoryRows = [
+  {
+    id: "user-designer-accessible",
+    name: "Accessible Designer",
+    email: "designer-accessible@lisno.example",
+    role: "designer",
+    active: true,
+    version: 2,
+    title: "Senior Designer",
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z"
+  },
+  {
+    id: "user-design-lead-accessible",
+    name: "Accessible Design Lead",
+    email: "design-lead-accessible@lisno.example",
+    role: "designer",
+    active: true,
+    version: 1,
+    createdAt: "2026-07-02T00:00:00.000Z",
+    updatedAt: "2026-08-02T00:00:00.000Z"
+  },
+  {
+    id: "user-site-manager-accessible",
+    name: "Accessible Site Manager",
+    email: "site-manager-accessible@lisno.example",
+    role: "site_manager",
+    active: false,
+    version: 5,
+    createdAt: "2026-07-03T00:00:00.000Z",
+    updatedAt: "2026-08-03T00:00:00.000Z"
+  },
+  {
+    id: "user-super-admin-accessible",
+    name: "Accessible Super Admin",
+    email: "super-admin-accessible@lisno.example",
+    role: "super_admin",
+    active: true,
+    version: 9,
+    createdAt: "2026-07-04T00:00:00.000Z",
+    updatedAt: "2026-08-04T00:00:00.000Z"
+  }
+] as const;
+
+function accessibleUserDirectory(user: ReturnType<typeof userFor>) {
+  return {
+    items: accessibleDirectoryRows,
+    pagination: {
+      limit: 20,
+      offset: 0,
+      total: accessibleDirectoryRows.length,
+      hasMore: false
+    },
+    filterRoles: ROLE_CODES,
+    manageableRoles: user.role === "super_admin" ? ROLE_CODES : OPERATIONAL_ROLES,
+    summary: { total: 4, active: 3, inactive: 1, roleCount: 3 }
+  };
+}
+
 function fixtureFetch(
   user: ReturnType<typeof userFor>,
   permissions?: readonly PermissionCode[]
@@ -411,20 +476,8 @@ function fixtureFetch(
     if (url === "/api/v1/estimates") return Response.json({ data: [] });
     if (url.startsWith("/api/v1/kpis/users/") && url.includes("/tasks?")) return Response.json({ data: { items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false } } });
     if (url.startsWith("/api/v1/kpis/users/")) return Response.json({ data: { userId: user.id, periodStartAt: "2000-01-01T00:00:00.000Z", periodEndAt: "2100-01-01T00:00:00.000Z", score: 0, components: [], aggregates: { taskCounts: { total: 0, completed: 0, active: 0 }, riskCounts: { gray: 0, green: 0, yellow: 0, red: 0 }, effort: { planned: 0, completed: 0, remaining: 0, workloadPercentage: 0 }, projects: [], recentActivity: [] }, tasks: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } } });
-    if (url === "/api/v1/admin/users?limit=20&offset=0") return Response.json({ data: {
-      items: [{
-        id: "user-designer-accessible",
-        name: "Accessible Designer",
-        email: "designer-accessible@lisno.example",
-        role: "designer",
-        active: true,
-        version: 2,
-        createdAt: "2026-07-01T00:00:00.000Z",
-        updatedAt: "2026-08-01T00:00:00.000Z"
-      }],
-      pagination: { limit: 20, offset: 0, total: 1, hasMore: false },
-      manageableRoles: user.role === "super_admin" ? ROLE_CODES : OPERATIONAL_ROLES
-    } });
+    if (url === "/api/v1/admin/users?limit=20&offset=0") return Response.json({ data: accessibleUserDirectory(user) });
+    if (url.startsWith("/api/v1/admin/user-invitations?")) return Response.json({ data: invitationPage() });
     if (url === "/api/v1/admin/projects?limit=20&offset=0") return Response.json({ data: {
       items: [{
         id: "project-admin-a11y",
@@ -504,6 +557,70 @@ function fixtureFetch(
     } });
     throw new Error(`Unhandled request: ${url}`);
   });
+}
+
+/*
+ * jsdom performs no layout, so `scrollWidth`/`clientWidth` are always 0 and a
+ * numeric overflow assertion would pass vacuously. Page-level overflow is
+ * therefore checked structurally: nothing inside the page may be pinned wider
+ * than the viewport by an inline width, and the only horizontally scrolling
+ * regions may be the table viewports that opt into it deliberately.
+ */
+function expectNoPageLevelHorizontalOverflow(
+  root: HTMLElement,
+  width: number,
+  scrollRegions: readonly string[] = [
+    "User directory records",
+    "User invitation records"
+  ]
+) {
+  const pinnedWider = Array.from(
+    root.querySelectorAll<HTMLElement>("[style]")
+  ).filter((element) =>
+    [
+      element.style.width,
+      element.style.minWidth,
+      element.style.inlineSize,
+      element.style.minInlineSize
+    ].some(
+      (declared) =>
+        declared.endsWith("px") && Number.parseFloat(declared) > width
+    )
+  );
+  expect(
+    pinnedWider.map((element) => element.outerHTML.slice(0, 120))
+  ).toEqual([]);
+  expect(
+    within(root)
+      .getAllByRole("region")
+      .filter((region) => region.classList.contains("access-administration__table-scroll"))
+      .map((region) => region.getAttribute("aria-label"))
+  ).toEqual(scrollRegions);
+}
+
+/*
+ * `queryAllByRole(role, { name })` resolves the computed accessible name, so an
+ * element present in the unfiltered list but absent from the named list has no
+ * accessible name at all.
+ */
+function expectEveryControlHasAnAccessibleName(root: HTMLElement) {
+  const unnamed: string[] = [];
+  for (const role of [
+    "button",
+    "link",
+    "tab",
+    "searchbox",
+    "textbox",
+    "combobox",
+    "checkbox"
+  ] as const) {
+    const all = within(root).queryAllByRole(role);
+    const named = new Set(within(root).queryAllByRole(role, { name: /\S/ }));
+    for (const element of all) {
+      if (!named.has(element)) unnamed.push(element.outerHTML.slice(0, 120));
+    }
+  }
+  expect(unnamed).toEqual([]);
 }
 
 async function expectNoAxeViolations() {
@@ -838,6 +955,91 @@ describe("accessibility smoke coverage", () => {
     await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Role" })).toHaveFocus());
     await expectNoAxeViolations();
   });
+
+  /*
+   * AC10 — width/state matrix for the redesigned user administration page.
+   * Widths are applied with the container idiom this file already uses for the
+   * narrow response inbox (an explicit `style.width` on the render container).
+   */
+  it.each([1440, 1180, 760, 390])(
+    "keeps the user administration page accessible and free of page-level overflow at %ipx",
+    async (width) => {
+      const user = userEvent.setup();
+      tokenStorage.set("super-admin-width-matrix-token");
+      fixtureFetch(userFor("super_admin"), [
+        "identity.self.read",
+        "identity.authorization.read",
+        "identity.users.read",
+        "identity.users.update",
+        "identity.user_invitations.read",
+        "identity.user_invitations.create",
+        "identity.user_invitations.resend",
+        "identity.user_invitations.revoke"
+      ]);
+      const viewport = document.createElement("div");
+      viewport.style.width = `${width}px`;
+      document.body.append(viewport);
+
+      renderApp(["/admin/users"], { container: viewport });
+      await screen.findByRole("heading", { name: "User administration" });
+      await screen.findByRole("heading", { name: "User invitations" });
+      expect(viewport).toHaveStyle({ width: `${width}px` });
+
+      // Metric row renders from `summary`, not from the four loaded rows.
+      const metrics = viewport.querySelector<HTMLElement>(
+        ".access-administration__metrics"
+      );
+      expect(metrics).not.toBeNull();
+      for (const [label, value] of [
+        ["Total users", "4"],
+        ["Active users", "3"],
+        ["Inactive users", "1"],
+        ["Different roles", "3"]
+      ]) {
+        const tile = within(metrics as HTMLElement)
+          .getByText(label!)
+          .closest(".metric-card");
+        expect(tile).not.toBeNull();
+        expect(within(tile as HTMLElement).getByText(value!)).toBeVisible();
+      }
+
+      // No status is carried by colour alone: every badge and chip has text.
+      const directory = screen.getByRole("region", { name: "User directory" });
+      const inactiveRow = within(directory).getByRole("row", {
+        name: /Accessible Site Manager/
+      });
+      expect(within(inactiveRow).getByText("Inactive")).toBeVisible();
+      expect(within(inactiveRow).getByText("Site Manager")).toBeVisible();
+      const activeRow = within(directory).getByRole("row", {
+        name: /Accessible Designer/
+      });
+      expect(within(activeRow).getByText("Active")).toBeVisible();
+      expect(within(activeRow).getByText("Designer")).toBeVisible();
+      expect(
+        within(
+          within(directory).getByRole("row", { name: /Accessible Super Admin/ })
+        ).queryByRole("button", { name: /^Manage/ })
+      ).not.toBeInTheDocument();
+
+      expectNoPageLevelHorizontalOverflow(viewport, width);
+      expectEveryControlHasAnAccessibleName(viewport);
+      await expectNoAxeViolations();
+
+      // The status tab strip stays operable at every width.
+      const expiredTab = screen.getByRole("tab", { name: "Expired" });
+      await user.click(expiredTab);
+      await waitFor(() => expect(expiredTab).toHaveAttribute("aria-selected", "true"));
+      expect(screen.getByRole("tab", { name: "All actionable" })).toHaveAttribute(
+        "aria-selected",
+        "false"
+      );
+      expectNoPageLevelHorizontalOverflow(viewport, width);
+      expectEveryControlHasAnAccessibleName(viewport);
+      await expectNoAxeViolations();
+
+      viewport.remove();
+    }
+  );
 
   it("keeps the Super Admin invitation panel and create, resend, and revoke dialogs accessible", async () => {
     const revokeGate = deferredResponse();

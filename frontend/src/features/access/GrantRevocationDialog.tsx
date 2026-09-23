@@ -59,7 +59,7 @@ export function GrantRevocationDialog({ request, isCurrentRow, onClose }: GrantR
           {(controlProps) => <Textarea {...controlProps} data-dialog-initial-focus rows={5} value={reason} disabled={mutation.isPending || !isCurrentRow || !grant} onChange={(event) => { setReason(event.target.value); setError(""); }} />}
         </Field>
         <div className="access-request-dialog__actions">
-          <Button variant="quiet" disabled={mutation.isPending} onClick={onClose}>Cancel</Button>
+          <Button variant="destructive-outline" disabled={mutation.isPending} onClick={onClose}>Cancel</Button>
           <Button type="submit" variant="destructive" busy={mutation.isPending} disabled={!isCurrentRow || !grant} busyLabel="Revoking…">Revoke access</Button>
         </div>
       </form>

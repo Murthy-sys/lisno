@@ -215,6 +215,7 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "GET /estimates/:estimateId/design-uploads": "EstimateDesignWorkspace",
   "GET /auth/authorization": "AuthorizationSnapshot",
   "GET /admin/sales-managers": "SalesManagerOptionPage",
+  "GET /admin/users": "UserDirectoryPage",
   "GET /admin/designers": "DesignerOptionList",
   "POST /admin/projects/:projectId/design-assignment": "DesignPlanTask",
   "GET /designer/design-plan-tasks": "DesignPlanTaskList",
@@ -1793,6 +1794,56 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
           }
         },
         pagination: { $ref: "#/components/schemas/Pagination" }
+      }
+    },
+    UserDirectorySummary: {
+      type: "object",
+      additionalProperties: false,
+      required: ["total", "active", "inactive", "roleCount"],
+      description:
+        "Aggregate counts for the whole role-visible directory. Independent of the search, role and active query filters; total always equals active plus inactive.",
+      properties: {
+        total: { type: "integer", minimum: 0 },
+        active: { type: "integer", minimum: 0 },
+        inactive: { type: "integer", minimum: 0 },
+        roleCount: {
+          type: "integer",
+          minimum: 0,
+          description: "Number of distinct roles actually present among visible users, not the number of roles defined in the system."
+        }
+      }
+    },
+    UserDirectoryItem: {
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "name", "email", "role", "active", "version", "createdAt", "updatedAt"],
+      properties: {
+        id,
+        name: { type: "string" },
+        email: { type: "string", format: "email" },
+        role: { $ref: "#/components/schemas/Role" },
+        active: { type: "boolean" },
+        version: { type: "integer", minimum: 1 },
+        avatar: { type: "string" },
+        title: { type: "string" },
+        createdAt: dateTime,
+        updatedAt: dateTime
+      }
+    },
+    UserDirectoryPage: {
+      type: "object",
+      additionalProperties: false,
+      required: ["items", "pagination", "summary", "filterRoles", "manageableRoles"],
+      properties: {
+        items: { type: "array", items: { $ref: "#/components/schemas/UserDirectoryItem" } },
+        pagination: { $ref: "#/components/schemas/Pagination" },
+        summary: { $ref: "#/components/schemas/UserDirectorySummary" },
+        filterRoles: { type: "array", items: { $ref: "#/components/schemas/Role" } },
+        manageableRoles: {
+          type: "array",
+          items: { $ref: "#/components/schemas/Role" },
+          description: "Roles that may be assigned through this endpoint; never includes super_admin."
+        }
       }
     },
     DesignerAssignmentRequest: {

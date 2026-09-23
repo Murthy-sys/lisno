@@ -335,7 +335,7 @@ function SurfaceManagementTable({
                   {canUpdate && surface.status !== "archived" ? (
                     <Button
                       size="compact"
-                      variant="quiet"
+                      variant={surface.status === "active" ? "destructive-outline" : "quiet"}
                       busy={statusBusyId === surface.id}
                       disabled={statusBusyId !== null && statusBusyId !== surface.id}
                       onClick={() => onStatusChange(

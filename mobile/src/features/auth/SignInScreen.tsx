@@ -107,5 +107,5 @@ export function SignInScreen() {
 const styles = StyleSheet.create({
   banner: { color: colors.danger, backgroundColor: colors.dangerSoft, padding: spacing.sm, borderRadius: 8, fontFamily: fonts.regular, fontSize: 13, lineHeight: 19 },
   links: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: spacing.md, paddingTop: spacing.xs },
-  link: { color: colors.violet, fontFamily: fonts.semibold, fontSize: 13, minHeight: 32, textAlignVertical: "center" }
+  link: { color: colors.violet, fontFamily: fonts.semibold, fontSize: 13, minHeight: 48, textAlignVertical: "center" }
 });

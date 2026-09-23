@@ -141,7 +141,7 @@ export function KnowledgeSurfaceEditorDialog({
       dirty={name !== (existing?.name ?? "") || description !== (existing?.description ?? "")}
       footer={({ requestClose }) => (
         <div className="knowledge-dialog-actions">
-          <Button type="button" variant="quiet" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
+          <Button type="button" variant="destructive-outline" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
           <Button type="submit" form={formId} busy={mutation.isPending}>
             {existing ? "Save changes" : "Add Surface"}
           </Button>

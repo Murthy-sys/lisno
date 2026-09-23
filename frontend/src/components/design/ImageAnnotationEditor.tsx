@@ -633,7 +633,7 @@ export function ImageAnnotationEditor({
           ))}
           <button type="button" onClick={undo} disabled={undoRef.current.length === 0}>Undo</button>
           <button type="button" onClick={redo} disabled={redoRef.current.length === 0}>Redo</button>
-          <button type="button" onClick={deleteSelected} disabled={!selectedId}>Delete selected</button>
+          <button type="button" className="ui-button ui-button--destructive-outline" onClick={deleteSelected} disabled={!selectedId}>Delete selected</button>
         </div>
       ) : null}
       <div className="annotation-editor__viewport">

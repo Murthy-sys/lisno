@@ -1,3 +1,4 @@
+import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -55,9 +56,7 @@ function ProgressIndicator({ index }: Readonly<{ index: number }>) {
           accessible={false}
           key={slide.id}
           style={[styles.progressTrack, dotIndex === index ? styles.progressTrackActive : null]}
-        >
-          {dotIndex === index ? <View style={styles.progressGlow} /> : null}
-        </View>
+        />
       ))}
     </View>
   );
@@ -86,9 +85,8 @@ function PrimaryAction({
         busy ? styles.primaryActionBusy : null
       ]}
     >
-      {busy ? <ActivityIndicator color={colors.midnight} size="small" /> : null}
+      {busy ? <ActivityIndicator color={colors.primaryInk} size="small" /> : null}
       <Text style={styles.primaryActionLabel}>{label}</Text>
-      {!busy ? <Text accessible={false} style={styles.primaryActionArrow}>→</Text> : null}
     </Pressable>
   );
 }
@@ -133,10 +131,7 @@ function SlidePage({
           </View>
           <View style={[styles.copyColumn, expanded ? styles.copyColumnExpanded : null]}>
             <View style={styles.copyBlock}>
-              <View style={styles.eyebrowRow}>
-                <View style={styles.eyebrowRule} />
-                <Text style={styles.eyebrow}>{slide.eyebrow}</Text>
-              </View>
+              <Text style={styles.eyebrow}>{slide.eyebrow}</Text>
               <Text accessibilityRole="header" style={[styles.title, expanded ? styles.titleExpanded : null]}>
                 {slide.title}
               </Text>
@@ -258,14 +253,14 @@ export function OnboardingScreen({ onComplete, reducedMotion: reducedMotionOverr
   if (reducedMotionPreference === null) {
     return (
       <SafeAreaView edges={["top", "left", "right", "bottom"]} style={styles.safeArea}>
-        <View pointerEvents="none" style={styles.ambientLight} />
+        <StatusBar style="dark" />
         <View style={styles.preferenceLoading}>
-          <LisnoWordmark tone="light" width={142} />
+          <LisnoWordmark tone="dark" width={142} />
           <ActivityIndicator
             accessible
             accessibilityLabel="Preparing introduction"
             accessibilityRole="progressbar"
-            color={colors.gold}
+            color={colors.primary}
             size="small"
           />
         </View>
@@ -275,9 +270,9 @@ export function OnboardingScreen({ onComplete, reducedMotion: reducedMotionOverr
 
   return (
     <SafeAreaView edges={["top", "left", "right", "bottom"]} style={styles.safeArea}>
-      <View pointerEvents="none" style={styles.ambientLight} />
+      <StatusBar style="dark" />
       <View style={[styles.header, expanded ? styles.headerExpanded : null]}>
-        <LisnoWordmark tone="light" width={expanded ? 142 : 124} />
+        <LisnoWordmark tone="dark" width={expanded ? 142 : 124} />
         <Text style={styles.headerNote}>PROJECT OPERATIONS</Text>
       </View>
       <Animated.FlatList
@@ -309,20 +304,11 @@ export function OnboardingScreen({ onComplete, reducedMotion: reducedMotionOverr
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: colors.midnight },
-  ambientLight: {
-    position: "absolute",
-    width: 360,
-    height: 360,
-    borderRadius: 180,
-    top: -190,
-    left: -130,
-    backgroundColor: colors.violet,
-    opacity: 0.18
-  },
+  safeArea: { flex: 1, backgroundColor: colors.authCanvas },
   header: {
     minHeight: 62,
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: spacing.lg,
@@ -330,7 +316,7 @@ const styles = StyleSheet.create({
     gap: spacing.md
   },
   headerExpanded: { width: "100%", maxWidth: 1040, alignSelf: "center", paddingHorizontal: spacing.xxl },
-  headerNote: { color: "rgba(255,255,255,0.56)", fontFamily: fonts.semibold, fontSize: 9, letterSpacing: 1.7 },
+  headerNote: { color: colors.inkMuted, fontFamily: fonts.semibold, fontSize: 9, letterSpacing: 1.7 },
   preferenceLoading: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.xxl },
   slide: { flex: 1 },
   slideScrollContent: { flexGrow: 1, justifyContent: "center", paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.lg },
@@ -342,37 +328,29 @@ const styles = StyleSheet.create({
   copyColumn: { width: "100%", gap: spacing.xl },
   copyColumnExpanded: { flex: 0.86, maxWidth: 430, justifyContent: "center", gap: spacing.xxl },
   copyBlock: { gap: spacing.sm },
-  eyebrowRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  eyebrowRule: { width: 27, height: 2, borderRadius: 1, backgroundColor: colors.gold },
-  eyebrow: { color: "#C9C1FF", fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 2.1 },
-  title: { color: colors.surface, fontFamily: fonts.semibold, fontSize: 30, lineHeight: 37, letterSpacing: -0.5 },
+  eyebrow: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 2.1 },
+  title: { color: colors.ink, fontFamily: fonts.display, fontSize: 30, lineHeight: 37, letterSpacing: -0.5 },
   titleExpanded: { fontSize: 38, lineHeight: 46, letterSpacing: -0.8 },
-  body: { color: "rgba(244,242,255,0.72)", fontFamily: fonts.regular, fontSize: 14, lineHeight: 22, maxWidth: 470 },
+  body: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 14, lineHeight: 22, maxWidth: 470 },
   actions: { gap: spacing.lg },
   progress: { minHeight: 24, flexDirection: "row", alignItems: "center", gap: spacing.xs, alignSelf: "flex-start" },
-  progressTrack: { width: 22, height: 4, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.2)", overflow: "visible" },
-  progressTrackActive: { width: 46, backgroundColor: colors.gold },
-  progressGlow: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, borderRadius: 2, backgroundColor: colors.gold, opacity: 0.38, transform: [{ scaleX: 1.12 }, { scaleY: 2.2 }] },
+  progressTrack: { width: 22, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong },
+  progressTrackActive: { width: 46, backgroundColor: colors.primary },
   primaryAction: {
     minHeight: 56,
     width: "100%",
     borderRadius: radii.control,
     paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "center",
     gap: spacing.sm,
-    backgroundColor: colors.gold,
+    backgroundColor: colors.primary,
     borderWidth: 1,
-    borderColor: "#F1D259",
-    shadowColor: "#0B081A",
-    shadowOpacity: 0.36,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 7
+    borderColor: colors.primary
   },
-  primaryActionPressed: { opacity: 0.9, transform: [{ scale: 0.99 }] },
+  primaryActionPressed: { backgroundColor: colors.primaryPressed, borderColor: colors.primaryPressed },
   primaryActionBusy: { opacity: 0.72 },
-  primaryActionLabel: { color: colors.midnight, fontFamily: fonts.semibold, fontSize: 15 },
-  primaryActionArrow: { color: colors.midnight, fontFamily: fonts.semibold, fontSize: 22 }
+  primaryActionLabel: { color: colors.primaryInk, fontFamily: fonts.semibold, fontSize: 14, flexShrink: 1, textAlign: "center" }
 });

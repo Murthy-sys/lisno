@@ -6,9 +6,12 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { ROLE_LABELS } from "../contracts/authorization";
 import { useConfiguredRuntime } from "../runtime/RuntimeProvider";
 import { LisnoWordmark } from "../ui/brand";
-import { colors, fonts, spacing } from "../ui/tokens";
+import { BackButton } from "../ui/BackButton";
+import { colors, fonts, radii, spacing } from "../ui/tokens";
+import { NavigationIcon, RootTabIcon } from "./NavigationIcon";
 import { rootTabsForAuthorization, type FeatureId, type RootTab } from "./registry";
 import { scaffoldNavigationMode } from "./scaffoldLayout";
+import { useScreenBack } from "./useScreenBack";
 
 function routeForTab(tab: RootTab): string {
   return tab.id === "more" ? "/more" : tab.destination?.path ?? "/";
@@ -28,13 +31,16 @@ function NavigationButton({ tab, selected, compact, disabled }: { readonly tab: 
   return (
     <Pressable
       accessibilityRole="tab"
+      accessibilityLabel={tab.label}
       accessibilityState={{ disabled, selected }}
       disabled={disabled}
       onPress={() => router.replace(routeForTab(tab) as never)}
-      style={({ pressed }) => [styles.navButton, compact ? styles.navButtonCompact : styles.navButtonRail, selected ? styles.navButtonSelected : null, pressed ? styles.pressed : null]}
+      style={({ pressed }) => [styles.navButton, compact ? styles.navButtonCompact : styles.navButtonRail, selected && !compact ? styles.navButtonSelected : null, pressed ? styles.pressed : null, disabled ? styles.disabled : null]}
     >
-      <View style={[styles.navMark, selected ? styles.navMarkSelected : null]} />
-      <Text numberOfLines={compact ? 1 : 2} style={[styles.navLabel, selected ? styles.navLabelSelected : null]}>{tab.label}</Text>
+      <View style={[styles.navIcon, compact && selected ? styles.navIconSelected : null]}>
+        <RootTabIcon tab={tab} selected={selected} color={selected ? colors.shellInk : colors.shellMuted} />
+      </View>
+      {!compact ? <Text numberOfLines={2} style={[styles.navLabel, selected ? styles.navLabelSelected : null]}>{tab.label}</Text> : null}
     </Pressable>
   );
 }
@@ -55,6 +61,7 @@ export function AdaptiveAppScaffold({
   const context = useConfiguredRuntime();
   const { width } = useWindowDimensions();
   const [navigationBlocked, setNavigationBlocked] = useState(false);
+  const back = useScreenBack({ blocked: navigationBlocked });
   const navigationGuard = useMemo(
     () => ({ setBlocked: setNavigationBlocked }),
     []
@@ -85,7 +92,7 @@ export function AdaptiveAppScaffold({
               <Text numberOfLines={1} style={styles.roleLabel}>{ROLE_LABELS[authenticated.user.role]}</Text>
             </View>
             <Pressable accessibilityLabel="Open notifications" accessibilityRole="button" accessibilityState={{ disabled: navigationBlocked }} disabled={navigationBlocked} onPress={() => router.push("/feature/notifications")} style={[styles.notificationButton, navigationBlocked ? styles.disabled : null]}>
-              <Text style={styles.notificationGlyph}>●</Text>
+              <NavigationIcon name="notifications" color={colors.shellInk} />
             </Pressable>
           </View>
         </View>
@@ -97,7 +104,12 @@ export function AdaptiveAppScaffold({
           </View>
         ) : null}
         <ScaffoldNavigationGuardContext.Provider value={navigationGuard}>
-          <View style={styles.content}>{children}</View>
+          <View style={styles.content}>
+            {back.visible && navigationMode !== "immersive" ? (
+              <View style={styles.backBar}><BackButton onPress={back.onBack} disabled={back.disabled} /></View>
+            ) : null}
+            {children}
+          </View>
         </ScaffoldNavigationGuardContext.Provider>
       </View>
       {navigationMode === "tabs" ? (
@@ -110,26 +122,26 @@ export function AdaptiveAppScaffold({
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: colors.midnight },
-  topBar: { minHeight: 70, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, backgroundColor: colors.midnight, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md },
+  safeArea: { flex: 1, backgroundColor: colors.shell },
+  topBar: { minHeight: 70, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, backgroundColor: colors.shell, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md },
   identity: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: spacing.sm, flex: 1 },
   identityCopy: { maxWidth: 180, alignItems: "flex-end" },
-  userName: { color: colors.surface, fontFamily: fonts.semibold, fontSize: 13 },
-  roleLabel: { color: "rgba(255,255,255,0.68)", fontFamily: fonts.regular, fontSize: 11 },
-  notificationButton: { minWidth: 48, minHeight: 48, borderRadius: 24, alignItems: "center", justifyContent: "center", backgroundColor: colors.midnightRaised },
-  notificationGlyph: { color: colors.gold, fontSize: 15 },
+  userName: { color: colors.shellInk, fontFamily: fonts.semibold, fontSize: 13 },
+  roleLabel: { color: colors.shellMuted, fontFamily: fonts.regular, fontSize: 11 },
+  notificationButton: { minWidth: 48, minHeight: 48, borderRadius: radii.control, alignItems: "center", justifyContent: "center", backgroundColor: colors.shellRaised },
   body: { flex: 1, flexDirection: "row", backgroundColor: colors.canvas },
-  rail: { width: 176, padding: spacing.sm, gap: spacing.xs, backgroundColor: colors.surface, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.border },
+  rail: { width: 176, padding: spacing.sm, gap: spacing.xs, backgroundColor: colors.shell },
   content: { flex: 1, backgroundColor: colors.canvas },
-  bottomBar: { minHeight: 68, flexDirection: "row", backgroundColor: colors.surface, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, paddingHorizontal: spacing.xs },
-  navButton: { minHeight: 48, alignItems: "center", justifyContent: "center", gap: 5 },
-  navButtonCompact: { flex: 1, paddingHorizontal: 2, paddingVertical: 6 },
-  navButtonRail: { flexDirection: "row", justifyContent: "flex-start", paddingHorizontal: spacing.sm, borderRadius: 10 },
-  navButtonSelected: { backgroundColor: colors.violetSoft },
-  navMark: { width: 18, height: 3, borderRadius: 2, backgroundColor: colors.border },
-  navMarkSelected: { backgroundColor: colors.violet },
-  navLabel: { color: colors.inkMuted, fontFamily: fonts.medium, fontSize: 11, textAlign: "center" },
-  navLabelSelected: { color: colors.midnight, fontFamily: fonts.semibold },
+  backBar: { paddingHorizontal: spacing.xs, backgroundColor: colors.canvas },
+  bottomBar: { minHeight: 64, flexDirection: "row", backgroundColor: colors.shell, paddingHorizontal: spacing.xs, paddingVertical: spacing.xs },
+  navButton: { minWidth: 48, minHeight: 48, alignItems: "center", justifyContent: "center" },
+  navButtonCompact: { flex: 1, paddingHorizontal: spacing.xxs },
+  navButtonRail: { flexDirection: "row", justifyContent: "flex-start", gap: spacing.xs, paddingHorizontal: spacing.xs, paddingVertical: spacing.xxs, borderRadius: radii.control },
+  navButtonSelected: { backgroundColor: colors.shellSelected },
+  navIcon: { width: 48, height: 40, alignItems: "center", justifyContent: "center", borderRadius: radii.control, borderWidth: 1, borderColor: "transparent" },
+  navIconSelected: { backgroundColor: colors.shellSelected, borderColor: colors.accent },
+  navLabel: { flex: 1, color: colors.shellMuted, fontFamily: fonts.medium, fontSize: 13, textAlign: "left" },
+  navLabelSelected: { color: colors.shellInk, fontFamily: fonts.semibold },
   pressed: { opacity: 0.72 },
   disabled: { opacity: 0.48 }
 });

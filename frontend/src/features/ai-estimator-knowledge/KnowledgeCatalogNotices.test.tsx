@@ -1,4 +1,6 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { KnowledgeSectionEditor } from "./KnowledgeSectionEditor";
@@ -25,11 +27,21 @@ const priority: KnowledgeMaster = {
   updatedAt: "2026-09-04T00:00:00.000Z"
 } as unknown as KnowledgeMaster;
 
+function renderWithQueryClient(element: ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false }
+    }
+  });
+  return render(<QueryClientProvider client={queryClient}>{element}</QueryClientProvider>);
+}
+
 function renderRecommendations(
   masters: Record<string, readonly KnowledgeMaster[]>,
   states: Record<string, unknown>
 ) {
-  return render(
+  return renderWithQueryClient(
     <KnowledgeSectionEditor
       sectionKey="recommendations"
       payload={{ recommendations: [{ id: "legacy-note", name: "Existing recommendation", reason: "Existing explanation", priorityId: priority.id, dependency: false, active: true }], exclusions: [] }}
@@ -88,7 +100,7 @@ describe("reusable-value catalog notices", () => {
   });
 
   it("reports only the catalogs the open section actually uses", () => {
-    render(
+    renderWithQueryClient(
       <KnowledgeSectionEditor
         sectionKey="scope"
         payload={{ exclusions: [], modeIds: [], surfaceIds: [] }}

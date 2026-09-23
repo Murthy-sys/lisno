@@ -570,7 +570,7 @@ export function KnowledgeSpecificationBuilder({
               </Field>
             </div>
             <div className="knowledge-dialog-actions">
-              <Button type="button" variant="quiet" onClick={closeBrandDialog}>Cancel</Button>
+              <Button type="button" variant="destructive-outline" onClick={closeBrandDialog}>Cancel</Button>
               <Button type="submit">{brandDialogBrandId ? "Save" : "Add"}</Button>
             </div>
           </form>

@@ -17,6 +17,24 @@
   --color-danger-strong: #8f2c3a;
   --color-info: #315ab8;
 
+  --button-primary-bg: #3d4a32;
+  --button-primary-bg-hover: #2f3a26;
+  --button-primary-ink: #f6f4ec;
+  --button-secondary-bg: #ffffff;
+  --button-secondary-border: color-mix(in srgb, #3d4a32 62%, transparent);
+  --button-secondary-ink: #1f2a1c;
+  --button-secondary-hover: color-mix(in srgb, #3d4a32 6%, #ffffff);
+  --button-quiet-ink: #3d4a32;
+  --button-quiet-hover: color-mix(in srgb, #3d4a32 8%, transparent);
+  --button-negative-ink: #b42318;
+  --button-negative-ink-strong: #8f1d13;
+  --button-negative-border: #b42318;
+  --button-negative-hover: color-mix(in srgb, #b42318 6%, #ffffff);
+  --button-focus-ring: 0 0 0 3px color-mix(in srgb, #3d4a32 60%, transparent);
+  --button-focus-ring-on-dark: 0 0 0 3px color-mix(in srgb, #f6f4ec 55%, transparent);
+  --button-font: var(--font-interface);
+  --button-weight: 600;
+
   --finance-chart-approved-gst: #a89bea;
   --finance-chart-approved-profit: #8e7cff;
   --finance-chart-approved-budget: #5a45d6;

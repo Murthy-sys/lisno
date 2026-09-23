@@ -8,13 +8,18 @@ import {
   createKnowledgeQualityControlOption,
   listKnowledgeSubBaskets,
   getKnowledgeBasketDeletionImpact,
+  getKnowledgeSubBasketDeletionImpact,
   listKnowledgeSurfaces,
   listKnowledgeItems,
   listKnowledgeQualityControlOptions,
+  permanentlyDeleteKnowledgeMainLine,
   permanentlyDeleteKnowledgeBasket,
+  permanentlyDeleteKnowledgeSubBasket,
   previewKnowledge,
   resolveKnowledgeContext,
   updateKnowledgeSurface,
+  updateKnowledgeMainLine,
+  updateKnowledgeSubBasket,
   updateKnowledgeSection
 } from "./knowledgeApi";
 
@@ -42,6 +47,73 @@ describe("knowledge API", () => {
     expect(post).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/baskets/basket%2Fone/main-lines", { name: "Flush door", subBasketName: "Doors" });
     await createKnowledgeMainLine("basket/one", { name: "Flush door", subBasketId: "child-1" });
     expect(post).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/baskets/basket%2Fone/main-lines", { name: "Flush door", subBasketId: "child-1" });
+  });
+
+  it("sends versioned Sub-Basket rename and guarded child mutations without changing their payloads", async () => {
+    const patch = vi.spyOn(apiClient, "patch").mockResolvedValue({});
+    const remove = vi.spyOn(apiClient, "delete").mockResolvedValue({});
+    const guard = { subBasketId: "sub/one", expectedVersion: 8 } as const;
+
+    await updateKnowledgeSubBasket("basket/one", "sub/one", {
+      expectedVersion: 8,
+      name: "False Ceiling Lights"
+    });
+    await updateKnowledgeMainLine("line/one", {
+      expectedVersion: 3,
+      name: "Ceiling spotlights",
+      draftSubBasketGuard: guard
+    });
+    await permanentlyDeleteKnowledgeMainLine("line/one", {
+      expectedVersion: 4,
+      reason: "Added by mistake",
+      draftSubBasketGuard: guard
+    });
+
+    expect(patch).toHaveBeenNthCalledWith(1,
+      "/admin/ai-estimator-knowledge/baskets/basket%2Fone/sub-baskets/sub%2Fone",
+      { expectedVersion: 8, name: "False Ceiling Lights" }
+    );
+    expect(patch).toHaveBeenNthCalledWith(2,
+      "/admin/ai-estimator-knowledge/main-lines/line%2Fone",
+      { expectedVersion: 3, name: "Ceiling spotlights", draftSubBasketGuard: guard }
+    );
+    expect(remove).toHaveBeenCalledWith(
+      "/admin/ai-estimator-knowledge/main-lines/line%2Fone",
+      { expectedVersion: 4, reason: "Added by mistake", draftSubBasketGuard: guard }
+    );
+  });
+
+  it("sends the explicit direct-parent Draft guard with rename and removal", async () => {
+    const patch = vi.spyOn(apiClient, "patch").mockResolvedValue({});
+    const remove = vi.spyOn(apiClient, "delete").mockResolvedValue({});
+    const draftItemGuard = { basketId: "basket/one", subBasketId: null } as const;
+    const update = { expectedVersion: 3, name: "False Ceiling Lights", draftItemGuard };
+    const deletion = { expectedVersion: 4, reason: "Added by mistake", draftItemGuard };
+    await updateKnowledgeMainLine("line/one", update);
+    await permanentlyDeleteKnowledgeMainLine("line/one", deletion);
+    expect(patch).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/main-lines/line%2Fone", update);
+    expect(remove).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/main-lines/line%2Fone", deletion);
+  });
+
+  it("preserves the confirmed Sub-Basket impact and explicit Configuration rename context", async () => {
+    const get = vi.spyOn(apiClient, "get").mockResolvedValue({});
+    const patch = vi.spyOn(apiClient, "patch").mockResolvedValue({});
+    const remove = vi.spyOn(apiClient, "delete").mockResolvedValue({});
+    const input = { expectedVersion: 3, confirmationName: "Lights", reason: "Remove mistake", impactToken: "a".repeat(64) };
+    await getKnowledgeSubBasketDeletionImpact("basket/one", "sub/one");
+    await updateKnowledgeSubBasket("basket/one", "sub/one", { expectedVersion: 3, name: "Ceiling lights", managementContext: "configuration" });
+    await permanentlyDeleteKnowledgeSubBasket("basket/one", "sub/one", input);
+    const path = "/admin/ai-estimator-knowledge/baskets/basket%2Fone/sub-baskets/sub%2Fone";
+    expect(get).toHaveBeenCalledWith(`${path}/deletion-impact`);
+    expect(patch).toHaveBeenCalledWith(path, { expectedVersion: 3, name: "Ceiling lights", managementContext: "configuration" });
+    expect(remove).toHaveBeenCalledWith(path, input);
+  });
+
+  it("sends the draft-only Sub-Basket guard with the reviewed deletion impact", async () => {
+    const remove = vi.spyOn(apiClient, "delete").mockResolvedValue({});
+    const input = { expectedVersion: 3, confirmationName: "Lights", reason: "Remove draft group", impactToken: "a".repeat(64), draftOnly: true } as const;
+    await permanentlyDeleteKnowledgeSubBasket("basket/one", "sub/one", input);
+    expect(remove).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/baskets/basket%2Fone/sub-baskets/sub%2Fone", input);
   });
 
   it("keeps searched item requests inside the additive admin namespace", async () => {

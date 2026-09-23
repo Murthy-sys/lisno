@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
 import { roleMayRequestModule } from "../src/domain/authorization.js";
-import type { Role } from "../src/domain/roles.js";
+import { ROLE_CODES, type Role } from "../src/domain/roles.js";
 import { AccessRequestModel } from "../src/models/AccessRequest.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoordination.js";
@@ -14,7 +14,10 @@ import { ProjectModel } from "../src/models/Project.js";
 import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
 import { TaskModel } from "../src/models/Task.js";
 import { UserModel } from "../src/models/User.js";
+import { createMemoryRepository } from "../src/repositories/memory.js";
 import { createMongoRepository } from "../src/repositories/mongo.js";
+import type { SeedData, UserRecord } from "../src/repositories/types.js";
+import { demoSeedData } from "../src/seed/data.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
 const JWT_SECRET = "user-administration-mongo-secret-at-least-32-characters";
@@ -51,7 +54,7 @@ function bearer(id: string, role: Role): string {
   return `Bearer ${jwt.sign({ id, role }, JWT_SECRET, { expiresIn: 900 })}`;
 }
 
-async function insertUser(id: string, role: Role) {
+async function insertUser(id: string, role: Role, active = true) {
   await UserModel.create({
     _id: id,
     name: id,
@@ -59,13 +62,60 @@ async function insertUser(id: string, role: Role) {
     emailNormalized: `${id}@mongo-admin.lisno.example`,
     passwordHash: "not-used-by-jwt-tests",
     role,
-    active: true,
+    active,
     version: 1,
     managerId: null,
     authorizedClientIds: [],
     createdAt: new Date(NOW),
     updatedAt: new Date(NOW)
   });
+}
+
+/**
+ * Asymmetric directory fixture shared by the Mongo/memory summary parity test:
+ * unequal role counts, two inactive users in two different roles, and many
+ * visible roles with no users at all.
+ */
+const DIRECTORY_FIXTURE: readonly { id: string; role: Role; active: boolean }[] = [
+  // "user-super" rather than "user-super-admin": the latter is a reserved
+  // development-demo identity and bearer tokens for it are rejected.
+  { id: "user-super", role: "super_admin", active: true },
+  { id: "user-designer-alpha", role: "designer", active: true },
+  { id: "user-designer-beta", role: "designer", active: true },
+  { id: "user-designer-gamma", role: "designer", active: false },
+  { id: "user-admin-one", role: "admin", active: true },
+  { id: "user-admin-two", role: "admin", active: true },
+  { id: "user-client-solo", role: "client", active: false }
+];
+
+async function insertDirectoryFixture() {
+  for (const { id, role, active } of DIRECTORY_FIXTURE) {
+    await insertUser(id, role, active);
+  }
+}
+
+/** The same seeded state as `DIRECTORY_FIXTURE`, backed by the memory repository. */
+function memoryDirectoryRepository() {
+  const seed: SeedData = structuredClone(demoSeedData);
+  const template = structuredClone(demoSeedData.users[0]!);
+  seed.users = DIRECTORY_FIXTURE.map(
+    ({ id, role, active }): UserRecord => ({
+      ...template,
+      id,
+      name: id,
+      email: `${id}@mongo-admin.lisno.example`,
+      emailNormalized: `${id}@mongo-admin.lisno.example`,
+      role,
+      active,
+      accountKind: "standard",
+      version: 1,
+      managerId: null,
+      authorizedClientIds: [],
+      createdAt: NOW,
+      updatedAt: NOW
+    })
+  );
+  return createMemoryRepository(seed);
 }
 
 async function insertProject(id: string) {
@@ -166,6 +216,42 @@ describe("user administration Mongo replica-set transactions", () => {
     expect(await UserModel.find({ role: "super_admin" }).lean().exec()).toEqual([
       expect.objectContaining({ _id: "user-super-admin", role: "super_admin" })
     ]);
+  });
+
+  it("summarizes the directory identically in Mongo and in memory", async () => {
+    await insertDirectoryFixture();
+    const mongo = createMongoRepository();
+    const memory = memoryDirectoryRepository();
+
+    const mongoSummary = await mongo.summarizeUsers(ROLE_CODES);
+    const memorySummary = await memory.summarizeUsers(ROLE_CODES);
+
+    expect(mongoSummary).toEqual(memorySummary);
+    expect(mongoSummary).toEqual({
+      total: 7,
+      active: 5,
+      inactive: 2,
+      roleCount: 4
+    });
+    expect(mongoSummary.total).toBe(mongoSummary.active + mongoSummary.inactive);
+    expect(mongoSummary.roleCount).toBeLessThan(ROLE_CODES.length);
+
+    // A visible role holding no user must not increment roleCount, in either
+    // implementation.
+    const scope: readonly Role[] = ["designer", "procurement"];
+    const scopedMongo = await mongo.summarizeUsers(scope);
+    expect(scopedMongo).toEqual(await memory.summarizeUsers(scope));
+    expect(scopedMongo).toEqual({ total: 3, active: 2, inactive: 1, roleCount: 1 });
+
+    expect(await mongo.summarizeUsers([])).toEqual(await memory.summarizeUsers([]));
+
+    // The route envelope carries the same filter-independent summary.
+    const directory = await request(application())
+      .get("/api/v1/admin/users?search=gamma&limit=20&offset=0")
+      .set("Authorization", bearer("user-super", "super_admin"));
+    expect(directory.status).toBe(200);
+    expect(directory.body.data.summary).toEqual(memorySummary);
+    expect(directory.body.data.pagination.total).toBe(1);
   });
 
   it("serializes access approval against requester deactivation", async () => {

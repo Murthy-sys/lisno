@@ -1,9 +1,11 @@
-import { router, useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
 import { StyleSheet, Text } from "react-native";
 
 import { ApiError } from "../../core/http/apiClient";
+import { useScreenBack } from "../../navigation/useScreenBack";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
+import { BackButton } from "../../ui/BackButton";
 import { Button, Field } from "../../ui/primitives";
 import { colors, fonts, radii, spacing } from "../../ui/tokens";
 import { AuthFrame } from "./AuthFrame";
@@ -39,6 +41,7 @@ export function TokenPasswordScreen({ flow }: { readonly flow: TokenFlow }) {
   const [errors, setErrors] = useState<{ password: string | undefined; passwordConfirmation: string | undefined }>({ password: undefined, passwordConfirmation: undefined });
   const [banner, setBanner] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const back = useScreenBack({ blocked: busy });
 
   useEffect(() => {
     let active = true;
@@ -54,6 +57,7 @@ export function TokenPasswordScreen({ flow }: { readonly flow: TokenFlow }) {
   }, [context.runtime.api.public, copy.inspect, token]);
 
   const submit = async () => {
+    if (busy) return;
     const parsed = newPasswordSchema.safeParse({ password, passwordConfirmation: confirmation });
     if (!parsed.success) {
       setErrors({
@@ -77,18 +81,22 @@ export function TokenPasswordScreen({ flow }: { readonly flow: TokenFlow }) {
   };
 
   return (
-    <AuthFrame eyebrow={copy.eyebrow} title={status === "complete" ? "You’re ready" : copy.title} subtitle="Use a unique password of at least 12 characters.">
+    <AuthFrame
+      eyebrow={copy.eyebrow}
+      title={status === "complete" ? "You’re ready" : copy.title}
+      subtitle="Use a unique password of at least 12 characters."
+      back={back.visible ? <BackButton onPress={back.onBack} disabled={back.disabled} accessibilityLabel="Back to sign in" accessibilityHint="Returns to sign in and closes this secure link." /> : null}
+    >
       {status === "inspecting" ? <Text accessibilityLiveRegion="polite" style={styles.notice}>Checking secure link…</Text> : null}
       {status === "invalid" ? (
         <>
           <Text accessibilityLiveRegion="assertive" style={styles.error}>This secure link is invalid, expired, or already used.</Text>
-          <Button label="Back to sign in" onPress={() => router.replace("/sign-in")} />
         </>
       ) : null}
       {status === "complete" ? (
         <>
           <Text accessibilityLiveRegion="polite" style={styles.notice}>{copy.success}</Text>
-          <Button label="Continue to sign in" onPress={() => router.replace("/sign-in")} />
+          <Button label="Continue to sign in" onPress={back.onBack} />
         </>
       ) : null}
       {status === "ready" ? (

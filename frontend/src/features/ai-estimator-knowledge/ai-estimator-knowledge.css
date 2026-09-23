@@ -1787,6 +1787,10 @@
 
 .knowledge-basket-manager,
 .knowledge-basket-manager__results,
+.ui-dialog:has(.knowledge-basket-delete) .ui-dialog__header .eyebrow {
+  color: var(--color-text-muted);
+}
+
 .knowledge-basket-delete,
 .knowledge-basket-delete__impact {
   min-width: 0;
@@ -1796,6 +1800,29 @@
   display: grid;
   gap: var(--space-4);
   outline: none;
+}
+
+.knowledge-basket-manager__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-block-end: var(--space-4);
+}
+
+.knowledge-basket-manager__toolbar h3,
+.knowledge-basket-manager__summary h4 {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-basket-manager__toolbar .ui-button,
+.knowledge-basket-manager__actions .ui-button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .knowledge-basket-manager__results:focus-visible {
@@ -2433,15 +2460,15 @@
    action: the secondaries take a lighter edge and a smaller icon, and only the
    primary keeps the full-weight teak fill. */
 .knowledge-page > .ui-page-header .ui-page-header__actions .ui-button--secondary {
-  border-color: var(--role-line-strong, var(--color-border-strong));
-  background: var(--role-deck, var(--color-surface));
-  color: var(--role-ink, var(--color-text));
+  border-color: var(--button-secondary-border);
+  background: var(--button-secondary-bg);
+  color: var(--button-secondary-ink);
 }
 
 .knowledge-page > .ui-page-header .ui-page-header__actions .ui-button--secondary:not(:disabled):hover {
-  border-color: var(--role-accent, var(--color-border-strong));
-  background: color-mix(in srgb, var(--role-accent, var(--color-brand-violet)) 7%, var(--role-deck, var(--color-surface)));
-  color: var(--role-accent, var(--color-text));
+  border-color: var(--button-primary-bg);
+  background: var(--button-secondary-hover);
+  color: var(--button-secondary-ink);
 }
 
 .knowledge-page > .ui-page-header .ui-page-header__actions .ui-button__icon > svg {
@@ -2596,24 +2623,20 @@
 
 /* ----------------------------------------------------------- basket decks */
 
-/* Repeated row-level commands stay quiet until they are pointed at. A column
-   of permanently red "Archive" outlines makes a healthy list look alarming;
-   the destructive colour arrives on hover and focus, where the intent is.
-   Confirmation dialogs keep the loud treatment untouched. */
+/* Row-level negative commands (Delete, Archive, Remove) always show red ink and
+   a red outline so the intent is visible before pointing at them. */
 .knowledge-basket-panel__meta .ui-button--destructive-outline,
 .knowledge-table .ui-button--destructive-outline {
-  border-color: var(--role-line-strong, var(--color-border-strong));
-  background: transparent;
-  color: var(--role-ink-muted, var(--color-text-muted));
+  border-color: var(--button-negative-border);
+  background: var(--button-secondary-bg);
+  color: var(--button-negative-ink);
 }
 
 .knowledge-basket-panel__meta .ui-button--destructive-outline:not(:disabled):hover,
-.knowledge-basket-panel__meta .ui-button--destructive-outline:focus-visible,
-.knowledge-table .ui-button--destructive-outline:not(:disabled):hover,
-.knowledge-table .ui-button--destructive-outline:focus-visible {
-  border-color: var(--color-danger);
-  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
-  color: var(--color-danger-strong);
+.knowledge-table .ui-button--destructive-outline:not(:disabled):hover {
+  border-color: var(--button-negative-ink-strong);
+  background: var(--button-negative-hover);
+  color: var(--button-negative-ink-strong);
 }
 
 /* The basket's own "Add estimation item" keeps the role theme's own glass
@@ -2756,19 +2779,17 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions {
   border-radius: var(--radius-field);
 }
 
-/* "Cancel" as a bare quiet button is unreadable as a control on the tinted
-   band. It keeps the lighter weight - dismissing should never compete with
-   confirming - but gains an edge to sit on. */
+/* Quiet dialog actions ("Done", "Close") follow the quiet button tokens; Cancel
+   now uses the negative destructive-outline variant. */
 body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--quiet {
-  border-color: var(--role-line-strong, var(--color-border-strong));
-  background: var(--role-deck, var(--color-surface));
-  color: var(--role-ink, var(--color-text));
+  border-color: transparent;
+  background: transparent;
+  color: var(--button-quiet-ink);
 }
 
 body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--quiet:not(:disabled):hover {
-  border-color: var(--role-accent, var(--color-border-strong));
-  background: color-mix(in srgb, var(--role-accent, var(--color-brand-violet)) 8%, var(--role-deck, var(--color-surface)));
-  color: var(--role-accent, var(--color-text));
+  background: var(--button-quiet-hover);
+  color: var(--button-quiet-ink);
 }
 
 /* ------------------------------------------- segmented search row, stacked */
@@ -4148,26 +4169,26 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 .knowledge-page.knowledge-page--item-workspace .knowledge-mode-configuration .knowledge-mode-configuration__section .knowledge-mode-calculation__actions .ui-button {
   min-block-size: 44px;
   padding: 9px 14px;
-  border: 1px solid color-mix(in srgb, var(--knowledge-mode-accent) 55%, var(--color-surface));
+  border: 1px solid var(--button-secondary-border);
   border-radius: 8px;
-  background: var(--color-surface);
-  color: var(--knowledge-mode-accent);
+  background: var(--button-secondary-bg);
+  color: var(--button-secondary-ink);
   font-size: 13px;
-  font-weight: 600;
   line-height: 1.4;
   box-shadow: none;
 }
 
 .knowledge-mode-configuration .knowledge-mode-configuration__section .knowledge-mode-calculation__actions .ui-button:hover:not(:disabled),
 .knowledge-page.knowledge-page--item-workspace .knowledge-mode-configuration .knowledge-mode-configuration__section .knowledge-mode-calculation__actions .ui-button:hover:not(:disabled) {
-  border-color: var(--knowledge-mode-accent);
-  background: color-mix(in srgb, var(--knowledge-mode-accent) 5%, var(--color-surface));
-  color: var(--knowledge-mode-accent);
+  border-color: var(--button-primary-bg);
+  background: var(--button-secondary-hover);
+  color: var(--button-secondary-ink);
 }
 
-.knowledge-mode-configuration .knowledge-mode-configuration__section .knowledge-mode-calculation__actions .ui-button:focus-visible {
-  outline: 2px solid var(--knowledge-mode-accent);
-  outline-offset: 3px;
+.knowledge-mode-configuration .knowledge-mode-configuration__section .knowledge-mode-calculation__actions .ui-button:focus-visible,
+.knowledge-page.knowledge-page--item-workspace .knowledge-mode-configuration .knowledge-mode-configuration__section .knowledge-mode-calculation__actions .ui-button:focus-visible {
+  box-shadow: var(--button-focus-ring);
+  outline: none;
 }
 
 .knowledge-mode-configuration .knowledge-mode-configuration__section .knowledge-mode-calculation__actions .ui-button:disabled {
@@ -4717,7 +4738,7 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 .knowledge-pending-changes .knowledge-pending-changes__disclosure,
 .ui-app-shell[data-role] .knowledge-page--item-workspace .knowledge-pending-changes .knowledge-pending-changes__disclosure.ui-button,
 .ui-app-shell[data-role] .knowledge-page--item-workspace .knowledge-pending-changes .knowledge-pending-changes__disclosure.ui-button:not(:disabled):hover {
-  color: var(--role-ink, var(--color-text));
+  color: var(--button-quiet-ink);
 }
 
 .knowledge-conflict-review {
@@ -5264,26 +5285,25 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   min-inline-size: 0;
   min-block-size: 44px;
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--role-line-strong, var(--color-border-strong));
+  border: 1px solid var(--button-secondary-border);
   border-radius: var(--radius-field);
-  background: var(--role-deck, var(--color-surface));
-  color: var(--role-ink, var(--color-text));
+  background: var(--button-secondary-bg);
+  color: var(--button-secondary-ink);
   box-shadow: none;
   font-size: var(--text-sm);
-  font-weight: 600;
   white-space: normal;
 }
 
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview :is(.knowledge-overview__quick-add, .knowledge-mode-surfaces__controls > .ui-button):not(:disabled):hover {
-  border-color: var(--role-ink-muted, var(--color-text-muted));
-  background: var(--role-deck-tint, var(--color-surface-subtle));
-  color: var(--role-ink, var(--color-text));
+  border-color: var(--button-primary-bg);
+  background: var(--button-secondary-hover);
+  color: var(--button-secondary-ink);
   transform: none;
 }
 
-.knowledge-page--item-workspace .knowledge-overview :is(.knowledge-overview__quick-add, .knowledge-mode-surfaces__controls > .ui-button):focus-visible {
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: 3px;
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview :is(.knowledge-overview__quick-add, .knowledge-mode-surfaces__controls > .ui-button):focus-visible {
+  box-shadow: var(--button-focus-ring);
+  outline: none;
 }
 
 .knowledge-page--item-workspace .knowledge-overview .knowledge-mode-surfaces__selected {

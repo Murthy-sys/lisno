@@ -5,8 +5,10 @@
   border-radius: var(--radius-control);
   display: inline-flex;
   font: var(--type-body);
-  font-weight: 600;
+  font-family: var(--button-font);
+  font-weight: var(--button-weight);
   justify-content: center;
+  letter-spacing: normal;
   transition: background-color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
 }
 
@@ -32,62 +34,74 @@
 
 .ui-button--primary,
 .ui-icon-button--primary {
-  background: var(--color-brand-violet);
-  color: var(--color-surface);
+  background: var(--button-primary-bg);
+  border-color: var(--button-primary-bg);
+  color: var(--button-primary-ink);
+}
+
+.ui-button--primary:not(:disabled):hover,
+.ui-icon-button--primary:not(:disabled):hover {
+  background: var(--button-primary-bg-hover);
+  border-color: var(--button-primary-bg-hover);
+  color: var(--button-primary-ink);
 }
 
 .ui-button--secondary,
 .ui-icon-button--secondary {
-  background: var(--color-surface);
-  border-color: var(--color-border-strong);
-  color: var(--color-brand-midnight);
+  background: var(--button-secondary-bg);
+  border-color: var(--button-secondary-border);
+  color: var(--button-secondary-ink);
+}
+
+.ui-button--secondary:not(:disabled):hover,
+.ui-icon-button--secondary:not(:disabled):hover {
+  background: var(--button-secondary-hover);
+  border-color: var(--button-primary-bg);
+  color: var(--button-secondary-ink);
 }
 
 .ui-button--quiet,
 .ui-icon-button--quiet {
   background: transparent;
-  color: var(--color-brand-violet);
+  color: var(--button-quiet-ink);
 }
 
 .ui-button--quiet:not(:disabled):hover,
 .ui-icon-button--quiet:not(:disabled):hover {
-  background: color-mix(in srgb, var(--color-brand-violet) 9%, transparent);
+  background: var(--button-quiet-hover);
+  color: var(--button-quiet-ink);
 }
 
+/* Negative actions: `destructive` renders identically to `destructive-outline` (red text + red outline). */
 .ui-button--destructive,
-.ui-icon-button--destructive {
-  background: var(--color-danger);
-  color: var(--color-surface);
-}
-
+.ui-icon-button--destructive,
 .ui-button--destructive-outline,
 .ui-icon-button--destructive-outline {
-  background: var(--color-surface);
-  border-color: var(--color-danger);
-  color: var(--color-danger);
+  background: var(--button-secondary-bg);
+  border-color: var(--button-negative-border);
+  color: var(--button-negative-ink);
 }
 
+.ui-button--destructive:not(:disabled):hover,
+.ui-icon-button--destructive:not(:disabled):hover,
 .ui-button--destructive-outline:not(:disabled):hover,
 .ui-icon-button--destructive-outline:not(:disabled):hover {
-  background: color-mix(in srgb, var(--color-danger) 8%, var(--color-surface));
-  border-color: var(--color-danger-strong);
-  color: var(--color-danger-strong);
+  background: var(--button-negative-hover);
+  border-color: var(--button-negative-ink-strong);
+  color: var(--button-negative-ink-strong);
 }
 
 .ui-button--success,
 .ui-icon-button--success {
   background: var(--color-success);
+  border-color: var(--color-success);
   color: var(--color-surface);
 }
 
 .ui-button--success:not(:disabled):hover,
 .ui-icon-button--success:not(:disabled):hover {
   background: var(--color-success-strong);
-}
-
-.ui-button--destructive:not(:disabled):hover,
-.ui-icon-button--destructive:not(:disabled):hover {
-  background: var(--color-danger-strong);
+  border-color: var(--color-success-strong);
 }
 
 .ui-button:not(:disabled):hover,
@@ -107,7 +121,7 @@
 
 .ui-button:focus-visible,
 .ui-icon-button:focus-visible {
-  box-shadow: var(--focus-ring);
+  box-shadow: var(--button-focus-ring);
   outline: none;
 }
 

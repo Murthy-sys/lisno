@@ -1092,6 +1092,19 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return state.users.filter((user) => user.role === role && user.active).length;
     },
 
+    async summarizeUsers(visibleRoles) {
+      const scope = new Set(visibleRoles);
+      const users = state.users.filter((user) => scope.has(user.role));
+      const active = users.filter((user) => user.active).length;
+      const presentRoles = new Set(users.map((user) => user.role));
+      return {
+        total: users.length,
+        active,
+        inactive: users.length - active,
+        roleCount: presentRoles.size
+      };
+    },
+
     async countUserResponsibilities(userId) {
       return {
         ownedActiveLeads: state.leads.filter(

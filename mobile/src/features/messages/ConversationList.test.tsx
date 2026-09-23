@@ -13,6 +13,11 @@ import { MessagesWorkspace } from "./MessagesWorkspace";
 const mockRouterPush = jest.fn();
 const mockRouterReplace = jest.fn();
 const mockRouterSetParams = jest.fn();
+const mockReturnToParent = jest.fn();
+
+jest.mock("../../navigation/useScreenBack", () => ({
+  useScreenBack: () => ({ returnToParent: mockReturnToParent })
+}));
 
 jest.mock("@tanstack/react-query", () => ({
   useInfiniteQuery: jest.fn(),
@@ -32,13 +37,16 @@ jest.mock("../../runtime/RuntimeProvider", () => ({
 }));
 
 jest.mock("./ChatThread", () => ({
-  ChatThread: ({ projectId, onBack }: { readonly projectId: string; readonly onBack?: () => void }) => {
+  ChatThread: ({ projectId, onBack, onSendingChange }: { readonly projectId: string; readonly onBack?: () => void; readonly onSendingChange?: (sending: boolean) => void }) => {
     const React = jest.requireActual("react") as typeof import("react");
     const { Pressable, Text } = jest.requireActual("react-native") as typeof import("react-native");
     return React.createElement(
-      Pressable,
-      { accessibilityLabel: "Mock thread back", accessibilityRole: "button", onPress: onBack },
-      React.createElement(Text, null, `Thread ${projectId}`)
+      React.Fragment,
+      null,
+      React.createElement(Text, null, `Thread ${projectId}`),
+      onBack ? React.createElement(Pressable, { accessibilityLabel: "Mock thread back", accessibilityRole: "button", onPress: onBack }, React.createElement(Text, null, "Thread Back")) : null,
+      React.createElement(Pressable, { accessibilityLabel: "Mock thread sending", accessibilityRole: "button", onPress: () => onSendingChange?.(true) }, React.createElement(Text, null, "Sending")),
+      React.createElement(Pressable, { accessibilityLabel: "Mock thread send complete", accessibilityRole: "button", onPress: () => onSendingChange?.(false) }, React.createElement(Text, null, "Send complete"))
     );
   }
 }));
@@ -214,7 +222,65 @@ describe("ConversationList", () => {
     expect(view.getByText("Thread project-a")).toBeTruthy();
     await fireEvent.press(view.getByRole("button", { name: "Mock thread back" }));
 
-    expect(mockRouterReplace).toHaveBeenCalledWith("/feature/messages");
+    expect(mockReturnToParent).toHaveBeenCalledWith("/feature/messages");
+    expect(mockRouterReplace).not.toHaveBeenCalled();
+  });
+
+  it("keeps split selection local and promotes it to a record when resized to phone", async () => {
+    const sessionValue = session();
+    const view = await render(<MessagesWorkspace session={sessionValue} viewportWidth={840} />);
+    await fireEvent.press(view.getByRole("button", { name: /Villa North/i }));
+
+    expect(view.queryByRole("button", { name: "Mock thread back" })).toBeNull();
+    await view.rerender(<MessagesWorkspace session={sessionValue} viewportWidth={599} />);
+
+    expect(view.getAllByRole("button", { name: "Mock thread back" })).toHaveLength(1);
+    expect(mockRouterReplace).toHaveBeenCalledWith({
+      pathname: "/record/[featureId]/[recordId]",
+      params: { featureId: "messages", recordId: "project-a" }
+    });
+    await fireEvent.press(view.getByRole("button", { name: "Mock thread back" }));
+    expect(mockReturnToParent).toHaveBeenCalledWith("/feature/messages");
+  });
+
+  it("preserves a direct record across phone and split layouts without duplicate local Back", async () => {
+    const sessionValue = session();
+    const element = (width: number) => <MessagesWorkspace selectedProjectId="project-a" session={sessionValue} viewportWidth={width} />;
+    const view = await render(element(599));
+    expect(view.getAllByRole("button", { name: "Mock thread back" })).toHaveLength(1);
+
+    await view.rerender(element(600));
+    expect(view.getByTestId("conversation-list")).toBeTruthy();
+    expect(view.getByText("Thread project-a")).toBeTruthy();
+    expect(view.queryByRole("button", { name: "Mock thread back" })).toBeNull();
+    await view.rerender(element(840));
+    expect(view.queryByRole("button", { name: "Mock thread back" })).toBeNull();
+    await view.rerender(element(390));
+    await fireEvent.press(view.getByRole("button", { name: "Mock thread back" }));
+
+    expect(mockReturnToParent).toHaveBeenCalledWith("/feature/messages");
+    expect(mockRouterPush).not.toHaveBeenCalled();
+    expect(mockRouterReplace).not.toHaveBeenCalled();
+  });
+
+  it("prevents changing split conversations during a pending send", async () => {
+    useInfiniteQueryMock.mockReturnValue(queryResult({
+      data: { pages: [page([
+        conversation(),
+        conversation({ project: { id: "project-b", name: "Villa South", status: "active" } })
+      ])], pageParams: [0] }
+    }) as never);
+    const view = await render(<MessagesWorkspace selectedProjectId="project-a" session={session()} viewportWidth={600} />);
+    await fireEvent.press(view.getByRole("button", { name: "Mock thread sending" }));
+    const other = view.getByRole("button", { name: /Villa South/i });
+
+    expect(other).toBeDisabled();
+    await fireEvent.press(other);
+    expect(mockRouterSetParams).not.toHaveBeenCalled();
+    expect(view.getByText("Thread project-a")).toBeTruthy();
+    await fireEvent.press(view.getByRole("button", { name: "Mock thread send complete" }));
+    await fireEvent.press(view.getByRole("button", { name: /Villa South/i }));
+    expect(mockRouterSetParams).toHaveBeenCalledWith({ recordId: "project-b" });
   });
 
   it("fetches normalized offset pages in the authenticated environment/user scope", async () => {

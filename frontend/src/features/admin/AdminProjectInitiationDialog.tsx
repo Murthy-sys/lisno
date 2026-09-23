@@ -244,7 +244,7 @@ export function AdminProjectInitiationDialog({
       className="administration-context-panel"
       footer={({ requestClose }) => (
         <div className="modal-form__actions admin-project-form__actions">
-          <Button variant="secondary" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
+          <Button variant="destructive-outline" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
           <Button type="submit" form="admin-project-initiation-form" busy={mutation.isPending} busyLabel="Initiating…" disabled={submitDisabled}>Initiate project</Button>
         </div>
       )}

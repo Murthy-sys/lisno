@@ -173,17 +173,16 @@ describe("Related item catalog and rule persistence", { timeout: 30_000 }, () =>
       const response = await request(app).post(`${PREFIX}/baskets/${electricalId}/main-lines`)
         .set("Authorization", "Bearer synthetic-token")
         .send({ name: "  RECESSED   LED downlight  ", subBasketName: "Must roll back", itemType });
-      // Existing API behavior: Mongo 11000 is intentionally not translated by this UI-only change.
-      expect(response.status).toBe(500);
-      expect(response.body).toEqual({ error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred." } });
+      expect(response.status).toBe(409);
+      expect(response.body.error).toMatchObject({ code: "DUPLICATE_IDENTITY", fields: { name: expect.any(String) } });
       expect(await recordCounts()).toEqual(before);
       expect(await AiEstimatorKnowledgeSubBasketModel.countDocuments({ nameNormalized: "must roll back" })).toBe(0);
     }
     await expect(services.item.createMainLine(ACTOR, electricalId, { name: "recessed led downlight" }))
-      .rejects.toMatchObject({ code: 11000 });
+      .rejects.toMatchObject({ status: 409, code: "DUPLICATE_IDENTITY" });
     await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: original.mainLineId }, { $set: { status: "inactive" } });
     await expect(services.item.createMainLine(ACTOR, electricalId, { name: "RECESSED LED DOWNLIGHT" }))
-      .rejects.toMatchObject({ code: 11000 });
+      .rejects.toMatchObject({ status: 409, code: "DUPLICATE_IDENTITY" });
     expect(await recordCounts()).toEqual(before);
     const anotherBasket = await services.item.createMainLine(ACTOR, ceilingId, { name: "Recessed LED downlight", subBasketName: "Ceiling details" });
     expect(anotherBasket.mainLineId).not.toBe(original.mainLineId);
@@ -197,7 +196,7 @@ describe("Related item catalog and rule persistence", { timeout: 30_000 }, () =>
       services.item.createMainLine(ACTOR, electricalId, { name: "WARDROBE  HANGING RAIL", subBasketName: "Fittings B" })
     ]);
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-    expect(results.find((result) => result.status === "rejected")).toMatchObject({ reason: { code: 11000 } });
+    expect(results.find((result) => result.status === "rejected")).toMatchObject({ reason: { status: 409, code: "DUPLICATE_IDENTITY" } });
     const after = await recordCounts();
     expect(after).toEqual({
       items: before.items + 1, revisions: before.revisions + 1,

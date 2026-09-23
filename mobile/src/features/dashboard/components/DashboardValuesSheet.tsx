@@ -5,6 +5,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import type { DashboardTimeBasis, DashboardValueUnit } from "../data";
 import {
   dashboardColors as color,
+  dashboardRadii as radius,
   dashboardSpacing as space,
   dashboardTypography as type
 } from "../dashboardTheme";
@@ -149,7 +150,7 @@ export function DashboardValuesSheet({
               onPress={onRequestClose}
               style={({ pressed }) => [styles.close, pressed ? styles.pressed : null]}
             >
-              <Text accessibilityElementsHidden style={styles.closeGlyph}>×</Text>
+              <Text accessibilityElementsHidden allowFontScaling={false} style={styles.closeGlyph}>×</Text>
             </Pressable>
           </View>
           <SectionList<DashboardValueRow, DashboardValueSection>
@@ -181,8 +182,8 @@ const styles = StyleSheet.create({
     maxHeight: "91%",
     alignSelf: "center",
     overflow: "hidden",
-    borderTopLeftRadius: 30,
-    borderTopRightRadius: 30,
+    borderTopLeftRadius: radius.surface,
+    borderTopRightRadius: radius.surface,
     borderWidth: 1,
     borderBottomWidth: 0,
     borderColor: color.stageEdge,
@@ -199,16 +200,16 @@ const styles = StyleSheet.create({
     borderBottomColor: color.stageLine
   },
   headerCopy: { flex: 1, gap: 3 },
-  eyebrow: { color: color.gold, fontFamily: type.semibold, fontSize: 9, letterSpacing: 1.8 },
-  title: { color: color.text, fontFamily: type.semibold, fontSize: 24, lineHeight: 31, letterSpacing: -0.5 },
-  meta: { color: color.textMuted, fontFamily: type.medium, fontSize: 11 },
-  range: { color: color.textDim, fontFamily: type.regular, fontSize: 10, lineHeight: 15 },
+  eyebrow: { color: color.warning, ...type.metadata, fontFamily: type.semibold, letterSpacing: 0.5 },
+  title: { color: color.text, ...type.pageTitle },
+  meta: { color: color.textMuted, fontFamily: type.medium, fontSize: 12, lineHeight: 18 },
+  range: { color: color.textDim, fontFamily: type.regular, fontSize: 12, lineHeight: 18 },
   close: {
-    width: 46,
-    height: 46,
+    width: 48,
+    height: 48,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 23,
+    borderRadius: radius.control,
     borderWidth: 1,
     borderColor: color.stageEdge
   },
@@ -223,23 +224,24 @@ const styles = StyleSheet.create({
     borderTopColor: color.stageLine,
     backgroundColor: color.stage
   },
-  groupTitle: { color: color.text, fontFamily: type.semibold, fontSize: 16 },
-  groupDescription: { color: color.textMuted, fontFamily: type.regular, fontSize: 10, lineHeight: 15 },
+  groupTitle: { color: color.text, ...type.cardTitle },
+  groupDescription: { color: color.textMuted, ...type.metadata },
   row: {
     minHeight: 54,
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     gap: space.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: color.stageLine
   },
   rowLast: { borderBottomWidth: 0 },
-  rowCopy: { flex: 1, paddingVertical: space.xs, gap: 2 },
-  rowLabel: { color: color.textMuted, fontFamily: type.medium, fontSize: 11 },
-  rowMetadata: { color: color.violetBright, fontFamily: type.medium, fontSize: 8, lineHeight: 13 },
-  rowDetail: { color: color.textDim, fontFamily: type.regular, fontSize: 9, lineHeight: 14 },
-  rowValue: { maxWidth: "45%", color: color.text, fontFamily: type.semibold, fontSize: 13, textAlign: "right" },
-  rowValueUnavailable: { color: color.unavailable, fontFamily: type.medium, fontSize: 11 },
-  footnote: { color: color.textDim, fontFamily: type.regular, fontSize: 9, lineHeight: 15, paddingTop: space.lg },
+  rowCopy: { flex: 1, minWidth: 130, paddingVertical: space.sm, gap: 2 },
+  rowLabel: { color: color.textMuted, ...type.body, fontFamily: type.medium },
+  rowMetadata: { color: color.violetBright, fontFamily: type.medium, fontSize: 12, lineHeight: 18 },
+  rowDetail: { color: color.textDim, fontFamily: type.regular, fontSize: 12, lineHeight: 18 },
+  rowValue: { maxWidth: "45%", flexShrink: 1, paddingVertical: space.xs, color: color.text, ...type.body, fontFamily: type.semibold, textAlign: "right" },
+  rowValueUnavailable: { color: color.textMuted, fontFamily: type.medium },
+  footnote: { color: color.textDim, fontFamily: type.regular, fontSize: 12, lineHeight: 18, paddingTop: space.lg },
   pressed: { opacity: 0.68 }
 });

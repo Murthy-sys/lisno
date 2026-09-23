@@ -1,5 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import { router } from "expo-router";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
 import type { AuthenticatedSession } from "../../contracts/session";
@@ -10,7 +9,7 @@ import type { FeatureDestination } from "../../navigation/registry";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { BrandLoader } from "../../ui/brand";
 import { Button, StateView } from "../../ui/primitives";
-import { colors, fonts, radii, spacing } from "../../ui/tokens";
+import { colors, fonts, radii, spacing, typography } from "../../ui/tokens";
 import { FEATURE_DEFINITIONS } from "./featureDefinitions";
 import { isRecord, recordFields, recordTitle } from "./recordPresentation";
 import { FinanceWorkspace } from "../finance/FinanceEntryForm";
@@ -53,10 +52,10 @@ function GenericRecordDetailScreen({ destination, recordId, session }: { readonl
   }
 
   if (destination.id === "procurement") {
-    return <ScrollView contentContainerStyle={styles.content}><Button label="Back to procurement" variant="quiet" onPress={() => router.back()} /><ProcurementProject projectId={recordId} data={query.data} session={session} onRefresh={() => void query.refetch()} /></ScrollView>;
+    return <ScrollView contentContainerStyle={styles.content}><ProcurementProject projectId={recordId} data={query.data} session={session} onRefresh={() => void query.refetch()} /></ScrollView>;
   }
   if (destination.id === "projects") {
-    return <ScrollView contentContainerStyle={styles.content}><Button label="Back to projects" variant="quiet" onPress={() => router.back()} /><ProjectStructure data={query.data} session={session} onRefresh={() => void query.refetch()} /></ScrollView>;
+    return <ScrollView contentContainerStyle={styles.content}><ProjectStructure data={query.data} session={session} onRefresh={() => void query.refetch()} /></ScrollView>;
   }
 
   const record = displayedRecord(query.data);
@@ -65,7 +64,6 @@ function GenericRecordDetailScreen({ destination, recordId, session }: { readonl
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
-      <Button label={`Back to ${definition.title}`} variant="quiet" onPress={() => router.back()} />
       <View style={styles.heading}>
         <Text style={styles.eyebrow}>{definition.eyebrow}</Text>
         <Text accessibilityRole="header" style={styles.title}>{recordTitle(record, 0)}</Text>
@@ -92,7 +90,7 @@ const styles = StyleSheet.create({
   content: { flexGrow: 1, width: "100%", maxWidth: 860, alignSelf: "center", padding: spacing.lg, paddingBottom: spacing.huge, gap: spacing.xl },
   heading: { gap: spacing.xs },
   eyebrow: { color: colors.violet, fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1.4 },
-  title: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 26, lineHeight: 34 },
+  title: { color: colors.ink, ...typography.pageTitle },
   details: { borderRadius: radii.surface, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, overflow: "hidden" },
   row: { minHeight: 58, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, gap: 4 },
   label: { color: colors.inkMuted, fontFamily: fonts.medium, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6 },

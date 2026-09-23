@@ -40,6 +40,15 @@ function services() {
   const reference = {
     listSubBaskets: vi.fn(async () => ({ items: [{ id: "child-1", basketId: "basket-1" }], total: 1 })),
     createSubBasket: vi.fn(async () => ({ id: "child-1", basketId: "basket-1" })),
+    updateSubBasket: vi.fn(async () => ({ id: "child-1", basketId: "basket-1", name: "False Ceiling Lights", version: 2 })),
+    getSubBasketDeletionImpact: vi.fn(async () => ({
+      basketId: "basket-1", subBasketId: "child-1", subBasketName: "Lights", version: 2,
+      mainLineCount: 2, referenceCount: 3, impactToken: "a".repeat(64)
+    })),
+    permanentlyDeleteSubBasket: vi.fn(async () => ({
+      basketId: "basket-1", subBasketId: "child-1", deleted: true as const,
+      deletedAt: "2026-09-23T00:00:00.000Z", deletedMainLineIds: ["line-1", "line-2"], deletedReferenceCount: 3
+    })),
     listBaskets: vi.fn(async () => ({ items: [{ id: "basket-1" }], total: 1 })),
     createBasket: vi.fn(async () => ({ id: "basket-1" })),
     updateBasket: vi.fn(async () => ({ id: "basket-1" })),
@@ -349,6 +358,98 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     expect(testServices.item.createMainLine).toHaveBeenCalledWith(superAdmin, "basket-1", { name: "Door", subBasketId: "child-1" });
   });
 
+  it("authorizes and validates versioned Sub Basket rename before dispatch", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/sub-baskets/child-1";
+    const input = { expectedVersion: 1, name: "False Ceiling Lights" };
+
+    expect((await request(app).patch(path).set("Authorization", "Bearer admin-token").send(input)).status).toBe(403);
+    expect(testServices.reference.updateSubBasket).not.toHaveBeenCalled();
+    expect((await request(app).patch(path).set("Authorization", "Bearer super-admin-token").send({
+      ...input,
+      unexpected: true
+    })).status).toBe(400);
+    expect(testServices.reference.updateSubBasket).not.toHaveBeenCalled();
+
+    const response = await request(app)
+      .patch(path)
+      .set("Authorization", "Bearer super-admin-token")
+      .send(input);
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ data: {
+      id: "child-1",
+      basketId: "basket-1",
+      name: "False Ceiling Lights",
+      version: 2
+    } });
+    expect(testServices.reference.updateSubBasket).toHaveBeenCalledWith(
+      superAdmin,
+      "basket-1",
+      "child-1",
+      input
+    );
+  });
+
+  it("keeps Configuration rename explicit and rejects unknown contexts", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/sub-baskets/child-1";
+    const input = { expectedVersion: 2, name: "Renamed lights", managementContext: "configuration" };
+    expect((await request(app).patch(path).set("Authorization", "Bearer super-admin-token").send(input)).status).toBe(200);
+    expect(testServices.reference.updateSubBasket).toHaveBeenCalledWith(superAdmin, "basket-1", "child-1", input);
+    expect((await request(app).patch(path).set("Authorization", "Bearer super-admin-token").send({ ...input, managementContext: "unrestricted" })).status).toBe(400);
+    expect(testServices.reference.updateSubBasket).toHaveBeenCalledTimes(1);
+  });
+
+  it("protects Sub-Basket deletion preview and validates the confirmed impact before dispatch", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/sub-baskets/child-1";
+    const input = { expectedVersion: 2, confirmationName: "Lights", reason: "Remove a mistaken group", impactToken: "a".repeat(64) };
+    expect((await request(app).get(`${path}/deletion-impact`).set("Authorization", "Bearer admin-token")).status).toBe(403);
+    expect((await request(app).delete(path).set("Authorization", "Bearer admin-token").send({})).status).toBe(403);
+    expect(testServices.reference.getSubBasketDeletionImpact).not.toHaveBeenCalled();
+    expect(testServices.reference.permanentlyDeleteSubBasket).not.toHaveBeenCalled();
+    for (const invalid of [
+      { ...input, impactToken: undefined }, { ...input, impactToken: "a" },
+      { ...input, reason: " " }, { ...input, expectedVersion: 0 }, { ...input, extra: true },
+      { ...input, draftOnly: false }, { ...input, draftOnly: "true" }
+    ]) {
+      expect((await request(app).delete(path).set("Authorization", "Bearer super-admin-token").send(invalid)).status).toBe(400);
+    }
+    expect(testServices.reference.permanentlyDeleteSubBasket).not.toHaveBeenCalled();
+    const preview = await request(app).get(`${path}/deletion-impact`).set("Authorization", "Bearer super-admin-token");
+    expect(preview.status).toBe(200);
+    expect(preview.body.data).toMatchObject({ mainLineCount: 2, referenceCount: 3, impactToken: input.impactToken });
+    expect(testServices.reference.getSubBasketDeletionImpact).toHaveBeenCalledWith(superAdmin, "basket-1", "child-1");
+    const removed = await request(app).delete(path).set("Authorization", "Bearer super-admin-token").send(input);
+    expect(removed.status).toBe(200);
+    expect(removed.body.data).toMatchObject({ deleted: true, deletedMainLineIds: ["line-1", "line-2"] });
+    expect(testServices.reference.permanentlyDeleteSubBasket).toHaveBeenCalledWith(superAdmin, "basket-1", "child-1", input);
+    vi.mocked(testServices.reference.permanentlyDeleteSubBasket).mockRejectedValueOnce(
+      new ApiError(409, "DELETION_IMPACT_CHANGED", "Review the updated deletion impact.")
+    );
+    const stale = await request(app).delete(path).set("Authorization", "Bearer super-admin-token").send(input);
+    expect(stale.status).toBe(409);
+    expect(stale.body.error.code).toBe("DELETION_IMPACT_CHANGED");
+  });
+
+  it("dispatches draft-only Sub-Basket deletion and preserves the freeze conflict", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/sub-baskets/child-1";
+    const input = { expectedVersion: 2, confirmationName: "Lights", reason: "Remove mistaken draft group", impactToken: "a".repeat(64), draftOnly: true };
+    expect((await request(app).delete(path).set("Authorization", "Bearer admin-token").send(input)).status).toBe(403);
+    expect(testServices.reference.permanentlyDeleteSubBasket).not.toHaveBeenCalled();
+    expect((await request(app).delete(path).set("Authorization", "Bearer super-admin-token").send(input)).status).toBe(200);
+    expect(testServices.reference.permanentlyDeleteSubBasket).toHaveBeenCalledWith(superAdmin, "basket-1", "child-1", input);
+    vi.mocked(testServices.reference.permanentlyDeleteSubBasket).mockRejectedValueOnce(new ApiError(409, "SUB_BASKET_FROZEN", "This Sub-Basket is frozen."));
+    const frozen = await request(app).delete(path).set("Authorization", "Bearer super-admin-token").send(input);
+    expect(frozen.status).toBe(409);
+    expect(frozen.body.error.code).toBe("SUB_BASKET_FROZEN");
+  });
+
   it("returns 403 before strict validation for a non-Super-Admin", async () => {
     const testServices = services();
     const response = await request(appFor(testServices))
@@ -566,6 +667,91 @@ describe("AI Estimator Knowledge HTTP routes", () => {
       "main-line-1",
       input
     );
+  });
+
+  it("forwards the strict Draft Sub Basket guard for child rename and removal", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const guard = { subBasketId: "child-1", expectedVersion: 4 };
+    const update = {
+      expectedVersion: 2,
+      name: "False Ceiling Lights",
+      draftSubBasketGuard: guard
+    };
+    const removal = {
+      expectedVersion: 3,
+      reason: "Remove mistaken Draft child",
+      draftSubBasketGuard: guard
+    };
+
+    expect((await request(app)
+      .patch("/api/v1/admin/ai-estimator-knowledge/main-lines/main-line-1")
+      .set("Authorization", "Bearer super-admin-token")
+      .send(update)).status).toBe(200);
+    expect(testServices.item.updateMainLine).toHaveBeenCalledWith(superAdmin, "main-line-1", update);
+
+    expect((await request(app)
+      .delete("/api/v1/admin/ai-estimator-knowledge/main-lines/main-line-1")
+      .set("Authorization", "Bearer super-admin-token")
+      .send(removal)).status).toBe(200);
+    expect(testServices.item.permanentlyDeleteMainLine).toHaveBeenCalledWith(superAdmin, "main-line-1", removal);
+
+    expect((await request(app)
+      .patch("/api/v1/admin/ai-estimator-knowledge/main-lines/main-line-1")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ expectedVersion: 2, draftSubBasketGuard: guard })).status).toBe(400);
+    expect((await request(app)
+      .delete("/api/v1/admin/ai-estimator-knowledge/main-lines/main-line-1")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ ...removal, draftSubBasketGuard: { subBasketId: "child-1", expectedVersion: 0 } })).status).toBe(400);
+  });
+
+  it("forwards a direct-parent Draft item guard without changing existing mutation endpoints", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const guard = { basketId: "basket-1", subBasketId: null };
+    const update = { expectedVersion: 2, name: "False Ceiling Lights", draftItemGuard: guard };
+    const removal = { expectedVersion: 3, reason: "Added by mistake", draftItemGuard: guard };
+    expect((await request(app).patch("/api/v1/admin/ai-estimator-knowledge/main-lines/main-line-1")
+      .set("Authorization", "Bearer super-admin-token").send(update)).status).toBe(200);
+    expect(testServices.item.updateMainLine).toHaveBeenCalledWith(superAdmin, "main-line-1", update);
+    expect((await request(app).delete("/api/v1/admin/ai-estimator-knowledge/main-lines/main-line-1")
+      .set("Authorization", "Bearer super-admin-token").send(removal)).status).toBe(200);
+    expect(testServices.item.permanentlyDeleteMainLine).toHaveBeenCalledWith(superAdmin, "main-line-1", removal);
+  });
+
+  it.each([
+    { basketId: "", subBasketId: null },
+    { basketId: "basket-1", subBasketId: "child-1" },
+    { basketId: "basket-1" },
+    { basketId: "basket-1", subBasketId: null, expectedVersion: 2 },
+    null
+  ])("rejects malformed direct-parent item guards before dispatch: %j", async (draftItemGuard) => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/main-lines/main-line-1";
+    expect((await request(app).patch(path).set("Authorization", "Bearer super-admin-token")
+      .send({ expectedVersion: 2, name: "False Ceiling Lights", draftItemGuard })).status).toBe(400);
+    expect((await request(app).delete(path).set("Authorization", "Bearer super-admin-token")
+      .send({ expectedVersion: 2, reason: "Added by mistake", draftItemGuard })).status).toBe(400);
+    expect(testServices.item.updateMainLine).not.toHaveBeenCalled();
+    expect(testServices.item.permanentlyDeleteMainLine).not.toHaveBeenCalled();
+  });
+
+  it("rejects both guards and a guard-only update before dispatch", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/main-lines/main-line-1";
+    const direct = { basketId: "basket-1", subBasketId: null };
+    const both = { draftItemGuard: direct, draftSubBasketGuard: { subBasketId: "child-1", expectedVersion: 1 } };
+    expect((await request(app).patch(path).set("Authorization", "Bearer super-admin-token")
+      .send({ expectedVersion: 2, draftItemGuard: direct })).status).toBe(400);
+    expect((await request(app).patch(path).set("Authorization", "Bearer super-admin-token")
+      .send({ expectedVersion: 2, name: "False Ceiling Lights", ...both })).status).toBe(400);
+    expect((await request(app).delete(path).set("Authorization", "Bearer super-admin-token")
+      .send({ expectedVersion: 2, reason: "Added by mistake", ...both })).status).toBe(400);
+    expect(testServices.item.updateMainLine).not.toHaveBeenCalled();
+    expect(testServices.item.permanentlyDeleteMainLine).not.toHaveBeenCalled();
   });
 
   it("dispatches each reusable-value family with its closed plural type", async () => {

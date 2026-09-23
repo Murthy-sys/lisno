@@ -173,6 +173,7 @@ export function KnowledgeItemWorkspacePage() {
   const [duplicateName, setDuplicateName] = useState("");
   const [mainLineEditorOpen, setMainLineEditorOpen] = useState(false);
 
+  const canRead = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.read");
   const canCreate = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.create");
   const canUpdate = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.update");
   const canCreateQualityOptions = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.quality_control_options.create");
@@ -195,6 +196,7 @@ export function KnowledgeItemWorkspacePage() {
   currentPendingSession.current = pendingSession;
   const currentPayload = useRef(payload);
   currentPayload.current = payload;
+  const [recommendationBase, setRecommendationBase] = useState<{ session: PendingEditorSession; version: number } | null>(null);
   const backendSection: KnowledgeSectionKey | null = activeSection === "mode" || activeSection === "quality"
     ? null
     : activeSection;
@@ -330,7 +332,14 @@ export function KnowledgeItemWorkspacePage() {
     setEditorValid(true);
     setServerReview(null);
     setOverviewDirtyFields(new Set());
-  }, [dirty, sectionQuery.data]);
+    setRecommendationBase(activeSection === "recommendations"
+      ? { session: pendingSession, version: sectionQuery.data.version }
+      : null);
+  }, [activeSection, dirty, pendingSession, sectionQuery.data]);
+
+  const expectedSectionVersion = backendSection === "recommendations" && recommendationBase?.session === pendingSession
+    ? recommendationBase.version
+    : sectionQuery.data?.version;
 
   const saveMutation = useMutation({
     onMutate: () => ({ session: pendingSession, payload: currentPayload.current }),
@@ -344,7 +353,7 @@ export function KnowledgeItemWorkspacePage() {
           )
         : payload;
       return updateKnowledgeSection(mainLineId, revision.id, backendSection, {
-        expectedVersion: sectionQuery.data.version,
+        expectedVersion: expectedSectionVersion ?? sectionQuery.data.version,
         expectedAggregateVersion: item.version,
         applicability: backendSection === "overview" && overviewDirtyFields.has("surfaceIds")
           && Array.isArray(rebasedPayload.surfaceIds) && rebasedPayload.surfaceIds.length > 0
@@ -354,6 +363,10 @@ export function KnowledgeItemWorkspacePage() {
       });
     },
     onSuccess: async (saved, _variables, submitted) => {
+      // Later local edits build on this confirmed save, even while its refresh is pending.
+      if (saved.sectionKey === "recommendations" && submitted?.session === currentPendingSession.current) {
+        setRecommendationBase({ session: submitted.session, version: saved.version });
+      }
       await syncKnowledgeSectionMutation(queryClient, saved);
       if (submitted && (currentPendingSession.current !== submitted.session || !pendingValuesEqual(currentPayload.current, submitted.payload))) return;
       setPayload(saved.payload);
@@ -368,17 +381,21 @@ export function KnowledgeItemWorkspacePage() {
   const saveSection = useCallback(async (): Promise<boolean> => {
     if (!editable || !backendSection || !sectionQuery.data) return false;
     if (!editorValid) { setValidationAttempt((value) => value + 1); return false; }
+    if (backendSection === "recommendations" && expectedSectionVersion !== sectionQuery.data.version) {
+      setConflict({ localVersion: expectedSectionVersion ?? sectionQuery.data.version, server: sectionQuery.data });
+      return false;
+    }
     try {
       await saveMutation.mutateAsync();
       return true;
     } catch (failure) {
       if (failure instanceof ApiError && failure.code === "VERSION_CONFLICT") {
         const [latest] = await Promise.all([sectionQuery.refetch(), itemQuery.refetch()]);
-        if (latest.data) setConflict({ localVersion: sectionQuery.data.version, server: latest.data });
+        if (latest.data) setConflict({ localVersion: expectedSectionVersion ?? sectionQuery.data.version, server: latest.data });
       }
       return false;
     }
-  }, [backendSection, editable, editorValid, itemQuery, saveMutation, sectionQuery]);
+  }, [backendSection, editable, editorValid, expectedSectionVersion, itemQuery, saveMutation, sectionQuery]);
 
   const saveActiveSection = useCallback(async (): Promise<boolean> => {
     if (activeSection === "quality") return qualityPanelRef.current?.save() ?? false;
@@ -478,8 +495,14 @@ export function KnowledgeItemWorkspacePage() {
     });
   }
 
-  if (itemQuery.isPending) return <PageState state="loading" message="Loading estimation item workspace…" />;
-  if (itemQuery.isError) return <PageState state="error" message={itemQuery.error instanceof ApiError && itemQuery.error.status === 404 ? "This estimation item is unavailable." : itemQuery.error.message} action={{ label: "Try again", onAction: () => void itemQuery.refetch() }} />;
+  const terminalItemError = itemQuery.error instanceof ApiError
+    && (itemQuery.error.status === 401 || itemQuery.error.status === 403 || itemQuery.error.status === 404);
+  if (itemQuery.isPending && !item) return <PageState state="loading" message="Loading estimation item workspace…" />;
+  if (itemQuery.isError && (!item || terminalItemError)) return <PageState
+    state="error"
+    message={terminalItemError ? "This estimation item is unavailable." : itemQuery.error.message}
+    action={terminalItemError ? undefined : { label: "Try again", onAction: () => void itemQuery.refetch() }}
+  />;
   if (!item) return <PageState state="empty" message="This estimation item is unavailable." />;
 
   const lifecycleError = lifecycleMutation.error instanceof ApiError && lifecycleMutation.error.code === "VERSION_CONFLICT" ? "This item changed elsewhere. Refresh before retrying." : lifecycleMutation.error?.message ?? null;
@@ -529,6 +552,17 @@ export function KnowledgeItemWorkspacePage() {
           onLifecycle={(next) => guard.requestNavigation(() => setLifecycleAction(next))} />}
       />
       <KnowledgeSafetyNotice />
+      {itemQuery.isError && !terminalItemError ? (
+        <InlineMessage
+          tone="warning"
+          role="status"
+          label="Item refresh warning"
+          title="Latest item details unavailable"
+          action={<Button variant="quiet" size="compact" busy={itemQuery.isFetching} busyLabel="Retrying…" onClick={() => void itemQuery.refetch()}>Retry</Button>}
+        >
+          This workspace is showing the last available item details. Retry before making decisions that depend on recent catalog changes.
+        </InlineMessage>
+      ) : null}
       <KnowledgeWorkspaceStatus item={item} />
       <KnowledgeTemporaryMainLineInfo item={item} onOpenMainLine={(id) => guard.requestNavigation(() => navigate(`/admin/configuration/estimation/items/${encodeURIComponent(id)}`))} />
       {announcement ? <p className="sr-only" role="status">{announcement}</p> : null}
@@ -573,6 +607,7 @@ export function KnowledgeItemWorkspacePage() {
             ) : sectionQuery.isPending ? <PageState state="loading" message={`Loading ${activeSectionLabel}…`} /> : sectionQuery.isError ? <PageState state="error" message={sectionQuery.error.message} action={{ label: "Try again", onAction: () => void sectionQuery.refetch() }} /> : sectionQuery.data && backendSection ? (
               <Surface as="section" className={`knowledge-workspace-section${backendSection === "overview" ? " knowledge-workspace-section--overview" : ""}`}>
                 {serverReview ? (
+                  <>
                   <KnowledgeConflictReview
                     sectionKey={serverReview.server.sectionKey}
                     localVersion={serverReview.localVersion}
@@ -582,6 +617,16 @@ export function KnowledgeItemWorkspacePage() {
                     relationshipBaskets={relationshipBasketsQuery.data?.items ?? []}
                     relationshipItems={relationshipItemsQuery.data?.items ?? []}
                   />
+                  {backendSection === "recommendations" && expectedSectionVersion !== serverReview.server.version ? (
+                    <div className="knowledge-dialog-body">
+                      <p>Compare the saved values with your local changes below. Confirm your choice, then save the section to apply your local changes.</p>
+                      <Button variant="secondary" onClick={() => {
+                        setRecommendationBase({ session: pendingSession, version: serverReview.server.version });
+                        setAnnouncement("Local changes confirmed for the reviewed version. Save the section to apply them.");
+                      }}>Use reviewed local changes</Button>
+                    </div>
+                  ) : null}
+                  </>
                 ) : null}
                 {(relationshipBasketsQuery.isError || relationshipItemsQuery.isError) && activeSection === "recommendations" ? <InlineMessage tone="warning">Some Basket or Main Line choices could not be loaded. Existing stable-ID selections remain visible; retry before changing relationships.</InlineMessage> : null}
                 {backendSection === "overview" && revision ? (
@@ -606,7 +651,7 @@ export function KnowledgeItemWorkspacePage() {
                     surfacesDirty={overviewDirtyFields.has("surfaceIds")}
                   />
                 ) : (
-                  <KnowledgeSectionEditor key={`${pendingSession.sourceKey}:${sectionQuery.data.id}`} sectionKey={backendSection} payload={payload} savedPayload={sectionQuery.data.payload} masters={masters} relationshipBaskets={relationshipBasketsQuery.data?.items ?? []} relationshipItems={(backendSection === "recommendations" ? relationshipItemsQuery.data?.allItems : relationshipItemsQuery.data?.items) ?? []} currentMainLineId={mainLineId} mainLineName={item.mainLineName} basketName={item.basketName} relationshipCatalogState={overviewRelationshipState} readOnly={!editable} canQuickAdd={canCreate} uomCatalogState={uomCatalogState} vendorCatalogState={vendorCatalogState} masterCatalogStates={masterCatalogStates} resetKey={`${sectionQuery.data.id}-${sectionQuery.data.version}`} validationAttempt={validationAttempt} onChange={(next) => {
+                  <KnowledgeSectionEditor key={`${pendingSession.sourceKey}:${sectionQuery.data.id}`} sectionKey={backendSection} payload={payload} savedPayload={sectionQuery.data.payload} masters={masters} relationshipBaskets={relationshipBasketsQuery.data?.items ?? []} relationshipItems={(backendSection === "recommendations" ? relationshipItemsQuery.data?.allItems : relationshipItemsQuery.data?.items) ?? []} currentMainLineId={mainLineId} mainLineName={item.mainLineName} basketName={item.basketName} relationshipCatalogState={overviewRelationshipState} readOnly={!editable} canQuickAdd={canCreate} canUpdateCatalog={canUpdate} canLifecycleCatalog={canLifecycle} canReadCatalog={canRead} uomCatalogState={uomCatalogState} vendorCatalogState={vendorCatalogState} masterCatalogStates={masterCatalogStates} resetKey={`${sectionQuery.data.id}-${sectionQuery.data.version}`} validationAttempt={validationAttempt} onChange={(next) => {
                     currentPayload.current = next;
                     setPayload(next);
                   }} onDirty={() => setDirty(true)} onValidationChange={setEditorValid} onQuickAdd={(type, select) => setQuickAdd({ type, select })} />
@@ -685,7 +730,7 @@ function MainLineEditorDialog({ item, onClose, onSaved }: {
           </Field>
         </div>
         <div className="knowledge-dialog-actions">
-          <Button type="button" variant="quiet" onClick={onClose}>Cancel</Button>
+          <Button type="button" variant="destructive-outline" onClick={onClose}>Cancel</Button>
           <Button type="submit" busy={mutation.isPending} disabled={!trimmedName || trimmedName === item.mainLineName}>Save Main Line</Button>
         </div>
       </form>
@@ -704,5 +749,5 @@ function KnowledgeCommandDialog({ kind, reason, duplicateName, onReasonChange, o
   readonly busy: boolean;
   readonly error: string | null;
 }) {
-  return <Dialog title={kind === "revision" ? "Create a Draft revision?" : "Duplicate this estimation item?"} eyebrow="Estimation configuration" description={kind === "revision" ? "The current Active revision stays available while the new Draft is edited." : "The duplicate receives independent stable IDs and Draft history."} onClose={onClose} busy={busy} role="alertdialog"><form className="knowledge-dialog-form" onSubmit={(event) => { event.preventDefault(); onConfirm(); }}><div className="knowledge-dialog-body">{error ? <InlineMessage tone="error" role="alert">{error}</InlineMessage> : null}{kind === "duplicate" ? <Field id="duplicate-name" label="New Main Line name" hint="Leave empty to use the server-generated copy name.">{(props) => <Input {...props} value={duplicateName} onChange={(event) => onNameChange(event.target.value)} />}</Field> : null}<Field id="command-reason" label="Reason" required hint="Recorded on the audit trail for this configuration change.">{(props) => <Textarea {...props} value={reason} onChange={(event) => onReasonChange(event.target.value)} />}</Field></div><div className="knowledge-dialog-actions"><Button type="button" variant="quiet" onClick={onClose}>Cancel</Button><Button type="submit" busy={busy} disabled={!reason.trim()}>{kind === "revision" ? "Create Draft" : "Duplicate item"}</Button></div></form></Dialog>;
+  return <Dialog title={kind === "revision" ? "Create a Draft revision?" : "Duplicate this estimation item?"} eyebrow="Estimation configuration" description={kind === "revision" ? "The current Active revision stays available while the new Draft is edited." : "The duplicate receives independent stable IDs and Draft history."} onClose={onClose} busy={busy} role="alertdialog"><form className="knowledge-dialog-form" onSubmit={(event) => { event.preventDefault(); onConfirm(); }}><div className="knowledge-dialog-body">{error ? <InlineMessage tone="error" role="alert">{error}</InlineMessage> : null}{kind === "duplicate" ? <Field id="duplicate-name" label="New Main Line name" hint="Leave empty to use the server-generated copy name.">{(props) => <Input {...props} value={duplicateName} onChange={(event) => onNameChange(event.target.value)} />}</Field> : null}<Field id="command-reason" label="Reason" required hint="Recorded on the audit trail for this configuration change.">{(props) => <Textarea {...props} value={reason} onChange={(event) => onReasonChange(event.target.value)} />}</Field></div><div className="knowledge-dialog-actions"><Button type="button" variant="destructive-outline" onClick={onClose}>Cancel</Button><Button type="submit" busy={busy} disabled={!reason.trim()}>{kind === "revision" ? "Create Draft" : "Duplicate item"}</Button></div></form></Dialog>;
 }

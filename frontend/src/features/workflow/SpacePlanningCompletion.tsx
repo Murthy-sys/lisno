@@ -109,7 +109,7 @@ function CompletionConfirmation({ workflow, stage, source, expectedVersion, stal
       : refreshing ? <p id={descriptionId} role="status">Checking the latest workflow…</p> : null}
     {mutation.isError && !conflict ? <p role="alert">{mutation.error instanceof ApiError ? mutation.error.message : "Stage approval could not be saved. Please try again."}</p> : null}
     <div className="modal__actions">
-      <Button variant="secondary" disabled={mutation.isPending} onClick={onClose}>Cancel</Button>
+      <Button variant="destructive-outline" disabled={mutation.isPending} onClick={onClose}>Cancel</Button>
       <Button disabled={blocked || refreshing || mutation.isPending} busy={mutation.isPending} aria-describedby={blocked || refreshing ? descriptionId : undefined}
         onClick={() => { if (!blocked && !refreshing && !mutation.isPending && !inFlight.current) { inFlight.current = true; mutation.mutate(); } }}>
         {mutation.isPending ? "Completing…" : "Approve and complete stage"}

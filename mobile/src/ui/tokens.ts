@@ -1,24 +1,39 @@
 export const colors = Object.freeze({
-  midnight: "#1E183B",
-  midnightRaised: "#312A59",
-  violet: "#6654D9",
-  violetSoft: "#F0EEFF",
-  gold: "#D5AD18",
-  canvas: "#F7F6FA",
-  surface: "#FFFFFF",
-  surfaceMuted: "#F1F0F5",
-  ink: "#171426",
-  inkMuted: "#655F72",
-  border: "#D9D6E2",
-  borderStrong: "#AAA4B7",
-  success: "#19734B",
-  successSoft: "#E9F7F0",
+  primary: "#3d4a32",
+  primaryPressed: "#2f3a26",
+  primaryInk: "#f6f4ec",
+  primarySoft: "#e8eddf",
+  primaryBorder: "rgba(61,74,50,0.62)",
+  shell: "#2f3a2a",
+  shellRaised: "#3d4935",
+  shellInk: "#eef0e6",
+  shellMuted: "#c8cebd",
+  shellSelected: "#46523e",
+  accent: "#a9b89a",
+  authCanvas: "#dfe5d8",
+  authSurface: "#f8f6f0",
+  // Compatibility aliases keep existing feature consumers on the shared palette.
+  midnight: "#2f3a2a",
+  midnightRaised: "#3d4935",
+  violet: "#3d4a32",
+  violetSoft: "#e8eddf",
+  gold: "#6b7558",
+  canvas: "#f6f4ec",
+  surface: "#fbfaf6",
+  surfaceMuted: "#eeeee5",
+  ink: "#1f2a1c",
+  inkMuted: "#5f6a58",
+  border: "#d9dccf",
+  borderStrong: "#929c86",
+  success: "#18795c",
+  successSoft: "#e9f3ec",
   danger: "#B42318",
+  dangerPressed: "#8f1d13",
   dangerSoft: "#FFF0EE",
-  warning: "#8A6100",
-  warningSoft: "#FFF8DA",
-  info: "#3157A4",
-  infoSoft: "#ECF2FF"
+  warning: "#8a5b12",
+  warningSoft: "#f5eee1",
+  info: "#315ab8",
+  infoSoft: "#edf1fa"
 });
 
 export const spacing = Object.freeze({
@@ -33,8 +48,8 @@ export const spacing = Object.freeze({
 });
 
 export const radii = Object.freeze({
-  control: 10,
-  surface: 16,
+  control: 8,
+  surface: 12,
   pill: 999
 });
 
@@ -42,5 +57,15 @@ export const fonts = Object.freeze({
   regular: "Poppins_400Regular",
   medium: "Poppins_500Medium",
   semibold: "Poppins_600SemiBold",
-  bold: "Poppins_700Bold"
+  bold: "Poppins_700Bold",
+  display: "Fraunces_500Medium"
+});
+
+export const typography = Object.freeze({
+  pageTitle: { fontFamily: fonts.semibold, fontSize: 24, lineHeight: 30 },
+  sectionTitle: { fontFamily: fonts.medium, fontSize: 18, lineHeight: 25 },
+  cardTitle: { fontFamily: fonts.semibold, fontSize: 16, lineHeight: 22 },
+  body: { fontFamily: fonts.regular, fontSize: 14, lineHeight: 21 },
+  metadata: { fontFamily: fonts.regular, fontSize: 12, lineHeight: 18 },
+  button: { fontFamily: fonts.semibold, fontSize: 14, lineHeight: 21 }
 });

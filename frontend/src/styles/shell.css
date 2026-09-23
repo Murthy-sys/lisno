@@ -467,19 +467,6 @@
   padding: var(--space-3) var(--space-5) max(var(--space-3), env(safe-area-inset-bottom));
 }
 
-.ui-drawer--contextual .ui-button--primary {
-  background: var(--color-primary);
-  color: var(--color-surface);
-}
-
-.ui-drawer--contextual .ui-button--primary:hover:not(:disabled) {
-  background: var(--color-brand-midnight-raised);
-}
-
-.ui-drawer--contextual .ui-button--quiet {
-  color: var(--color-primary);
-}
-
 .ui-drawer__body {
   block-size: 100%;
 }

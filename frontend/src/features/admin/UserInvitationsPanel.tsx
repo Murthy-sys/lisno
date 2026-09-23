@@ -1,5 +1,5 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, useMemo, useRef, useState } from "react";
 
 import {
   ROLE_LABELS,
@@ -47,6 +47,25 @@ const statusOptions: Array<{
 const statusLabels = Object.fromEntries(
   statusOptions.map(({ value, label }) => [value, label])
 ) as Record<UserInvitationPresentationStatus, string>;
+
+interface StatusTab {
+  key: string;
+  label: string;
+  value: UserInvitationPresentationStatus | undefined;
+}
+
+/*
+ * Derived from statusOptions rather than hand-listed, so a presentation status
+ * added above can never be silently unreachable from the tab strip.
+ */
+const statusTabs: StatusTab[] = [
+  { key: "all", label: "All actionable", value: undefined },
+  ...statusOptions.map(({ value, label }): StatusTab => ({
+    key: value,
+    label,
+    value
+  }))
+];
 
 const dateTime = new Intl.DateTimeFormat("en-GB", {
   day: "2-digit",
@@ -101,6 +120,7 @@ function AuthorizedUserInvitationsPanel({
   const [inviteOpen, setInviteOpen] = useState(false);
   const [selection, setSelection] = useState<Selection | null>(null);
   const panelHeadingRef = useRef<HTMLHeadingElement>(null);
+  const statusTabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const normalizedFilters = useMemo<UserInvitationFilters>(
     () => ({
       ...(filters.role ? { role: filters.role } : {}),
@@ -130,6 +150,32 @@ function AuthorizedUserInvitationsPanel({
     setPagination((current) =>
       current.offset === 0 ? current : { ...current, offset: 0 }
     );
+  };
+
+  /*
+   * Roaming tabindex: selection follows focus, so moving with the arrow keys
+   * both selects the tab and lands focus on it.
+   */
+  const selectStatusTab = (index: number) => {
+    const tab = statusTabs[index];
+    if (!tab) return;
+    setFilter("status", tab.value);
+    statusTabRefs.current[index]?.focus();
+  };
+
+  const onStatusTabKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    index: number
+  ) => {
+    const last = statusTabs.length - 1;
+    let next: number | null = null;
+    if (event.key === "ArrowRight") next = index === last ? 0 : index + 1;
+    else if (event.key === "ArrowLeft") next = index === 0 ? last : index - 1;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = last;
+    if (next === null) return;
+    event.preventDefault();
+    selectStatusTab(next);
   };
 
   const actionAllowed = (
@@ -188,25 +234,41 @@ function AuthorizedUserInvitationsPanel({
             </Select>
           )}
         </Field>
-        <Field id="invitation-status-filter" label="Filter invitations by status">
-          {(controlProps) => (
-            <Select
-              {...controlProps}
-              value={filters.status ?? ""}
-              onChange={(event) =>
-                setFilter(
-                  "status",
-                  (event.target.value || undefined) as UserInvitationFilters["status"]
-                )
-              }
+      </div>
+
+      {/*
+       * Status filter as a tab strip. No aria-controls: the results below are
+       * not a tabpanel (they swap between loading, error, empty and table
+       * states), and pointing at an element that may not exist would be worse
+       * than omitting the relationship.
+       */}
+      <div
+        className="user-invitations__tabs"
+        role="tablist"
+        aria-label="Filter invitations by status"
+        aria-orientation="horizontal"
+      >
+        {statusTabs.map((tab, index) => {
+          const selected = (filters.status ?? undefined) === tab.value;
+          return (
+            <button
+              key={tab.key}
+              ref={(node) => {
+                statusTabRefs.current[index] = node;
+              }}
+              type="button"
+              role="tab"
+              id={`invitation-status-tab-${tab.key}`}
+              className="user-invitations__tab"
+              aria-selected={selected}
+              tabIndex={selected ? 0 : -1}
+              onClick={() => setFilter("status", tab.value)}
+              onKeyDown={(event) => onStatusTabKeyDown(event, index)}
             >
-              <option value="">All actionable</option>
-              {statusOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </Select>
-          )}
-        </Field>
+              {tab.label}
+            </button>
+          );
+        })}
       </div>
 
       {invitationsQuery.isPending ? (
@@ -285,7 +347,7 @@ function AuthorizedUserInvitationsPanel({
                             <Button
                               key={action}
                               size="compact"
-                              variant={action === "revoke" ? "quiet" : "secondary"}
+                              variant={action === "revoke" ? "destructive-outline" : "secondary"}
                               onClick={() => setSelection({ invitation, action })}
                             >
                               {action === "resend" ? "Resend" : "Revoke"}{" "}

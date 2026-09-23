@@ -60,6 +60,20 @@ afterAll(async () => {
 });
 
 describe("AI estimator knowledge item service", () => {
+  it("preserves the active-item deletion gate before stale-version handling for unguarded workspace deletes", async () => {
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Active protected item" });
+    await AiEstimatorKnowledgeMainLineModel.updateOne(
+      { _id: created.mainLineId },
+      { $set: { status: "active", version: created.version + 1 } }
+    ).exec();
+
+    await expect(service.permanentlyDeleteMainLine(ACTOR, created.mainLineId, {
+      expectedVersion: created.version
+    })).rejects.toMatchObject({ status: 409, code: "ACTIVE_ITEM" });
+    expect(await AiEstimatorKnowledgeMainLineModel.exists({ _id: created.mainLineId })).not.toBeNull();
+  });
+
   it("resolves all incoming Main Lines for temporary items by identity across Basket filters and follows edits/removal", async () => {
     const { service } = createService();
     await AiEstimatorKnowledgeBasketModel.create(basketDocument("basket-electrical", "Electrical", "active", 2));
@@ -4040,7 +4054,7 @@ describe("AI estimator knowledge item service", () => {
       .toMatchObject({ dependencyEpoch: 1, version: 1 });
   });
 
-  it("coordinates only newly introduced Basket relationships, including inactive historical rows", async () => {
+  it("coordinates new and retained Basket relationships, including inactive historical rows", async () => {
     await AiEstimatorKnowledgeBasketModel.create({
       _id: "basket-history-target",
       name: "Historical Target",
@@ -4105,7 +4119,7 @@ describe("AI estimator knowledge item service", () => {
       }
     );
     expect(await AiEstimatorKnowledgeBasketModel.findById("basket-history-target").lean())
-      .toMatchObject({ dependencyEpoch: 1, version: 1 });
+      .toMatchObject({ dependencyEpoch: 2, version: 1 });
   });
 
   it("coordinates newly introduced Advanced Basket relationships", async () => {

@@ -823,9 +823,17 @@ export interface UserDirectoryItem {
   updatedAt: string;
 }
 
+export interface UserDirectorySummary {
+  total: number;
+  active: number;
+  inactive: number;
+  roleCount: number;
+}
+
 export interface UserDirectoryPage extends PageData<UserDirectoryItem> {
   filterRoles: Role[];
   manageableRoles: Exclude<Role, "super_admin">[];
+  summary: UserDirectorySummary;
 }
 
 export type UpdateManagedUserInput =

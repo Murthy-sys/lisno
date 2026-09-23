@@ -90,7 +90,7 @@ const styles = StyleSheet.create({
     textAlign: "center"
   },
   errorHint: {
-    color: colors.gold,
+    color: colors.accent,
     fontFamily: fonts.medium,
     fontSize: 13,
     lineHeight: 20,

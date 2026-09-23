@@ -1,4 +1,5 @@
 import { fireEvent, render } from "@testing-library/react-native";
+import { StyleSheet } from "react-native";
 
 import { DashboardValuesSheet } from "./DashboardValuesSheet";
 
@@ -39,6 +40,8 @@ describe("DashboardValuesSheet", () => {
       "Previous period · 2026-09-15 UTC: Not available. Unit: Count · Time basis: UTC calendar day. Source unavailable"
     )).toBeTruthy();
     expect(view.getByText("Unit: Count · Time basis: UTC calendar day")).toBeTruthy();
+    expect(StyleSheet.flatten(view.getByText("Unit: Count · Time basis: UTC calendar day").props.style).fontSize).toBeGreaterThanOrEqual(12);
+    expect(StyleSheet.flatten(view.getByRole("button", { name: "Close dashboard values" }).props.style)).toEqual(expect.objectContaining({ width: 48, height: 48 }));
 
     await fireEvent.press(view.getByRole("button", { name: "Close dashboard values" }));
     expect(onRequestClose).toHaveBeenCalledTimes(1);

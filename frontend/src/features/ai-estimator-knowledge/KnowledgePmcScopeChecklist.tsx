@@ -163,7 +163,7 @@ export function KnowledgePmcScopeChecklist({ list, items, oppositeItems, context
                 )}
               </Field>
               <div className="knowledge-pmc-scope__actions">
-                <Button type="button" variant="quiet" onClick={closeEditor}>Cancel</Button>
+                <Button type="button" variant="destructive-outline" onClick={closeEditor}>Cancel</Button>
                 <Button type="button" disabled={atLimit} onClick={addItem}>Save</Button>
               </div>
             </>

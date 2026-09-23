@@ -258,12 +258,19 @@
   border-radius: var(--radius-field);
   padding: var(--space-2) var(--space-3);
   cursor: pointer;
-  font-weight: 600;
+  font-family: var(--button-font);
+  font-weight: var(--button-weight);
+  letter-spacing: normal;
   transition:
     transform 160ms ease,
     box-shadow 160ms ease,
     background 160ms ease;
   font-size: var(--text-sm);
+}
+
+.button:focus-visible {
+  outline: none;
+  box-shadow: var(--button-focus-ring);
 }
 
 .button:disabled {
@@ -276,20 +283,27 @@
 }
 
 .button--primary {
-  background: var(--color-lisno-violet);
-  box-shadow: 0 12px 28px rgb(112 87 255 / 26%);
-  color: white;
+  border: 1px solid var(--button-primary-bg);
+  background: var(--button-primary-bg);
+  box-shadow: 0 10px 24px rgb(61 74 50 / 22%);
+  color: var(--button-primary-ink);
 }
 
 .button--primary:hover:not(:disabled) {
-  background: #6048ef;
-  box-shadow: 0 14px 32px rgb(112 87 255 / 32%);
+  border-color: var(--button-primary-bg-hover);
+  background: var(--button-primary-bg-hover);
+  box-shadow: 0 12px 28px rgb(61 74 50 / 28%);
 }
 
 .button--secondary {
-  border: 1px solid #d9d4ed;
-  background: white;
-  color: var(--color-lisno-navy);
+  border: 1px solid var(--button-secondary-border);
+  background: var(--button-secondary-bg);
+  color: var(--button-secondary-ink);
+}
+
+.button--secondary:hover:not(:disabled) {
+  border-color: var(--button-primary-bg);
+  background: var(--button-secondary-hover);
 }
 
 /*
@@ -303,14 +317,15 @@
   align-items: center;
   justify-content: center;
   gap: 0.4rem;
-  border: 1px solid #d9d4ed;
+  border: 1px solid var(--button-secondary-border);
   border-radius: var(--radius-control);
   padding: var(--space-2) var(--space-3);
-  background: white;
-  color: var(--color-lisno-navy);
+  background: var(--button-secondary-bg);
+  color: var(--button-secondary-ink);
   cursor: pointer;
   font: inherit;
-  font-weight: 600;
+  font-family: var(--button-font);
+  font-weight: var(--button-weight);
   text-decoration: none;
   white-space: nowrap;
   transition:
@@ -320,14 +335,14 @@
 }
 
 .secondary-button:hover:not(:disabled) {
-  border-color: #b8afe0;
-  background: #f6f5fd;
-  box-shadow: 0 4px 12px rgb(45 36 108 / 10%);
+  border-color: var(--button-primary-bg);
+  background: var(--button-secondary-hover);
+  box-shadow: 0 4px 12px rgb(31 42 28 / 10%);
 }
 
 .secondary-button:focus-visible {
   outline: none;
-  box-shadow: var(--focus-ring);
+  box-shadow: var(--button-focus-ring);
 }
 
 .secondary-button:disabled {
@@ -348,13 +363,15 @@
 }
 
 .button--download {
-  background: var(--color-lisno-violet);
-  box-shadow: 0 12px 28px rgb(112 87 255 / 26%);
-  color: white;
+  border: 1px solid var(--button-primary-bg);
+  background: var(--button-primary-bg);
+  box-shadow: 0 10px 24px rgb(61 74 50 / 22%);
+  color: var(--button-primary-ink);
 }
 
 .button--download:hover:not(:disabled) {
-  background: #6048ef;
+  border-color: var(--button-primary-bg-hover);
+  background: var(--button-primary-bg-hover);
 }
 
 .button--close {
@@ -368,31 +385,39 @@
 }
 
 .button--success {
-  background: #15803d;
-  box-shadow: 0 12px 28px rgb(21 128 61 / 22%);
-  color: white;
+  border: 1px solid var(--color-success);
+  background: var(--color-success);
+  box-shadow: 0 12px 28px rgb(24 121 92 / 22%);
+  color: var(--color-surface);
 }
 
 .button--success:hover:not(:disabled) {
-  background: #166534;
+  border-color: var(--color-success-strong);
+  background: var(--color-success-strong);
 }
 
 .button--danger {
-  border: 1px solid #fdba74;
-  background: #fff7ed;
-  color: #c2410c;
+  border: 1px solid var(--button-negative-border);
+  background: var(--button-secondary-bg);
+  color: var(--button-negative-ink);
 }
 
 .button--danger:hover:not(:disabled) {
-  background: #ffedd5;
+  border-color: var(--button-negative-ink-strong);
+  background: var(--button-negative-hover);
+  color: var(--button-negative-ink-strong);
 }
 
 .button--quiet {
   min-height: 2.35rem;
   grid-column: 1 / -1;
-  border: 1px solid rgb(112 87 255 / 24%);
-  background: white;
-  color: #5d46d7;
+  border: 1px solid var(--button-secondary-border);
+  background: var(--button-secondary-bg);
+  color: var(--button-quiet-ink);
+}
+
+.button--quiet:hover:not(:disabled) {
+  background: var(--button-secondary-hover);
 }
 
 .button--full {

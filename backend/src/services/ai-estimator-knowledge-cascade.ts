@@ -1,5 +1,7 @@
 import type { ClientSession } from "mongoose";
 
+import { ApiError } from "../middleware/errors.js";
+
 import { AiEstimatorKnowledgeMainLineModel } from "../models/AiEstimatorKnowledgeMainLine.js";
 import { AiEstimatorKnowledgePriceVersionModel } from "../models/AiEstimatorKnowledgePriceVersion.js";
 import { AiEstimatorKnowledgeRevisionModel } from "../models/AiEstimatorKnowledgeRevision.js";
@@ -20,6 +22,7 @@ const RELATIONSHIP_FIELDS = ["exclusions", "dependencies", "recommendations", "b
 export interface DeletionTargets {
   readonly basketIds: ReadonlySet<string>;
   readonly mainLineIds: ReadonlySet<string>;
+  readonly subBasketIds?: ReadonlySet<string>;
 }
 
 const pointsAtDeletedTarget = (row: unknown, targets: DeletionTargets) => {
@@ -28,8 +31,20 @@ const pointsAtDeletedTarget = (row: unknown, targets: DeletionTargets) => {
   const basketId = relation.targetBasketId;
   const mainLineId = relation.targetMainLineId;
   return (typeof basketId === "string" && targets.basketIds.has(basketId))
-    || (typeof mainLineId === "string" && targets.mainLineIds.has(mainLineId));
+    || (typeof mainLineId === "string" && targets.mainLineIds.has(mainLineId))
+    || (typeof relation.targetSubBasketId === "string" && targets.subBasketIds?.has(relation.targetSubBasketId) === true);
 };
+
+export function deletedTargetReferences(payload: unknown, targets: DeletionTargets): Row[] {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return [];
+  const source = payload as Row;
+  return RELATIONSHIP_FIELDS.flatMap((field) => {
+    const value = source[field];
+    const rows = Array.isArray(value) ? value : value == null ? [] : [value];
+    return rows.filter((row) => pointsAtDeletedTarget(row, targets))
+      .map((row, index) => ({ field, index, relation: row }));
+  });
+}
 
 /**
  * Drops every exclusion, dependency and recommendation in the surviving
@@ -45,14 +60,16 @@ export async function stripReferencesToDeleted(
   survivingFilter: Record<string, unknown>,
   session: ClientSession
 ): Promise<number> {
-  if (targets.basketIds.size === 0 && targets.mainLineIds.size === 0) return 0;
+  if (targets.basketIds.size === 0 && targets.mainLineIds.size === 0 && !targets.subBasketIds?.size) return 0;
   const sections = await AiEstimatorKnowledgeSectionModel.find(survivingFilter)
-    .select({ payload: 1 })
+    .select({ payload: 1, mainLineId: 1, revisionId: 1, version: 1 })
     .session(session)
     .lean()
     .exec() as Row[];
 
   let stripped = 0;
+  const changedMainLineIds = new Set<string>();
+  const changedRevisionIds = new Set<string>();
   for (const section of sections) {
     const payload = section.payload;
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) continue;
@@ -61,17 +78,34 @@ export async function stripReferencesToDeleted(
     let changed = false;
     for (const field of RELATIONSHIP_FIELDS) {
       const value = row[field];
-      if (!Array.isArray(value)) continue;
-      const kept = value.filter((candidate) => !pointsAtDeletedTarget(candidate, targets));
-      if (kept.length === value.length) continue;
-      stripped += value.length - kept.length;
+      const candidates = Array.isArray(value) ? value : value == null ? [] : [value];
+      const kept = candidates.filter((candidate) => !pointsAtDeletedTarget(candidate, targets));
+      if (kept.length === candidates.length) continue;
+      stripped += candidates.length - kept.length;
       next[field] = kept;
       changed = true;
     }
     if (!changed) continue;
-    await AiEstimatorKnowledgeSectionModel.updateOne(
-      { _id: section._id },
-      { $set: { payload: next } }
+    const updated = await AiEstimatorKnowledgeSectionModel.updateOne(
+      { _id: section._id, version: section.version },
+      { $set: { payload: next }, $inc: { version: 1 } }
+    ).session(session).exec();
+    if (updated.modifiedCount !== 1) {
+      throw new ApiError(409, "VERSION_CONFLICT", "An affected knowledge section changed elsewhere.");
+    }
+    changedMainLineIds.add(String(section.mainLineId));
+    changedRevisionIds.add(String(section.revisionId));
+  }
+  // Source editors carry both section and aggregate versions. Advance both so
+  // an open draft cannot save its old payload and resurrect a removed target.
+  if (changedMainLineIds.size) {
+    await AiEstimatorKnowledgeMainLineModel.updateMany(
+      { _id: { $in: [...changedMainLineIds] } },
+      { $inc: { version: 1 } }
+    ).session(session).exec();
+    await AiEstimatorKnowledgeRevisionModel.updateMany(
+      { _id: { $in: [...changedRevisionIds] }, status: "draft" },
+      { $inc: { version: 1 } }
     ).session(session).exec();
   }
   return stripped;

@@ -2,8 +2,13 @@ import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  commitKnowledgeMainLineMutation,
+  commitKnowledgeMainLineRemoval,
+  commitKnowledgeSubBasketMutation,
+  refreshKnowledgeSubBasketCatalog,
   syncKnowledgeBasketMutation,
   syncKnowledgeBasketDeletion,
+  syncKnowledgeSubBasketDeletion,
   syncKnowledgeMainLineDeletion,
   syncKnowledgeLifecycleMutation,
   syncKnowledgeMasterMutation,
@@ -37,6 +42,39 @@ function queryClient() {
   return new QueryClient({
     defaultOptions: { queries: { retry: false } }
   });
+}
+
+function itemDetail(overrides: Partial<KnowledgeItemDetail> = {}): KnowledgeItemDetail {
+  return {
+    ...actor,
+    id: "line-1",
+    itemType: "main_line",
+    completionRequired: false,
+    basketId: "basket-1",
+    basketName: "Electrical",
+    subBasketId: "sub-1",
+    subBasketName: "Functional Lights",
+    mainLineId: "line-1",
+    mainLineName: "Lights Supply",
+    description: "Saved catalog description",
+    status: "draft",
+    activeRevisionId: null,
+    draftRevisionId: null,
+    revisionNumber: null,
+    uomId: null,
+    priorityId: null,
+    modeIds: [],
+    surfaceIds: [],
+    vendorIds: [],
+    completeness,
+    allowedActions: [],
+    activeRevision: null,
+    draftRevision: null,
+    blockers: [],
+    warnings: [],
+    version: 1,
+    ...overrides
+  };
 }
 
 describe("knowledge mutation cache synchronization", () => {
@@ -132,6 +170,57 @@ describe("knowledge mutation cache synchronization", () => {
     expect(client.getQueryState(["unrelated"])?.isInvalidated).toBe(false);
   });
 
+  it("removes only a deleted group and its children before reporting refresh failure", async () => {
+    const client = queryClient();
+    const subgroupKey = [...knowledgeQueryKeys.subBasketLists("basket-1"), { limit: 100, offset: 0 }];
+    const otherGroupKey = [...knowledgeQueryKeys.subBasketLists("basket-2"), { limit: 100, offset: 0 }];
+    const itemListKey = knowledgeQueryKeys.itemList({});
+    const mainLinesKey = knowledgeQueryKeys.mainLineList("basket-1", {});
+    const child = itemDetail();
+    const sibling = itemDetail({ id: "sibling", mainLineId: "sibling", subBasketId: "sub-2" });
+    const pagination = { limit: 100, offset: 0, total: 2, hasMore: false };
+    client.setQueryData(subgroupKey, { items: [{ id: "sub-1" }, { id: "sub-2" }], pagination });
+    client.setQueryData(otherGroupKey, { items: [{ id: "other-sub", name: "Same name" }], pagination: { ...pagination, total: 1 } });
+    client.setQueryData(itemListKey, { items: [child, sibling], allItems: [child, sibling], pagination });
+    client.setQueryData(mainLinesKey, { items: [{ id: "line-1" }, { id: "sibling" }], pagination });
+    client.setQueryData(knowledgeQueryKeys.item("line-1"), child);
+    const deletedSection = knowledgeQueryKeys.section("line-1", "revision-1", "overview");
+    const survivingSection = knowledgeQueryKeys.section("sibling", "revision-2", "recommendations");
+    client.setQueryData(deletedSection, { payload: { gone: true } });
+    client.setQueryData(survivingSection, { payload: { reason: "Preserve unsaved draft" } });
+    client.setQueryData(knowledgeQueryKeys.subBasketDeletionImpact("basket-1", "sub-1"), { impactToken: "old" });
+    const invalidation = vi.spyOn(client, "invalidateQueries").mockRejectedValue(new Error("offline"));
+    await expect(syncKnowledgeSubBasketDeletion(client, {
+      basketId: "basket-1", subBasketId: "sub-1", deleted: true, deletedAt: "2026-09-23T00:00:00.000Z",
+      deletedMainLineIds: ["line-1"], deletedReferenceCount: 2
+    })).rejects.toThrow("could not refresh");
+    expect(client.getQueryData(subgroupKey)).toMatchObject({ items: [{ id: "sub-2" }], pagination: { total: 1 } });
+    expect(client.getQueryData(otherGroupKey)).toMatchObject({ items: [{ id: "other-sub" }] });
+    expect(client.getQueryData(itemListKey)).toMatchObject({ items: [sibling], allItems: [sibling] });
+    expect(client.getQueryData(mainLinesKey)).toMatchObject({ items: [{ id: "sibling" }] });
+    expect(client.getQueryData(knowledgeQueryKeys.item("line-1"))).toBeUndefined();
+    expect(client.getQueryData(deletedSection)).toBeUndefined();
+    expect(client.getQueryData(survivingSection)).toEqual({ payload: { reason: "Preserve unsaved draft" } });
+    expect(client.getQueryData(knowledgeQueryKeys.subBasketDeletionImpact("basket-1", "sub-1"))).toBeUndefined();
+    invalidation.mockRestore();
+  });
+
+  it("cancels an older group response so it cannot restore a deleted row", async () => {
+    const client = queryClient();
+    const key = [...knowledgeQueryKeys.subBasketLists("basket-1"), "catalog"];
+    const prior = { items: [{ id: "sub-1" }, { id: "sub-2" }], pagination: { limit: 100, offset: 0, total: 2, hasMore: false } };
+    client.setQueryData(key, prior);
+    let resolveRead!: (value: typeof prior) => void;
+    const read = client.fetchQuery({ queryKey: key, queryFn: () => new Promise<typeof prior>((resolve) => { resolveRead = resolve; }) }).catch(() => undefined);
+    await syncKnowledgeSubBasketDeletion(client, {
+      basketId: "basket-1", subBasketId: "sub-1", deleted: true, deletedAt: "2026-09-23T00:00:00.000Z",
+      deletedMainLineIds: [], deletedReferenceCount: 0
+    });
+    resolveRead(prior);
+    await read;
+    expect(client.getQueryData(key)).toMatchObject({ items: [{ id: "sub-2" }] });
+  });
+
   it("publishes a renamed Basket by stable ID and refreshes every name-bearing cache", async () => {
     const client = queryClient();
     const basketListKey = knowledgeQueryKeys.basketList({ limit: 100, offset: 0 });
@@ -186,6 +275,172 @@ describe("knowledge mutation cache synchronization", () => {
       knowledgeQueryKeys.mainLineLists(), knowledgeQueryKeys.contexts()]) {
       expect(client.getQueryState(key)?.isInvalidated).toBe(true);
     }
+  });
+
+  it("reconciles Sub-Basket and child mutations by stable ID without touching the open section draft", async () => {
+    const client = queryClient();
+    const subBasketKey = [...knowledgeQueryKeys.subBasketLists("basket-1"), "catalog"] as const;
+    const itemListKey = knowledgeQueryKeys.itemList({ limit: 100, offset: 0 });
+    const itemKey = knowledgeQueryKeys.item("line-1");
+    const sectionKey = knowledgeQueryKeys.section("source", "revision-1", "recommendations");
+    const relationshipItems = [
+      { ...actor, mainLineId: "line-1", mainLineName: "Lights Supply", basketId: "basket-1", subBasketId: "sub-1", subBasketName: "Functional Lights", version: 1 },
+      { ...actor, mainLineId: "source", mainLineName: "False ceiling", basketId: "basket-2", subBasketId: null, subBasketName: null, version: 1,
+        linkedMainLines: [{ mainLineId: "line-1", mainLineName: "Lights Supply", basketId: "basket-1", basketName: "Electrical", subBasketId: "sub-1", subBasketName: "Functional Lights", status: "draft", revisionId: "revision-line", revisionStatus: "draft", rules: [] }] }
+    ];
+    client.setQueryData(subBasketKey, {
+      items: [{ ...actor, id: "sub-1", basketId: "basket-1", name: "Functional Lights", displayOrder: 0, version: 1 }],
+      pagination: { limit: 100, offset: 0, total: 1, hasMore: false }
+    });
+    client.setQueryData(itemListKey, {
+      items: relationshipItems,
+      allItems: relationshipItems,
+      pagination: { limit: 100, offset: 0, total: 2, hasMore: false }
+    });
+    client.setQueryData(itemKey, { ...actor, mainLineId: "line-1", mainLineName: "Lights Supply", basketId: "basket-1", subBasketId: "sub-1", subBasketName: "Functional Lights", version: 1 });
+    client.setQueryData(sectionKey, { payload: { budgetAlterations: [{ targetSubBasketId: "sub-1", reason: "Keep this draft" }] } });
+
+    commitKnowledgeSubBasketMutation(client, { ...actor, id: "sub-1", basketId: "basket-1", name: "False Ceiling Lights", displayOrder: 0, version: 2 });
+    expect(client.getQueryData<{ items: Array<{ name: string }> }>(subBasketKey)?.items[0]?.name).toBe("False Ceiling Lights");
+    expect(client.getQueryData<{ items: Array<{ subBasketName: string | null }> }>(itemListKey)?.items[0]?.subBasketName).toBe("False Ceiling Lights");
+    expect(client.getQueryData<{ allItems: Array<{ subBasketName: string | null }> }>(itemListKey)?.allItems[0]?.subBasketName).toBe("False Ceiling Lights");
+
+    const renamed = { ...client.getQueryData<Record<string, unknown>>(itemKey), mainLineId: "line-1", mainLineName: "Ceiling spotlights", version: 2 } as KnowledgeItemDetail;
+    commitKnowledgeMainLineMutation(client, renamed);
+    expect(client.getQueryData<{ items: Array<{ mainLineName: string; linkedMainLines?: Array<{ mainLineName: string }> }> }>(itemListKey)?.items)
+      .toMatchObject([{ mainLineName: "Ceiling spotlights" }, { linkedMainLines: [{ mainLineName: "Ceiling spotlights" }] }]);
+    expect(client.getQueryData<{ allItems: Array<{ mainLineName: string; linkedMainLines?: Array<{ mainLineName: string }> }> }>(itemListKey)?.allItems)
+      .toMatchObject([{ mainLineName: "Ceiling spotlights" }, { linkedMainLines: [{ mainLineName: "Ceiling spotlights" }] }]);
+
+    commitKnowledgeMainLineRemoval(client, "line-1");
+    expect(client.getQueryData<{ items: Array<{ mainLineId: string; linkedMainLines?: unknown[] }> }>(itemListKey)?.items)
+      .toMatchObject([{ mainLineId: "source", linkedMainLines: [] }]);
+    expect(client.getQueryData<{ allItems: Array<{ mainLineId: string; linkedMainLines?: unknown[] }> }>(itemListKey)?.allItems)
+      .toMatchObject([{ mainLineId: "source", linkedMainLines: [] }]);
+    expect(client.getQueryData(itemKey)).toBeUndefined();
+    expect(client.getQueryData(sectionKey)).toEqual({ payload: { budgetAlterations: [{ targetSubBasketId: "sub-1", reason: "Keep this draft" }] } });
+  });
+
+  it("updates linked references in every exact item detail cache and preserves them when refresh fails", async () => {
+    const client = queryClient();
+    const childKey = knowledgeQueryKeys.item("line-1");
+    const sourceKey = knowledgeQueryKeys.item("source-line");
+    const sourceSectionKey = knowledgeQueryKeys.section("source-line", "revision-source", "recommendations");
+    const linkedChild = {
+      mainLineId: "line-1",
+      mainLineName: "Lights Supply",
+      basketId: "basket-1",
+      basketName: "Electrical",
+      subBasketId: "sub-1",
+      subBasketName: "Functional Lights",
+      status: "draft" as const,
+      revisionId: "revision-child",
+      revisionStatus: "draft" as const,
+      rules: [{ id: "rule-child", trigger: "removed" as const, action: "remove" as const, requirement: "must" as const, reason: "Keep linked metadata", active: true }]
+    };
+    const untouchedLink = {
+      ...linkedChild,
+      mainLineId: "other-line",
+      mainLineName: "Other item",
+      revisionId: "revision-other",
+      rules: [{ ...linkedChild.rules[0]!, id: "rule-other", reason: "Preserve this reference" }]
+    };
+    const source = itemDetail({
+      id: "source-line",
+      itemType: "temporary",
+      mainLineId: "source-line",
+      mainLineName: "Temporary lighting group",
+      description: "Preserve the open workspace detail",
+      linkedMainLines: [linkedChild, untouchedLink]
+    });
+    client.setQueryData(childKey, itemDetail());
+    client.setQueryData(sourceKey, source);
+    client.setQueryData(sourceSectionKey, { payload: { sentinel: "Keep the open draft" } });
+
+    commitKnowledgeMainLineMutation(client, itemDetail({ mainLineName: "False Ceiling Lights", version: 2 }));
+    await expect(client.fetchQuery({
+      queryKey: sourceKey,
+      queryFn: async () => { throw new Error("Item detail refresh unavailable"); }
+    })).rejects.toThrow("Item detail refresh unavailable");
+
+    expect(client.getQueryData<KnowledgeItemDetail>(sourceKey)).toEqual({
+      ...source,
+      linkedMainLines: [{ ...linkedChild, mainLineName: "False Ceiling Lights" }, untouchedLink]
+    });
+    expect(client.getQueryData(sourceSectionKey)).toEqual({ payload: { sentinel: "Keep the open draft" } });
+
+    commitKnowledgeMainLineRemoval(client, "line-1");
+    await expect(client.fetchQuery({
+      queryKey: sourceKey,
+      queryFn: async () => { throw new Error("Item detail refresh still unavailable"); }
+    })).rejects.toThrow("Item detail refresh still unavailable");
+
+    expect(client.getQueryData(childKey)).toBeUndefined();
+    expect(client.getQueryData<KnowledgeItemDetail>(sourceKey)).toEqual({
+      ...source,
+      linkedMainLines: [untouchedLink]
+    });
+    expect(client.getQueryData(sourceSectionKey)).toEqual({ payload: { sentinel: "Keep the open draft" } });
+  });
+
+  it("cancels older item reads and removes deleted item caches without changing a surviving section draft", async () => {
+    const client = queryClient();
+    const deleted = itemDetail({ mainLineId: "deleted", id: "deleted" });
+    const survivor = itemDetail({ mainLineId: "survivor", id: "survivor" });
+    const pagination = { limit: 100, offset: 0, total: 2, hasMore: false };
+    const listKey = [...knowledgeQueryKeys.itemLists(), "relationship-catalog"];
+    const linesKey = knowledgeQueryKeys.mainLineList("basket-1", {});
+    const detailKey = knowledgeQueryKeys.item("deleted");
+    const deletedKeys = [detailKey, knowledgeQueryKeys.section("deleted", "revision", "overview"),
+      knowledgeQueryKeys.history("deleted"), knowledgeQueryKeys.activationReview("deleted", "revision")];
+    const sourceSection = knowledgeQueryKeys.section("survivor", "source-revision", "recommendations");
+    const draft = { version: 2, payload: { budgetAlterations: [{ id: "keep-rule", reason: "Keep my draft" }] } };
+    client.setQueryData(sourceSection, draft);
+    deletedKeys.forEach((key) => client.setQueryData(key, deleted));
+    const priorLists = [
+      { key: listKey, data: { items: [deleted, survivor], allItems: [deleted, survivor], pagination } },
+      { key: linesKey, data: { items: [{ id: "deleted" }, { id: "survivor" }], pagination } },
+      { key: detailKey, data: deleted }
+    ];
+    const finishReads: (() => void)[] = [];
+    const reads = priorLists.map(({ key, data }) => {
+      client.setQueryData(key, data);
+      return client.fetchQuery({ queryKey: key, queryFn: () => new Promise((resolve) => {
+        finishReads.push(() => resolve(data));
+      }) }).catch(() => undefined);
+    });
+
+    commitKnowledgeMainLineRemoval(client, "deleted");
+    finishReads.forEach((resolve) => resolve());
+    await Promise.all(reads);
+
+    expect(client.getQueryData(listKey)).toMatchObject({ items: [survivor], allItems: [survivor], pagination: { total: 1 } });
+    expect(client.getQueryData(linesKey)).toMatchObject({ items: [{ id: "survivor" }], pagination: { total: 1 } });
+    deletedKeys.forEach((key) => expect(client.getQueryData(key)).toBeUndefined());
+    expect(client.getQueryData(sourceSection)).toEqual(draft);
+    expect(client.getQueryState(sourceSection)?.isInvalidated).toBe(false);
+  });
+
+  it("invalidates every cache family that can expose Sub-Basket membership or references", async () => {
+    const client = queryClient();
+    const keys = [
+      knowledgeQueryKeys.itemLists(),
+      knowledgeQueryKeys.items(),
+      knowledgeQueryKeys.mainLineLists("basket-1"),
+      knowledgeQueryKeys.subBasketLists("basket-1"),
+      knowledgeQueryKeys.basketDeletionImpact("basket-1"),
+      knowledgeQueryKeys.subBasketDeletionImpacts("basket-1"),
+      knowledgeQueryKeys.histories(),
+      knowledgeQueryKeys.activationReviews(),
+      knowledgeQueryKeys.contexts()
+    ];
+    keys.forEach((key) => client.setQueryData(key, { cached: true }));
+    client.setQueryData(["unrelated"], { preserved: true });
+
+    await refreshKnowledgeSubBasketCatalog(client, "basket-1");
+
+    keys.forEach((key) => expect(client.getQueryState(key)?.isInvalidated).toBe(true));
+    expect(client.getQueryState(["unrelated"])?.isInvalidated).toBe(false);
   });
 
   it("updates the section and invalidates related summaries and resolved contexts", async () => {

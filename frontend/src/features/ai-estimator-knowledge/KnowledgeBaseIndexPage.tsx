@@ -16,7 +16,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
+import { useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
@@ -30,7 +30,6 @@ import { InlineMessage } from "../../components/ui/InlineMessage";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
 import { ProgressBar } from "../../components/ui/ProgressBar";
-import { StatusBadge, type StatusTone } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
 import {
   createKnowledgeBasket,
@@ -45,6 +44,7 @@ import {
 import { syncKnowledgeBasketDeletion, syncKnowledgeBasketMutation } from "./knowledgeMutationSync";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { KNOWLEDGE_ITEM_STATUS_LABELS } from "./knowledgePresentation";
+import { KnowledgeBasketManagementDialog } from "./KnowledgeBasketManagementDialog";
 import { CreateKnowledgeItemDialog } from "./CreateKnowledgeItemDialog";
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
 import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
@@ -55,7 +55,6 @@ import type {
   KnowledgeItemListItem,
   KnowledgeItemStatus,
   KnowledgeMaster,
-  KnowledgeMasterStatus,
   KnowledgeMasterType,
   KnowledgePermanentDeleteBasketResult
 } from "./knowledgeTypes";
@@ -63,7 +62,6 @@ import "./ai-estimator-knowledge.css";
 import "./knowledge-configuration-ui.css";
 
 const PAGE_SIZE = 20;
-const BASKET_MANAGEMENT_PAGE_SIZE = 100;
 const FILTER_MASTER_TYPES = [
   "priorities",
   "modes",
@@ -129,7 +127,7 @@ export function KnowledgeBaseIndexPage() {
     auth.authorization,
     "ai_estimator_knowledge.configuration.lifecycle"
   );
-  const canManageBaskets = auth.user?.role === "super_admin" && (canUpdate || canLifecycle);
+  const canManageBaskets = auth.user?.role === "super_admin" && (canCreate || canUpdate || canLifecycle);
   const canCreateBasketInline = auth.user?.role === "super_admin" && canCreate;
   const request = { ...appliedFilters, limit: PAGE_SIZE, offset };
   const itemsQuery = useQuery({
@@ -278,7 +276,7 @@ export function KnowledgeBaseIndexPage() {
                 leadingIcon={<ListTree />}
                 onClick={() => setBasketManagerOpen(true)}
               >
-                Manage main baskets
+                Manage baskets
               </Button>
             ) : null}
             {canCreate ? (
@@ -567,20 +565,22 @@ export function KnowledgeBaseIndexPage() {
       {basketDialogOpen ? (
         <BasketEditorDialog
           onClose={() => setBasketDialogOpen(false)}
-          onCreated={async () => {
-            await queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketLists() });
+          onCreated={async (basket) => {
+            await syncKnowledgeBasketMutation(queryClient, basket);
             setBasketDialogOpen(false);
           }}
         />
       ) : null}
       {basketManagerOpen ? (
-        <MainBasketManagementDialog
+        <KnowledgeBasketManagementDialog
+          canCreate={canCreate}
+          onCreate={() => setBasketDialogOpen(true)}
           canUpdate={canUpdate}
           canLifecycle={canLifecycle}
           onClose={closeBasketManager}
           onEdit={setBasketEditor}
           onDelete={setBasketDelete}
-          childDialogOpen={Boolean(basketEditor || basketDelete)}
+          childDialogOpen={Boolean(basketDialogOpen || basketEditor || basketDelete)}
         />
       ) : null}
       {basketEditor ? (
@@ -618,6 +618,7 @@ export function KnowledgeBaseIndexPage() {
         }} />}
       {itemDialogOpen ? (
         <CreateKnowledgeItemDialog
+          canCreateBasket={canCreateBasketInline}
           onClose={() => setItemDialogOpen(false)}
           onCreated={async (mainLineId) => {
             await queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() });
@@ -627,180 +628,6 @@ export function KnowledgeBaseIndexPage() {
         />
       ) : null}
     </div>
-  );
-}
-
-function masterStatusTone(status: KnowledgeMasterStatus): StatusTone {
-  if (status === "active") return "success";
-  if (status === "archived") return "danger";
-  return "neutral";
-}
-
-function masterStatusLabel(status: KnowledgeMasterStatus): string {
-  return status === "active" ? "Active" : status === "inactive" ? "Inactive" : "Archived";
-}
-
-function MainBasketManagementDialog({
-  canUpdate,
-  canLifecycle,
-  onClose,
-  onEdit,
-  onDelete,
-  childDialogOpen
-}: {
-  readonly canUpdate: boolean;
-  readonly canLifecycle: boolean;
-  readonly onClose: () => void;
-  readonly onEdit: (basket: KnowledgeBasket) => void;
-  readonly onDelete: (basket: KnowledgeBasket) => void;
-  readonly childDialogOpen: boolean;
-}) {
-  const [offset, setOffset] = useState(0);
-  const resultsRef = useRef<HTMLDivElement>(null);
-  const focusResultsAfterNavigationRef = useRef(false);
-  const params = {
-    includeArchived: true,
-    limit: BASKET_MANAGEMENT_PAGE_SIZE,
-    offset
-  } as const;
-  const basketsQuery = useQuery({
-    queryKey: knowledgeQueryKeys.basketList(params),
-    queryFn: () => listKnowledgeBaskets(params),
-    retry: false
-  });
-
-  useEffect(() => {
-    if (basketsQuery.isFetching || !focusResultsAfterNavigationRef.current) return;
-    focusResultsAfterNavigationRef.current = false;
-    resultsRef.current?.focus();
-  }, [basketsQuery.isFetching]);
-
-  function goToOffset(nextOffset: number) {
-    focusResultsAfterNavigationRef.current = true;
-    setOffset(Math.max(0, nextOffset));
-  }
-
-  return (
-    <ContextPanel
-      title="Manage main baskets"
-      eyebrow="Estimation configuration"
-      description={canUpdate && canLifecycle
-        ? "Edit or permanently delete existing baskets. Deleting a basket also deletes the Main Lines inside it."
-        : canUpdate
-          ? "Edit existing baskets."
-          : "Permanently delete existing baskets. Deleting a basket also deletes the Main Lines inside it."}
-      onClose={onClose}
-      contentInert={childDialogOpen}
-      width="wide"
-      className="knowledge-context-panel"
-      footer={<div className="knowledge-dialog-actions">
-        <Button type="button" variant="secondary" onClick={onClose}>
-          Done
-        </Button>
-      </div>}
-    >
-      <div className="knowledge-dialog-body knowledge-basket-manager">
-        <div
-          ref={resultsRef}
-          className="knowledge-basket-manager__results"
-          tabIndex={-1}
-          aria-busy={basketsQuery.isFetching || undefined}
-        >
-          {basketsQuery.isPending ? (
-            <PageState state="loading" message="Loading main baskets…" />
-          ) : basketsQuery.isError ? (
-            <PageState
-              state="error"
-              message={errorMessage(basketsQuery.error)}
-              action={{ label: "Try again", onAction: () => void basketsQuery.refetch() }}
-            />
-          ) : (
-            <>
-              {basketsQuery.data.items.length === 0 ? (
-                <PageState
-                  state="empty"
-                  message={offset === 0
-                    ? "No main baskets have been added yet."
-                    : "No main baskets are available on this page."}
-                />
-              ) : (
-                <ul className="knowledge-basket-manager__list" aria-label="Main baskets">
-                  {basketsQuery.data.items.map((basket) => (
-                    <li key={basket.id} className="knowledge-basket-manager__row">
-                      <div className="knowledge-basket-manager__summary">
-                        <div>
-                          <h3>{basket.name}</h3>
-                          <p>{basket.description ?? "No description provided."}</p>
-                        </div>
-                        <StatusBadge
-                          label={masterStatusLabel(basket.status)}
-                          tone={masterStatusTone(basket.status)}
-                        />
-                      </div>
-                      <div className="knowledge-basket-manager__actions">
-                        {canUpdate && basket.status !== "archived" ? (
-                          <Button
-                            size="compact"
-                            variant="quiet"
-                            leadingIcon={<Pencil />}
-                            aria-label={`Edit ${basket.name}`}
-                            onClick={() => onEdit(basket)}
-                          >
-                            Edit
-                          </Button>
-                        ) : null}
-                        {canLifecycle ? <Button
-                          size="compact"
-                          variant="destructive-outline"
-                          leadingIcon={<Trash2 />}
-                          aria-label={`Delete ${basket.name} permanently`}
-                          onClick={() => onDelete(basket)}
-                        >
-                          Delete
-                        </Button> : null}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {offset > 0 || basketsQuery.data.pagination.hasMore ? (
-                <nav
-                  className="knowledge-pagination knowledge-basket-manager__pagination"
-                  aria-label="Main basket pages"
-                >
-                  <Button
-                    variant="secondary"
-                    aria-label="Previous basket page"
-                    disabled={offset === 0 || basketsQuery.isFetching}
-                    onClick={() => goToOffset(offset - BASKET_MANAGEMENT_PAGE_SIZE)}
-                  >
-                    Previous
-                  </Button>
-                  <span>
-                    {basketsQuery.data.pagination.total === 0
-                      ? 0
-                      : basketsQuery.data.pagination.offset + 1}
-                    –{Math.min(
-                      basketsQuery.data.pagination.offset + basketsQuery.data.items.length,
-                      basketsQuery.data.pagination.total
-                    )} of {basketsQuery.data.pagination.total}
-                  </span>
-                  <Button
-                    variant="secondary"
-                    aria-label="Next basket page"
-                    disabled={!basketsQuery.data.pagination.hasMore || basketsQuery.isFetching}
-                    onClick={() => goToOffset(offset + BASKET_MANAGEMENT_PAGE_SIZE)}
-                  >
-                    Next
-                  </Button>
-                </nav>
-              ) : null}
-            </>
-          )}
-        </div>
-      </div>
-
-    </ContextPanel>
   );
 }
 
@@ -819,6 +646,9 @@ function PermanentDeleteBasketDialog({
   const queryClient = useQueryClient();
   const [confirmationName, setConfirmationName] = useState("");
   const [reason, setReason] = useState("");
+  const [saved, setSaved] = useState<KnowledgePermanentDeleteBasketResult | null>(null);
+  const [refreshError, setRefreshError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
   const [conflictRefresh, setConflictRefresh] = useState<
     "none" | "refreshed" | "failed"
   >("none");
@@ -828,9 +658,20 @@ function PermanentDeleteBasketDialog({
     queryFn: () => getKnowledgeBasketDeletionImpact(basket.id),
     retry: false,
     staleTime: 0,
-    refetchOnMount: "always"
+    refetchOnMount: "always",
+    enabled: !saved
   });
   const impact = impactQuery.data;
+
+  async function finishDeletion(result: KnowledgePermanentDeleteBasketResult) {
+    setRefreshing(true);
+    setRefreshError("");
+    try {
+      await onDeleted(result, impact?.basketName ?? basket.name);
+    } catch {
+      setRefreshError("The Main Basket was permanently deleted, but the catalog could not refresh. Retry the refresh; deletion will not run again.");
+    } finally { setRefreshing(false); }
+  }
 
   async function refreshImpact(): Promise<boolean> {
     setRequiresFreshImpact(true);
@@ -856,7 +697,7 @@ function PermanentDeleteBasketDialog({
         reason: reason.trim()
       });
     },
-    onSuccess: (result) => onDeleted(result, impact?.basketName ?? basket.name),
+    onSuccess: async (result) => { setSaved(result); await finishDeletion(result); },
     onError: async (error) => {
       if (error instanceof ApiError && error.code === "VERSION_CONFLICT") {
         setConfirmationName("");
@@ -865,10 +706,10 @@ function PermanentDeleteBasketDialog({
       }
     }
   });
-  const busy = impactQuery.isFetching || mutation.isPending || requiresFreshImpact;
+  const busy = impactQuery.isFetching || mutation.isPending || requiresFreshImpact || refreshing;
   const nameMatches = Boolean(impact && confirmationName === impact.basketName);
   const canSubmit = Boolean(
-    impact && nameMatches && reason.trim() && !busy && !impactQuery.isError
+    impact && nameMatches && reason.trim() && !busy && !impactQuery.isError && !saved
   );
   const mutationError = mutation.error;
   const mutationErrorMessage =
@@ -882,7 +723,7 @@ function PermanentDeleteBasketDialog({
       eyebrow="Irrecoverable action"
       description={`“${impact?.basketName ?? basket.name}” and everything inside it will be permanently deleted. This cannot be undone.`}
       onClose={onClose}
-      busy={mutation.isPending}
+      busy={mutation.isPending || refreshing}
       role="alertdialog"
     >
       <form
@@ -893,9 +734,10 @@ function PermanentDeleteBasketDialog({
         }}
       >
         <div className="knowledge-dialog-body knowledge-basket-delete">
-          {impactQuery.isPending ? (
+          {refreshError ? <InlineMessage tone="warning" title="Main Basket deleted" role="status">{refreshError}</InlineMessage> : null}
+          {!saved && impactQuery.isPending ? (
             <PageState state="loading" message="Checking whether this basket can be deleted…" />
-          ) : impactQuery.isError ? (
+          ) : !saved && impactQuery.isError ? (
             <PageState
               state="error"
               message={errorMessage(impactQuery.error)}
@@ -904,7 +746,7 @@ function PermanentDeleteBasketDialog({
                 onAction: () => void retryImpact()
               }}
             />
-          ) : impact ? (
+          ) : !saved && impact ? (
             <BasketDeletionImpactSummary impact={impact} />
           ) : null}
 
@@ -924,7 +766,7 @@ function PermanentDeleteBasketDialog({
             </InlineMessage>
           ) : null}
 
-          {impact ? (
+          {impact && !saved ? (
             <>
               <Field
                 id="basket-delete-confirmation-name"
@@ -961,10 +803,10 @@ function PermanentDeleteBasketDialog({
           ) : null}
         </div>
         <div className="knowledge-dialog-actions">
-          <Button type="button" variant="quiet" onClick={onClose}>
-            Cancel
+          <Button type="button" variant={saved ? "quiet" : "destructive-outline"} onClick={onClose} disabled={mutation.isPending || refreshing}>
+            {saved ? "Done" : "Cancel"}
           </Button>
-          <Button
+          {saved ? <Button variant="secondary" busy={refreshing} onClick={() => void finishDeletion(saved)}>Retry catalog refresh</Button> : <Button
             type="submit"
             variant="destructive"
             busy={mutation.isPending}
@@ -972,7 +814,7 @@ function PermanentDeleteBasketDialog({
             disabled={!canSubmit}
           >
             Delete
-          </Button>
+          </Button>}
         </div>
       </form>
     </Dialog>
@@ -1079,32 +921,44 @@ function BasketEditorDialog({ existing, onClose, onCreated }: {
   const [description, setDescription] = useState(existing?.description ?? "");
   const [displayOrder, setDisplayOrder] = useState(String(existing?.displayOrder ?? ""));
   const [status, setStatus] = useState<"active" | "inactive">(existing?.status === "inactive" ? "inactive" : "active");
+  const [saved, setSaved] = useState<KnowledgeBasket | null>(null);
+  const [refreshError, setRefreshError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
   const displayOrderValid = !existing || (
     displayOrder.trim() !== "" &&
     Number.isSafeInteger(Number(displayOrder)) &&
     Number(displayOrder) >= 0
   );
+  async function finishSave(basket: KnowledgeBasket) {
+    setRefreshing(true);
+    setRefreshError("");
+    try { await onCreated(basket); }
+    catch { setRefreshError("The Main Basket was saved, but the catalog could not refresh. Retry the refresh to see the latest list."); }
+    finally { setRefreshing(false); }
+  }
   const mutation = useMutation({
     mutationFn: () => existing
       ? updateKnowledgeBasket(existing.id, { expectedVersion: existing.version, name, description: description.trim() || null, displayOrder: Number(displayOrder), status })
       : createKnowledgeBasket({ name }),
-    onSuccess: onCreated
+    onSuccess: async (basket) => { setSaved(basket); await finishSave(basket); }
   });
+  const busy = mutation.isPending || refreshing;
   return (
-    <ContextPanel title={existing ? "Edit main basket" : "Add main basket"} eyebrow="Estimation configuration" onClose={onClose} busy={mutation.isPending}
+    <ContextPanel title={existing ? "Edit main basket" : "Add main basket"} eyebrow="Estimation configuration" onClose={onClose} busy={busy}
       width="medium"
       className="knowledge-context-panel"
-      dirty={name !== (existing?.name ?? "") || description !== (existing?.description ?? "") || displayOrder !== String(existing?.displayOrder ?? "") || status !== (existing?.status === "inactive" ? "inactive" : "active")}
-      footer={({ requestClose }) => (<div className="knowledge-dialog-actions"><Button type="button" variant="quiet" onClick={requestClose}>Cancel</Button><Button type="submit" form={formId} busy={mutation.isPending} disabled={!name.trim() || !displayOrderValid}>{existing ? "Save basket" : "Add main basket"}</Button></div>)}>
-      <form id={formId} className="knowledge-dialog-form" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
+      dirty={!saved && (name !== (existing?.name ?? "") || description !== (existing?.description ?? "") || displayOrder !== String(existing?.displayOrder ?? "") || status !== (existing?.status === "inactive" ? "inactive" : "active"))}
+      footer={({ requestClose }) => (<div className="knowledge-dialog-actions"><Button type="button" variant={saved ? "quiet" : "destructive-outline"} onClick={requestClose}>{saved ? "Done" : "Cancel"}</Button>{saved ? <Button variant="secondary" busy={busy} onClick={() => void finishSave(saved)}>Retry catalog refresh</Button> : <Button type="submit" form={formId} busy={busy} disabled={!name.trim() || !displayOrderValid}>{existing ? "Save basket" : "Add main basket"}</Button>}</div>)}>
+      <form id={formId} className="knowledge-dialog-form" onSubmit={(event) => { event.preventDefault(); if (!saved && !busy && name.trim() && displayOrderValid) mutation.mutate(); }}>
         <div className="knowledge-dialog-body">
+          {refreshError ? <InlineMessage tone="warning" title="Main Basket saved" role="status">{refreshError}</InlineMessage> : null}
           {mutation.error ? <InlineMessage tone="error" role="alert">{mutation.error.message}</InlineMessage> : null}
-          <Field id="basket-name" label="Basket name" required>{(props) => <Input {...props} value={name} onChange={(event) => setName(event.target.value)} />}</Field>
-          {existing ? <Field id="basket-description" label="Description" hint="Optional context shown alongside the basket in the knowledge base.">{(props) => <Textarea {...props} value={description} onChange={(event) => setDescription(event.target.value)} />}</Field> : null}
+          <Field id="basket-name" label="Basket name" required>{(props) => <Input {...props} value={name} disabled={busy || Boolean(saved)} onChange={(event) => setName(event.target.value)} />}</Field>
+          {existing ? <Field id="basket-description" label="Description" hint="Optional context shown alongside the basket in the knowledge base.">{(props) => <Textarea {...props} value={description} disabled={busy || Boolean(saved)} onChange={(event) => setDescription(event.target.value)} />}</Field> : null}
           {existing ? (
             <div className="knowledge-form-grid">
-              <Field id="basket-order" label="Display order" required hint="Lower numbers appear first.">{(props) => <Input {...props} type="number" min={0} step={1} value={displayOrder} onChange={(event) => setDisplayOrder(event.target.value)} />}</Field>
-              <Field id="basket-status" label="Status">{(props) => <Select {...props} value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="active">Active</option><option value="inactive">Inactive</option></Select>}</Field>
+              <Field id="basket-order" label="Display order" required hint="Lower numbers appear first.">{(props) => <Input {...props} type="number" min={0} step={1} value={displayOrder} disabled={busy || Boolean(saved)} onChange={(event) => setDisplayOrder(event.target.value)} />}</Field>
+              <Field id="basket-status" label="Status">{(props) => <Select {...props} value={status} disabled={busy || Boolean(saved)} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="active">Active</option><option value="inactive">Inactive</option></Select>}</Field>
             </div>
           ) : null}
         </div>

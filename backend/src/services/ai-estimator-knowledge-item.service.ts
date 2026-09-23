@@ -106,13 +106,30 @@ export interface KnowledgeMainLineInput {
   readonly displayOrder?: number;
 }
 
+export interface KnowledgeDraftSubBasketGuard {
+  readonly subBasketId: string;
+  readonly expectedVersion: number;
+}
+
+export interface KnowledgeDraftItemGuard {
+  readonly basketId: string;
+  readonly subBasketId: null;
+}
+
 export interface KnowledgeMainLineUpdateInput extends Partial<Omit<KnowledgeMainLineInput, "subBasketId" | "subBasketName" | "itemType">> {
   readonly expectedVersion: number;
+  readonly draftSubBasketGuard?: KnowledgeDraftSubBasketGuard;
+  readonly draftItemGuard?: KnowledgeDraftItemGuard;
 }
 
 export interface KnowledgeExpectedVersionInput {
   readonly expectedVersion: number;
   readonly reason?: string;
+}
+
+export interface KnowledgeMainLineDeleteInput extends KnowledgeExpectedVersionInput {
+  readonly draftSubBasketGuard?: KnowledgeDraftSubBasketGuard;
+  readonly draftItemGuard?: KnowledgeDraftItemGuard;
 }
 
 export interface KnowledgeSectionUpdateInput {
@@ -167,7 +184,7 @@ export interface AiEstimatorKnowledgeItemService {
   permanentlyDeleteMainLine(
     actor: PublicUser,
     mainLineId: string,
-    input: KnowledgeExpectedVersionInput
+    input: KnowledgeMainLineDeleteInput
   ): Promise<AiEstimatorKnowledgeMainLineDeletionResult>;
   listItems(
     actor: PublicUser,
@@ -256,7 +273,7 @@ export function createAiEstimatorKnowledgeItemService(
     async createMainLine(actor, basketId, input) {
       if (input.itemType !== undefined && !["main_line", "temporary"].includes(input.itemType)) throw new ApiError(400, "VALIDATION_ERROR", "Select a valid item type.");
       const mainLineId = knowledgeId("main-line", uuid());
-      await mongoose.connection.transaction(async (session) => {
+      await withItemCreationTransaction(async (session) => {
         const storedActor = await actorGuard.requireMutationActor(actor, session);
         await coordinateMainLineBasketDependency(basketId, session);
         const occurredAt = now();
@@ -265,10 +282,8 @@ export function createAiEstimatorKnowledgeItemService(
         if (input.subBasketId !== undefined && input.subBasketName !== undefined) {
           throw new ApiError(400, "VALIDATION_ERROR", "Provide either a Sub Basket name or ID, not both.");
         }
-        if (input.subBasketId !== undefined || input.subBasketName !== undefined) {
-          const activeParent = await AiEstimatorKnowledgeBasketModel.exists({ _id: basketId, status: "active" }).session(session);
-          if (!activeParent) throw new ApiError(400, "VALIDATION_ERROR", "Select an active Main Basket.");
-        }
+        const activeParent = await AiEstimatorKnowledgeBasketModel.exists({ _id: basketId, status: "active" }).session(session);
+        if (!activeParent) throw new ApiError(400, "VALIDATION_ERROR", "Select an active Main Basket.", { basketId: "Select an active Main Basket." });
         if (input.subBasketName !== undefined) {
           const subBasketName = typeof input.subBasketName === "string"
             ? input.subBasketName.normalize("NFKC").trim().replace(/\s+/gu, " ") : "";
@@ -296,6 +311,15 @@ export function createAiEstimatorKnowledgeItemService(
         } else if (subBasketId !== null) {
           const child = await AiEstimatorKnowledgeSubBasketModel.exists({ _id: subBasketId, basketId }).session(session);
           if (!child) throw new ApiError(400, "VALIDATION_ERROR", "Select a Sub Basket belonging to the active Main Basket.", { subBasketId: "Sub Basket is unavailable for this Main Basket." });
+        }
+        if (subBasketId !== null) {
+          await advanceDirectSubBasketAggregate({
+            subBasketId,
+            basketId,
+            actorId: storedActor.id,
+            occurredAt,
+            session
+          });
         }
         const revisionId = knowledgeId("revision", uuid());
         const completeness = emptyCompleteness(mainLineId, input.itemType);
@@ -334,7 +358,7 @@ export function createAiEstimatorKnowledgeItemService(
             updatedAt: occurredAt
           }],
           { session }
-        );
+        ).catch(rethrowMainLineIdentityConflict);
         await AiEstimatorKnowledgeRevisionModel.create(
           [{
             _id: revisionId,
@@ -373,7 +397,7 @@ export function createAiEstimatorKnowledgeItemService(
             actorId: storedActor.id, action: "ai_estimator_knowledge_sub_basket_created",
             entityType: "ai_estimator_knowledge_sub_basket", entityId: subBasketId!,
             occurredAt: occurredAt.toISOString(),
-            newValues: { basketId, displayOrder: createdSubBasketOrder, version: 1 }
+            newValues: { basketId, displayOrder: createdSubBasketOrder, version: 2 }
           }, session);
         }
         await dependencies.audit.appendInMongoTransaction({
@@ -391,15 +415,28 @@ export function createAiEstimatorKnowledgeItemService(
     async updateMainLine(actor, mainLineId, input) {
       await mongoose.connection.transaction(async (session) => {
         const storedActor = await actorGuard.requireMutationActor(actor, session);
+        validateInlineItemMutationGuards(input);
+        if ((input.draftItemGuard || input.draftSubBasketGuard)
+          && input.name === undefined && input.description === undefined && input.displayOrder === undefined) {
+          invalid("name", "Change at least one item field before saving.");
+        }
         const current = asRow(
           await AiEstimatorKnowledgeMainLineModel.findById(mainLineId)
             .session(session)
             .lean()
             .exec()
         );
-        if (!current || current.status === "archived") notFound();
+        if (!current || (!input.draftItemGuard && current.status === "archived")) notFound();
         if (requiredInteger(current.version) !== input.expectedVersion) versionConflict();
+        assertDraftItemGuard(current, input.draftItemGuard);
         const occurredAt = now();
+        const subBasketAdvance = await advanceDirectSubBasketAggregateForLine({
+          line: current,
+          guard: input.draftSubBasketGuard,
+          actorId: storedActor.id,
+          occurredAt,
+          session
+        });
         const set: Row = {
           updatedById: storedActor.id,
           updatedAt: occurredAt
@@ -424,7 +461,7 @@ export function createAiEstimatorKnowledgeItemService(
           { _id: mainLineId, version: input.expectedVersion, status: { $ne: "archived" } },
           { $set: set, $inc: { version: 1 } },
           { new: true, runValidators: true, session }
-        ).lean().exec();
+        ).lean().exec().catch(rethrowMainLineIdentityConflict);
         if (!updated) versionConflict();
         await dependencies.audit.appendInMongoTransaction({
           actorId: storedActor.id,
@@ -434,12 +471,26 @@ export function createAiEstimatorKnowledgeItemService(
           occurredAt: occurredAt.toISOString(),
           oldValues: {
             version: input.expectedVersion,
+            ...(String(current.name) === String(asRow(updated)!.name) ? {} : { name: String(current.name) }),
+            ...(subBasketAdvance === null
+              ? {}
+              : {
+                  subBasketId: subBasketAdvance.subBasketId,
+                  subBasketVersion: subBasketAdvance.previousVersion
+                }),
             ...(input.displayOrder === undefined
               ? {}
               : { displayOrder: requiredInteger(current.displayOrder) })
           },
           newValues: {
             version: input.expectedVersion + 1,
+            ...(String(current.name) === String(asRow(updated)!.name) ? {} : { name: String(asRow(updated)!.name) }),
+            ...(subBasketAdvance === null
+              ? {}
+              : {
+                  subBasketId: subBasketAdvance.subBasketId,
+                  subBasketVersion: subBasketAdvance.version
+                }),
             ...(input.displayOrder === undefined
               ? {}
               : { displayOrder: input.displayOrder })
@@ -453,6 +504,7 @@ export function createAiEstimatorKnowledgeItemService(
       let deletedAt = "";
       await mongoose.connection.transaction(async (session) => {
         const storedActor = await actorGuard.requireMutationActor(actor, session);
+        validateInlineItemMutationGuards(input);
         const current = asRow(
           await AiEstimatorKnowledgeMainLineModel.findById(mainLineId)
             .session(session)
@@ -461,6 +513,27 @@ export function createAiEstimatorKnowledgeItemService(
         );
         if (!current) notFound();
         /*
+         * Preserve the established main-workspace contract: active items must
+         * be deactivated before deletion even when the caller holds a stale
+         * item version. Guarded drawer mutations use the aggregate guard and
+         * keep their stricter CAS/frozen ordering below.
+         */
+        if (!input.draftSubBasketGuard && !input.draftItemGuard && current.status === "active") {
+          throw new ApiError(409, "ACTIVE_ITEM", "Deactivate the estimation item before deleting it.");
+        }
+        if (requiredInteger(current.version) !== input.expectedVersion) versionConflict();
+        assertDraftItemGuard(current, input.draftItemGuard);
+        const occurredAt = now();
+        const subBasketAdvance = input.draftSubBasketGuard
+          ? await advanceDirectSubBasketAggregateForLine({
+              line: current,
+              guard: input.draftSubBasketGuard,
+              actorId: storedActor.id,
+              occurredAt,
+              session
+            })
+          : null;
+        /*
          * An active Main Line is still resolving through the context service.
          * Deactivating first is what takes it out of circulation, so that stays
          * the gate; deletion only removes something already out of use.
@@ -468,7 +541,12 @@ export function createAiEstimatorKnowledgeItemService(
         if (current.status === "active") {
           throw new ApiError(409, "ACTIVE_ITEM", "Deactivate the estimation item before deleting it.");
         }
-        if (requiredInteger(current.version) !== input.expectedVersion) versionConflict();
+        const coordinatedSubBasket = subBasketAdvance ?? await advanceDirectSubBasketAggregateForLine({
+          line: current,
+          actorId: storedActor.id,
+          occurredAt,
+          session
+        });
 
         const deleted = await AiEstimatorKnowledgeMainLineModel.deleteOne({
           _id: mainLineId,
@@ -483,7 +561,6 @@ export function createAiEstimatorKnowledgeItemService(
           session
         );
 
-        const occurredAt = now();
         deletedAt = occurredAt.toISOString();
         await dependencies.audit.appendInMongoTransaction({
           actorId: storedActor.id,
@@ -497,6 +574,12 @@ export function createAiEstimatorKnowledgeItemService(
             name: String(current.name),
             status: String(current.status),
             version: input.expectedVersion,
+            ...(coordinatedSubBasket === null
+              ? {}
+              : {
+                  subBasketVersion: coordinatedSubBasket.previousVersion,
+                  resultingSubBasketVersion: coordinatedSubBasket.version
+                }),
             deletedRevisionCount: cascade.revisions,
             deletedSectionCount: cascade.sections,
             deletedPriceVersionCount: cascade.priceVersions,
@@ -624,6 +707,7 @@ export function createAiEstimatorKnowledgeItemService(
           remapPriceEntryIds: false
         });
         const copiedSections = copyRevisionSections(sourceSections, priceReferences, uuid, false);
+        await coordinateCopiedBasketReferences(copiedSections, session);
         await coordinateCopiedSurfaceReferences(copiedSections, session, false);
         const completeness = completenessForRows(mainLineId, copiedSections);
         await AiEstimatorKnowledgeRevisionModel.create([{
@@ -859,6 +943,12 @@ export function createAiEstimatorKnowledgeItemService(
           });
         }
         const occurredAt = now();
+        await advanceDirectSubBasketAggregateForLine({
+          line,
+          actorId: storedActor.id,
+          occurredAt,
+          session
+        });
         const activeRevisionId = optionalString(line.activeRevisionId);
         if (activeRevisionId) {
           const superseded = await AiEstimatorKnowledgeRevisionModel.findOneAndUpdate(
@@ -932,7 +1022,22 @@ export function createAiEstimatorKnowledgeItemService(
     async deactivate(actor, mainLineId, input) {
       await mongoose.connection.transaction(async (session) => {
         const storedActor = await actorGuard.requireMutationActor(actor, session);
+        const line = asRow(
+          await AiEstimatorKnowledgeMainLineModel.findById(mainLineId)
+            .session(session)
+            .lean()
+            .exec()
+        );
+        if (!line || requiredInteger(line.version) !== input.expectedVersion || line.status !== "active") {
+          versionConflict();
+        }
         const occurredAt = now();
+        await advanceDirectSubBasketAggregateForLine({
+          line,
+          actorId: storedActor.id,
+          occurredAt,
+          session
+        });
         const updated = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
           { _id: mainLineId, version: input.expectedVersion, status: "active" },
           {
@@ -997,6 +1102,12 @@ export function createAiEstimatorKnowledgeItemService(
         const duplicateName = input.name?.trim() || `${requiredString(source.name)} Copy`;
         const basketId = requiredString(source.basketId);
         await coordinateMainLineBasketDependency(basketId, session);
+        await advanceDirectSubBasketAggregateForLine({
+          line: source,
+          actorId: storedActor.id,
+          occurredAt,
+          session
+        });
         const displayOrder = await allocateAiEstimatorKnowledgeDisplayOrder({
           scope: createAiEstimatorKnowledgeMainLineDisplayOrderScope(basketId),
           resourceModel: AiEstimatorKnowledgeMainLineModel,
@@ -2324,6 +2435,166 @@ interface RevisionRelationshipValidationContext {
   readonly previousPayload: Row;
 }
 
+function validateInlineItemMutationGuards(input: {
+  readonly expectedVersion: number;
+  readonly draftItemGuard?: KnowledgeDraftItemGuard;
+  readonly draftSubBasketGuard?: KnowledgeDraftSubBasketGuard;
+}): void {
+  if (input.draftItemGuard !== undefined && input.draftSubBasketGuard !== undefined) {
+    invalid("draftItemGuard", "Use only one inline item guard.");
+  }
+  if (input.draftItemGuard === undefined) return;
+  const guard = asRow(input.draftItemGuard);
+  if (!guard || Object.keys(guard).length !== 2
+    || !Object.hasOwn(guard, "basketId") || !Object.hasOwn(guard, "subBasketId")
+    || typeof guard.basketId !== "string" || guard.basketId.trim().length === 0
+    || guard.basketId.length > 128 || guard.basketId !== guard.basketId.trim()
+    || guard.subBasketId !== null) {
+    invalid("draftItemGuard", "Identify the Main Basket and a null Sub Basket for this direct item.");
+  }
+  if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1) {
+    invalid("expectedVersion", "Enter a valid item version.");
+  }
+}
+
+function assertDraftItemGuard(line: Row, guard: KnowledgeDraftItemGuard | undefined): void {
+  if (!guard) return;
+  if (line.basketId !== guard.basketId || optionalString(line.subBasketId) !== undefined) {
+    throw new ApiError(409, "ITEM_PARENT_MISMATCH", "The item no longer belongs directly to the selected Main Basket.");
+  }
+  if (line.status !== "draft") {
+    throw new ApiError(409, "ITEM_FROZEN", "This item is frozen because it is no longer Draft.");
+  }
+}
+
+function rethrowMainLineIdentityConflict(error: unknown): never {
+  const failure = asRow(error);
+  const pattern = asRow(failure?.keyPattern);
+  if (failure?.code === 11000 && pattern?.basketId === 1 && pattern.nameNormalized === 1 && Object.keys(pattern).length === 2) {
+    throw new ApiError(409, "DUPLICATE_IDENTITY", "An item in this Main Basket already uses that name.", {
+      name: "Choose a different item name within this Main Basket."
+    });
+  }
+  throw error;
+}
+
+/** Creation owns only fresh local documents; no document state survives a retry.
+ * Use the driver's transaction wrapper, as the reference service does, so an
+ * abort cannot be replaced by Mongoose resetting embedded revision documents'
+ * disabled version keys. Mongo atomicity and transient-error retries remain.
+ */
+async function withItemCreationTransaction(operation: (session: ClientSession) => Promise<void>): Promise<void> {
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(() => operation(session));
+  } finally {
+    await session.endSession();
+  }
+}
+
+interface SubBasketAggregateAdvance {
+  readonly subBasketId: string;
+  readonly previousVersion: number;
+  readonly version: number;
+}
+
+async function advanceDirectSubBasketAggregateForLine(input: {
+  readonly line: Row;
+  readonly guard?: KnowledgeDraftSubBasketGuard;
+  readonly actorId: string;
+  readonly occurredAt: Date;
+  readonly session: ClientSession;
+}): Promise<SubBasketAggregateAdvance | null> {
+  const subBasketId = optionalString(input.line.subBasketId);
+  const basketId = requiredString(input.line.basketId);
+  if (input.guard) {
+    if (subBasketId !== input.guard.subBasketId) subBasketParentMismatch();
+    if (!Number.isSafeInteger(input.guard.expectedVersion) || input.guard.expectedVersion < 1) {
+      invalid("draftSubBasketGuard.expectedVersion", "Enter a valid Sub Basket version.");
+    }
+    return advanceDirectSubBasketAggregate({
+      subBasketId: input.guard.subBasketId,
+      basketId,
+      expectedVersion: input.guard.expectedVersion,
+      requireEveryChildDraft: true,
+      actorId: input.actorId,
+      occurredAt: input.occurredAt,
+      session: input.session
+    });
+  }
+  if (!subBasketId) return null;
+  return advanceDirectSubBasketAggregate({
+    subBasketId,
+    basketId,
+    actorId: input.actorId,
+    occurredAt: input.occurredAt,
+    session: input.session
+  });
+}
+
+async function advanceDirectSubBasketAggregate(input: {
+  readonly subBasketId: string;
+  readonly basketId: string;
+  readonly expectedVersion?: number;
+  readonly requireEveryChildDraft?: boolean;
+  readonly actorId: string;
+  readonly occurredAt: Date;
+  readonly session: ClientSession;
+}): Promise<SubBasketAggregateAdvance | null> {
+  const current = asRow(
+    await AiEstimatorKnowledgeSubBasketModel.findById(input.subBasketId)
+      .session(input.session)
+      .lean()
+      .exec()
+  );
+  if (!current) {
+    if (input.expectedVersion !== undefined) notFound();
+    return null;
+  }
+  if (requiredString(current.basketId) !== input.basketId) {
+    if (input.expectedVersion !== undefined) subBasketParentMismatch();
+    return null;
+  }
+  const previousVersion = requiredInteger(current.version);
+  if (input.expectedVersion !== undefined && previousVersion !== input.expectedVersion) versionConflict();
+
+  if (input.requireEveryChildDraft) {
+    const frozenChild = await AiEstimatorKnowledgeMainLineModel.exists({
+      basketId: input.basketId,
+      subBasketId: input.subBasketId,
+      status: { $ne: "draft" }
+    }).session(input.session);
+    if (frozenChild) subBasketFrozen();
+  }
+
+  const updated = asRow(
+    await AiEstimatorKnowledgeSubBasketModel.findOneAndUpdate(
+      {
+        _id: input.subBasketId,
+        basketId: input.basketId,
+        ...(input.expectedVersion === undefined ? {} : { version: input.expectedVersion })
+      },
+      {
+        $set: {
+          updatedById: input.actorId,
+          updatedAt: input.occurredAt
+        },
+        $inc: { version: 1 }
+      },
+      { returnDocument: "after", runValidators: true, session: input.session }
+    ).lean().exec()
+  );
+  if (!updated) {
+    if (input.expectedVersion !== undefined) versionConflict();
+    return null;
+  }
+  return {
+    subBasketId: input.subBasketId,
+    previousVersion,
+    version: requiredInteger(updated.version)
+  };
+}
+
 async function coordinateMainLineBasketDependency(
   basketId: string,
   session: ClientSession
@@ -2347,12 +2618,14 @@ async function coordinateNewBasketReferences(
   nextPayload: Row,
   session: ClientSession
 ): Promise<void> {
-  const priorIds = basketTargetIds(sectionKey, priorPayload);
-  const nextIds = basketTargetIds(sectionKey, nextPayload);
-  await coordinateBasketDependencies(
-    new Set([...nextIds].filter((basketId) => !priorIds.has(basketId))),
-    session
-  );
+  // Every affected parent participates, including retained references, removals,
+  // inactive rules and retargeting within the same Basket. Deletion uses this
+  // same parent write before checking its confirmed impact snapshot.
+  const basketIds = await relationshipBasketIds([
+    { sectionKey, payload: priorPayload },
+    { sectionKey, payload: nextPayload }
+  ], session);
+  await coordinateBasketDependencies(basketIds, session);
 }
 
 async function coordinateNewModeConfigurationReferences(
@@ -2528,14 +2801,36 @@ async function coordinateCopiedBasketReferences(
   rows: Row[],
   session: ClientSession
 ): Promise<void> {
+  await coordinateBasketDependencies(await relationshipBasketIds(rows, session), session);
+}
+
+async function relationshipBasketIds(rows: Row[], session: ClientSession): Promise<Set<string>> {
   const basketIds = new Set<string>();
+  const mainLineIds = new Set<string>();
+  const subBasketIds = new Set<string>();
   for (const row of rows) {
-    const sectionKey = requiredString(row.sectionKey) as KnowledgeSectionKey;
-    for (const basketId of basketTargetIds(sectionKey, payloadFor(row))) {
-      basketIds.add(basketId);
+    const payload = payloadFor(row);
+    for (const field of ["exclusions", "dependencies", "recommendations", "budgetAlterations"] as const) {
+      for (const relation of structuredRows(payload[field])) {
+        addOptionalId(basketIds, relation.targetBasketId);
+        addOptionalId(mainLineIds, relation.targetMainLineId);
+        addOptionalId(subBasketIds, relation.targetSubBasketId);
+      }
     }
   }
-  await coordinateBasketDependencies(basketIds, session);
+  // Older relationships may contain only a child ID. Resolve its parent so
+  // they use the same deletion lock as newer fully-qualified targets.
+  if (mainLineIds.size) {
+    const lines = await AiEstimatorKnowledgeMainLineModel.find({ _id: { $in: [...mainLineIds] } })
+      .select({ basketId: 1 }).session(session).lean().exec();
+    for (const line of lines) addOptionalId(basketIds, line.basketId);
+  }
+  if (subBasketIds.size) {
+    const groups = await AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: [...subBasketIds] } })
+      .select({ basketId: 1 }).session(session).lean().exec();
+    for (const group of groups) addOptionalId(basketIds, group.basketId);
+  }
+  return basketIds;
 }
 
 async function coordinateCopiedSlabRateUomReferences(
@@ -2616,21 +2911,6 @@ async function coordinateBasketDependencies(
     ).select({ _id: 1 }).lean().exec();
     if (!basket) invalidKnowledgeReference("Basket");
   }
-}
-
-function basketTargetIds(sectionKey: KnowledgeSectionKey, payload: Row): Set<string> {
-  const candidates = sectionKey === "scope"
-    ? payload.exclusions
-    : sectionKey === "advanced"
-      ? payload.dependencies
-      : sectionKey === "recommendations"
-        ? payload.budgetAlterations
-      : null;
-  return new Set(
-    structuredRows(candidates)
-      .map((candidate) => optionalString(candidate.targetBasketId))
-      .filter((basketId): basketId is string => Boolean(basketId))
-  );
 }
 
 function legacyModeConfigurationIds(
@@ -3534,6 +3814,14 @@ function activeRowsForEnforcement(sectionKey: KnowledgeSectionKey, payload: unkn
 
 function versionConflict(): never {
   throw new ApiError(409, "VERSION_CONFLICT", "Estimation knowledge changed elsewhere.");
+}
+
+function subBasketFrozen(): never {
+  throw new ApiError(409, "SUB_BASKET_FROZEN", "This Sub Basket is frozen because one or more items are no longer Draft.");
+}
+
+function subBasketParentMismatch(): never {
+  throw new ApiError(409, "SUB_BASKET_PARENT_MISMATCH", "The estimation item no longer belongs to the selected Sub Basket.");
 }
 
 function immutableHistory(): never {

@@ -11,6 +11,7 @@ import { KnowledgeBaseIndexPage } from "./KnowledgeBaseIndexPage";
 import { KnowledgeItemWorkspacePage } from "./KnowledgeItemWorkspacePage";
 import { KnowledgeReusableValuesPage } from "./KnowledgeReusableValuesPage";
 import * as knowledgeApi from "./knowledgeApi";
+import { commitKnowledgeMainLineMutation } from "./knowledgeMutationSync";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import type {
   KnowledgeCompleteness,
@@ -46,6 +47,9 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     createKnowledgeSurface: vi.fn(),
     getKnowledgeItem: vi.fn(),
     updateKnowledgeMainLine: vi.fn(),
+    permanentlyDeleteKnowledgeMainLine: vi.fn(),
+    getKnowledgeSubBasketDeletionImpact: vi.fn(),
+    permanentlyDeleteKnowledgeSubBasket: vi.fn(),
     getKnowledgeHistory: vi.fn(),
     getKnowledgeSection: vi.fn(),
     getKnowledgeBasketQuality: vi.fn(),
@@ -476,6 +480,153 @@ describe("workspace hierarchy summary", () => {
     expectSummary();
   });
 
+  it("retains a clean saved rule for explicit repair when removing its temporary target", async () => {
+    setupRecommendations();
+    const temporaryRule = { ...rule, targetType: "temporary" };
+    const temporary = { ...item, id: "target-2", mainLineId: "target-2", mainLineName: "Temporary light", itemType: "temporary" as const, completionRequired: true, subBasketId: null };
+    let removed = false;
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockImplementation(async () => ({ items: removed ? [] : [temporary], pagination: { ...page, total: removed ? 0 : 1 } }));
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => section(key, key === "recommendations" ? {
+      ...savedPayload, budgetAlterations: removed ? [] : [temporaryRule]
+    } : {}, removed ? 3 : 2));
+    vi.mocked(knowledgeApi.permanentlyDeleteKnowledgeMainLine).mockImplementation(async () => {
+      removed = true;
+      return { basketId: "basket-1", mainLineId: "target-2", deleted: true, deletedAt: item.updatedAt };
+    });
+    const user = userEvent.setup();
+    const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await doneFocusedEditing(user);
+    await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    await openRecommendationEditor(user);
+    expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Remove item" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Remove Temporary light?" });
+    await user.click(within(dialog).getByRole("button", { name: "Remove permanently" }));
+    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(queryClient.getQueryData<KnowledgeSectionEnvelope>(knowledgeQueryKeys.section("line-1", "revision-1", "recommendations"))?.version).toBe(3);
+    expect(screen.getByRole("dialog", { name: "Edit scope rule 1" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Why is this change needed?" })).toHaveValue(rule.reason);
+    expect(screen.getByRole("combobox", { name: "Related item" })).toHaveValue("target-2");
+    expect(screen.getByText("Unsaved changes")).toBeVisible();
+    await doneFocusedEditing(user);
+    await user.click(screen.getByRole("button", { name: "Save Recommendation & Exclusions" }));
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog", { name: "This section changed elsewhere" })).not.toBeInTheDocument();
+    expect(screen.getAllByText("Choose an available related item or remove this rule before saving.").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Existing exclusion|Untouched exclusion/)).toBeInTheDocument();
+  });
+
+  it.each([
+    { kind: "sub_basket", dirty: false, empty: false },
+    { kind: "sub_basket", dirty: true, empty: true },
+    { kind: "main_line", dirty: true, empty: false }
+  ] as const)("preserves the $kind rule after group removal (dirty=$dirty, empty=$empty)", async ({ kind, dirty, empty }) => {
+    setupRecommendations();
+    const group = { ...squareFoot, id: "group-remove", basketId: "basket-1", name: "test-sub1", version: 1 };
+    const groupRule = { ...rule, targetKind: kind, targetType: kind === "sub_basket" ? null : "temporary", targetSubBasketId: group.id, targetMainLineId: kind === "sub_basket" ? null : "target-2" };
+    const target = { ...item, id: "target-2", mainLineId: "target-2", mainLineName: "Lights", itemType: "temporary" as const, completionRequired: true, subBasketId: group.id, subBasketName: group.name };
+    let removed = false;
+    vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockImplementation(async () => ({ items: removed ? [] : [group], pagination: { ...page, total: removed ? 0 : 1 } }));
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockImplementation(async (params) => ({ items: params?.status === "archived" ? [] : [item, ...(!removed && !empty ? [target] : [])], pagination: { ...page, total: params?.status === "archived" ? 0 : removed || empty ? 1 : 2 } }));
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => section(key, key === "recommendations" ? { ...savedPayload, budgetAlterations: removed ? [] : [groupRule] } : {}, removed ? 3 : 2));
+    vi.mocked(knowledgeApi.getKnowledgeSubBasketDeletionImpact).mockResolvedValue({ basketId: "basket-1", subBasketId: group.id, subBasketName: group.name, version: 1, mainLineCount: empty ? 0 : 1, referenceCount: 1, impactToken: "a".repeat(64) });
+    vi.mocked(knowledgeApi.permanentlyDeleteKnowledgeSubBasket).mockImplementation(async () => {
+      removed = true;
+      return { basketId: "basket-1", subBasketId: group.id, deleted: true, deletedAt: item.updatedAt, deletedMainLineIds: empty ? [] : [target.mainLineId], deletedReferenceCount: 1 };
+    });
+    const user = userEvent.setup();
+    const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await doneFocusedEditing(user);
+    await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    await openRecommendationEditor(user);
+    if (dirty) await user.type(screen.getByRole("textbox", { name: "Why is this change needed?" }), " local edit");
+    else expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Remove Sub-Basket test-sub1" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Remove Sub-Basket?" });
+    await user.type(await within(dialog).findByRole("textbox", { name: "Type Sub-Basket name to confirm" }), group.name);
+    await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), "Obsolete draft group");
+    await user.click(within(dialog).getByRole("button", { name: "Remove permanently" }));
+    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(knowledgeApi.permanentlyDeleteKnowledgeSubBasket).toHaveBeenCalledTimes(1);
+    expect(knowledgeApi.permanentlyDeleteKnowledgeSubBasket).toHaveBeenCalledWith("basket-1", group.id, expect.objectContaining({ draftOnly: true }));
+    expect(queryClient.getQueryData<KnowledgeSectionEnvelope>(knowledgeQueryKeys.section("line-1", "revision-1", "recommendations"))?.version).toBe(3);
+    expect(screen.getByRole("dialog", { name: "Edit scope rule 1" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Why is this change needed?" })).toHaveValue(`${rule.reason}${dirty ? " local edit" : ""}`);
+    expect(screen.getByRole("combobox", { name: "Sub Basket" })).toHaveValue(group.id);
+    if (kind === "main_line") expect(screen.getByRole("combobox", { name: "Related item" })).toHaveValue(target.mainLineId);
+    expect(screen.getByText("Unsaved changes")).toBeVisible();
+    await doneFocusedEditing(user);
+    await user.click(screen.getByRole("button", { name: "Save Recommendation & Exclusions" }));
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog", { name: "This section changed elsewhere" })).not.toBeInTheDocument();
+    expect(screen.getAllByText(kind === "main_line" ? "Choose an available related item or remove this rule before saving." : "Add at least one available sub-item or remove or retarget this Whole Sub-Basket rule before saving.").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Existing exclusion|Untouched exclusion/)).toBeInTheDocument();
+  });
+
+  it("requires explicit review before saving a local recommendation over a refreshed section", async () => {
+    setupRecommendations();
+    const user = userEvent.setup();
+    const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await doneFocusedEditing(user);
+    await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    await openRecommendationEditor(user);
+    await user.type(await screen.findByRole("textbox", { name: "Why is this change needed?" }), " local edit");
+    const newer = section("recommendations", {
+      ...savedPayload, budgetAlterations: [{ ...rule, reason: "Another editor's saved wording", action: "add" }]
+    }, 8);
+    await act(async () => {
+      queryClient.setQueryData(knowledgeQueryKeys.section("line-1", "revision-1", "recommendations"), newer);
+    });
+    await doneFocusedEditing(user);
+    const save = screen.getByRole("button", { name: "Save Recommendation & Exclusions" });
+    await user.click(save);
+    expect(await screen.findByRole("alertdialog", { name: "This section changed elsewhere" })).toHaveTextContent("You edited version 2, while the server now has version 8");
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    await user.click(save);
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Review server version" }));
+    expect(screen.getByRole("region", { name: "Latest Recommendation & Exclusions server version" })).toHaveTextContent("Another editor's saved wording");
+    await user.click(save);
+    expect(await screen.findByRole("alertdialog")).toBeVisible();
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Review server version" }));
+    await user.click(screen.getByRole("button", { name: "Use reviewed local changes" }));
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_id, _revision, key, input) => mutationSection(key, input.payload));
+    await user.click(save);
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith("line-1", "revision-1", "recommendations", expect.objectContaining({
+      expectedVersion: 8,
+      payload: expect.objectContaining({
+        budgetAlterations: [expect.objectContaining({ id: rule.id, action: rule.action, reason: `${rule.reason} local edit` })],
+        exclusions: savedPayload.exclusions
+      })
+    })));
+  });
+
+  it("does not treat review of one recommendation version as approval of a later refresh", async () => {
+    setupRecommendations();
+    const user = userEvent.setup();
+    const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await doneFocusedEditing(user);
+    await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    await openRecommendationEditor(user);
+    await user.type(await screen.findByRole("textbox", { name: "Why is this change needed?" }), " local edit");
+    const key = knowledgeQueryKeys.section("line-1", "revision-1", "recommendations");
+    await act(async () => { queryClient.setQueryData(key, section("recommendations", savedPayload, 8)); });
+    await doneFocusedEditing(user);
+    const save = screen.getByRole("button", { name: "Save Recommendation & Exclusions" });
+    await user.click(save);
+    await user.click(screen.getByRole("button", { name: "Review server version" }));
+    await act(async () => { queryClient.setQueryData(key, section("recommendations", savedPayload, 9)); });
+    await user.click(screen.getByRole("button", { name: "Use reviewed local changes" }));
+    await user.click(save);
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent("You edited version 8, while the server now has version 9");
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+  });
+
   it("keeps the hierarchy stable and retains edits made during the save refresh", async () => {
     setupRecommendations();
     const user = userEvent.setup();
@@ -648,6 +799,8 @@ describe("temporary item workspace", () => {
     const starter = within(related).getByRole("option", { name: "Recessed LED downlight · Ceiling lighting" }) as HTMLOptionElement;
     await user.selectOptions(related, starter.value);
     const dialog = screen.getByRole("dialog", { name: "Add related item" });
+    await within(dialog).findByRole("option", { name: lighting.name });
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Sub basket" }), lighting.id);
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "Add related item" })).toBeEnabled());
     await user.click(within(dialog).getByRole("button", { name: "Add related item" }));
     await waitFor(() => expect(related).toHaveValue(created.mainLineId));
@@ -687,7 +840,7 @@ describe("temporary item workspace", () => {
     await user.click(screen.getByRole("button", { name: "Add temporary item to Carpentry" }));
     const dialog = screen.getByRole("dialog", { name: "Add temporary item" });
     await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Main basket" })).toHaveValue("basket-1"));
-    expect(within(dialog).getByRole("textbox", { name: "Sub basket" })).not.toBeRequired();
+    expect(within(dialog).getByRole("combobox", { name: "Sub basket" })).not.toBeRequired();
     expect(within(dialog).getByRole("textbox", { name: "Temporary item name" })).toBeRequired();
   });
 
@@ -846,6 +999,128 @@ describe("AI estimator knowledge screens", () => {
     expect(await screen.findByRole("heading", { name: "TV Console", level: 1 })).toBeVisible();
     expect(screen.queryByRole("dialog", { name: "Edit Main Line" })).not.toBeInTheDocument();
     expect(screen.getByText("Main Line renamed to “TV Console”.")).toBeInTheDocument();
+  });
+
+  it("keeps cached workspace data visible when an inline catalog refresh fails and retries in place", async () => {
+    const user = userEvent.setup();
+    const linkedChild = {
+      mainLineId: "lights-line",
+      mainLineName: "Functional Lights Supply",
+      basketId: "basket-lights",
+      basketName: "Electrical",
+      subBasketId: "sub-lights",
+      subBasketName: "Functional Lights",
+      status: "draft" as const,
+      revisionId: "revision-lights",
+      revisionStatus: "draft" as const,
+      rules: [{
+        id: "rule-lights",
+        trigger: "removed" as const,
+        action: "remove" as const,
+        requirement: "must" as const,
+        reason: "Remove false ceiling lights with the ceiling",
+        active: true
+      }]
+    };
+    const source = { ...item, itemType: "temporary" as const, linkedMainLines: [linkedChild] };
+    const renamedChild = {
+      ...item,
+      id: linkedChild.mainLineId,
+      mainLineId: linkedChild.mainLineId,
+      mainLineName: "False Ceiling Lights",
+      basketId: linkedChild.basketId,
+      basketName: linkedChild.basketName,
+      subBasketId: linkedChild.subBasketId,
+      subBasketName: linkedChild.subBasketName,
+      version: 2
+    };
+    const refreshedSource = {
+      ...source,
+      linkedMainLines: [{ ...linkedChild, mainLineName: "Current False Ceiling Lights" }]
+    };
+    let sourceReads = 0;
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockImplementation(async (mainLineId) => {
+      if (mainLineId !== source.mainLineId) return renamedChild;
+      sourceReads += 1;
+      if (sourceReads === 1) return source;
+      if (sourceReads === 2) {
+        throw new ApiError(503, "UPSTREAM_UNAVAILABLE", "Item detail refresh unavailable.");
+      }
+      return refreshedSource;
+    });
+    const { queryClient } = renderRoute(
+      <KnowledgeItemWorkspacePage />,
+      "/admin/configuration/estimation/items/line-1",
+      "/admin/configuration/estimation/items/:itemId"
+    );
+
+    expect(await screen.findByRole("link", { name: "Functional Lights Supply" })).toBeVisible();
+    act(() => commitKnowledgeMainLineMutation(queryClient, renamedChild));
+    expect(await screen.findByRole("link", { name: "False Ceiling Lights" })).toBeVisible();
+
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.items() });
+    });
+
+    const warning = await screen.findByRole("status", { name: "Item refresh warning" });
+    expect(warning).toHaveTextContent("Latest item details unavailable");
+    expect(warning).toHaveTextContent("showing the last available item details");
+    expect(screen.getByRole("heading", { name: "Wall panelling", level: 1 })).toBeVisible();
+    expect(screen.getByRole("link", { name: "False Ceiling Lights" })).toBeVisible();
+    expect(screen.queryByText("Item detail refresh unavailable.")).not.toBeInTheDocument();
+    await expectNoAutomatedAccessibilityViolations();
+
+    await user.click(within(warning).getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByRole("link", { name: "Current False Ceiling Lights" })).toBeVisible();
+    await waitFor(() => expect(screen.queryByRole("status", { name: "Item refresh warning" })).not.toBeInTheDocument());
+    expect(sourceReads).toBe(3);
+  });
+
+  it.each([
+    { status: 401, code: "UNAUTHORIZED" },
+    { status: 403, code: "FORBIDDEN" },
+    { status: 404, code: "NOT_FOUND" }
+  ])("removes cached editable workspace data after a terminal $status refetch", async ({ status, code }) => {
+    let reads = 0;
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockImplementation(async () => {
+      reads += 1;
+      if (reads === 1) return item;
+      throw new ApiError(status, code, "Sensitive server detail");
+    });
+    const { queryClient } = renderRoute(
+      <KnowledgeItemWorkspacePage />,
+      "/admin/configuration/estimation/items/line-1",
+      "/admin/configuration/estimation/items/:itemId"
+    );
+
+    expect(await screen.findByRole("heading", { name: "Wall panelling", level: 1 })).toBeVisible();
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.item("line-1") });
+    });
+
+    expect(await screen.findByText("This estimation item is unavailable.")).toBeVisible();
+    expect(screen.queryByText("Sensitive server detail")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Wall panelling", level: 1 })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit Main Line" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Item refresh warning" })).not.toBeInTheDocument();
+  });
+
+  it("shows the terminal item error only when no cached workspace is available", async () => {
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockRejectedValue(
+      new ApiError(503, "UPSTREAM_UNAVAILABLE", "Item workspace unavailable.")
+    );
+
+    renderRoute(
+      <KnowledgeItemWorkspacePage />,
+      "/admin/configuration/estimation/items/line-1",
+      "/admin/configuration/estimation/items/:itemId"
+    );
+
+    expect(await screen.findByText("Item workspace unavailable.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Wall panelling", level: 1 })).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Item refresh warning" })).not.toBeInTheDocument();
   });
 
   it("shows a terminal empty state with no Save when the item has no revision", async () => {

@@ -94,6 +94,20 @@
   .dashboard-comparison-toggle input { width: 1rem; height: 1rem; accent-color: var(--color-brand-violet); }
   .dashboard-comparison-toggle:focus-within { outline: 3px solid var(--focus-ring-color); outline-offset: 2px; }
 
+  /*
+   * Header actions sat on three different baselines: .ui-page-header__actions
+   * centres its children, but .dashboard-period stacks its caption above the
+   * select and is therefore the tallest item, so the toggle had to opt out with
+   * align-self: end to line up. The Refresh control had no such override and
+   * floated above both. Aligning the row itself to one end baseline makes that
+   * opt-out redundant rather than load-bearing. The icon button also needs an
+   * explicit box: .ui-button carries min-block-size: var(--control-height) but
+   * .ui-icon-button carries no size at all, so Refresh rendered shorter than
+   * its neighbours. Scoped to this dashboard — .ui-icon-button is shared.
+   */
+  .super-admin-dashboard .ui-page-header__actions { align-items: end; }
+  .super-admin-dashboard .ui-page-header__actions .ui-icon-button { min-block-size: var(--control-height); min-inline-size: var(--control-height); }
+
   .dashboard-overview--echarts { gap: 1.25rem; }
   .dashboard-reporting-context {
     display: flex !important;
@@ -330,19 +344,12 @@
   }
 
   /* Buttons: Button.tsx renders .ui-button / .ui-button--primary /
-     .ui-button--secondary here, the equivalents of Estimator/Sales'
-     .button--primary / .button--secondary. */
+     .ui-button--secondary here. Colors, font and weight come from the shared
+     --button-* tokens; only layout is tuned for this dashboard. */
   .ui-app-shell[data-role="super_admin"] .super-admin-dashboard .ui-button {
     border-radius: var(--radius-control);
     box-shadow: none;
-    font-weight: var(--text-text2);
     font-size: var(--text-text2-size);
-  }
-  .ui-app-shell[data-role="super_admin"] .super-admin-dashboard .ui-button--primary {
-    color: var(--color-bg);
-  }
-  .ui-app-shell[data-role="super_admin"] .super-admin-dashboard .ui-button--secondary {
-    color: var(--color-text-strong);
   }
 
   /* Lisno Spatial Operations Atlas -------------------------------------- */

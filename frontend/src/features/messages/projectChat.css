@@ -176,7 +176,6 @@
 .ui-dialog:has(> .project-chat-form) .ui-dialog__header, .project-chat-details .ui-drawer__header { background: #f0f2f5; border-color: #dbe1e3; }
 .ui-dialog:has(> .project-chat-form) .ui-dialog__header .eyebrow, .project-chat-details .ui-drawer__eyebrow { color: #08705d; }
 .ui-dialog:has(> .project-chat-form) .ui-dialog__header h2, .project-chat-details .ui-drawer__header h2 { color: #111b21; font-family: inherit; font-size: 18px; }
-.project-chat-form .ui-button--primary, .project-chat-details .ui-button--primary { background: #087f69; color: #fff; border-color: #087f69; }
 .project-chat-form .ui-control { font-family: inherit; background: #fff; color: #111b21; }
 .project-chat-form :is(button,input,select,textarea):focus-visible, .project-chat-details :is(button,input,select,textarea):focus-visible { outline-color: #006b5d; }
 /* Attachments and local tools share the compact composer and media sizing rules. */

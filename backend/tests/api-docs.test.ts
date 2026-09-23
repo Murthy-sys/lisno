@@ -525,7 +525,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 237 routes without versioning paths twice", () => {
+  it("contains all 240 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -534,7 +534,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 13);
-    expect(operationCount).toBe(237);
+    expect(operationCount).toBe(240);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -544,7 +544,7 @@ describe("OpenAPI and Swagger UI", () => {
     const knowledgeOperations = HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability }) => availability === "ai_estimator_knowledge"
     );
-    expect(knowledgeOperations).toHaveLength(50);
+    expect(knowledgeOperations).toHaveLength(53);
 
     for (const registered of knowledgeOperations) {
       const { method, path } = splitHumanOperationKey(registered.key);
@@ -653,6 +653,68 @@ describe("OpenAPI and Swagger UI", () => {
     });
     expect(componentSchemas().KnowledgeTemporaryMainLineReference)
       .toHaveProperty("properties.rules.items.properties.targetKind.enum", ["main_line", "sub_basket"]);
+    expect(
+      openApiDocument.paths[
+        "/admin/ai-estimator-knowledge/baskets/{basketId}/sub-baskets/{subBasketId}"
+      ]?.patch
+    ).toMatchObject({
+      summary: "Rename a Sub Basket with contextual lifecycle validation",
+      "x-lisno-permission": "ai_estimator_knowledge.configuration.update",
+      requestBody: {
+        content: {
+          "application/json": {
+            schema: { $ref: "#/components/schemas/KnowledgeSubBasketUpdateRequest" }
+          }
+        }
+      },
+      responses: {
+        "2XX": {
+          content: {
+            "application/json": {
+              schema: { properties: { data: { $ref: "#/components/schemas/KnowledgeSubBasket" } } }
+            }
+          }
+        }
+      }
+    });
+    expect(componentSchemas().KnowledgeSubBasketUpdateRequest).toMatchObject({
+      additionalProperties: false,
+      required: ["expectedVersion", "name"],
+      properties: { managementContext: { enum: ["configuration"] } }
+    });
+    expect(componentSchemas().KnowledgePermanentDeleteSubBasketRequest).toMatchObject({
+      additionalProperties: false,
+      required: ["expectedVersion", "confirmationName", "reason", "impactToken"],
+      properties: { draftOnly: { type: "boolean", enum: [true] } }
+    });
+    expect(componentSchemas().KnowledgeSubBasketDeletionImpact).toMatchObject({
+      required: ["basketId", "subBasketId", "subBasketName", "version", "mainLineCount", "referenceCount", "impactToken"]
+    });
+    expect(openApiDocument.paths["/admin/ai-estimator-knowledge/baskets/{basketId}/sub-baskets/{subBasketId}/deletion-impact"]?.get).toMatchObject({
+      "x-lisno-permission": "ai_estimator_knowledge.configuration.lifecycle"
+    });
+    expect(componentSchemas().KnowledgeDraftSubBasketGuard).toMatchObject({
+      additionalProperties: false,
+      required: ["subBasketId", "expectedVersion"]
+    });
+    expect(componentSchemas().KnowledgeMainLineUpdateRequest)
+      .toHaveProperty("properties.draftSubBasketGuard.$ref", "#/components/schemas/KnowledgeDraftSubBasketGuard");
+    expect(componentSchemas().KnowledgeMainLineDeleteRequest)
+      .toHaveProperty("properties.draftSubBasketGuard.$ref", "#/components/schemas/KnowledgeDraftSubBasketGuard");
+    expect(componentSchemas().KnowledgeDraftItemGuard).toMatchObject({
+      additionalProperties: false,
+      required: ["basketId", "subBasketId"],
+      properties: { subBasketId: { nullable: true, enum: [null] } }
+    });
+    for (const name of ["KnowledgeMainLineUpdateRequest", "KnowledgeMainLineDeleteRequest"]) {
+      expect(componentSchemas()[name]).toMatchObject({
+        properties: { draftItemGuard: { $ref: "#/components/schemas/KnowledgeDraftItemGuard" } },
+        not: { required: ["draftSubBasketGuard", "draftItemGuard"] }
+      });
+    }
+    expect(componentSchemas().KnowledgeMainLineUpdateRequest).toHaveProperty("anyOf", [
+      { required: ["name"] }, { required: ["description"] }, { required: ["displayOrder"] }
+    ]);
 
     const previewRequest = componentSchemas().KnowledgePreviewRequest as {
       additionalProperties?: boolean;

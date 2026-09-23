@@ -1,28 +1,31 @@
-import { colors, fonts, spacing } from "../../ui/tokens";
+import { colors, fonts, radii, spacing, typography } from "../../ui/tokens";
 
 export const dashboardColors = Object.freeze({
-  canvas: "#F7F6F1",
-  canvasDeep: "#EFEEE8",
-  stage: "#FFFFFF",
-  stageRaised: "#FBFAF7",
-  stageEdge: "#E4E1DA",
-  stageLine: "#ECE9E2",
-  text: "#171B2D",
-  textMuted: "#626A7D",
-  textDim: "#848A97",
+  canvas: colors.canvas,
+  canvasDeep: colors.surfaceMuted,
+  stage: colors.surface,
+  stageRaised: colors.surfaceMuted,
+  stageEdge: colors.border,
+  stageLine: colors.border,
+  text: colors.ink,
+  textMuted: colors.inkMuted,
+  textDim: colors.inkMuted,
+  primaryInk: colors.primaryInk,
   sage: "#5F806C",
   sand: "#C8AA7C",
   stone: "#9AA09C",
   blue: "#607FA8",
-  violet: "#5F806C",
-  violetBright: "#496856",
-  violetDeep: "#DDE9E1",
+  violet: colors.primary,
+  violetBright: colors.primary,
+  violetDeep: colors.primarySoft,
   cyan: "#607FA8",
   gold: "#C8AA7C",
-  goldSoft: "#F5EFE5",
-  success: "#496856",
-  warning: "#8A6742",
+  goldSoft: colors.warningSoft,
+  success: colors.success,
+  warning: colors.warning,
   danger: "#B65E57",
+  dangerInk: colors.danger,
+  dangerSoft: colors.dangerSoft,
   unavailable: "#9AA09C",
   sageSoft: "#EDF3EF",
   sandSoft: "#F5EFE5",
@@ -37,11 +40,14 @@ export const dashboardColors = Object.freeze({
 });
 
 export const dashboardTypography = Object.freeze({
+  ...typography,
   regular: fonts.regular,
   medium: fonts.medium,
   semibold: fonts.semibold,
   bold: fonts.bold
 });
+
+export const dashboardRadii = radii;
 
 export const dashboardSpacing = Object.freeze({
   ...spacing,
@@ -58,12 +64,4 @@ export const dashboardLayout = Object.freeze({
   heroTabletHeight: 320,
   trendHeight: 246,
   moduleHeight: 250
-});
-
-export const dashboardShadow = Object.freeze({
-  shadowColor: "#34433A",
-  shadowOffset: { width: 0, height: 8 },
-  shadowOpacity: 0.08,
-  shadowRadius: 18,
-  elevation: 4
 });

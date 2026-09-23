@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { describe, expect, it } from "vitest";
 
 import { KnowledgeSectionEditor } from "./KnowledgeSectionEditor";
@@ -57,6 +59,16 @@ const professionalWorkspaceStart = stylesheet.indexOf(
   "Professional Main Line workspace"
 );
 
+function renderWithQueryClient(element: ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false }
+    }
+  });
+  return render(<QueryClientProvider client={queryClient}>{element}</QueryClientProvider>);
+}
+
 function declarations(selector: string, after = 0) {
   const selectorStart = stylesheet.indexOf(selector, after);
   if (selectorStart < 0) throw new Error(`Missing CSS rule for ${selector}`);
@@ -112,7 +124,7 @@ describe("Super Admin knowledge item workspace layout", () => {
     expect(overviewPanelSource).not.toContain("knowledge-overview__cards");
     expect(overviewPanelSource).not.toContain("knowledge-overview-card");
 
-    render(
+    renderWithQueryClient(
       <KnowledgeSectionEditor
         sectionKey="overview"
         payload={{}}
@@ -154,7 +166,7 @@ describe("Super Admin knowledge item workspace layout", () => {
       onQuickAdd: () => undefined
     } as const;
 
-    render(
+    renderWithQueryClient(
       <>
         <KnowledgeSectionEditor
           {...editorProps}

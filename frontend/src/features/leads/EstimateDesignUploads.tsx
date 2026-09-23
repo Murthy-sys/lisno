@@ -627,7 +627,7 @@ export function EstimateDesignUploads({
               </p>
             ) : null}
             <div className="estimate-design-uploads__delete-actions">
-              <Button variant="secondary" disabled={deleteUpload.isPending} onClick={closeDeleteDialog}>
+              <Button variant="destructive-outline" disabled={deleteUpload.isPending} onClick={closeDeleteDialog}>
                 Cancel
               </Button>
               <Button
@@ -693,7 +693,7 @@ function CorrectionDialog({ selection, defaultVerified, page, busy, error, onSub
   return <ContextPanel
     title={`${defaultVerified ? "Verify" : "Correct"} ${selection.drawing.displayTitle}`}
     eyebrow="Drawing correction" onClose={onClose} busy={busy} dirty={dirty}
-    footer={({ requestClose }) => <><Button variant="secondary" disabled={busy} onClick={requestClose}>Cancel</Button><Button type="submit" form={formId} disabled={busy}>{busy ? "Saving…" : defaultVerified ? "Verify drawing" : "Save drawing"}</Button></>}
+    footer={({ requestClose }) => <><Button variant="destructive-outline" disabled={busy} onClick={requestClose}>Cancel</Button><Button type="submit" form={formId} disabled={busy}>{busy ? "Saving…" : defaultVerified ? "Verify drawing" : "Save drawing"}</Button></>}
   >
     <form id={formId} className="estimate-drawing-correction" onSubmit={(event) => {
       event.preventDefault();
@@ -717,7 +717,7 @@ function EstimateItemAssignmentDialog({ selection, rooms, items, busy, error, on
   const roomItems = items.filter((item) => item.roomId === roomId);
   const selected = roomItems.find((item) => item.catalogueId === catalogueId);
   return <ContextPanel title={`Assign ${selection.drawing.displayTitle}`} eyebrow="Exact estimate item" onClose={onClose} busy={busy} dirty={dirty}
-    footer={({ requestClose }) => <><Button variant="secondary" disabled={busy} onClick={requestClose}>Cancel</Button><Button type="submit" form={formId} disabled={!selected || busy}>{busy ? "Assigning…" : "Assign item"}</Button></>}
+    footer={({ requestClose }) => <><Button variant="destructive-outline" disabled={busy} onClick={requestClose}>Cancel</Button><Button type="submit" form={formId} disabled={!selected || busy}>{busy ? "Assigning…" : "Assign item"}</Button></>}
   >
     <form id={formId} className="estimate-drawing-assignment" onSubmit={(event) => { event.preventDefault(); if (roomId && selected) onSubmit({ roomId, catalogueId }); }}>
       <label>Room<Select disabled={busy} value={roomId} onChange={(event) => { setRoomId(event.target.value); setCatalogueId(""); }}><option value="">Choose room</option>{rooms.map((room) => <option value={room.id} key={room.id}>{room.label}</option>)}</Select></label>
@@ -736,7 +736,7 @@ function HistoryDialog({ revisions, onClose }: { revisions: EstimateDesignRevisi
 function ReplacementDialog({ file, busy, error, onChange, onSubmit, onClose }: { file?: File; busy: boolean; error: string; onChange: (file: File | undefined) => void; onSubmit: () => void; onClose: () => void }) {
   const formId = useId();
   return <ContextPanel title="Upload replacement" eyebrow="Client-requested change" onClose={onClose} busy={busy} dirty={Boolean(file)}
-    footer={({ requestClose }) => <><Button variant="secondary" disabled={busy} onClick={requestClose}>Cancel</Button><Button type="submit" form={formId} disabled={!file || busy}>{busy ? "Uploading…" : "Upload replacement"}</Button></>}
+    footer={({ requestClose }) => <><Button variant="destructive-outline" disabled={busy} onClick={requestClose}>Cancel</Button><Button type="submit" form={formId} disabled={!file || busy}>{busy ? "Uploading…" : "Upload replacement"}</Button></>}
   >
     <form id={formId} className="estimate-drawing-replacement" onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
       <label>Replacement drawing file<FileInput aria-label="Replacement drawing file" disabled={busy} accept="application/pdf,image/png,image/jpeg,image/webp,image/tiff,image/heic,image/heif,.heif" onChange={(event) => onChange(event.target.files?.[0])} /></label>
@@ -873,7 +873,7 @@ function ManualDrawingDialog({
         />
         {error ? <p role="alert">{error}</p> : null}
         <div className="estimate-drawing-correction__actions">
-          <button type="button" className="secondary-button" onClick={onClose}>
+          <button type="button" className="secondary-button ui-button ui-button--destructive-outline" onClick={onClose}>
             Cancel
           </button>
           <button

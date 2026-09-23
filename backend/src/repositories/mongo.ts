@@ -1332,6 +1332,38 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return query.exec();
     },
 
+    async summarizeUsers(visibleRoles) {
+      if (visibleRoles.length === 0) {
+        return { total: 0, active: 0, inactive: 0, roleCount: 0 };
+      }
+      const pipeline: PipelineStage[] = [
+        { $match: { role: { $in: [...visibleRoles] } } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            active: { $sum: { $cond: [{ $eq: ["$active", true] }, 1, 0] } },
+            roles: { $addToSet: "$role" }
+          }
+        }
+      ];
+      const aggregate = UserModel.aggregate<{
+        total: number;
+        active: number;
+        roles: string[];
+      }>(pipeline);
+      if (session) aggregate.session(session);
+      const [result] = await aggregate.exec();
+      const total = result?.total ?? 0;
+      const active = result?.active ?? 0;
+      return {
+        total,
+        active,
+        inactive: total - active,
+        roleCount: result?.roles.length ?? 0
+      };
+    },
+
     async countUserResponsibilities(userId) {
       const leadQuery = LeadModel.countDocuments({
         ownerId: userId,

@@ -50,6 +50,16 @@ describe("SignupPage", () => {
     expect(container.querySelector("textarea")).not.toBeInTheDocument();
   });
 
+  it("uses the shared sage background and keeps decorative copy out of the accessibility tree", () => {
+    renderApp(["/signup"]);
+
+    expect(screen.getByAltText("").getAttribute("src")).toMatch(/login_screen/);
+    expect(screen.getAllByRole("img", { name: "Lisno" })).toHaveLength(1);
+    expect(screen.getByText(/for a better/)).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByText("Better Living").closest("[aria-hidden='true']")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: /google/i })).not.toBeInTheDocument();
+  });
+
   it("requires every client signup field and focuses the first invalid field", async () => {
     renderApp(["/signup"]);
 
@@ -199,7 +209,7 @@ describe("SignupPage", () => {
   it("keeps a route back to sign in", async () => {
     renderApp(["/signup"]);
     await userEvent.click(screen.getByRole("link", { name: "Sign in" }));
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Welcome to Lisno" })).toBeVisible();
   });
 
   it("keeps the submit name stable and prevents duplicate signup while pending", async () => {

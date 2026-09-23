@@ -1,4 +1,4 @@
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Lock, Mail } from "lucide-react";
 import {
   useEffect,
   useState,
@@ -10,6 +10,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { z, type ZodString } from "zod";
 
 import { ApiError, apiClient } from "../api/client";
+import loginBackground from "../assets/login_screen.png";
 import { safeReturnPath } from "../app/routePaths";
 import { useAuth } from "./AuthProvider";
 import "./login-page.css";
@@ -268,32 +269,30 @@ export function LoginPage() {
       : "login-field__message";
 
   return (
-    <main className="login-screen">
+    <main className="login-screen login-screen--sage">
       <a href="#login-form" className="login-skip-link">
         Skip to sign in
       </a>
+      <span className="login-logo" role="img" aria-label="Lisno" />
       <img
         className="login-bg"
-        src="/login-hero.png"
+        src={loginBackground}
         alt=""
         loading="eager"
         fetchPriority="high"
       />
-      <div className="login-scrim login-scrim--diagonal" aria-hidden="true" />
-      <div className="login-scrim login-scrim--base" aria-hidden="true" />
+      <div className="login-scrim" aria-hidden="true" />
+
+      <p className="login-script" aria-hidden="true">
+        Spaces
+        <br />
+        for a better
+        <br />
+        tomorrow
+      </p>
 
       <div className="login-grid">
         <section className="login-hero" aria-label="Lisno design operations">
-          <div className="login-hero__brand">
-            <span className="login-hero__logo" role="img" aria-label="LISNO" />
-            <span className="login-hero__wordmark">LISNO</span>
-          </div>
-
-          <div className="login-hero__eyebrow">
-            <span className="login-rule login-rule--hero" aria-hidden="true" />
-            <span>DESIGN OPERATIONS, IN FOCUS</span>
-          </div>
-
           <h1 className="login-hero__title">
             From first sketch{" "}
             <br />
@@ -305,9 +304,13 @@ export function LoginPage() {
             workspace.
           </p>
 
-          <div className="login-hero__footer">
-            <p>Clear ownership. Timely reviews. Beautiful outcomes.</p>
-          </div>
+          <span className="login-hero__rule" aria-hidden="true" />
+
+          <p className="login-hero__tagline">
+            Clear ownership. Timely reviews.{" "}
+            <br />
+            Beautiful outcomes.
+          </p>
         </section>
 
         <div className="login-card-wrap">
@@ -318,12 +321,8 @@ export function LoginPage() {
             noValidate
             aria-busy={isSubmitting}
           >
-            <div className="login-card__eyebrow">
-              <span className="login-rule login-rule--card" aria-hidden="true" />
-              <span>WELCOME TO LISNO</span>
-            </div>
-            <h2 className="login-card__title">Sign in</h2>
-            <p className="login-card__subtitle">Continue to your design workspace.</p>
+            <h2 className="login-card__title">Welcome to Lisno</h2>
+            <p className="login-card__subtitle">Sign in to continue</p>
 
             {auth.sessionExpired ? (
               <div
@@ -368,21 +367,25 @@ export function LoginPage() {
             </div>
 
             <div className="login-field">
-              <label htmlFor="login-email" className="login-field__label">
+              <label htmlFor="login-email" className="sr-only">
                 Email address
               </label>
-              <input
-                id="login-email"
-                ref={emailRef}
-                type="email"
-                autoComplete="email"
-                value={email}
-                onChange={(event) => handleEmailChange(event.target.value)}
-                disabled={disabled}
-                aria-invalid={errors.email ? true : undefined}
-                aria-describedby="login-email-message"
-                className="login-input"
-              />
+              <div className="login-input-wrap">
+                <Mail className="login-input-icon" size={18} aria-hidden="true" />
+                <input
+                  id="login-email"
+                  ref={emailRef}
+                  type="email"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(event) => handleEmailChange(event.target.value)}
+                  disabled={disabled}
+                  aria-invalid={errors.email ? true : undefined}
+                  aria-describedby="login-email-message"
+                  placeholder="Email address"
+                  className="login-input login-input--icon"
+                />
+              </div>
               <p
                 id="login-email-message"
                 className={
@@ -396,10 +399,11 @@ export function LoginPage() {
             </div>
 
             <div className="login-field">
-              <label htmlFor="login-password" className="login-field__label">
+              <label htmlFor="login-password" className="sr-only">
                 Password
               </label>
-              <div className="login-password-wrap">
+              <div className="login-input-wrap login-password-wrap">
+                <Lock className="login-input-icon" size={18} aria-hidden="true" />
                 <input
                   id="login-password"
                   ref={passwordRef}
@@ -411,7 +415,8 @@ export function LoginPage() {
                   disabled={disabled}
                   aria-invalid={errors.password ? true : undefined}
                   aria-describedby="login-password-message"
-                  className="login-input login-input--password"
+                  placeholder="Password"
+                  className="login-input login-input--icon login-input--password"
                 />
                 <button
                   type="button"
@@ -441,7 +446,7 @@ export function LoginPage() {
                   disabled={disabled}
                   onChange={(event) => setKeepSignedIn(event.target.checked)}
                 />
-                Keep me signed in
+                Remember me
               </label>
               <Link
                 to="/forgot-password"
@@ -466,12 +471,7 @@ export function LoginPage() {
                   Signing in
                 </>
               ) : (
-                <>
-                  Sign in
-                  <span className="login-submit__arrow" aria-hidden="true">
-                    &rarr;
-                  </span>
-                </>
+"Sign In"
               )}
             </button>
 
@@ -485,14 +485,19 @@ export function LoginPage() {
               {isSubmitting ? "Signing in. Please wait." : ""}
             </p>
 
-            <hr className="login-hairline" />
-
             <p className="login-footer-text">
-              New to Lisno? <Link to="/signup">Create a client account</Link>
+              New to Lisno? <Link to="/signup">Create an account</Link>
             </p>
           </form>
         </div>
       </div>
+
+      <p className="login-strip" aria-hidden="true">
+        <span>Spaces</span>
+        <span>People</span>
+        <span>Ideas</span>
+        <span>Better Living</span>
+      </p>
     </main>
   );
 }

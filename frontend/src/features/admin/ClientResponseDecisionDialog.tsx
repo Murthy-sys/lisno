@@ -246,7 +246,7 @@ export function ClientResponseDecisionDialog({
         <div className="client-response-dialog__actions">
           <Button
             className="client-response-dialog__cancel"
-            variant="secondary"
+            variant="destructive-outline"
             disabled={mutation.isPending}
             onClick={onClose}
           >

@@ -4,6 +4,8 @@ import type {
   KnowledgeBasketQuality,
   KnowledgeSubBasket,
   KnowledgeSubBasketListResponse,
+  KnowledgeSubBasketDeletionImpact,
+  KnowledgePermanentDeleteSubBasketResult,
   KnowledgeBasketDeletionImpact,
   KnowledgeMainLineDeletionResult,
   KnowledgeBasketListResponse,
@@ -210,6 +212,34 @@ export interface KnowledgeUpdateMainLineInput {
   readonly name?: string;
   readonly description?: string | null;
   readonly displayOrder?: number;
+  readonly draftSubBasketGuard?: KnowledgeDraftSubBasketGuard;
+  readonly draftItemGuard?: KnowledgeDraftItemGuard;
+}
+
+export interface KnowledgeDraftSubBasketGuard {
+  readonly subBasketId: string;
+  readonly expectedVersion: number;
+}
+
+export interface KnowledgeDraftItemGuard {
+  readonly basketId: string;
+  readonly subBasketId: null;
+}
+
+export interface KnowledgePermanentDeleteMainLineInput extends KnowledgeExpectedVersionCommand {
+  readonly draftSubBasketGuard?: KnowledgeDraftSubBasketGuard;
+  readonly draftItemGuard?: KnowledgeDraftItemGuard;
+}
+
+export interface KnowledgeUpdateSubBasketInput {
+  readonly expectedVersion: number;
+  readonly name: string;
+  readonly managementContext?: "configuration";
+}
+
+export interface KnowledgePermanentDeleteSubBasketInput extends KnowledgePermanentDeleteBasketInput {
+  readonly impactToken: string;
+  readonly draftOnly?: true;
 }
 
 export interface KnowledgeTaxVersionInput {
@@ -423,7 +453,7 @@ export function updateKnowledgeMainLine(
 
 export function permanentlyDeleteKnowledgeMainLine(
   mainLineId: string,
-  input: KnowledgeExpectedVersionCommand
+  input: KnowledgePermanentDeleteMainLineInput
 ): Promise<KnowledgeMainLineDeletionResult> {
   return apiClient.delete<KnowledgeMainLineDeletionResult>(
     `${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}`,
@@ -516,8 +546,39 @@ export function createKnowledgeSubBasket(basketId: string, input: { readonly nam
   return apiClient.post<KnowledgeSubBasket>(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets`, input);
 }
 
+export function updateKnowledgeSubBasket(
+  basketId: string,
+  subBasketId: string,
+  input: KnowledgeUpdateSubBasketInput
+): Promise<KnowledgeSubBasket> {
+  return apiClient.patch<KnowledgeSubBasket>(
+    `${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets/${segment(subBasketId)}`,
+    input
+  );
+}
+
 export function getKnowledgeBasketQuality(basketId: string): Promise<KnowledgeBasketQuality> {
   return apiClient.get<KnowledgeBasketQuality>(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/quality`);
+}
+
+export function getKnowledgeSubBasketDeletionImpact(
+  basketId: string,
+  subBasketId: string
+): Promise<KnowledgeSubBasketDeletionImpact> {
+  return apiClient.get<KnowledgeSubBasketDeletionImpact>(
+    `${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets/${segment(subBasketId)}/deletion-impact`
+  );
+}
+
+export function permanentlyDeleteKnowledgeSubBasket(
+  basketId: string,
+  subBasketId: string,
+  input: KnowledgePermanentDeleteSubBasketInput
+): Promise<KnowledgePermanentDeleteSubBasketResult> {
+  return apiClient.delete<KnowledgePermanentDeleteSubBasketResult>(
+    `${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets/${segment(subBasketId)}`,
+    input
+  );
 }
 
 export function listKnowledgeQualityControlOptions(

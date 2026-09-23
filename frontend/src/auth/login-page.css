@@ -868,3 +868,452 @@
     transition: none;
   }
 }
+
+/* =======================================================================
+   Sage sign-in variant (/login only). Everything here is scoped under
+   .login-screen--sage so Signup, Forgot-password, Password-reset and
+   Invitation pages — which share the base .login-* rules above — keep
+   their current look.
+   ===================================================================== */
+
+.login-screen--sage {
+  --sage-ink: #1f2a1c;
+  --sage-text: #34402f;
+  --sage-muted: #5f6a58;
+  --sage-olive: #3d4a32;
+  --sage-olive-hover: #2f3a26;
+  --sage-card: #f8f6f0;
+  --sage-line: #d9dccf;
+  --sage-field: #ffffff;
+
+  /* Re-point the shared tokens so banners, spinner and focus states that
+     the base rules draw from them harmonise with the sage palette. */
+  --color-primary: var(--sage-ink);
+  --color-text-strong: #000000;
+  --color-highlight: var(--sage-olive);
+  --focus-ring-color: color-mix(in srgb, var(--sage-olive) 45%, transparent);
+  --focus-ring: 0 0 0 3px var(--focus-ring-color);
+
+  background: #dfe5d8;
+  color: var(--sage-text);
+}
+
+.login-screen--sage .login-bg {
+  object-position: 50% 50%;
+}
+
+.login-screen--sage .login-scrim {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, #eef1e9 38%, transparent) 0%,
+    color-mix(in srgb, #eef1e9 0%, transparent) 42%
+  );
+}
+
+.login-screen--sage .login-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 480px);
+  align-items: stretch;
+  gap: clamp(24px, 4vw, 64px);
+  padding: clamp(16px, 1.6vw, 24px) clamp(16px, 3.4vw, 52px) clamp(16px, 1.6vw, 24px)
+    clamp(24px, 3vw, 48px);
+}
+
+/* ------------------------------------------------------------ sage hero */
+
+.login-screen--sage .login-hero {
+  align-self: start;
+  gap: 0;
+  padding-top: clamp(48px, 11vh, 110px);
+  color: var(--sage-ink);
+}
+
+.login-screen--sage .login-hero__title {
+  max-width: 11.5em;
+  font-family: "Fraunces", "Playfair Display", Georgia, serif;
+  font-size: clamp(2.4rem, 4.6vw, 4.1rem);
+  font-weight: 500;
+  line-height: 1.04;
+  letter-spacing: -0.03em;
+  color: var(--sage-ink);
+  font-variation-settings: "opsz" 144, "SOFT" 0, "WONK" 0;
+}
+
+.login-screen--sage .login-hero__body {
+  max-width: 25em;
+  margin-top: clamp(14px, 1.6vw, 22px);
+  font-size: clamp(1rem, 1.35vw, 1.25rem);
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--sage-text);
+}
+
+.login-screen--sage .login-hero__rule {
+  display: block;
+  width: 64px;
+  height: 2px;
+  margin: clamp(22px, 2.6vw, 34px) 0;
+  background: #707a3d;
+}
+
+.login-screen--sage .login-hero__tagline {
+  margin: 0;
+  font-size: clamp(1rem, 1.35vw, 1.25rem);
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--sage-text);
+}
+
+.login-screen--sage .login-script {
+  position: absolute;
+  z-index: 2;
+  top: clamp(40px, 7vh, 72px);
+  left: 49.5%;
+  margin: 0;
+  font-family: "Caveat", "Segoe Script", cursive;
+  font-size: clamp(1.4rem, 1.9vw, 1.85rem);
+  font-weight: 500;
+  line-height: 1.05;
+  color: var(--sage-text);
+  transform: rotate(-14deg);
+  transform-origin: left top;
+  pointer-events: none;
+  user-select: none;
+}
+
+.login-screen--sage .login-script::after {
+  content: "";
+  display: block;
+  width: 2.4em;
+  height: 1px;
+  margin: 0.3em 0 0 1.4em;
+  background: currentColor;
+  opacity: 0.6;
+}
+
+.login-screen--sage .login-strip {
+  position: absolute;
+  z-index: 2;
+  bottom: clamp(16px, 3vh, 28px);
+  left: clamp(24px, 3vw, 48px);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0;
+  font-size: 13px;
+  color: var(--sage-text);
+  pointer-events: none;
+  user-select: none;
+}
+
+.login-screen--sage .login-strip span + span::before {
+  content: "|";
+  margin: 0 14px;
+  opacity: 0.7;
+}
+
+/* ------------------------------------------------------------ sage card */
+
+.login-screen--sage .login-card-wrap {
+  align-self: center;
+  max-width: 480px;
+  margin: 0;
+  margin-inline-start: auto;
+}
+
+.login-screen--sage .login-card {
+  padding: clamp(28px, 3.4vw, 48px) clamp(24px, 3.2vw, 44px);
+  border: 1px solid color-mix(in srgb, #ffffff 70%, transparent);
+  border-radius: 16px;
+  background: var(--sage-card);
+  box-shadow:
+    0 30px 70px -36px rgba(31, 42, 28, 0.45),
+    0 2px 8px -4px rgba(31, 42, 28, 0.18);
+}
+
+.login-screen--sage .login-card::before {
+  content: none;
+}
+
+.login-screen--sage .login-card__title {
+  margin: 0 0 6px;
+  font-family: "Fraunces", "Playfair Display", Georgia, serif;
+  font-size: clamp(1.9rem, 2.6vw, 2.35rem);
+  font-weight: 500;
+  line-height: 1.12;
+  letter-spacing: -0.03em;
+  color: var(--sage-ink);
+  font-variation-settings: "opsz" 144, "SOFT" 0, "WONK" 0;
+}
+
+.login-screen--sage .login-card__subtitle {
+  margin: 0 0 clamp(20px, 2.4vw, 30px);
+  font-size: 1rem;
+  color: var(--sage-muted);
+}
+
+.login-screen--sage .login-field {
+  margin-top: 16px;
+}
+
+.login-screen--sage .login-field:first-of-type {
+  margin-top: 0;
+}
+
+.login-screen--sage .login-input-wrap {
+  position: relative;
+}
+
+.login-screen--sage .login-input-icon {
+  position: absolute;
+  top: 50%;
+  left: 18px;
+  width: 20px;
+  height: 20px;
+  color: var(--sage-ink);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.login-screen--sage .login-input {
+  height: 52px;
+  border-color: var(--sage-line);
+  border-radius: 8px;
+  background: var(--sage-field);
+  color: var(--sage-ink);
+  font-size: 0.95rem;
+}
+
+.login-screen--sage .login-input--icon {
+  padding-inline-start: 52px;
+}
+
+.login-screen--sage .login-input--password {
+  padding-inline-end: 56px;
+}
+
+.login-screen--sage .login-input::placeholder {
+  color: var(--sage-muted);
+  opacity: 1;
+}
+
+.login-screen--sage .login-input:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--sage-olive) 55%, var(--sage-line));
+}
+
+.login-screen--sage .login-input:focus,
+.login-screen--sage .login-input:focus-visible {
+  border-color: var(--sage-olive);
+  box-shadow: var(--focus-ring);
+}
+
+.login-screen--sage .login-input:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 60px var(--sage-field) inset;
+  -webkit-text-fill-color: var(--sage-ink);
+}
+
+.login-screen--sage .login-password-toggle {
+  top: 4px;
+  inset-inline-end: 4px;
+  width: 44px;
+  height: 44px;
+  color: var(--sage-ink);
+}
+
+.login-screen--sage .login-password-toggle svg {
+  width: 20px;
+  height: 20px;
+}
+
+.login-screen--sage .login-password-toggle:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--sage-olive) 10%, transparent);
+}
+
+.login-screen--sage .login-field__message:empty {
+  display: none;
+}
+
+.login-screen--sage .login-row {
+  margin-top: 18px;
+}
+
+.login-screen--sage .login-remember {
+  gap: 10px;
+  font-size: 0.95rem;
+  color: var(--sage-ink);
+}
+
+.login-screen--sage .login-remember input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--sage-olive);
+}
+
+.login-screen--sage .login-forgot {
+  font-size: 0.95rem;
+  font-weight: 400;
+  color: var(--sage-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.login-screen--sage .login-forgot:hover {
+  color: var(--sage-olive-hover);
+}
+
+.login-screen--sage .login-forgot:focus-visible,
+.login-screen--sage .login-footer-text a:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.login-screen--sage .login-forgot--urgent {
+  font-weight: 600;
+  color: var(--color-danger-ink);
+}
+
+.login-screen--sage .login-submit {
+  height: 52px;
+  margin-top: clamp(20px, 2.2vw, 28px);
+  border-radius: 8px;
+  background: var(--sage-olive);
+  color: #f6f4ec;
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.login-screen--sage .login-submit:hover:not(:disabled) {
+  background: var(--sage-olive-hover);
+}
+
+.login-screen--sage .login-submit:focus-visible {
+  box-shadow:
+    0 0 0 2px var(--sage-card),
+    0 0 0 5px var(--focus-ring-color);
+}
+
+.login-screen--sage .login-submit:disabled {
+  background: color-mix(in srgb, var(--sage-olive) 72%, var(--sage-card));
+}
+
+.login-screen--sage .login-submit[data-busy="true"] {
+  background: color-mix(in srgb, var(--sage-olive) 72%, var(--sage-card));
+}
+
+.login-screen--sage .login-spinner {
+  border-color: color-mix(in srgb, #f6f4ec 35%, transparent);
+  border-top-color: #f6f4ec;
+}
+
+.login-screen--sage .login-footer-text {
+  margin-top: clamp(22px, 2.6vw, 32px);
+  font-size: 0.95rem;
+  color: var(--sage-ink);
+}
+
+.login-screen--sage .login-footer-text a {
+  margin-left: 4px;
+  font-weight: 500;
+  color: var(--sage-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@media (max-width: 1199px) {
+  .login-screen--sage .login-script {
+    display: none;
+  }
+}
+
+@media (max-width: 999px) {
+  .login-screen--sage .login-grid {
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    gap: 32px;
+    padding: 24px 16px 72px;
+  }
+
+  .login-screen--sage .login-scrim {
+    background: color-mix(in srgb, #eef1e9 72%, transparent);
+  }
+
+  .login-screen--sage .login-card-wrap {
+    order: 1;
+    width: 100%;
+    margin-inline: auto;
+  }
+
+  .login-screen--sage .login-hero {
+    order: 2;
+    padding-top: 0;
+  }
+
+  .login-screen--sage .login-strip {
+    left: 16px;
+  }
+}
+
+@media (pointer: coarse), (max-width: 767px) {
+  .login-screen--sage .login-input {
+    font-size: 1rem;
+  }
+
+  .login-screen--sage .login-card {
+    padding: 28px 20px;
+  }
+
+  .login-screen--sage .login-hero__title {
+    font-size: clamp(2.1rem, 9vw, 2.8rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-screen--sage .login-submit {
+    transition: none;
+  }
+}
+
+/* Signup keeps visible field labels on the sage variant (login hides its
+   labels with sr-only, so these rules do not affect it). */
+.login-screen--sage .login-field__label {
+  margin-bottom: 6px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--sage-ink);
+}
+
+.login-screen--sage .login-input:not(.login-input--icon) {
+  padding-inline-start: 16px;
+}
+
+/* Lisno logo on the sage login/signup screens, tinted with the sage ink. */
+.login-screen--sage .login-logo {
+  position: absolute;
+  z-index: 3;
+  top: clamp(24px, 4.4vh, 44px);
+  left: clamp(24px, 3vw, 48px);
+  display: block;
+  width: 118px;
+  height: 32px;
+  background: var(--sage-ink);
+  -webkit-mask: url("/lisno-logo.svg") left center / contain no-repeat;
+  mask: url("/lisno-logo.svg") left center / contain no-repeat;
+}
+
+@media (max-width: 999px) {
+  .login-screen--sage .login-logo {
+    position: relative;
+    z-index: 2;
+    top: auto;
+    left: auto;
+    width: 103px;
+    height: 28px;
+    margin: 20px auto 0;
+    -webkit-mask-position: center;
+    mask-position: center;
+  }
+
+  .login-screen--sage .login-grid {
+    padding-top: 16px;
+  }
+}

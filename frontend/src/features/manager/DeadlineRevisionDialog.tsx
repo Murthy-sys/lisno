@@ -49,7 +49,7 @@ export function DeadlineRevisionDialog({ task, onClose, onConflict }: { task: Ta
       footer={({ requestClose }) => (
         <div className="management-panel-actions">
           {requiresRefresh ? <Button onClick={onClose}>Review refreshed task</Button> : <>
-            <Button variant="secondary" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
+            <Button variant="destructive-outline" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
             <Button type="submit" form={formId} busy={mutation.isPending} busyLabel="Saving…">Save deadline</Button>
           </>}
         </div>

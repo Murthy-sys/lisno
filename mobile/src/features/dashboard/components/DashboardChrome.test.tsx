@@ -1,4 +1,5 @@
 import { fireEvent, render } from "@testing-library/react-native";
+import { StyleSheet } from "react-native";
 
 import {
   DashboardSelector,
@@ -31,6 +32,10 @@ describe("dashboard chrome", () => {
     expect(view.getByRole("tab", { name: "30 days" }).props.accessibilityState).toEqual({ selected: true });
     expect(view.getByRole("switch", { name: "Compare with previous period" }).props.accessibilityState).toEqual({ checked: true });
     expect(view.getByLabelText(/Partial coverage/)).toBeTruthy();
+    expect(StyleSheet.flatten(view.getByRole("button", { name: "Refresh dashboard" }).props.style)).toEqual(expect.objectContaining({ width: 48, height: 48 }));
+    for (const days of [7, 30, 90]) {
+      expect(StyleSheet.flatten(view.getByRole("tab", { name: `${days} days` }).props.style).minHeight).toBeGreaterThanOrEqual(48);
+    }
 
     await fireEvent.press(view.getByRole("tab", { name: "90 days" }));
     await fireEvent.press(view.getByRole("switch", { name: "Compare with previous period" }));
@@ -70,6 +75,7 @@ describe("dashboard chrome", () => {
     expect(view.getByText("At risk")).toBeTruthy();
     expect(view.getByRole("tab", { name: "Overview" }).props.accessibilityState).toEqual({ selected: true, disabled: false });
     expect(view.getByRole("tab", { name: "Capital" }).props.accessibilityState).toEqual({ selected: false, disabled: false });
+    expect(StyleSheet.flatten(view.getByRole("tab", { name: "Capital" }).props.style).minHeight).toBeGreaterThanOrEqual(48);
 
     await fireEvent.press(view.getByRole("tab", { name: "Overview" }));
     expect(onSelect).toHaveBeenCalledWith("overview");

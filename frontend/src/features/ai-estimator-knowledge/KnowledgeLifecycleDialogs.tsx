@@ -122,7 +122,7 @@ export function KnowledgeLifecycleDialog({
         </div>
       ) : null}
       <div className="knowledge-dialog-actions">
-        <Button variant="quiet" onClick={onClose} disabled={busy}>
+        <Button variant="destructive-outline" onClick={onClose} disabled={busy}>
           Cancel
         </Button>
         <Button

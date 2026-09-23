@@ -43,6 +43,11 @@ export const knowledgeQueryKeys = {
   activationReview: (itemId: string, revisionId: string) =>
     ["ai-estimator-knowledge", "activation-review", itemId, revisionId] as const,
   subBasketLists: (basketId: string) => ["ai-estimator-knowledge", "sub-baskets", basketId] as const,
+  subBasketDeletionImpacts: (basketId?: string) => basketId
+    ? ["ai-estimator-knowledge", "sub-basket-deletion-impact", basketId] as const
+    : ["ai-estimator-knowledge", "sub-basket-deletion-impact"] as const,
+  subBasketDeletionImpact: (basketId: string, subBasketId: string) =>
+    ["ai-estimator-knowledge", "sub-basket-deletion-impact", basketId, subBasketId] as const,
   basketQualities: () => ["ai-estimator-knowledge", "basket-quality"] as const,
   basketQuality: (basketId: string) => ["ai-estimator-knowledge", "basket-quality", basketId] as const,
   qualityControlOptions: (kind?: KnowledgeQualityControlOptionKind) =>

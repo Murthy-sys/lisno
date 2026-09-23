@@ -103,6 +103,9 @@ export interface KnowledgeSectionEditorProps {
      a save in flight, and hiding controls for that would make them flicker. */
   readonly readOnlyRevision?: boolean;
   readonly canQuickAdd: boolean;
+  readonly canUpdateCatalog?: boolean;
+  readonly canLifecycleCatalog?: boolean;
+  readonly canReadCatalog?: boolean;
   readonly resetKey: string;
   readonly specificationScopeKey?: string;
   readonly specificationReferenceIds?: readonly string[];
@@ -189,6 +192,9 @@ export function KnowledgeSectionEditor({
   readOnly,
   readOnlyRevision = readOnly,
   canQuickAdd,
+  canUpdateCatalog = false,
+  canLifecycleCatalog = false,
+  canReadCatalog = true,
   resetKey,
   specificationScopeKey,
   specificationReferenceIds = [],
@@ -216,8 +222,8 @@ export function KnowledgeSectionEditor({
       vendors: masters.vendors,
       uomCatalogStatus: uomCatalogState.status,
       vendorCatalogStatus: vendorCatalogState.status
-    }), ...serverIssues],
-    [currentMainLineId, masters.uoms, masters.vendors, payload, pricingSpecifications, sectionKey, serverIssues, uomCatalogState.status, vendorCatalogState.status]
+    }), ...recommendationCatalogIssues(sectionKey, payload, relationshipItems, relationshipCatalogState), ...serverIssues],
+    [currentMainLineId, masters.uoms, masters.vendors, payload, pricingSpecifications, relationshipCatalogState, relationshipItems, sectionKey, serverIssues, uomCatalogState.status, vendorCatalogState.status]
   );
   const validationSummaryRef = useRef<HTMLDivElement>(null);
   const lastValidationAttempt = useRef(0);
@@ -271,7 +277,8 @@ export function KnowledgeSectionEditor({
       {sectionKey === "recommendations" && <KnowledgeBudgetAlterationBuilder value={payload.budgetAlterations}
         savedValue={savedPayload?.budgetAlterations} validationAttempt={validationAttempt} resetKey={resetKey}
         mainLineId={currentMainLineId} mainLineName={mainLineName} baskets={relationshipBaskets} items={relationshipItems}
-        catalogState={relationshipCatalogState} readOnly={readOnly} canCreate={canQuickAdd} issues={issues}
+        catalogState={relationshipCatalogState} readOnly={readOnly} canCreate={canQuickAdd} canUpdate={canUpdateCatalog}
+        canLifecycle={canLifecycleCatalog} canReadCatalog={canReadCatalog} issues={issues}
         onItemConfirmed={onRelatedItemConfirmed}
         onChange={(value) => change("budgetAlterations", value)} />}
 
@@ -710,6 +717,38 @@ function stringArray(value: KnowledgeJsonValue | undefined): readonly string[] {
 
 function objectArray(value: KnowledgeJsonValue | undefined): readonly KnowledgeJsonObject[] {
   return Array.isArray(value) ? value.filter(isJsonObject) : [];
+}
+
+function recommendationCatalogIssues(
+  sectionKey: KnowledgeSectionKey,
+  payload: KnowledgeJsonObject,
+  items: readonly KnowledgeItemListItem[],
+  state: KnowledgeBudgetCatalogState | undefined
+): readonly KnowledgeValidationIssue[] {
+  if (sectionKey !== "recommendations") return [];
+  if (!state || state.status !== "ready" || state.refreshing || state.refreshErrorMessage) return [];
+  return objectArray(payload.budgetAlterations).flatMap((rule, index) => {
+    if (rule.active === false) return [];
+    if (rule.targetKind !== "sub_basket") {
+      if (typeof rule.targetBasketId !== "string" || typeof rule.targetMainLineId !== "string" || !rule.targetMainLineId) return [];
+      const target = items.find((item) => item.mainLineId === rule.targetMainLineId);
+      const available = target && (target.status === "draft" || target.status === "active")
+        && target.basketId === rule.targetBasketId
+        && (!rule.targetSubBasketId || target.subBasketId === rule.targetSubBasketId)
+        && (target.itemType === "temporary" ? "temporary" : "catalog") === rule.targetType;
+      return available ? [] : [{
+        path: `budgetAlterations.${index}.targetMainLineId`,
+        message: "Choose an available related item or remove this rule before saving."
+      }];
+    }
+    if (typeof rule.targetBasketId !== "string" || typeof rule.targetSubBasketId !== "string") return [];
+    const hasAvailableChild = items.some((item) => item.basketId === rule.targetBasketId
+      && item.subBasketId === rule.targetSubBasketId && (item.status === "draft" || item.status === "active"));
+    return hasAvailableChild ? [] : [{
+      path: `budgetAlterations.${index}.targetSubBasketId`,
+      message: "Add at least one available sub-item or remove or retarget this Whole Sub-Basket rule before saving."
+    }];
+  });
 }
 
 function singular(label: string): string {

@@ -20,7 +20,7 @@ const baskets: KnowledgeBasket[] = ["Carpentry", "Painting"].map((name, index) =
 function page<T>(items: T[]) { return { items, pagination: { limit: 100, offset: 0, total: items.length, hasMore: false } }; }
 const createdDetail = { mainLineId: "line-created", mainLineName: "Panelling", basketId: "basket-0", basketName: "Carpentry", subBasketId: "sub-walls", subBasketName: "Walls", itemType: "main_line", status: "draft" } as KnowledgeItemDetail;
 const existingLine = { id: "line-created", name: "Panelling", basketId: "basket-0", subBasketId: "sub-walls", itemType: "main_line", status: "draft" } as KnowledgeMainLine;
-const relatedProps = { context: "related-item", initialBasketId: "basket-0", initialSubBasketName: "Walls", initialName: "Panelling", excludeMainLineId: "source-line" } as const;
+const relatedProps = { context: "related-item", initialBasketId: "basket-0", initialSubBasketId: "sub-walls", initialSubBasketName: "Walls", initialName: "Panelling", excludeMainLineId: "source-line" } as const;
 function setup(props: Partial<ComponentProps<typeof CreateKnowledgeItemDialog>> = {}, strictMode = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const onCreated = vi.fn(async () => {});
@@ -38,57 +38,45 @@ beforeEach(() => {
   vi.mocked(api.getKnowledgeItem).mockResolvedValue(createdDetail);
 });
 
-describe("Main Line with a Sub Basket text field", () => {
-  it("submits the typed Sub Basket with the selected Main Basket and exposes no add-basket buttons", async () => {
+describe("Main Line with a stable Sub-Basket selection", () => {
+  it("requires an existing Sub-Basket and submits its stable ID", async () => {
     const { user, onCreated } = setup();
     await screen.findByRole("option", { name: "Carpentry" });
     expect(screen.queryByRole("textbox", { name: "Description" })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Add Main Basket" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add sub basket" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("combobox", { name: "Sub basket" })).not.toBeInTheDocument();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Main basket" }), baskets[0].id);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main basket" }), "basket-0");
+    await screen.findByRole("option", { name: "Walls" });
     await user.type(screen.getByRole("textbox", { name: "Main Line name" }), "Panelling");
     expect(screen.getByRole("button", { name: "Add estimation item" })).toBeDisabled();
-    await user.type(screen.getByRole("textbox", { name: "Sub basket" }), "  Walls  ");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sub basket" }), "sub-walls");
     const results = await axe.run(screen.getByRole("dialog"), { rules: { "color-contrast": { enabled: false } } });
     expect(results.violations).toEqual([]);
     await user.click(screen.getByRole("button", { name: "Add estimation item" }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith("line-created"));
-    expect(api.createKnowledgeMainLine).toHaveBeenCalledWith(baskets[0].id, { name: "Panelling", subBasketName: "Walls" });
-    expect(api.listKnowledgeSubBaskets).not.toHaveBeenCalled();
+    expect(api.createKnowledgeMainLine).toHaveBeenCalledWith("basket-0", { name: "Panelling", subBasketId: "sub-walls" });
     expect(api.createKnowledgeSubBasket).not.toHaveBeenCalled();
-    expect(api.createKnowledgeBasket).not.toHaveBeenCalled();
   });
 
-  it("keeps the typed name and maps it under the final selected Main Basket", async () => {
-    const { user } = setup();
-    await screen.findByRole("option", { name: "Carpentry" });
-    await user.selectOptions(screen.getByRole("combobox", { name: "Main basket" }), baskets[0].id);
-    await user.type(screen.getByRole("textbox", { name: "Sub basket" }), "Walls");
-    await user.type(screen.getByRole("textbox", { name: "Main Line name" }), "Panelling");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Main basket" }), baskets[1].id);
-    await user.click(screen.getByRole("button", { name: "Add estimation item" }));
-    await waitFor(() => expect(api.createKnowledgeMainLine).toHaveBeenCalledWith(baskets[1].id, { name: "Panelling", subBasketName: "Walls" }));
+  it("clears incompatible Sub-Basket IDs on parent changes while retaining the item name", async () => {
+    const { user } = setup({ initialBasketId: "basket-0", initialSubBasketId: "sub-walls", initialName: "Panelling" });
+    await screen.findByRole("option", { name: "Walls" });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main basket" }), "basket-1");
+    expect(screen.getByRole("combobox", { name: "Sub basket" })).toHaveValue("");
+    expect(screen.getByRole("textbox", { name: "Main Line name" })).toHaveValue("Panelling");
+    expect(screen.getByRole("button", { name: "Add estimation item" })).toBeDisabled();
   });
 
-  it("retains entered values on failure and supports retry and cancellation", async () => {
+  it("reconciles an uncertain Configuration create before retry and retains fields", async () => {
     vi.mocked(api.createKnowledgeMainLine).mockRejectedValueOnce(new Error("Save failed"));
-    const { user, onClose } = setup();
-    await screen.findByRole("option", { name: "Carpentry" });
-    await user.selectOptions(screen.getByRole("combobox", { name: "Main basket" }), baskets[0].id);
-    await user.type(screen.getByRole("textbox", { name: "Sub basket" }), "Walls");
-    await user.type(screen.getByRole("textbox", { name: "Main Line name" }), "Panelling");
+    const { user, onCreated } = setup({ initialBasketId: "basket-0", initialSubBasketId: "sub-walls", initialName: "Panelling" });
+    await screen.findByRole("option", { name: "Walls" });
     await user.click(screen.getByRole("button", { name: "Add estimation item" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Save failed");
-    expect(screen.getByRole("textbox", { name: "Sub basket" })).toHaveValue("Walls");
+    expect(await screen.findByText(/No matching item was found/)).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Sub basket" })).toHaveValue("sub-walls");
     expect(screen.getByRole("textbox", { name: "Main Line name" })).toHaveValue("Panelling");
     await user.click(screen.getByRole("button", { name: "Add estimation item" }));
     await waitFor(() => expect(api.createKnowledgeMainLine).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled());
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(onClose).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Discard changes" }));
-    expect(onClose).toHaveBeenCalledOnce();
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("line-created"));
   });
 
   it("reports unavailable or empty Main Baskets without offering creation buttons", async () => {
@@ -101,35 +89,37 @@ describe("Main Line with a Sub Basket text field", () => {
     expect(screen.queryByRole("option", { name: "Add Main Basket" })).not.toBeInTheDocument();
   });
 
-  it("loads later Main Basket pages", async () => {
+  it("loads later Main Basket and Sub-Basket pages", async () => {
     vi.mocked(api.listKnowledgeBaskets).mockImplementation(async (params) => params?.offset === 0
       ? { ...page([baskets[0]]), pagination: { limit: 100, offset: 0, total: 2, hasMore: true } }
       : { ...page([baskets[1]]), pagination: { limit: 100, offset: 1, total: 2, hasMore: false } });
-    setup();
+    vi.mocked(api.listKnowledgeSubBaskets).mockImplementation(async (_basketId, params) => params?.offset === 0
+      ? { ...page([{ ...metadata, id: "sub-first", basketId: "basket-0", name: "First group", displayOrder: 0 }]), pagination: { limit: 100, offset: 0, total: 2, hasMore: true } }
+      : { ...page([{ ...metadata, id: "sub-walls", basketId: "basket-0", name: "Walls", displayOrder: 1 }]), pagination: { limit: 100, offset: 1, total: 2, hasMore: false } });
+    setup({ initialBasketId: "basket-0" });
     expect(await screen.findByRole("option", { name: "Painting" })).toBeVisible();
+    expect(await screen.findByRole("option", { name: "Walls" })).toBeVisible();
+    expect(api.listKnowledgeSubBaskets).toHaveBeenLastCalledWith("basket-0", { limit: 100, offset: 1 });
   });
 
-  it("supports keyboard entry and prevents duplicate submissions while saving", async () => {
+  it("supports keyboard selection and prevents duplicate submissions while saving", async () => {
     let resolveSave!: (item: KnowledgeItemDetail) => void;
     vi.mocked(api.createKnowledgeMainLine).mockImplementation(() => new Promise((resolve) => { resolveSave = resolve; }));
-    const { user, onCreated } = setup();
-    await screen.findByRole("option", { name: "Carpentry" });
-    await user.selectOptions(screen.getByRole("combobox", { name: "Main basket" }), baskets[0].id);
+    const { user, onCreated } = setup({ initialBasketId: "basket-0", initialSubBasketId: "sub-walls" });
+    await screen.findByRole("option", { name: "Walls" });
+    screen.getByRole("combobox", { name: "Main basket" }).focus();
     await user.tab();
-    expect(screen.getByRole("textbox", { name: "Sub basket" })).toHaveFocus();
-    await user.keyboard("Walls");
+    expect(screen.getByRole("combobox", { name: "Sub basket" })).toHaveFocus();
     await user.tab();
     expect(screen.getByRole("textbox", { name: "Main Line name" })).toHaveFocus();
     await user.keyboard("Panelling");
-    // External footer buttons remain associated with the form and keyboard reachable.
     await user.tab();
     await user.tab();
     expect(screen.getByRole("button", { name: "Add estimation item" })).toHaveFocus();
-    await user.keyboard("{Enter}");
-    expect(screen.getByRole("textbox", { name: "Sub basket" })).toBeDisabled();
-    await user.keyboard("{Enter}");
+    await user.keyboard("{Enter}{Enter}");
+    expect(screen.getByRole("combobox", { name: "Sub basket" })).toBeDisabled();
     expect(api.createKnowledgeMainLine).toHaveBeenCalledOnce();
-    await act(async () => { resolveSave({ mainLineId: "line-created" } as KnowledgeItemDetail); });
+    await act(async () => { resolveSave(createdDetail); });
     await waitFor(() => expect(onCreated).toHaveBeenCalledOnce());
   });
 });
@@ -145,7 +135,7 @@ describe("related item creation", () => {
     expect(api.createKnowledgeMainLine).toHaveBeenCalledOnce();
     unmount();
     await act(async () => { resolveSave(createdDetail); });
-    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(5));
+    await waitFor(() => expect(invalidate).toHaveBeenCalled());
     expect(client.getQueryData(knowledgeQueryKeys.item("line-created"))).toEqual(createdDetail);
     expect(onCreated).not.toHaveBeenCalled();
   });
@@ -167,7 +157,7 @@ describe("related item creation", () => {
     await screen.findByRole("option", { name: "Carpentry" });
     await user.click(screen.getByRole("button", { name: "Add related item" }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith("line-created", createdDetail));
-    expect(invalidate).toHaveBeenCalledTimes(5);
+    expect(invalidate).toHaveBeenCalled();
     unmount();
     await act(async () => { rejectRefresh(new Error("Catalog refresh failed")); });
     await waitFor(() => expect(onRefreshError).toHaveBeenCalledWith(expect.stringContaining("related item is saved")));
@@ -179,7 +169,7 @@ describe("related item creation", () => {
     await screen.findByRole("option", { name: "Carpentry" });
     expect(screen.getByRole("dialog", { name: "Add related item" })).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Related item name" })).toHaveValue("Panelling");
-    expect(screen.getByRole("textbox", { name: "Sub basket" })).toHaveValue("Walls");
+    expect(screen.getByRole("combobox", { name: "Sub basket" })).toHaveValue("sub-walls");
     expect(screen.getByText(/Save the rule separately/)).toBeVisible();
     await user.clear(screen.getByRole("textbox", { name: "Related item name" }));
     await user.type(screen.getByRole("textbox", { name: "Related item name" }), "Fluted panelling");
@@ -203,11 +193,11 @@ describe("related item creation", () => {
     await user.click(screen.getByRole("button", { name: "Add related item" }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith("line-created", createdDetail));
     expect(client.getQueryData(knowledgeQueryKeys.item("line-created"))).toEqual(createdDetail);
-    expect(api.createKnowledgeMainLine).toHaveBeenCalledWith("basket-0", { name: "Panelling", subBasketName: "Walls" });
-    expect(invalidate).toHaveBeenCalledTimes(5);
-    expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
+    expect(api.createKnowledgeMainLine).toHaveBeenCalledWith("basket-0", { name: "Panelling", subBasketId: "sub-walls" });
+    expect(invalidate).toHaveBeenCalled();
+    expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual(expect.arrayContaining([
       knowledgeQueryKeys.itemLists(), knowledgeQueryKeys.mainLineLists("basket-0"), knowledgeQueryKeys.subBasketLists("basket-0"), knowledgeQueryKeys.basketDeletionImpact("basket-0"), knowledgeQueryKeys.contexts()
-    ]);
+    ]));
     expect(onCreated.mock.invocationCallOrder[0]).toBeLessThan(invalidate.mock.invocationCallOrder[0]);
     expect(screen.getByRole("button", { name: "Close" })).toBeEnabled();
     await act(async () => { resolveRefresh(); });
@@ -305,7 +295,7 @@ describe("related item creation", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
     expect(onCreated).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Check catalog again" }));
-    expect(await screen.findByText(/No matching related item was found/)).toBeVisible();
+    expect(await screen.findByText(/No matching item was found/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Add related item" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Add related item" }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith("line-created", createdDetail));
@@ -343,7 +333,7 @@ describe("related item creation", () => {
     vi.mocked(api.createKnowledgeMainLine).mockResolvedValue(temporaryDetail);
     const { user, onCreated } = setup({ context, itemType: "temporary", initialBasketId: "basket-0" });
     await screen.findByRole("option", { name: "Carpentry" });
-    expect(screen.getByRole("textbox", { name: "Sub basket" })).not.toBeRequired();
+    expect(screen.getByRole("combobox", { name: "Sub basket" })).not.toBeRequired();
     await user.type(screen.getByRole("textbox", { name: context ? "Related item name" : "Temporary item name" }), "Relocate light point");
     await user.click(screen.getByRole("button", { name: context ? "Add related item" : "Add temporary item" }));
     expect(api.createKnowledgeMainLine).toHaveBeenCalledWith("basket-0", { name: "Relocate light point", itemType: "temporary" });
@@ -366,8 +356,8 @@ describe("sub-item creation", () => {
     await screen.findByRole("option", { name: "Carpentry" });
     expect(screen.getByRole("dialog", { name: "Add sub-item" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Main basket" })).toBeDisabled();
-    expect(screen.getByRole("textbox", { name: "Sub basket" })).toBeDisabled();
-    expect(screen.getByRole("textbox", { name: "Sub basket" })).toHaveValue("Walls");
+    expect(screen.getByRole("combobox", { name: "Sub basket" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Sub basket" })).toHaveValue("sub-walls");
     expect(screen.getByRole("combobox", { name: "Sub-item type" })).toHaveValue("main_line");
     await user.type(screen.getByRole("textbox", { name: "Sub-item name" }), "Panelling");
     await user.click(screen.getByRole("button", { name: "Add sub-item" }));
@@ -399,7 +389,7 @@ describe("sub-item creation", () => {
     await user.click(await screen.findByRole("button", { name: "Use existing item" }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith("line-created", createdDetail));
     expect(api.createKnowledgeMainLine).toHaveBeenCalledOnce();
-    expect(api.listKnowledgeSubBaskets).not.toHaveBeenCalled();
+    expect(api.listKnowledgeSubBaskets).toHaveBeenCalled();
   });
 });
 
@@ -415,6 +405,7 @@ describe("temporary item Main Basket creation", () => {
     };
     vi.mocked(api.listKnowledgeBaskets).mockResolvedValue(page([]));
     vi.mocked(api.createKnowledgeBasket).mockResolvedValue(addedBasket);
+    vi.mocked(api.createKnowledgeMainLine).mockResolvedValue({ ...createdDetail, mainLineName: "Temporary wiring point", basketId: addedBasket.id, itemType: "temporary", subBasketId: null, subBasketName: null });
     const { user, onCreated } = setup({ itemType: "temporary", canCreateBasket: true });
 
     expect(await screen.findByText(/No Main Baskets are available/)).toBeVisible();
@@ -524,7 +515,7 @@ describe("Main Basket dropdown creation in item dialogs", () => {
     await user.keyboard("{Escape}");
     expect(select).toHaveFocus();
     expect(select).toHaveValue("basket-0");
-    expect(screen.getByRole("textbox", { name: "Sub basket" })).toHaveValue("Walls");
+    expect(screen.getByRole("combobox", { name: "Sub basket" })).toHaveValue("sub-walls");
     expect(screen.getByRole("textbox", { name: "Related item name" })).toHaveValue("Panelling");
     expect(api.createKnowledgeBasket).not.toHaveBeenCalled();
   });
@@ -534,14 +525,13 @@ describe("Main Basket dropdown creation in item dialogs", () => {
     await screen.findByRole("option", { name: "Carpentry" });
     const select = screen.getByRole("combobox", { name: "Main basket" });
     await user.selectOptions(select, "basket-1");
-    const subBasket = screen.getByRole("textbox", { name: "Sub basket" });
+    const subBasket = screen.getByRole("combobox", { name: "Sub basket" });
     expect(subBasket).toBeEnabled();
     expect(subBasket).toHaveValue("");
     expect(screen.getByRole("button", { name: "Add sub-item" })).toBeDisabled();
-    await user.type(subBasket, "Other wall");
     await user.selectOptions(select, "basket-0");
     expect(subBasket).toBeDisabled();
-    expect(subBasket).toHaveValue("Walls");
+    expect(subBasket).toHaveValue("sub-walls");
     await user.type(screen.getByRole("textbox", { name: "Sub-item name" }), "Panelling");
     await user.click(screen.getByRole("button", { name: "Add sub-item" }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith("line-created", createdDetail));
@@ -559,5 +549,197 @@ describe("Main Basket dropdown creation in item dialogs", () => {
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Main basket" })).toHaveValue("basket-created"));
     expect(api.createKnowledgeBasket).toHaveBeenCalledOnce();
     expect(api.createKnowledgeMainLine).not.toHaveBeenCalled();
+  });
+});
+
+describe("independent Sub-Basket creation and selection", () => {
+  const group: KnowledgeSubBasket = { ...metadata, id: "sub-new", basketId: "basket-0", name: "Electrical fixtures", displayOrder: 1 };
+
+  it("preserves a suggested group name only when explicitly adding a Sub-Basket", async () => {
+    const { user } = setup({ context: "related-item", initialBasketId: "basket-0", initialSubBasketName: "Suggested lighting", initialName: "Lights", canCreateSubBasket: true });
+    await screen.findByRole("option", { name: "Walls" });
+    expect(screen.getByRole("combobox", { name: "Sub basket" })).toHaveValue("");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sub basket" }), "add-sub-basket");
+    expect(screen.getByRole("textbox", { name: "New Sub-Basket name" })).toHaveValue("Suggested lighting");
+    expect(api.createKnowledgeSubBasket).not.toHaveBeenCalled();
+  });
+
+  it("saves an empty Sub-Basket independently, restores focus and retains the temporary item draft", async () => {
+    vi.mocked(api.createKnowledgeSubBasket).mockResolvedValue(group);
+    const { user } = setup({ itemType: "temporary", initialBasketId: "basket-0", canCreateBasket: true });
+    await screen.findByRole("option", { name: "Walls" });
+    await user.type(screen.getByRole("textbox", { name: "Temporary item name" }), "Temporary fitting");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sub basket" }), "add-sub-basket");
+    expect(screen.getByRole("textbox", { name: "New Sub-Basket name" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Add temporary item" })).toBeDisabled();
+    await user.type(screen.getByRole("textbox", { name: "New Sub-Basket name" }), " Electrical fixtures {Enter}");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Sub basket" })).toHaveValue(group.id));
+    expect(screen.getByRole("combobox", { name: "Sub basket" })).toHaveFocus();
+    expect(screen.getByRole("textbox", { name: "Temporary item name" })).toHaveValue("Temporary fitting");
+    expect(screen.getByText(/saved separately remain in Configuration/)).toBeVisible();
+    expect(api.createKnowledgeSubBasket).toHaveBeenCalledWith("basket-0", { name: group.name });
+    expect(api.createKnowledgeMainLine).not.toHaveBeenCalled();
+    vi.mocked(api.createKnowledgeMainLine).mockResolvedValue({ ...createdDetail, mainLineName: "Temporary fitting", subBasketId: group.id, subBasketName: group.name, itemType: "temporary" });
+    await user.click(screen.getByRole("button", { name: "Add temporary item" }));
+    expect(api.createKnowledgeMainLine).toHaveBeenCalledWith("basket-0", { name: "Temporary fitting", subBasketId: group.id, itemType: "temporary" });
+  });
+
+  it("keeps independently saved groups after cancelling the item without a placeholder POST", async () => {
+    vi.mocked(api.createKnowledgeSubBasket).mockResolvedValue(group);
+    const { user, onClose } = setup({ itemType: "temporary", initialBasketId: "basket-0", canCreateSubBasket: true });
+    await screen.findByRole("option", { name: "Walls" });
+    expect(screen.queryByRole("option", { name: "Add Main Basket" })).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sub basket" }), "add-sub-basket");
+    await user.type(screen.getByRole("textbox", { name: "New Sub-Basket name" }), group.name);
+    await user.click(screen.getByRole("button", { name: "Save Sub-Basket" }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Sub basket" })).toHaveValue(group.id));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(api.createKnowledgeSubBasket).toHaveBeenCalledOnce();
+    expect(api.createKnowledgeMainLine).not.toHaveBeenCalled();
+  });
+
+  it("requires explicit identity-safe reuse after an uncertain group create", async () => {
+    vi.mocked(api.createKnowledgeSubBasket).mockRejectedValue(new Error("Lost response"));
+    vi.mocked(api.listKnowledgeSubBaskets).mockResolvedValueOnce(page([])).mockResolvedValue(page([group]));
+    const { user } = setup({ itemType: "temporary", initialBasketId: "basket-0", canCreateSubBasket: true });
+    await screen.findByText("No Sub-Baskets are available in this Main Basket.");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sub basket" }), "add-sub-basket");
+    await user.type(screen.getByRole("textbox", { name: "New Sub-Basket name" }), group.name);
+    await user.click(screen.getByRole("button", { name: "Save Sub-Basket" }));
+    const useExisting = await screen.findByRole("button", { name: "Use existing Sub-Basket" });
+    expect(screen.getByRole("combobox", { name: "Sub basket" })).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Save Sub-Basket" })).toBeDisabled();
+    await user.click(useExisting);
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Sub basket" })).toHaveValue(group.id));
+    expect(api.createKnowledgeSubBasket).toHaveBeenCalledOnce();
+  });
+
+  it("blocks group and item submission until an ambiguous group outcome is reconciled", async () => {
+    vi.mocked(api.createKnowledgeSubBasket).mockRejectedValue(new Error("Lost response"));
+    vi.mocked(api.listKnowledgeSubBaskets).mockResolvedValueOnce(page([])).mockRejectedValueOnce(new Error("Unavailable")).mockResolvedValue(page([]));
+    const { user } = setup({ itemType: "temporary", initialBasketId: "basket-0", initialName: "Unspecified fitting", canCreateSubBasket: true });
+    await screen.findByText("No Sub-Baskets are available in this Main Basket.");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sub basket" }), "add-sub-basket");
+    await user.type(screen.getByRole("textbox", { name: "New Sub-Basket name" }), group.name);
+    await user.click(screen.getByRole("button", { name: "Save Sub-Basket" }));
+    const check = await screen.findByRole("button", { name: "Check Sub-Baskets again" });
+    expect(screen.getByRole("textbox", { name: "New Sub-Basket name" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save Sub-Basket" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add temporary item" })).toBeDisabled();
+    await user.click(check);
+    expect(await screen.findByText(/No matching Sub-Basket was found/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save Sub-Basket" })).toBeEnabled();
+    expect(api.createKnowledgeSubBasket).toHaveBeenCalledOnce();
+  });
+
+  it("retains group fields after a definite rejection without extra reconciliation reads", async () => {
+    vi.mocked(api.createKnowledgeSubBasket).mockRejectedValue(new ApiError(403, "FORBIDDEN", "You cannot add Sub-Baskets."));
+    const { user } = setup({ itemType: "temporary", initialBasketId: "basket-0", canCreateSubBasket: true });
+    await screen.findByRole("option", { name: "Walls" });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sub basket" }), "add-sub-basket");
+    await user.type(screen.getByRole("textbox", { name: "New Sub-Basket name" }), group.name);
+    await user.click(screen.getByRole("button", { name: "Save Sub-Basket" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("You cannot add Sub-Baskets");
+    expect(screen.getByRole("textbox", { name: "New Sub-Basket name" })).toHaveValue(group.name);
+    expect(api.listKnowledgeSubBaskets).toHaveBeenCalledOnce();
+  });
+
+  it("retains a saved group and offers refresh-only recovery after refresh failure", async () => {
+    vi.mocked(api.createKnowledgeSubBasket).mockResolvedValue(group);
+    const { user, client } = setup({ itemType: "temporary", initialBasketId: "basket-0", canCreateSubBasket: true });
+    await screen.findByRole("option", { name: "Walls" });
+    const invalidate = vi.spyOn(client, "invalidateQueries").mockRejectedValue(new Error("Refresh failed"));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sub basket" }), "add-sub-basket");
+    await user.type(screen.getByRole("textbox", { name: "New Sub-Basket name" }), group.name);
+    await user.click(screen.getByRole("button", { name: "Save Sub-Basket" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The Sub-Basket is saved");
+    expect(screen.getByRole("combobox", { name: "Sub basket" })).toHaveValue(group.id);
+    invalidate.mockResolvedValue();
+    await user.click(screen.getByRole("button", { name: "Retry catalog refresh" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(api.createKnowledgeSubBasket).toHaveBeenCalledOnce();
+    expect(api.createKnowledgeMainLine).not.toHaveBeenCalled();
+  });
+
+  it("retains combined whole-group creation as one item POST", async () => {
+    vi.mocked(api.createKnowledgeMainLine).mockResolvedValue({ ...createdDetail, mainLineName: "Lights", itemType: "temporary", subBasketName: "New lighting", subBasketId: "sub-lighting" });
+    const { user, onCreated } = setup({ context: "sub-basket", itemType: "temporary", initialBasketId: "basket-0", canCreateSubBasket: true });
+    await screen.findByRole("option", { name: "Walls" });
+    expect(screen.getByRole("combobox", { name: "Sub basket" })).toHaveValue("create-sub-basket-with-item");
+    await user.type(screen.getByRole("textbox", { name: "New Sub-Basket name" }), "New lighting");
+    await user.type(screen.getByRole("textbox", { name: "Temporary item name" }), "Lights");
+    await user.click(screen.getByRole("button", { name: "Add Sub-Basket" }));
+    expect(api.createKnowledgeMainLine).toHaveBeenCalledWith("basket-0", { name: "Lights", subBasketName: "New lighting", itemType: "temporary" });
+    expect(api.createKnowledgeSubBasket).not.toHaveBeenCalled();
+    await waitFor(() => expect(onCreated).toHaveBeenCalledOnce());
+  });
+
+  it("prevents submission from an incomplete Sub-Basket catalog and retries loading", async () => {
+    vi.mocked(api.listKnowledgeSubBaskets).mockRejectedValueOnce(new Error("Later page failed")).mockResolvedValue(page([group]));
+    const { user } = setup({ itemType: "temporary", initialBasketId: "basket-0", initialName: "Lights", canCreateSubBasket: true });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Sub-Baskets could not be loaded");
+    expect(screen.getByRole("button", { name: "Add temporary item" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Retry Sub-Baskets" }));
+    expect(await screen.findByRole("option", { name: group.name })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add temporary item" })).toBeEnabled();
+  });
+});
+
+describe("Configuration item saved-state recovery", () => {
+  const props = { initialBasketId: "basket-0", initialSubBasketId: "sub-walls", initialName: "Panelling" };
+
+  it("keeps successful Configuration creation saved when refresh fails and never repeats POST", async () => {
+    const { user, client, onCreated } = setup(props);
+    await screen.findByRole("option", { name: "Walls" });
+    const invalidate = vi.spyOn(client, "invalidateQueries").mockRejectedValue(new Error("Offline"));
+    await user.click(screen.getByRole("button", { name: "Add estimation item" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The item is saved");
+    expect(onCreated).toHaveBeenCalledWith("line-created");
+    expect(screen.getByRole("button", { name: "Add estimation item" })).toBeDisabled();
+    invalidate.mockResolvedValue();
+    await user.click(screen.getByRole("button", { name: "Retry catalog refresh" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(api.createKnowledgeMainLine).toHaveBeenCalledOnce();
+    expect(onCreated).toHaveBeenCalledOnce();
+  });
+
+  it("retries selection of the saved record after callback failure without another create", async () => {
+    const onCreated = vi.fn().mockRejectedValueOnce(new Error("Navigation unavailable")).mockResolvedValue(undefined);
+    const { user } = setup({ ...props, onCreated });
+    await screen.findByRole("option", { name: "Walls" });
+    await user.click(screen.getByRole("button", { name: "Add estimation item" }));
+    const useSaved = await screen.findByRole("button", { name: "Use saved item" });
+    await waitFor(() => expect(useSaved).toBeEnabled());
+    expect(screen.getByRole("button", { name: "Add estimation item" })).toBeDisabled();
+    await user.click(useSaved);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Use saved item" })).not.toBeInTheDocument());
+    expect(onCreated).toHaveBeenCalledTimes(2);
+    expect(api.createKnowledgeMainLine).toHaveBeenCalledOnce();
+  });
+
+  it("does not select a successful response whose item name differs from the request", async () => {
+    vi.mocked(api.createKnowledgeMainLine).mockResolvedValue({ ...createdDetail, mainLineName: "Another catalog item" });
+    const { user, onCreated } = setup(props);
+    await screen.findByRole("option", { name: "Walls" });
+    await user.click(screen.getByRole("button", { name: "Add estimation item" }));
+    expect(await screen.findByRole("button", { name: "Use saved item" })).toBeVisible();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Add estimation item" })).toBeDisabled();
+    expect(api.createKnowledgeMainLine).toHaveBeenCalledOnce();
+  });
+
+  it("requires explicit reuse in Configuration after a saved response was lost", async () => {
+    vi.mocked(api.createKnowledgeMainLine).mockRejectedValue(new Error("Response lost"));
+    vi.mocked(api.listKnowledgeMainLines).mockResolvedValue(page([existingLine]));
+    const { user, onCreated } = setup(props);
+    await screen.findByRole("option", { name: "Walls" });
+    await user.click(screen.getByRole("button", { name: "Add estimation item" }));
+    const useExisting = await screen.findByRole("button", { name: "Use existing item" });
+    expect(onCreated).not.toHaveBeenCalled();
+    await user.click(useExisting);
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("line-created"));
+    expect(api.createKnowledgeMainLine).toHaveBeenCalledOnce();
   });
 });

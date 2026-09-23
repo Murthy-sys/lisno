@@ -118,7 +118,7 @@ export function KnowledgeModeDescriptionEditor({ description, pmc, inHouse, read
             <p className="knowledge-mode-description__text">{preview}</p>
           </div>
           <div className="knowledge-mode-description__actions">
-            <Button variant="quiet" disabled={readOnly} onClick={close}>Cancel</Button>
+            <Button variant="destructive-outline" disabled={readOnly} onClick={close}>Cancel</Button>
             <Button disabled={readOnly} onClick={save}>Save</Button>
           </div>
         </>

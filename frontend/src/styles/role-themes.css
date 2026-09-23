@@ -381,18 +381,68 @@
   box-shadow: 1px 0 0 rgb(12 10 30 / 18%);
 }
 
+.ui-app-shell[data-role] .ui-sidebar__link,
+.ui-app-shell[data-role] .ui-sidebar__link span {
+  color: var(--role-rail-ink);
+}
+
 .ui-app-shell[data-role] .ui-sidebar__link > svg {
-  color: var(--color-highlight);
+  color: var(--role-rail-icon);
+  opacity: 0.85;
+  stroke-width: 1.75;
+}
+
+.ui-app-shell[data-role] .ui-sidebar__link > .ui-sidebar__link-arrow {
+  opacity: 0.48;
+}
+
+.ui-app-shell[data-role] .ui-sidebar__link:hover {
+  background: rgb(255 255 255 / 6%);
+  color: var(--role-rail-ink);
 }
 
 .ui-app-shell[data-role] .ui-sidebar__link--active,
-.ui-app-shell[data-role] .ui-sidebar__link:hover {
-  background: rgb(255 255 255 / 10%);
+.ui-app-shell[data-role] .ui-sidebar__link--active:hover {
+  background: rgb(255 255 255 / 8%);
+  color: var(--role-rail-ink);
 }
 
 .ui-app-shell[data-role] .ui-sidebar__link--active {
-  border-inline-start-color: var(--role-accent-bright);
+  border-inline-start-color: var(--role-rail-marker);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 7%);
+}
+
+.ui-app-shell[data-role] .ui-sidebar__link--active > svg:not(.ui-sidebar__link-arrow) {
+  opacity: 1;
+}
+
+.ui-app-shell[data-role] .ui-sidebar__role p {
+  color: color-mix(in srgb, var(--role-rail-ink) 72%, transparent);
+}
+
+.ui-app-shell[data-role] .ui-sidebar__role strong,
+.ui-app-shell[data-role] .ui-sidebar__account-name,
+.ui-app-shell[data-role] .ui-sidebar__account-chevron {
+  color: var(--role-rail-ink);
+}
+
+.ui-app-shell[data-role] .ui-sidebar__account-trigger:hover {
+  background: rgb(255 255 255 / 6%);
+}
+
+.ui-app-shell[data-role] .ui-sidebar__account-trigger[aria-expanded="true"] {
+  background: rgb(255 255 255 / 8%);
+}
+
+.ui-app-shell[data-role] .ui-sidebar__avatar {
+  background: var(--role-rail-marker);
+  color: #1f2a1c;
+}
+
+/* The mobile navigation drawer carries the same Sidebar as the rail. */
+.ui-app-shell[data-role] .ui-drawer--navigation {
+  background: var(--role-rail);
+  color: var(--role-rail-ink);
 }
 
 .ui-app-shell[data-role] .ui-mobile-header {
@@ -557,7 +607,6 @@
   --color-lisno-navy: var(--role-ink);
 }
 
-.ui-app-shell[data-role] .button--quiet,
 .ui-app-shell[data-role] .auth-switch a,
 .ui-app-shell[data-role] .search-combobox__error button,
 .ui-app-shell[data-role] .risk-item a,
@@ -653,30 +702,12 @@
 
 /* ----------------------------------------------------------------- buttons */
 
-.ui-app-shell[data-role] .button--primary,
-.ui-app-shell[data-role] .ui-button--primary,
-.ui-app-shell[data-role] .button--download {
-  border: 0;
-  background: var(--role-cta);
-  color: var(--role-cta-ink);
-  box-shadow: var(--shadow-card);
-}
-
-.ui-app-shell[data-role] .button--primary:hover:not(:disabled),
-.ui-app-shell[data-role] .ui-button--primary:hover:not(:disabled),
-.ui-app-shell[data-role] .button--download:hover:not(:disabled) {
-  background: var(--role-cta-hover);
-  box-shadow: var(--shadow-soft);
-}
-
 /*
- * `.secondary-button` had no definition at all, so every control using it
- * rendered as plain text. index.css now gives it a base; here it picks up
- * the role's wood tones and the glass treatment.
+ * Button colours, font and weight come from the --button-* tokens in
+ * global.css (primitives.css and index.css). Role shells no longer retint
+ * primary/secondary/quiet buttons; only controls on a dark band opt out
+ * (see "Controls sitting ON a dark band" below).
  */
-.ui-app-shell[data-role] .secondary-button,
-.ui-app-shell[data-role] .button--secondary,
-.ui-app-shell[data-role] .ui-button--secondary,
 .ui-app-shell[data-role] .estimate-design-uploads__retry {
   border: 1px solid var(--role-line-strong);
   border-radius: var(--radius-field);
@@ -688,9 +719,6 @@
   font-weight: 750;
 }
 
-.ui-app-shell[data-role] .secondary-button:hover:not(:disabled),
-.ui-app-shell[data-role] .button--secondary:hover:not(:disabled),
-.ui-app-shell[data-role] .ui-button--secondary:hover:not(:disabled),
 .ui-app-shell[data-role] .estimate-design-uploads__retry:hover:not(:disabled) {
   border-color: var(--role-accent);
   background: color-mix(in srgb, var(--role-accent-bright) 18%, var(--role-deck));
@@ -738,19 +766,6 @@
 .ui-app-shell[data-role] .estimate-panel > .secondary-button {
   justify-self: start;
   inline-size: max-content;
-}
-
-.ui-app-shell[data-role] .workspace-header .button--primary {
-  border: 1px solid rgb(255 255 255 / 30%);
-  background: rgb(255 255 255 / 16%);
-  color: var(--role-band-ink);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-
-.ui-app-shell[data-role] .workspace-header .button--primary:hover:not(:disabled) {
-  border-color: rgb(255 255 255 / 50%);
-  background: rgb(255 255 255 / 26%);
 }
 
 /* ---------------------------------------------------------- metric tiles */
@@ -1270,13 +1285,12 @@
 }
 
 /*
- * Controls sitting ON a dark band.
+ * Controls sitting ON a dark band (documented exception to the button tokens).
  *
- * `--role-cta` is a teak gradient tuned for the light canvas. Reused here it
- * lands at 1.27:1 against the band — below the 3:1 WCAG needs for a control
- * boundary — so the primary action vanished while the cream secondary read at
- * 6.6:1 and outranked it. On the band the treatment inverts: amber solid for
- * primary, light outline for secondary.
+ * The olive primary fill would sit at ~1:1 against a dark band, so on the
+ * band the treatment inverts: primary is a cream fill with olive ink, and
+ * secondary is a darkened fill with cream ink and a cream-alpha outline.
+ * The focus ring turns cream so it stays visible on the band.
  */
 .ui-app-shell[data-role] .estimate-workspace__footer .estimate-actions,
 .ui-app-shell[data-role] .estimate-proposal > header .estimate-actions {
@@ -1291,44 +1305,39 @@
 
 .ui-app-shell[data-role] .estimate-workspace__footer .button--primary,
 .ui-app-shell[data-role] .estimate-proposal > header .button--primary {
-  /* The band runs #3e2a1b -> #a9793f and the actions sit at its lightest end,
-     so the fill has to clear 3:1 against #a9793f, not the mid-tone. Cream
-     manages 3.50:1 there; amber only reached 1.91:1. The dark ring keeps the
-     edge defined across the whole gradient. */
-  border: 1px solid transparent;
-  background: linear-gradient(140deg, #fffdf8 0%, #fdf3e2 55%, #f6e7cd 100%);
-  color: #3a2a17;
-  box-shadow:
-    0 0 0 1px rgb(34 20 8 / 32%),
-    0 10px 24px -12px rgb(18 11 5 / 85%);
+  border: 1px solid var(--button-primary-ink);
+  background: var(--button-primary-ink);
+  color: var(--button-secondary-ink);
+  box-shadow: 0 10px 24px -12px rgb(0 0 0 / 70%);
 }
 
 .ui-app-shell[data-role] .estimate-workspace__footer .button--primary:hover:not(:disabled),
 .ui-app-shell[data-role] .estimate-proposal > header .button--primary:hover:not(:disabled) {
-  background: linear-gradient(140deg, #ffffff 0%, #fffaf0 55%, #fdf0da 100%);
-  box-shadow:
-    0 0 0 1px rgb(34 20 8 / 40%),
-    0 14px 30px -12px rgb(18 11 5 / 90%);
+  border-color: #ffffff;
+  background: #ffffff;
+  color: var(--button-secondary-ink);
 }
 
 .ui-app-shell[data-role] .estimate-workspace__footer .button--secondary,
 .ui-app-shell[data-role] .estimate-proposal > header .button--secondary {
-  /* Tinted dark rather than light: a white wash over the band's light end
-     capped the label at 3.5:1, and even pure white tops out at 3.84 there.
-     Darkening the button's own fill takes the label to ~7.8:1. */
-  border: 1px solid rgb(255 255 255 / 42%);
-  background: rgb(28 17 7 / 72%);
-  color: #ffffff;
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 20%);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  /* A darkened own fill keeps the cream label readable even at the band's
+     lightest end. */
+  border: 1px solid color-mix(in srgb, var(--button-primary-ink) 55%, transparent);
+  background: color-mix(in srgb, var(--button-secondary-ink) 72%, transparent);
+  color: var(--button-primary-ink);
+  box-shadow: none;
 }
 
 .ui-app-shell[data-role] .estimate-workspace__footer .button--secondary:hover:not(:disabled),
 .ui-app-shell[data-role] .estimate-proposal > header .button--secondary:hover:not(:disabled) {
-  border-color: rgb(255 255 255 / 68%);
-  background: rgb(28 17 7 / 84%);
-  color: #ffffff;
+  border-color: var(--button-primary-ink);
+  background: color-mix(in srgb, var(--button-secondary-ink) 86%, transparent);
+  color: var(--button-primary-ink);
+}
+
+.ui-app-shell[data-role] .estimate-workspace__footer .button:focus-visible,
+.ui-app-shell[data-role] .estimate-proposal > header .button:focus-visible {
+  box-shadow: var(--button-focus-ring-on-dark);
 }
 
 .ui-app-shell[data-role] .estimate-workspace__footer .button:disabled,
@@ -1453,6 +1462,11 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--role-focus) 55%, transparent);
 }
 
+/* Buttons keep the shared olive focus ring inside role shells. */
+.ui-app-shell[data-role] :is(.ui-button, .ui-icon-button, .button, .secondary-button):focus-visible {
+  box-shadow: var(--button-focus-ring);
+}
+
 @media (max-width: 767px) {
 .ui-app-shell[data-role] {
     background-attachment: scroll;
@@ -1569,24 +1583,7 @@ body:has(.ui-app-shell[data-role]) .knowledge-dialog-body .ui-field__hint {
   color: var(--role-ink-muted);
 }
 
-/* Quiet buttons and progress fills still resolve to the base violet, which is
-   the loudest cool note left on these screens. Scoped to Configuration rather
-   than retinting .ui-button--quiet app-wide, which would reach every role. */
-.ui-app-shell[data-role] .knowledge-page .ui-button--quiet,
-.ui-app-shell[data-role] .knowledge-page .ui-icon-button--quiet,
-body:has(.ui-app-shell[data-role]) .knowledge-dialog-body .ui-button--quiet,
-body:has(.ui-app-shell[data-role]) .knowledge-dialog-actions .ui-button--quiet {
-  color: var(--role-accent);
-}
-
-.ui-app-shell[data-role] .knowledge-page .ui-button--quiet:not(:disabled):hover,
-.ui-app-shell[data-role] .knowledge-page .ui-icon-button--quiet:not(:disabled):hover,
-body:has(.ui-app-shell[data-role]) .knowledge-dialog-body .ui-button--quiet:not(:disabled):hover,
-body:has(.ui-app-shell[data-role]) .knowledge-dialog-actions .ui-button--quiet:not(:disabled):hover {
-  background: color-mix(in srgb, var(--role-accent) 12%, transparent);
-  color: #7a5122;
-}
-
+/* Quiet and primary buttons here resolve to the shared --button-* tokens. */
 .ui-app-shell[data-role] .knowledge-page .ui-progress {
   background: var(--role-line);
 }
@@ -1615,19 +1612,6 @@ body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.knowledge-dialog-bo
 
 body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.knowledge-dialog-body) .modal__header p:last-child:not(.eyebrow) {
   color: var(--role-ink-muted);
-}
-
-/* The gold CTA is scoped inside .ui-app-shell, which portalled dialogs are
-   not, so their submit fell back to the base violet. */
-body:has(.ui-app-shell[data-role]) .knowledge-dialog-actions .ui-button--primary {
-  border: 0;
-  background: var(--role-cta, linear-gradient(140deg, #6b4a2f 0%, #8d6238 58%, #a9793f 100%));
-  color: var(--role-cta-ink, #fdf7ec);
-  box-shadow: 0 12px 26px -14px rgb(58 38 18 / 90%);
-}
-
-body:has(.ui-app-shell[data-role]) .knowledge-dialog-actions .ui-button--primary:hover:not(:disabled) {
-  background: var(--role-cta-hover, linear-gradient(140deg, #7a5636 0%, #9d6f3f 58%, #bd8a4a 100%));
 }
 
 /* accent-color drives the native checkbox tick. */
@@ -1769,7 +1753,11 @@ body:has(.ui-app-shell[data-role="super_admin"]) .finance-chart__ring {
 /* The PDF token guide is the shared visual contract for every role. */
 .ui-app-shell[data-role] {
   --role-canvas: var(--color-bg);
-  --role-rail: var(--color-primary);
+  /* Sage rail: olive gradient with cream ink, matching the login page palette. */
+  --role-rail: linear-gradient(180deg, #2f3a2a 0%, #283223 55%, #222b1e 100%);
+  --role-rail-ink: #eef0e6;
+  --role-rail-icon: #e6e9dc;
+  --role-rail-marker: #a9b89a;
   --role-band: var(--color-primary);
   --role-band-ink: var(--color-surface);
   --role-band-ink-muted: color-mix(in srgb, var(--color-surface) 72%, transparent);

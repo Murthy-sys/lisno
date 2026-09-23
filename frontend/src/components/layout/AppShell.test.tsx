@@ -207,7 +207,7 @@ describe("AppShell", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument()
     );
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Welcome to Lisno" })).toBeVisible();
   });
 
   it("uses the same permission-filtered Admin links on desktop and mobile", async () => {

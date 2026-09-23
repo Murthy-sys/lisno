@@ -276,7 +276,7 @@ export function EstimateDrawingPreviewDialog({
             >
               Keep editing
             </button>
-            <button type="button" onClick={onClose}>Discard changes</button>
+            <button type="button" className="ui-button ui-button--destructive-outline" onClick={onClose}>Discard changes</button>
           </div>
         </Dialog>
       ) : null}

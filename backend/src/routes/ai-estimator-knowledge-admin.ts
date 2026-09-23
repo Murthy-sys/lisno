@@ -126,6 +126,23 @@ const expectedVersionCommandSchema = z
   })
   .strict();
 
+const draftSubBasketGuardSchema = z.object({
+  subBasketId: stableIdSchema,
+  expectedVersion: expectedVersionSchema
+}).strict();
+
+const draftItemGuardSchema = z.object({
+  basketId: stableIdSchema,
+  subBasketId: z.null()
+}).strict();
+
+const exclusiveDraftGuard = (input: { draftSubBasketGuard?: unknown; draftItemGuard?: unknown }) =>
+  input.draftSubBasketGuard === undefined || input.draftItemGuard === undefined;
+const exclusiveDraftGuardIssue = {
+  message: "Provide either a Draft Sub Basket guard or a Draft item guard, not both.",
+  path: ["draftItemGuard"]
+};
+
 const mainLineListQuerySchema = z
   .object({
     ...paginationFields,
@@ -154,14 +171,38 @@ const mainLineUpdateSchema = z
     expectedVersion: expectedVersionSchema,
     name: shortTextSchema.optional(),
     description: z.string().trim().min(1).max(4_000).nullable().optional(),
-    displayOrder: displayOrderSchema.optional()
+    displayOrder: displayOrderSchema.optional(),
+    draftSubBasketGuard: draftSubBasketGuardSchema.optional(),
+    draftItemGuard: draftItemGuardSchema.optional()
   })
   .strict()
   .refine(
-    ({ expectedVersion: _expectedVersion, ...changes }) =>
+    ({ expectedVersion: _expectedVersion, draftSubBasketGuard: _draftSubBasketGuard, draftItemGuard: _draftItemGuard, ...changes }) =>
       Object.values(changes).some((value) => value !== undefined),
     { message: "At least one Main Line field must be changed." }
-  );
+  )
+  .refine(exclusiveDraftGuard, exclusiveDraftGuardIssue);
+
+const mainLineDeleteSchema = z.object({
+  expectedVersion: expectedVersionSchema,
+  reason: z.string().trim().min(1).max(1_000),
+  draftSubBasketGuard: draftSubBasketGuardSchema.optional(),
+  draftItemGuard: draftItemGuardSchema.optional()
+}).strict().refine(exclusiveDraftGuard, exclusiveDraftGuardIssue);
+
+const subBasketUpdateSchema = z.object({
+  expectedVersion: expectedVersionSchema,
+  name: shortTextSchema,
+  managementContext: z.literal("configuration").optional()
+}).strict();
+
+const subBasketDeleteSchema = z.object({
+  expectedVersion: expectedVersionSchema,
+  confirmationName: z.string().min(1).max(240),
+  reason: z.string().trim().min(1).max(1_000),
+  impactToken: z.string().regex(/^[a-f0-9]{64}$/u),
+  draftOnly: z.literal(true).optional()
+}).strict();
 
 const itemListQuerySchema = z
   .object({
@@ -473,6 +514,35 @@ export function createAiEstimatorKnowledgeAdminRouter(
     validateBody(z.object({ name: shortTextSchema }).strict()),
     handler(async (request) => services.reference.createSubBasket(request.authenticatedUser!, String(request.params.basketId), request.body), 201)
   );
+  router.patch(
+    `${prefix}/baskets/:basketId/sub-baskets/:subBasketId`,
+    protectedRoute,
+    requireOperation("PATCH /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets/:subBasketId"),
+    validateBody(subBasketUpdateSchema),
+    handler(async (request) => services.reference.updateSubBasket(
+      request.authenticatedUser!,
+      String(request.params.basketId),
+      String(request.params.subBasketId),
+      request.body
+    ))
+  );
+  router.get(
+    `${prefix}/baskets/:basketId/sub-baskets/:subBasketId/deletion-impact`,
+    protectedRoute,
+    requireOperation("GET /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets/:subBasketId/deletion-impact"),
+    handler(async (request) => services.reference.getSubBasketDeletionImpact(
+      request.authenticatedUser!, String(request.params.basketId), String(request.params.subBasketId)
+    ))
+  );
+  router.delete(
+    `${prefix}/baskets/:basketId/sub-baskets/:subBasketId`,
+    protectedRoute,
+    requireOperation("DELETE /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets/:subBasketId"),
+    validateBody(subBasketDeleteSchema),
+    handler(async (request) => services.reference.permanentlyDeleteSubBasket(
+      request.authenticatedUser!, String(request.params.basketId), String(request.params.subBasketId), request.body
+    ))
+  );
   router.get(
     `${prefix}/baskets/:basketId/main-lines`,
     protectedRoute,
@@ -501,7 +571,7 @@ export function createAiEstimatorKnowledgeAdminRouter(
     `${prefix}/main-lines/:mainLineId`,
     protectedRoute,
     requireOperation("DELETE /admin/ai-estimator-knowledge/main-lines/:mainLineId"),
-    validateBody(archiveSchema),
+    validateBody(mainLineDeleteSchema),
     handler(async (request) => services.item.permanentlyDeleteMainLine(request.authenticatedUser!, String(request.params.mainLineId), request.body))
   );
   router.get(

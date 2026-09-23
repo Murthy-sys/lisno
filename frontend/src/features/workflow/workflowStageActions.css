@@ -4,8 +4,7 @@
 .workflow-stage-actions__choice { display: grid; gap: var(--space-2); max-inline-size: 100%; }
 .workflow-stage-actions__choice p { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
 .workflow-stage-actions__buttons .ui-button { white-space: normal; max-width: 100%; }
-.ui-app-shell[data-role] .workflow-stage-actions__buttons .ui-button { min-height: var(--control-height); padding: var(--space-2) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-control); }
-.ui-app-shell[data-role] .workflow-stage-actions__buttons .ui-button--secondary { border-color: var(--color-border-strong); background: var(--color-surface); color: var(--color-text); }
+.ui-app-shell[data-role] .workflow-stage-actions__buttons .ui-button { min-height: var(--control-height); padding: var(--space-2) var(--space-4); border-width: 1px; border-style: solid; border-radius: var(--radius-control); }
 .workflow-stage-actions__form { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface-subtle); }
 .workflow-stage-actions__form--panel { padding: 0; border: 0; background: transparent; }
 .workflow-stage-actions__form-heading h6 { margin: 0 0 var(--space-2); font-size: var(--text-md); }
@@ -62,7 +61,7 @@
 .workflow-submitted-document__heading h5 { margin: 0 0 var(--space-1); color: var(--color-text-muted); font-size: var(--text-xs); font-weight: 500; }
 .workflow-submitted-document__heading p { margin: 0; font-size: var(--text-sm); font-weight: 600; overflow-wrap: anywhere; }
 .workflow-submitted-document__buttons { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.workflow-submitted-document__buttons .ui-button { min-block-size: var(--control-height-compact); padding-inline: var(--space-3); gap: var(--space-2); border: 1px solid var(--color-border-strong); border-radius: var(--radius-control); }
+.workflow-submitted-document__buttons .ui-button { min-block-size: var(--control-height-compact); padding-inline: var(--space-3); gap: var(--space-2); border-width: 1px; border-style: solid; border-radius: var(--radius-control); }
 .workflow-submitted-document__expanded { display: block; inline-size: 100%; block-size: min(65vh, 720px); object-fit: contain; border: 0; }
 .workflow-submitted-document__error { display: grid; justify-items: start; gap: var(--space-2); font-size: var(--text-sm); }
 .workflow-submitted-document__error p { margin: 0; }

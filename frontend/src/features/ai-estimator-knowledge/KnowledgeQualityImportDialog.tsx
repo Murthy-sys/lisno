@@ -56,7 +56,7 @@ export function KnowledgeQualityImportDialog({ basketName, currentParameters, di
     footer={({ requestClose }) => (<div className="knowledge-quality-import__footer">
         <p>Adds to your draft.<br /> Save the checklist to apply changes.</p>
         <div className="knowledge-quality-import__actions">
-          <Button variant="secondary" onClick={requestClose}>Cancel</Button>
+          <Button variant="destructive-outline" onClick={requestClose}>Cancel</Button>
           <Button variant="primary" disabled={!canImport} onClick={() => { if (canImport && result) onImport(result.parameters); }}>Add {count > 0 ? `${count} ${count === 1 ? "check" : "checks"}` : "checks"} to checklist</Button>
         </div>
       </div>)}>

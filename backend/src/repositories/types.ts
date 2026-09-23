@@ -248,6 +248,13 @@ export interface UserDirectoryFilters {
   active?: boolean;
 }
 
+export interface UserDirectorySummary {
+  total: number;
+  active: number;
+  inactive: number;
+  roleCount: number;
+}
+
 export interface UserResponsibilityCounts {
   ownedActiveLeads: number;
   ownedActiveEstimates: number;
@@ -1096,6 +1103,7 @@ export interface AppRepository {
     pagination: PaginationInput
   ): Promise<PageResult<UserRecord>>;
   countActiveUsersByRole(role: Role): Promise<number>;
+  summarizeUsers(visibleRoles: readonly Role[]): Promise<UserDirectorySummary>;
   countUserResponsibilities(userId: string): Promise<UserResponsibilityCounts>;
   updateUser(
     userId: string,

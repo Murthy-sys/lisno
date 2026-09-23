@@ -79,7 +79,7 @@ export function AccessRequestDecisionDialog({
 
   const actions = (requestClose: () => void) => (
     <div className="access-request-dialog__actions">
-          <Button data-dialog-initial-focus={!rejected || undefined} variant="quiet" disabled={mutation.isPending} onClick={requestClose}>Cancel</Button>
+          <Button data-dialog-initial-focus={!rejected || undefined} variant="destructive-outline" disabled={mutation.isPending} onClick={requestClose}>Cancel</Button>
           <Button type="submit" form={`access-decision-${request.id}`} variant={rejected ? "destructive" : "primary"} busy={mutation.isPending} disabled={!isCurrentRow} busyLabel={rejected ? "Rejecting…" : "Approving…"}>
             {rejected ? "Reject request" : "Approve request"}
           </Button>

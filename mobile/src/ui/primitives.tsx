@@ -13,7 +13,7 @@ import {
 import type { ReactNode } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { colors, fonts, radii, spacing } from "./tokens";
+import { colors, fonts, radii, spacing, typography } from "./tokens";
 
 export function Screen({
   children,
@@ -101,6 +101,7 @@ export function Button({
   readonly accessibilityHint?: string;
 }) {
   const inactive = disabled || loading;
+  const foreground = variant === "primary" ? colors.primaryInk : variant === "danger" ? colors.danger : colors.primary;
   return (
     <Pressable
       accessibilityHint={accessibilityHint}
@@ -111,11 +112,11 @@ export function Button({
       style={({ pressed }) => [
         styles.button,
         styles[`${variant}Button`],
-        pressed && !inactive ? styles.buttonPressed : null,
+        pressed && !inactive ? styles[`${variant}ButtonPressed`] : null,
         inactive ? styles.buttonDisabled : null
       ]}
     >
-      {loading ? <ActivityIndicator color={variant === "primary" ? colors.surface : colors.midnight} /> : null}
+      {loading ? <ActivityIndicator color={foreground} /> : null}
       <Text style={[styles.buttonText, styles[`${variant}ButtonText`]]}>{label}</Text>
     </Pressable>
   );
@@ -166,8 +167,8 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     textTransform: "uppercase"
   },
-  heading: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 28, lineHeight: 36 },
-  subtitle: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 15, lineHeight: 23 },
+  heading: { color: colors.ink, ...typography.pageTitle },
+  subtitle: { color: colors.inkMuted, ...typography.body },
   fieldGroup: { gap: 6 },
   fieldLabel: { color: colors.ink, fontFamily: fonts.medium, fontSize: 14 },
   field: {
@@ -185,26 +186,30 @@ const styles = StyleSheet.create({
   fieldError: { borderColor: colors.danger },
   errorText: { color: colors.danger, fontFamily: fonts.regular, fontSize: 12 },
   button: {
-    minHeight: 50,
+    minHeight: 52,
     borderRadius: radii.control,
     paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: spacing.xs,
     borderWidth: 1
   },
-  primaryButton: { backgroundColor: colors.midnight, borderColor: colors.midnight },
-  secondaryButton: { backgroundColor: colors.surface, borderColor: colors.midnight },
-  dangerButton: { backgroundColor: colors.danger, borderColor: colors.danger },
+  primaryButton: { backgroundColor: colors.primary, borderColor: colors.primary },
+  secondaryButton: { backgroundColor: colors.surface, borderColor: colors.primaryBorder },
+  dangerButton: { backgroundColor: colors.surface, borderColor: colors.danger },
   quietButton: { backgroundColor: "transparent", borderColor: "transparent" },
-  buttonPressed: { opacity: 0.82 },
+  primaryButtonPressed: { backgroundColor: colors.primaryPressed, borderColor: colors.primaryPressed },
+  secondaryButtonPressed: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
+  dangerButtonPressed: { backgroundColor: colors.dangerSoft, borderColor: colors.dangerPressed },
+  quietButtonPressed: { backgroundColor: colors.primarySoft },
   buttonDisabled: { opacity: 0.48 },
-  buttonText: { fontFamily: fonts.semibold, fontSize: 15 },
-  primaryButtonText: { color: colors.surface },
-  secondaryButtonText: { color: colors.midnight },
-  dangerButtonText: { color: colors.surface },
-  quietButtonText: { color: colors.midnight },
+  buttonText: { ...typography.button, flexShrink: 1, textAlign: "center" },
+  primaryButtonText: { color: colors.primaryInk },
+  secondaryButtonText: { color: colors.ink },
+  dangerButtonText: { color: colors.danger },
+  quietButtonText: { color: colors.primary },
   state: {
     flex: 1,
     minHeight: 280,

@@ -358,7 +358,7 @@ function FinanceEntryForm({ projectId, projectName, onClose, onRecorded }: { pro
       onClose={onClose}
       busy={mutation.isPending}
       dirty={Boolean(category || amount || description || vendor || reference || type !== "direct_spend" || expenseClass !== "employee_payment" || incurredAt !== initialDate.current)}
-      footer={({ requestClose }) => <div className="finance-panel-actions"><Button variant="secondary" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button><Button form={`finance-entry-form-${projectId}`} type="submit" busy={mutation.isPending} busyLabel="Recording…">Record cost</Button></div>}
+      footer={({ requestClose }) => <div className="finance-panel-actions"><Button variant="destructive-outline" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button><Button form={`finance-entry-form-${projectId}`} type="submit" busy={mutation.isPending} busyLabel="Recording…">Record cost</Button></div>}
     >
       <form id={`finance-entry-form-${projectId}`} className="finance-entry-form finance-entry-form--panel" onSubmit={submit} noValidate>
         <fieldset className="finance-entry-form__grid" disabled={mutation.isPending}>

@@ -69,7 +69,6 @@
   border-radius: var(--radius-field);
   box-shadow: none;
   font-size: var(--text-sm);
-  font-weight: 600;
   line-height: 1.4;
   white-space: normal;
 }
@@ -79,31 +78,73 @@
   inline-size: fit-content;
 }
 
-.ui-app-shell[data-role] .knowledge-page .ui-button:is(.ui-button--secondary, .ui-button--quiet),
-:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button:is(.ui-button--secondary, .ui-button--quiet) {
-  border-color: var(--knowledge-control-edge);
-  background: var(--role-deck, var(--color-surface));
-  color: var(--role-ink, var(--color-text));
+/* Colors come from the global --button-* tokens so knowledge actions follow the theme. */
+.ui-app-shell[data-role] .knowledge-page .ui-button.ui-button--secondary,
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button.ui-button--secondary {
+  border-color: var(--button-secondary-border);
+  background: var(--button-secondary-bg);
+  color: var(--button-secondary-ink);
 }
 
-.ui-app-shell[data-role] .knowledge-page .ui-button:is(.ui-button--secondary, .ui-button--quiet):not(:disabled):hover,
-:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button:is(.ui-button--secondary, .ui-button--quiet):not(:disabled):hover {
-  border-color: var(--role-ink-muted, var(--color-text-muted));
-  background: var(--role-deck-tint, var(--color-surface-subtle));
-  color: var(--role-ink, var(--color-text));
+.ui-app-shell[data-role] .knowledge-page .ui-button.ui-button--secondary:not(:disabled):hover,
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button.ui-button--secondary:not(:disabled):hover {
+  border-color: var(--button-primary-bg);
+  background: var(--button-secondary-hover);
+  color: var(--button-secondary-ink);
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-button.ui-button--quiet,
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button.ui-button--quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--button-quiet-ink);
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-button.ui-button--quiet:not(:disabled):hover,
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button.ui-button--quiet:not(:disabled):hover {
+  background: var(--button-quiet-hover);
+  color: var(--button-quiet-ink);
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-button:is(.ui-button--secondary, .ui-button--quiet):not(:disabled):not(:focus-visible):hover,
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button:is(.ui-button--secondary, .ui-button--quiet):not(:disabled):not(:focus-visible):hover {
   box-shadow: none;
   transform: none;
 }
 
 .ui-app-shell[data-role] .knowledge-page .ui-button--primary,
 :is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button--primary {
-  border-color: transparent;
+  border-color: var(--button-primary-bg);
+  background: var(--button-primary-bg);
+  color: var(--button-primary-ink);
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-button--primary:not(:disabled):hover,
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button--primary:not(:disabled):hover {
+  border-color: var(--button-primary-bg-hover);
+  background: var(--button-primary-bg-hover);
+  color: var(--button-primary-ink);
+}
+
+/* Negative actions keep red ink and a red outline over every neutral rule above. */
+.ui-app-shell[data-role] .knowledge-page :is(.ui-button, .ui-icon-button):is(.ui-button--destructive, .ui-button--destructive-outline, .ui-icon-button--destructive, .ui-icon-button--destructive-outline),
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) :is(.ui-button, .ui-icon-button):is(.ui-button--destructive, .ui-button--destructive-outline, .ui-icon-button--destructive, .ui-icon-button--destructive-outline) {
+  border-color: var(--button-negative-border);
+  background: var(--button-secondary-bg);
+  color: var(--button-negative-ink);
+}
+
+.ui-app-shell[data-role] .knowledge-page :is(.ui-button, .ui-icon-button):is(.ui-button--destructive, .ui-button--destructive-outline, .ui-icon-button--destructive, .ui-icon-button--destructive-outline):not(:disabled):hover,
+:is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) :is(.ui-button, .ui-icon-button):is(.ui-button--destructive, .ui-button--destructive-outline, .ui-icon-button--destructive, .ui-icon-button--destructive-outline):not(:disabled):hover {
+  border-color: var(--button-negative-ink-strong);
+  background: var(--button-negative-hover);
+  color: var(--button-negative-ink-strong);
 }
 
 .ui-app-shell[data-role] .knowledge-page :is(.ui-button, .ui-icon-button):focus-visible,
 :is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) :is(.ui-button, .ui-icon-button):focus-visible {
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: 3px;
+  box-shadow: var(--button-focus-ring);
+  outline: none;
 }
 
 .ui-app-shell[data-role] .knowledge-page .ui-icon-button,
@@ -120,8 +161,8 @@
 }
 
 .ui-app-shell[data-role] .knowledge-page .ui-icon-button.ui-icon-button--quiet {
-  color: var(--role-ink, var(--color-text));
-  background: var(--role-deck, var(--color-surface));
+  color: var(--button-quiet-ink);
+  background: var(--button-secondary-bg);
 }
 
 /* Native checkbox, radio and switch dimensions remain independent of fields. */
@@ -767,14 +808,14 @@
 }
 
 :is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button.ui-button--primary {
-  border-color: transparent;
-  background: var(--color-primary);
-  color: var(--color-surface);
-  box-shadow: none;
+  border-color: var(--button-primary-bg);
+  background: var(--button-primary-bg);
+  color: var(--button-primary-ink);
 }
 
 :is(.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button.ui-button--primary:not(:disabled):hover {
-  background: var(--color-brand-midnight-raised);
+  border-color: var(--button-primary-bg-hover);
+  background: var(--button-primary-bg-hover);
 }
 
 .ui-dialog.modal:has(.knowledge-dialog-body) .modal__header,

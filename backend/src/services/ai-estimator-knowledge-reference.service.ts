@@ -40,7 +40,7 @@ import {
   type AiEstimatorKnowledgeQualityControlOptionService
 } from "./ai-estimator-knowledge-quality-control-option.service.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../models/AiEstimatorKnowledgeMainLine.js";
-import { cascadeDeleteMainLines, stripReferencesToDeleted } from "./ai-estimator-knowledge-cascade.js";
+import { cascadeDeleteMainLines, deletedTargetReferences, stripReferencesToDeleted } from "./ai-estimator-knowledge-cascade.js";
 import { AiEstimatorKnowledgeModeModel } from "../models/AiEstimatorKnowledgeMode.js";
 import { AiEstimatorKnowledgePriceVersionModel } from "../models/AiEstimatorKnowledgePriceVersion.js";
 import { AiEstimatorKnowledgePriorityModel } from "../models/AiEstimatorKnowledgePriority.js";
@@ -109,6 +109,39 @@ export interface AiEstimatorKnowledgeBasketDto {
 
 export interface AiEstimatorKnowledgeSubBasketDto extends Omit<AiEstimatorKnowledgeBasketDto, "description" | "status"> {
   readonly basketId: string;
+}
+
+export interface AiEstimatorKnowledgeUpdateSubBasketInput {
+  readonly expectedVersion: number;
+  readonly name: string;
+  readonly managementContext?: "configuration";
+}
+
+export interface AiEstimatorKnowledgeSubBasketDeletionImpact {
+  readonly basketId: string;
+  readonly subBasketId: string;
+  readonly subBasketName: string;
+  readonly version: number;
+  readonly mainLineCount: number;
+  readonly referenceCount: number;
+  readonly impactToken: string;
+}
+
+export interface AiEstimatorKnowledgePermanentDeleteSubBasketInput {
+  readonly expectedVersion: number;
+  readonly confirmationName: string;
+  readonly reason: string;
+  readonly impactToken: string;
+  readonly draftOnly?: true;
+}
+
+export interface AiEstimatorKnowledgePermanentDeleteSubBasketResult {
+  readonly basketId: string;
+  readonly subBasketId: string;
+  readonly deleted: true;
+  readonly deletedAt: string;
+  readonly deletedMainLineIds: readonly string[];
+  readonly deletedReferenceCount: number;
 }
 
 export interface AiEstimatorKnowledgeMasterDto {
@@ -246,6 +279,23 @@ export interface AiEstimatorKnowledgeReferenceService {
   }): Promise<AiEstimatorKnowledgeBasketQualityDto>;
   listSubBaskets(actor: PublicUser, basketId: string, filters: Pick<AiEstimatorKnowledgeListFilters, "search">, pagination: PaginationInput): Promise<PageResult<AiEstimatorKnowledgeSubBasketDto>>;
   createSubBasket(actor: PublicUser, basketId: string, input: { readonly name: string }): Promise<AiEstimatorKnowledgeSubBasketDto>;
+  updateSubBasket(
+    actor: PublicUser,
+    basketId: string,
+    subBasketId: string,
+    input: AiEstimatorKnowledgeUpdateSubBasketInput
+  ): Promise<AiEstimatorKnowledgeSubBasketDto>;
+  getSubBasketDeletionImpact(
+    actor: PublicUser,
+    basketId: string,
+    subBasketId: string
+  ): Promise<AiEstimatorKnowledgeSubBasketDeletionImpact>;
+  permanentlyDeleteSubBasket(
+    actor: PublicUser,
+    basketId: string,
+    subBasketId: string,
+    input: AiEstimatorKnowledgePermanentDeleteSubBasketInput
+  ): Promise<AiEstimatorKnowledgePermanentDeleteSubBasketResult>;
   listBaskets(
     actor: PublicUser,
     filters: AiEstimatorKnowledgeListFilters,
@@ -372,6 +422,169 @@ export function createAiEstimatorKnowledgeReferenceService(
         }, session);
         return subBasketDto(created.toObject() as Row);
       }));
+    },
+
+    async updateSubBasket(actor, basketId, subBasketId, input) {
+      return mapMongoConflict(() => withMongoTransaction(startSession, async (session) => {
+        const authorized = await actorGuard.requireMutationActor(actor, session);
+        validateExpectedVersion(input.expectedVersion);
+        const name = typeof input.name === "string"
+          ? input.name.normalize("NFKC").trim().replace(/\s+/gu, " ")
+          : "";
+        validateName(name, "name");
+
+        // Coordinate against Main Basket deletion/status changes before touching
+        // the child aggregate. A failed rename rolls this dependency write back.
+        const parent = await AiEstimatorKnowledgeBasketModel.findOneAndUpdate(
+          { _id: basketId, status: { $ne: "archived" } },
+          { $inc: { dependencyEpoch: 1 } },
+          { session, returnDocument: "after", runValidators: true, timestamps: false }
+        ).select({ _id: 1 }).lean().exec();
+        if (!parent) notFound();
+
+        const current = await AiEstimatorKnowledgeSubBasketModel.findById(subBasketId)
+          .session(session)
+          .lean()
+          .exec() as Row | null;
+        if (!current) notFound();
+        if (String(current.basketId) !== basketId) subBasketParentMismatch();
+        if (Number(current.version) !== input.expectedVersion) versionConflict();
+
+        if (input.managementContext !== undefined && input.managementContext !== "configuration") {
+          throw new ApiError(400, "VALIDATION_ERROR", "Select a valid basket management context.");
+        }
+        if (input.managementContext !== "configuration") {
+          const frozenChild = await AiEstimatorKnowledgeMainLineModel.exists({
+            basketId,
+            subBasketId,
+            status: { $ne: "draft" }
+          }).session(session);
+          if (frozenChild) subBasketFrozen();
+        }
+
+        const nameNormalized = normalizeKnowledgeIdentity(name);
+        const duplicate = await AiEstimatorKnowledgeSubBasketModel.exists({
+          _id: { $ne: subBasketId },
+          basketId,
+          nameNormalized
+        }).session(session);
+        if (duplicate) duplicateIdentity();
+
+        const occurredAt = now();
+        const updated = await AiEstimatorKnowledgeSubBasketModel.findOneAndUpdate(
+          { _id: subBasketId, basketId, version: input.expectedVersion },
+          {
+            $set: {
+              name,
+              nameNormalized,
+              updatedById: authorized.id,
+              updatedAt: occurredAt
+            },
+            $inc: { version: 1 }
+          },
+          { returnDocument: "after", runValidators: true, session }
+        ).lean().exec() as Row | null;
+        if (!updated) versionConflict();
+
+        await dependencies.audit.appendInMongoTransaction({
+          actorId: authorized.id,
+          action: "ai_estimator_knowledge_sub_basket_updated",
+          entityType: "ai_estimator_knowledge_sub_basket",
+          entityId: subBasketId,
+          occurredAt: occurredAt.toISOString(),
+          oldValues: {
+            basketId,
+            name: String(current.name),
+            version: input.expectedVersion
+          },
+          newValues: {
+            basketId,
+            name: String(updated.name),
+            version: input.expectedVersion + 1
+          }
+        }, session);
+        return subBasketDto(updated);
+      }));
+    },
+
+    async getSubBasketDeletionImpact(actor, basketId, subBasketId) {
+      return withMongoTransaction(startSession, async (session) => {
+        await actorGuard.requireReadActor(actor, session);
+        const { parent, group } = await requireSubBasketParent(basketId, subBasketId, session);
+        return (await subBasketDeletionSnapshot(parent, group, session)).impact;
+      });
+    },
+
+    async permanentlyDeleteSubBasket(actor, basketId, subBasketId, input) {
+      return withMongoTransaction(startSession, async (session) => {
+        const authorized = await actorGuard.requireMutationActor(actor, session);
+        validatePermanentDeleteBasketInput(input);
+        if (input.draftOnly !== undefined && input.draftOnly !== true) {
+          throw new ApiError(400, "VALIDATION_ERROR", "Draft-only deletion must be true when provided.", {
+            draftOnly: "Set draftOnly to true or omit it."
+          });
+        }
+        if (typeof input.impactToken !== "string" || !/^[a-f0-9]{64}$/u.test(input.impactToken)) {
+          throw new ApiError(400, "VALIDATION_ERROR", "Load the current Sub Basket deletion impact.", {
+            impactToken: "Load a fresh deletion preview before confirming."
+          });
+        }
+        // Every child create and incoming relationship change shares this
+        // parent write. Transaction retries must recompute the complete impact.
+        const coordinatedParent = await AiEstimatorKnowledgeBasketModel.findOneAndUpdate(
+          { _id: basketId, status: { $ne: "archived" } },
+          { $inc: { dependencyEpoch: 1 } },
+          { session, returnDocument: "after", runValidators: true, timestamps: false }
+        ).lean().exec();
+        if (!coordinatedParent) notFound();
+        const { parent, group } = await requireSubBasketParent(basketId, subBasketId, session);
+        if (Number(group.version) !== input.expectedVersion) versionConflict();
+        if (input.draftOnly) {
+          const frozenChild = await AiEstimatorKnowledgeMainLineModel.exists({
+            basketId,
+            subBasketId,
+            status: { $ne: "draft" }
+          }).session(session);
+          if (frozenChild) subBasketFrozen();
+        }
+        if (String(group.name) !== input.confirmationName) {
+          throw new ApiError(400, "VALIDATION_ERROR", "Sub Basket confirmation name must exactly match the stored name.", {
+            confirmationName: "Enter the exact current Sub Basket name."
+          });
+        }
+        const snapshot = await subBasketDeletionSnapshot(parent, group, session);
+        if (snapshot.impact.impactToken !== input.impactToken) {
+          throw new ApiError(409, "DELETION_IMPACT_CHANGED", "Sub Basket contents or references changed. Review a fresh deletion preview.");
+        }
+        const deleted = await AiEstimatorKnowledgeSubBasketModel.deleteOne({
+          _id: subBasketId, basketId, version: input.expectedVersion
+        }).session(session).exec();
+        if (deleted.deletedCount !== 1) versionConflict();
+        const cascade = await cascadeDeleteMainLines(snapshot.mainLineIds, session);
+        const deletedReferenceCount = await stripReferencesToDeleted({
+          basketIds: new Set(), subBasketIds: new Set([subBasketId]), mainLineIds: new Set(snapshot.mainLineIds)
+        }, { mainLineId: { $nin: snapshot.mainLineIds } }, session);
+        const deletedAt = now().toISOString();
+        await dependencies.audit.appendInMongoTransaction({
+          actorId: authorized.id,
+          action: "ai_estimator_knowledge_sub_basket_permanently_deleted",
+          entityType: "ai_estimator_knowledge_sub_basket",
+          entityId: subBasketId,
+          occurredAt: deletedAt,
+          oldValues: {
+            basketId, name: String(group.name), version: input.expectedVersion,
+            deletedMainLineIds: snapshot.mainLineIds,
+            deletedRevisionCount: cascade.revisions,
+            deletedSectionCount: cascade.sections,
+            deletedPriceVersionCount: cascade.priceVersions,
+            deletedReferenceCount
+          },
+          newValues: { deleted: true },
+          reason: input.reason.trim()
+        }, session);
+        return { basketId, subBasketId, deleted: true as const, deletedAt,
+          deletedMainLineIds: snapshot.mainLineIds, deletedReferenceCount };
+      });
     },
 
     async listBaskets(actor, filters, pagination) {
@@ -912,6 +1125,61 @@ export function createAiEstimatorKnowledgeReferenceService(
       });
     }
   };
+}
+
+async function requireSubBasketParent(basketId: string, subBasketId: string, session: ClientSession): Promise<{ parent: Row; group: Row }> {
+  const parent = await AiEstimatorKnowledgeBasketModel.findById(basketId).session(session).lean().exec() as Row | null;
+  if (!parent) notFound();
+  if (parent.status === "archived") archived();
+  const group = await AiEstimatorKnowledgeSubBasketModel.findById(subBasketId).session(session).lean().exec() as Row | null;
+  if (!group) notFound();
+  if (String(group.basketId) !== basketId) subBasketParentMismatch();
+  return { parent, group };
+}
+
+async function subBasketDeletionSnapshot(parent: Row, group: Row, session: ClientSession): Promise<{
+  impact: AiEstimatorKnowledgeSubBasketDeletionImpact;
+  mainLineIds: string[];
+}> {
+  const basketId = String(parent._id);
+  const subBasketId = String(group._id);
+  const children = await AiEstimatorKnowledgeMainLineModel.find({ basketId, subBasketId })
+    .select({ _id: 1, version: 1, status: 1 }).sort({ _id: 1 }).session(session).lean().exec() as Row[];
+  const mainLineIds = children.map((child) => String(child._id));
+  const targets = { basketIds: new Set<string>(), subBasketIds: new Set([subBasketId]), mainLineIds: new Set(mainLineIds) };
+  const fields = ["exclusions", "dependencies", "recommendations", "budgetAlterations"];
+  const sections = await AiEstimatorKnowledgeSectionModel.find({
+    mainLineId: { $nin: mainLineIds },
+    $or: fields.flatMap((field) => [
+      { [`payload.${field}.targetSubBasketId`]: subBasketId },
+      { [`payload.${field}.targetMainLineId`]: { $in: mainLineIds } }
+    ])
+  }).select({ _id: 1, version: 1, mainLineId: 1, revisionId: 1, payload: 1 })
+    .sort({ _id: 1 }).session(session).lean().exec() as Row[];
+  const references = sections.flatMap((section) => {
+    const rows = deletedTargetReferences(section.payload, targets);
+    return rows.length ? [{ sectionId: section._id, version: section.version,
+      mainLineId: section.mainLineId, revisionId: section.revisionId, rows }] : [];
+  });
+  const impactToken = createHash("sha256").update(JSON.stringify(canonicalImpactValue({
+    basketId, basketVersion: parent.version, subBasketId, subBasketName: group.name,
+    version: group.version, children, references
+  }))).digest("hex");
+  return {
+    mainLineIds,
+    impact: { basketId, subBasketId, subBasketName: String(group.name), version: Number(group.version),
+      mainLineCount: mainLineIds.length, referenceCount: references.reduce((count, section) => count + section.rows.length, 0),
+      impactToken }
+  };
+}
+
+function canonicalImpactValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalImpactValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, nested]) => [key, canonicalImpactValue(nested)]));
+  }
+  return value;
 }
 
 async function basketDeletionImpact(
@@ -1593,6 +1861,12 @@ function notFound(): never { throw new ApiError(404, "NOT_FOUND", "The requested
 function archived(): never { throw new ApiError(409, "RESOURCE_ARCHIVED", "Archived knowledge resources are immutable."); }
 function versionConflict(): never { throw new ApiError(409, "VERSION_CONFLICT", "The knowledge resource changed elsewhere."); }
 function duplicateIdentity(): never { throw new ApiError(409, "DUPLICATE_IDENTITY", "A non-archived knowledge resource already uses that identity."); }
+function subBasketFrozen(): never {
+  throw new ApiError(409, "SUB_BASKET_FROZEN", "This Sub Basket is frozen because one or more items are no longer Draft.");
+}
+function subBasketParentMismatch(): never {
+  throw new ApiError(409, "SUB_BASKET_PARENT_MISMATCH", "The Sub Basket no longer belongs to the selected Main Basket.");
+}
 function referenceConflict(message: string): never { throw new ApiError(409, "ACTIVE_REFERENCE_CONFLICT", message); }
 function canonicalPriorityImmutable(): never { throw new ApiError(409, "CANONICAL_PRIORITY_IMMUTABLE", "Canonical Priority identity and availability are system managed."); }
 function canonicalTaxPolicyImmutable(): never { throw new ApiError(409, "CANONICAL_TAX_POLICY_IMMUTABLE", "The fixed GST policy is system managed and cannot be changed through generic Tax operations."); }

@@ -170,7 +170,7 @@ export function InviteUserDialog({ roles, onClose }: InviteUserDialogProps) {
       footer={({ requestClose }) => (
         <div className="user-invitation-dialog__actions">
           <Button
-            variant="quiet"
+            variant="destructive-outline"
             disabled={mutation.isPending}
             onClick={requestClose}
           >
