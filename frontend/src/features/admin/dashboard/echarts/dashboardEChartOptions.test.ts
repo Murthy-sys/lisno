@@ -31,7 +31,7 @@ describe("dashboard ECharts options", () => {
       motionEnabled: false,
       option: {
         tooltip: { trigger: "item", renderMode: "html" },
-        series: [{ id: "projects", type: "bar", data: [2] }]
+        series: [{ id: "projects", type: "custom", data: [2] }]
       }
     }) as Record<string, unknown>;
 
@@ -56,7 +56,7 @@ describe("dashboard ECharts options", () => {
         animationDurationUpdate: 20,
         series: [{
           id: "projects",
-          type: "line",
+          type: "custom",
           animationDuration: 30,
           animationDurationUpdate: 40,
           universalTransition: true,
@@ -67,11 +67,11 @@ describe("dashboard ECharts options", () => {
 
     expect(option).toMatchObject({
       animation: true,
-      animationDuration: 760,
-      animationDurationUpdate: 700,
+      animationDuration: 480,
+      animationDurationUpdate: 360,
       animationEasing: "cubicOut",
       animationEasingUpdate: "cubicInOut",
-      stateAnimation: { duration: 100, easing: "cubicOut" }
+      stateAnimation: { duration: 220, easing: "cubicOut" }
     });
     expect((option.animationDelay as (dataIndex: number) => number)(3)).toBe(72);
     expect((option.animationDelay as (dataIndex: number) => number)(100)).toBe(144);
@@ -81,8 +81,8 @@ describe("dashboard ECharts options", () => {
       expect.objectContaining({
         id: "projects",
         universalTransition: true,
-        animationDuration: 760,
-        animationDurationUpdate: 700,
+        animationDuration: 480,
+        animationDurationUpdate: 360,
         animationEasing: "cubicOut",
         animationEasingUpdate: "cubicInOut"
       })
@@ -105,7 +105,7 @@ describe("dashboard ECharts options", () => {
         animationDuration: 900,
         series: [{
           id: "projects",
-          type: "bar",
+          type: "custom",
           animation: true,
           animationDelay: 250,
           animationDuration: 900,

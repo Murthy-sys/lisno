@@ -15,9 +15,9 @@ import {
   superAdminDashboardWorkforcePageFixture
 } from "./dashboardFixtures";
 import {
-  createNamedGrowthData,
-  createProjectLifecycleChartOption
-} from "./DashboardOverviewCharts";
+  createExecutiveLifecycleOption,
+  createRecordedCostActivityOption
+} from "./ExecutiveDashboardCharts";
 import { SuperAdminDashboardPage } from "./SuperAdminDashboardPage";
 import type {
   SuperAdminDashboardOverview,
@@ -119,56 +119,29 @@ function deferred<T>() {
 }
 
 describe("Super Admin dashboard page", () => {
-  it("uses stable UTC and lifecycle identities for ECharts data transitions", () => {
-    const comparison = superAdminDashboardOverviewFixture.comparison!;
-    const namedGrowth = createNamedGrowthData(
-      comparison.currentBuckets,
-      "projectsCreated",
-      (value) => String(value)
-    );
-    expect(namedGrowth.map((datum) => datum.name)).toEqual(
-      comparison.currentBuckets.map((bucket) => bucket.date.slice(0, 10))
-    );
-
-    const lifecycleData = {
-      ...superAdminDashboardOverviewFixture,
-      projects: {
-        ...superAdminDashboardOverviewFixture.projects,
-        planning: 2,
-        active: 2,
-        onHold: 3,
-        completed: 1
-      }
-    };
-    const doughnut = createProjectLifecycleChartOption({ data: lifecycleData, theme: chartTheme, view: "doughnut" });
-    const rankedBars = createProjectLifecycleChartOption({ data: lifecycleData, theme: chartTheme, view: "ranked_bar" });
-    const doughnutSeries = (doughnut as unknown as { series: Array<Record<string, unknown>> }).series[0];
-    const rankedSeries = (rankedBars as unknown as { series: Array<Record<string, unknown>> }).series[0];
-
-    expect(doughnutSeries).toMatchObject({
-      id: "project-lifecycle",
-      type: "pie",
-      universalTransition: { enabled: true, divideShape: "clone" }
-    });
-    expect(rankedSeries).toMatchObject({
-      id: "project-lifecycle",
-      type: "bar",
-      universalTransition: { enabled: true, divideShape: "clone" }
-    });
-    expect((doughnutSeries.data as Array<Record<string, unknown>>).map(({ name, groupId }) => ({ name, groupId }))).toEqual([
-      { name: "planning", groupId: "planning" },
-      { name: "active", groupId: "active" },
-      { name: "on_hold", groupId: "on_hold" },
-      { name: "completed", groupId: "completed" }
+  it("uses stable UTC and semantic identities for executive ECharts transitions", () => {
+    const activity = createRecordedCostActivityOption({
+      trends: superAdminDashboardOverviewFixture.trends,
+      approvedNetRevenuePaise: superAdminDashboardOverviewFixture.finance.approvedSubtotalPaise,
+      costBudgetPaise: superAdminDashboardOverviewFixture.finance.costBudgetPaise,
+      theme: chartTheme
+    }) as unknown as { series: Array<Record<string, unknown>> };
+    expect(activity.series).toEqual([
+      expect.objectContaining({ id: "recorded-cost-activity", type: "bar", universalTransition: expect.anything() }),
+      expect.objectContaining({ id: "approved-net-revenue-guide", type: "line", universalTransition: true }),
+      expect.objectContaining({ id: "cost-budget-guide", type: "line", universalTransition: true })
     ]);
-    expect((rankedSeries.data as Array<Record<string, unknown>>).map(({ name, groupId }) => ({ name, groupId }))).toEqual([
-      { name: "on_hold", groupId: "on_hold" },
-      { name: "planning", groupId: "planning" },
-      { name: "active", groupId: "active" },
-      { name: "completed", groupId: "completed" }
+    expect((activity.series[0].data as Array<Record<string, unknown>>).map(({ id }) => id)).toEqual(["2026-08-30"]);
+
+    const lifecycle = createExecutiveLifecycleOption({ data: superAdminDashboardOverviewFixture, theme: chartTheme }) as unknown as { series: Array<Record<string, unknown>> };
+    expect(lifecycle.series[0]).toMatchObject({ id: "executive-project-status", type: "pie", universalTransition: expect.anything() });
+    expect((lifecycle.series[0].data as Array<Record<string, unknown>>).map(({ id, groupId }) => ({ id, groupId }))).toEqual([
+      { id: "planning", groupId: "projects.planning" },
+      { id: "active", groupId: "projects.active" },
+      { id: "on_hold", groupId: "projects.onHold" },
+      { id: "completed", groupId: "projects.completed" }
     ]);
   });
-
   it("makes approved-project payment confirmations available from Overview", async () => {
     vi.mocked(useAuth).mockReturnValue({ user: { id: "super-admin-one", role: "super_admin" }, authorization: authorizationFor("super_admin", ["projects.design_workflow.payments.read", "projects.design_workflow.act"]) } as ReturnType<typeof useAuth>);
     const get = installDashboardApi();
@@ -198,52 +171,145 @@ describe("Super Admin dashboard page", () => {
     }
   });
 
-  it("renders one organization-wide Overview request with every approved domain summary", async () => {
+  it("renders one organization-wide request as the reference-led executive overview", async () => {
     const get = installDashboardApi();
     const { container } = renderDashboard();
 
     expect(await screen.findByRole("heading", { name: "Organization overview" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Organization headline metrics" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Current period activity" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Registered Client accounts" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Current delivery stage" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Budget and recorded cost" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Needs attention" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Module summaries" })).toBeVisible();
-    expect(screen.getByText("Approved net revenue")).toBeVisible();
-    expect(screen.queryByRole("combobox", { name: /project/i })).not.toBeInTheDocument();
+    for (const heading of [
+      "Recorded cost activity",
+      "Project status",
+      "Priority project",
+      "Action queue",
+      "Cost composition",
+      "Budget position",
+      "Module progress",
+      "Workforce summary",
+      "Module summaries"
+    ]) expect(screen.getByRole("heading", { name: heading })).toBeVisible();
+    const headline = screen.getByRole("region", { name: "Organization headline metrics" });
+    for (const label of ["Total projects", "Approved net revenue", "Approved contract value", "Current margin", "Live overdue projects"]) {
+      expect(within(headline).getByText(label)).toBeVisible();
+    }
+    expect(screen.queryByText(/Pipeline value|Revenue trend|Recent activity|Top vendors/i)).not.toBeInTheDocument();
 
     const requested = get.mock.calls.map(([path]) => path);
     expect(requested.filter((path) => path.startsWith("/admin/dashboard/overview?"))).toHaveLength(1);
     expect(requested.join(" ")).not.toMatch(/\/admin\/projects|\/finance\/projects/);
-    expect((await axe.run(container, {
-      rules: { "color-contrast": { enabled: false } }
-    })).violations).toEqual([]);
+    expect((await axe.run(container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
   });
+  it("keeps every executive finance mark in its exact-value table", async () => {
+    installDashboardApi();
+    const user = userEvent.setup();
+    renderDashboard();
 
-  it("presents the four headline metrics with explicit snapshot and period bases", async () => {
+    const activity = await screen.findByRole("figure", { name: "Recorded cost activity" });
+    await user.click(within(activity).getByRole("button", { name: "Show values" }));
+    expect(within(activity).getByRole("row", { name: /30 Aug.*₹2,500\.00.*₹1,00,000\.00.*₹80,000\.00/ })).toBeVisible();
+
+    const composition = screen.getByRole("figure", { name: "Cost composition" });
+    await user.click(within(composition).getByRole("button", { name: "Show values" }));
+    expect(within(composition).getByRole("row", { name: /Procurement.*₹12,000\.00/ })).toBeVisible();
+    expect(within(composition).getByRole("row", { name: /Employee payments.*₹9,000\.00/ })).toBeVisible();
+
+    const budget = screen.getByRole("figure", { name: "Budget position" });
+    await user.click(within(budget).getByRole("button", { name: "Show values" }));
+    expect(within(budget).getByRole("row", { name: /Cost budget.*₹80,000\.00/ })).toBeVisible();
+    expect(within(budget).getByRole("row", { name: /Remaining budget.*₹52,000\.00/ })).toBeVisible();
+  });
+  it("keeps healthy finance marks and exact tables when one cost class is unavailable", async () => {
+    installDashboardApi({
+      overview: {
+        ...superAdminDashboardOverviewFixture,
+        dataQuality: {
+          status: "partial",
+          totalIssueCount: 1,
+          unavailableMetricKeys: ["finance.employeePaymentPaise"],
+          issues: [{
+            code: "module_aggregate_unavailable",
+            metricKey: "finance.employeePaymentPaise",
+            message: "Employee payment lineage could not be verified.",
+            entityType: null,
+            entityId: null
+          }]
+        }
+      }
+    });
+    const user = userEvent.setup();
+    renderDashboard();
+
+    const figure = await screen.findByRole("figure", { name: "Cost composition" });
+    expect(within(figure).getByRole("img", { name: /Recorded cost composition/ })).toBeVisible();
+    expect(within(figure).getByText(/Employee payment lineage could not be verified/)).toBeVisible();
+    await user.click(within(figure).getByRole("button", { name: "Show values" }));
+    expect(within(figure).getByRole("row", { name: /Employee payments.*Not available/ })).toBeVisible();
+    expect(within(figure).getByRole("row", { name: /Procurement.*₹12,000\.00/ })).toBeVisible();
+  });
+  it("narrates unavailable budget lineage without exposing raw fallback zeroes", async () => {
+    const unavailableMetricKeys = [
+      "finance.costBudgetPaise",
+      "finance.recordedCostPaise",
+      "finance.remainingBudgetPaise"
+    ];
+    installDashboardApi({
+      overview: {
+        ...superAdminDashboardOverviewFixture,
+        finance: {
+          ...superAdminDashboardOverviewFixture.finance,
+          costBudgetPaise: 0,
+          recordedCostPaise: 0,
+          remainingBudgetPaise: 0
+        },
+        dataQuality: {
+          status: "partial",
+          totalIssueCount: unavailableMetricKeys.length,
+          unavailableMetricKeys,
+          issues: unavailableMetricKeys.map((metricKey) => ({
+            code: "module_aggregate_unavailable" as const,
+            metricKey,
+            message: `${metricKey} could not be verified.`,
+            entityType: "finance_bucket" as const,
+            entityId: null
+          }))
+        }
+      }
+    });
+    const user = userEvent.setup();
+    renderDashboard();
+
+    const figure = await screen.findByRole("figure", { name: "Budget position" });
+    const chart = within(figure).getByRole("img", {
+      name: "Approved cost budget Not available, recorded cost Not available, remaining budget Not available."
+    });
+    expect(chart).toBeVisible();
+    expect(chart).not.toHaveAccessibleName(/₹0\.00/);
+
+    await user.click(within(figure).getByRole("button", { name: "Show values" }));
+    expect(within(figure).getByRole("row", { name: "Cost budget Not available" })).toBeVisible();
+    expect(within(figure).getByRole("row", { name: "Recorded cost Not available" })).toBeVisible();
+    expect(within(figure).getByRole("row", { name: "Remaining budget Not available" })).toBeVisible();
+  });
+  it("presents five accurate headline metrics with explicit snapshot bases", async () => {
     installDashboardApi();
     renderDashboard();
 
     const band = await screen.findByRole("region", { name: "Organization headline metrics" });
-    for (const label of ["Projects", "Registered Clients", "Approved net revenue", "Recorded expenses"]) {
+    for (const label of ["Total projects", "Approved net revenue", "Approved contract value", "Current margin", "Live overdue projects"]) {
       expect(within(band).getByText(label)).toBeVisible();
     }
-    expect(within(band).getByText("Current total · period activity")).toBeVisible();
-    expect(within(band).getByText("Current Client accounts")).toBeVisible();
-    expect(within(band).getByText("Current snapshot")).toBeVisible();
-    expect(within(band).getByText("Selected 30-day incurred period")).toBeVisible();
-    expect(within(band).queryByText(/\+77/)).not.toBeInTheDocument();
+    expect(within(band).getByText("Client-approved subtotal; GST excluded")).toBeVisible();
+    expect(within(band).getByText("Includes ₹18,000.00 GST")).toBeVisible();
+    expect(within(band).getByText("72.00%")).toBeVisible();
+    expect(within(band).getByText("Current incomplete portfolio")).toBeVisible();
   });
-
-  it("keeps cross-route actions aligned with the live authorization snapshot", async () => {
+  it("keeps context-rail actions aligned with the live authorization snapshot", async () => {
     const get = installDashboardApi();
     const withoutPermissions = renderDashboard();
 
-    const attention = await screen.findByRole("region", { name: "Needs attention" });
-    expect(screen.queryByRole("link", { name: "Open user directory" })).not.toBeInTheDocument();
-    expect(within(within(attention).getByText("Pending Client responses").closest("li")!).queryByRole("link")).not.toBeInTheDocument();
-    expect(within(within(attention).getByText("North Residence").closest("li")!).queryByRole("link", { name: "North Residence" })).not.toBeInTheDocument();
+    const queue = await screen.findByRole("region", { name: "Action queue" });
+    expect(screen.queryByRole("link", { name: "Directory" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "View project" })).not.toBeInTheDocument();
+    expect(within(within(queue).getByText("Pending Client responses").closest("li")!).queryByRole("link")).not.toBeInTheDocument();
     withoutPermissions.unmount();
 
     vi.mocked(useAuth).mockReturnValue({
@@ -257,13 +323,12 @@ describe("Super Admin dashboard page", () => {
     } as ReturnType<typeof useAuth>);
     renderDashboard();
 
-    expect(await screen.findByRole("link", { name: "Open user directory" })).toHaveAttribute("href", "/admin/users");
-    const permittedAttention = screen.getByRole("region", { name: "Needs attention" });
-    expect(within(within(permittedAttention).getByText("Pending Client responses").closest("li")!).getByRole("link")).toHaveAttribute("href", "/admin/client-responses");
-    expect(within(within(permittedAttention).getByText("North Residence").closest("li")!).getByRole("link", { name: "North Residence" })).toHaveAttribute("href", "/admin/projects/project-risk");
+    expect(await screen.findByRole("link", { name: "Directory" })).toHaveAttribute("href", "/admin/users");
+    expect(screen.getByRole("link", { name: "View project" })).toHaveAttribute("href", "/admin/projects/project-risk");
+    const permittedQueue = screen.getByRole("region", { name: "Action queue" });
+    expect(within(within(permittedQueue).getByText("Pending Client responses").closest("li")!).getByRole("link")).toHaveAttribute("href", "/admin/client-responses");
     expect(get).toHaveBeenCalled();
   });
-
   it("does not present an unavailable project total as an empty organization", async () => {
     installDashboardApi({
       overview: {
@@ -273,134 +338,72 @@ describe("Super Admin dashboard page", () => {
           status: "partial",
           totalIssueCount: 1,
           unavailableMetricKeys: ["projects.total"],
-          issues: [{
-            code: "module_aggregate_unavailable",
-            metricKey: "projects.total",
-            message: "Project totals could not be verified.",
-            entityType: null,
-            entityId: null
-          }]
+          issues: [{ code: "module_aggregate_unavailable", metricKey: "projects.total", message: "Project totals could not be verified.", entityType: null, entityId: null }]
         }
       }
     });
     renderDashboard();
 
     const band = await screen.findByRole("region", { name: "Organization headline metrics" });
-    expect(within(within(band).getByText("Projects").closest("article")!).getByText("Not available")).toBeVisible();
+    expect(within(within(band).getByText("Total projects").closest("article")!).getByText("Not available")).toBeVisible();
     expect(screen.queryByText(/No projects yet/)).not.toBeInTheDocument();
   });
-
-  it("stores comparison visibility in the URL state and removes previous values without refetching", async () => {
+  it("stores comparison visibility in URL state and updates project activity without refetching", async () => {
     const get = installDashboardApi();
     const user = userEvent.setup();
     renderDashboard();
 
     const toggle = await screen.findByRole("checkbox", { name: "Compare with previous period" });
-    const figure = screen.getByRole("figure", { name: "Current period activity" });
-    const chartHost = within(figure).getByRole("img", { name: /current and previous reporting period/ });
+    const metric = within(screen.getByRole("region", { name: "Organization headline metrics" })).getByText("Total projects").closest("article")!;
     expect(toggle).toBeChecked();
-    expect(within(figure).getByText("Previous period")).toBeVisible();
-    await user.click(within(figure).getByRole("button", { name: "Show values" }));
-    expect(within(figure).getByRole("columnheader", { name: "Previous" })).toBeVisible();
-
+    expect(metric).toHaveTextContent("vs previous");
     await user.click(toggle);
     expect(toggle).not.toBeChecked();
-    expect(within(figure).queryByText("Previous period")).not.toBeInTheDocument();
-    expect(within(figure).queryByRole("columnheader", { name: "Previous" })).not.toBeInTheDocument();
-    expect(within(figure).getByRole("img", { name: /current reporting period/ })).toBe(chartHost);
-    expect(screen.getByRole("link", { name: /View finance details/ })).toHaveAttribute("href", expect.stringContaining("comparison=off"));
+    expect(metric).toHaveTextContent("created in the selected period");
+    expect(metric).not.toHaveTextContent("vs previous");
+    expect(screen.getByRole("link", { name: /Finance/ })).toHaveAttribute("href", expect.stringContaining("comparison=off"));
     expect(get.mock.calls.filter(([path]) => path.startsWith("/admin/dashboard/overview?")).length).toBe(1);
   });
 
-  it("updates the growth metric through the existing chart host", async () => {
-    installDashboardApi();
-    const user = userEvent.setup();
-    renderDashboard();
-
-    const figure = await screen.findByRole("figure", { name: "Current period activity" });
-    const chartHost = within(figure).getByRole("img", { name: /Projects created/ });
-    await user.selectOptions(within(figure).getByRole("combobox", { name: "Growth chart metric" }), "clients_created");
-
-    expect(within(figure).getByText(/Client accounts created, aligned by UTC day index/)).toBeVisible();
-    expect(within(figure).getByRole("img", { name: /Client accounts created/ })).toBe(chartHost);
-  });
-
-  it("keeps current history when only the previous metric is unavailable and trusts backend deltas", async () => {
+  it("keeps current project activity when the previous comparison is unavailable", async () => {
     const sourceComparison = superAdminDashboardOverviewFixture.comparison!;
-    installDashboardApi({
-      overview: {
-        ...superAdminDashboardOverviewFixture,
-        comparison: {
-          ...sourceComparison,
-          metrics: {
-            ...sourceComparison.metrics,
-            projects_created: {
-              ...sourceComparison.metrics.projects_created,
-              delta: 77,
-              changeBps: 1234,
-              previous: null,
-              previousStatus: "unavailable",
-              previousUnavailableReason: "Previous project history could not be verified.",
-              changeKind: "unavailable"
-            }
-          }
-        }
-      }
-    });
-    const user = userEvent.setup();
+    installDashboardApi({ overview: { ...superAdminDashboardOverviewFixture, comparison: { ...sourceComparison, metrics: { ...sourceComparison.metrics, projects_created: { ...sourceComparison.metrics.projects_created, previous: null, previousStatus: "unavailable", previousUnavailableReason: "Previous project history could not be verified.", delta: null, changeBps: null, changeKind: "unavailable" } } } } });
+    renderDashboard();
+
+    const card = within(await screen.findByRole("region", { name: "Organization headline metrics" })).getByText("Total projects").closest("article")!;
+    expect(card).toHaveTextContent("1 project created");
+    expect(card).toHaveTextContent("Previous project history could not be verified.");
+  });
+  it("keeps snapshot KPIs visible when current project activity is unavailable", async () => {
+    const sourceComparison = superAdminDashboardOverviewFixture.comparison!;
+    installDashboardApi({ overview: { ...superAdminDashboardOverviewFixture, comparison: { ...sourceComparison, metrics: { ...sourceComparison.metrics, projects_created: { ...sourceComparison.metrics.projects_created, current: null, currentStatus: "unavailable", currentUnavailableReason: "Current project history could not be verified.", delta: null, changeBps: null, changeKind: "unavailable" } } } } });
     renderDashboard();
 
     const band = await screen.findByRole("region", { name: "Organization headline metrics" });
-    expect(within(band).getByText(/1 project created · Previous project history could not be verified/)).toBeVisible();
-    const figure = screen.getByRole("figure", { name: "Current period activity" });
-    expect(within(figure).getByText(/Previous project history could not be verified/)).toBeVisible();
-    await user.click(within(figure).getByRole("button", { name: "Show values" }));
-    const table = within(figure).getByRole("table");
-    expect(within(table).getByRole("row", { name: /Day 30.*30 Aug 2026.*1.*31 Jul 2026.*Not available/ })).toBeVisible();
-
+    const card = within(band).getByText("Total projects").closest("article")!;
+    expect(card).toHaveTextContent("2");
+    expect(card).toHaveTextContent("Current project history could not be verified.");
+    expect(within(band).getByText("₹1,00,000.00")).toBeVisible();
   });
-
-  it("uses backend delta fields without recomputing them in the browser", async () => {
+  it("uses backend project-activity delta fields without recomputing them", async () => {
     const comparison = superAdminDashboardOverviewFixture.comparison!;
-    installDashboardApi({
-      overview: {
-        ...superAdminDashboardOverviewFixture,
-        comparison: {
-          ...comparison,
-          metrics: {
-            ...comparison.metrics,
-            projects_created: {
-              ...comparison.metrics.projects_created,
-              delta: 77,
-              changeBps: 1234,
-              changeKind: "percentage"
-            }
-          }
-        }
-      }
-    });
+    installDashboardApi({ overview: { ...superAdminDashboardOverviewFixture, comparison: { ...comparison, metrics: { ...comparison.metrics, projects_created: { ...comparison.metrics.projects_created, delta: 77, changeBps: 1234, changeKind: "percentage" } } } } });
     renderDashboard();
     const band = await screen.findByRole("region", { name: "Organization headline metrics" });
-    expect(within(band).getByText(/\+77 \(12\.34%\) vs previous/)).toBeVisible();
-    expect(within(band).queryByText(/−1/)).not.toBeInTheDocument();
+    expect(within(band).getByText(/\+77 \(\+12\.34%\) vs previous/)).toBeVisible();
+    expect(within(band).queryByText(/−1 \(−50/)).not.toBeInTheDocument();
   });
-
-  it("marks new reporting fields unavailable for an older response while retaining verified snapshots", async () => {
+  it("marks optional comparison and Client fields unavailable while retaining verified snapshots", async () => {
     const { clients: _clients, comparison: _comparison, ...oldOverview } = superAdminDashboardOverviewFixture;
     installDashboardApi({ overview: oldOverview });
     renderDashboard();
 
     const band = await screen.findByRole("region", { name: "Organization headline metrics" });
-    const clientCard = within(band).getByText("Registered Clients").closest("article");
-    const expenseCard = within(band).getByText("Recorded expenses").closest("article");
-    expect(within(clientCard!).getByText("Not available")).toBeVisible();
-    expect(within(expenseCard!).getByText("Not available")).toBeVisible();
-    expect(within(band).getByText("2")).toBeVisible();
-    expect(within(band).getByText("Current approved baseline; GST excluded")).toBeVisible();
-    expect(screen.getByText("Previous-period reporting is not available in this response.")).toBeVisible();
-    expect(screen.getByText("This response predates Client relationship reporting.")).toBeVisible();
+    expect(within(band).getByText("Total projects").closest("article")).toHaveTextContent("2");
+    expect(within(band).getByText("Total projects").closest("article")).toHaveTextContent("Period project activity is not available");
+    expect(within(band).getByText("Approved net revenue").closest("article")).toHaveTextContent("₹1,00,000.00");
+    expect(screen.getByRole("region", { name: "Client pulse" })).toHaveTextContent("This response predates Client reporting.");
   });
-
   it("opens a lifecycle drilldown with the selected stable project status", async () => {
     const get = installDashboardApi();
     const user = userEvent.setup();
@@ -412,54 +415,33 @@ describe("Super Admin dashboard page", () => {
     expect(get.mock.calls.some(([path]) => path.includes("projectStatus=active"))).toBe(true);
   });
 
-  it("morphs lifecycle views without remounting the chart or changing exact values", async () => {
+  it("keeps the project-status doughnut mounted while exposing exact values", async () => {
     const get = installDashboardApi();
     const user = userEvent.setup();
     renderDashboard();
 
-    const lifecycleFigure = await screen.findByRole("figure", { name: "Current delivery stage" });
-    const viewControl = within(lifecycleFigure).getByRole("group", { name: "Lifecycle chart view" });
-    const doughnut = within(viewControl).getByRole("button", { name: "Doughnut" });
-    const rankedBars = within(viewControl).getByRole("button", { name: "Ranked bars" });
-    expect(doughnut).toHaveAttribute("aria-pressed", "true");
-    expect(rankedBars).toHaveAttribute("aria-pressed", "false");
-
-    const chartHost = within(lifecycleFigure).getByRole("img", { name: /shown as a doughnut/ });
-    await user.click(within(lifecycleFigure).getByRole("button", { name: "Show values" }));
-    const table = within(lifecycleFigure).getByRole("table");
+    const figure = await screen.findByRole("figure", { name: "Project status" });
+    const chartHost = within(figure).getByRole("img", { name: /Project status doughnut/ });
+    await user.click(within(figure).getByRole("button", { name: "Show values" }));
+    const table = within(figure).getByRole("table");
     expect(within(table).getByRole("row", { name: "Active 1 50%" })).toBeVisible();
     expect(within(table).getByRole("row", { name: "Completed 1 50%" })).toBeVisible();
-
-    await user.click(rankedBars);
-    expect(rankedBars).toHaveAttribute("aria-pressed", "true");
-    expect(within(lifecycleFigure).getByRole("img", { name: /shown as ranked bars/ })).toBe(chartHost);
-    expect(within(table).getByRole("row", { name: "Active 1 50%" })).toBeVisible();
-
-    await user.click(doughnut);
-    await user.click(rankedBars);
-    await user.click(doughnut);
-    await user.click(rankedBars);
-    expect(rankedBars).toHaveAttribute("aria-pressed", "true");
-    expect(doughnut).toHaveAttribute("aria-pressed", "false");
-    expect(within(lifecycleFigure).getByRole("img", { name: /shown as ranked bars/ })).toBe(chartHost);
+    expect(within(figure).getByRole("img", { name: /Project status doughnut/ })).toBe(chartHost);
     expect(get.mock.calls.filter(([path]) => path.startsWith("/admin/dashboard/overview?")).length).toBe(1);
   });
-
-  it("keeps ranked lifecycle bars keyboard-operable for the same project drilldown", async () => {
+  it("keeps project-status segments keyboard-operable for the project drilldown", async () => {
     const get = installDashboardApi();
     const user = userEvent.setup();
     renderDashboard();
 
-    const lifecycleFigure = await screen.findByRole("figure", { name: "Current delivery stage" });
-    await user.click(within(lifecycleFigure).getByRole("button", { name: "Ranked bars" }));
-    const chart = within(lifecycleFigure).getByRole("img", { name: /shown as ranked bars/ });
+    const figure = await screen.findByRole("figure", { name: "Project status" });
+    const chart = within(figure).getByRole("img", { name: /Project status doughnut/ });
     chart.focus();
-    await user.keyboard("{Home}{Enter}");
+    await user.keyboard("{Home}{ArrowRight}{Enter}");
 
     await waitFor(() => expect(screen.getByRole("heading", { name: "Projects", level: 2 })).toBeVisible());
     expect(get.mock.calls.some(([path]) => path.includes("projectStatus=active"))).toBe(true);
   });
-
   it("supports roving focus, explicit activation, URL-backed tabs, and panel focus", async () => {
     installDashboardApi();
     const user = userEvent.setup();
@@ -562,55 +544,23 @@ describe("Super Admin dashboard page", () => {
     expect(within(variance!).queryByText(/₹18,000/)).not.toBeInTheDocument();
   });
 
-  it("suppresses unavailable risk, factor, top-project, and ratio values with safe explanations", async () => {
-    const unavailableKeys = [
-      "risk.projectDistribution",
-      "risk.factorDistribution",
-      "risk.topProjects",
-      "projects.completionRate"
-    ];
-    installDashboardApi({
-      overview: {
-        ...superAdminDashboardOverviewFixture,
-        projects: {
-          ...superAdminDashboardOverviewFixture.projects,
-          completionRate: { numerator: 0, denominator: 2, rateBps: 0 }
-        },
-        dataQuality: {
-          status: "partial",
-          totalIssueCount: unavailableKeys.length,
-          unavailableMetricKeys: unavailableKeys,
-          issues: unavailableKeys.map((metricKey) => ({
-            code: "module_aggregate_unavailable" as const,
-            metricKey,
-            message: `${metricKey} could not be verified.`,
-            entityType: null,
-            entityId: null
-          }))
-        }
-      }
-    });
+  it("shows unavailable risk and project context without manufacturing zero", async () => {
+    const unavailableKeys = ["risk.projectDistribution", "risk.factorDistribution", "risk.topProjects", "projects.completionRate"];
+    installDashboardApi({ overview: { ...superAdminDashboardOverviewFixture, dataQuality: { status: "partial", totalIssueCount: unavailableKeys.length, unavailableMetricKeys: unavailableKeys, issues: unavailableKeys.map((metricKey) => ({ code: "module_aggregate_unavailable" as const, metricKey, message: `${metricKey} could not be verified.`, entityType: null, entityId: null })) } } });
     const overviewRender = renderDashboard();
 
-    const attention = await screen.findByRole("region", { name: "Needs attention" });
-    expect(within(attention).getByText("Red-risk projects")).toBeVisible();
-    expect(within(attention).getAllByText("Not available").length).toBeGreaterThan(0);
-    expect(within(attention).getAllByText("risk.projectDistribution could not be verified.").length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/risk\.topProjects could not be verified/)).not.toHaveLength(0);
+    const queue = await screen.findByRole("region", { name: "Action queue" });
+    expect(within(queue).getByText("Red-risk projects").closest("li")).toHaveTextContent("Not available");
+    expect(screen.getByRole("region", { name: "Priority project" })).toHaveTextContent("risk.topProjects could not be verified.");
     expect(screen.queryByText("North Residence")).not.toBeInTheDocument();
-    expect(screen.queryByText("Project is past its planned deadline.")).not.toBeInTheDocument();
     const modules = screen.getByRole("region", { name: "Module summaries" });
-    const riskModule = within(modules).getByText("Risk").closest("a");
-    expect(within(riskModule!).getByText("Not available")).toBeVisible();
-    expect(screen.getByText("1 Client approved")).toBeVisible();
+    expect(within(within(modules).getByText("Risk").closest("a")!).getByText("Not available")).toBeVisible();
 
     overviewRender.unmount();
     renderDashboard("/admin/dashboard?tab=risk&periodDays=30");
-    const riskTabRed = (await screen.findByText("Red-risk projects")).closest("article");
-    expect(within(riskTabRed!).getByText("Not available")).toBeVisible();
-    expect(within(riskTabRed!).queryByText("1")).not.toBeInTheDocument();
+    const riskTabRed = (await screen.findByText("Red-risk projects")).closest("article")!;
+    expect(within(riskTabRed).getByText("Not available")).toBeVisible();
   });
-
   it("shows initial loading and retains verified data during a background refresh", async () => {
     const loading = deferred<never>();
     vi.spyOn(apiClient, "get").mockImplementation(() => loading.promise);
@@ -635,37 +585,16 @@ describe("Super Admin dashboard page", () => {
     expect(screen.getByText("Module summaries")).toBeVisible();
   });
 
-  it("keeps the verified period mounted while rapid period requests resolve out of order", async () => {
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
-      x: 0,
-      y: 0,
-      top: 0,
-      right: 800,
-      bottom: 300,
-      left: 0,
-      width: 800,
-      height: 300,
-      toJSON: () => ({})
-    });
+  it("keeps the verified executive view mounted while rapid period requests resolve out of order", async () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, top: 0, right: 800, bottom: 300, left: 0, width: 800, height: 300, toJSON: () => ({}) });
     const forPeriod = (days: 7 | 30 | 90, projectTotal: number): SuperAdminDashboardOverview => {
       const comparison = superAdminDashboardOverviewFixture.comparison!;
-      const currentBuckets = days === 7 ? comparison.currentBuckets.slice(-7) : comparison.currentBuckets;
-      const previousBuckets = days === 7 ? comparison.previousBuckets.slice(-7) : comparison.previousBuckets;
       return {
         ...superAdminDashboardOverviewFixture,
         observedAt: `2026-09-${String(days === 7 ? 7 : days === 30 ? 8 : 9).padStart(2, "0")}T12:00:00.000Z`,
         period: { ...superAdminDashboardOverviewFixture.period, days },
         projects: { ...superAdminDashboardOverviewFixture.projects, total: projectTotal },
-        comparison: {
-          ...comparison,
-          window: {
-            ...comparison.window,
-            current: { ...comparison.window.current, days },
-            previous: { ...comparison.window.previous, days }
-          },
-          currentBuckets,
-          previousBuckets
-        }
+        comparison: { ...comparison, window: { ...comparison.window, current: { ...comparison.window.current, days }, previous: { ...comparison.window.previous, days } } }
       };
     };
     const thirtyDayData = forPeriod(30, 30);
@@ -684,43 +613,31 @@ describe("Super Admin dashboard page", () => {
     const { queryClient } = renderDashboard();
 
     const headline = await screen.findByRole("region", { name: "Organization headline metrics" });
-    const projectsMetric = within(headline).getByText("Projects").closest("article")!;
+    const projectsMetric = within(headline).getByText("Total projects").closest("article")!;
     expect(within(projectsMetric).getByText("30")).toBeVisible();
-    expect(screen.getByText("Selected 30-day incurred period")).toBeVisible();
-    const growthHost = screen.getByRole("img", { name: /Projects created for the current and previous reporting period/ });
+    const activityHost = screen.getByRole("img", { name: /Recorded cost postings by UTC day/ });
     await waitFor(() => expect(dashboardChartRuntimeMock.init).toHaveBeenCalledTimes(4));
-    const growthInstance = dashboardChartRuntimeMock.instances.get("dashboard-growth");
-    expect(growthInstance).toBeDefined();
-    const initialGrowthUpdates = growthInstance!.update.mock.calls.length;
+    const activityInstance = dashboardChartRuntimeMock.instances.get("dashboard-recorded-cost-activity")!;
+    const initialUpdates = activityInstance.update.mock.calls.length;
 
     const period = screen.getByRole("combobox", { name: "Reporting period" });
     await user.selectOptions(period, "90");
-    expect(period).toHaveValue("90");
     expect(screen.getByText("Refreshing dashboard…")).toBeVisible();
-    expect(screen.getByText("Selected 30-day incurred period")).toBeVisible();
     expect(within(projectsMetric).getByText("30")).toBeVisible();
-
     await user.selectOptions(period, "7");
-    expect(period).toHaveValue("7");
-    expect(screen.getByText("Selected 30-day incurred period")).toBeVisible();
 
     act(() => ninetyDayRequest.resolve(ninetyDayData));
     await waitFor(() => expect(queryClient.getQueryData(dashboardKeys.overview(90))).toBe(ninetyDayData));
-    expect(screen.queryByText("Selected 90-day incurred period")).not.toBeInTheDocument();
-    expect(screen.getByText("Selected 30-day incurred period")).toBeVisible();
     expect(within(projectsMetric).getByText("30")).toBeVisible();
 
     act(() => sevenDayRequest.resolve(sevenDayData));
-    await waitFor(() => expect(screen.getByText("Selected 7-day incurred period")).toBeVisible());
-    expect(within(projectsMetric).getByText("7")).toBeVisible();
-    expect(screen.queryByText("Selected 90-day incurred period")).not.toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /Projects created for the current and previous reporting period/ })).toBe(growthHost);
+    await waitFor(() => expect(within(projectsMetric).getByText("7")).toBeVisible());
+    expect(screen.getByRole("img", { name: /Recorded cost postings by UTC day/ })).toBe(activityHost);
     expect(screen.queryByText("Refreshing dashboard…")).not.toBeInTheDocument();
     expect(dashboardChartRuntimeMock.init).toHaveBeenCalledTimes(4);
-    expect(dashboardChartRuntimeMock.instances.get("dashboard-growth")).toBe(growthInstance);
-    expect(growthInstance!.update.mock.calls.length).toBeGreaterThan(initialGrowthUpdates);
+    expect(dashboardChartRuntimeMock.instances.get("dashboard-recorded-cost-activity")).toBe(activityInstance);
+    expect(activityInstance.update.mock.calls.length).toBeGreaterThan(initialUpdates);
   });
-
   it("keeps Overview available when the selected project page fails", async () => {
     vi.spyOn(apiClient, "get").mockImplementation(async (path) => {
       if (path.startsWith("/admin/dashboard/overview?")) {

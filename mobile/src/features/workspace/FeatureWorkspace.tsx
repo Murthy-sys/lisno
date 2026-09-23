@@ -26,6 +26,7 @@ import { AdminInvitationPanel, ManagedUserActiveAction, type ManagedUserSummary 
 import { KnowledgeCatalogWorkspace } from "../knowledge";
 import { ProjectCreateAction } from "../projects/ProjectCreateActions";
 import { MessagesWorkspace } from "../messages/MessagesWorkspace";
+import { SuperAdminMobileDashboard } from "../dashboard/SuperAdminMobileDashboard";
 
 function requestScope(context: ReturnType<typeof useConfiguredRuntime>, session: AuthenticatedSession) {
   return {
@@ -64,6 +65,9 @@ function NotificationRealtimeBridge({ onSnapshot }: { readonly onSnapshot: () =>
 }
 
 export function FeatureWorkspace({ destination, session }: { readonly destination: FeatureDestination; readonly session: AuthenticatedSession }) {
+  if (destination.id === "dashboard") {
+    return <SuperAdminMobileDashboard session={session} />;
+  }
   if (destination.id === "messages") {
     return <MessagesWorkspace session={session} />;
   }

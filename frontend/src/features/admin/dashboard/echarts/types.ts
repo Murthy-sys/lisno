@@ -1,7 +1,11 @@
-import type { BarSeriesOption, LineSeriesOption, PieSeriesOption } from "echarts/charts";
+import type {
+  BarSeriesOption,
+  CustomSeriesOption,
+  LineSeriesOption,
+  PieSeriesOption
+} from "echarts/charts";
 import type {
   AriaComponentOption,
-  DatasetComponentOption,
   GridComponentOption,
   TooltipComponentOption
 } from "echarts/components";
@@ -10,7 +14,7 @@ import type { ComposeOption } from "echarts/core";
 export type DashboardEChartOption = ComposeOption<
   | AriaComponentOption
   | BarSeriesOption
-  | DatasetComponentOption
+  | CustomSeriesOption
   | GridComponentOption
   | LineSeriesOption
   | PieSeriesOption
@@ -32,6 +36,15 @@ export interface DashboardChartTheme {
   grid: string;
   track: string;
   surface: string;
+  spatial?: Readonly<{
+    field: string;
+    plane: string;
+    line: string;
+    text: string;
+    muted: string;
+    gold: string;
+    cyan: string;
+  }>;
 }
 
 export interface DashboardChartKeyboardItem {

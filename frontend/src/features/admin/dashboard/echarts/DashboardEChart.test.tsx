@@ -112,7 +112,7 @@ const baseProps = {
   height: 280,
   description: "Current and previous project activity.",
   createOption: vi.fn(() => ({
-    series: [{ id: "current", type: "line" as const, data: [1, 3, 2] }],
+    series: [{ id: "current", type: "custom" as const, data: [1, 3, 2] }],
     tooltip: { trigger: "axis" as const }
   }))
 };
@@ -136,8 +136,8 @@ describe("DashboardEChart", () => {
     const option = vi.mocked(instance.update).mock.calls[0][0] as Record<string, unknown>;
     expect(option.color).toEqual(expect.arrayContaining(["#5a45d6"]));
     expect((option.color as string[]).some((color) => color.includes("var("))).toBe(false);
-    expect(option.animationDuration).toBe(760);
-    expect(option.animationDurationUpdate).toBe(700);
+    expect(option.animationDuration).toBe(480);
+    expect(option.animationDurationUpdate).toBe(360);
     expect(option.animationEasingUpdate).toBe("cubicInOut");
     expect(option.tooltip).toMatchObject({ confine: true, renderMode: "richText" });
     expect(screen.getByRole("img", { name: baseProps.description })).toHaveAttribute("aria-busy", "false");
@@ -170,10 +170,10 @@ describe("DashboardEChart", () => {
     const { runtime, instance } = createRuntime();
     loadRuntime.mockReturnValue(pending);
     const firstOption = vi.fn(() => ({
-      series: [{ id: "current", type: "line" as const, data: [1] }]
+      series: [{ id: "current", type: "custom" as const, data: [1] }]
     }));
     const latestOption = vi.fn(() => ({
-      series: [{ id: "current", type: "line" as const, data: [9] }]
+      series: [{ id: "current", type: "custom" as const, data: [9] }]
     }));
 
     const { rerender, unmount } = render(
@@ -214,8 +214,8 @@ describe("DashboardEChart", () => {
     await waitFor(() => expect(instance.update).toHaveBeenCalledTimes(2));
     expect(vi.mocked(instance.update).mock.calls.at(-1)?.[0]).toMatchObject({
       animation: true,
-      animationDuration: 760,
-      animationDurationUpdate: 700
+      animationDuration: 480,
+      animationDurationUpdate: 360
     });
     expect(runtime.init).toHaveBeenCalledOnce();
   });
@@ -226,7 +226,7 @@ describe("DashboardEChart", () => {
     const optionFor = (value: number) => vi.fn(() => ({
       series: [{
         id: "current",
-        type: "line" as const,
+        type: "custom" as const,
         universalTransition: true,
         data: [{ name: "2026-09-20", value }]
       }]

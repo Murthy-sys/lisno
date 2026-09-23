@@ -20,9 +20,9 @@ const ORDINAL_FALLBACKS = [
   "#4b39b4"
 ] as const;
 
-const ENTRANCE_DURATION_MS = 760;
-const UPDATE_DURATION_MS = 700;
-const STATE_DURATION_MS = 100;
+const ENTRANCE_DURATION_MS = 480;
+const UPDATE_DURATION_MS = 360;
+const STATE_DURATION_MS = 220;
 const ENTRANCE_STAGGER_MS = 24;
 const UPDATE_STAGGER_MS = 16;
 const MAX_ENTRANCE_STAGGER_MS = 144;
@@ -90,7 +90,16 @@ export const resolveDashboardChartTheme = (element: HTMLElement): DashboardChart
     mutedText: readToken(styles, "--color-text-muted", "#626a7d"),
     grid: readToken(styles, "--chart-grid", "#e7eaf2"),
     track: readToken(styles, "--chart-track", "#eceef5"),
-    surface: readToken(styles, "--chart-surface", "#ffffff")
+    surface: readToken(styles, "--chart-surface", "#ffffff"),
+    spatial: {
+      field: readToken(styles, "--dashboard-spatial-field", "#17122f"),
+      plane: readToken(styles, "--dashboard-spatial-plane", "#312951"),
+      line: readToken(styles, "--dashboard-spatial-line", "#736aa0"),
+      text: readToken(styles, "--dashboard-spatial-text", "#f7f4ff"),
+      muted: readToken(styles, "--dashboard-spatial-muted", "#b8b1ce"),
+      gold: readToken(styles, "--dashboard-spatial-gold", "#f4c84b"),
+      cyan: readToken(styles, "--dashboard-spatial-cyan", "#29d5c6")
+    }
   };
 };
 

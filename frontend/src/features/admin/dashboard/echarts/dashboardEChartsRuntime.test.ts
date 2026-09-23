@@ -17,15 +17,18 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("echarts/core", () => ({ init: mocks.init, use: mocks.use }));
-vi.mock("echarts/charts", () => ({ BarChart: "bar", LineChart: "line", PieChart: "pie" }));
+vi.mock("echarts/charts", () => ({
+  BarChart: "bar",
+  CustomChart: "custom",
+  LineChart: "line",
+  PieChart: "pie"
+}));
 vi.mock("echarts/components", () => ({
   AriaComponent: "aria",
-  DatasetComponent: "dataset",
   GridComponent: "grid",
   TooltipComponent: "tooltip"
 }));
 vi.mock("echarts/features", () => ({
-  LabelLayout: "label-layout",
   UniversalTransition: "universal-transition"
 }));
 vi.mock("echarts/renderers", () => ({ SVGRenderer: "svg" }));
@@ -38,21 +41,20 @@ beforeEach(() => {
 });
 
 describe("dashboard ECharts runtime", () => {
-  it("uses SVG and replaces removable option collections on every update", () => {
+  it("registers the dashboard chart families in the lazy SVG runtime and preserves stable updates", () => {
     const element = document.createElement("div");
     const instance = dashboardEChartsRuntime.init(element);
-    instance.update({ series: [{ id: "one", type: "line", data: [1] }] });
+    instance.update({ series: [{ id: "one", type: "custom", data: [1] }] });
 
     expect(mocks.init).toHaveBeenCalledWith(element, null, { renderer: "svg" });
     expect(mocks.use).toHaveBeenCalledWith([
-      "line",
       "bar",
+      "custom",
+      "line",
       "pie",
       "grid",
       "tooltip",
-      "dataset",
       "aria",
-      "label-layout",
       "universal-transition",
       "svg"
     ]);
@@ -60,25 +62,24 @@ describe("dashboard ECharts runtime", () => {
       expect.objectContaining({ series: expect.any(Array) }),
       expect.objectContaining({
         lazyUpdate: false,
-        notMerge: false,
-        replaceMerge: ["series", "dataset", "xAxis", "yAxis", "grid"]
+        notMerge: false
       })
     );
   });
 
-  it("updates one instance by stable series ID while replacing obsolete collections", () => {
+  it("updates one instance by stable series ID and replaces only removed series", () => {
     const element = document.createElement("div");
     const instance = dashboardEChartsRuntime.init(element);
 
     instance.update({
       series: [
-        { id: "current", type: "line", data: [{ name: "2026-09-20", value: 2 }] },
-        { id: "previous", type: "line", data: [{ name: "2026-09-20", value: 1 }] }
+        { id: "current", type: "custom", data: [{ name: "2026-09-20", value: 2 }] },
+        { id: "previous", type: "custom", data: [{ name: "2026-09-20", value: 1 }] }
       ]
     });
     instance.update({
       series: [
-        { id: "current", type: "bar", universalTransition: true, data: [{ name: "2026-09-20", value: 4 }] }
+        { id: "current", type: "custom", universalTransition: true, data: [{ name: "2026-09-20", value: 4 }] }
       ]
     });
 
@@ -86,12 +87,12 @@ describe("dashboard ECharts runtime", () => {
     expect(mocks.chart.setOption).toHaveBeenCalledTimes(2);
     expect(mocks.chart.setOption.mock.calls[1]).toEqual([
       expect.objectContaining({
-        series: [expect.objectContaining({ id: "current", type: "bar", universalTransition: true })]
+        series: [expect.objectContaining({ id: "current", type: "custom", universalTransition: true })]
       }),
       {
         lazyUpdate: false,
         notMerge: false,
-        replaceMerge: ["series", "dataset", "xAxis", "yAxis", "grid"]
+        replaceMerge: ["series"]
       }
     ]);
   });

@@ -1,12 +1,11 @@
-import { BarChart, LineChart, PieChart } from "echarts/charts";
+import { BarChart, CustomChart, LineChart, PieChart } from "echarts/charts";
 import {
   AriaComponent,
-  DatasetComponent,
   GridComponent,
   TooltipComponent
 } from "echarts/components";
 import { init, use } from "echarts/core";
-import { LabelLayout, UniversalTransition } from "echarts/features";
+import { UniversalTransition } from "echarts/features";
 import { SVGRenderer } from "echarts/renderers";
 
 import type {
@@ -16,14 +15,13 @@ import type {
 } from "./dashboardEChartsRuntimeTypes";
 
 use([
-  LineChart,
   BarChart,
+  CustomChart,
+  LineChart,
   PieChart,
   GridComponent,
   TooltipComponent,
-  DatasetComponent,
   AriaComponent,
-  LabelLayout,
   UniversalTransition,
   SVGRenderer
 ]);
@@ -45,6 +43,7 @@ const createInstance = (element: HTMLElement): DashboardEChartRuntimeInstance =>
   const chart = init(element, null, { renderer: "svg" });
   const datumListeners = new Set<(target: DashboardEChartDatumTarget) => void>();
   let disposed = false;
+  let previousSeriesIds = new Set<string>();
 
   const handleClick = (payload: unknown) => {
     const target = normalizeDatumTarget(payload);
@@ -62,11 +61,20 @@ const createInstance = (element: HTMLElement): DashboardEChartRuntimeInstance =>
   return {
     update(option) {
       if (disposed) return;
+      const rawSeries = (option as { series?: unknown }).series;
+      const nextSeries = Array.isArray(rawSeries) ? rawSeries : rawSeries ? [rawSeries] : [];
+      const nextSeriesIds = new Set(nextSeries.flatMap((entry) => {
+        if (typeof entry !== "object" || entry === null) return [];
+        const id = (entry as { id?: unknown }).id;
+        return typeof id === "string" && id ? [id] : [];
+      }));
+      const removesSeries = [...previousSeriesIds].some((id) => !nextSeriesIds.has(id));
       chart.setOption(option, {
         lazyUpdate: false,
         notMerge: false,
-        replaceMerge: ["series", "dataset", "xAxis", "yAxis", "grid"]
+        ...(removesSeries ? { replaceMerge: ["series"] } : {})
       });
+      previousSeriesIds = nextSeriesIds;
     },
     resize() {
       if (!disposed) chart.resize({ animation: { duration: 0 } });
@@ -92,6 +100,7 @@ const createInstance = (element: HTMLElement): DashboardEChartRuntimeInstance =>
     dispose() {
       if (disposed) return;
       disposed = true;
+      previousSeriesIds.clear();
       datumListeners.clear();
       chart.off("click", handleClick);
       chart.dispose();
