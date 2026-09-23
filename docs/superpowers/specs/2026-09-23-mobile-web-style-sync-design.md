@@ -1,6 +1,6 @@
 # Mobile visual alignment with web
 
-Status: authorized for implementation. The user's instruction to proceed without further approval applies; use their existing parallel execution preference.
+Status: implemented and verified within the recorded Android scope; one unrelated contract-test failure remains. The user's instruction to proceed without further approval applies; use their existing parallel execution preference.
 
 ## Goal and evidence
 Align the mobile interface, fonts, cards and buttons with the current web application. Bottom navigation must show only icons. Mobile currently uses purple tokens, 16dp cards and 10dp controls, while effective web overrides use olive primary buttons (#3d4a32), a sage rail (#2f3a2a), 12px cards and 8px controls. Poppins is already shared. Web Login uses Fraunces 500 specifically for its title; general headings remain Poppins.

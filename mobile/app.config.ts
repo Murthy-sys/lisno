@@ -88,6 +88,7 @@ export const createAppConfig = (
     icon: "./assets/brand/icon.png",
     scheme: production ? "lisno" : "lisno-dev",
     userInterfaceStyle: "light",
+    backgroundColor: BRAND_SHELL,
     android: {
       package: androidPackage,
       adaptiveIcon: {

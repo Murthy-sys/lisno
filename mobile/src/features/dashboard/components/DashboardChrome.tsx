@@ -1,20 +1,25 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
   type StyleProp,
   type ViewStyle
 } from "react-native";
+
+import Svg, { Defs, LinearGradient, Path, Rect, Stop } from "react-native-svg";
 
 import type { DashboardPeriod } from "../data";
 import {
   dashboardColors as color,
   dashboardRadii as radius,
   dashboardSpacing as space,
+  dashboardSurfaceDepth,
   dashboardTypography as type
 } from "../dashboardTheme";
 
@@ -39,12 +44,6 @@ const statusCopy: Record<DashboardQualityStatus, string> = {
   unavailable: "Sources unavailable"
 };
 
-const statusColor: Record<DashboardQualityStatus, string> = {
-  complete: color.success,
-  partial: color.warning,
-  unavailable: color.unavailable
-};
-
 export function OperationsHeader({
   period,
   comparisonEnabled,
@@ -53,6 +52,10 @@ export function OperationsHeader({
   qualityStatus,
   qualityDetail,
   refreshing,
+  greeting,
+  currentRangeLabel,
+  previousRangeLabel,
+  partialFinalDay = false,
   onPeriodChange,
   onComparisonChange,
   onRefresh
@@ -64,85 +67,123 @@ export function OperationsHeader({
   readonly qualityStatus: DashboardQualityStatus;
   readonly qualityDetail: string;
   readonly refreshing: boolean;
+  readonly greeting?: string;
+  readonly currentRangeLabel?: string;
+  readonly previousRangeLabel?: string;
+  readonly partialFinalDay?: boolean;
   readonly onPeriodChange: (period: DashboardPeriod) => void;
   readonly onComparisonChange: (enabled: boolean) => void;
   readonly onRefresh: () => void;
 }) {
+  const { width, fontScale } = useWindowDimensions();
+  const stacked = width < 370 || fontScale >= 1.25;
+  const heroId = useId().replace(/:/g, "");
+  const timeBasis = `Times in UTC${partialFinalDay ? " · Final day is partial" : ""}`;
+
   return (
     <View style={styles.header}>
-      <View style={styles.headerTopline}>
-        <View style={styles.liveLabel}>
-          <View style={styles.liveMark} />
-          <Text style={styles.eyebrow}>PORTFOLIO CONTROL</Text>
+      <View style={styles.hero}>
+        <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none" style={StyleSheet.absoluteFill}>
+          <Image
+            accessible={false}
+            resizeMode="cover"
+            source={require("../../../../assets/brand/dashboard-interior.jpg")}
+            style={styles.heroPhoto}
+          />
+          <Svg height="100%" preserveAspectRatio="none" style={StyleSheet.absoluteFill} width="100%">
+            <Defs>
+              <LinearGradient id={`${heroId}-horizontal`} x1="0%" x2="100%" y1="0%" y2="0%">
+                <Stop offset="0%" stopColor={color.canvas} stopOpacity={1} />
+                <Stop offset="38%" stopColor={color.canvas} stopOpacity={0.97} />
+                <Stop offset="65%" stopColor={color.canvas} stopOpacity={0.63} />
+                <Stop offset="100%" stopColor={color.canvas} stopOpacity={0.02} />
+              </LinearGradient>
+              <LinearGradient id={`${heroId}-vertical`} x1="0%" x2="0%" y1="0%" y2="100%">
+                <Stop offset="45%" stopColor={color.canvas} stopOpacity={0} />
+                <Stop offset="100%" stopColor={color.canvas} stopOpacity={1} />
+              </LinearGradient>
+            </Defs>
+            <Rect fill={`url(#${heroId}-horizontal)`} height="100%" width="100%" />
+            <Rect fill={`url(#${heroId}-vertical)`} height="100%" width="100%" />
+          </Svg>
         </View>
-        <Pressable
-          accessibilityLabel="Refresh dashboard"
-          accessibilityRole="button"
-          accessibilityState={{ busy: refreshing, disabled: refreshing }}
-          disabled={refreshing}
-          onPress={onRefresh}
-          style={({ pressed }) => [styles.refreshButton, pressed ? styles.pressed : null]}
-        >
-          {refreshing ? (
-            <ActivityIndicator color={color.text} size="small" />
-          ) : (
-            <Text accessibilityElementsHidden allowFontScaling={false} style={styles.refreshGlyph}>↻</Text>
-          )}
-        </Pressable>
+        <View style={[styles.headerCopy, stacked ? styles.headerCopyStacked : null]}>
+          {greeting ? <Text style={styles.greeting}>{greeting}</Text> : null}
+          <Text accessibilityLabel="Executive dashboard" accessibilityRole="header" style={styles.title}>{"Executive\ndashboard"}</Text>
+          <Text style={styles.subtitle}>Authorized project, finance and workforce signals.</Text>
+        </View>
       </View>
 
-      <View style={styles.headerCopy}>
-        <Text accessibilityRole="header" style={styles.title}>Executive dashboard</Text>
-        <Text style={styles.subtitle}>Authorized project, finance and workforce signals.</Text>
-      </View>
-
-      <View style={styles.periodRow}>
-        <View accessibilityLabel="Reporting period" accessibilityRole="tablist" style={styles.periodControl}>
-          {([7, 30, 90] as const).map((value) => {
-            const selected = value === period;
-            return (
-              <Pressable
-                key={value}
-                accessibilityLabel={`${value} days`}
-                accessibilityRole="tab"
-                accessibilityState={{ selected }}
-                onPress={() => onPeriodChange(value)}
-                style={({ pressed }) => [
-                  styles.periodButton,
-                  selected ? styles.periodButtonSelected : null,
-                  pressed ? styles.pressed : null
-                ]}
-              >
-                <Text style={[styles.periodText, selected ? styles.periodTextSelected : null]}>{value}D</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-        <Pressable
-          accessibilityLabel="Compare with previous period"
-          accessibilityRole="switch"
-          accessibilityState={{ checked: comparisonEnabled }}
-          onPress={() => onComparisonChange(!comparisonEnabled)}
-          style={({ pressed }) => [styles.compareControl, pressed ? styles.pressed : null]}
-        >
-          <View style={[styles.switchTrack, comparisonEnabled ? styles.switchTrackSelected : null]}>
-            <View style={[styles.switchThumb, comparisonEnabled ? styles.switchThumbSelected : null]} />
+      <View style={styles.reportingCard}>
+        <View style={[styles.reportingRow, stacked ? styles.reportingRowStacked : null]} testID="dashboard-reporting-dates">
+          <View accessibilityLabel="Reporting period" accessibilityRole="tablist" style={styles.periodControl}>
+            {([7, 30, 90] as const).map((value) => {
+              const selected = value === period;
+              return (
+                <Pressable
+                  key={value}
+                  accessibilityLabel={`${value} days`}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected }}
+                  onPress={() => onPeriodChange(value)}
+                  style={({ pressed }) => [
+                    styles.periodButton,
+                    selected ? styles.periodButtonSelected : null,
+                    pressed ? styles.pressed : null
+                  ]}
+                >
+                  <Text style={[styles.periodText, selected ? styles.periodTextSelected : null]}>{value}D</Text>
+                </Pressable>
+              );
+            })}
           </View>
-          <Text style={styles.compareText}>Compare</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.metaRow}>
-        <View style={styles.metaCopy}>
-          <Text style={styles.observed}>{observedLabel}</Text>
-          <Text style={styles.range}>{rangeLabel}</Text>
+          <View style={[styles.dateGroup, stacked ? styles.dateGroupStacked : null]}>
+            <Svg accessible={false} height={22} viewBox="0 0 24 24" width={22}>
+              <Path d="M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1ZM4 10h16M8 3v4m8-4v4m-8 8 2 2 5-5" fill="none" stroke={color.text} strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} />
+            </Svg>
+            <View style={styles.dateCopy}>
+              <Text style={styles.currentRange}>{currentRangeLabel ?? rangeLabel}</Text>
+              {comparisonEnabled && previousRangeLabel ? <Text style={styles.previousRange}>Prev: {previousRangeLabel}</Text> : null}
+              <Text accessibilityLabel={`${statusCopy[qualityStatus]}. ${qualityDetail}. ${timeBasis}`} style={styles.timeBasis}>{timeBasis}</Text>
+            </View>
+          </View>
         </View>
-        <View
-          accessibilityLabel={`${statusCopy[qualityStatus]}. ${qualityDetail}`}
-          style={styles.quality}
-        >
-          <View style={[styles.qualityDot, { backgroundColor: statusColor[qualityStatus] }]} />
-          <Text style={styles.qualityText}>{statusCopy[qualityStatus]}</Text>
+
+        <View style={[styles.reportingBottomRow, stacked ? styles.reportingRowStacked : null]} testID="dashboard-reporting-updates">
+          <Pressable
+            accessibilityLabel="Compare with previous period"
+            accessibilityRole="switch"
+            accessibilityState={{ checked: comparisonEnabled }}
+            onPress={() => onComparisonChange(!comparisonEnabled)}
+            style={({ pressed }) => [styles.compareControl, pressed ? styles.pressed : null]}
+          >
+            <View style={[styles.switchTrack, comparisonEnabled ? styles.switchTrackSelected : null]}>
+              <View style={[styles.switchThumb, comparisonEnabled ? styles.switchThumbSelected : null]} />
+            </View>
+            <Text style={styles.compareText}>Compare periods</Text>
+          </Pressable>
+          <View style={[styles.updateGroup, stacked ? styles.updateGroupStacked : null]}>
+            <Pressable
+              accessibilityLabel="Refresh dashboard"
+              accessibilityRole="button"
+              accessibilityState={{ busy: refreshing, disabled: refreshing }}
+              disabled={refreshing}
+              onPress={onRefresh}
+              style={({ pressed }) => [styles.refreshButton, pressed ? styles.pressed : null]}
+            >
+              {refreshing ? (
+                <ActivityIndicator color={color.text} size="small" />
+              ) : (
+                <Svg accessible={false} height={25} viewBox="0 0 24 24" width={25}>
+                  <Path d="M19 8a8 8 0 1 1-6-4m0-2v5l4-3" fill="none" stroke={color.text} strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} />
+                </Svg>
+              )}
+            </Pressable>
+            <View style={styles.updatedCopy}>
+              <Text style={styles.updatedLabel}>Last updated</Text>
+              <Text style={styles.observed}>{observedLabel}</Text>
+            </View>
+          </View>
         </View>
       </View>
     </View>
@@ -281,19 +322,38 @@ export function SceneFrame({
 export function AvailabilityBanner({
   title,
   message,
-  tone = "partial"
+  tone = "partial",
+  actionLabel,
+  onAction
 }: {
   readonly title: string;
   readonly message: string;
   readonly tone?: "partial" | "unavailable";
+  readonly actionLabel?: string;
+  readonly onAction?: () => void;
 }) {
+  const { width, fontScale } = useWindowDimensions();
+  const stacked = width < 370 || fontScale >= 1.25;
+
   return (
-    <View accessibilityLiveRegion="polite" style={styles.availability}>
-      <View style={[styles.availabilityMark, tone === "unavailable" ? styles.availabilityMarkUnavailable : null]} />
-      <View style={styles.availabilityCopy}>
-        <Text style={styles.availabilityTitle}>{title}</Text>
-        <Text style={styles.availabilityMessage}>{message}</Text>
+    <View accessibilityLiveRegion="polite" style={[styles.availability, stacked ? styles.availabilityStacked : null]}>
+      <View style={styles.availabilityMain}>
+        <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.availabilityMark, tone === "unavailable" ? styles.availabilityMarkUnavailable : null]}>
+          <Text allowFontScaling={false} style={styles.availabilityGlyph}>!</Text>
+        </View>
+        <View style={styles.availabilityCopy}>
+          <Text style={styles.availabilityTitle}>{title}</Text>
+          <Text style={styles.availabilityMessage}>{message}</Text>
+        </View>
       </View>
+      {actionLabel && onAction ? (
+        <Pressable accessibilityRole="button" onPress={onAction} style={({ pressed }) => [styles.availabilityAction, pressed ? styles.pressed : null]}>
+          <Text style={styles.availabilityActionText}>{actionLabel}</Text>
+          <Svg accessible={false} height={17} viewBox="0 0 24 24" width={17}>
+            <Path d="M4 12h15m-6-6 6 6-6 6" fill="none" stroke={color.warning} strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} />
+          </Svg>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -323,68 +383,63 @@ export function DashboardSkeleton() {
 }
 
 const styles = StyleSheet.create({
-  header: {
-    gap: space.md,
-    paddingTop: space.md,
-    paddingBottom: space.lg
+  header: { gap: 0 },
+  hero: {
+    minHeight: 180,
+    marginHorizontal: -16,
+    overflow: "hidden",
+    backgroundColor: color.canvas
   },
-  headerTopline: { minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  liveLabel: { flexDirection: "row", alignItems: "center", gap: 8 },
-  liveMark: { width: 7, height: 7, borderRadius: 4, backgroundColor: color.violet },
-  eyebrow: { color: color.warning, fontFamily: type.semibold, fontSize: 12, lineHeight: 18, letterSpacing: 0.5 },
-  refreshButton: {
-    width: 48,
-    height: 48,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: radius.control,
+  heroPhoto: { position: "absolute", top: 0, right: 0, bottom: 0, width: "80%", height: "100%" },
+  headerCopy: { gap: 4, paddingTop: 14, paddingBottom: 18, paddingHorizontal: 24, maxWidth: 360 },
+  headerCopyStacked: { maxWidth: "100%" },
+  greeting: { color: color.textMuted, fontFamily: type.displayItalic, fontSize: 14, lineHeight: 20 },
+  title: { color: color.text, fontFamily: type.display, fontSize: 36, lineHeight: 38, letterSpacing: -0.8 },
+  subtitle: { color: color.textMuted, fontFamily: type.display, fontSize: 16, lineHeight: 20, maxWidth: 260, marginTop: 1 },
+  reportingCard: {
+    ...dashboardSurfaceDepth,
+    marginTop: -10,
+    borderRadius: radius.surface,
     borderWidth: 1,
-    borderColor: color.stageEdge,
-    backgroundColor: color.stage
+    borderColor: "rgba(217,220,207,0.65)",
+    backgroundColor: "rgba(251,250,246,0.94)",
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    paddingBottom: 6
   },
-  refreshGlyph: { color: color.text, fontFamily: type.medium, fontSize: 24, lineHeight: 28 },
-  headerCopy: { gap: 5, maxWidth: 620 },
-  title: { color: color.text, ...type.pageTitle },
-  subtitle: { color: color.textMuted, ...type.body },
-  periodRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: space.sm },
+  reportingRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  reportingRowStacked: { flexDirection: "column", alignItems: "stretch", gap: 8 },
   periodControl: {
     flexDirection: "row",
+    alignSelf: "flex-start",
     minHeight: 48,
-    padding: 3,
+    padding: 1,
     borderRadius: radius.control,
-    borderWidth: 1,
-    borderColor: color.stageEdge,
-    backgroundColor: color.stage
+    backgroundColor: color.stageRaised
   },
-  periodButton: { minWidth: 54, minHeight: 48, alignItems: "center", justifyContent: "center", borderRadius: radius.control, paddingHorizontal: 8, paddingVertical: 8 },
+  periodButton: { minWidth: 48, minHeight: 48, alignItems: "center", justifyContent: "center", borderRadius: radius.control, paddingHorizontal: 7, paddingVertical: 8 },
   periodButtonSelected: { backgroundColor: color.violet },
-  periodText: { color: color.textMuted, ...type.button },
+  periodText: { color: color.text, fontFamily: type.medium, fontSize: 13, lineHeight: 19 },
   periodTextSelected: { color: color.primaryInk },
-  compareControl: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 4 },
-  compareText: { color: color.textMuted, ...type.button },
+  dateGroup: { minWidth: 0, flex: 1, flexDirection: "row", alignItems: "center", gap: 8, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: color.stageEdge, paddingLeft: 9 },
+  dateGroupStacked: { flex: 0, borderLeftWidth: 0, paddingLeft: 3 },
+  dateCopy: { flex: 1, minWidth: 0, gap: 1 },
+  currentRange: { color: color.text, fontFamily: type.medium, fontSize: 11, lineHeight: 16 },
+  previousRange: { color: color.textMuted, fontFamily: type.regular, fontSize: 10, lineHeight: 15 },
+  reportingBottomRow: { marginTop: 3, paddingTop: 2, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.stageEdge, flexDirection: "row", alignItems: "center", gap: 6 },
+  compareControl: { minHeight: 48, flex: 1, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 3 },
+  compareText: { flexShrink: 1, color: color.text, fontFamily: type.regular, fontSize: 12, lineHeight: 18 },
   switchTrack: { width: 42, height: 24, borderRadius: 12, padding: 3, backgroundColor: color.unavailable },
   switchTrackSelected: { backgroundColor: color.violet },
-  switchThumb: { width: 18, height: 18, borderRadius: 9, backgroundColor: color.textMuted },
-  switchThumbSelected: { alignSelf: "flex-end", backgroundColor: color.primaryInk },
-  metaRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: space.sm },
-  metaCopy: { flex: 1, minWidth: 180, gap: 2 },
-  observed: { color: color.text, ...type.metadata, fontFamily: type.medium },
-  range: { color: color.textDim, fontFamily: type.regular, fontSize: 12, lineHeight: 18 },
-  quality: {
-    minHeight: 34,
-    maxWidth: "100%",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 7,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: radius.control,
-    borderWidth: 1,
-    borderColor: color.stageEdge,
-    backgroundColor: color.stage
-  },
-  qualityDot: { width: 7, height: 7, borderRadius: 4 },
-  qualityText: { flexShrink: 1, color: color.textMuted, fontFamily: type.medium, fontSize: 12, lineHeight: 18 },
+  switchThumb: { width: 18, height: 18, borderRadius: 9, backgroundColor: color.primaryInk },
+  switchThumbSelected: { alignSelf: "flex-end" },
+  updateGroup: { minWidth: 0, flex: 1.15, flexDirection: "row", alignItems: "center", gap: 2, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: color.stageEdge },
+  updateGroupStacked: { flex: 0, borderLeftWidth: 0 },
+  refreshButton: { width: 48, height: 48, alignItems: "center", justifyContent: "center", borderRadius: radius.control },
+  updatedCopy: { minWidth: 0, flex: 1 },
+  updatedLabel: { color: color.textMuted, fontFamily: type.regular, fontSize: 10, lineHeight: 15 },
+  observed: { color: color.textMuted, fontFamily: type.regular, fontSize: 10, lineHeight: 15 },
+  timeBasis: { color: color.textMuted, fontFamily: type.regular, fontSize: 9, lineHeight: 12 },
   factRail: {
     minWidth: 0,
     flex: 1,
@@ -454,19 +509,25 @@ const styles = StyleSheet.create({
   },
   availability: {
     flexDirection: "row",
-    gap: space.sm,
-    paddingVertical: space.sm,
-    paddingHorizontal: space.md,
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 12,
     borderWidth: 1,
-    borderRadius: radius.control,
-    borderColor: color.stageEdge,
+    borderRadius: radius.surface,
+    borderColor: "rgba(200,170,124,0.35)",
     backgroundColor: color.goldSoft
   },
-  availabilityMark: { width: 5, height: 5, borderRadius: 3, marginTop: 7, backgroundColor: color.warning },
+  availabilityStacked: { alignItems: "stretch", flexDirection: "column", gap: 4 },
+  availabilityMain: { minWidth: 0, flex: 1, flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  availabilityMark: { width: 22, height: 22, borderRadius: 11, marginTop: 1, alignItems: "center", justifyContent: "center", backgroundColor: color.warning },
   availabilityMarkUnavailable: { backgroundColor: color.unavailable },
-  availabilityCopy: { flex: 1, gap: 2 },
-  availabilityTitle: { color: color.text, ...type.body, fontFamily: type.semibold },
-  availabilityMessage: { color: color.textMuted, ...type.metadata },
+  availabilityGlyph: { color: color.primaryInk, fontFamily: type.semibold, fontSize: 16, lineHeight: 21 },
+  availabilityCopy: { minWidth: 0, flex: 1, gap: 2 },
+  availabilityTitle: { color: color.text, fontFamily: type.medium, fontSize: 14, lineHeight: 20 },
+  availabilityMessage: { color: color.textMuted, fontFamily: type.regular, fontSize: 11, lineHeight: 16 },
+  availabilityAction: { minHeight: 48, alignSelf: "center", maxWidth: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingHorizontal: 3 },
+  availabilityActionText: { flexShrink: 1, color: color.warning, fontFamily: type.medium, fontSize: 11, lineHeight: 17 },
   skeleton: { gap: space.lg, paddingTop: space.xl },
   skeletonHeader: { width: "64%", height: 42, borderRadius: 8, backgroundColor: color.stageRaised },
   skeletonMeta: { width: "46%", height: 14, borderRadius: 7, backgroundColor: color.stage },

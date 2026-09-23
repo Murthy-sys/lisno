@@ -1,4 +1,5 @@
 import { Redirect } from "expo-router";
+import { StatusBar } from "expo-status-bar";
 import { StyleSheet, Text, View } from "react-native";
 
 import { useOnboardingCompletion } from "../core/onboarding";
@@ -19,6 +20,7 @@ export default function StartupRouter() {
   if (!context.configured) {
     return (
       <View style={styles.configurationError}>
+        <StatusBar style="light" />
         <Text accessibilityRole="header" style={styles.errorTitle}>Backend setup required</Text>
         <Text style={styles.errorMessage}>{context.message}</Text>
         <Text style={styles.errorHint}>

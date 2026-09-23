@@ -16,6 +16,7 @@ import {
 import type { AuthenticatedSession } from "../../contracts/session";
 import { ApiError } from "../../core/http/apiClient";
 import { canPerformOperation } from "../../core/session/operationCapabilities";
+import { NavigationIcon } from "../../navigation/NavigationIcon";
 import { useReducedMotion } from "../onboarding/useReducedMotion";
 import {
   BudgetPositionChart,
@@ -51,6 +52,7 @@ import {
   dashboardLayout,
   dashboardRadii as radius,
   dashboardSpacing as space,
+  dashboardSurfaceDepth,
   dashboardTypography as type
 } from "./dashboardTheme";
 
@@ -64,7 +66,6 @@ const MODULE_ITEMS: readonly DashboardSelectorItem<ProgressModuleId>[] = [
   { id: "execution", label: "Execution" }
 ];
 
-const COST_TONES = [color.sage, color.sand, color.blue, color.plum] as const;
 const ROLE_TONES = [color.sage, color.blue, color.plum, color.sand, color.unavailable] as const;
 
 interface ExecutiveKpi {
@@ -159,11 +160,9 @@ function accentStyles(accent: Accent) {
 
 function KpiCard({
   item,
-  wide,
   singleColumn
 }: {
   readonly item: ExecutiveKpi;
-  readonly wide: boolean;
   readonly singleColumn: boolean;
 }) {
   const [accent, icon] = accentStyles(item.accent);
@@ -172,7 +171,7 @@ function KpiCard({
       accessibilityLabel={`${item.label}: ${item.value.displayValue}. ${item.value.available ? item.supporting : item.value.unavailableReason ?? "Not available"}`}
       style={[
         styles.kpiCard,
-        singleColumn ? styles.kpiSingle : wide ? styles.kpiWide : styles.kpiHalf
+        singleColumn ? styles.kpiSingle : styles.kpiThird
       ]}
       testID={`dashboard-kpi-${item.id}`}
     >
@@ -185,14 +184,84 @@ function KpiCard({
       <Text
         adjustsFontSizeToFit
         minimumFontScale={0.66}
-        numberOfLines={1}
+        numberOfLines={item.value.available ? 2 : undefined}
         style={[styles.kpiValue, !item.value.available ? styles.unavailableValue : null]}
       >
         {item.value.displayValue}
       </Text>
       <Text style={[styles.kpiSupporting, !item.value.available ? styles.unavailableText : null]}>
-        {item.value.available ? item.supporting : item.value.unavailableReason ?? "Authoritative source unavailable."}
+        {item.value.available ? item.supporting
+          : item.value.unavailableReason === "Authoritative data is unavailable for this metric."
+            ? "Authoritative data is unavailable."
+            : item.value.unavailableReason ?? "Authoritative source unavailable."}
       </Text>
+    </View>
+  );
+}
+
+function ProjectOverviewCard({ item, model, stacked }: {
+  readonly item: ExecutiveKpi;
+  readonly model: DashboardViewModel;
+  readonly stacked: boolean;
+}) {
+  const points = model.trendByMetric.projects_created.points;
+  // Six chronological groups cover the entire selected window; a missing day
+  // leaves its group unavailable rather than turning missing data into zero.
+  const bucketSize = Math.max(1, Math.ceil(points.length / 6));
+  const groups = Array.from({ length: Math.ceil(points.length / bucketSize) }, (_, index) => {
+    const group = points.slice(index * bucketSize, (index + 1) * bucketSize);
+    return {
+      id: group[0]!.id,
+      label: `${group[0]!.currentDate} to ${group[group.length - 1]!.currentDate}`,
+      value: group.some((point) => point.current === null) ? null : group.reduce((sum, point) => sum + point.current!, 0)
+    };
+  });
+  const maximum = Math.max(1, ...groups.map((group) => group.value ?? 0));
+  return (
+    <View style={styles.projectCard} testID={`dashboard-kpi-${item.id}`}
+      accessibilityLabel={`${item.label}: ${item.value.displayValue}. ${item.value.available ? item.supporting : item.value.unavailableReason}`}>
+      <View style={[styles.projectMain, stacked ? styles.projectStacked : null]}>
+        <View accessibilityElementsHidden style={[styles.projectIcon, styles.iconSage]}>
+          <NavigationIcon name="projects" color={color.text} />
+        </View>
+        <View style={styles.projectCopy}>
+          <Text style={styles.projectLabel}>{item.label}</Text>
+          <Text style={styles.projectValue}>{item.value.displayValue}</Text>
+        </View>
+        <View style={styles.trendBlock} accessible accessibilityRole="image"
+          accessibilityLabel={`New projects in the ${model.period}-day UTC window. ${groups.map((group) => `${group.label}: ${group.value ?? "Not available"}`).join(". ")}`}>
+          <View style={styles.projectTrend} testID="dashboard-project-creation-trend">
+            {groups.map((group, index) => (
+              <View key={group.id} style={styles.trendColumn}>
+                {group.value === null ? <Text style={styles.trendMissing}>?</Text> : (
+                  <View testID={`dashboard-project-trend-${index}`} style={[styles.trendBar, {
+                    height: group.value / maximum * 44,
+                    backgroundColor: index === groups.length - 1 ? color.violet : "#d5e0d6"
+                  }]} />
+                )}
+              </View>
+            ))}
+          </View>
+          <Text style={styles.trendCaption}>New projects · {model.period}D</Text>
+        </View>
+      </View>
+      <Text style={styles.projectSupporting}>{item.value.available ? item.supporting : item.value.unavailableReason}</Text>
+    </View>
+  );
+}
+
+function OverviewHeading({ title, onPress, actionLabel }: {
+  readonly title: string;
+  readonly onPress?: (() => void) | undefined;
+  readonly actionLabel: string;
+}) {
+  return (
+    <View style={styles.overviewHeading}>
+      <Text accessibilityRole="header" style={styles.overviewTitle}>{title}</Text>
+      {onPress ? <Pressable accessibilityRole="button" accessibilityLabel={actionLabel} onPress={onPress}
+        style={({ pressed }) => [styles.overviewAction, pressed ? styles.pressed : null]}>
+        <Text style={styles.overviewActionText}>View all</Text><Text accessibilityElementsHidden style={styles.overviewArrow}>→</Text>
+      </Pressable> : null}
     </View>
   );
 }
@@ -592,10 +661,12 @@ export function SuperAdminMobileDashboard({ session }: { readonly session: Authe
   const authorized = canPerformOperation(session, "GET /admin/dashboard/overview");
   const canOpenProject = canPerformOperation(session, "GET /admin/projects")
     && canPerformOperation(session, "GET /admin/projects/:projectId");
+  const canListProjects = canPerformOperation(session, "GET /admin/projects");
   const query = useDashboardOverview(session, period);
   const model = query.data;
   const tablet = width >= dashboardLayout.tabletBreakpoint;
-  const singleColumnKpis = width < dashboardLayout.compactWidth || fontScale >= 1.45;
+  const singleColumnKpis = width < 390 || fontScale > 1.15;
+  const greeting = `${new Date().getHours() < 12 ? "Good morning" : new Date().getHours() < 17 ? "Good afternoon" : "Good evening"}, ${session.user.name.trim().split(/\s+/)[0] || "welcome"}`;
 
   const financeData = useMemo(() => model ? toFinanceActivityChartData(model) : null, [model]);
   const lifecycleData = useMemo(() => model ? toLifecycleDonutData(model) : [], [model]);
@@ -663,8 +734,7 @@ export function SuperAdminMobileDashboard({ session }: { readonly session: Authe
       <ScrollView
         contentContainerStyle={[
           styles.content,
-          { paddingHorizontal: singleColumnKpis ? space.md : space.lg },
-          tablet ? styles.contentTablet : null
+          { paddingHorizontal: space.md }
         ]}
         refreshControl={(
           <RefreshControl
@@ -679,7 +749,11 @@ export function SuperAdminMobileDashboard({ session }: { readonly session: Authe
       >
         <OperationsHeader
           comparisonEnabled={comparisonEnabled}
-          observedLabel={`Observed ${model.range.observedLabel}`}
+          observedLabel={model.range.observedLabel}
+          greeting={greeting}
+          currentRangeLabel={model.range.currentLabel}
+          previousRangeLabel={model.range.previousLabel}
+          partialFinalDay={model.range.partialFinalDay}
           onComparisonChange={setComparisonEnabled}
           onPeriodChange={onPeriodChange}
           onRefresh={() => void onRefresh()}
@@ -697,7 +771,7 @@ export function SuperAdminMobileDashboard({ session }: { readonly session: Authe
           <AvailabilityBanner title="Refresh did not complete" message="The last verified dashboard remains visible. Pull down or use refresh to retry." tone="unavailable" />
         ) : null}
         {model.dataQuality.status === "partial" ? (
-          <AvailabilityBanner title="Available data remains live" message={model.dataQuality.summary} />
+          <AvailabilityBanner title="Partial coverage" message={model.dataQuality.summary} actionLabel="View details" onAction={() => setValuesOpen(true)} />
         ) : null}
         {model.isAllZero ? (
           <AvailabilityBanner title="No recorded activity in this view" message="Verified sources returned zero. Lisno has not substituted demo values." />
@@ -711,20 +785,39 @@ export function SuperAdminMobileDashboard({ session }: { readonly session: Authe
           </View>
         ) : null}
 
-        <View accessibilityLabel="Executive key performance indicators" style={styles.kpiGrid} testID="dashboard-kpi-grid">
-          {kpis.map((item, index) => (
-            <KpiCard key={item.id} item={item} singleColumn={singleColumnKpis} wide={index === 4} />
-          ))}
+        <View accessibilityLabel="Executive key performance indicators" style={styles.overviewSections} testID="dashboard-kpi-grid">
+          <View style={styles.overviewSection}>
+            <OverviewHeading title="Project overview" actionLabel="View all projects"
+              onPress={canListProjects ? () => router.push("/feature/projects") : undefined} />
+            <ProjectOverviewCard item={kpis[0]!} model={model} stacked={fontScale > 1.3} />
+          </View>
+          <View style={styles.overviewSection}>
+            <OverviewHeading title="Financial overview" actionLabel="View all financial values" onPress={() => setValuesOpen(true)} />
+            <View style={styles.kpiGrid}>
+              {kpis.slice(1, 4).map((item) => <KpiCard key={item.id} item={item} singleColumn={singleColumnKpis} />)}
+            </View>
+          </View>
+          <View style={styles.overdueRow} testID="dashboard-kpi-projects.liveOverdue"
+            accessibilityLabel={`Live overdue: ${kpis[4]!.value.displayValue}. ${kpis[4]!.value.available ? kpis[4]!.supporting : kpis[4]!.value.unavailableReason}`}>
+            <View style={[styles.kpiIcon, kpis[4]!.accent === "danger" ? styles.iconDanger : styles.iconSage]}>
+              <Text adjustsFontSizeToFit minimumFontScale={0.7} numberOfLines={1} style={styles.overdueCount}>{kpis[4]!.value.available ? kpis[4]!.value.displayValue : "!"}</Text>
+            </View>
+            <View style={styles.projectCopy}>
+              <Text style={styles.projectLabel}>Live overdue</Text>
+              <Text style={styles.kpiSupporting}>{kpis[4]!.value.available ? kpis[4]!.supporting : kpis[4]!.value.unavailableReason}</Text>
+            </View>
+          </View>
         </View>
 
         <ExecutivePanel
           eyebrow="FINANCE ACTIVITY"
           title="Recorded cost activity"
-          subtitle="Daily posted ledger cost for the selected UTC window. Approved net revenue and cost budget are snapshot guides."
+          subtitle="Daily posted ledger cost for the selected UTC window. Approved snapshot values are listed below."
           testID="dashboard-finance-panel"
         >
           <FinanceActivityChart
             data={financeData}
+            selectedDayId={selectedFinancePoint?.id}
             height={tablet ? 290 : 258}
             onRenderError={() => setChartFailure(true)}
             onSelectDay={(id) => {
@@ -750,7 +843,7 @@ export function SuperAdminMobileDashboard({ session }: { readonly session: Authe
           subtitle="Current project counts by lifecycle state."
           testID="dashboard-project-status-panel"
         >
-          <LifecycleDonutChart
+          <View style={styles.referenceChartBody}><LifecycleDonutChart
             centerDisplay={chartCenterDisplay(
               model.lifecycle,
               requiredValue(model.projectFacts.values, "projects.total").displayValue
@@ -759,9 +852,8 @@ export function SuperAdminMobileDashboard({ session }: { readonly session: Authe
             reducedMotion={reducedMotion}
             retryKey={chartRetryKey}
             values={lifecycleData}
-          />
+          /></View>
           <ChartAvailabilityNote values={model.lifecycle} />
-          <ExactRows values={model.lifecycle} tones={[color.unavailable, color.sage, color.sand, color.blue]} />
         </ExecutivePanel>
 
         <View style={[styles.splitRow, tablet ? styles.splitRowTablet : null]}>
@@ -793,7 +885,7 @@ export function SuperAdminMobileDashboard({ session }: { readonly session: Authe
             subtitle="Exact ledger classifications; unavailable sources remain separate from zero."
             testID="dashboard-cost-composition-panel"
           >
-            <CostCompositionDonutChart
+            <View style={styles.referenceChartBody}><CostCompositionDonutChart
               centerDisplay={chartCenterDisplay(
                 model.capital.costComposition,
                 model.capital.recordedCost.displayValue
@@ -802,9 +894,8 @@ export function SuperAdminMobileDashboard({ session }: { readonly session: Authe
               reducedMotion={reducedMotion}
               retryKey={chartRetryKey}
               values={costComposition}
-            />
+            /></View>
             <ChartAvailabilityNote values={model.capital.costComposition} />
-            <ExactRows values={model.capital.costComposition} tones={COST_TONES} />
           </ExecutivePanel>
           <ExecutivePanel
             eyebrow="APPROVED PLAN"
@@ -886,25 +977,47 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: dashboardLayout.maxWidth,
     alignSelf: "center",
-    gap: space.scene,
+    gap: 10,
     paddingBottom: 72
   },
-  contentTablet: { paddingHorizontal: space.xxl },
   loadingContent: { flex: 1, width: "100%", maxWidth: dashboardLayout.maxWidth, alignSelf: "center", paddingHorizontal: space.lg },
-  kpiGrid: { flexDirection: "row", flexWrap: "wrap", alignItems: "stretch", gap: 12 },
+  overviewSections: { gap: 12 },
+  overviewSection: { gap: 4 },
+  overviewHeading: { minHeight: 38, flexDirection: "row", alignItems: "center", flexWrap: "wrap", columnGap: 8 },
+  overviewTitle: { flex: 1, minWidth: 180, fontFamily: type.display, fontSize: 21, lineHeight: 28, color: color.text },
+  overviewAction: { minHeight: 48, marginVertical: -5, flexDirection: "row", alignItems: "center", gap: 8 },
+  overviewActionText: { fontFamily: type.regular, fontSize: 12, color: color.text },
+  overviewArrow: { fontSize: 20, color: color.text },
+  projectCard: { ...dashboardSurfaceDepth, padding: 14, gap: 5, borderRadius: radius.surface, borderWidth: 1, borderColor: color.stageEdge, backgroundColor: color.stage },
+  projectMain: { flexDirection: "row", alignItems: "center", gap: 12 },
+  projectStacked: { flexWrap: "wrap" },
+  projectIcon: { width: 48, height: 48, borderRadius: radius.control, alignItems: "center", justifyContent: "center", alignSelf: "flex-start" },
+  projectCopy: { flex: 1, minWidth: 80 },
+  projectLabel: { color: color.text, fontFamily: type.regular, fontSize: 13, lineHeight: 20 },
+  projectValue: { color: color.text, fontFamily: type.medium, fontSize: 36, lineHeight: 46 },
+  projectSupporting: { fontFamily: type.regular, color: color.textMuted, fontSize: 11, lineHeight: 17 },
+  trendBlock: { width: 102, gap: 3 },
+  projectTrend: { height: 46, flexDirection: "row", alignItems: "flex-end", gap: 5 },
+  trendColumn: { flex: 1, height: 46, justifyContent: "flex-end", borderBottomWidth: 1, borderBottomColor: color.stageEdge },
+  trendBar: { width: "100%", borderTopLeftRadius: 3, borderTopRightRadius: 3 },
+  trendMissing: { color: color.textMuted, fontFamily: type.regular, fontSize: 12, textAlign: "center" },
+  trendCaption: { color: color.textMuted, fontFamily: type.regular, fontSize: 10, textAlign: "right" },
+  overdueRow: { padding: 14, flexDirection: "row", alignItems: "center", gap: 12, borderRadius: radius.surface, borderWidth: 1, borderColor: color.stageEdge, backgroundColor: color.stage },
+  overdueCount: { color: color.text, fontFamily: type.medium, fontSize: 16 },
+  kpiGrid: { flexDirection: "row", flexWrap: "wrap", alignItems: "stretch", gap: 7 },
   kpiCard: {
+    ...dashboardSurfaceDepth,
     minWidth: 0,
-    minHeight: 150,
+    minHeight: 158,
     overflow: "hidden",
-    gap: 8,
-    padding: 16,
+    gap: 7,
+    padding: 12,
     borderRadius: radius.surface,
     borderWidth: 1,
     borderColor: color.stageEdge,
     backgroundColor: color.stage
   },
-  kpiHalf: { flexBasis: "47%", flexGrow: 1 },
-  kpiWide: { flexBasis: "100%", flexGrow: 1 },
+  kpiThird: { flexBasis: "30%", flexGrow: 1 },
   kpiSingle: { flexBasis: "100%", flexGrow: 1 },
   accentSage: { backgroundColor: color.sageSoft, color: color.violetBright },
   accentSand: { backgroundColor: color.sandSoft, color: color.warning },
@@ -916,12 +1029,12 @@ const styles = StyleSheet.create({
   iconBlue: { backgroundColor: color.blueSoft },
   iconPlum: { backgroundColor: color.plumSoft },
   iconDanger: { backgroundColor: color.dangerSoft },
-  kpiTopline: { minHeight: 38, flexDirection: "row", alignItems: "center", gap: 9 },
+  kpiTopline: { alignItems: "flex-start", gap: 7 },
   kpiIcon: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: radius.control },
   kpiGlyph: { fontFamily: type.semibold, fontSize: 15 },
-  kpiLabel: { flex: 1, minWidth: 0, color: color.textMuted, ...type.metadata, fontFamily: type.medium },
-  kpiValue: { color: color.text, ...type.pageTitle },
-  kpiSupporting: { color: color.textDim, fontFamily: type.regular, fontSize: 12, lineHeight: 18 },
+  kpiLabel: { minWidth: 0, minHeight: 34, color: color.textMuted, fontSize: 12, lineHeight: 17, fontFamily: type.regular },
+  kpiValue: { color: color.text, fontFamily: type.semibold, fontSize: 14, lineHeight: 20 },
+  kpiSupporting: { color: color.textDim, fontFamily: type.regular, fontSize: 11, lineHeight: 16 },
   panel: {
     minWidth: 0,
     overflow: "hidden",
@@ -933,9 +1046,10 @@ const styles = StyleSheet.create({
   panelHeader: { flexDirection: "row", alignItems: "flex-start", gap: space.sm, padding: 18, paddingBottom: 8 },
   panelHeading: { flex: 1, minWidth: 0, gap: 3 },
   panelEyebrow: { color: color.warning, fontFamily: type.semibold, fontSize: 12, lineHeight: 18, letterSpacing: 0.5 },
-  panelTitle: { color: color.text, ...type.sectionTitle },
+  panelTitle: { color: color.text, fontFamily: type.display, fontSize: 23, lineHeight: 30 },
   panelSubtitle: { color: color.textMuted, ...type.body },
   panelAction: { alignItems: "flex-end" },
+  referenceChartBody: { paddingHorizontal: 18, paddingBottom: 16 },
   splitRow: { gap: space.scene },
   splitRowTablet: { flexDirection: "row", alignItems: "flex-start" },
   splitPanel: { flex: 1 },

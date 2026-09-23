@@ -1,9 +1,26 @@
 import type { ConfigContext } from "expo/config";
 
 import { createAppConfig, selectedApiEnvironment } from "./app.config";
+import { colors } from "./src/ui/tokens";
 
 const context = { config: {} } as ConfigContext;
 describe("Android app environment configuration", () => {
+  it("keeps the native launch background and launcher aligned with the forest application theme", () => {
+    const config = createAppConfig(context, {});
+
+    expect(config.backgroundColor).toBe(colors.shell);
+    expect(config.android?.adaptiveIcon?.backgroundColor).toBe(colors.shell);
+    expect(config.plugins).toContainEqual([
+      "expo-splash-screen",
+      {
+        backgroundColor: colors.shell,
+        image: "./assets/brand/splash-icon.png",
+        imageWidth: 112,
+        resizeMode: "contain"
+      }
+    ]);
+  });
+
   it("defaults to Remote and rejects unsupported selectors", () => {
     expect(selectedApiEnvironment(undefined)).toBe("remote");
     expect(() => selectedApiEnvironment("staging")).toThrow(

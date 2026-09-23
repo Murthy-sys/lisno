@@ -44,10 +44,20 @@ export const dashboardTypography = Object.freeze({
   regular: fonts.regular,
   medium: fonts.medium,
   semibold: fonts.semibold,
-  bold: fonts.bold
+  bold: fonts.bold,
+  display: fonts.display,
+  displayItalic: "Fraunces_400Regular_Italic"
 });
 
-export const dashboardRadii = radii;
+export const dashboardRadii = Object.freeze({ ...radii, surface: 20, control: 12 });
+
+export const dashboardSurfaceDepth = Object.freeze({
+  shadowColor: colors.primary,
+  shadowOffset: { width: 0, height: 2 },
+  shadowOpacity: 0.06,
+  shadowRadius: 5,
+  elevation: 1
+});
 
 export const dashboardSpacing = Object.freeze({
   ...spacing,

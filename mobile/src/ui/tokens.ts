@@ -36,6 +36,29 @@ export const colors = Object.freeze({
   infoSoft: "#edf1fa"
 });
 
+/** Translucent navigation surfaces keep content ink independent of layer opacity. */
+export const chrome = Object.freeze({
+  base: colors.shell,
+  surface: "rgba(47,58,42,0.68)",
+  opaque: colors.shell,
+  sheenStart: "#20301f",
+  sheenCenter: "#697d57",
+  sheenEnd: colors.shell,
+  line: "rgba(169,184,154,0.27)",
+  highlight: "rgba(224,234,213,0.20)",
+  control: "rgba(238,240,230,0.07)",
+  selected: "rgba(169,184,154,0.18)",
+  selectedBorder: colors.accent,
+  ink: colors.shellInk,
+  muted: colors.shellMuted,
+  glassFill: "rgba(255,255,255,0.10)",
+  glassBorder: "rgba(255,255,255,0.22)",
+  glassSheen: "#ffffff",
+  glassSheenTopOpacity: 0.14,
+  glassSheenBottomOpacity: 0,
+  glassOpaque: colors.shellRaised
+});
+
 export const spacing = Object.freeze({
   xxs: 4,
   xs: 8,

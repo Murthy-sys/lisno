@@ -16,15 +16,15 @@ function iconForTab(tab: RootTab): NavigationIconName {
   }
 }
 
-export function RootTabIcon({ tab, color, selected }: { readonly tab: RootTab; readonly color: string; readonly selected: boolean }) {
-  return <NavigationIcon name={iconForTab(tab)} color={color} selected={selected} />;
+export function RootTabIcon({ tab, color, selected, size = 24 }: { readonly tab: RootTab; readonly color: string; readonly selected: boolean; readonly size?: number }) {
+  return <NavigationIcon name={iconForTab(tab)} color={color} selected={selected} size={size} />;
 }
 
-export function NavigationIcon({ name, color, selected = false }: { readonly name: NavigationIconName; readonly color: string; readonly selected?: boolean }) {
+export function NavigationIcon({ name, color, selected = false, size = 24 }: { readonly name: NavigationIconName; readonly color: string; readonly selected?: boolean; readonly size?: number }) {
   return (
     <Svg
-      width={24}
-      height={24}
+      width={size}
+      height={size}
       viewBox="0 0 24 24"
       fill="none"
       stroke={color}

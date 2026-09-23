@@ -1,0 +1,20 @@
+# Project initiation modal plan
+
+Specification: [design](../specs/2026-09-24-mobile-project-initiation-modal-design.md). Standing approval waiver and Mode A apply.
+
+1. Baseline/audit complete: initial status and mobile diff under `/tmp/lisno-project-modal-20260924`; read-only audit traced draft, accessibility, navigation and mutation contracts.
+2. Primary owns dependency/lockfile, scaffold integration and new `ui/AppModalBackdrop.tsx` plus focused tests. Install the Expo-compatible native blur dependency and start native Android build.
+3. Parallel form worker owns only `ProjectCreateActions.tsx`, its tests and new `ProjectCreationModal.tsx`/tests. Shared hook contract: `useModalBackdrop(visible)` activates the provider's blur below the native modal. Preserve existing trigger and API behavior. Implement scrolling, keyboard, dismissal, pending/duplicate guards, focus and owner reset.
+4. Integrate and review after writers finish. Run focused rendered tests for criteria 1–5, scaffold/chat regressions, TypeScript and Android export; build/install the native binary without clearing data. Native QA opens/cancels only, checks blur, keyboard, scroll and hardware Back. No live project submissions.
+5. Record exact evidence and platform limits, update completion status and run diff hygiene. Preserve all unrelated changes and existing runtime-log prefixes. Do not stage/commit/push/deploy.
+
+Implementation and independent integrity review complete. No confirmed defects found. No migration or backend/API changes.
+
+## Delivered behavior and automated verification
+
+- Admin initiation and Designer creation now share a native modal. The original CTA remains in place, fields scroll, keyboard avoidance keeps the footer reachable, and errors remain above the footer actions. Drafts survive dismissal; environment/session ownership changes clear them. Existing role-specific payloads, permissions and query invalidation are preserved.
+- `AppModalBackdrop.tsx` wraps the scaffold with the native blur target and activates a separate blur layer only while a modal is open. Background accessibility is hidden; reduced-transparency preference uses an opaque forest surface. Added only SDK-compatible `expo-blur ~57.0.3` plus its lock entry.
+- Final integrated checks: **72 tests passed across 6 suites** (creation actions/model, Projects workspace, backdrop, scaffold and chat); TypeScript and diff check exited 0. Android export passed with 2,749 modules, 38 assets and an 8.3 MB bundle. All 63 scoped source hashes remained unchanged through verification.
+- Native Android development build passed in 14 seconds; installed with `adb install -r`, preserving the session. Initial on-device inspection confirms actual backdrop blur, cream/forest modal and background accessibility isolation. Keyboard screenshot confirms the modal shrinks and keeps Cancel/Initiate above the on-screen keyboard.
+- Native interaction verification complete: Close, Cancel, hardware Back and a central backdrop tap return to Projects; typed draft survives Close/reopen; scrolling reaches the Sales assignee; background controls disappear from the native accessibility tree. Final blank form captured at `/tmp/lisno-project-modal-20260924/project-modal-final.png`; keyboard proof at `project-modal-keyboard-visible.png`. Temporary draft cleared by navigating away, original keyboard preference restored, no project submitted. The automation harness needed manual recovery for the emulator's hardware-keyboard toolbar, startup deep-link redirect and a system-edge tap; these were verified through subsequent direct native actions rather than claiming the interrupted script passed.
+- Exact commands, warnings and artifacts: `/tmp/lisno-project-modal-20260924/verification-report.md`. Export-log cleanup preserved the existing prefix; shared Metro logs retained. The full suite's known unrelated contract inventory mismatch was not rerun. iOS device/build, physical tablet and production release build remain unverified. No project submitted during native QA; no commits, pushes, deployment or migrations.

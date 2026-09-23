@@ -20,7 +20,7 @@ import Svg, {
 } from "react-native-svg";
 
 import { LisnoIcon } from "../../ui/brand";
-import { colors, fonts, radii, spacing } from "../../ui/tokens";
+import { chrome, colors, fonts, radii, spacing } from "../../ui/tokens";
 import type { OnboardingSlide } from "./slides";
 
 type SceneProps = Readonly<{
@@ -442,9 +442,9 @@ const styles = StyleSheet.create({
     height: 236,
     overflow: "hidden",
     borderRadius: radii.surface,
-    backgroundColor: colors.shell,
+    backgroundColor: colors.shellRaised,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border
+    borderColor: chrome.line
   },
   depthPlane: {
     position: "absolute",
@@ -548,21 +548,21 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     borderRadius: radii.control,
     borderWidth: 1,
-    borderColor: colors.primaryBorder,
-    backgroundColor: colors.authSurface
+    borderColor: colors.accent,
+    backgroundColor: chrome.control
   },
-  sceneActionPressed: { backgroundColor: colors.primarySoft },
+  sceneActionPressed: { backgroundColor: colors.shellSelected },
   sceneActionBusy: { opacity: 0.72 },
   actionGlyph: {
     width: 19,
     height: 19,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: colors.primary,
+    borderColor: colors.accent,
     alignItems: "center",
     justifyContent: "center"
   },
-  actionGlyphCore: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.primary },
-  sceneActionLabel: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 14, flexShrink: 1, textAlign: "center" },
-  sceneActionArrow: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 14, flexShrink: 0 }
+  actionGlyphCore: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.accent },
+  sceneActionLabel: { color: colors.shellInk, fontFamily: fonts.semibold, fontSize: 14, flexShrink: 1, textAlign: "center" },
+  sceneActionArrow: { color: colors.shellInk, fontFamily: fonts.semibold, fontSize: 14, flexShrink: 0 }
 });

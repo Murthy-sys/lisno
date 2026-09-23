@@ -20,20 +20,19 @@ jest.mock("expo-router", () => ({
 jest.mock("./charts", () => {
   const React = jest.requireActual("react") as typeof import("react");
   const { Pressable, Text, View } = jest.requireActual("react-native") as typeof import("react-native");
+  const { ProjectStatusLandscape, CostCompositionGauge } = jest.requireActual("./charts/ReferenceStatusCharts") as typeof import("./charts/ReferenceStatusCharts");
   return {
-    FinanceActivityChart: ({ onSelectDay }: { readonly onSelectDay?: (id: string) => void }) => React.createElement(
+    FinanceActivityChart: ({ onSelectDay, selectedDayId }: { readonly onSelectDay?: (id: string) => void; readonly selectedDayId?: string }) => React.createElement(
       Pressable,
-      { accessibilityLabel: "Recorded cost chart", onPress: () => onSelectDay?.("trends.ledgerExpensesPostedPaise:2026-09-21"), testID: "dashboard-finance-activity-chart" },
+      { accessibilityLabel: "Recorded cost chart", accessibilityHint: selectedDayId, onPress: () => onSelectDay?.("trends.ledgerExpensesPostedPaise:2026-09-21"), testID: "dashboard-finance-activity-chart" },
       React.createElement(Text, null, "Finance activity chart")
     ),
-    LifecycleDonutChart: ({ centerDisplay }: { readonly centerDisplay: string }) => React.createElement(View, {
-      accessibilityLabel: `Project status chart center ${centerDisplay}`,
-      testID: "dashboard-lifecycle-chart"
-    }),
-    CostCompositionDonutChart: ({ centerDisplay }: { readonly centerDisplay: string }) => React.createElement(View, {
-      accessibilityLabel: `Cost composition chart center ${centerDisplay}`,
-      testID: "dashboard-cost-composition-chart"
-    }),
+    LifecycleDonutChart: (props: import("./charts/ReferenceStatusCharts").ReferenceStatusChartProps) => React.createElement(View, {
+      accessibilityLabel: `Project status chart center ${props.centerDisplay}`
+    }, React.createElement(ProjectStatusLandscape, props)),
+    CostCompositionDonutChart: (props: import("./charts/ReferenceStatusCharts").ReferenceStatusChartProps) => React.createElement(View, {
+      accessibilityLabel: `Cost composition chart center ${props.centerDisplay}`
+    }, React.createElement(CostCompositionGauge, props)),
     BudgetPositionChart: () => React.createElement(View, { testID: "dashboard-budget-position-chart" })
   };
 });
@@ -87,6 +86,9 @@ describe("SuperAdminMobileDashboard", () => {
     const view = await render(<SuperAdminMobileDashboard session={session} />);
 
     expect(view.getByRole("header", { name: "Executive dashboard" })).toBeTruthy();
+    expect(view.getByRole("header", { name: "Project overview" })).toBeTruthy();
+    expect(view.getByRole("header", { name: "Financial overview" })).toBeTruthy();
+    expect(view.queryByRole("button", { name: "View all projects" })).toBeNull();
     expect([
       "projects.total",
       "finance.approvedSubtotalPaise",
@@ -156,6 +158,7 @@ describe("SuperAdminMobileDashboard", () => {
 
     await fireEvent.press(view.getByRole("button", { name: "Previous finance day" }));
     expect(view.getByLabelText(/Selected UTC day 2026-09-21/)).toBeTruthy();
+    expect(view.getByTestId("dashboard-finance-activity-chart").props.accessibilityHint).toBe("trends.ledgerExpensesPostedPaise:2026-09-21");
     expect(view.getByRole("button", { name: "Next finance day" }).props.accessibilityState).toEqual({ disabled: false });
 
     await fireEvent.press(view.getByLabelText("Recorded cost chart"));
@@ -191,7 +194,7 @@ describe("SuperAdminMobileDashboard", () => {
     useDashboardOverviewMock.mockReturnValue(queryResult({ data: buildDashboardViewModel(fixture) }));
 
     const view = await render(<SuperAdminMobileDashboard session={session} />);
-    expect(view.getByLabelText(/Procurement: Not available.*Procurement cost lineage/)).toBeTruthy();
+    expect(view.getByLabelText(/Procurement: Not available/)).toBeTruthy();
     expect(view.getByLabelText(/Employee payments: ₹24,000\.00/)).toBeTruthy();
     expect(view.getByTestId("dashboard-cost-composition-panel")).toBeTruthy();
     expect(view.getByLabelText("Cost composition chart center Partial")).toBeTruthy();
@@ -247,6 +250,8 @@ describe("SuperAdminMobileDashboard", () => {
       }
     };
     const withLink = await render(<SuperAdminMobileDashboard session={projectSession} />);
+    await fireEvent.press(withLink.getByRole("button", { name: "View all projects" }));
+    expect(mockPush).toHaveBeenCalledWith("/feature/projects");
     await fireEvent.press(withLink.getByRole("link", { name: "Open Atrium Residence" }));
     expect(mockPush).toHaveBeenCalledWith({
       pathname: "/record/[featureId]/[recordId]",
@@ -318,6 +323,29 @@ describe("SuperAdminMobileDashboard", () => {
     expect(view.getByRole("header", { name: "Dashboard ledger" })).toBeTruthy();
     expect(view.getByLabelText(/Total: 17/)).toBeTruthy();
     expect(view.getByText(/Money is calculated in paise/)).toBeTruthy();
+  });
+
+  it("opens verified financial values from the overview action", async () => {
+    const view = await render(<SuperAdminMobileDashboard session={session} />);
+    await fireEvent.press(view.getByRole("button", { name: "View all financial values" }));
+    expect(view.getByRole("header", { name: "Dashboard ledger" })).toBeTruthy();
+    expect(view.getByText(/Money is calculated in paise/)).toBeTruthy();
+  });
+
+  it("keeps a zero project trend flat and an unavailable bucket visibly unavailable", async () => {
+    useDashboardOverviewMock.mockReturnValue(queryResult({ data: buildDashboardViewModel(createZeroDashboardOverviewFixture()) }));
+    const zero = await render(<SuperAdminMobileDashboard session={session} />);
+    const bars = zero.getAllByTestId(/^dashboard-project-trend-\d/);
+    expect(bars.length).toBeGreaterThan(0);
+    expect(bars.every((bar) => StyleSheet.flatten(bar.props.style).height === 0)).toBe(true);
+    await zero.unmount();
+
+    const fixture = createDashboardOverviewFixture(30);
+    fixture.comparison.currentBuckets[0]!.projectsCreated = null;
+    useDashboardOverviewMock.mockReturnValue(queryResult({ data: buildDashboardViewModel(fixture) }));
+    const partial = await render(<SuperAdminMobileDashboard session={session} />);
+    expect(partial.queryByTestId("dashboard-project-trend-0")).toBeNull();
+    expect(partial.getByRole("image", { name: /New projects.*Not available/ })).toBeTruthy();
   });
 
   it("renders a safe first-load failure and retries", async () => {

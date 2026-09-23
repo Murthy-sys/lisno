@@ -24,7 +24,7 @@ import { ProxyDecisionAction } from "../reviews/ProxyDecisionAction";
 import { ClientEstimateAction } from "../estimates/ClientEstimateAction";
 import { AdminInvitationPanel, ManagedUserActiveAction, type ManagedUserSummary } from "../admin";
 import { KnowledgeCatalogWorkspace } from "../knowledge";
-import { ProjectCreateAction } from "../projects/ProjectCreateActions";
+import { ProjectsWorkspace } from "../projects/ProjectsWorkspace";
 import { MessagesWorkspace } from "../messages/MessagesWorkspace";
 import { SuperAdminMobileDashboard } from "../dashboard/SuperAdminMobileDashboard";
 
@@ -74,6 +74,9 @@ export function FeatureWorkspace({ destination, session }: { readonly destinatio
   if (destination.id === "configuration") {
     return <KnowledgeCatalogWorkspace session={session} />;
   }
+  if (destination.id === "projects") {
+    return <ProjectsWorkspace session={session} />;
+  }
   return <GenericFeatureWorkspace destination={destination} session={session} />;
 }
 
@@ -122,7 +125,6 @@ function GenericFeatureWorkspace({ destination, session }: { readonly destinatio
       {destination.id === "access-self" && canPerformOperation(session, "POST /access-requests") ? <CreateAccessRequest role={session.user.role} /> : null}
       {destination.id === "leads" && canPerformOperation(session, "POST /leads") ? <LeadCreateForm /> : null}
       {destination.id === "users" ? <AdminInvitationPanel session={session} /> : null}
-      {destination.id === "projects" ? <ProjectCreateAction session={session} /> : null}
 
       {metrics.length > 0 ? (
         <View style={styles.metricGrid}>

@@ -9,10 +9,33 @@ import {
 } from "react-native";
 
 import { OnboardingScreen } from "./OnboardingScreen";
+import { colors } from "../../ui/tokens";
+import { ONBOARDING_SLIDES } from "./slides";
+
+jest.mock("expo-status-bar", () => {
+  const React = jest.requireActual("react") as typeof import("react");
+  const { View } = jest.requireActual("react-native") as typeof import("react-native");
+  return { StatusBar: ({ style }: { readonly style: string }) => React.createElement(View, { testID: `status-bar-${style}` }) };
+});
 
 describe("OnboardingScreen", () => {
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it("keeps the forest theme and readable controls across all three introduction slides", async () => {
+    const view = await render(<OnboardingScreen onComplete={jest.fn()} reducedMotion />);
+
+    for (const slide of ONBOARDING_SLIDES) {
+      expect(view.getByTestId("onboarding-background")).toHaveStyle({ backgroundColor: colors.shell });
+      expect(view.getByTestId("status-bar-light")).toBeTruthy();
+      expect(view.getByRole("header", { name: slide.title })).toHaveStyle({ color: colors.shellInk });
+      expect(view.getByText(slide.body)).toHaveStyle({ color: colors.shellMuted });
+      expect(view.getByRole("button", { name: slide.sceneActionLabel })).toHaveStyle({ minHeight: 48 });
+      const primary = view.getByRole("button", { name: slide.primaryActionLabel });
+      expect(primary).toHaveStyle({ backgroundColor: colors.shellInk, minHeight: 56 });
+      if (slide.primaryActionLabel === "Next") await fireEvent.press(primary);
+    }
   });
 
   it("renders all three distinct depth scenes and only exposes the active slide to accessibility", async () => {
@@ -163,6 +186,8 @@ describe("OnboardingScreen", () => {
     const view = await render(<OnboardingScreen onComplete={jest.fn()} />);
 
     expect(view.getByRole("progressbar", { name: "Preparing introduction" })).toBeTruthy();
+    expect(view.getByTestId("onboarding-background")).toHaveStyle({ backgroundColor: colors.shell });
+    expect(view.getByTestId("status-bar-light")).toBeTruthy();
     expect(view.queryByTestId("scene-plan", { includeHiddenElements: true })).toBeNull();
     expect(timingSpy).not.toHaveBeenCalled();
 

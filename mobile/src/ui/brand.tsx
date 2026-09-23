@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { StatusBar } from "expo-status-bar";
 import {
   AccessibilityInfo,
   Animated,
@@ -206,7 +207,8 @@ export function StartupBrand({
   }, [prefersReducedMotion, reveal]);
 
   return (
-    <View style={styles.startup}>
+    <View style={styles.startup} testID="startup-brand">
+      <StatusBar style="light" />
       <Animated.View
         style={{
           opacity: reveal,
@@ -229,6 +231,7 @@ export function StartupBrand({
 
 const styles = StyleSheet.create({
   startup: {
+    backgroundColor: colors.shell,
     alignItems: "center",
     gap: spacing.huge
   },

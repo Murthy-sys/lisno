@@ -5,12 +5,11 @@ import { buildDeliveryOption } from "./delivery";
 import { EChartsSurface } from "./EChartsSurface";
 import {
   buildBudgetPositionOption,
-  buildCostCompositionDonutOption,
-  buildFinanceActivityOption,
-  buildLifecycleDonutOption,
   type BudgetPositionChartData,
   type FinanceActivityChartData
 } from "./executive";
+import { FinanceCylinderChart } from "./FinanceCylinderChart";
+import { CostCompositionGauge, ProjectStatusLandscape } from "./ReferenceStatusCharts";
 import { buildHeroComparisonOption } from "./heroComparison";
 import { buildOverviewOption } from "./overview";
 import { buildPeopleOption } from "./people";
@@ -35,33 +34,17 @@ interface ChartComponentBaseProps {
 
 export interface FinanceActivityChartProps extends ChartComponentBaseProps {
   readonly data: FinanceActivityChartData;
+  readonly selectedDayId?: string | undefined;
   readonly onSelectDay?: ((dayId: string) => void) | undefined;
 }
 
 export function FinanceActivityChart({
   data,
-  reducedMotion,
   height = 250,
-  retryKey,
+  selectedDayId,
   onSelectDay,
-  onRenderError
 }: FinanceActivityChartProps) {
-  const option = useMemo(
-    () => buildFinanceActivityOption(data, reducedMotion),
-    [data, reducedMotion]
-  );
-  return (
-    <EChartsSurface
-      accessibilitySummary="Recorded cost activity by UTC day with approved net revenue and cost budget snapshot guides. Exact daily values are available below."
-      height={height}
-      onRenderError={onRenderError}
-      onSelectDatum={({ id }) => onSelectDay?.(id)}
-      option={option}
-      reducedMotion={reducedMotion}
-      retryKey={retryKey}
-      testID="dashboard-finance-activity-chart"
-    />
-  );
+  return <FinanceCylinderChart data={data} height={height} selectedDayId={selectedDayId} onSelectDay={onSelectDay} />;
 }
 
 export interface ExecutiveRingChartProps extends ChartComponentBaseProps {
@@ -72,51 +55,17 @@ export interface ExecutiveRingChartProps extends ChartComponentBaseProps {
 export function LifecycleDonutChart({
   values,
   centerDisplay,
-  reducedMotion,
   height = 220,
-  retryKey,
-  onRenderError
 }: ExecutiveRingChartProps) {
-  const option = useMemo(
-    () => buildLifecycleDonutOption(values, centerDisplay, reducedMotion),
-    [centerDisplay, reducedMotion, values]
-  );
-  return (
-    <EChartsSurface
-      accessibilitySummary="Current project lifecycle distribution. Exact stage counts are listed below."
-      height={height}
-      onRenderError={onRenderError}
-      option={option}
-      reducedMotion={reducedMotion}
-      retryKey={retryKey}
-      testID="dashboard-lifecycle-chart"
-    />
-  );
+  return <ProjectStatusLandscape values={values} centerDisplay={centerDisplay} height={height} />;
 }
 
 export function CostCompositionDonutChart({
   values,
   centerDisplay,
-  reducedMotion,
   height = 220,
-  retryKey,
-  onRenderError
 }: ExecutiveRingChartProps) {
-  const option = useMemo(
-    () => buildCostCompositionDonutOption(values, centerDisplay, reducedMotion),
-    [centerDisplay, reducedMotion, values]
-  );
-  return (
-    <EChartsSurface
-      accessibilitySummary="Recorded cost composition across procurement, employee payments, other expenses, and overheads. Exact paise values are listed below."
-      height={height}
-      onRenderError={onRenderError}
-      option={option}
-      reducedMotion={reducedMotion}
-      retryKey={retryKey}
-      testID="dashboard-cost-composition-chart"
-    />
-  );
+  return <CostCompositionGauge values={values} centerDisplay={centerDisplay} height={height} />;
 }
 
 export interface BudgetPositionChartProps extends ChartComponentBaseProps {

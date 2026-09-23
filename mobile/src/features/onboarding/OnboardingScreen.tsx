@@ -19,6 +19,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { LisnoWordmark } from "../../ui/brand";
+import { ChromeSurface } from "../../ui/ChromeSurface";
 import { colors, fonts, radii, spacing } from "../../ui/tokens";
 import { OnboardingScene } from "./OnboardingScenes";
 import { ONBOARDING_SLIDES, type OnboardingSlide } from "./slides";
@@ -85,7 +86,7 @@ function PrimaryAction({
         busy ? styles.primaryActionBusy : null
       ]}
     >
-      {busy ? <ActivityIndicator color={colors.primaryInk} size="small" /> : null}
+      {busy ? <ActivityIndicator color={colors.shell} size="small" /> : null}
       <Text style={styles.primaryActionLabel}>{label}</Text>
     </Pressable>
   );
@@ -252,59 +253,64 @@ export function OnboardingScreen({ onComplete, reducedMotion: reducedMotionOverr
 
   if (reducedMotionPreference === null) {
     return (
-      <SafeAreaView edges={["top", "left", "right", "bottom"]} style={styles.safeArea}>
-        <StatusBar style="dark" />
-        <View style={styles.preferenceLoading}>
-          <LisnoWordmark tone="dark" width={142} />
-          <ActivityIndicator
-            accessible
-            accessibilityLabel="Preparing introduction"
-            accessibilityRole="progressbar"
-            color={colors.primary}
-            size="small"
-          />
-        </View>
-      </SafeAreaView>
+      <ChromeSurface edge="top" style={styles.background} testID="onboarding-background">
+        <SafeAreaView edges={["top", "left", "right", "bottom"]} style={styles.safeArea}>
+          <StatusBar style="light" />
+          <View style={styles.preferenceLoading}>
+            <LisnoWordmark tone="light" width={142} />
+            <ActivityIndicator
+              accessible
+              accessibilityLabel="Preparing introduction"
+              accessibilityRole="progressbar"
+              color={colors.shellInk}
+              size="small"
+            />
+          </View>
+        </SafeAreaView>
+      </ChromeSurface>
     );
   }
 
   return (
-    <SafeAreaView edges={["top", "left", "right", "bottom"]} style={styles.safeArea}>
-      <StatusBar style="dark" />
-      <View style={[styles.header, expanded ? styles.headerExpanded : null]}>
-        <LisnoWordmark tone="dark" width={expanded ? 142 : 124} />
-        <Text style={styles.headerNote}>PROJECT OPERATIONS</Text>
-      </View>
-      <Animated.FlatList
-        bounces={false}
-        data={ONBOARDING_SLIDES}
-        decelerationRate="fast"
-        disableIntervalMomentum
-        getItemLayout={(_data, index) => ({ index, length: width, offset: index * width })}
-        horizontal
-        initialNumToRender={3}
-        keyExtractor={(item) => item.id}
-        maxToRenderPerBatch={3}
-        onMomentumScrollEnd={syncIndexAfterScroll}
-        onScroll={Animated.event(
-          [{ nativeEvent: { contentOffset: { x: scrollX } } }],
-          { useNativeDriver: true }
-        )}
-        pagingEnabled
-        ref={listRef}
-        removeClippedSubviews={false}
-        renderItem={renderSlide}
-        scrollEventThrottle={16}
-        showsHorizontalScrollIndicator={false}
-        testID="onboarding-carousel"
-        windowSize={3}
-      />
-    </SafeAreaView>
+    <ChromeSurface edge="top" style={styles.background} testID="onboarding-background">
+      <SafeAreaView edges={["top", "left", "right", "bottom"]} style={styles.safeArea}>
+        <StatusBar style="light" />
+        <View style={[styles.header, expanded ? styles.headerExpanded : null]}>
+          <LisnoWordmark tone="light" width={expanded ? 142 : 124} />
+          <Text style={styles.headerNote}>PROJECT OPERATIONS</Text>
+        </View>
+        <Animated.FlatList
+          bounces={false}
+          data={ONBOARDING_SLIDES}
+          decelerationRate="fast"
+          disableIntervalMomentum
+          getItemLayout={(_data, index) => ({ index, length: width, offset: index * width })}
+          horizontal
+          initialNumToRender={3}
+          keyExtractor={(item) => item.id}
+          maxToRenderPerBatch={3}
+          onMomentumScrollEnd={syncIndexAfterScroll}
+          onScroll={Animated.event(
+            [{ nativeEvent: { contentOffset: { x: scrollX } } }],
+            { useNativeDriver: true }
+          )}
+          pagingEnabled
+          ref={listRef}
+          removeClippedSubviews={false}
+          renderItem={renderSlide}
+          scrollEventThrottle={16}
+          showsHorizontalScrollIndicator={false}
+          testID="onboarding-carousel"
+          windowSize={3}
+        />
+      </SafeAreaView>
+    </ChromeSurface>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: colors.authCanvas },
+  background: { flex: 1 },
+  safeArea: { flex: 1 },
   header: {
     minHeight: 62,
     flexDirection: "row",
@@ -316,7 +322,7 @@ const styles = StyleSheet.create({
     gap: spacing.md
   },
   headerExpanded: { width: "100%", maxWidth: 1040, alignSelf: "center", paddingHorizontal: spacing.xxl },
-  headerNote: { color: colors.inkMuted, fontFamily: fonts.semibold, fontSize: 9, letterSpacing: 1.7 },
+  headerNote: { color: colors.shellMuted, fontFamily: fonts.semibold, fontSize: 9, letterSpacing: 1.7 },
   preferenceLoading: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.xxl },
   slide: { flex: 1 },
   slideScrollContent: { flexGrow: 1, justifyContent: "center", paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.lg },
@@ -328,14 +334,14 @@ const styles = StyleSheet.create({
   copyColumn: { width: "100%", gap: spacing.xl },
   copyColumnExpanded: { flex: 0.86, maxWidth: 430, justifyContent: "center", gap: spacing.xxl },
   copyBlock: { gap: spacing.sm },
-  eyebrow: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 2.1 },
-  title: { color: colors.ink, fontFamily: fonts.display, fontSize: 30, lineHeight: 37, letterSpacing: -0.5 },
+  eyebrow: { color: colors.accent, fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 2.1 },
+  title: { color: colors.shellInk, fontFamily: fonts.display, fontSize: 30, lineHeight: 37, letterSpacing: -0.5 },
   titleExpanded: { fontSize: 38, lineHeight: 46, letterSpacing: -0.8 },
-  body: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 14, lineHeight: 22, maxWidth: 470 },
+  body: { color: colors.shellMuted, fontFamily: fonts.regular, fontSize: 14, lineHeight: 22, maxWidth: 470 },
   actions: { gap: spacing.lg },
   progress: { minHeight: 24, flexDirection: "row", alignItems: "center", gap: spacing.xs, alignSelf: "flex-start" },
-  progressTrack: { width: 22, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong },
-  progressTrackActive: { width: 46, backgroundColor: colors.primary },
+  progressTrack: { width: 22, height: 4, borderRadius: 2, backgroundColor: colors.shellSelected },
+  progressTrackActive: { width: 46, backgroundColor: colors.accent },
   primaryAction: {
     minHeight: 56,
     width: "100%",
@@ -346,11 +352,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: spacing.sm,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.shellInk,
     borderWidth: 1,
-    borderColor: colors.primary
+    borderColor: colors.shellInk
   },
-  primaryActionPressed: { backgroundColor: colors.primaryPressed, borderColor: colors.primaryPressed },
+  primaryActionPressed: { backgroundColor: colors.accent, borderColor: colors.accent },
   primaryActionBusy: { opacity: 0.72 },
-  primaryActionLabel: { color: colors.primaryInk, fontFamily: fonts.semibold, fontSize: 14, flexShrink: 1, textAlign: "center" }
+  primaryActionLabel: { color: colors.shell, fontFamily: fonts.semibold, fontSize: 14, flexShrink: 1, textAlign: "center" }
 });

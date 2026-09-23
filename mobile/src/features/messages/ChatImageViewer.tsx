@@ -1,4 +1,5 @@
 import { ActivityIndicator, Image, Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { StatusBar } from "expo-status-bar";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { fonts, radii, spacing } from "../../ui/tokens";
@@ -37,6 +38,7 @@ export function ChatImageViewer({
       statusBarTranslucent
       visible={visible}
     >
+      {visible ? <StatusBar style="light" /> : null}
       <SafeAreaView accessibilityViewIsModal edges={["top", "right", "bottom", "left"]} style={styles.safeArea}>
         <View style={styles.header}>
           <Pressable
