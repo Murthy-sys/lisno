@@ -1,6 +1,5 @@
 import { useId, type ReactNode } from "react";
 import {
-  ActivityIndicator,
   Image,
   Pressable,
   ScrollView,
@@ -15,11 +14,11 @@ import {
 import Svg, { Defs, LinearGradient, Path, Rect, Stop } from "react-native-svg";
 
 import type { DashboardPeriod } from "../data";
+import { DASHBOARD_PERIODS } from "../data/contract";
 import {
   dashboardColors as color,
   dashboardRadii as radius,
   dashboardSpacing as space,
-  dashboardSurfaceDepth,
   dashboardTypography as type
 } from "../dashboardTheme";
 
@@ -38,47 +37,24 @@ export interface DashboardFact {
   readonly tone?: "default" | "positive" | "warning" | "danger" | "unavailable";
 }
 
-const statusCopy: Record<DashboardQualityStatus, string> = {
-  complete: "Verified sources",
-  partial: "Partial coverage",
-  unavailable: "Sources unavailable"
+const periodCopy: Record<DashboardPeriod, { readonly label: string; readonly accessibilityLabel: string }> = {
+  7: { label: "7D", accessibilityLabel: "7 days" },
+  30: { label: "30D", accessibilityLabel: "30 days" },
+  365: { label: "1Y", accessibilityLabel: "1 year" }
 };
 
 export function OperationsHeader({
   period,
-  comparisonEnabled,
-  observedLabel,
-  rangeLabel,
-  qualityStatus,
-  qualityDetail,
-  refreshing,
   greeting,
-  currentRangeLabel,
-  previousRangeLabel,
-  partialFinalDay = false,
-  onPeriodChange,
-  onComparisonChange,
-  onRefresh
+  onPeriodChange
 }: {
   readonly period: DashboardPeriod;
-  readonly comparisonEnabled: boolean;
-  readonly observedLabel: string;
-  readonly rangeLabel: string;
-  readonly qualityStatus: DashboardQualityStatus;
-  readonly qualityDetail: string;
-  readonly refreshing: boolean;
   readonly greeting?: string;
-  readonly currentRangeLabel?: string;
-  readonly previousRangeLabel?: string;
-  readonly partialFinalDay?: boolean;
   readonly onPeriodChange: (period: DashboardPeriod) => void;
-  readonly onComparisonChange: (enabled: boolean) => void;
-  readonly onRefresh: () => void;
 }) {
   const { width, fontScale } = useWindowDimensions();
   const stacked = width < 370 || fontScale >= 1.25;
   const heroId = useId().replace(/:/g, "");
-  const timeBasis = `Times in UTC${partialFinalDay ? " · Final day is partial" : ""}`;
 
   return (
     <View style={styles.header}>
@@ -114,77 +90,38 @@ export function OperationsHeader({
         </View>
       </View>
 
-      <View style={styles.reportingCard}>
-        <View style={[styles.reportingRow, stacked ? styles.reportingRowStacked : null]} testID="dashboard-reporting-dates">
-          <View accessibilityLabel="Reporting period" accessibilityRole="tablist" style={styles.periodControl}>
-            {([7, 30, 90] as const).map((value) => {
-              const selected = value === period;
-              return (
-                <Pressable
-                  key={value}
-                  accessibilityLabel={`${value} days`}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected }}
-                  onPress={() => onPeriodChange(value)}
-                  style={({ pressed }) => [
-                    styles.periodButton,
-                    selected ? styles.periodButtonSelected : null,
-                    pressed ? styles.pressed : null
-                  ]}
-                >
-                  <Text style={[styles.periodText, selected ? styles.periodTextSelected : null]}>{value}D</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-          <View style={[styles.dateGroup, stacked ? styles.dateGroupStacked : null]}>
-            <Svg accessible={false} height={22} viewBox="0 0 24 24" width={22}>
-              <Path d="M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1ZM4 10h16M8 3v4m8-4v4m-8 8 2 2 5-5" fill="none" stroke={color.text} strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} />
-            </Svg>
-            <View style={styles.dateCopy}>
-              <Text style={styles.currentRange}>{currentRangeLabel ?? rangeLabel}</Text>
-              {comparisonEnabled && previousRangeLabel ? <Text style={styles.previousRange}>Prev: {previousRangeLabel}</Text> : null}
-              <Text accessibilityLabel={`${statusCopy[qualityStatus]}. ${qualityDetail}. ${timeBasis}`} style={styles.timeBasis}>{timeBasis}</Text>
-            </View>
-          </View>
-        </View>
-
-        <View style={[styles.reportingBottomRow, stacked ? styles.reportingRowStacked : null]} testID="dashboard-reporting-updates">
-          <Pressable
-            accessibilityLabel="Compare with previous period"
-            accessibilityRole="switch"
-            accessibilityState={{ checked: comparisonEnabled }}
-            onPress={() => onComparisonChange(!comparisonEnabled)}
-            style={({ pressed }) => [styles.compareControl, pressed ? styles.pressed : null]}
-          >
-            <View style={[styles.switchTrack, comparisonEnabled ? styles.switchTrackSelected : null]}>
-              <View style={[styles.switchThumb, comparisonEnabled ? styles.switchThumbSelected : null]} />
-            </View>
-            <Text style={styles.compareText}>Compare periods</Text>
-          </Pressable>
-          <View style={[styles.updateGroup, stacked ? styles.updateGroupStacked : null]}>
+      <View
+        accessibilityLabel="Reporting period"
+        accessibilityRole="tablist"
+        style={styles.periodControl}
+        testID="dashboard-period-selector"
+      >
+        {DASHBOARD_PERIODS.map((value) => {
+          const selected = value === period;
+          return (
             <Pressable
-              accessibilityLabel="Refresh dashboard"
-              accessibilityRole="button"
-              accessibilityState={{ busy: refreshing, disabled: refreshing }}
-              disabled={refreshing}
-              onPress={onRefresh}
-              style={({ pressed }) => [styles.refreshButton, pressed ? styles.pressed : null]}
+              key={value}
+              accessibilityLabel={periodCopy[value].accessibilityLabel}
+              accessibilityRole="tab"
+              accessibilityState={{ selected }}
+              onPress={() => onPeriodChange(value)}
+              style={({ pressed }) => [
+                styles.periodButton,
+                selected ? styles.periodButtonSelected : null,
+                pressed ? styles.pressed : null
+              ]}
             >
-              {refreshing ? (
-                <ActivityIndicator color={color.text} size="small" />
-              ) : (
-                <Svg accessible={false} height={25} viewBox="0 0 24 24" width={25}>
-                  <Path d="M19 8a8 8 0 1 1-6-4m0-2v5l4-3" fill="none" stroke={color.text} strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} />
-                </Svg>
-              )}
+              <Text
+                adjustsFontSizeToFit
+                minimumFontScale={0.8}
+                numberOfLines={1}
+                style={[styles.periodText, selected ? styles.periodTextSelected : null]}
+              >
+                {periodCopy[value].label}
+              </Text>
             </Pressable>
-            <View style={styles.updatedCopy}>
-              <Text style={styles.updatedLabel}>Last updated</Text>
-              <Text style={styles.observed}>{observedLabel}</Text>
-            </View>
-          </View>
-        </View>
+          );
+        })}
       </View>
     </View>
   );
@@ -396,50 +333,26 @@ const styles = StyleSheet.create({
   greeting: { color: color.textMuted, fontFamily: type.displayItalic, fontSize: 14, lineHeight: 20 },
   title: { color: color.text, fontFamily: type.display, fontSize: 36, lineHeight: 38, letterSpacing: -0.8 },
   subtitle: { color: color.textMuted, fontFamily: type.display, fontSize: 16, lineHeight: 20, maxWidth: 260, marginTop: 1 },
-  reportingCard: {
-    ...dashboardSurfaceDepth,
-    marginTop: -10,
-    borderRadius: radius.surface,
-    borderWidth: 1,
-    borderColor: "rgba(217,220,207,0.65)",
-    backgroundColor: "rgba(251,250,246,0.94)",
-    paddingHorizontal: 10,
-    paddingTop: 8,
-    paddingBottom: 6
-  },
-  reportingRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  reportingRowStacked: { flexDirection: "column", alignItems: "stretch", gap: 8 },
   periodControl: {
+    alignSelf: "stretch",
     flexDirection: "row",
-    alignSelf: "flex-start",
-    minHeight: 48,
-    padding: 1,
-    borderRadius: radius.control,
+    gap: 4,
+    padding: 4,
+    borderRadius: 14,
     backgroundColor: color.stageRaised
   },
-  periodButton: { minWidth: 48, minHeight: 48, alignItems: "center", justifyContent: "center", borderRadius: radius.control, paddingHorizontal: 7, paddingVertical: 8 },
+  periodButton: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 10,
+    paddingHorizontal: 4
+  },
   periodButtonSelected: { backgroundColor: color.violet },
-  periodText: { color: color.text, fontFamily: type.medium, fontSize: 13, lineHeight: 19 },
-  periodTextSelected: { color: color.primaryInk },
-  dateGroup: { minWidth: 0, flex: 1, flexDirection: "row", alignItems: "center", gap: 8, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: color.stageEdge, paddingLeft: 9 },
-  dateGroupStacked: { flex: 0, borderLeftWidth: 0, paddingLeft: 3 },
-  dateCopy: { flex: 1, minWidth: 0, gap: 1 },
-  currentRange: { color: color.text, fontFamily: type.medium, fontSize: 11, lineHeight: 16 },
-  previousRange: { color: color.textMuted, fontFamily: type.regular, fontSize: 10, lineHeight: 15 },
-  reportingBottomRow: { marginTop: 3, paddingTop: 2, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.stageEdge, flexDirection: "row", alignItems: "center", gap: 6 },
-  compareControl: { minHeight: 48, flex: 1, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 3 },
-  compareText: { flexShrink: 1, color: color.text, fontFamily: type.regular, fontSize: 12, lineHeight: 18 },
-  switchTrack: { width: 42, height: 24, borderRadius: 12, padding: 3, backgroundColor: color.unavailable },
-  switchTrackSelected: { backgroundColor: color.violet },
-  switchThumb: { width: 18, height: 18, borderRadius: 9, backgroundColor: color.primaryInk },
-  switchThumbSelected: { alignSelf: "flex-end" },
-  updateGroup: { minWidth: 0, flex: 1.15, flexDirection: "row", alignItems: "center", gap: 2, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: color.stageEdge },
-  updateGroupStacked: { flex: 0, borderLeftWidth: 0 },
-  refreshButton: { width: 48, height: 48, alignItems: "center", justifyContent: "center", borderRadius: radius.control },
-  updatedCopy: { minWidth: 0, flex: 1 },
-  updatedLabel: { color: color.textMuted, fontFamily: type.regular, fontSize: 10, lineHeight: 15 },
-  observed: { color: color.textMuted, fontFamily: type.regular, fontSize: 10, lineHeight: 15 },
-  timeBasis: { color: color.textMuted, fontFamily: type.regular, fontSize: 9, lineHeight: 12 },
+  periodText: { color: color.textMuted, fontFamily: type.medium, fontSize: 14, lineHeight: 20, textAlign: "center" },
+  periodTextSelected: { color: color.primaryInk, fontFamily: type.semibold },
   factRail: {
     minWidth: 0,
     flex: 1,

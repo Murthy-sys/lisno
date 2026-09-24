@@ -2,8 +2,16 @@ import { z } from "zod";
 
 import { WORKER_ROLES } from "../../../contracts/authorization";
 
-export const DASHBOARD_PERIODS = [7, 30, 90] as const;
+export const DASHBOARD_PERIODS = [7, 30, 365] as const;
 export type DashboardPeriod = (typeof DASHBOARD_PERIODS)[number];
+/** Response windows the backend may return; 90 stays tolerated for other clients. */
+export const DASHBOARD_RESPONSE_PERIOD_DAYS = [7, 30, 90, 365] as const;
+export type DashboardResponsePeriodDays = (typeof DASHBOARD_RESPONSE_PERIOD_DAYS)[number];
+const MAX_DASHBOARD_PERIOD_DAYS = 365;
+
+export function isDashboardPeriod(value: unknown): value is DashboardPeriod {
+  return (DASHBOARD_PERIODS as readonly unknown[]).includes(value);
+}
 
 export const DASHBOARD_COUNT_COMPARISON_METRIC_IDS = [
   "projects_created",
@@ -94,7 +102,7 @@ const identifierSchema = z.string().min(1).max(256);
 const boundedTextSchema = z.string().max(2_000);
 
 const dashboardPeriodSchema = z.object({
-  days: z.union([z.literal(7), z.literal(30), z.literal(90)]),
+  days: z.union([z.literal(7), z.literal(30), z.literal(90), z.literal(365)]),
   startAt: utcTimestampSchema,
   endAt: utcTimestampSchema
 }).strict().superRefine((period, context) => {
@@ -185,8 +193,8 @@ const comparisonSchema = z.object({
     partialFinalDay: z.boolean()
   }).strict(),
   metrics: comparisonMetricsSchema,
-  currentBuckets: z.array(comparisonBucketSchema).max(90),
-  previousBuckets: z.array(comparisonBucketSchema).max(90)
+  currentBuckets: z.array(comparisonBucketSchema).max(MAX_DASHBOARD_PERIOD_DAYS),
+  previousBuckets: z.array(comparisonBucketSchema).max(MAX_DASHBOARD_PERIOD_DAYS)
 }).strict();
 
 const moduleCoverageShape = {
@@ -400,7 +408,7 @@ export const dashboardOverviewSchema = z.object({
     designPlansApproved: nonNegativeIntegerSchema,
     workflowTasksCompleted: nonNegativeIntegerSchema,
     ledgerExpensesPostedPaise: nonNegativeIntegerSchema
-  }).strict()).max(90),
+  }).strict()).max(MAX_DASHBOARD_PERIOD_DAYS),
   comparison: comparisonSchema,
   dataQuality: dataQualitySchema
 }).strict().superRefine((overview, context) => {

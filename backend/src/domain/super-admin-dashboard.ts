@@ -9,7 +9,8 @@ import type {
   DashboardRiskFactorKind,
   DashboardRiskLevel,
   DashboardRiskReasonCode,
-  DashboardWeightedProgress
+  DashboardWeightedProgress,
+  SuperAdminDashboardPeriodDays
 } from "../contracts/super-admin-dashboard.js";
 import { calculateTaskRisk } from "./risk.js";
 
@@ -22,7 +23,7 @@ const RISK_RANK: Readonly<Record<DashboardRiskLevel, number>> = {
 
 export function dashboardComparisonWindow(
   observedAt: Date,
-  days: 7 | 30 | 90
+  days: SuperAdminDashboardPeriodDays
 ): DashboardComparisonWindow {
   if (Number.isNaN(observedAt.getTime())) {
     throw new TypeError("Dashboard observation time must be valid.");

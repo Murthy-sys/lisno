@@ -1,5 +1,6 @@
-import { fireEvent, render } from "@testing-library/react-native";
-import { StyleSheet } from "react-native";
+import type React from "react";
+import { act, fireEvent, render } from "@testing-library/react-native";
+import { RefreshControl, StyleSheet } from "react-native";
 
 import { AUTHORIZATION_POLICY_VERSION } from "../../contracts/authorization";
 import type { AuthenticatedSession } from "../../contracts/session";
@@ -119,15 +120,40 @@ describe("SuperAdminMobileDashboard", () => {
     expect(view.queryByText(/sample project|vendor leaderboard|employee leaderboard/i)).toBeNull();
   });
 
-  it("changes periods and limits comparison copy to the period-derived KPI", async () => {
+  it("defaults to 30 days, switches to one year and keeps the KPI comparison always on", async () => {
     const view = await render(<SuperAdminMobileDashboard session={session} />);
 
+    expect(useDashboardOverviewMock).toHaveBeenLastCalledWith(session, 30);
+    expect(view.getByRole("tab", { name: "30 days" }).props.accessibilityState).toEqual({ selected: true });
     expect(view.getByText(/\+2 \(\+66\.67%\) vs previous/)).toBeTruthy();
-    await fireEvent.press(view.getByRole("tab", { name: "90 days" }));
-    expect(useDashboardOverviewMock).toHaveBeenLastCalledWith(session, 90);
+    expect(view.queryByRole("switch")).toBeNull();
+    expect(view.queryByText(/Compare periods/)).toBeNull();
+    expect(view.queryByLabelText("Refresh dashboard")).toBeNull();
+    expect(view.queryByText(/Last updated/)).toBeNull();
+    expect(view.queryByRole("tab", { name: "90 days" })).toBeNull();
 
-    await fireEvent.press(view.getByRole("switch", { name: "Compare with previous period" }));
-    expect(view.getByText("5 created in the current window")).toBeTruthy();
+    useDashboardOverviewMock.mockReturnValue(queryResult({ data: buildDashboardViewModel(createDashboardOverviewFixture(365)) }));
+    await fireEvent.press(view.getByRole("tab", { name: "1 year" }));
+
+    expect(useDashboardOverviewMock).toHaveBeenLastCalledWith(session, 365);
+    expect(view.getByRole("tab", { name: "1 year" }).props.accessibilityState).toEqual({ selected: true });
+    expect(view.getByRole("header", { name: "Project overview" })).toBeTruthy();
+    expect(view.getByText(/\+2 \(\+66\.67%\) vs previous/)).toBeTruthy();
+    expect(view.getByText("New projects · 365D")).toBeTruthy();
+  });
+
+  it("keeps pull-to-refresh as the refresh path", async () => {
+    const view = await render(<SuperAdminMobileDashboard session={session} />);
+
+    let scroll = view.getByText("EXACT DATA & QUALITY").parent;
+    while (scroll && !scroll.props.refreshControl) scroll = scroll.parent;
+    const refreshControl = scroll?.props.refreshControl as React.ReactElement<React.ComponentProps<typeof RefreshControl>>;
+    expect(refreshControl.type).toBe(RefreshControl);
+    expect(refreshControl.props.refreshing).toBe(false);
+    await act(async () => {
+      refreshControl.props.onRefresh?.();
+    });
+    expect(refetch).toHaveBeenCalledTimes(1);
   });
 
   it("retains the verified current project count when only the previous comparison is unavailable", async () => {

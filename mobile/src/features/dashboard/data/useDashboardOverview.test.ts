@@ -3,7 +3,7 @@ import { dashboardEndpoint, dashboardQueryKey } from "./query";
 describe("dashboard query identity", () => {
   const scope = { environmentId: "local-development", userId: "super-admin" };
 
-  it.each([7, 30, 90] as const)("builds the canonical %d-day endpoint", (period) => {
+  it.each([7, 30, 365] as const)("builds the canonical %d-day endpoint", (period) => {
     expect(dashboardEndpoint(period)).toBe(`/admin/dashboard/overview?periodDays=${period}`);
   });
 

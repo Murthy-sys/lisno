@@ -11,18 +11,8 @@ import {
 } from "./DashboardChrome";
 
 const reportingProps = {
-  comparisonEnabled: true,
-  currentRangeLabel: "25 Aug 2026 – 23 Sep 2026",
-  previousRangeLabel: "26 Jul 2026 – 24 Aug 2026",
-  observedLabel: "23 Sep 2026, 18:14 UTC",
-  rangeLabel: "Current and previous reporting windows",
-  qualityStatus: "partial" as const,
-  qualityDetail: "Some sources are unavailable.",
-  refreshing: false,
   period: 30 as const,
-  onPeriodChange: jest.fn(),
-  onComparisonChange: jest.fn(),
-  onRefresh: jest.fn()
+  onPeriodChange: jest.fn()
 };
 
 describe("dashboard chrome", () => {
@@ -30,85 +20,70 @@ describe("dashboard chrome", () => {
     jest.restoreAllMocks();
     jest.clearAllMocks();
   });
-  it("exposes reporting controls and their state through native semantics", async () => {
+  it("renders only a 7D / 30D / 1Y period selector with native tab semantics", async () => {
     const onPeriodChange = jest.fn();
-    const onComparisonChange = jest.fn();
-    const onRefresh = jest.fn();
-    const view = await render(
-      <OperationsHeader
-        comparisonEnabled
-        observedLabel="Observed 22 Sep, 10:30 UTC"
-        onComparisonChange={onComparisonChange}
-        onPeriodChange={onPeriodChange}
-        onRefresh={onRefresh}
-        period={30}
-        qualityDetail="Some sources are unavailable."
-        qualityStatus="partial"
-        rangeLabel="Current 24 Aug–22 Sep · final day is partial"
-        refreshing={false}
-      />
-    );
+    const view = await render(<OperationsHeader onPeriodChange={onPeriodChange} period={30} />);
 
     expect(view.getByRole("header", { name: "Executive dashboard" })).toBeTruthy();
+    const tablist = view.getByTestId("dashboard-period-selector");
+    expect(tablist.props).toEqual(expect.objectContaining({ accessibilityRole: "tablist", accessibilityLabel: "Reporting period" }));
+
+    const tabs = view.getAllByRole("tab");
+    expect(tabs).toHaveLength(3);
+    expect(tabs.map((tab) => tab.props.accessibilityLabel)).toEqual(["7 days", "30 days", "1 year"]);
+    expect(["7D", "30D", "1Y"].map((label) => view.getByText(label))).toHaveLength(3);
     expect(view.getByRole("tab", { name: "30 days" }).props.accessibilityState).toEqual({ selected: true });
-    expect(view.getByRole("switch", { name: "Compare with previous period" }).props.accessibilityState).toEqual({ checked: true });
-    expect(view.getByLabelText(/Partial coverage/)).toBeTruthy();
-    expect(StyleSheet.flatten(view.getByRole("button", { name: "Refresh dashboard" }).props.style)).toEqual(expect.objectContaining({ width: 48, height: 48 }));
-    for (const days of [7, 30, 90]) {
-      expect(StyleSheet.flatten(view.getByRole("tab", { name: `${days} days` }).props.style).minHeight).toBeGreaterThanOrEqual(48);
-    }
+    expect(view.getByRole("tab", { name: "7 days" }).props.accessibilityState).toEqual({ selected: false });
+    expect(view.getByRole("tab", { name: "1 year" }).props.accessibilityState).toEqual({ selected: false });
+    expect(view.queryByRole("tab", { name: "90 days" })).toBeNull();
 
-    await fireEvent.press(view.getByRole("tab", { name: "90 days" }));
-    await fireEvent.press(view.getByRole("switch", { name: "Compare with previous period" }));
-    await fireEvent.press(view.getByRole("button", { name: "Refresh dashboard" }));
+    await fireEvent.press(view.getByRole("tab", { name: "1 year" }));
+    expect(onPeriodChange).toHaveBeenCalledWith(365);
+    await fireEvent.press(view.getByRole("tab", { name: "7 days" }));
+    expect(onPeriodChange).toHaveBeenCalledWith(7);
 
-    expect(onPeriodChange).toHaveBeenCalledWith(90);
-    expect(onComparisonChange).toHaveBeenCalledWith(false);
-    expect(onRefresh).toHaveBeenCalledTimes(1);
+    await view.rerender(<OperationsHeader onPeriodChange={onPeriodChange} period={365} />);
+    expect(view.getByRole("tab", { name: "1 year" }).props.accessibilityState).toEqual({ selected: true });
+    expect(view.getByRole("tab", { name: "30 days" }).props.accessibilityState).toEqual({ selected: false });
   });
 
-  it("shows real reporting ranges, the greeting and UTC partial-day context", async () => {
-    const view = await render(<OperationsHeader {...reportingProps} greeting="Good evening, Aditi" partialFinalDay />);
+  it("removes range, UTC, comparison, refresh and last-updated chrome", async () => {
+    const view = await render(<OperationsHeader {...reportingProps} greeting="Good evening, Aditi" />);
 
     expect(view.getByText("Good evening, Aditi")).toBeTruthy();
-    expect(view.getByText(reportingProps.currentRangeLabel).props.numberOfLines).toBeUndefined();
-    expect(view.getByText(`Prev: ${reportingProps.previousRangeLabel}`).props.numberOfLines).toBeUndefined();
-    expect(view.getByText(reportingProps.observedLabel)).toBeTruthy();
-    expect(view.getByText("Last updated")).toBeTruthy();
-    expect(view.getByText("Times in UTC · Final day is partial")).toBeTruthy();
-    expect(view.getByLabelText(/Partial coverage.*Some sources are unavailable.*Final day is partial/)).toBeTruthy();
+    expect(view.queryByText(/Compare periods/)).toBeNull();
+    expect(view.queryByRole("switch")).toBeNull();
+    expect(view.queryByLabelText("Refresh dashboard")).toBeNull();
+    expect(view.queryByRole("button")).toBeNull();
+    expect(view.queryByText(/Last updated/)).toBeNull();
+    expect(view.queryByText(/Times in UTC/)).toBeNull();
+    expect(view.queryByText(/Prev:/)).toBeNull();
 
-    await view.rerender(<OperationsHeader {...reportingProps} comparisonEnabled={false} />);
-    expect(view.queryByText(`Prev: ${reportingProps.previousRangeLabel}`)).toBeNull();
-    expect(view.getByText(reportingProps.currentRangeLabel)).toBeTruthy();
-    expect(view.getByText("Times in UTC")).toBeTruthy();
+    await view.rerender(<OperationsHeader {...reportingProps} />);
     expect(view.queryByText("Good evening, Aditi")).toBeNull();
   });
 
-  it("prevents duplicate refresh while a refresh is running", async () => {
-    const onRefresh = jest.fn();
-    const view = await render(<OperationsHeader {...reportingProps} onRefresh={onRefresh} refreshing />);
-    const button = view.getByRole("button", { name: "Refresh dashboard" });
-
-    expect(button.props.accessibilityState).toEqual({ busy: true, disabled: true });
-    await fireEvent.press(button);
-    expect(onRefresh).not.toHaveBeenCalled();
-  });
-
   it.each([
-    { width: 360, fontScale: 1 },
-    { width: 411, fontScale: 1.5 }
-  ])("reflows dates and refresh controls at $width dp and font scale $fontScale", async ({ width, fontScale }) => {
+    { width: 320, fontScale: 1 },
+    { width: 360, fontScale: 2 }
+  ])("keeps three equal single-line segments at $width dp and font scale $fontScale", async ({ width, fontScale }) => {
     jest.spyOn(ReactNative, "useWindowDimensions").mockReturnValue({ width, height: 800, scale: 3, fontScale });
     const view = await render(<OperationsHeader {...reportingProps} />);
 
-    for (const testID of ["dashboard-reporting-dates", "dashboard-reporting-updates"]) {
-      expect(StyleSheet.flatten(view.getByTestId(testID).props.style).flexDirection).toBe("column");
+    const track = StyleSheet.flatten(view.getByTestId("dashboard-period-selector").props.style);
+    expect(track).toEqual(expect.objectContaining({ flexDirection: "row", alignSelf: "stretch", padding: 4, gap: 4, borderRadius: 14 }));
+    expect(track.borderWidth).toBeUndefined();
+    for (const tab of view.getAllByRole("tab")) {
+      const style = StyleSheet.flatten(tab.props.style);
+      expect(style).toEqual(expect.objectContaining({ flex: 1, minWidth: 0, minHeight: 44 }));
     }
-    expect(view.getByText(reportingProps.currentRangeLabel).props.numberOfLines).toBeUndefined();
-    expect(view.getByText(reportingProps.observedLabel).props.numberOfLines).toBeUndefined();
-    expect(view.getByRole("switch", { name: "Compare with previous period" })).toBeTruthy();
-    expect(view.getByRole("button", { name: "Refresh dashboard" })).toBeTruthy();
+    for (const label of ["7D", "30D", "1Y"]) {
+      expect(view.getByText(label).props).toEqual(expect.objectContaining({
+        numberOfLines: 1,
+        adjustsFontSizeToFit: true,
+        minimumFontScale: 0.8
+      }));
+    }
   });
 
   it("offers a coverage detail action only when it can perform an action", async () => {

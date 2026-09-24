@@ -12,6 +12,9 @@ import {
   riskFactor
 } from "../src/domain/super-admin-dashboard.js";
 import { resolveEstimateReviewRoundId } from "../src/domain/estimate-client-review.js";
+import { createMemoryRepository } from "../src/repositories/memory.js";
+import type { PublicUser } from "../src/services/auth.service.js";
+import { createSuperAdminDashboardService } from "../src/services/super-admin-dashboard.service.js";
 
 describe("Super Admin dashboard domain", () => {
   it("builds matched UTC event windows with aligned partial final days", () => {
@@ -29,6 +32,69 @@ describe("Super Admin dashboard domain", () => {
       },
       partialFinalDay: true
     });
+  });
+
+  it("builds 365-day current and previous UTC windows across a leap day", () => {
+    const observedAt = new Date("2028-03-15T08:00:00.000Z");
+    expect(dashboardComparisonWindow(observedAt, 365)).toEqual({
+      timezone: "UTC",
+      current: {
+        days: 365,
+        startAt: "2027-03-17T00:00:00.000Z",
+        endAt: "2028-03-15T08:00:00.000Z"
+      },
+      previous: {
+        days: 365,
+        startAt: "2026-03-17T00:00:00.000Z",
+        endAt: "2027-03-16T08:00:00.000Z"
+      },
+      partialFinalDay: true
+    });
+
+    const window = dashboardComparisonWindow(new Date("2026-09-24T23:59:59.999Z"), 365);
+    expect(window.current).toEqual({
+      days: 365,
+      startAt: "2025-09-25T00:00:00.000Z",
+      endAt: "2026-09-24T23:59:59.999Z"
+    });
+    expect(window.previous).toEqual({
+      days: 365,
+      startAt: "2024-09-25T00:00:00.000Z",
+      endAt: "2025-09-24T23:59:59.999Z"
+    });
+    const dayMs = 24 * 60 * 60 * 1000;
+    expect((Date.parse(window.current.startAt) - Date.parse(window.previous.startAt)) / dayMs).toBe(365);
+  });
+
+  it("aligns the 365-day reporting period with the comparison window across a leap day", async () => {
+    const observedAt = new Date("2028-03-15T08:00:00.000Z");
+    const repository = createMemoryRepository();
+    const stored = await repository.findUserById("user-super-admin");
+    expect(stored).not.toBeNull();
+    const service = createSuperAdminDashboardService(repository, () => observedAt);
+    const page = await service.projects(stored as unknown as PublicUser, 365, {
+      sort: "risk_desc",
+      limit: 1,
+      offset: 0
+    });
+    expect(page.period).toEqual({
+      days: 365,
+      startAt: "2027-03-17T00:00:00.000Z",
+      endAt: "2028-03-15T08:00:00.000Z"
+    });
+    for (const [days, startAt] of [
+      [7, "2028-03-09T00:00:00.000Z"],
+      [30, "2028-02-15T00:00:00.000Z"],
+      [90, "2027-12-17T00:00:00.000Z"]
+    ] as const) {
+      const shorter = await service.projects(stored as unknown as PublicUser, days, {
+        sort: "risk_desc",
+        limit: 1,
+        offset: 0
+      });
+      expect(shorter.period).toEqual({ days, startAt, endAt: "2028-03-15T08:00:00.000Z" });
+      expect(dashboardComparisonWindow(observedAt, days).current.startAt).toBe(startAt);
+    }
   });
 
   it("reports percentage, new, no-change, and unavailable comparison states", () => {

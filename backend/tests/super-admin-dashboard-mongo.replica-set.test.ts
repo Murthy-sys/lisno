@@ -2255,3 +2255,175 @@ describe("Super Admin dashboard Mongo pre-pagination filters", () => {
     });
   });
 });
+
+describe("Super Admin dashboard Mongo one-year period", () => {
+  it("includes records older than 90 days in 365-day totals and compares the prior 365 days", async () => {
+    const annualClient = (id: string, createdAt: string) => ({
+      ...worker(id, id),
+      role: "client" as const,
+      createdAt: new Date(createdAt),
+      updatedAt: new Date(createdAt)
+    });
+    const recentClient = annualClient("annual-client-recent", "2026-08-20T08:00:00.000Z");
+    await UserModel.create([
+      recentClient,
+      annualClient("annual-client-older", "2026-02-01T08:00:00.000Z"),
+      annualClient("annual-client-previous", "2025-01-15T08:00:00.000Z"),
+      annualClient("annual-client-outside", "2024-06-01T08:00:00.000Z")
+    ]);
+
+    await ProjectModel.create([
+      { ...project("annual-recent", "Recent", "2026-12-31T00:00:00.000Z"), createdAt: new Date("2026-08-25T09:00:00.000Z") },
+      {
+        ...project("annual-older-completed", "Older completed", "2026-12-31T00:00:00.000Z"),
+        status: "completed" as const,
+        createdAt: new Date("2026-03-01T09:00:00.000Z"),
+        actualEndAt: new Date("2026-04-10T09:00:00.000Z")
+      },
+      { ...project("annual-older", "Older", "2026-12-31T00:00:00.000Z"), createdAt: new Date("2025-12-01T09:00:00.000Z") },
+      {
+        ...project("annual-previous-completed", "Previous completed", "2026-12-31T00:00:00.000Z"),
+        status: "completed" as const,
+        createdAt: new Date("2025-06-15T09:00:00.000Z"),
+        actualEndAt: new Date("2025-07-20T09:00:00.000Z")
+      },
+      { ...project("annual-outside", "Outside", "2026-12-31T00:00:00.000Z"), createdAt: new Date("2024-07-01T09:00:00.000Z") }
+    ]);
+
+    // Two finance projects (created 2026-08-01) with unequal ledgers across both 365-day windows.
+    for (const [id, subtotalRupees] of [["annual-finance-a", 1_000], ["annual-finance-b", 4_000]] as const) {
+      await approvedFinanceProject({ id, subtotalRupees, directSpendPaise: 0 });
+      await EstimateModel.collection.updateOne(
+        { _id: `${id}:estimate` },
+        {
+          $set: {
+            clientDecisionAt: new Date("2026-08-02T10:00:00.000Z"),
+            reviews: [{ actorId: recentClient._id, action: "client_approved", note: "Approved", occurredAt: new Date("2026-08-02T10:00:00.000Z") }],
+            designPlanStatus: "approved",
+            designPlanVersion: 1,
+            designPlanApprovedAt: new Date("2026-08-03T10:00:00.000Z"),
+            designPlanApprovedById: recentClient._id,
+            designPlanApprovalSource: "client_portal"
+          }
+        }
+      );
+      await ProjectFinanceBucketModel.collection.updateOne(
+        { _id: `${id}:bucket` },
+        {
+          $set: {
+            estimateReviewRoundId: null,
+            designPlanVersion: 1,
+            status: "open",
+            openedAt: new Date("2026-08-03T10:00:00.000Z"),
+            openedById: recentClient._id
+          }
+        }
+      );
+    }
+    const ledger = (id: string, projectId: string, amountPaise: number, incurredAt: string) => ({
+      _id: id,
+      bucketId: `${projectId}:bucket`,
+      projectId,
+      type: "direct_spend" as const,
+      expenseClass: "other" as const,
+      category: "Annual expense",
+      amountPaise,
+      incurredAt: new Date(incurredAt),
+      description: "Annual comparison expense",
+      idempotencyKey: `${id}:key`,
+      status: "posted" as const,
+      version: 1,
+      createdById: "dashboard-owner"
+    });
+    await FinanceLedgerEntryModel.create([
+      ledger("annual-ledger-a-recent", "annual-finance-a", 500, "2026-08-27T10:00:00.000Z"),
+      ledger("annual-ledger-a-older", "annual-finance-a", 1_200, "2025-10-10T10:00:00.000Z"),
+      ledger("annual-ledger-a-previous", "annual-finance-a", 300, "2025-02-02T10:00:00.000Z"),
+      ledger("annual-ledger-b-older", "annual-finance-b", 7_000, "2026-01-05T10:00:00.000Z"),
+      ledger("annual-ledger-b-previous", "annual-finance-b", 900, "2024-12-12T10:00:00.000Z"),
+      ledger("annual-ledger-b-outside", "annual-finance-b", 50, "2024-06-01T10:00:00.000Z")
+    ]);
+
+    const completedTask = (id: string, projectId: string, completedAt: string) => ({
+      ...executionTask(id, projectId, null),
+      kind: "site_execution" as const,
+      assigneeRole: "site_manager" as const,
+      sourceSectionId: null,
+      sourceLineItemKey: null,
+      status: "completed" as const,
+      progress: 100,
+      completedAt: new Date(completedAt)
+    });
+    await ProjectWorkflowTaskModel.create([
+      completedTask("annual-task-recent", "annual-finance-a", "2026-08-28T10:00:00.000Z"),
+      completedTask("annual-task-older", "annual-finance-b", "2025-11-11T10:00:00.000Z"),
+      completedTask("annual-task-previous", "annual-finance-a", "2025-03-03T10:00:00.000Z")
+    ]);
+
+    const yearStartedAt = performance.now();
+    const year = await mongoSuperAdminDashboardOverview({
+      observedAt: OBSERVED_AT,
+      startAt: "2025-08-31T00:00:00.000Z",
+      endAt: OBSERVED_AT,
+      previousStartAt: "2024-08-31T00:00:00.000Z",
+      previousEndAt: "2025-08-30T12:00:00.000Z",
+      periodDays: 365
+    });
+    const yearMs = performance.now() - yearStartedAt;
+    const quarterStartedAt = performance.now();
+    const quarter = await mongoSuperAdminDashboardOverview({
+      observedAt: OBSERVED_AT,
+      startAt: "2026-06-02T00:00:00.000Z",
+      endAt: OBSERVED_AT,
+      previousStartAt: "2026-03-04T00:00:00.000Z",
+      previousEndAt: "2026-06-01T12:00:00.000Z",
+      periodDays: 90
+    });
+    const quarterMs = performance.now() - quarterStartedAt;
+    console.info(
+      `[dashboard-timing] mongo overview periodDays=365: ${yearMs.toFixed(1)}ms; periodDays=90: ${quarterMs.toFixed(1)}ms`
+    );
+
+    expect(year.comparison.window).toMatchObject({
+      current: { days: 365, startAt: "2025-08-31T00:00:00.000Z" },
+      previous: { days: 365, startAt: "2024-08-31T00:00:00.000Z", endAt: "2025-08-30T12:00:00.000Z" }
+    });
+    expect(year.comparison.metrics).toMatchObject({
+      projects_created: { current: 5, previous: 1 },
+      clients_created: { current: 2, previous: 1 },
+      projects_completed: { current: 1, previous: 1 },
+      execution_tasks_completed: { current: 2, previous: 1 },
+      recorded_expenses_paise: {
+        current: 8_700,
+        previous: 1_200,
+        currentStatus: "available",
+        previousStatus: "available",
+        delta: 7_500
+      }
+    });
+    expect(year.comparison.currentBuckets).toHaveLength(365);
+    expect(year.comparison.previousBuckets).toHaveLength(365);
+    expect(year.comparison.currentBuckets[0]?.date).toBe("2025-08-31");
+    expect(year.comparison.currentBuckets.at(-1)?.date).toBe("2026-08-30");
+    expect(year.comparison.previousBuckets[0]?.date).toBe("2024-08-31");
+    expect(year.comparison.previousBuckets.at(-1)?.date).toBe("2025-08-30");
+    const bucketTotal = (buckets: typeof year.comparison.currentBuckets) =>
+      buckets.reduce((total, bucket) => total + (bucket.recordedExpensesPaise ?? 0), 0);
+    expect(bucketTotal(year.comparison.currentBuckets)).toBe(8_700);
+    expect(bucketTotal(year.comparison.previousBuckets)).toBe(1_200);
+    expect(year.comparison.currentBuckets.find((bucket) => bucket.date === "2025-10-10")?.recordedExpensesPaise)
+      .toBe(1_200);
+    expect(year.comparison.currentBuckets.find((bucket) => bucket.date === "2026-01-05")?.recordedExpensesPaise)
+      .toBe(7_000);
+
+    // The 90-day window must exclude the older records that the 365-day window includes.
+    expect(quarter.comparison.metrics).toMatchObject({
+      projects_created: { current: 3, previous: 0 },
+      clients_created: { current: 1, previous: 0 },
+      projects_completed: { current: 0, previous: 1 },
+      execution_tasks_completed: { current: 1, previous: 0 },
+      recorded_expenses_paise: { current: 500, previous: 0 }
+    });
+    expect(quarter.comparison.currentBuckets).toHaveLength(90);
+  });
+});

@@ -5,7 +5,7 @@ import {
   type DashboardCountComparisonMetricId,
   type DashboardDataQuality,
   type DashboardOverview,
-  type DashboardPeriod,
+  type DashboardResponsePeriodDays,
   type DashboardRiskLevel
 } from "./contract";
 import {
@@ -135,7 +135,7 @@ export interface DashboardValueGroupView {
 
 export interface DashboardViewModel {
   readonly overview: DashboardOverview;
-  readonly period: DashboardPeriod;
+  readonly period: DashboardResponsePeriodDays;
   readonly range: {
     readonly timezone: "UTC";
     readonly observedAt: string;

@@ -1,5 +1,7 @@
 import {
+  DASHBOARD_PERIODS,
   InvalidDashboardResponseError,
+  isDashboardPeriod,
   parseDashboardOverview
 } from "./contract";
 import {
@@ -11,7 +13,14 @@ import {
 } from "./testFixtures";
 
 describe("dashboard overview contract", () => {
-  it.each([7, 30, 90] as const)("parses the complete %d-day backend shape", (period) => {
+  it("offers exactly the 7-day, 30-day and 1-year selector periods", () => {
+    expect(DASHBOARD_PERIODS).toEqual([7, 30, 365]);
+    expect(isDashboardPeriod(30)).toBe(true);
+    expect(isDashboardPeriod(365)).toBe(true);
+    expect(isDashboardPeriod(90)).toBe(false);
+  });
+
+  it.each([7, 30, 90, 365] as const)("parses the complete %d-day backend shape", (period) => {
     const parsed = parseDashboardOverview(createDashboardOverviewFixture(period));
 
     expect(parsed.period.days).toBe(period);

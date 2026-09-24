@@ -32,7 +32,8 @@ import type {
   DashboardProjectRow,
   DashboardWorkforceFilters,
   DashboardWorkforceRow,
-  SuperAdminDashboardOverview
+  SuperAdminDashboardOverview,
+  SuperAdminDashboardPeriodDays
 } from "../contracts/super-admin-dashboard.js";
 
 export type ProjectStatus = "planning" | "active" | "on_hold" | "completed";
@@ -1082,7 +1083,7 @@ export interface AppRepository {
     endAt: string;
     previousStartAt: string;
     previousEndAt: string;
-    periodDays: 7 | 30 | 90;
+    periodDays: SuperAdminDashboardPeriodDays;
   }): Promise<SuperAdminDashboardOverview>;
   pageSuperAdminDashboardProjects(
     observedAt: string,
@@ -1092,7 +1093,7 @@ export interface AppRepository {
     observedAt: string;
     startAt: string;
     endAt: string;
-    periodDays: 7 | 30 | 90;
+    periodDays: SuperAdminDashboardPeriodDays;
     filters: DashboardWorkforceFilters;
   }): Promise<DashboardPageResult<DashboardWorkforceRow>>;
   createUser(input: NewUser): Promise<UserRecord>;

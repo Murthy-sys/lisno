@@ -40,6 +40,7 @@ import {
   type DashboardValueView,
   type DashboardViewModel
 } from "./data";
+import { isDashboardPeriod } from "./data/contract";
 import {
   toBudgetPositionChartData,
   toCostCompositionDonutData,
@@ -647,10 +648,15 @@ function DashboardFailure({ denied, onRetry }: { readonly denied: boolean; reado
   );
 }
 
+const DEFAULT_DASHBOARD_PERIOD: DashboardPeriod = 30;
+
 export function SuperAdminMobileDashboard({ session }: { readonly session: AuthenticatedSession }) {
   const { width, fontScale } = useWindowDimensions();
-  const [period, setPeriod] = useState<DashboardPeriod>(30);
-  const [comparisonEnabled, setComparisonEnabled] = useState(true);
+  const [selectedPeriod, setPeriod] = useState<DashboardPeriod>(DEFAULT_DASHBOARD_PERIOD);
+  // A period outside the selector (for example a retired 90-day value) falls back to 30 days.
+  const period: DashboardPeriod = isDashboardPeriod(selectedPeriod) ? selectedPeriod : DEFAULT_DASHBOARD_PERIOD;
+  // The previous-period comparison is always on; the header no longer offers a switch.
+  const comparisonEnabled = true;
   const [selectedFinancePosition, setSelectedFinancePosition] = useState(0);
   const [selectedModule, setSelectedModule] = useState<ProgressModuleId>("estimation");
   const [valuesOpen, setValuesOpen] = useState(false);
@@ -748,27 +754,16 @@ export function SuperAdminMobileDashboard({ session }: { readonly session: Authe
         showsVerticalScrollIndicator={false}
       >
         <OperationsHeader
-          comparisonEnabled={comparisonEnabled}
-          observedLabel={model.range.observedLabel}
           greeting={greeting}
-          currentRangeLabel={model.range.currentLabel}
-          previousRangeLabel={model.range.previousLabel}
-          partialFinalDay={model.range.partialFinalDay}
-          onComparisonChange={setComparisonEnabled}
           onPeriodChange={onPeriodChange}
-          onRefresh={() => void onRefresh()}
           period={period}
-          qualityDetail={model.dataQuality.summary}
-          qualityStatus={model.dataQuality.status}
-          rangeLabel={rangeLabel}
-          refreshing={query.isRefetching}
         />
 
         {query.isPlaceholderData ? (
           <AvailabilityBanner title={`Loading the ${period}-day view`} message="The last verified period remains visible until the new response is validated." />
         ) : null}
         {query.isError && model ? (
-          <AvailabilityBanner title="Refresh did not complete" message="The last verified dashboard remains visible. Pull down or use refresh to retry." tone="unavailable" />
+          <AvailabilityBanner title="Refresh did not complete" message="The last verified dashboard remains visible. Pull down to retry." tone="unavailable" />
         ) : null}
         {model.dataQuality.status === "partial" ? (
           <AvailabilityBanner title="Partial coverage" message={model.dataQuality.summary} actionLabel="View details" onAction={() => setValuesOpen(true)} />

@@ -393,7 +393,7 @@ describe("OpenAPI and Swagger UI", () => {
     expect((projects?.parameters as Array<{ name: string; schema: Record<string, unknown> }>))
       .toEqual(expect.arrayContaining([
         expect.objectContaining({ name: "limit", schema: expect.objectContaining({ maximum: 50 }) }),
-        expect.objectContaining({ name: "periodDays", schema: expect.objectContaining({ enum: [7, 30, 90] }) })
+        expect.objectContaining({ name: "periodDays", schema: expect.objectContaining({ enum: [7, 30, 90, 365] }) })
       ]));
     expect(componentSchemas()).toHaveProperty("DashboardRatio");
     expect(componentSchemas()).toHaveProperty("DashboardDataQuality");

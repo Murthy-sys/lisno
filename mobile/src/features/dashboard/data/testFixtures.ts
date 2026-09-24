@@ -1,4 +1,4 @@
-import type { DashboardOverview, DashboardPeriod } from "./contract";
+import type { DashboardOverview, DashboardResponsePeriodDays } from "./contract";
 
 const OBSERVED_AT = "2026-09-22T10:30:00.000Z";
 
@@ -12,7 +12,7 @@ function dateOnly(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
 
-function periodWindow(days: DashboardPeriod, offset: number) {
+function periodWindow(days: DashboardResponsePeriodDays, offset: number) {
   const observed = new Date(OBSERVED_AT);
   const end = shiftUtcDate(observed.toISOString(), offset);
   const start = shiftUtcDate(observed.toISOString(), offset - days + 1);
@@ -39,7 +39,7 @@ function comparisonMetric(current: number, previous: number, unit: "count" | "pa
   };
 }
 
-function buckets(days: DashboardPeriod, startAt: string, side: "current" | "previous") {
+function buckets(days: DashboardResponsePeriodDays, startAt: string, side: "current" | "previous") {
   const final = side === "current"
     ? {
         projectsCreated: 5,
@@ -80,7 +80,7 @@ export function cloneDashboardFixture(value: DashboardOverview): DashboardOvervi
   return JSON.parse(JSON.stringify(value)) as DashboardOverview;
 }
 
-export function createDashboardOverviewFixture(days: DashboardPeriod = 7): DashboardOverview {
+export function createDashboardOverviewFixture(days: DashboardResponsePeriodDays = 7): DashboardOverview {
   const current = periodWindow(days, 0);
   const previous = periodWindow(days, -days);
   return {

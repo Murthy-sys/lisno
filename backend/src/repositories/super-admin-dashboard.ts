@@ -15,7 +15,8 @@ import type {
   DashboardWorkforceFilters,
   DashboardWorkforceMetrics,
   DashboardWorkforceRow,
-  SuperAdminDashboardOverview
+  SuperAdminDashboardOverview,
+  SuperAdminDashboardPeriodDays
 } from "../contracts/super-admin-dashboard.js";
 import {
   dashboardComparisonMetric,
@@ -87,7 +88,7 @@ export function memorySuperAdminDashboardOverview(
     endAt: string;
     previousStartAt?: string;
     previousEndAt?: string;
-    periodDays: 7 | 30 | 90;
+    periodDays: SuperAdminDashboardPeriodDays;
   }
 ): SuperAdminDashboardOverview {
   const observedAt = new Date(input.observedAt);
@@ -1435,7 +1436,7 @@ async function mongoDashboardComparisonSide(input: {
 }
 
 async function mongoDashboardComparison(input: {
-  periodDays: 7 | 30 | 90;
+  periodDays: SuperAdminDashboardPeriodDays;
   startAt: Date;
   endAt: Date;
   previousStartAt: Date;
@@ -1547,7 +1548,7 @@ export async function mongoSuperAdminDashboardOverview(input: {
   endAt: string;
   previousStartAt?: string;
   previousEndAt?: string;
-  periodDays: 7 | 30 | 90;
+  periodDays: SuperAdminDashboardPeriodDays;
   /** Repository-only deterministic failure seam used to prove partial-read isolation. */
   failureInjection?: readonly DashboardOverviewSource[];
 }): Promise<SuperAdminDashboardOverview> {
@@ -2228,7 +2229,7 @@ export async function mongoSuperAdminDashboardWorkforce(input: {
   observedAt: string;
   startAt: string;
   endAt: string;
-  periodDays: 7 | 30 | 90;
+  periodDays: SuperAdminDashboardPeriodDays;
   filters: DashboardWorkforceFilters;
 }): Promise<DashboardPageResult<DashboardWorkforceRow>> {
   if (input.filters.capacityState && input.filters.capacityState !== "unavailable") {
@@ -2457,7 +2458,7 @@ function emptyRiskOverview(): {
   };
 }
 
-function period(input: { periodDays: 7 | 30 | 90; startAt: string; endAt: string }): DashboardPeriod {
+function period(input: { periodDays: SuperAdminDashboardPeriodDays; startAt: string; endAt: string }): DashboardPeriod {
   return { days: input.periodDays, startAt: input.startAt, endAt: input.endAt };
 }
 
@@ -2548,7 +2549,7 @@ function memoryDashboardClients(
 function memoryDashboardComparison(
   state: SeedData,
   input: {
-    periodDays: 7 | 30 | 90;
+    periodDays: SuperAdminDashboardPeriodDays;
     startAt: string;
     endAt: string;
     previousStartAt: string;
@@ -3260,7 +3261,7 @@ function dashboardComparisonAvailabilityDataQuality(
 
 function unavailableDashboardComparison(
   input: {
-    periodDays: 7 | 30 | 90;
+    periodDays: SuperAdminDashboardPeriodDays;
     startAt: string;
     endAt: string;
     previousStartAt: string;

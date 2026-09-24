@@ -1,7 +1,7 @@
 # Mobile bottom tab bar: compact glass selection — specification
 
 Date: 2026-09-24
-Status: Revision 4 — awaiting approval (supersedes Revision 3 layout; Revision 3 was implemented 2026-09-24)
+Status: Revision 4 approved and implemented 2026-09-24 (floating content-width capsule, 20pt grouped icons)
 Classification: Small (mobile app, one component's presentation; no navigation, API, or behavior change)
 
 ## Goal

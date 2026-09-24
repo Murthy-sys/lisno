@@ -1,7 +1,7 @@
 import type { ProjectStatus } from "../repositories/types.js";
 import type { WorkerRole } from "../domain/roles.js";
 
-export const SUPER_ADMIN_DASHBOARD_PERIOD_DAYS = [7, 30, 90] as const;
+export const SUPER_ADMIN_DASHBOARD_PERIOD_DAYS = [7, 30, 90, 365] as const;
 export type SuperAdminDashboardPeriodDays =
   (typeof SUPER_ADMIN_DASHBOARD_PERIOD_DAYS)[number];
 
