@@ -91,9 +91,11 @@ describe("frontend authorization contract", () => {
     );
   });
 
-  it("publishes all 135 unique permissions with quality option creation in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(135);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(135);
+  it("publishes all 138 unique permissions in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(138);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(138);
+    expect(PERMISSION_CODES).toContain("chat.action_types.manage");
+    expect(PERMISSION_CODES).toContain("chat.project_name.manage");
     expect(PERMISSION_CODES).toContain("estimation.design_upload.delete");
     expect(PERMISSION_CODES).toContain("projects.initiate");
     expect(PERMISSION_CODES).toContain("organization.estimators.read");
@@ -107,7 +109,7 @@ describe("frontend authorization contract", () => {
       ...invitationPermissions,
       "access_request.create"
     ]);
-    expect(PERMISSION_CODES.slice(-30)).toEqual([
+    expect(PERMISSION_CODES.slice(-32)).toEqual([
       "access_request.review.read",
       "access_request.review.decide",
       "project_access_grant.revoke",
@@ -123,6 +125,7 @@ describe("frontend authorization contract", () => {
       "ai_estimator_knowledge.context.read",
       "admin.dashboard.read",
       "chat.read", "chat.send", "chat.issue", "chat.read_state", "chat.participants.manage",
+      "chat.action_types.manage", "chat.project_name.manage",
       "procurement.items.read", "procurement.items.manage",
       "procurement.vendors.read", "procurement.vendors.create",
       "procurement.vendor_suggestions.read",

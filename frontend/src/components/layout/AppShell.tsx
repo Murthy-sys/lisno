@@ -5,11 +5,14 @@ import { AskLisnoLauncher } from "../../features/estimates/AskLisnoLauncher";
 import { MobileHeader } from "./MobileHeader";
 import { Sidebar } from "./Sidebar";
 import { SkipLink } from "./SkipLink";
+import { WorkspaceTopbar } from "./WorkspaceTopbar";
+import { BrandLogo } from "../ui/BrandLogo";
 import { ProjectChatProvider } from "../../features/messages";
 import "../../features/messages/projectChatShell.css";
 import { NotificationProvider } from "../../features/notifications/NotificationProvider";
-import { NotificationBanners, NotificationBell } from "../../features/notifications/NotificationBell";
+import { NotificationBanners } from "../../features/notifications/NotificationBell";
 import "../../features/notifications/notifications.css";
+import "./common-shell.css";
 
 export function AppShell() {
   const auth = useAuth();
@@ -20,28 +23,27 @@ export function AppShell() {
   return (
     <NotificationProvider>
     <ProjectChatProvider>
-    <div className={messaging ? "project-messaging-app" : "ui-app-shell"} data-role={messaging ? undefined : auth.user.role}>
+    <div className={messaging ? "project-messaging-app ui-common-shell" : "ui-app-shell ui-common-shell"} data-role={messaging ? undefined : auth.user.role}>
       <SkipLink />
-      {!messaging ? <><aside className="ui-sidebar-rail" aria-label="Application sidebar">
+      {!messaging ? <aside className="ui-sidebar-rail" aria-label="Application sidebar">
         <Sidebar
           user={auth.user}
           authorization={auth.authorization}
           onLogout={auth.logout}
         />
-      </aside>
-      <MobileHeader
-        user={auth.user}
-        authorization={auth.authorization}
-        onLogout={auth.logout}
+      </aside> : null}
+      <WorkspaceTopbar user={auth.user} onLogout={auth.logout} compact={messaging}
+        leading={messaging ? <Link className="workspace-topbar__home" to="/project-messages" aria-label="Project messages"><BrandLogo /></Link> : <>
+          <MobileHeader user={auth.user} authorization={auth.authorization} onLogout={auth.logout} />
+          <span className="workspace-topbar__mobile-brand"><BrandLogo /></span>
+        </>}
       />
-      </> : <header className="notification-chat-bar" aria-label="Project messages and notifications"><Link to="/project-messages">Project messages</Link><NotificationBell /></header>}
       <main
         id="main-content"
         className={messaging ? "project-messaging-main" : "ui-workspace"}
         data-role={messaging ? undefined : auth.user.role}
         tabIndex={-1}
       >
-        {!messaging ? <div className="notification-workspace-bar"><NotificationBell /></div> : null}
         <Outlet />
       </main>
       <NotificationBanners />

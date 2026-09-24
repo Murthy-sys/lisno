@@ -4,7 +4,7 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from "re
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { ROLE_LABELS } from "../contracts/authorization";
+import type { PublicUser } from "../contracts/session";
 import { useConfiguredRuntime } from "../runtime/RuntimeProvider";
 import { LisnoWordmark } from "../ui/brand";
 import { BackButton } from "../ui/BackButton";
@@ -13,18 +13,14 @@ import { ChromeSurface } from "../ui/ChromeSurface";
 import { chrome, colors, fonts, radii, spacing } from "../ui/tokens";
 import { GlassSelection } from "./GlassSelection";
 import { NavigationIcon, RootTabIcon } from "./NavigationIcon";
+import { ProfileAvatar } from "./ProfileAvatar";
+import { ProfileMenu } from "./ProfileMenu";
 import { rootTabsForAuthorization, type FeatureId, type RootTab } from "./registry";
 import { scaffoldNavigationMode } from "./scaffoldLayout";
 import { useScreenBack } from "./useScreenBack";
 
 function routeForTab(tab: RootTab): string {
   return tab.id === "more" ? "/more" : tab.destination?.path ?? "/";
-}
-
-function initialsForName(name: string): string {
-  const parts = name.trim().split(/\s+/u).filter(Boolean);
-  const initials = parts.length > 1 ? [parts[0], parts[parts.length - 1]] : parts;
-  return initials.map((part) => Array.from(part ?? "")[0] ?? "").join("").toLocaleUpperCase();
 }
 
 interface ScaffoldNavigationGuardValue {
@@ -44,7 +40,7 @@ export function ScaffoldContentBack() {
   return back?.visible ? <BackButton onPress={back.onBack} disabled={back.disabled} /> : null;
 }
 
-function NavigationButton({ tab, selected, compact, disabled }: { readonly tab: RootTab; readonly selected: boolean; readonly compact: boolean; readonly disabled: boolean }) {
+function NavigationButton({ tab, selected, compact, disabled, user, onOpenProfile }: { readonly tab: RootTab; readonly selected: boolean; readonly compact: boolean; readonly disabled: boolean; readonly user: PublicUser; readonly onOpenProfile: () => void }) {
   const displayLabel = compact && tab.id === "landing" ? "Home" : tab.label;
   return (
     <Pressable
@@ -52,18 +48,22 @@ function NavigationButton({ tab, selected, compact, disabled }: { readonly tab: 
       accessibilityLabel={displayLabel}
       accessibilityState={{ disabled, selected }}
       disabled={disabled}
-      onPress={() => router.replace(routeForTab(tab) as never)}
+      onPress={() => tab.id === "profile" ? onOpenProfile() : router.replace(routeForTab(tab) as never)}
       style={({ pressed }) => [styles.navButton, compact ? styles.navButtonCompact : styles.navButtonRail, selected && !compact ? styles.navButtonSelected : null, pressed ? styles.pressed : null, disabled ? styles.disabled : null]}
     >
       {compact ? (
         <View style={styles.navGlassSlot}>
           {selected ? <GlassSelection radius={18} /> : null}
-          <RootTabIcon tab={tab} selected={selected} size={20} color={selected ? colors.primaryInk : chrome.muted} />
+          {tab.id === "profile"
+            ? <ProfileAvatar user={user} size={24} />
+            : <RootTabIcon tab={tab} selected={selected} size={20} color={selected ? colors.primaryInk : chrome.muted} />}
         </View>
       ) : (
         <>
           <View style={styles.navIcon}>
-            <RootTabIcon tab={tab} selected={selected} color={selected ? colors.primaryInk : chrome.muted} />
+            {tab.id === "profile"
+              ? <ProfileAvatar user={user} size={24} />
+              : <RootTabIcon tab={tab} selected={selected} color={selected ? colors.primaryInk : chrome.muted} />}
           </View>
           <Text numberOfLines={2} adjustsFontSizeToFit={false} minimumFontScale={0.8} style={[styles.navLabel, styles.navLabelRail, selected ? styles.navLabelSelected : null]}>{displayLabel}</Text>
         </>
@@ -75,6 +75,7 @@ function NavigationButton({ tab, selected, compact, disabled }: { readonly tab: 
 export function AdaptiveAppScaffold({
   activeFeature,
   more = false,
+  profile = false,
   navigationRailBreakpoint = 600,
   immersiveBelowWidth,
   backPlacement = "scaffold",
@@ -82,6 +83,8 @@ export function AdaptiveAppScaffold({
 }: {
   readonly activeFeature?: FeatureId;
   readonly more?: boolean;
+  /** Selects the Profile tab. */
+  readonly profile?: boolean;
   readonly navigationRailBreakpoint?: number;
   readonly immersiveBelowWidth?: number;
   readonly backPlacement?: "scaffold" | "content";
@@ -91,6 +94,7 @@ export function AdaptiveAppScaffold({
   const isFocused = useIsFocused();
   const { width } = useWindowDimensions();
   const [navigationBlocked, setNavigationBlocked] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const back = useScreenBack({ blocked: navigationBlocked });
   const navigationGuard = useMemo(
     () => ({ setBlocked: setNavigationBlocked }),
@@ -107,6 +111,8 @@ export function AdaptiveAppScaffold({
     return null;
   }
   const tabs = rootTabsForAuthorization(authenticated.user.role, authenticated.authorization);
+  const isSelected = (tab: RootTab) => more ? tab.id === "more" : profile ? tab.id === "profile" : tab.destination?.id === activeFeature;
+  const openProfileMenu = () => setProfileMenuOpen(true);
 
   return (
     <AppModalBackdrop>
@@ -116,22 +122,17 @@ export function AdaptiveAppScaffold({
         <ChromeSurface edge="top" testID="scaffold-top-chrome">
           <SafeAreaView edges={["top", "left", "right"]} testID="scaffold-top-inset">
             <View style={styles.topBar}>
-              <View accessibilityLabel="Lisno. Plan, track, deliver." style={styles.brand}>
+              <View accessible accessibilityRole="image" accessibilityLabel="Lisno" style={styles.brand}>
                 <LisnoWordmark tone="light" width={104} />
-                <Text style={styles.tagline}>PLAN · TRACK · DELIVER</Text>
               </View>
-              <View style={styles.identity}>
-                <View style={styles.identityCopy}>
-                  <Text numberOfLines={1} style={styles.userName}>{authenticated.user.name}</Text>
-                  <Text numberOfLines={1} style={styles.roleLabel}>{ROLE_LABELS[authenticated.user.role]}</Text>
-                </View>
-                <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.avatar}>
-                  <Text style={styles.avatarText}>{initialsForName(authenticated.user.name)}</Text>
-                </View>
-                <Pressable accessibilityLabel="Open notifications" accessibilityRole="button" accessibilityState={{ disabled: navigationBlocked }} disabled={navigationBlocked} onPress={() => router.push("/feature/notifications")} style={[styles.notificationButton, navigationBlocked ? styles.disabled : null]}>
-                  <NavigationIcon name="notifications" color={chrome.ink} />
-                </Pressable>
-              </View>
+              <Pressable accessibilityLabel="Open notifications" accessibilityRole="button" accessibilityState={{ disabled: navigationBlocked }} disabled={navigationBlocked} onPress={() => router.push("/feature/notifications")} style={[styles.notificationButton, navigationBlocked ? styles.disabled : null]}>
+                {({ pressed }) => (
+                  <View testID="notification-circle" style={[styles.notificationCircle, pressed ? styles.notificationPressed : null]}>
+                    <GlassSelection testID="notification-glass" radius={18} />
+                    <NavigationIcon name="notifications" color={chrome.ink} size={20} />
+                  </View>
+                )}
+              </Pressable>
             </View>
           </SafeAreaView>
         </ChromeSurface>
@@ -141,7 +142,7 @@ export function AdaptiveAppScaffold({
           <ChromeSurface edge="rail" style={styles.railSurface} testID="scaffold-rail-chrome">
             <SafeAreaView edges={["bottom"]} style={styles.rail} testID="scaffold-rail-inset">
               <View accessibilityRole="tablist" style={styles.railTabs}>
-                {tabs.map((tab) => <NavigationButton key={tab.id} tab={tab} compact={false} disabled={navigationBlocked} selected={more ? tab.id === "more" : tab.destination?.id === activeFeature} />)}
+                {tabs.map((tab) => <NavigationButton key={tab.id} tab={tab} compact={false} disabled={navigationBlocked} user={authenticated.user} onOpenProfile={openProfileMenu} selected={isSelected(tab)} />)}
               </View>
             </SafeAreaView>
           </ChromeSurface>
@@ -161,10 +162,13 @@ export function AdaptiveAppScaffold({
         <SafeAreaView edges={["bottom", "left", "right"]} style={styles.bottomInset} testID="scaffold-bottom-inset">
           <ChromeSurface edge="bottom" style={styles.dock} testID="scaffold-bottom-chrome">
             <View accessibilityRole="tablist" style={styles.bottomBar}>
-              {tabs.map((tab) => <NavigationButton key={tab.id} tab={tab} compact disabled={navigationBlocked} selected={more ? tab.id === "more" : tab.destination?.id === activeFeature} />)}
+              {tabs.map((tab) => <NavigationButton key={tab.id} tab={tab} compact disabled={navigationBlocked} user={authenticated.user} onOpenProfile={openProfileMenu} selected={isSelected(tab)} />)}
             </View>
           </ChromeSurface>
         </SafeAreaView>
+      ) : null}
+      {navigationMode !== "immersive" ? (
+        <ProfileMenu visible={profileMenuOpen} placement={navigationMode} onRequestClose={() => setProfileMenuOpen(false)} />
       ) : null}
     </View>
     </AppModalBackdrop>
@@ -173,16 +177,11 @@ export function AdaptiveAppScaffold({
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.shell },
-  topBar: { minHeight: 66, paddingHorizontal: spacing.md, paddingVertical: spacing.xs, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
-  brand: { alignItems: "flex-start", gap: spacing.xxs },
-  tagline: { color: chrome.muted, fontFamily: fonts.medium, fontSize: 7, letterSpacing: 1.05 },
-  identity: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: spacing.xs, flex: 1, minWidth: 0 },
-  identityCopy: { maxWidth: 180, flexShrink: 1, alignItems: "flex-end" },
-  userName: { color: chrome.ink, fontFamily: fonts.semibold, fontSize: 13 },
-  roleLabel: { color: chrome.muted, fontFamily: fonts.regular, fontSize: 11 },
-  avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: chrome.selected, borderWidth: 1, borderColor: chrome.selectedBorder, alignItems: "center", justifyContent: "center" },
-  avatarText: { fontFamily: fonts.medium, fontSize: 12, color: chrome.ink },
+  topBar: { minHeight: 52, paddingHorizontal: spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
+  brand: { alignItems: "flex-start" },
   notificationButton: { minWidth: 48, minHeight: 48, alignItems: "center", justifyContent: "center" },
+  notificationCircle: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  notificationPressed: { opacity: 0.8 },
   body: { flex: 1, flexDirection: "row", backgroundColor: colors.canvas },
   bodyRounded: { borderTopLeftRadius: 30, borderTopRightRadius: 30, overflow: "hidden" },
   railSurface: { width: 176 },

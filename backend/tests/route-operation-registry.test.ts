@@ -33,6 +33,7 @@ import { EXPECTED_PROJECT_FINANCE_HUMAN_JWT_OPERATIONS } from "./fixtures/projec
 import { EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS } from "./fixtures/ai-estimator-knowledge-route-operations.js";
 import { EXPECTED_SUPER_ADMIN_DASHBOARD_OPERATIONS } from "./fixtures/super-admin-dashboard-route-operations.js";
 import { EXPECTED_PROJECT_CHAT_OPERATIONS } from "./fixtures/project-chat-route-operations.js";
+import { EXPECTED_PROFILE_PHOTO_OPERATIONS } from "./fixtures/profile-photo-route-operations.js";
 
 const EXPECTED_ALL_HUMAN_JWT_OPERATIONS = [
   ...EXPECTED_PROJECT_PROCUREMENT_OPERATIONS,
@@ -41,6 +42,7 @@ const EXPECTED_ALL_HUMAN_JWT_OPERATIONS = [
   ...EXPECTED_PROJECT_FINANCE_HUMAN_JWT_OPERATIONS,
   ...EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS,
   ...EXPECTED_SUPER_ADMIN_DASHBOARD_OPERATIONS,
+  ...EXPECTED_PROFILE_PHOTO_OPERATIONS,
   { key: "DELETE /estimate-design-uploads/:uploadId", permission: "estimation.design_upload.delete", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "baseline" },
   { key: "POST /estimate-plan-change-requests/:requestId/replacement-upload", permission: "estimation.drawing.replace", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "baseline" }
 ] as const;
@@ -216,9 +218,9 @@ describe("human JWT operation registry", () => {
     expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => expected.some((row) => row.key === key))).toEqual(expected);
   });
 
-  it("matches all 227 normative operation rows", () => {
+  it("matches all 241 normative operation rows", () => {
     expect(Object.values(HUMAN_JWT_OPERATIONS).sort((a, b) => a.key.localeCompare(b.key))).toEqual([...EXPECTED_ALL_HUMAN_JWT_OPERATIONS].sort((a, b) => a.key.localeCompare(b.key)));
-    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(227);
+    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(241);
   });
 
   it("mounts rows 2 through 23 as exact router groups with one ordered marker pair", () => {
@@ -456,9 +458,9 @@ describe("human JWT operation registry", () => {
     );
   });
 
-  it("appends exactly 53 AI Estimator Knowledge operations with one closed namespace", () => {
+  it("appends exactly 59 AI Estimator Knowledge operations with one closed namespace", () => {
     expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS.some((row) => row.key === key))).toEqual(EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS);
-    expect(EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS).toHaveLength(53);
+    expect(EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS).toHaveLength(59);
     expect(HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability }) => availability === "ai_estimator_knowledge"
     )).toEqual(EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS);
@@ -479,6 +481,10 @@ describe("human JWT operation registry", () => {
         superAdminBehavior: "admin_override"
       });
     }
+  });
+
+  it("registers exactly three self-scoped profile photo operations", () => {
+    expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => EXPECTED_PROFILE_PHOTO_OPERATIONS.some((row) => row.key === key))).toEqual(EXPECTED_PROFILE_PHOTO_OPERATIONS);
   });
 
   it("appends exactly three Super Admin dashboard reads", () => {
@@ -506,7 +512,7 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("mounts the exact 227-operation manifest with one ordered marker pair each", () => {
+  it("mounts the exact 241-operation manifest with one ordered marker pair each", () => {
     const expectedKeys = EXPECTED_ALL_HUMAN_JWT_OPERATIONS.map(
       ({ key }) => key
     ).sort();
@@ -516,8 +522,8 @@ describe("human JWT operation registry", () => {
     const mountedOperations = mountedRoutes.map(({ key }) => key);
 
     expect([...mountedOperations].sort()).toEqual(expectedKeys);
-    expect(expectedKeys).toHaveLength(227);
-    expect(new Set(expectedKeys).size).toBe(227);
+    expect(expectedKeys).toHaveLength(241);
+    expect(new Set(expectedKeys).size).toBe(241);
     expect(mountedOperations).toContain(
       "POST /execution/worker-assignments/override"
     );
@@ -564,9 +570,9 @@ describe("human JWT operation registry", () => {
     expect(() => assertTaskSixRouteMounts(routers)).toThrow();
   });
 
-  it("has 227 unique keys and exactly 135 routed permissions", () => {
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(227);
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(135);
+  it("has 241 unique keys and exactly 138 routed permissions", () => {
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(241);
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(138);
     expect(HUMAN_JWT_OPERATION_LIST.every(({ permission }) =>
       (PERMISSION_CODES as readonly string[]).includes(permission)
     )).toBe(true);

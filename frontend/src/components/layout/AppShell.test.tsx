@@ -3,15 +3,12 @@ import { resolve } from "node:path";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
 
 import type { PublicUser, Role } from "../../api/types";
 import type { PermissionCode } from "../../api/authorization-contract";
 import { tokenStorage } from "../../api/client";
 import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
-import { FeedbackProvider } from "../feedback/FeedbackProvider";
-import { Sidebar } from "./Sidebar";
 import { SkipLink } from "./SkipLink";
 
 const shellFixtures = [
@@ -130,6 +127,10 @@ describe("AppShell", () => {
         "src",
         "/lisno-logo.svg"
       );
+      const tools = screen.getByRole("banner", { name: "Workspace tools" });
+      expect(within(tools).getByRole("button", { name })).toBeVisible();
+      expect(screen.getAllByRole("button", { name: /^Notifications/ })).toHaveLength(1);
+      expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
       expect(screen.getAllByText(name).length).toBeGreaterThan(0);
       await userEvent.click(screen.getByRole("button", { name }));
       expect(screen.getAllByText(email).length).toBeGreaterThan(0);
@@ -189,7 +190,7 @@ describe("AppShell", () => {
     expect(trigger).toHaveFocus();
   });
 
-  it("closes the mobile Drawer when its sign-out action logs out", async () => {
+  it("keeps account access in the shared topbar when mobile navigation closes", async () => {
     installAuthenticatedSession({
       id: "designer-1",
       name: "Ananya Rao",
@@ -201,8 +202,10 @@ describe("AppShell", () => {
     await userEvent.click(screen.getByRole("button", { name: "Open navigation" }));
 
     const drawer = screen.getByRole("dialog", { name: "Navigation" });
-    await userEvent.click(within(drawer).getByRole("button", { name: "Ananya Rao" }));
-    await userEvent.click(within(drawer).getByRole("button", { name: "Sign out" }));
+    expect(within(drawer).queryByRole("button", { name: "Ananya Rao" })).not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Ananya Rao" }));
+    await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument()
@@ -227,7 +230,7 @@ describe("AppShell", () => {
     });
     expect(
       within(desktopNavigation).getAllByRole("link").map((link) => link.textContent)
-    ).toEqual(["My Projects", "Access requests"]);
+    ).toEqual(["My Projects", "Procurement", "Access requests"]);
 
     await userEvent.click(screen.getByRole("button", { name: "Open navigation" }));
     const mobileNavigation = within(
@@ -235,72 +238,11 @@ describe("AppShell", () => {
     ).getByRole("navigation", { name: "Mobile navigation" });
     expect(
       within(mobileNavigation).getAllByRole("link").map((link) => link.textContent)
-    ).toEqual(["My Projects", "Access requests"]);
-  });
-});
-
-describe("Sidebar", () => {
-  it("disables duplicate sign-out activation while preserving its accessible name", async () => {
-    let finishLogout!: () => void;
-    const logoutPending = new Promise<void>((resolve) => {
-      finishLogout = resolve;
-    });
-    const onLogout = vi.fn(() => logoutPending);
-    const user = userEvent.setup();
-
-    render(
-      <MemoryRouter initialEntries={["/designer"]}>
-        <FeedbackProvider>
-          <Sidebar
-            user={{
-              id: "designer-1",
-              name: "Ananya Rao",
-              email: "ananya@lisno.example",
-              role: "designer"
-            }}
-            authorization={authorizationFor("designer")}
-            onLogout={onLogout}
-          />
-        </FeedbackProvider>
-      </MemoryRouter>
-    );
-
-    await user.click(screen.getByRole("button", { name: "Ananya Rao" }));
-    const button = screen.getByRole("button", { name: "Sign out" });
-    await user.click(button);
-
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute("aria-busy", "true");
-    expect(button).toHaveAccessibleName("Sign out");
-    expect(button).toHaveAttribute("data-busy", "true");
-
-    await user.click(button);
-    expect(onLogout).toHaveBeenCalledTimes(1);
-
-    finishLogout();
-    await waitFor(() => expect(button).not.toBeDisabled());
+    ).toEqual(["My Projects", "Procurement", "Access requests"]);
   });
 });
 
 describe("shell CSS contract", () => {
-  it("keeps the account trigger legible on midnight and the sign-out item disabled-while-busy", () => {
-    const shell = readRuntimeStyle("shell.css");
-
-    expect(
-      declarations(shell, ".ui-sidebar__account-name").get("color")
-    ).toBe("var(--color-bg)");
-    expect(
-      declarations(shell, ".ui-sidebar__account-trigger:hover").get(
-        "background"
-      )
-    ).toBe("var(--color-brand-midnight-raised)");
-    expect(
-      declarations(shell, ".ui-sidebar__account-menu-item:disabled").get(
-        "opacity"
-      )
-    ).toBe("0.56");
-  });
-
   it("preserves the layered, responsive, role-aware shell cascade", () => {
     const index = readRuntimeStyle("index.css");
     const shell = readRuntimeStyle("shell.css");

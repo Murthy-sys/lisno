@@ -114,6 +114,14 @@ describe("Configuration basket management", () => {
     await user.type(within(dialog).getByRole("textbox", { name: "Type Sub-Basket name to confirm" }), group.name); await user.click(within(dialog).getByRole("button", { name: "Delete Sub-Basket" }));
     await waitFor(() => expect(api.permanentlyDeleteKnowledgeSubBasket).toHaveBeenLastCalledWith(basket.id, group.id, expect.objectContaining({ impactToken: "impact-two" })));
   });
+  it("blocks permanent Sub-Basket deletion while retained vendors reference it", async () => {
+    vi.mocked(api.getKnowledgeSubBasketDeletionImpact).mockResolvedValue({ ...impact, vendorReferenceCount: 2 });
+    const user = userEvent.setup(); renderManager(); const dialog = await openDelete(user);
+    await within(dialog).findByText("Permanent deletion is blocked"); await confirmDelete(user, dialog);
+    expect(within(dialog).getByText(/2 retained vendors/)).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Delete Sub-Basket" })).toBeDisabled();
+    expect(api.permanentlyDeleteKnowledgeSubBasket).not.toHaveBeenCalled();
+  });
   it("blocks deletion until failed impact loads successfully", async () => {
     const user = userEvent.setup(); vi.mocked(api.getKnowledgeSubBasketDeletionImpact).mockRejectedValueOnce(new Error("Impact unavailable")); renderManager(); const dialog = await openDelete(user);
     expect(await within(dialog).findByText("Impact unavailable")).toBeVisible(); expect(within(dialog).getByRole("button", { name: "Delete Sub-Basket" })).toBeDisabled();

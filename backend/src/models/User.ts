@@ -2,6 +2,15 @@ import { model, models, Schema } from "./mongoose.js";
 import { ROLE_CODES } from "../domain/roles.js";
 import { ACCOUNT_KINDS } from "../domain/demo-identities.js";
 
+const profilePhotoSchema = new Schema(
+  {
+    storageKey: { type: String, required: true },
+    version: { type: Number, required: true, min: 1 },
+    updatedAt: { type: Date, required: true }
+  },
+  { _id: false }
+);
+
 const userSchema = new Schema(
   {
     _id: { type: String, required: true },
@@ -28,7 +37,9 @@ const userSchema = new Schema(
     managerId: { type: String, ref: "User", default: null },
     authorizedClientIds: [{ type: String, ref: "User" }],
     avatar: { type: String },
-    title: { type: String }
+    title: { type: String },
+    profilePhoto: { type: profilePhotoSchema, default: undefined },
+    profilePhotoRevision: { type: Number, min: 0 }
   },
   { timestamps: true, versionKey: false }
 );

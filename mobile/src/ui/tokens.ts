@@ -33,7 +33,9 @@ export const colors = Object.freeze({
   warning: "#8a5b12",
   warningSoft: "#f5eee1",
   info: "#315ab8",
-  infoSoft: "#edf1fa"
+  infoSoft: "#edf1fa",
+  lavender: "#5e4f8c",
+  lavenderSoft: "#eeeaf6"
 });
 
 /** Translucent navigation surfaces keep content ink independent of layer opacity. */

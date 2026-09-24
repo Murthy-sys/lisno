@@ -6,6 +6,7 @@ import { Button } from "../../components/ui/Button";
 import { Drawer } from "../../components/ui/Drawer";
 import { attachmentSummary } from "./chatAttachments";
 import { ChatActionMenu, chatInitials } from "./ChatActionMenu";
+import { ChatProjectNameDialog } from "./ChatProjectNameDialog";
 import { ChatComposer } from "./ChatComposer";
 import { ChatIssueDialog } from "./ChatIssueDialog";
 import { ChatParticipants } from "./ChatParticipants";
@@ -15,7 +16,7 @@ import { ChatTypingIndicator } from "./ChatTypingIndicator";
 import { useChatTypingActivity } from "./useChatTypingActivity";
 import { useProjectChat, useChatProjectRegistration, type ChatSendAttempt } from "./ProjectChatProvider";
 import { chatErrorMessage, chatKeys } from "./projectChatApi";
-import { useChatMessages, useChatParticipants, useChatSummary, useChatAttachmentPolicy } from "./projectChatQueries";
+import { useChatMessages, useChatParticipants, useChatSummary, useChatAttachmentPolicy, useChatActionTypes } from "./projectChatQueries";
 import { emptyChatDraft, mergeChatMessages } from "./projectChatState";
 import type { ChatFilter, ChatMessage } from "./projectChatTypes";
 import "./projectChat.css";
@@ -35,6 +36,8 @@ function ProjectConversation({ projectId }: { projectId: string }) {
   const filter = filters.find(item => item.value === params.get("filter"))?.value ?? "all";
   const around = params.get("message") ?? undefined;
   const summary = useChatSummary(projectId);
+  const actionTypes = useChatActionTypes(projectId, Boolean(summary.data));
+  const [renameOpen, setRenameOpen] = useState(false);
   const attachmentPolicy = useChatAttachmentPolicy(projectId, Boolean(summary.data));
   const participants = useChatParticipants(projectId, Boolean(summary.data));
   const history = useChatMessages(projectId, filter, around, Boolean(summary.data));
@@ -67,12 +70,12 @@ function ProjectConversation({ projectId }: { projectId: string }) {
     requestAnimationFrame(() => composerRegion.current?.querySelector("textarea")?.focus());
   }
   function send() {
-    const input = { body: draft.body, mentions: draft.mentions, priority: draft.priority, replyToId: draft.reply?.id ?? null, responsibleUserId: draft.responsibleUserId || null, clientMessageId: crypto.randomUUID() };
+    const input = { ...(draft.action ? { action: { ...draft.action } } : {}), body: draft.body, mentions: draft.mentions, priority: draft.priority, replyToId: draft.reply?.id ?? null, responsibleUserId: draft.responsibleUserId || null, clientMessageId: crypto.randomUUID() };
     void chat.send(projectId, input, true);
   }
   function editAttempt(attempt: ChatSendAttempt) {
     if (draft.body.trim() || draft.files.length || draft.reply || draft.priority !== "normal" || attempt.commitStarted || attempt.status === "sending") return;
-    chat.setDraft(projectId, { body: attempt.input.body, mentions: attempt.input.mentions, priority: attempt.input.priority, responsibleUserId: attempt.input.responsibleUserId ?? "", reply: attempt.reply ?? null, files: attempt.files ?? [] });
+    chat.setDraft(projectId, { action: attempt.input.action, body: attempt.input.body, mentions: attempt.input.mentions, priority: attempt.input.priority, responsibleUserId: attempt.input.responsibleUserId ?? "", reply: attempt.reply ?? null, files: attempt.files ?? [] });
     chat.removeAttempt(projectId, attempt.input.clientMessageId);
     composerRegion.current?.querySelector("textarea")?.focus();
   }
@@ -89,6 +92,7 @@ function ProjectConversation({ projectId }: { projectId: string }) {
         </button>
         <h1 id="project-chat-title" className="sr-only">{name}</h1>
       </div>
+      {summary.data?.capabilities.canRenameProject && !unavailable ? <button type="button" className="project-chat-icon project-chat-rename" aria-label="Edit project name" onClick={() => setRenameOpen(true)}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15Z" /></svg></button> : null}
       {summary.data && !unavailable ? <button type="button" className="project-chat-critical" onClick={() => selectFilter("critical")} aria-label={`Critical ${summary.data.counts.openCritical}`}>Critical {summary.data.counts.openCritical}</button> : null}
       <ChatActionMenu label="Conversation options" items={[
         ...(!unavailable && summary.data ? filters.map(item => ({ label: item.label, selected: filter === item.value && !around, onSelect: () => selectFilter(item.value) })) : []),
@@ -108,13 +112,14 @@ function ProjectConversation({ projectId }: { projectId: string }) {
             {participants.isError ? <p className="project-chat-warning" role="status">Participants are unavailable. Retry before sending a message. <Button variant="quiet" onClick={() => void participants.refetch()}>Retry participants</Button></p> : null}
             {(draft.body || draft.files.length || draft.reply || draft.priority !== "normal") && attempts.some(attempt => attempt.status === "failed") ? <p className="project-chat-muted">Finish or clear your current draft before editing a failed message.</p> : null}
             <ChatTypingIndicator people={chat.currentProjectId === projectId ? chat.typing : []} />
-            <ChatComposer draft={draft} participants={participants.data?.items ?? []} sender={participants.data?.items.find(person => person.id === chat.userId)} onTypingEdit={typingActivity.edit} onTypingStop={typingActivity.stop} disabled={!summary.data.capabilities.canSend || !participants.data || participants.isError} onChange={next => chat.setDraft(projectId, next)} onSend={send} policy={attachmentPolicy.data} policyError={attachmentPolicy.isError && !attachmentPolicy.unsupported ? "Attachments are temporarily unavailable." : undefined} onRetryPolicy={() => void attachmentPolicy.refetch()} />
+            <ChatComposer projectId={projectId} actionTypes={actionTypes.isError ? undefined : actionTypes.data} actionTypesError={actionTypes.isError ? "Actions are temporarily unavailable. Your draft is retained." : undefined} onRetryActionTypes={() => void actionTypes.refetch()} draft={draft} participants={participants.data?.items ?? []} sender={participants.data?.items.find(person => person.id === chat.userId)} onTypingEdit={typingActivity.edit} onTypingStop={typingActivity.stop} disabled={!summary.data.capabilities.canSend || !participants.data || participants.isError} onChange={next => chat.setDraft(projectId, next)} onSend={send} policy={attachmentPolicy.data} policyError={attachmentPolicy.isError && !attachmentPolicy.unsupported ? "Attachments are temporarily unavailable." : undefined} onRetryPolicy={() => void attachmentPolicy.refetch()} />
             {!summary.data.capabilities.canSend ? <p role="status">Sending is not available for your current access.</p> : null}
           </div>
       </div></ChatMediaProvider>
       {panel ? <Drawer id="project-chat-group-info" open title="Project participants" eyebrow="Group information" variant="contextual" className="project-chat-details" onClose={() => setPanel(null)}>
-        {participants.isPending ? <p role="status">Loading participants…</p> : participants.isError ? <p role="alert">{chatErrorMessage(participants.error)} <Button variant="quiet" onClick={() => void participants.refetch()}>Retry</Button></p> : <ChatParticipants projectId={projectId} participants={participants.data?.items ?? []} warnings={participants.data?.setupWarnings ?? []} canManage={summary.data.capabilities.canManageParticipants} />}
+        {participants.isPending ? <p role="status">Loading participants…</p> : participants.isError ? <p role="alert">{chatErrorMessage(participants.error)} <Button variant="quiet" onClick={() => void participants.refetch()}>Retry</Button></p> : <ChatParticipants projectId={projectId} participants={participants.data?.items ?? []} removed={participants.data?.removed ?? []} warnings={participants.data?.setupWarnings ?? []} canManage={summary.data.capabilities.canManageParticipants} />}
       </Drawer> : null}
+      {renameOpen ? <ChatProjectNameDialog projectId={projectId} summary={summary.data} onClose={() => setRenameOpen(false)} /> : null}
       {selectedIssue ? <ChatIssueDialog projectId={projectId} message={messages.find(message => message.id === selectedIssue.id) ?? selectedIssue} participants={participants.data?.items ?? []} onClose={() => setSelectedIssue(null)} /> : null}
     </>}
   </section>;

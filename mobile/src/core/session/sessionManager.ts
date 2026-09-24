@@ -230,6 +230,31 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Replaces the signed-in user's public profile (for example after a profile-photo change)
+   * without re-authenticating. The replacement must parse as a strict PublicUser and keep the
+   * same id and role, so the accepted authorization snapshot stays valid; otherwise it is ignored.
+   */
+  replaceUser(input: unknown): boolean {
+    const current = this.snapshot;
+    if (current.status !== "authenticated" || !current.session) return false;
+    const user = parsePublicUser(input);
+    if (
+      !user ||
+      user.id !== current.session.user.id ||
+      user.role !== current.session.user.role
+    ) {
+      return false;
+    }
+    this.commit(
+      "authenticated",
+      Object.freeze({ user, authorization: current.session.authorization }),
+      null,
+      current.generation
+    );
+    return true;
+  }
+
   handleUnauthorized = (context: UnauthorizedRequestContext): void => {
     const currentToken = this.dependencies.tokenState.getRequestToken();
     const environment = this.dependencies.getEnvironmentSnapshot();

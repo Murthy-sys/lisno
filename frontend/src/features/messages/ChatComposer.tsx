@@ -7,13 +7,15 @@ import { Field, Select, Textarea } from "../../components/ui/Field";
 import { IconButton } from "../../components/ui/IconButton";
 import { ChatActionMenu } from "./ChatActionMenu";
 import { ChatEmojiPicker } from "./ChatEmojiPicker";
+import { AddChatActionTypeDialog, ChatTrackedActionDialog, chatDueDate, isChatDueDate } from "./ChatTrackedAction";
 import { ChatFileTray } from "./ChatFileTray";
 import { attachmentSummaryText, selectChatFiles } from "./chatAttachments";
 import { useChatRecorder } from "./useChatRecorder";
 import { mentionsAfterEdit, type ChatDraft } from "./projectChatState";
-import type { ChatAttachmentPolicy, ChatParticipant, ChatPerson, ChatPriority } from "./projectChatTypes";
+import type { ChatActionType, ChatActionTypes, ChatAttachmentPolicy, ChatParticipant, ChatPerson, ChatPriority } from "./projectChatTypes";
 
-export function ChatComposer({ draft, participants, disabled, onChange, onSend, policy, policyError, onRetryPolicy, sender, onTypingEdit, onTypingStop }: {
+export function ChatComposer({ draft, participants, disabled, onChange, onSend, policy, policyError, onRetryPolicy, sender, onTypingEdit, onTypingStop, projectId, actionTypes, actionTypesError, onRetryActionTypes }: {
+  projectId?: string; actionTypes?: ChatActionTypes; actionTypesError?: string; onRetryActionTypes?: () => void;
   draft: ChatDraft; participants: ChatParticipant[]; disabled: boolean;
   onChange: (draft: ChatDraft) => void; onSend: () => void;
   policy?: ChatAttachmentPolicy; policyError?: string; onRetryPolicy?: () => void;
@@ -54,6 +56,15 @@ export function ChatComposer({ draft, participants, disabled, onChange, onSend, 
     requestAnimationFrame(() => { input.current?.focus(); input.current?.setSelectionRange(caret, caret); });
   }
   const pendingSelection = useRef<number | null>(null);
+  const [actionOpen, setActionOpen] = useState(false);
+  const [addTypeOpen, setAddTypeOpen] = useState(false);
+  const [createdType, setCreatedType] = useState<ChatActionType | null>(null);
+  const selectedType = actionTypes?.items.find(type => type.id === draft.action?.typeId) ?? (createdType?.id === draft.action?.typeId ? createdType : null);
+  function selectAction(type: ChatActionType) {
+    onChange({ ...draft, priority: type.priority, action: { typeId: type.id, dueDate: draft.action?.dueDate ?? "" } });
+    setActionOpen(true);
+  }
+  const actionInvalid = Boolean(draft.action && (!selectedType || !draft.body.trim() || !draft.responsibleUserId || !isChatDueDate(draft.action.dueDate)));
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [cursor, setCursor] = useState(0);
   const [active, setActive] = useState(0);
@@ -113,7 +124,7 @@ export function ChatComposer({ draft, participants, disabled, onChange, onSend, 
     onTypingEdit?.(body);
     setCursor(nextCursor); setDismissed(true);
   }
-  const sendDisabled = disabled || Boolean(selectionError) || (!draft.body.trim() && !files.length) || (files.length > 0 && !canAttach) || voice.state !== "idle" || draft.body.length > 4000 || unavailableMentions || unavailableOwner || tooManyMentions;
+  const sendDisabled = disabled || actionInvalid || Boolean(selectionError) || (!draft.body.trim() && !files.length) || (files.length > 0 && !canAttach) || voice.state !== "idle" || draft.body.length > 4000 || unavailableMentions || unavailableOwner || tooManyMentions;
   function submit() { if (!sendDisabled) { onTypingStop?.(); onSend(); } }
   function keyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -128,10 +139,11 @@ export function ChatComposer({ draft, participants, disabled, onChange, onSend, 
       event.preventDefault(); submit();
     }
   }
-  const validation = unavailableMentions ? "A mentioned person is no longer available. Remove their mention and choose a current participant." : unavailableOwner ? "The responsible person is no longer available. Choose a current participant or Unassigned." : tooManyMentions ? "Mention up to 20 people per message." : draft.body.length > 4000 ? "Messages can contain up to 4,000 characters." : "";
+  const validation = unavailableMentions ? "A mentioned person is no longer available. Remove their mention and choose a current participant." : unavailableOwner ? "The responsible person is no longer available. Choose a current participant." : actionInvalid ? "Choose an available action type, a responsible participant and a valid due date before sending." : tooManyMentions ? "Mention up to 20 people per message." : draft.body.length > 4000 ? "Messages can contain up to 4,000 characters." : "";
   return <form className={`project-chat-composer${dragging ? " project-chat-composer--dragging" : ""}`} onDragOver={event => { if (event.dataTransfer.types.includes("Files")) { event.preventDefault(); setDragging(true); } }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); addFiles(Array.from(event.dataTransfer.files)); }} aria-label="Write a project message" onSubmit={event => { event.preventDefault(); submit(); }}>
     {draft.reply ? <div className="project-chat-composer__reply"><div><strong>Replying to {draft.reply.author.name}</strong><p>{draft.reply.body || attachmentSummaryText(draft.reply.attachmentSummary)}</p></div><IconButton label="Cancel reply" variant="quiet" icon={<X size={16} />} onClick={() => onChange({ ...draft, reply: null })} /></div> : null}
-    {draft.priority !== "normal" ? <div className="project-chat-composer__selection"><button type="button" className={`project-chat-priority project-chat-priority--${draft.priority}`} onClick={() => setOptionsOpen(true)}>{draft.priority === "critical" ? "Critical" : "Important"}{draft.responsibleUserId ? ` · ${participants.find(person => person.id === draft.responsibleUserId)?.name ?? "Person unavailable"}` : ""}</button><button type="button" className="project-chat-icon" aria-label="Clear message importance" onClick={() => onChange({ ...draft, priority: "normal", responsibleUserId: "" })}><X size={16} aria-hidden="true" /></button></div> : null}
+    {draft.action ? <div className="project-chat-composer__selection"><button type="button" className={`project-chat-priority project-chat-priority--${draft.priority}`} onClick={() => setActionOpen(true)}>{selectedType?.name ?? "Action unavailable"} · {participants.find(person => person.id === draft.responsibleUserId)?.name ?? "Choose responsible person"} · {draft.action.dueDate ? chatDueDate(draft.action.dueDate) : "Choose due date"}</button><button type="button" className="project-chat-icon" aria-label="Clear draft action" onClick={() => onChange({ ...draft, action: undefined, priority: "normal", responsibleUserId: "" })}><X size={16} aria-hidden="true" /></button></div> : null}
+    {!draft.action && draft.priority !== "normal" ? <div className="project-chat-composer__selection"><button type="button" className={`project-chat-priority project-chat-priority--${draft.priority}`} onClick={() => setOptionsOpen(true)}>{draft.priority === "critical" ? "Critical" : "Important"}{draft.responsibleUserId ? ` · ${participants.find(person => person.id === draft.responsibleUserId)?.name ?? "Person unavailable"}` : ""}</button><button type="button" className="project-chat-icon" aria-label="Clear message importance" onClick={() => onChange({ ...draft, priority: "normal", responsibleUserId: "" })}><X size={16} aria-hidden="true" /></button></div> : null}
     {files.length ? <ChatFileTray files={files} sender={sender} onRemove={id => onChange({ ...draft, files: files.filter(file => file.localId !== id) })} /> : null}
     {voice.state !== "idle" ? <div className="project-chat-recording" role="status"><span>{voice.state === "requesting" ? "Requesting microphone…" : `Recording ${Math.floor(voice.elapsed / 60)}:${String(voice.elapsed % 60).padStart(2, "0")}`}</span>{voice.state === "recording" ? <button type="button" onClick={voice.stop}><Square size={14} aria-hidden="true" /> Stop recording</button> : null}<button type="button" className="ui-button ui-button--destructive-outline" onClick={voice.cancel}>Cancel recording</button></div> : null}
     <input className="sr-only" ref={fileInput} type="file" multiple accept={fileAccept} aria-label="Choose attachments" tabIndex={-1} onChange={event => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
@@ -139,7 +151,8 @@ export function ChatComposer({ draft, participants, disabled, onChange, onSend, 
     <div className="project-chat-composer__tools">
     {canAttach && voice.state === "idle" ? <ChatActionMenu label="Attach" icon={<Paperclip size={20} aria-hidden="true" />} items={[{ label: "Photos and videos", onSelect: () => chooseFiles(["image", "video"]) }, { label: "Documents and ZIP", onSelect: () => chooseFiles(["document", "archive"]) }, { label: "Audio files", onSelect: () => chooseFiles(["audio"]) }]} /> : null}
     <button type="button" className="project-chat-icon" aria-label="Emoji" aria-haspopup="dialog" disabled={disabled} onClick={() => { selection.current = { start: input.current?.selectionStart ?? draft.body.length, end: input.current?.selectionEnd ?? draft.body.length }; setEmojiOpen(true); }}><Smile size={20} aria-hidden="true" /></button>
-    <button type="button" className="project-chat-icon project-chat-composer__importance" aria-label="Message importance" aria-haspopup="dialog" onClick={() => setOptionsOpen(true)} disabled={disabled}><Flag size={20} aria-hidden="true" /></button>
+    {!disabled && actionTypes ? <ChatActionMenu label="Actions" icon={<><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M9 5h11M9 12h11M9 19h11M3 5l1 1 2-2M3 12l1 1 2-2M3 19l1 1 2-2" /></svg><span className="project-chat-action-label">Actions</span></>} items={[...actionTypes.items.map(type => ({ label: type.name, selected: draft.action?.typeId === type.id, onSelect: () => selectAction(type) })), ...(actionTypes.canCreate && projectId ? [{ label: "Add action type…", onSelect: () => setAddTypeOpen(true) }] : [])]} /> : null}
+    <button type="button" className="project-chat-icon project-chat-composer__importance" aria-label="Message importance" aria-haspopup="dialog" onClick={() => setOptionsOpen(true)} disabled={disabled || Boolean(draft.action)}><Flag size={20} aria-hidden="true" /></button>
     {canAttach && policy?.capabilities.canRecord ? <button type="button" className="project-chat-icon" aria-label="Record voice note" disabled={voice.state !== "idle" || files.length >= policy.limits.maxAttachments} onClick={() => void voice.start()}><Mic size={20} aria-hidden="true" /></button> : null}
     </div>
     <div className="project-chat-composer__input" role="combobox" aria-label="Participant mentions" aria-haspopup="listbox" aria-expanded={expanded} aria-controls={expanded ? `${id}-mentions` : undefined}>
@@ -153,7 +166,7 @@ export function ChatComposer({ draft, participants, disabled, onChange, onSend, 
         onChange={event => { const body = event.target.value; onChange({ ...draft, body, mentions: mentionsAfterEdit(draft.body, body, draft.mentions) }); onTypingEdit?.(body); setCursor(event.target.selectionStart); setActive(0); setDismissed(false); }} />
       {expanded ? <div className="project-chat-mentions"><ul id={`${id}-mentions`} role="listbox" aria-label="Project participants">
         {suggestions.map((person, index) => <li key={person.id} id={`${id}-person-${index}`} role="option" aria-selected={index === selectedIndex} onMouseDown={event => event.preventDefault()} onClick={() => select(person)}>
-          <strong>{person.name}</strong><span>{ROLE_LABELS[person.role]}{participants.some(other => other.id !== person.id && other.name === person.name && other.role === person.role) ? ` · ${person.id.slice(-6)}` : ""}</span>
+          <span className="project-chat-mention-person"><strong>{person.name}</strong><span> · {ROLE_LABELS[person.role]}{participants.some(other => other.id !== person.id && other.name === person.name && other.role === person.role) ? ` · ${person.id.slice(-6)}` : ""}</span></span>
         </li>)}
       </ul>{!suggestions.length ? <p role="status">No matching participants.</p> : null}</div> : null}
     </div>
@@ -163,6 +176,9 @@ export function ChatComposer({ draft, participants, disabled, onChange, onSend, 
     <p id={`${id}-help`} className={validation ? "project-chat-error" : "sr-only"} role={validation ? "status" : undefined}>{validation || "Type @ to mention someone. Shift+Enter adds a line."}</p>
     {selectionError || voice.error ? <p className="project-chat-error" role="status">{selectionError || voice.error}{selectionError ? <> <button type="button" onClick={() => setSelectionError("")}>Dismiss attachment error</button></> : null}</p> : null}
     {policyError ? <p className="project-chat-error" role="status">{policyError} <button type="button" onClick={onRetryPolicy}>Retry attachments</button></p> : null}
+    {actionTypesError ? <p className="project-chat-error" role="status">{actionTypesError} <button type="button" onClick={onRetryActionTypes}>Retry actions</button></p> : null}
+    {actionOpen && selectedType ? <ChatTrackedActionDialog draft={draft} type={selectedType} participants={participants} onChange={onChange} onClose={() => setActionOpen(false)} /> : null}
+    {addTypeOpen && projectId ? <AddChatActionTypeDialog projectId={projectId} onClose={() => setAddTypeOpen(false)} onCreated={type => { setCreatedType(type); setAddTypeOpen(false); selectAction(type); }} /> : null}
     {emojiOpen ? <ChatEmojiPicker onSelect={insertEmoji} onClose={() => setEmojiOpen(false)} /> : null}
     {optionsOpen ? <Dialog title="Message importance" eyebrow="Project discussion" description="Importance is chosen by a person. A mention does not assign responsibility." onClose={() => setOptionsOpen(false)}>
       <div className="project-chat-form">

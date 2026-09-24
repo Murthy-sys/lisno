@@ -3,14 +3,17 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { AUTHORIZATION_POLICY_VERSION, type PermissionCode, type Role } from "../contracts/authorization";
 import { useConfiguredRuntime } from "../runtime/RuntimeProvider";
+import { chrome } from "../ui/tokens";
 import { AdaptiveAppScaffold, ScaffoldContentBack, useScaffoldNavigationGuard } from "./AdaptiveAppScaffold";
 import type { FeatureId } from "./registry";
 
 const mockReplace = jest.fn();
 const mockPush = jest.fn();
 const mockBack = jest.fn();
+const mockLogout = jest.fn(() => Promise.resolve());
 let mockBackVisible = true;
 let mockIsFocused = true;
+let mockReducedTransparency = false;
 
 jest.mock("expo-router", () => ({ useIsFocused: () => mockIsFocused, router: { replace: (...args: readonly unknown[]) => mockReplace(...args), push: (...args: readonly unknown[]) => mockPush(...args) } }));
 jest.mock("expo-status-bar", () => {
@@ -29,13 +32,14 @@ jest.mock("react-native-safe-area-context", () => {
 jest.mock("../ui/ChromeSurface", () => {
   const React = jest.requireActual("react") as typeof import("react");
   const { View } = jest.requireActual("react-native") as typeof import("react-native");
-  return { ChromeSurface: ({ children, ...props }: import("react").ComponentProps<typeof import("../ui/ChromeSurface").ChromeSurface>) => React.createElement(View, props, children), useReducedTransparency: () => false };
+  return { ChromeSurface: ({ children, ...props }: import("react").ComponentProps<typeof import("../ui/ChromeSurface").ChromeSurface>) => React.createElement(View, props, children), useReducedTransparency: () => mockReducedTransparency };
 });
 
 const useRuntimeMock = jest.mocked(useConfiguredRuntime);
 
 function configureRole(role: Role, permissions: readonly PermissionCode[], name = "Aditi Rao") {
   useRuntimeMock.mockReturnValue({
+    runtime: { session: { logout: mockLogout } },
     session: {
       status: "authenticated",
       session: {
@@ -85,8 +89,10 @@ describe("AdaptiveAppScaffold navigation", () => {
     mockBack.mockClear();
     mockReplace.mockClear();
     mockPush.mockClear();
+    mockLogout.mockClear();
     mockBackVisible = true;
     mockIsFocused = true;
+    mockReducedTransparency = false;
     configureRole("super_admin", ["admin.dashboard.read", "projects.list", "chat.read"]);
   });
 
@@ -98,7 +104,7 @@ describe("AdaptiveAppScaffold navigation", () => {
     expect(topInset.props.edges).toEqual(["top", "left", "right"]);
     expect(bottomInset.props.edges).toEqual(["bottom", "left", "right"]);
     expect(within(topInset).getByRole("button", { name: "Open notifications" })).toBeTruthy();
-    expect(within(bottomInset).getAllByRole("tab")).toHaveLength(4);
+    expect(within(bottomInset).getAllByRole("tab")).toHaveLength(5);
     expect(StyleSheet.flatten(dock.props.style).position).not.toBe("absolute");
     expect(StyleSheet.flatten(dock.props.style).marginHorizontal ?? 0).toBe(0);
     expect(view.getByTestId("scaffold-body-inset").props.edges).toEqual(["left", "right"]);
@@ -106,23 +112,88 @@ describe("AdaptiveAppScaffold navigation", () => {
     expect(view.queryByTestId("scaffold-rail-chrome")).toBeNull();
   });
 
-  it("shows the signed-in identity and initials with the reference tagline", async () => {
+  it("keeps only the Lisno wordmark and notifications in a tightened top bar", async () => {
     configureRole("super_admin", ["admin.dashboard.read"], "Meera Priya Nair");
     const view = await render(<AdaptiveAppScaffold activeFeature="dashboard"><Text>Dashboard content</Text></AdaptiveAppScaffold>);
-    const header = within(view.getByTestId("scaffold-top-inset"));
-    expect(header.getByText("Meera Priya Nair")).toBeTruthy();
-    expect(header.getByText("Super Admin")).toBeTruthy();
-    expect(header.getByText("MN", { includeHiddenElements: true })).toBeTruthy();
-    expect(header.getByText("PLAN · TRACK · DELIVER")).toBeTruthy();
+    const topInset = view.getByTestId("scaffold-top-inset");
+    const header = within(topInset);
+    expect(header.getByLabelText("Lisno")).toBeTruthy();
+    expect(header.queryByText("PLAN · TRACK · DELIVER", { includeHiddenElements: true })).toBeNull();
+    expect(header.queryByText("Meera Priya Nair", { includeHiddenElements: true })).toBeNull();
+    expect(header.queryByText("Super Admin", { includeHiddenElements: true })).toBeNull();
+    expect(header.queryByText("MN", { includeHiddenElements: true })).toBeNull();
     expect(header.getAllByRole("button")).toHaveLength(1);
     expect(header.getByRole("button", { name: "Open notifications" })).toBeTruthy();
+    const bars = hostsWithin(topInset, (node) => StyleSheet.flatten(node.props.style as import("react-native").StyleProp<import("react-native").ViewStyle>)?.minHeight === 52);
+    expect(bars).toHaveLength(1);
+  });
+
+  it("shows the signed-in user's initials in the Profile tab and opens the profile menu instead of navigating", async () => {
+    configureRole("super_admin", ["admin.dashboard.read", "projects.list", "chat.read"], "Meera Priya Nair");
+    const view = await render(<AdaptiveAppScaffold activeFeature="dashboard" navigationRailBreakpoint={2000}><Text>Dashboard content</Text></AdaptiveAppScaffold>);
+    const profileTab = view.getByRole("tab", { name: "Profile" });
+    expect(within(profileTab).getByText("MN", { includeHiddenElements: true })).toBeTruthy();
+    expect(StyleSheet.flatten(profileTab.props.style).width).toBe(44);
+    expect(view.queryByTestId("profile-menu")).toBeNull();
+    await fireEvent.press(profileTab);
+    expect(mockReplace).not.toHaveBeenCalled();
+    const menu = within(view.getByTestId("profile-menu"));
+    expect(menu.getAllByRole("menuitem").map((item) => item.props.accessibilityLabel)).toEqual(["Profile", "Sign out"]);
+    await fireEvent.press(menu.getByRole("menuitem", { name: "Profile" }));
+    expect(mockPush).toHaveBeenLastCalledWith("/profile");
+    await waitFor(() => expect(view.queryByTestId("profile-menu")).toBeNull());
+  });
+
+  it("orders five tabs with Profile directly after Messages and More last on the dock and the rail", async () => {
+    const order = ["Home", "Projects", "Messages", "Profile", "More"];
+    const phone = await render(<AdaptiveAppScaffold activeFeature="dashboard" navigationRailBreakpoint={2000}><Text>Dashboard</Text></AdaptiveAppScaffold>);
+    expect(within(phone.getByTestId("scaffold-bottom-chrome")).getAllByRole("tab").map((tab) => tab.props.accessibilityLabel)).toEqual(order);
+    await phone.unmount();
+    const tablet = await render(<AdaptiveAppScaffold activeFeature="dashboard" navigationRailBreakpoint={1}><Text>Dashboard</Text></AdaptiveAppScaffold>);
+    expect(within(tablet.getByTestId("scaffold-rail-chrome")).getAllByRole("tab").map((tab) => tab.props.accessibilityLabel)).toEqual(["Dashboard", "Projects", "Messages", "Profile", "More"]);
+  });
+
+  it("renders all five 44pt tabs inside a 320pt-wide phone window", async () => {
+    const dimensions = jest.spyOn(jest.requireActual<typeof import("react-native")>("react-native"), "useWindowDimensions").mockReturnValue({ width: 320, height: 640, scale: 2, fontScale: 1 });
+    try {
+      const view = await render(<AdaptiveAppScaffold activeFeature="dashboard"><Text>Dashboard</Text></AdaptiveAppScaffold>);
+      expect(view.queryByTestId("scaffold-rail-chrome")).toBeNull();
+      const chromeView = view.getByTestId("scaffold-bottom-chrome");
+      const tabs = within(chromeView).getAllByRole("tab");
+      expect(tabs.map((tab) => tab.props.accessibilityLabel)).toEqual(["Home", "Projects", "Messages", "Profile", "More"]);
+      const barStyle = StyleSheet.flatten(hostsWithin(chromeView, (node) => node.props.accessibilityRole === "tablist")[0]!.props.style as import("react-native").StyleProp<import("react-native").ViewStyle>);
+      const dockStyle = StyleSheet.flatten(chromeView.props.style);
+      const tabsWidth = tabs.reduce((total, tab) => total + (StyleSheet.flatten(tab.props.style).width as number), 0);
+      const contentWidth = tabsWidth + (tabs.length - 1) * (barStyle.gap as number) + 2 * (barStyle.padding as number) + 2 * (dockStyle.borderWidth as number);
+      expect(tabsWidth).toBe(5 * 44);
+      expect(contentWidth).toBeLessThanOrEqual(320 - 2 * 16);
+    } finally {
+      dimensions.mockRestore();
+    }
+  });
+
+  it("signs out from the profile menu through the session and routes to sign-in", async () => {
+    const view = await render(<AdaptiveAppScaffold activeFeature="dashboard" navigationRailBreakpoint={2000}><Text>Dashboard</Text></AdaptiveAppScaffold>);
+    await fireEvent.press(view.getByRole("tab", { name: "Profile" }));
+    await fireEvent.press(view.getByRole("menuitem", { name: "Sign out" }));
+    expect(mockLogout).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mockReplace).toHaveBeenLastCalledWith("/sign-in"));
+  });
+
+  it("opens the same profile menu from the tablet rail", async () => {
+    const view = await render(<AdaptiveAppScaffold activeFeature="dashboard" navigationRailBreakpoint={1}><Text>Dashboard</Text></AdaptiveAppScaffold>);
+    const profileTab = within(view.getByTestId("scaffold-rail-chrome")).getByRole("tab", { name: "Profile" });
+    expect(within(profileTab).getByText("AR", { includeHiddenElements: true })).toBeTruthy();
+    await fireEvent.press(profileTab);
+    expect(view.getByTestId("profile-menu")).toBeTruthy();
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 
   it("keeps tablet navigation continuous through the bottom inset with separate content clearance", async () => {
     const view = await render(<AdaptiveAppScaffold activeFeature="dashboard" navigationRailBreakpoint={1}><Text>Dashboard content</Text></AdaptiveAppScaffold>);
     const railInset = within(view.getByTestId("scaffold-rail-chrome")).getByTestId("scaffold-rail-inset");
     expect(railInset.props.edges).toEqual(["bottom"]);
-    expect(within(railInset).getAllByRole("tab")).toHaveLength(4);
+    expect(within(railInset).getAllByRole("tab")).toHaveLength(5);
     expect(view.getByTestId("scaffold-content-inset").props.edges).toEqual(["bottom"]);
     expect(view.queryByTestId("scaffold-bottom-chrome")).toBeNull();
   });
@@ -138,7 +209,7 @@ describe("AdaptiveAppScaffold navigation", () => {
   it("shows icon-only phone tabs with Home for the landing route and retains accessible names and selection", async () => {
     const view = await render(<AdaptiveAppScaffold activeFeature="projects" navigationRailBreakpoint={2000}><Text>Project content</Text></AdaptiveAppScaffold>);
 
-    for (const label of ["Home", "Projects", "Messages", "More"]) {
+    for (const label of ["Home", "Projects", "Messages", "Profile", "More"]) {
       const tab = view.getByRole("tab", { name: label });
       expect(tab.props.accessibilityLabel).toBe(label);
       expect(within(tab).queryByText(label, { includeHiddenElements: true })).toBeNull();
@@ -157,8 +228,63 @@ describe("AdaptiveAppScaffold navigation", () => {
     expect(mockReplace).toHaveBeenLastCalledWith("/feature/messages");
     await fireEvent.press(view.getByRole("tab", { name: "More" }));
     expect(mockReplace).toHaveBeenLastCalledWith("/more");
+    await fireEvent.press(view.getByRole("tab", { name: "Profile" }));
+    expect(mockReplace).toHaveBeenLastCalledWith("/more");
+    expect(view.getByTestId("profile-menu")).toBeTruthy();
+    await fireEvent.press(view.getByTestId("profile-menu-backdrop", { includeHiddenElements: true }));
     await fireEvent.press(view.getByRole("button", { name: "Open notifications" }));
     expect(mockPush).toHaveBeenLastCalledWith("/feature/notifications");
+  });
+
+  it("frames the notifications bell in a 36pt glass circle inside the 48pt button", async () => {
+    const view = await render(<AdaptiveAppScaffold activeFeature="projects" navigationRailBreakpoint={2000}><Text>Project content</Text></AdaptiveAppScaffold>);
+    const button = within(view.getByTestId("scaffold-top-inset")).getByRole("button", { name: "Open notifications" });
+    const buttonStyle = StyleSheet.flatten(button.props.style);
+    expect(buttonStyle.minWidth).toBe(48);
+    expect(buttonStyle.minHeight).toBe(48);
+    const circle = within(button).getByTestId("notification-circle", { includeHiddenElements: true });
+    const circleStyle = StyleSheet.flatten(circle.props.style);
+    expect(circleStyle).toMatchObject({ width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", overflow: "hidden" });
+    expect(circleStyle.opacity).toBeUndefined();
+    const glass = within(circle).getByTestId("notification-glass", { includeHiddenElements: true });
+    expect(glass.props.pointerEvents).toBe("none");
+    expect(StyleSheet.flatten(glass.props.style)).toMatchObject({ borderRadius: 18, backgroundColor: chrome.glassFill });
+    const icons = hostsWithin(circle, (node) => node.type === "RNSVGSvgView", (node) => node.props.testID === "notification-glass").map((node) => node.props);
+    expect(icons).toHaveLength(1);
+    expect(icons[0]!.width).toBe(20);
+    expect(icons[0]!.height).toBe(20);
+    expect(icons[0]!.stroke).toBe(chrome.ink);
+    await fireEvent.press(button);
+    expect(mockPush).toHaveBeenLastCalledWith("/feature/notifications");
+  });
+
+  it("dims only the bell circle to 0.8 while pressed", async () => {
+    const view = await render(<AdaptiveAppScaffold activeFeature="projects" navigationRailBreakpoint={2000}><Text>Project content</Text></AdaptiveAppScaffold>);
+    const button = view.getByRole("button", { name: "Open notifications" });
+    await fireEvent(button, "responderGrant", { nativeEvent: { timestamp: Date.now(), touches: [], changedTouches: [] }, persist: () => undefined, currentTarget: { measure: () => undefined } });
+    const pressedCircle = view.getByTestId("notification-circle", { includeHiddenElements: true });
+    expect(StyleSheet.flatten(pressedCircle.props.style).opacity).toBe(0.8);
+    expect(StyleSheet.flatten(button.props.style).opacity).toBeUndefined();
+  });
+
+  it("uses the opaque glass fill behind the bell when Reduce Transparency is on", async () => {
+    mockReducedTransparency = true;
+    const view = await render(<AdaptiveAppScaffold activeFeature="projects" navigationRailBreakpoint={2000}><Text>Project content</Text></AdaptiveAppScaffold>);
+    const button = view.getByRole("button", { name: "Open notifications" });
+    const glass = within(button).getByTestId("notification-glass", { includeHiddenElements: true });
+    expect(StyleSheet.flatten(glass.props.style).backgroundColor).toBe(chrome.glassOpaque);
+    expect(within(button).queryByTestId("notification-glass-sheen", { includeHiddenElements: true })).toBeNull();
+  });
+
+  it("keeps the redesigned bell disabled while navigation is blocked", async () => {
+    const view = await render(<AdaptiveAppScaffold activeFeature="messages" navigationRailBreakpoint={2000}><PendingSendControl /></AdaptiveAppScaffold>);
+    await fireEvent.press(view.getByRole("button", { name: "Start pending send" }));
+    const button = view.getByRole("button", { name: "Open notifications" });
+    await waitFor(() => expect(button.props.accessibilityState.disabled).toBe(true));
+    expect(StyleSheet.flatten(button.props.style).opacity).toBe(0.48);
+    expect(within(button).getByTestId("notification-glass", { includeHiddenElements: true })).toBeTruthy();
+    await fireEvent.press(button);
+    expect(mockPush).not.toHaveBeenCalled();
   });
 
   it("frames only the selected phone tab in a centered radius-18 glass circle with a 20pt icon and no full-cell tint or dot", async () => {
@@ -177,7 +303,7 @@ describe("AdaptiveAppScaffold navigation", () => {
     expect(icons).toHaveLength(1);
     expect(icons[0]!.width).toBe(20);
     expect(icons[0]!.height).toBe(20);
-    for (const label of ["Home", "Messages", "More"]) {
+    for (const label of ["Home", "Messages", "Profile", "More"]) {
       const tab = view.getByRole("tab", { name: label });
       expect(tab.props.accessibilityState.selected).toBe(false);
       expect(within(tab).queryByTestId("navigation-glass-selection", { includeHiddenElements: true })).toBeNull();
@@ -201,8 +327,8 @@ describe("AdaptiveAppScaffold navigation", () => {
     expect(barStyle.padding).toBe(4);
     expect(barStyle.gap).toBe(4);
     const bar = within(chromeView);
-    expect(bar.getAllByRole("tab")).toHaveLength(4);
-    for (const label of ["Home", "Projects", "Messages", "More"]) {
+    expect(bar.getAllByRole("tab")).toHaveLength(5);
+    for (const label of ["Home", "Projects", "Messages", "Profile", "More"]) {
       expect(bar.getByRole("tab", { name: label })).toBeTruthy();
       expect(bar.queryByText(label, { includeHiddenElements: true })).toBeNull();
     }
@@ -218,7 +344,7 @@ describe("AdaptiveAppScaffold navigation", () => {
 
   it("retains the visible labels on tablet navigation", async () => {
     const view = await render(<AdaptiveAppScaffold activeFeature="dashboard" navigationRailBreakpoint={1}><Text>Dashboard content</Text></AdaptiveAppScaffold>);
-    for (const label of ["Dashboard", "Projects", "Messages", "More"]) {
+    for (const label of ["Dashboard", "Projects", "Messages", "Profile", "More"]) {
       expect(view.getByText(label)).toBeTruthy();
       expect(view.getByRole("tab", { name: label }).props.accessibilityState.selected).toBe(label === "Dashboard");
     }
@@ -253,10 +379,16 @@ describe("AdaptiveAppScaffold navigation", () => {
   it("does not expose unauthorized destinations and selects More by its route", async () => {
     configureRole("super_admin", ["admin.dashboard.read"]);
     const view = await render(<AdaptiveAppScaffold more navigationRailBreakpoint={2000}><Text>Account</Text></AdaptiveAppScaffold>);
-    expect(view.getAllByRole("tab")).toHaveLength(2);
+    expect(view.getAllByRole("tab")).toHaveLength(3);
     expect(view.queryByRole("tab", { name: "Projects" })).toBeNull();
     expect(view.queryByRole("tab", { name: "Messages" })).toBeNull();
     expect(view.getByRole("tab", { name: "More" }).props.accessibilityState.selected).toBe(true);
+    expect(view.getByRole("tab", { name: "Profile" }).props.accessibilityState.selected).toBe(false);
+  });
+
+  it("selects Profile, not More, on the profile route", async () => {
+    const view = await render(<AdaptiveAppScaffold profile navigationRailBreakpoint={2000}><Text>Profile</Text></AdaptiveAppScaffold>);
+    expect(view.getAllByRole("tab").filter((tab) => tab.props.accessibilityState.selected).map((tab) => tab.props.accessibilityLabel)).toEqual(["Profile"]);
   });
 
   it("disables scaffold navigation while a child reports an in-flight send", async () => {

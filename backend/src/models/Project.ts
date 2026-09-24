@@ -13,6 +13,7 @@ const projectSchema = new Schema(
     _id: { type: String, required: true },
     designWorkflowStages: { type: [workflowStageSchema], default: undefined },
     name: { type: String, required: true, trim: true },
+    nameVersion: { type: Number, min: 1, default: 1 },
     clientId: { type: String, ref: "User", default: null },
     clientName: { type: String, required: true, default: "" },
     clientEmail: { type: String, required: true, default: "" },

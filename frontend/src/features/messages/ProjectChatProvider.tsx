@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { ApiError, tokenStorage } from "../../api/client";
+import { invalidateProjectNameQueries } from "../../api/projectNameSync";
 import { chatErrorMessage, chatKeys, isChatDenied, projectChatApi } from "./projectChatApi";
 import { emptyChatDraft, type ChatDraft, type ChatLocalAttachment } from "./projectChatState";
 import { ChatTransferPool } from "./chatTransfers";
@@ -55,6 +56,7 @@ function ChatSession({ children, userId, enabled }: { children: ReactNode; userI
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [denied, setDenied] = useState<Set<string>>(new Set());
   const deniedRef = useRef(denied);
+  const projectNames = useRef(new Map<string, { name: string; version: number }>());
   const [memory, setMemory] = useState<Record<string, ProjectMemory>>({});
   const memoryRef = useRef(memory);
   const [pool] = useState(() => new ChatTransferPool());
@@ -101,6 +103,7 @@ function ChatSession({ children, userId, enabled }: { children: ReactNode; userI
   const revoke = useCallback((projectId: string) => {
     if (!mounted.current || deniedRef.current.has(projectId)) return;
     deniedRef.current = new Set([...deniedRef.current, projectId]);
+    projectNames.current.delete(projectId);
     setDenied(deniedRef.current);
     for (const { controller, projectId: requestProject } of controllers.current.values()) if (projectId === requestProject) controller.abort();
     const nextMemory = { ...memoryRef.current }; delete nextMemory[projectId]; memoryRef.current = nextMemory; setMemory(nextMemory);
@@ -259,6 +262,14 @@ function ChatSession({ children, userId, enabled }: { children: ReactNode; userI
     refetchOnWindowFocus: true
   });
   useEffect(() => { if (currentProjectId && isChatDenied(summary.error)) revoke(currentProjectId); }, [currentProjectId, summary.error, revoke]);
+  useEffect(() => {
+    if (!enabled || !currentProjectId || !mounted.current || deniedRef.current.has(currentProjectId) || isChatDenied(summary.error) || !summary.data) return;
+    const next = { name: summary.data.project.name, version: summary.data.project.nameVersion ?? 1 };
+    const previous = projectNames.current.get(currentProjectId);
+    projectNames.current.set(currentProjectId, next);
+    // Overview and Messages share this observer and stream, so both refresh names.
+    if (previous && (previous.name !== next.name || previous.version !== next.version)) void invalidateProjectNameQueries(queryClient, currentProjectId);
+  }, [currentProjectId, enabled, queryClient, summary.data, summary.error]);
   const cursor = useRef<string | undefined>(undefined);
   cursor.current = summary.data?.cursor;
   const ready = Boolean(summary.data);

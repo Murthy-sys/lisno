@@ -5,12 +5,14 @@ import { normalizedEmailSchema } from "../domain/email.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
 import { ApiError } from "../middleware/errors.js";
+import { uploadProfilePhoto } from "../middleware/profile-photo-upload.js";
 import { validateBody } from "../middleware/validate.js";
 import {
   AccountExistsError,
   InvalidCredentialsError,
   type AuthService
 } from "../services/auth.service.js";
+import type { ProfilePhotoService } from "../services/profile-photo.service.js";
 
 const loginCredentialsSchema = z.object({
   email: normalizedEmailSchema,
@@ -42,7 +44,8 @@ const clientSignupSchema = z
 
 export function createAuthRouter(
   authService: AuthService,
-  authRateLimit: RequestHandler
+  authRateLimit: RequestHandler,
+  profilePhotos: ProfilePhotoService
 ): Router {
   const router = Router();
 
@@ -111,6 +114,38 @@ export function createAuthRouter(
     requireOperation("GET /auth/me"),
     (request, response) => {
       response.status(200).json({ data: request.authenticatedUser });
+    }
+  );
+
+  router.put(
+    "/auth/me/profile-photo",
+    authenticate(authService),
+    requireOperation("PUT /auth/me/profile-photo"),
+    uploadProfilePhoto(),
+    async (request, response, next) => {
+      try {
+        const user = await profilePhotos.replace(
+          request.authenticatedUser!,
+          request.file!.buffer
+        );
+        response.status(200).json({ data: { user } });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.delete(
+    "/auth/me/profile-photo",
+    authenticate(authService),
+    requireOperation("DELETE /auth/me/profile-photo"),
+    async (request, response, next) => {
+      try {
+        const user = await profilePhotos.remove(request.authenticatedUser!);
+        response.status(200).json({ data: { user } });
+      } catch (error) {
+        next(error);
+      }
     }
   );
 

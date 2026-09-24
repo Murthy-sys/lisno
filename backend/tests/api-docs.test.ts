@@ -26,6 +26,48 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents optional global vendor overview and safe execution summary without changing other masters", () => {
+    const schemas = componentSchemas();
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    expect(schemas.KnowledgeVendorSummary!.properties.executionType).toMatchObject({ type: "array", nullable: true, minItems: 1, maxItems: 2, uniqueItems: true, items: { type: "string", enum: ["labor", "material_labour"] } });
+    expect(schemas.KnowledgeVendorSummary!.required).toContain("executionType");
+    expect(schemas.KnowledgeVendorDirectoryOverview!.properties).toEqual({ totalVendors: { type: "integer", minimum: 0 }, activeVendors: { type: "integer", minimum: 0 }, underReviewVendors: { type: "integer", minimum: 0 } });
+    expect(schemas.KnowledgeVendorPage!.properties.directoryOverview).toEqual({ $ref: "#/components/schemas/KnowledgeVendorDirectoryOverview" });
+    expect(schemas.KnowledgeVendorPage!.required).toEqual(["items", "pagination"]);
+    expect(schemas.KnowledgeMasterPage!.properties).not.toHaveProperty("directoryOverview");
+    expect(paths["/admin/ai-estimator-knowledge/vendors"]!.get!.parameters).toContainEqual(expect.objectContaining({ name: "includeDirectoryOverview", in: "query", required: false, schema: { type: "boolean", default: false } }));
+    for (const kind of ["uoms", "taxes", "priorities", "surfaces", "modes"]) expect(paths[`/admin/ai-estimator-knowledge/${kind}`]!.get!.parameters).not.toContainEqual(expect.objectContaining({ name: "includeDirectoryOverview" }));
+  });
+  it("separates legacy-compatible Execution input from canonical array detail output", () => {
+    const schemas = componentSchemas();
+    const canonicalSelections = {
+      type: "array", nullable: true, minItems: 1, maxItems: 2, uniqueItems: true,
+      items: { type: "string", enum: ["labor", "material_labour"] }
+    };
+    expect(schemas.KnowledgeVendorProfile!.properties.executionType).toMatchObject(canonicalSelections);
+    expect(schemas.KnowledgeVendorStoredProfile!.properties.executionType).toMatchObject(canonicalSelections);
+    expect(schemas.KnowledgeVendorDetail!.properties.procurementProfile.properties.executionType).toMatchObject(canonicalSelections);
+    expect(schemas.KnowledgeVendorProfileInput!.properties.executionType.oneOf).toEqual([
+      expect.objectContaining(canonicalSelections),
+      expect.objectContaining({ type: "string", enum: ["labor", "material_labour"] })
+    ]);
+    expect(schemas.KnowledgeVendorProfile!.properties.executionType).not.toHaveProperty("oneOf");
+    for (const name of ["KnowledgeVendorCreateRequest", "KnowledgeVendorUpdateRequest"]) {
+      expect(schemas[name]!.properties.procurementProfile).toEqual({ $ref: "#/components/schemas/KnowledgeVendorProfileInput" });
+    }
+  });
+  it("keeps vendor mutation responses compatible with the shared master DTO", () => {
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const schemas = componentSchemas();
+    expect(schemas.KnowledgeVendorCreateRequest!.required).toEqual(["name"]);
+    expect(schemas.KnowledgeVendorCreateRequest).not.toHaveProperty("anyOf");
+    for (const [path, method] of [["/admin/ai-estimator-knowledge/vendors", "post"], ["/admin/ai-estimator-knowledge/vendors/{id}", "patch"]]) {
+      expect(paths[path!]![method!]!.responses).toHaveProperty("2XX.content.application/json.schema.properties.data.$ref", "#/components/schemas/KnowledgeMaster");
+    }
+    expect(schemas.KnowledgeVendor!.required).toContain("procurementSummary");
+    expect(schemas.KnowledgeMaster!.required).not.toContain("procurementSummary");
+    expect(schemas.KnowledgeVendorDetail!.required).toEqual(expect.arrayContaining(["procurementProfile", "procurementSummary", "geoTaggedPicture"]));
+  });
   it("documents request-scoped plan replacement uploads with their exact multipart and response contract", () => {
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
     const operation = paths["/estimate-plan-change-requests/{requestId}/replacement-upload"]!.post!;
@@ -525,7 +567,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 240 routes without versioning paths twice", () => {
+  it("contains all 254 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -534,7 +576,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 13);
-    expect(operationCount).toBe(240);
+    expect(operationCount).toBe(254);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -544,7 +586,7 @@ describe("OpenAPI and Swagger UI", () => {
     const knowledgeOperations = HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability }) => availability === "ai_estimator_knowledge"
     );
-    expect(knowledgeOperations).toHaveLength(53);
+    expect(knowledgeOperations).toHaveLength(59);
 
     for (const registered of knowledgeOperations) {
       const { method, path } = splitHumanOperationKey(registered.key);
@@ -557,7 +599,13 @@ describe("OpenAPI and Swagger UI", () => {
       expect(documented?.responses?.["422"], registered.key).toEqual({
         $ref: "#/components/responses/UnprocessableKnowledge"
       });
-      if (method !== "GET") {
+      if (registered.key === "PUT /admin/ai-estimator-knowledge/vendors/:id/photo") {
+        expect(documented?.requestBody).toMatchObject({
+          required: true,
+          "x-lisno-schema-completeness": "exact",
+          content: { "multipart/form-data": { schema: { $ref: "#/components/schemas/KnowledgeVendorPhotoUpload" } } }
+        });
+      } else if (method !== "GET") {
         expect(documented?.requestBody, registered.key).toMatchObject({
           required: true,
           "x-lisno-schema-completeness": "exact",
@@ -688,7 +736,7 @@ describe("OpenAPI and Swagger UI", () => {
       properties: { draftOnly: { type: "boolean", enum: [true] } }
     });
     expect(componentSchemas().KnowledgeSubBasketDeletionImpact).toMatchObject({
-      required: ["basketId", "subBasketId", "subBasketName", "version", "mainLineCount", "referenceCount", "impactToken"]
+      required: ["basketId", "subBasketId", "subBasketName", "version", "mainLineCount", "referenceCount", "vendorReferenceCount", "impactToken"]
     });
     expect(openApiDocument.paths["/admin/ai-estimator-knowledge/baskets/{basketId}/sub-baskets/{subBasketId}/deletion-impact"]?.get).toMatchObject({
       "x-lisno-permission": "ai_estimator_knowledge.configuration.lifecycle"
@@ -1479,7 +1527,7 @@ describe("OpenAPI and Swagger UI", () => {
       required?: string[];
       properties?: Record<string, unknown>;
     };
-    /* The impact reports what a deletion carries away; nothing can block one. */
+    /* Vendor references block deletion; historical estimate references are reported. */
     expect(impact).toMatchObject({
       additionalProperties: false,
       required: [
@@ -1489,12 +1537,14 @@ describe("OpenAPI and Swagger UI", () => {
         "mainLineCount",
         "subBasketCount",
         "historicalReferenceCount",
+        "vendorReferenceCount",
         "bootstrapOwned"
       ],
       properties: {
         mainLineCount: { type: "integer", minimum: 0 },
         subBasketCount: { type: "integer", minimum: 0 },
-        historicalReferenceCount: { type: "integer", minimum: 0 }
+        historicalReferenceCount: { type: "integer", minimum: 0 },
+        vendorReferenceCount: { type: "integer", minimum: 0 }
       }
     });
     expect(componentSchemas().KnowledgeBasketDeletionBlocker).toBeUndefined();

@@ -1024,12 +1024,14 @@ describe("production server bootstrap", () => {
     expect(connect).not.toHaveBeenCalled();
   });
 
-  it("runs receipt and chat cleanup without overlap and waits for both during shutdown", async () => {
+  it("runs receipt, chat and vendor photo cleanup without overlap and drains them on shutdown", async () => {
     const server = fakeServer();
     let tick: (() => void) | undefined;
     let releaseRun: (() => void) | undefined;
     let releaseChat: (() => void) | undefined;
+    let releaseVendorPhotos: (() => void) | undefined;
     const cleanupChat = vi.fn(() => new Promise<void>(resolve => { releaseChat = resolve; }));
+    const cleanupVendorPhotos = vi.fn(() => new Promise<void>(resolve => { releaseVendorPhotos = resolve; }));
     const maintenanceRunner = vi.fn(
       () => new Promise<void>((resolve) => {
         releaseRun = resolve;
@@ -1054,7 +1056,8 @@ describe("production server bootstrap", () => {
           callback();
           return server;
         }),
-        cleanupProjectChatAttachments: cleanupChat
+        cleanupProjectChatAttachments: cleanupChat,
+        cleanupProcurementVendorPhotos: cleanupVendorPhotos
       }),
       receiptMaintenanceIntervalMs: 30_000,
       receiptMaintenanceRunner: maintenanceRunner,
@@ -1071,6 +1074,7 @@ describe("production server bootstrap", () => {
     await Promise.resolve();
     expect(maintenanceRunner).toHaveBeenCalledOnce();
     expect(cleanupChat).toHaveBeenCalledOnce();
+    expect(cleanupVendorPhotos).toHaveBeenCalledOnce();
 
     let stopped = false;
     const stopping = runtime.stop().then(() => {
@@ -1083,6 +1087,10 @@ describe("production server bootstrap", () => {
     await Promise.resolve();
     expect(stopped).toBe(false);
     releaseChat?.();
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    expect(disconnect).not.toHaveBeenCalled();
+    releaseVendorPhotos?.();
     await stopping;
     expect(disconnect).toHaveBeenCalledOnce();
     tick?.();

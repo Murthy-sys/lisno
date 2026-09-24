@@ -7,7 +7,8 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
-  View
+  View,
+  type TextInput
 } from "react-native";
 
 import type { AuthenticatedSession } from "../../contracts/session";
@@ -16,16 +17,19 @@ import { canPerformOperation } from "../../core/session/operationCapabilities";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { StateView } from "../../ui/primitives";
 import { colors, fonts, radii, spacing } from "../../ui/tokens";
-import { chatQueryKeys } from "./chatQueryKeys";
+import { chatQueryKeys, normalizeConversationSearch, type ConversationListFilter } from "./chatQueryKeys";
 import {
   mergeConversationPages,
   presentConversationPage,
   type PresentedConversation,
-  type PresentedConversationPage
+  type PresentedConversationPage,
+  type PresentedConversationTotals
 } from "./chatModel";
+import { ConversationFilters } from "./ConversationFilters";
 import { ConversationRow } from "./ConversationRow";
+import { ConversationSearchField, useDebouncedSearch } from "./ConversationSearchField";
+import { ConversationSortMenu, sortConversations, type ConversationSortMode } from "./ConversationSortMenu";
 import { ChatIcon } from "./ChatIcon";
-import { chatColors } from "./chatTheme";
 
 const PAGE_SIZE = 30;
 
@@ -33,35 +37,55 @@ function isDenied(error: unknown): boolean {
   return error instanceof ApiError && [401, 403, 404].includes(error.status);
 }
 
-function ListHeader({ compact, refreshing, refreshEnabled, total, onRefresh }: {
-  readonly compact: boolean;
-  readonly refreshing: boolean;
-  readonly refreshEnabled: boolean;
-  readonly total: number;
-  readonly onRefresh: () => void;
+function conversationsPath(offset: number, filter: ConversationListFilter, search: string): string {
+  // Omit default parameters so older servers with a strict query schema keep working.
+  return `/project-messages?limit=${PAGE_SIZE}&offset=${offset}` +
+    (filter !== "all" ? `&filter=${filter}` : "") +
+    (search ? `&search=${encodeURIComponent(search)}` : "");
+}
+
+const FILTER_EMPTY_STATES: Readonly<Record<Exclude<ConversationListFilter, "all">, { readonly title: string; readonly message: string }>> = {
+  unread: { title: "No unread conversations", message: "You are all caught up." },
+  critical: { title: "No open critical issues", message: "Conversations with open critical issues will appear here." },
+  important: { title: "No open important issues", message: "Conversations with open important issues will appear here." }
+};
+
+function HeaderIconButton({ label, icon, disabled, onPress }: {
+  readonly label: string;
+  readonly icon: "search" | "list";
+  readonly disabled: boolean;
+  readonly onPress: () => void;
 }) {
   return (
-    <View>
-      <View style={[styles.header, compact ? styles.headerCompact : null]}>
-        <View style={styles.headerCopy}>
-          <Text accessibilityRole="header" style={styles.title}>Messages</Text>
-          <Text style={styles.subtitle}>Project conversations</Text>
-        </View>
-        <Pressable
-          accessibilityLabel="Refresh messages"
-          accessibilityRole="button"
-          accessibilityState={{ busy: refreshing, disabled: !refreshEnabled || refreshing }}
-          disabled={!refreshEnabled || refreshing}
-          hitSlop={4}
-          onPress={onRefresh}
-          style={({ pressed }) => [styles.refreshButton, pressed ? styles.refreshPressed : null]}
-        >
-          {refreshing ? <ActivityIndicator color={chatColors.green} size="small" /> : <ChatIcon name="refresh" />}
-        </Pressable>
+    <Pressable
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      hitSlop={2}
+      onPress={onPress}
+      style={({ pressed }) => [styles.iconButton, pressed ? styles.iconButtonPressed : null, disabled ? styles.iconButtonDisabled : null]}
+    >
+      <ChatIcon color={colors.ink} name={icon} size={22} />
+    </Pressable>
+  );
+}
+
+function ListHeader({ compact, controlsEnabled, onSearch, onSort }: {
+  readonly compact: boolean;
+  readonly controlsEnabled: boolean;
+  readonly onSearch: () => void;
+  readonly onSort: () => void;
+}) {
+  return (
+    <View style={[styles.header, compact ? styles.headerCompact : null]}>
+      <View style={styles.headerCopy}>
+        <Text accessibilityRole="header" style={styles.title}>Messages</Text>
+        <Text style={styles.subtitle}>Project conversations</Text>
       </View>
-      <View style={styles.contextRow}>
-        <Text style={styles.contextLabel}>Your project groups</Text>
-        <Text accessibilityLabel={`${total} project ${total === 1 ? "group" : "groups"}`} style={styles.contextCount}>{total}</Text>
+      <View style={styles.headerActions}>
+        <HeaderIconButton disabled={!controlsEnabled} icon="search" label="Search messages" onPress={onSearch} />
+        <HeaderIconButton disabled={!controlsEnabled} icon="list" label="Sort conversations" onPress={onSort} />
       </View>
     </View>
   );
@@ -118,13 +142,25 @@ export function ConversationList({
     environmentId: context.environment.environment.id,
     userId: session.user.id
   }), [context.environment.environment.id, session.user.id]);
-  const conversationsKey = useMemo(() => chatQueryKeys.conversations(scope), [scope]);
+  const [filter, setFilter] = useState<ConversationListFilter>("all");
+  const [searchText, setSearchText] = useState("");
+  const search = normalizeConversationSearch(useDebouncedSearch(searchText));
+  const [sortMode, setSortMode] = useState<ConversationSortMode>("recent");
+  const [sortOpen, setSortOpen] = useState(false);
+  const searchInput = useRef<TextInput>(null);
+  const conversationsFamilyKey = useMemo(() => chatQueryKeys.conversations(scope), [scope]);
+  const conversationsKey = useMemo(
+    () => chatQueryKeys.conversations(scope, { filter, search }),
+    [filter, scope, search]
+  );
   const queryClient = useQueryClient();
   const [accessDenied, setAccessDenied] = useState(false);
+  const [knownTotals, setKnownTotals] = useState<PresentedConversationTotals | null>(null);
   const paging = useRef(false);
 
   useEffect(() => {
     setAccessDenied(false);
+    setKnownTotals(null);
   }, [scope.environmentId, scope.userId]);
 
   const query = useInfiniteQuery({
@@ -133,7 +169,7 @@ export function ConversationList({
     enabled: mayRead && !accessDenied && context.environment.status === "ready",
     queryFn: async ({ pageParam, signal }): Promise<PresentedConversationPage> => {
       const value = await context.runtime.api.authenticated.get<unknown>(
-        `/project-messages?limit=${PAGE_SIZE}&offset=${pageParam}`,
+        conversationsPath(pageParam, filter, search),
         { signal }
       );
       const page = presentConversationPage(value);
@@ -150,18 +186,26 @@ export function ConversationList({
   useEffect(() => {
     if (!serverDenied) return;
     setAccessDenied(true);
-    void queryClient.cancelQueries({ queryKey: conversationsKey }).finally(() => {
-      queryClient.removeQueries({ queryKey: conversationsKey });
+    // Denial clears every filtered/searched list in this scope, not only the visible one.
+    void queryClient.cancelQueries({ queryKey: conversationsFamilyKey }).finally(() => {
+      queryClient.removeQueries({ queryKey: conversationsFamilyKey });
     });
-  }, [conversationsKey, queryClient, serverDenied]);
+  }, [conversationsFamilyKey, queryClient, serverDenied]);
 
   const listDenied = !mayRead || accessDenied || serverDenied;
 
   const conversations = useMemo(
-    () => !listDenied ? mergeConversationPages(query.data?.pages ?? []) : [],
-    [listDenied, query.data?.pages]
+    () => !listDenied ? sortConversations(mergeConversationPages(query.data?.pages ?? []), sortMode) : [],
+    [listDenied, query.data?.pages, sortMode]
   );
-  const total = !listDenied ? query.data?.pages[0]?.pagination.total ?? conversations.length : 0;
+  const latestTotals = !listDenied ? query.data?.pages[0]?.totals ?? null : null;
+  useEffect(() => {
+    if (latestTotals) setKnownTotals(latestTotals);
+  }, [latestTotals]);
+  // Totals ignore filter and search, so the last server value stays valid while a new filter loads.
+  const totals = listDenied ? null : latestTotals ?? knownTotals;
+  const clearSearch = useCallback(() => setSearchText(""), []);
+  const focusSearch = useCallback(() => searchInput.current?.focus(), []);
   const refresh = useCallback(() => {
     if (!listDenied) void query.refetch();
   }, [listDenied, query]);
@@ -189,6 +233,15 @@ export function ConversationList({
       title="Messages could not be loaded"
       tone="error"
     />
+  ) : search ? (
+    <StateView
+      actionLabel="Clear"
+      message="Try a different project name."
+      onAction={clearSearch}
+      title="No conversations match"
+    />
+  ) : filter !== "all" ? (
+    <StateView message={FILTER_EMPTY_STATES[filter].message} title={FILTER_EMPTY_STATES[filter].title} />
   ) : (
     <StateView
       message="Projects you actively participate in will appear here."
@@ -211,49 +264,68 @@ export function ConversationList({
   ) : <View style={styles.footerSpace} />;
 
   return (
-    <FlatList
-      ListEmptyComponent={listEmpty}
-      ListFooterComponent={footer}
-      ListHeaderComponent={(
-        <>
-          <ListHeader
-            compact={compact}
+    <>
+      <FlatList
+        ListEmptyComponent={listEmpty}
+        ListFooterComponent={footer}
+        ListHeaderComponent={(
+          <>
+            <ListHeader
+              compact={compact}
+              controlsEnabled={!listDenied}
+              onSearch={focusSearch}
+              onSort={() => setSortOpen(true)}
+            />
+            {!listDenied ? (
+              <View style={styles.controls}>
+                <ConversationSearchField
+                  inputRef={searchInput}
+                  onChangeText={setSearchText}
+                  onClear={clearSearch}
+                  value={searchText}
+                />
+                <ConversationFilters onChange={setFilter} totals={totals} value={filter} />
+              </View>
+            ) : null}
+            {query.isRefetchError && conversations.length > 0 ? <StaleWarning onRetry={refresh} /> : null}
+          </>
+        )}
+        contentContainerStyle={[styles.content, compact ? styles.contentCompact : null, conversations.length === 0 ? styles.contentEmpty : null]}
+        data={conversations}
+        extraData={selectedProjectId}
+        keyExtractor={(conversation) => conversation.project.id}
+        keyboardShouldPersistTaps="handled"
+        onEndReached={loadNext}
+        onEndReachedThreshold={0.35}
+        refreshControl={(
+          <RefreshControl
+            accessibilityLabel="Refresh project conversations"
+            enabled={!listDenied}
             onRefresh={refresh}
-            refreshEnabled={!listDenied}
             refreshing={query.isRefetching && !query.isFetchingNextPage}
-            total={total}
+            tintColor={colors.violet}
           />
-          {query.isRefetchError && conversations.length > 0 ? <StaleWarning onRetry={refresh} /> : null}
-        </>
-      )}
-      contentContainerStyle={[styles.content, compact ? styles.contentCompact : null, conversations.length === 0 ? styles.contentEmpty : null]}
-      data={conversations}
-      extraData={selectedProjectId}
-      keyExtractor={(conversation) => conversation.project.id}
-      keyboardShouldPersistTaps="handled"
-      onEndReached={loadNext}
-      onEndReachedThreshold={0.35}
-      refreshControl={(
-        <RefreshControl
-          accessibilityLabel="Refresh project conversations"
-          enabled={!listDenied}
-          onRefresh={refresh}
-          refreshing={query.isRefetching && !query.isFetchingNextPage}
-          tintColor={colors.violet}
-        />
-      )}
-      renderItem={({ item }: { readonly item: PresentedConversation }) => (
-        <ConversationRow
-          compact={compact}
-          conversation={item}
-          disabled={selectionDisabled}
-          onPress={() => onSelectProject(item.project.id)}
-          selected={item.project.id === selectedProjectId}
-        />
-      )}
-      style={styles.list}
-      testID="conversation-list"
-    />
+        )}
+        renderItem={({ item }: { readonly item: PresentedConversation }) => (
+          <ConversationRow
+            compact={compact}
+            conversation={item}
+            currentUserId={session.user.id}
+            disabled={selectionDisabled}
+            onPress={() => onSelectProject(item.project.id)}
+            selected={item.project.id === selectedProjectId}
+          />
+        )}
+        style={styles.list}
+        testID="conversation-list"
+      />
+      <ConversationSortMenu
+        onChange={setSortMode}
+        onRequestClose={() => setSortOpen(false)}
+        value={sortMode}
+        visible={sortOpen && !listDenied}
+      />
+    </>
   );
 }
 
@@ -263,31 +335,31 @@ const styles = StyleSheet.create({
   contentCompact: { maxWidth: 520 },
   contentEmpty: { backgroundColor: colors.canvas },
   header: {
-    minHeight: 78,
+    minHeight: 72,
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: spacing.md,
-    paddingHorizontal: spacing.md,
+    gap: spacing.sm,
+    paddingLeft: spacing.md,
+    paddingRight: spacing.xs,
     paddingTop: spacing.md,
     paddingBottom: spacing.sm,
     backgroundColor: colors.surface
   },
-  headerCompact: { minHeight: 76 },
-  headerCopy: { flex: 1 },
-  title: { color: chatColors.ink, fontFamily: fonts.semibold, fontSize: 23, lineHeight: 30, letterSpacing: -0.45 },
-  subtitle: { color: chatColors.muted, fontFamily: fonts.regular, fontSize: 12, lineHeight: 18, marginTop: 1 },
-  refreshButton: {
-    width: 48,
-    height: 48,
+  headerCompact: { minHeight: 70 },
+  headerCopy: { flex: 1, minWidth: 0 },
+  headerActions: { flexDirection: "row", alignItems: "center" },
+  title: { color: colors.ink, fontFamily: fonts.bold, fontSize: 28, lineHeight: 36, letterSpacing: -0.5 },
+  subtitle: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 13, lineHeight: 19 },
+  iconButton: {
+    width: 44,
+    height: 44,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: radii.pill,
-    backgroundColor: "transparent"
+    borderRadius: radii.pill
   },
-  refreshPressed: { opacity: 0.7 },
-  contextRow: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.md, paddingBottom: spacing.xs, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: chatColors.header },
-  contextLabel: { color: chatColors.muted, fontFamily: fonts.regular, fontSize: 12 },
-  contextCount: { minWidth: 24, color: chatColors.muted, fontFamily: fonts.medium, fontSize: 11, lineHeight: 20, textAlign: "center", borderRadius: radii.pill, backgroundColor: chatColors.header, overflow: "hidden", paddingHorizontal: 6 },
+  iconButtonPressed: { backgroundColor: colors.surfaceMuted },
+  iconButtonDisabled: { opacity: 0.45 },
+  controls: { gap: spacing.xxs, paddingBottom: spacing.xxs, backgroundColor: colors.surface },
   skeletonList: { backgroundColor: colors.surface },
   skeletonRow: { minHeight: 84, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   skeletonAvatar: { width: 48, height: 48, borderRadius: radii.pill, backgroundColor: colors.surfaceMuted },

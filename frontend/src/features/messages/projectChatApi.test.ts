@@ -68,3 +68,26 @@ describe("project chat HTTP contract", () => {
     expect(fetch.mock.calls.at(-1)![1]!.method).toBe("POST");
   });
 });
+
+
+it("uses tracked action, exclusion and canonical rename HTTP contracts without changing calendar dates", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ data: {} }));
+  const controller = new AbortController();
+  await projectChatApi.actionTypes("project/a", controller.signal);
+  expect(fetch.mock.calls.at(-1)![0]).toBe("/api/v1/projects/project%2Fa/chat/action-types");
+  await projectChatApi.createActionType("project/a", { name: "Site review", idempotencyKey: "type-key" }, controller.signal);
+  expect(fetch.mock.calls.at(-1)![1]).toMatchObject({ method: "POST", body: JSON.stringify({ name: "Site review", idempotencyKey: "type-key" }), signal: controller.signal });
+  const membership = { expectedVersion: 2, reason: "Updated team", idempotencyKey: "member-key" };
+  await projectChatApi.removeParticipant("project/a", "user/b", membership, controller.signal);
+  expect(fetch.mock.calls.at(-1)![0]).toBe("/api/v1/projects/project%2Fa/chat/participants/user%2Fb/remove");
+  expect(fetch.mock.calls.at(-1)![1]).toMatchObject({ method: "POST", body: JSON.stringify(membership), signal: controller.signal });
+  await projectChatApi.restoreParticipant("project/a", "user/b", membership, controller.signal);
+  expect(fetch.mock.calls.at(-1)![0]).toBe("/api/v1/projects/project%2Fa/chat/participants/user%2Fb/restore");
+  const rename = { name: "Courtyard renovation", expectedVersion: 3, idempotencyKey: "rename-key" };
+  await projectChatApi.renameProject("project/a", rename, controller.signal);
+  expect(fetch.mock.calls.at(-1)![0]).toBe("/api/v1/projects/project%2Fa/chat/project-name");
+  expect(fetch.mock.calls.at(-1)![1]).toMatchObject({ method: "PATCH", body: JSON.stringify(rename), signal: controller.signal });
+  const input = { body: "Confirm finish", priority: "important" as const, mentions: [], clientMessageId: "send-key", responsibleUserId: "user/b", action: { typeId: "action", dueDate: "2026-10-01" } };
+  await projectChatApi.send("project/a", input, controller.signal);
+  expect(fetch.mock.calls.at(-1)![1]).toMatchObject({ method: "POST", body: JSON.stringify(input), signal: controller.signal });
+});

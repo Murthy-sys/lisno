@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   BriefcaseBusiness,
@@ -22,6 +22,7 @@ import type { PublicUser, Role } from "../../api/types";
 import { ROLE_CODES, ROLE_LABELS } from "../../api/authorization-contract";
 import { roleHomePath } from "../../app/routePaths";
 import { authorizationFor } from "../../test/authFixtures";
+import { AccountMenu } from "./AccountMenu";
 import { Sidebar } from "./Sidebar";
 import { navigationForAuthorization } from "./navigation";
 
@@ -68,7 +69,7 @@ describe("role navigation", () => {
     }
   });
 
-  it.each(ROLE_CODES)("renders the canonical %s role label", (role) => {
+  it.each(ROLE_CODES)("renders the canonical %s role label in the shared account control", async (role) => {
     const user: PublicUser = {
       id: `${role}-1`,
       name: "Aarav Mehta",
@@ -78,15 +79,17 @@ describe("role navigation", () => {
 
     render(
       <MemoryRouter initialEntries={[roleHomePath(role)]}>
-        <Sidebar
-          user={user}
-          authorization={authorizationFor(role)}
-          onLogout={vi.fn()}
-        />
+        <AccountMenu user={user} onLogout={vi.fn()} />
       </MemoryRouter>
     );
 
-    expect(screen.getAllByText(ROLE_LABELS[role]).some((element) => element.closest(".ui-sidebar__role"))).toBe(true);
+    const trigger = screen.getByRole("button", { name: user.name });
+    expect(within(trigger).getByText(ROLE_LABELS[role])).toBeVisible();
+
+    await userEvent.click(trigger);
+    const account = screen.getByRole("group", { name: "Account" });
+    expect(within(account).getByText(ROLE_LABELS[role])).toBeVisible();
+    expect(within(account).getByText(user.email)).toBeVisible();
   });
 
   it.each(roleNavigation)(

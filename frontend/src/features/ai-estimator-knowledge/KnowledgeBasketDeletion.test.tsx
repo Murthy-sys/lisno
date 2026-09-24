@@ -316,6 +316,17 @@ describe("Super Admin permanent Main Basket deletion", () => {
     expect(await within(errorManagement).findByText(emptyBasket.name)).toBeVisible();
   });
 
+  it("blocks permanent Main Basket deletion while retained vendors reference it", async () => {
+    vi.mocked(knowledgeApi.getKnowledgeBasketDeletionImpact).mockResolvedValue({ ...eligibleImpact, vendorReferenceCount: 3 });
+    const user = userEvent.setup(); renderPage(); const dialog = await openPermanentDelete(user);
+    await within(dialog).findByText("Permanent deletion is blocked");
+    await user.type(within(dialog).getByRole("textbox", { name: "Type basket name to confirm" }), emptyBasket.name);
+    await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), "Remove duplicate");
+    expect(within(dialog).getByRole("button", { name: "Delete" })).toBeDisabled();
+    expect(within(dialog).getByText(/3 retained vendors/)).toBeVisible();
+    expect(knowledgeApi.permanentlyDeleteKnowledgeBasket).not.toHaveBeenCalled();
+  });
+
   it("names everything a deletion carries away instead of refusing it", async () => {
     const user = userEvent.setup();
     vi.mocked(knowledgeApi.getKnowledgeBasketDeletionImpact).mockResolvedValue({

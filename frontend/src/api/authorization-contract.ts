@@ -102,6 +102,7 @@ export const REQUESTABLE_MODULES_BY_ROLE = {
 
 export const PERMISSION_CODES = [
   "identity.self.read",
+  "identity.self.profile_photo.manage",
   "projects.list",
   "projects.client_summary.read",
   "projects.create",
@@ -229,6 +230,8 @@ export const PERMISSION_CODES = [
   "chat.issue",
   "chat.read_state",
   "chat.participants.manage",
+  "chat.action_types.manage",
+  "chat.project_name.manage",
   "procurement.items.read",
   "procurement.items.manage",
   "procurement.vendors.read",

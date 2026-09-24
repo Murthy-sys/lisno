@@ -11,6 +11,7 @@ import {
   getKnowledgeSubBasketDeletionImpact,
   listKnowledgeSurfaces,
   listKnowledgeItems,
+  listKnowledgeMasters,
   listKnowledgeQualityControlOptions,
   permanentlyDeleteKnowledgeMainLine,
   permanentlyDeleteKnowledgeBasket,
@@ -26,6 +27,13 @@ import {
 afterEach(() => vi.restoreAllMocks());
 
 describe("knowledge API", () => {
+  it("requests the global vendor overview independently of filtered table pages", async () => {
+    const get = vi.spyOn(apiClient, "get").mockResolvedValue({});
+    await listKnowledgeMasters("vendors", { includeDirectoryOverview: true, limit: 1, offset: 0 });
+    expect(get).toHaveBeenLastCalledWith("/admin/ai-estimator-knowledge/vendors?includeDirectoryOverview=true&limit=1&offset=0");
+    await listKnowledgeMasters("vendors", { limit: 5, offset: 5, search: "Oak", status: "inactive" });
+    expect(get).toHaveBeenLastCalledWith("/admin/ai-estimator-knowledge/vendors?limit=5&offset=5&search=Oak&status=inactive");
+  });
   it("preserves preview defaults and passes cancellation/local-loading options separately from the payload", async () => {
     const post = vi.spyOn(apiClient, "post").mockResolvedValue({});
     const input = { quantity: "2", quantityScale: 0 };

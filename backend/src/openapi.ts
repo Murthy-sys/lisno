@@ -1,3 +1,4 @@
+import { PROCUREMENT_VENDOR_SCHEMAS, PROCUREMENT_VENDOR_REQUESTS, PROCUREMENT_VENDOR_RESPONSES, PROCUREMENT_VENDOR_QUERIES } from "./openapi/procurement-vendor.js";
 import { VENDOR_SUGGESTION_SCHEMAS, VENDOR_SUGGESTION_REQUESTS, VENDOR_SUGGESTION_RESPONSES } from "./openapi/project-vendor-suggestions.js";
 import { PROJECT_PROCUREMENT_SCHEMAS, PROJECT_PROCUREMENT_REQUESTS, PROJECT_PROCUREMENT_RESPONSES, PROJECT_PROCUREMENT_ITEM_QUERY_PARAMETERS } from "./openapi/project-procurement.js";
 import { DESIGN_WORKFLOW_ACTIONS } from "./domain/design-workflow-state.js";
@@ -140,6 +141,7 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
     "EstimateDecisionRequest"
   ),
   "PUT /leads/:leadId/estimate": jsonRequest("EstimateInput"),
+  "PUT /auth/me/profile-photo": multipartRequest("ProfilePhotoUploadRequest"),
   "POST /estimates/:estimateId/design-uploads": multipartRequest(
     "FileUploadRequest"
   ),
@@ -183,10 +185,12 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   "POST /internal/extraction-jobs/:jobId/fail": jsonRequest(
     "ExtractionFailureRequest"
   ),
-  ...AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES
+  ...AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES,
+  ...PROCUREMENT_VENDOR_REQUESTS
 };
 
 const operationsWithoutBodies = new Set<string>([
+  "DELETE /auth/me/profile-photo",
   "PUT /notifications/:notificationId/read",
   "POST /leads/:leadId/estimate/submit",
   "POST /estimates/:estimateId/send-client",
@@ -208,6 +212,8 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "POST /auth/password-reset/inspect": "PasswordResetAvailable",
   "POST /auth/password-reset/complete": "PasswordResetCompleted",
   "GET /auth/me": "PublicUser",
+  "PUT /auth/me/profile-photo": "ProfilePhotoUserResult",
+  "DELETE /auth/me/profile-photo": "ProfilePhotoUserResult",
   "DELETE /estimate-design-uploads/:uploadId": "EstimateDesignUploadDeleted",
   "POST /estimates/:estimateId/design-uploads": "EstimateDesignUpload",
   "POST /estimate-plan-change-requests/:requestId/replacement-upload": "EstimateDesignUpload",
@@ -247,7 +253,8 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "GET /admin/dashboard/overview": "SuperAdminDashboardOverview",
   "GET /admin/dashboard/projects": "SuperAdminDashboardProjectPage",
   "GET /admin/dashboard/workforce": "SuperAdminDashboardWorkforcePage",
-  ...AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS
+  ...AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS,
+  ...PROCUREMENT_VENDOR_RESPONSES
 };
 
 const pdfOperations = new Set<string>([
@@ -279,6 +286,8 @@ const attachmentOperations = new Set<string>([
 ]);
 
 const multipartOperations = new Set<string>([
+  "PUT /admin/ai-estimator-knowledge/vendors/:id/photo",
+  "PUT /auth/me/profile-photo",
   "POST /projects/:projectId/chat/attachments",
   "POST /estimates/:estimateId/design-uploads",
   "POST /tasks/:taskId/design-versions",
@@ -307,6 +316,9 @@ const operationSummaries: Readonly<Record<string, string>> = {
   "POST /auth/password-reset/inspect": "Inspect a password-reset link",
   "POST /auth/password-reset/complete": "Choose a new password",
   "GET /auth/me": "Read the current user",
+  "PUT /auth/me/profile-photo": "Upload or replace the current user's profile photo",
+  "DELETE /auth/me/profile-photo": "Remove the current user's profile photo",
+  "GET /users/:userId/profile-photo": "Read a visible user's profile photo",
   "GET /auth/authorization": "Read the current authorization snapshot",
   "POST /auth/user-invitations/inspect": "Inspect a staff invitation",
   "POST /auth/user-invitations/accept": "Accept a staff invitation",
@@ -481,6 +493,7 @@ const queryParametersByOperation: Readonly<
   Record<string, readonly OpenApiParameter[]>
 > = {
   ...CHAT_QUERY_PARAMETERS,
+  "GET /users/:userId/profile-photo": [{ name: "v", in: "query", required: false, schema: { type: "string", pattern: "^[1-9][0-9]{0,15}$" }, description: "Optional profilePhotoVersion used only to vary the client cache key." }],
   "GET /procurement/suggestion-projects": [{ name: "q", in: "query", required: false, schema: { type: "string", maxLength: 100 } }],
   "GET /procurement/projects/:projectId/vendor-suggestions": [{ name: "q", in: "query", required: false, schema: { type: "string", maxLength: 100 } }],
   "GET /procurement/vendors": [{ name: "q", in: "query", required: false, schema: { type: "string", maxLength: 100 }, description: "Literal normalized search across active Configuration vendor codes and names." }],
@@ -674,7 +687,13 @@ const queryParametersByOperation: Readonly<
   ],
   "GET /kpis/users/:userId/tasks": kpiPeriodParameters(),
   "GET /kpis/users/:userId": kpiPeriodParameters(),
-  ...AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS
+  ...AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS,
+  ...PROCUREMENT_VENDOR_QUERIES,
+  "GET /admin/ai-estimator-knowledge/vendors": [
+    ...(AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS["GET /admin/ai-estimator-knowledge/vendors"] ?? []),
+    { name: "vendorType", in: "query", required: false, schema: { type: "string", enum: ["execution", "supplier"] } },
+    ...["mainBasketId", "subBasketId"].map((name) => ({ name, in: "query", required: false, schema: { type: "string" } }))
+  ]
 };
 
 function kpiPeriodParameters(): readonly OpenApiParameter[] {
@@ -1050,6 +1069,19 @@ function responsesFor(key: HumanJwtOperationKeyShape): Readonly<Record<string, O
       "503": { $ref: "#/components/responses/ServiceUnavailable" }
     };
   }
+  if (key === "GET /users/:userId/profile-photo") {
+    return {
+      ...binaryResponses("image/jpeg", "Processed 512 x 512 JPEG without metadata. Served only to the user or an actor who can already read users; otherwise 404 without disclosing existence. Cache-Control private, max-age=86400, with a version-derived ETag."),
+      "304": { description: "The If-None-Match ETag matches the current photo version." }
+    };
+  }
+  if (key === "GET /admin/ai-estimator-knowledge/vendors/:id/photo") {
+    return {
+      ...binaryResponses(["image/jpeg", "image/png", "image/webp"], "Original vendor photograph, authenticated Super Admin only. Private, no-store; embedded geotags are preserved."),
+      "422": { $ref: "#/components/responses/UnprocessableKnowledge" },
+      "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    };
+  }
   if (pdfOperations.has(key)) {
     return binaryResponses("application/pdf", "PDF attachment.");
   }
@@ -1308,6 +1340,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
   const dateTime = { type: "string", format: "date-time" } as const;
   return {
     ...AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS,
+    ...PROCUREMENT_VENDOR_SCHEMAS,
     ...CHAT_COMPONENT_SCHEMAS,
     ...PROJECT_PROCUREMENT_SCHEMAS,
     ...VENDOR_SUGGESTION_SCHEMAS,
@@ -1619,7 +1652,30 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         name: { type: "string", minLength: 1 },
         email: { type: "string", format: "email" },
         role: { $ref: "#/components/schemas/Role" },
-        avatar: { type: "string" }
+        avatar: { type: "string" },
+        profilePhotoVersion: {
+          type: "integer",
+          minimum: 1,
+          description: "Present only while a profile photo exists; omitted otherwise. Storage keys and URLs are never exposed."
+        }
+      }
+    },
+    ProfilePhotoUserResult: {
+      type: "object",
+      additionalProperties: false,
+      required: ["user"],
+      properties: { user: { $ref: "#/components/schemas/PublicUser" } }
+    },
+    ProfilePhotoUploadRequest: {
+      type: "object",
+      additionalProperties: false,
+      required: ["photo"],
+      properties: {
+        photo: {
+          type: "string",
+          format: "binary",
+          description: "Exactly one JPEG, PNG, or WebP image of at most 5 MB and 4096 x 4096 pixels, verified by file signature. It is re-encoded as a 512 x 512 JPEG without metadata. Errors: 400 PROFILE_PHOTO_INVALID, 413 PROFILE_PHOTO_TOO_LARGE, 409 PROFILE_PHOTO_CONFLICT."
+        }
       }
     },
     AuthPayload: {

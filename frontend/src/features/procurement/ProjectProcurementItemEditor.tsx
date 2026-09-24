@@ -43,6 +43,7 @@ function draftFor(item: ProjectProcurementItem | null) {
     itemName: item?.itemName ?? "",
     brand: item?.brand ?? "",
     uomId: item?.uom.id ?? "",
+    allocation: item?.allocatedWorkPaise == null ? "" : `${Math.floor(item.allocatedWorkPaise / 100)}.${String(item.allocatedWorkPaise % 100).padStart(2, "0")}`,
     price: item ? `${Math.floor(item.pricePaise / 100)}.${String(item.pricePaise % 100).padStart(2, "0")}` : ""
   };
 }
@@ -128,7 +129,10 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
     const itemName = draft.itemName.normalize("NFKC").trim().replace(/\s+/gu, " ");
     const brand = draft.brand.normalize("NFKC").trim().replace(/\s+/gu, " ");
     const pricePaise = rupeesToPaise(draft.price);
+    const allocatedWorkPaise = rupeesToPaise(draft.allocation);
+    const allocationUnchanged = Boolean(baseItem && vendor?.id === baseItem.vendor?.id && draft.allocation === initialDraft.allocation);
     const nextErrors: Record<string, string> = {};
+    if (vendor && !allocationUnchanged && (allocatedWorkPaise === null || allocatedWorkPaise > MAX_PROCUREMENT_ITEM_PRICE_PAISE)) nextErrors.allocatedWorkPaise = "Enter a positive allocated work amount with up to two decimal places.";
     const selectedSource = source ?? baseItem?.estimateSource ?? assignment;
     if ((!baseItem || assignment) && !selectedSource) nextErrors.estimateSource = "Choose a current approved estimate item.";
     if (!itemName || itemName.length > 200) nextErrors.itemName = "Enter an item name of up to 200 characters.";
@@ -144,6 +148,7 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
       return;
     }
     save.mutate({ itemName, brand, uomId: draft.uomId, vendorId: vendor?.id ?? null, pricePaise: pricePaise!,
+      ...(!vendor || allocationUnchanged ? {} : { allocatedWorkPaise: allocatedWorkPaise! }),
       ...(selectedSource ? { estimateId: selectedSource.estimateId, estimateVersion: selectedSource.estimateVersion, sourceLineItemKey: selectedSource.sourceLineItemKey } : {}) });
   }
 
@@ -199,6 +204,7 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
           </Field>
           <ProcurementVendorField key={vendorFieldRevision} projectId={projectId} suggestionsDisabled={sourceStale || sourceConflict} value={vendor} error={errors.vendorId}
             onChange={(selected) => {
+              if (selected?.id !== vendor?.id) setDraft((previous) => ({ ...previous, allocation: "" }));
               setVendor(selected);
               setErrors((previous) => ({ ...previous, vendorId: "" }));
               if (!conflict && !sourceConflict) save.reset();
@@ -221,6 +227,10 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
             hint="Unit price in rupees per selected UOM. Up to 2 decimal places.">
             {(props) => <Input {...props} type="text" inputMode="decimal" value={draft.price} maxLength={20} onChange={(event) => change("price", event.target.value)} placeholder="0.00" />}
           </Field>
+          {vendor ? <Field id="procurement-item-allocation" label="Allocated work (INR)" required={!baseItem || vendor.id !== baseItem.vendor?.id || baseItem.allocatedWorkPaise != null} error={errors.allocatedWorkPaise}
+            hint={baseItem?.allocatedWorkPaise == null && vendor.id === baseItem?.vendor?.id ? "Not recorded. Leave unchanged for unrelated edits. Missing historical values must be corrected by Super Admin before new unverified work is allocated." : "Total committed work including applicable tax, separate from unit price. The vendor limit applies across all projects."}>
+            {(props) => <Input {...props} inputMode="decimal" value={draft.allocation} maxLength={20} onChange={(event) => change("allocation", event.target.value)} placeholder={baseItem?.allocatedWorkPaise == null && vendor.id === baseItem?.vendor?.id ? "Not recorded" : "0.00"} />}
+          </Field> : null}
         </fieldset>
       </form>
     </ContextPanel>

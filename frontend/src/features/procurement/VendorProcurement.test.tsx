@@ -9,6 +9,7 @@ import type { ProcurementVendorReference } from "../../api/types";
 import { authorizationFor } from "../../test/authFixtures";
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
+import { completeVendor, vendorBasket, vendorSubBasket } from "./vendorProfile.fixtures";
 import { ProcurementManagementPage } from "./ProcurementManagementPage";
 import { ProcurementVendorField } from "./ProcurementVendorField";
 import { getVendorSuggestions, vendorSuggestionKeys, type VendorSuggestion, type VendorSuggestionProject } from "./vendorSuggestionsApi";
@@ -46,6 +47,9 @@ beforeEach(() => {
     http.get("/api/v1/procurement/suggestion-projects", () => data({ items: [currentProject], total: 1, limit: 20, offset: 0 })),
     http.get("/api/v1/procurement/projects/project-one/vendor-suggestions", () => suggestionPage()),
     http.get("/api/v1/procurement/vendors", () => data({ items: [vendor], total: 1, limit: 20, offset: 0 })),
+    http.get("/api/v1/admin/ai-estimator-knowledge/baskets", () => data({ items: [vendorBasket], pagination: { total: 1, limit: 100, offset: 0, hasMore: false } })),
+    http.get("/api/v1/admin/ai-estimator-knowledge/baskets/basket-one/sub-baskets", () => data({ items: [vendorSubBasket], pagination: { total: 1, limit: 100, offset: 0, hasMore: false } })),
+    http.get("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-one", () => data({ ...completeVendor, version: 3 })),
     http.get("/api/v1/admin/ai-estimator-knowledge/vendors", () => data({ items: [master], pagination: { total: 1, limit: 20, offset: 0, hasMore: false } }))
   );
 });
@@ -122,9 +126,9 @@ describe("vendor procurement", () => {
     server.use(http.delete("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-one", async ({ request }) => { writes(await request.json()); return data({ ...master, status: "archived", version: 4 }); }));
     start(); const user = userEvent.setup();
     expect(await screen.findByRole("rowheader", { name: /Timber House/ })).toBeVisible();
-    expect(screen.getByText("Not rated yet")).toBeVisible();
+    expect(within(screen.getByRole("table")).getByText("Not available")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Edit Timber House" }));
-    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Timber House");
+    expect(await screen.findByRole("textbox", { name: "Entity Name" })).toHaveValue("Timber House");
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     await user.click(screen.getByRole("button", { name: "Archive Timber House" }));
     const dialog = screen.getByRole("alertdialog");
@@ -134,24 +138,28 @@ describe("vendor procurement", () => {
     await screen.findByText("Timber House archived.");
     expect(writes).toHaveBeenCalledWith({ expectedVersion: 3, reason: "No longer supplying" });
   });
-  it("creates a configured vendor and updates its availability using CAS", async () => {
+  it("updates a complete configured vendor availability using CAS", async () => {
     role = "super_admin"; const writes: unknown[] = [];
-    server.use(
-      http.post("/api/v1/admin/ai-estimator-knowledge/vendors", async ({ request }) => { const body = await request.json() as Record<string, unknown>; writes.push(body); return data({ ...master, ...body, id: "vendor-new", version: 1 }); }),
-      http.patch("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-one", async ({ request }) => { const body = await request.json() as Record<string, unknown>; writes.push(body); return data({ ...master, ...body, version: 4 }); })
-    );
+    server.use(http.patch("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-one", async ({ request }) => { const body = await request.json() as Record<string, unknown>; writes.push(body); return data({ ...master, ...body, version: 4 }); }));
     start(); const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Add vendor" }));
-    await user.type(screen.getByRole("textbox", { name: "Code" }), "STONE");
-    await user.type(screen.getByRole("textbox", { name: "Name" }), "Stone Studio");
-    await user.click(screen.getByRole("button", { name: "Add Vendor" }));
-    await screen.findByText("Stone Studio saved.");
-    expect(writes[0]).toEqual({ code: "STONE", name: "Stone Studio", description: null });
-    await user.click(screen.getByRole("button", { name: "Edit Timber House" }));
-    await user.selectOptions(within(screen.getByRole("dialog", { name: "Edit Vendor" })).getByRole("combobox", { name: "Status" }), "inactive");
+    await user.click(await screen.findByRole("button", { name: "Edit Timber House" }));
+    const panel = await screen.findByRole("dialog", { name: "Vendor details" });
+    await user.selectOptions(await within(panel).findByRole("combobox", { name: "Status" }), "inactive");
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await screen.findByText("Timber House saved.");
-    expect(writes[1]).toMatchObject({ expectedVersion: 3, status: "inactive", name: "Timber House" });
+    expect(writes[0]).toMatchObject({ expectedVersion: 3, status: "inactive", name: "Timber House", procurementProfile: { vendorType: "execution", executionType: ["labor"] } });
+  });
+  it("sends classification filters and resets pagination when they change", async () => {
+    role = "super_admin"; const requests: URLSearchParams[] = [];
+    server.use(http.get("/api/v1/admin/ai-estimator-knowledge/vendors", ({ request }) => { const params = new URL(request.url).searchParams; requests.push(params); return data({ items: [master], pagination: { total: 41, offset: Number(params.get("offset")), limit: 20, hasMore: true } }); }));
+    start(); const user = userEvent.setup(); await screen.findByRole("rowheader", { name: /Timber House/ });
+    await user.click(screen.getByRole("button", { name: "Next" })); await waitFor(() => expect(requests.at(-1)?.get("offset")).toBe("5"));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Vendor Type" }), "supplier");
+    await waitFor(() => expect(requests.at(-1)?.get("vendorType")).toBe("supplier")); expect(requests.at(-1)?.get("offset")).toBe("0");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), "basket-one"); await screen.findByRole("option", { name: vendorSubBasket.name });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sub Basket" }), "sub-one"); await waitFor(() => expect(requests.at(-1)?.get("subBasketId")).toBe("sub-one"));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), ""); await waitFor(() => expect(requests.at(-1)?.has("subBasketId")).toBe(false));
+    expect(screen.getByRole("combobox", { name: "Sub Basket" })).toBeDisabled();
   });
   it("blocks a failed refresh without discarding the manager draft", async () => {
     const view = start(); const user = await openPanel(); await chooseVendor(user);

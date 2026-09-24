@@ -13,6 +13,9 @@ import type {
 
 export const knowledgeQueryKeys = {
   all: ["ai-estimator-knowledge"] as const,
+  vendorDetails: () => ["private-procurement-vendors"] as const,
+  vendorDetail: (id: string) => ["private-procurement-vendors", id] as const,
+  vendorBaseline: (id: string) => ["private-procurement-vendors", id, "allocation-baseline"] as const,
   itemLists: () => ["ai-estimator-knowledge", "items"] as const,
   itemList: (filters: KnowledgeListParams) =>
     ["ai-estimator-knowledge", "items", filters] as const,
@@ -77,6 +80,8 @@ export const knowledgeQueryKeys = {
     ["ai-estimator-knowledge", "masters", type, params] as const,
   masterCatalog: (type: KnowledgeMasterType) =>
     ["ai-estimator-knowledge", "masters", type, "catalog"] as const,
+  vendorDirectoryOverview: () =>
+    ["ai-estimator-knowledge", "masters", "vendors", "directory-overview"] as const,
   previews: () => ["ai-estimator-knowledge", "preview"] as const,
   preview: (input: KnowledgePreviewRequest) =>
     ["ai-estimator-knowledge", "preview", input] as const,

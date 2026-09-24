@@ -6,6 +6,7 @@ import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import axe from "axe-core";
 import { ApiError, tokenStorage } from "../../api/client";
+import { clientKeys } from "../client/clientApi";
 import { projectChatApi } from "./projectChatApi";
 import { chatTestMessage, chatTestPage, chatTestPolicy, chatTestPeople, chatTestSummary } from "./projectChatFixtures";
 import { ProjectChatNavigation, ProjectChatLink } from "./ProjectChatHeader";
@@ -39,6 +40,7 @@ beforeEach(() => {
   tokenStorage.set("chat-test-session");
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({ matches: query.includes("pointer: fine"), addEventListener: vi.fn(), removeEventListener: vi.fn() }));
   vi.spyOn(projectChatApi, "summary").mockImplementation(async projectId => chatTestSummary({ project: { id: projectId, name: projectId === "project-a" ? "Courtyard residence" : "Garden residence", status: "active" } }));
+  vi.spyOn(projectChatApi, "actionTypes").mockResolvedValue({ items: [{ id: "action", name: "Action", priority: "important", builtIn: true }, { id: "escalation", name: "Escalation", priority: "critical", builtIn: true }], canCreate: false });
   vi.spyOn(projectChatApi, "attachmentPolicy").mockResolvedValue(chatTestPolicy());
   vi.spyOn(projectChatApi, "participants").mockResolvedValue({ items: chatTestPeople, setupWarnings: [] });
   vi.spyOn(projectChatApi, "messages").mockResolvedValue(chatTestPage());
@@ -234,7 +236,7 @@ describe("shared project messages", () => {
     const add = vi.spyOn(projectChatApi, "selectParticipant").mockResolvedValue({ items: chatTestPeople, setupWarnings: [] });
     app(); await screen.findByText("Critical 3");
     await userEvent.click(screen.getByRole("button", { name: "3 participants" }));
-    expect(screen.getByText(/People linked by an assignment/)).toBeVisible();
+    expect(screen.getByText(/Removal blocks conversation access/)).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Add participant" }));
     const dialog = screen.getByRole("dialog", { name: "Add project participant" });
     await userEvent.selectOptions(await within(dialog).findByLabelText(/Eligible participant/), "site-a");
@@ -458,4 +460,156 @@ describe("shared project messages", () => {
     expect(screen.getByText("second.pdf")).toBeVisible();
     expect(send).not.toHaveBeenCalled();
   });
+});
+
+
+describe("tracked actions and conversation administration", () => {
+  it("lets a Client select an escalation, requires its fields and retains its exact retry payload", async () => {
+    vi.mocked(projectChatApi.summary).mockResolvedValue(chatTestSummary({ capabilities: { canSend: true, canManageParticipants: false, canManageIssues: false, canRenameProject: false } }));
+    const send = vi.spyOn(projectChatApi, "send").mockRejectedValueOnce(new ApiError(503, "UNAVAILABLE", "Try again")).mockResolvedValueOnce(chatTestMessage());
+    app();
+    const actions = await screen.findByRole("button", { name: "Actions" });
+    expect(screen.queryByRole("button", { name: "Edit project name" })).not.toBeInTheDocument();
+    await userEvent.click(actions);
+    expect(screen.queryByRole("menuitem", { name: "Add action type…" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("menuitem", { name: "Escalation" }));
+    const dialog = screen.getByRole("dialog", { name: "Escalation" });
+    expect(within(dialog).getByRole("button", { name: "Done" })).toBeDisabled();
+    await userEvent.selectOptions(within(dialog).getByLabelText(/Responsible person/), "worker-b");
+    fireEvent.change(within(dialog).getByLabelText(/Due date/), { target: { value: "2026-10-04" } });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+    expect(actions).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    await userEvent.type(screen.getByRole("textbox", { name: "Message the project team" }), "Confirm the revised wiring plan");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    expect(send.mock.calls[0][1]).toMatchObject({ action: { typeId: "escalation", dueDate: "2026-10-04" }, responsibleUserId: "worker-b", priority: "critical" });
+    expect(send.mock.calls[0][1]).toEqual(send.mock.calls[1][1]);
+  });
+
+  it("removes assignment-derived people and explicitly restores them without exposing protected controls", async () => {
+    const current = chatTestPeople.map(person => ({ ...person, canRemove: person.id === "worker-a", removalVersion: 0, ...(person.id === "client-a" ? { removalBlockedReason: "The linked Client cannot be removed." } : {}) }));
+    const removed = { ...chatTestPeople[1], removalVersion: 1, canRestore: true };
+    vi.mocked(projectChatApi.participants).mockResolvedValue({ items: current, setupWarnings: [] });
+    const remove = vi.spyOn(projectChatApi, "removeParticipant").mockImplementation(async () => { const page = { items: current.filter(person => person.id !== "worker-a"), removed: [removed], setupWarnings: [] }; vi.mocked(projectChatApi.participants).mockResolvedValue(page); return page; });
+    const restore = vi.spyOn(projectChatApi, "restoreParticipant").mockResolvedValue({ items: current, removed: [], setupWarnings: [] });
+    app(); await userEvent.click(await screen.findByRole("button", { name: "3 participants" }));
+    expect(await screen.findByText("The linked Client cannot be removed.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Remove participant Maya Client" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Remove participant Alex Team" }));
+    const dialog = screen.getByRole("dialog", { name: "Remove participant" });
+    await userEvent.type(within(dialog).getByLabelText(/Reason/), "Project contact changed");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Remove participant" }));
+    await waitFor(() => expect(remove).toHaveBeenCalledWith("project-a", "worker-a", expect.objectContaining({ expectedVersion: 0, reason: "Project contact changed" }), expect.any(AbortSignal)));
+    await userEvent.click(await screen.findByRole("button", { name: "Restore participant Alex Team" }));
+    const restoreDialog = screen.getByRole("dialog", { name: "Restore participant" });
+    await userEvent.type(within(restoreDialog).getByLabelText(/Reason/), "Returning to this conversation");
+    await userEvent.click(within(restoreDialog).getByRole("button", { name: "Restore participant" }));
+    await waitFor(() => expect(restore).toHaveBeenCalledWith("project-a", "worker-a", expect.objectContaining({ expectedVersion: 1 }), expect.any(AbortSignal)));
+  });
+
+  it("retains a rename draft on conflict and requires review of the new canonical name", async () => {
+    const base = chatTestSummary();
+    vi.mocked(projectChatApi.summary).mockResolvedValue({ ...base, project: { ...base.project, nameVersion: 1 }, capabilities: { ...base.capabilities, canRenameProject: true } });
+    const rename = vi.spyOn(projectChatApi, "renameProject").mockImplementationOnce(async () => { vi.mocked(projectChatApi.summary).mockResolvedValue({ ...base, project: { ...base.project, name: "Another saved name", nameVersion: 2 }, capabilities: { ...base.capabilities, canRenameProject: true } }); throw new ApiError(409, "CONFLICT", "Changed"); }).mockResolvedValueOnce({ ...base, project: { ...base.project, name: "My revised project", nameVersion: 3 } });
+    app(); await userEvent.click(await screen.findByRole("button", { name: "Edit project name" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit project name" });
+    await userEvent.clear(within(dialog).getByLabelText(/Project name/));
+    await userEvent.type(within(dialog).getByLabelText(/Project name/), "My revised project");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save project name" }));
+    expect(await within(dialog).findByText("Another saved name")).toBeVisible();
+    expect(within(dialog).getByLabelText(/Project name/)).toHaveValue("My revised project");
+    expect(within(dialog).getByRole("button", { name: "Save project name" })).toBeDisabled();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Review complete, keep my name" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save project name" }));
+    await waitFor(() => expect(rename).toHaveBeenCalledTimes(2));
+    expect(rename.mock.calls[0][1].expectedVersion).toBe(1);
+    expect(rename.mock.calls[1][1].expectedVersion).toBe(2);
+    expect(rename.mock.calls[1][1].idempotencyKey).not.toBe(rename.mock.calls[0][1].idempotencyKey);
+  });
+
+  it("adds a permitted catalogue type and selects it without accidentally sending the current draft", async () => {
+    const builtIns = (await projectChatApi.actionTypes("project-a")).items;
+    vi.mocked(projectChatApi.actionTypes).mockResolvedValue({ items: builtIns, canCreate: true });
+    const type = { id: "custom-a", name: "Site review", priority: "important" as const, builtIn: false };
+    const create = vi.spyOn(projectChatApi, "createActionType").mockImplementation(async () => { vi.mocked(projectChatApi.actionTypes).mockResolvedValue({ items: [...builtIns, type], canCreate: true }); return type; });
+    const send = vi.spyOn(projectChatApi, "send");
+    app(); await screen.findByRole("button", { name: "Actions" });
+    await userEvent.type(screen.getByRole("textbox", { name: "Message the project team" }), "Review this site");
+    await userEvent.click(screen.getByRole("button", { name: "Actions" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Add action type…" }));
+    const dialog = screen.getByRole("dialog", { name: "Add action type" });
+    await userEvent.type(within(dialog).getByLabelText(/Action type name/), "Site review");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Add action type" }));
+    expect(await screen.findByRole("dialog", { name: "Site review" })).toBeVisible();
+    expect(create).toHaveBeenCalledWith("project-a", expect.objectContaining({ name: "Site review" }), expect.any(AbortSignal));
+    expect(send).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "Message the project team", hidden: true })).toHaveValue("Review this site");
+  });
+
+  it("shows original deadline history, disallows clearing saved tracking and requires a reschedule reason", async () => {
+    const message = chatTestMessage({ priority: "important", issueStatus: "open", responsible: { ...chatTestPeople[1], available: true }, raisedBy: chatTestPeople[0], action: { typeId: "action", typeName: "Action", originalDueDate: "2026-10-01", dueDate: "2026-10-04" }, capabilities: { canRaise: true, canResolve: true, canReopen: false, canAssign: true, canAssignSelf: true, canReschedule: true }, issueHistory: [{ id: "history-a", action: "reschedule", actor: chatTestPeople[0], occurredAt: "2026-09-24T10:00:00Z", note: "Materials arriving later", priority: "important", status: "open", responsibleUserId: "worker-a", actionMetadata: { typeId: "action", typeName: "Action", originalDueDate: "2026-10-01", dueDate: "2026-10-04" } }] });
+    vi.mocked(projectChatApi.messages).mockResolvedValue(chatTestPage([message]));
+    const issue = vi.spyOn(projectChatApi, "issue").mockResolvedValue({ ...message, version: 2 });
+    app(); await userEvent.click(await screen.findByRole("button", { name: "View important issue details" }));
+    const dialog = screen.getByRole("dialog", { name: "Manage discussion issue" });
+    await waitFor(() => expect(within(dialog).getByLabelText("Action")).toHaveValue("escalate"));
+    expect(within(dialog).queryByRole("option", { name: "Clear priority" })).not.toBeInTheDocument();
+    expect(within(dialog).getByText("Materials arriving later")).toBeVisible();
+    expect(within(dialog).getByText(/Original due date:/)).toBeVisible();
+    await userEvent.selectOptions(within(dialog).getByLabelText("Action"), "reschedule");
+    fireEvent.change(within(dialog).getByLabelText(/New due date/), { target: { value: "2026-10-07" } });
+    expect(within(dialog).getByRole("button", { name: "Save update" })).toBeDisabled();
+    await userEvent.type(within(dialog).getByLabelText(/Reason/), "Confirmed delivery schedule");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save update" }));
+    await waitFor(() => expect(issue).toHaveBeenCalledWith("project-a", "message-a", expect.objectContaining({ action: "reschedule", dueDate: "2026-10-07", note: "Confirmed delivery schedule", expectedVersion: 1 }), expect.any(AbortSignal)));
+  });
+});
+
+
+it("requires explicit review before applying a retained deadline draft over a realtime update", async () => {
+  let message = chatTestMessage({ priority: "important", issueStatus: "open", responsible: { ...chatTestPeople[1], available: true }, action: { typeId: "action", typeName: "Action", originalDueDate: "2026-10-01", dueDate: "2026-10-01" }, capabilities: { canRaise: false, canResolve: true, canReopen: false, canAssign: true, canAssignSelf: false, canReschedule: true } });
+  vi.mocked(projectChatApi.messages).mockImplementation(async () => chatTestPage([message]));
+  const issue = vi.spyOn(projectChatApi, "issue").mockImplementation(async () => message);
+  app();
+  await userEvent.click(await screen.findByRole("button", { name: "View important issue details" }));
+  const dialog = screen.getByRole("dialog", { name: "Manage discussion issue" });
+  await waitFor(() => expect(within(dialog).getByLabelText("Action")).toHaveValue("resolve"));
+  await userEvent.selectOptions(within(dialog).getByLabelText("Action"), "reschedule");
+  fireEvent.change(within(dialog).getByLabelText(/New due date/), { target: { value: "2026-10-07" } });
+  await userEvent.type(within(dialog).getByLabelText(/Reason/), "My planned delivery date");
+  expect(within(dialog).getByRole("button", { name: "Save update" })).toBeEnabled();
+  message = { ...message, version: 2, action: { ...message.action!, dueDate: "2026-10-10" }, issueHistory: [{ id: "remote-change", action: "reschedule", actor: chatTestPeople[1], occurredAt: "2026-09-24T12:00:00Z", note: "Delivery moved by project manager", priority: "important", status: "open", responsibleUserId: "worker-a", actionMetadata: { ...message.action!, dueDate: "2026-10-10" } }] };
+  act(() => mocks.streams.at(-1)!.onBatch({ events: [{ id: "remote-change", projectId: "project-a", sequence: 9, type: "issue.changed", recordId: message.id, version: 2, occurredAt: "2026-09-24T12:00:00Z" }], cursor: "after-remote", hasMore: false, resync: false }));
+  expect(await within(dialog).findByText("Delivery moved by project manager")).toBeVisible();
+  expect(within(dialog).getByLabelText(/New due date/)).toHaveValue("2026-10-07");
+  expect(within(dialog).getByLabelText(/Reason/)).toHaveValue("My planned delivery date");
+  expect(within(dialog).getByRole("button", { name: "Save update" })).toBeDisabled();
+  fireEvent.submit(within(dialog).getByRole("button", { name: "Save update" }).closest("form")!);
+  expect(issue).not.toHaveBeenCalled();
+  await userEvent.click(within(dialog).getByRole("button", { name: "Review complete, keep my changes" }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Save update" }));
+  await waitFor(() => expect(issue).toHaveBeenCalledWith("project-a", message.id, expect.objectContaining({ action: "reschedule", expectedVersion: 2, dueDate: "2026-10-07", note: "My planned delivery date" }), expect.any(AbortSignal)));
+});
+
+
+it("refreshes canonical project queries after a remote rename while only the overview is mounted", async () => {
+  const base = chatTestSummary();
+  vi.mocked(projectChatApi.summary).mockResolvedValue({ ...base, project: { ...base.project, nameVersion: 1 } });
+  const { queryClient } = app("/overview");
+  await screen.findByRole("heading", { name: "Overview" });
+  await screen.findByRole("link", { name: /Critical 3/ });
+  await waitFor(() => expect(mocks.streams.length).toBeGreaterThan(0));
+  queryClient.setQueryData(clientKeys.projects, { items: [{ id: "project-a", name: base.project.name }] });
+  const snapshotKey = ["immutable-delivery-snapshot", "project-a"];
+  queryClient.setQueryData(snapshotKey, { projectName: base.project.name });
+  expect(queryClient.getQueryState(clientKeys.projects)?.isInvalidated).toBe(false);
+  expect(screen.queryByRole("textbox", { name: "Message the project team" })).not.toBeInTheDocument();
+  vi.mocked(projectChatApi.summary).mockResolvedValue({ ...base, project: { ...base.project, name: "Renamed remotely", nameVersion: 2 } });
+  act(() => mocks.streams.at(-1)!.onBatch({ events: [{ id: "rename-event", projectId: "project-a", sequence: 10, type: "participants.changed", recordId: "project-a", version: 2, occurredAt: "2026-09-24T12:00:00Z" }], cursor: "after-rename", hasMore: false, resync: false }));
+  await waitFor(() => expect(queryClient.getQueryState(clientKeys.projects)?.isInvalidated).toBe(true));
+  expect(queryClient.getQueryState(snapshotKey)?.isInvalidated).toBe(false);
+  expect(queryClient.getQueryData(snapshotKey)).toEqual({ projectName: base.project.name });
+  expect(screen.getByRole("heading", { name: "Overview" })).toBeVisible();
 });

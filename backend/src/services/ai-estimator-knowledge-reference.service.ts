@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession, type Model } from "mongoose";
 
+import type { ProcurementVendorProfile, ProcurementVendorSummary, ProcurementVendorDetailFields, ProcurementVendorDirectoryOverview } from "../contracts/procurement-vendor.js";
+import { prepareProcurementVendorProfile, procurementVendorSummaries, storedProcurementVendorProfile, procurementVendorPhotoDescriptor } from "./procurement-vendor-profile.js";
 import type {
   KnowledgePrioritySemanticTier,
   KnowledgeTaxVersion
@@ -92,6 +94,14 @@ export interface AiEstimatorKnowledgeListFilters {
   readonly search?: string;
   readonly status?: KnowledgeMasterStatus;
   readonly includeArchived?: boolean;
+  readonly vendorType?: "execution" | "supplier";
+  readonly mainBasketId?: string;
+  readonly subBasketId?: string;
+  readonly includeDirectoryOverview?: boolean;
+}
+
+export interface AiEstimatorKnowledgeMasterPage extends PageResult<AiEstimatorKnowledgeMasterDto> {
+  readonly directoryOverview?: ProcurementVendorDirectoryOverview;
 }
 
 export interface AiEstimatorKnowledgeBasketDto {
@@ -125,6 +135,7 @@ export interface AiEstimatorKnowledgeSubBasketDeletionImpact {
   readonly mainLineCount: number;
   readonly referenceCount: number;
   readonly impactToken: string;
+  readonly vendorReferenceCount: number;
 }
 
 export interface AiEstimatorKnowledgePermanentDeleteSubBasketInput {
@@ -145,6 +156,7 @@ export interface AiEstimatorKnowledgePermanentDeleteSubBasketResult {
 }
 
 export interface AiEstimatorKnowledgeMasterDto {
+  readonly procurementSummary?: ProcurementVendorSummary;
   readonly id: string;
   readonly masterType: AiEstimatorKnowledgeMasterType;
   readonly code: string;
@@ -196,7 +208,7 @@ export interface AiEstimatorKnowledgeArchiveInput {
   readonly reason?: string | null;
 }
 
-/** What a Basket deletion takes with it. Every count here is cascaded, never refused. */
+/** Configuration children cascade; retained vendor references block deletion. */
 export interface AiEstimatorKnowledgeBasketDeletionImpact {
   readonly basketId: string;
   readonly basketName: string;
@@ -208,6 +220,7 @@ export interface AiEstimatorKnowledgeBasketDeletionImpact {
   readonly historicalReferenceCount: number;
   /** Seeded by the knowledge bootstrap; deletable, but flagged to the reader. */
   readonly bootstrapOwned: boolean;
+  readonly vendorReferenceCount: number;
 }
 
 export interface AiEstimatorKnowledgePermanentDeleteBasketInput {
@@ -223,7 +236,9 @@ export interface AiEstimatorKnowledgePermanentDeleteBasketResult {
 }
 
 export interface AiEstimatorKnowledgeCreateMasterInput {
-  readonly code: string;
+  readonly code?: string;
+  readonly procurementProfile?: ProcurementVendorProfile;
+  readonly confirmPhysicalAddressVerification?: boolean;
   readonly name: string;
   readonly description?: string | null;
   readonly displayOrder?: number;
@@ -233,6 +248,8 @@ export interface AiEstimatorKnowledgeCreateMasterInput {
 }
 
 export interface AiEstimatorKnowledgeCreateSurfaceInput {
+  readonly procurementProfile?: never;
+  readonly confirmPhysicalAddressVerification?: never;
   readonly code?: string;
   readonly name: string;
   readonly description?: string | null;
@@ -243,6 +260,8 @@ export interface AiEstimatorKnowledgeCreateSurfaceInput {
 }
 
 export interface AiEstimatorKnowledgeUpdateMasterInput {
+  readonly procurementProfile?: ProcurementVendorProfile;
+  readonly confirmPhysicalAddressVerification?: boolean;
   readonly expectedVersion: number;
   readonly code?: string;
   readonly name?: string;
@@ -254,6 +273,8 @@ export interface AiEstimatorKnowledgeUpdateMasterInput {
 }
 
 export interface AiEstimatorKnowledgeUpdateSurfaceInput {
+  readonly procurementProfile?: never;
+  readonly confirmPhysicalAddressVerification?: never;
   readonly expectedVersion: number;
   readonly code?: string;
   readonly name?: string;
@@ -273,6 +294,7 @@ type AiEstimatorKnowledgeAnyUpdateMasterInput =
   | AiEstimatorKnowledgeUpdateSurfaceInput;
 
 export interface AiEstimatorKnowledgeReferenceService {
+  getVendorDetail(actor: PublicUser, id: string): Promise<AiEstimatorKnowledgeMasterDto & ProcurementVendorDetailFields>;
   getBasketQuality(actor: PublicUser, basketId: string): Promise<AiEstimatorKnowledgeBasketQualityDto>;
   updateBasketQuality(actor: PublicUser, basketId: string, input: {
     readonly expectedVersion: number; readonly parameters: Row[];
@@ -324,7 +346,7 @@ export interface AiEstimatorKnowledgeReferenceService {
     masterType: AiEstimatorKnowledgeMasterType,
     filters: AiEstimatorKnowledgeListFilters,
     pagination: PaginationInput
-  ): Promise<PageResult<AiEstimatorKnowledgeMasterDto>>;
+  ): Promise<AiEstimatorKnowledgeMasterPage>;
   createMaster(
     actor: PublicUser,
     masterType: AiEstimatorKnowledgeMasterType,
@@ -553,6 +575,7 @@ export function createAiEstimatorKnowledgeReferenceService(
           });
         }
         const snapshot = await subBasketDeletionSnapshot(parent, group, session);
+        requireNoVendorBasketReferences(snapshot.impact.vendorReferenceCount);
         if (snapshot.impact.impactToken !== input.impactToken) {
           throw new ApiError(409, "DELETION_IMPACT_CHANGED", "Sub Basket contents or references changed. Review a fresh deletion preview.");
         }
@@ -788,6 +811,7 @@ export function createAiEstimatorKnowledgeReferenceService(
         }
 
         const impact = await basketDeletionImpact(current, basketId, session);
+        requireNoVendorBasketReferences(impact.vendorReferenceCount);
 
         /*
          * The Basket takes its Main Lines with it. They are collected before
@@ -857,27 +881,46 @@ export function createAiEstimatorKnowledgeReferenceService(
       });
     },
 
+    async getVendorDetail(actor, id) {
+      await actorGuard.requireReadActor(actor);
+      const row = await AiEstimatorKnowledgeVendorModel.findById(id).lean().exec() as Row | null;
+      if (!row) notFound();
+      const summaries = await procurementVendorSummaries([row]);
+      return { ...masterDto("vendors", row), procurementSummary: summaries.get(id)!, procurementProfile: storedProcurementVendorProfile(row.procurementProfile), geoTaggedPicture: procurementVendorPhotoDescriptor(id, row.geoTaggedPicture) };
+    },
+
     async listMasters(actor, masterType, filters, pagination) {
       await actorGuard.requireReadActor(actor);
       validateListFilters(filters);
       const model = requireMasterModel(masterType);
       validatePagination(pagination);
+      if (filters.includeDirectoryOverview !== undefined && (masterType !== "vendors" || typeof filters.includeDirectoryOverview !== "boolean")) {
+        throw new ApiError(400, "VALIDATION_ERROR", "Directory overview is a boolean option for vendor lists only.");
+      }
       const query = listFilter(filters, ["codeNormalized", "nameNormalized"]);
-      const [rows, total] = await Promise.all([
+      if (masterType === "vendors") {
+        if (filters.vendorType) query["procurementProfile.vendorType"] = filters.vendorType;
+        if (filters.mainBasketId) query["procurementProfile.mainBasketId"] = filters.mainBasketId;
+        if (filters.subBasketId) query["procurementProfile.subBasketId"] = filters.subBasketId;
+      }
+      const [rows, total, directoryOverview] = await Promise.all([
         model.find(query).sort({ displayOrder: 1, nameNormalized: 1, _id: 1 }).skip(pagination.offset).limit(pagination.limit).lean().exec(),
-        model.countDocuments(query).exec()
+        model.countDocuments(query).exec(),
+        filters.includeDirectoryOverview === true ? procurementVendorDirectoryOverview() : undefined
       ]);
       const typedRows = rows as Row[];
       const taxVersions = masterType === "taxes"
         ? await taxVersionsByRuleIds(typedRows.map((row) => String(row._id)))
         : new Map<string, readonly KnowledgeTaxVersion[]>();
+      const summaries = masterType === "vendors" ? await procurementVendorSummaries(typedRows) : new Map<string, ProcurementVendorSummary>();
       return {
-        items: typedRows.map((row) => masterDto(
+        items: typedRows.map((row) => ({ ...masterDto(
           masterType,
           row,
           taxVersions.get(String(row._id))
-        )),
-        total
+        ), ...(masterType === "vendors" ? { procurementSummary: summaries.get(String(row._id))! } : {}) })),
+        total,
+        ...(directoryOverview ? { directoryOverview } : {})
       };
     },
 
@@ -890,7 +933,7 @@ export function createAiEstimatorKnowledgeReferenceService(
         const id = `knowledge-${singular(masterType)}-${createId()}`;
         const code = masterType === "surfaces"
           ? input.code ?? generatedSurfaceCode(id)
-          : input.code;
+          : masterType === "vendors" ? input.code ?? `PV-${createHash("sha256").update(id).digest("hex").slice(0, 36).toUpperCase()}` : input.code;
         if (!code) {
           throw new ApiError(400, "VALIDATION_ERROR", "code is invalid.", {
             code: "Required bounded text."
@@ -914,6 +957,8 @@ export function createAiEstimatorKnowledgeReferenceService(
             displayOrder: input.displayOrder
           });
         }
+        const procurementProfile = masterType === "vendors" && input.procurementProfile !== undefined
+          ? await prepareProcurementVendorProfile(input.procurementProfile, null, authorized.id, timestamp, input.confirmPhysicalAddressVerification, session) : undefined;
         const [created] = await model.create([{
           _id: id,
           code,
@@ -924,6 +969,7 @@ export function createAiEstimatorKnowledgeReferenceService(
           displayOrder,
           status: input.status ?? "active",
           ...(masterType === "uoms" ? { decimalScale: input.decimalScale } : {}),
+          ...(procurementProfile ? { procurementProfile } : {}),
           version: 1,
           createdById: authorized.id,
           updatedById: authorized.id,
@@ -942,7 +988,7 @@ export function createAiEstimatorKnowledgeReferenceService(
           entityType: `ai_estimator_knowledge_${singular(masterType)}`,
           entityId: id,
           occurredAt: timestamp.toISOString(),
-          newValues: masterType === "surfaces"
+          newValues: masterType === "surfaces" || masterType === "vendors"
             ? { masterType, ...masterAuditState(created.toObject() as Row, masterType) }
             : { masterType, status: created.get("status"), version: created.get("version"), displayOrder: created.get("displayOrder") }
         }, session);
@@ -990,6 +1036,7 @@ export function createAiEstimatorKnowledgeReferenceService(
           set.displayOrder = input.displayOrder;
         }
         if (input.status !== undefined) set.status = input.status;
+        if (masterType === "vendors" && input.procurementProfile !== undefined) set.procurementProfile = await prepareProcurementVendorProfile(input.procurementProfile, current.procurementProfile, authorized.id, timestamp, input.confirmPhysicalAddressVerification, session);
         let dependencyEpochFilter: Record<string, unknown> = {};
         if (masterType === "uoms" && input.decimalScale !== undefined) {
           if (Number(current.decimalScale) !== input.decimalScale) {
@@ -1014,7 +1061,7 @@ export function createAiEstimatorKnowledgeReferenceService(
             status: { $ne: "archived" },
             ...dependencyEpochFilter
           },
-          { $set: set, $inc: { version: 1 } },
+          { $set: set, $inc: { version: 1, ...(masterType === "vendors" ? { dependencyEpoch: 1 } : {}) } },
           { returnDocument: "after", runValidators: true, session }
         ).lean().exec() as Row | null;
         if (!updated) versionConflict();
@@ -1040,7 +1087,14 @@ export function createAiEstimatorKnowledgeReferenceService(
           entityId: id,
           occurredAt: timestamp.toISOString(),
           oldValues: masterAuditState(current, masterType),
-          newValues: masterAuditState(updated!, masterType)
+          newValues: { ...masterAuditState(updated!, masterType), ...(masterType === "vendors" && input.procurementProfile ? { changedProfileFields: Object.keys(input.procurementProfile).filter(key => {
+            const nextValue = (set.procurementProfile as unknown as Row)[key];
+            if (key === "executionType") {
+              const previousSelections = storedProcurementVendorProfile(current.procurementProfile)?.executionType;
+              return JSON.stringify(previousSelections) !== JSON.stringify(nextValue);
+            }
+            return (current.procurementProfile as Row | undefined)?.[key] !== nextValue;
+          }) } : {}) }
         }, session);
         return masterDto(
           masterType,
@@ -1161,15 +1215,16 @@ async function subBasketDeletionSnapshot(parent: Row, group: Row, session: Clien
     return rows.length ? [{ sectionId: section._id, version: section.version,
       mainLineId: section.mainLineId, revisionId: section.revisionId, rows }] : [];
   });
+  const vendorReferenceCount = await AiEstimatorKnowledgeVendorModel.countDocuments({ "procurementProfile.subBasketId": subBasketId }).session(session).exec();
   const impactToken = createHash("sha256").update(JSON.stringify(canonicalImpactValue({
     basketId, basketVersion: parent.version, subBasketId, subBasketName: group.name,
-    version: group.version, children, references
+    version: group.version, children, references, vendorReferenceCount
   }))).digest("hex");
   return {
     mainLineIds,
     impact: { basketId, subBasketId, subBasketName: String(group.name), version: Number(group.version),
       mainLineCount: mainLineIds.length, referenceCount: references.reduce((count, section) => count + section.rows.length, 0),
-      impactToken }
+      vendorReferenceCount, impactToken }
   };
 }
 
@@ -1187,6 +1242,7 @@ async function basketDeletionImpact(
   basketId: string,
   session?: ClientSession
 ): Promise<AiEstimatorKnowledgeBasketDeletionImpact> {
+  const vendorQuery = AiEstimatorKnowledgeVendorModel.countDocuments({ "procurementProfile.mainBasketId": basketId });
   const subBasketCountQuery = AiEstimatorKnowledgeSubBasketModel.countDocuments({ basketId });
   const mainLineCountQuery = AiEstimatorKnowledgeMainLineModel.countDocuments({ basketId });
   const sectionQuery = AiEstimatorKnowledgeSectionModel.find({
@@ -1197,14 +1253,16 @@ async function basketDeletionImpact(
     ]
   }).select({ payload: 1 });
   if (session) {
+    vendorQuery.session(session);
     subBasketCountQuery.session(session);
     mainLineCountQuery.session(session);
     sectionQuery.session(session);
   }
-  const [subBasketCount, mainLineCount, sections] = await Promise.all([
+  const [subBasketCount, mainLineCount, sections, vendorReferenceCount] = await Promise.all([
     subBasketCountQuery.exec(),
     mainLineCountQuery.exec(),
-    sectionQuery.lean().exec()
+    sectionQuery.lean().exec(),
+    vendorQuery.exec()
   ]);
   const historicalReferenceCount = sections.reduce(
     (count, section) => count + basketReferenceCount(
@@ -1213,13 +1271,6 @@ async function basketDeletionImpact(
     ),
     0
   );
-  /*
-   * Nothing blocks a deletion any more, so this reports what will go with the
-   * Basket rather than whether it may go at all: the Main Lines that are
-   * deleted alongside it, and the relationship rows in other configurations
-   * that are stripped so none of them is left pointing at a row that no
-   * longer exists.
-   */
   return {
     basketId,
     basketName: String(basket.name),
@@ -1227,8 +1278,13 @@ async function basketDeletionImpact(
     mainLineCount,
     subBasketCount,
     historicalReferenceCount,
+    vendorReferenceCount,
     bootstrapOwned: bootstrapBasketIds.has(basketId)
   };
+}
+
+function requireNoVendorBasketReferences(count: number): void {
+  if (count > 0) throw new ApiError(409, "VENDOR_BASKET_REFERENCED", "This classification is referenced by retained vendors and cannot be deleted.", { vendorReferenceCount: String(count) });
 }
 
 function basketReferenceCount(payload: unknown, basketId: string): number {
@@ -1333,7 +1389,24 @@ function validatePagination(pagination: PaginationInput): void {
   }
 }
 
+async function procurementVendorDirectoryOverview(): Promise<ProcurementVendorDirectoryOverview> {
+  // This aggregation deliberately has no list filters or pagination: the tiles describe the directory.
+  const [overview] = await AiEstimatorKnowledgeVendorModel.aggregate<ProcurementVendorDirectoryOverview>([
+    { $match: { status: { $ne: "archived" } } },
+    { $group: {
+      _id: null,
+      totalVendors: { $sum: 1 },
+      activeVendors: { $sum: { $cond: [{ $eq: ["$status", "active"] }, 1, 0] } },
+      underReviewVendors: { $sum: { $cond: [{ $eq: [{ $ifNull: ["$procurementProfile.currentAddressVerifiedPhysically", false] }, false] }, 1, 0] } }
+    } },
+    { $project: { _id: 0, totalVendors: 1, activeVendors: 1, underReviewVendors: 1 } }
+  ]).exec();
+  return overview ?? { totalVendors: 0, activeVendors: 0, underReviewVendors: 0 };
+}
+
 function validateListFilters(filters: AiEstimatorKnowledgeListFilters): void {
+  if (filters.vendorType !== undefined && !["execution", "supplier"].includes(filters.vendorType)) throw new ApiError(400, "VALIDATION_ERROR", "Vendor Type filter is invalid.");
+  for (const field of ["mainBasketId", "subBasketId"] as const) if (filters[field] !== undefined && (typeof filters[field] !== "string" || !filters[field]!.trim() || filters[field]!.length > 128)) throw new ApiError(400, "VALIDATION_ERROR", "Basket filter is invalid.");
   if (filters.search !== undefined && (typeof filters.search !== "string" || filters.search.length > AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT)) {
     throw new ApiError(400, "VALIDATION_ERROR", "Search filter is invalid.");
   }
@@ -1359,7 +1432,7 @@ function validateUpdateInput(input: AiEstimatorKnowledgeUpdateBasketInput): void
 
 function validateMasterCreate(masterType: AiEstimatorKnowledgeMasterType, input: AiEstimatorKnowledgeAnyCreateMasterInput): void {
   if (input.code !== undefined) validateName(input.code, "code", 64);
-  else if (masterType !== "surfaces") {
+  else if (masterType !== "surfaces" && masterType !== "vendors") {
     throw new ApiError(400, "VALIDATION_ERROR", "code is invalid.", {
       code: "Required bounded text."
     });
@@ -1386,6 +1459,8 @@ function validateMasterSpecificInput(
   input: AiEstimatorKnowledgeAnyCreateMasterInput | AiEstimatorKnowledgeAnyUpdateMasterInput,
   creating: boolean
 ): void {
+  if (input.procurementProfile !== undefined && masterType !== "vendors") throw new ApiError(400, "VALIDATION_ERROR", "procurementProfile is valid only for vendors.");
+  if (input.confirmPhysicalAddressVerification !== undefined && (masterType !== "vendors" || input.procurementProfile === undefined || typeof input.confirmPhysicalAddressVerification !== "boolean")) throw new ApiError(400, "VALIDATION_ERROR", "Verification confirmation requires a vendor profile.");
   if (masterType === "uoms") {
     if ((creating || input.decimalScale !== undefined) && (!Number.isSafeInteger(input.decimalScale) || input.decimalScale! < 0 || input.decimalScale! > 3)) {
       throw new ApiError(400, "VALIDATION_ERROR", "UOM decimalScale must be an integer from 0 to 3.", { decimalScale: "Invalid UOM scale." });
@@ -1838,6 +1913,10 @@ function masterAuditState(
   row: Row,
   masterType: AiEstimatorKnowledgeMasterType
 ): Record<string, unknown> {
+  if (masterType === "vendors") {
+    const profile = storedProcurementVendorProfile(row.procurementProfile);
+    return { ...auditState(row), profileComplete: !!profile, currentAddressVerifiedPhysically: profile?.currentAddressVerifiedPhysically ?? null, physicalAddressVerifiedAt: profile?.physicalAddressVerifiedAt ?? null, physicalAddressVerifiedById: profile?.physicalAddressVerifiedById ?? null, mainBasketId: profile?.mainBasketId ?? null, subBasketId: profile?.subBasketId ?? null };
+  }
   if (masterType !== "surfaces") return auditState(row);
   return {
     name: row.name,

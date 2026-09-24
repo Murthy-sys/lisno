@@ -410,26 +410,88 @@
   flex-shrink: 0;
   gap: var(--space-3);
   justify-content: space-between;
-  padding: max(var(--space-4), env(safe-area-inset-top)) var(--space-5) var(--space-4);
+  padding: max(var(--space-5), env(safe-area-inset-top)) var(--space-6) var(--space-5);
   border-block-end: 1px solid var(--color-border);
   background: var(--color-bg);
+  isolation: isolate;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Decorative interior motif on the header's inline end: a slatted timber
+   panel behind the close button and a soft sage arch beside it. Tints are
+   translucent so per-panel header backgrounds show through, and faint enough
+   that muted copy crossing them stays at 4.5:1 and the close button's focus
+   ring at 3:1. */
+.ui-drawer--contextual .ui-drawer__header::before,
+.ui-drawer--contextual .ui-drawer__header::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  z-index: -1;
+}
+
+.ui-drawer--contextual .ui-drawer__header::before {
+  background: repeating-linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-highlight) 8%, transparent) 0 7px,
+    color-mix(in srgb, var(--color-highlight) 14%, transparent) 7px 9px
+  );
+  inline-size: 4.75rem;
+  inset-block: 0;
+  inset-inline-end: 0;
+}
+
+.ui-drawer--contextual .ui-drawer__header::after {
+  background: linear-gradient(
+    color-mix(in srgb, var(--button-primary-bg) 10%, transparent),
+    color-mix(in srgb, var(--button-primary-bg) 5%, transparent)
+  );
+  border-start-start-radius: var(--radius-pill);
+  border-start-end-radius: var(--radius-pill);
+  inline-size: 7rem;
+  inset-block: var(--space-4) 0;
+  inset-inline-end: 5rem;
+}
+
+/* A narrow panel has no room beside its title for the arch. */
+.ui-drawer--contextual.ui-drawer--narrow .ui-drawer__header::after {
+  display: none;
 }
 
 .ui-drawer__heading {
   min-inline-size: 0;
 }
 
+/* Wide panels keep their copy clear of the arch. */
+.ui-drawer--contextual.ui-drawer--wide .ui-drawer__heading {
+  padding-inline-end: 7.5rem;
+}
+
 .ui-drawer__header h2 {
-  font: var(--type-section-title);
+  color: var(--color-text);
+  font: 600 var(--text-3xl)/1.25 var(--font-interface);
+  letter-spacing: -0.01em;
   margin: 0;
   overflow-wrap: anywhere;
 }
 
-.ui-drawer__eyebrow,
+.ui-drawer__eyebrow {
+  /* The shared .eyebrow class is unlayered, so it outranks this layer and
+     colours itself from --color-lisno-violet; point that token at the brand
+     olive here. Per-panel rules that set their own eyebrow colour still win. */
+  --color-lisno-violet: var(--button-primary-bg);
+  color: var(--button-primary-bg);
+  font: 600 var(--text-xs)/1.4 var(--font-interface);
+  letter-spacing: 0.08em;
+  margin: 0 0 var(--space-1);
+  text-transform: uppercase;
+}
+
 .ui-drawer__description {
   color: var(--color-text-muted);
-  font: var(--type-metadata);
-  margin: var(--space-1) 0;
+  font: var(--type-body);
+  margin: var(--space-1) 0 0;
 }
 
 .ui-drawer__metadata {
@@ -441,8 +503,10 @@
 
 .ui-drawer--contextual .ui-drawer__close {
   position: static;
-  color: var(--color-text-muted);
+  color: var(--color-text);
   flex-shrink: 0;
+  margin-block-start: calc(var(--space-2) * -1);
+  margin-inline-end: calc(var(--space-2) * -1);
 }
 
 .ui-drawer--contextual .ui-drawer__body {
@@ -452,8 +516,9 @@
   min-inline-size: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: var(--space-5);
+  padding: var(--space-6);
   scroll-padding-block: var(--space-4);
+  background: color-mix(in srgb, var(--button-primary-bg) 3%, var(--color-surface));
 }
 
 .ui-drawer__footer {
@@ -462,9 +527,48 @@
   display: flex;
   flex-shrink: 0;
   flex-wrap: wrap;
-  gap: var(--space-2);
+  gap: var(--space-3);
   justify-content: flex-end;
-  padding: var(--space-3) var(--space-5) max(var(--space-3), env(safe-area-inset-bottom));
+  padding: var(--space-3) var(--space-6) max(var(--space-3), env(safe-area-inset-bottom));
+  box-shadow: 0 -4px 16px color-mix(in srgb, var(--color-brand-midnight) 6%, transparent);
+  position: relative;
+  z-index: 1;
+}
+
+.ui-drawer--contextual .ui-drawer__footer .ui-button {
+  min-block-size: var(--control-height-large);
+  min-inline-size: 7.5rem;
+}
+
+/* Panel forms: roomier fields and brand-olive selection. Only properties that
+   no primitive state rule changes are set here, because this layer outranks
+   the components layer's hover, invalid and variant rules. */
+.ui-drawer--contextual .ui-control {
+  min-block-size: var(--control-height-large);
+}
+
+.ui-drawer--contextual .ui-textarea {
+  min-block-size: 5rem;
+  padding-block: var(--space-3);
+}
+
+.ui-drawer--contextual .ui-control::placeholder {
+  color: var(--color-text-muted);
+  opacity: 1;
+}
+
+.ui-drawer--contextual :is(.ui-radio, .ui-checkbox) {
+  accent-color: var(--button-primary-bg);
+}
+
+.ui-drawer--contextual .ui-radio-option:has(.ui-radio:checked) {
+  background: color-mix(in srgb, var(--button-primary-bg) 6%, var(--color-surface));
+  border-color: var(--button-primary-bg);
+}
+
+.ui-drawer--contextual .ui-inline-message--warning {
+  background: color-mix(in srgb, var(--color-highlight) 14%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--color-highlight) 45%, var(--color-surface));
 }
 
 .ui-drawer__body {
@@ -524,6 +628,19 @@
   .ui-drawer__header,
   .ui-drawer__footer {
     padding-inline: max(var(--space-4), env(safe-area-inset-left)) max(var(--space-4), env(safe-area-inset-right));
+  }
+
+  .ui-drawer--contextual .ui-drawer__header::before,
+  .ui-drawer--contextual .ui-drawer__header::after {
+    display: none;
+  }
+
+  .ui-drawer--contextual.ui-drawer--wide .ui-drawer__heading {
+    padding-inline-end: 0;
+  }
+
+  .ui-drawer--contextual .ui-drawer__header h2 {
+    font-size: var(--text-2xl);
   }
 
   .ui-app-shell {

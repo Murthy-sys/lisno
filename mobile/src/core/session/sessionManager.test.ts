@@ -235,4 +235,39 @@ describe("SessionManager", () => {
     });
     expect(harness.storage.values.get(TOKEN_KEY)).toBe("new-token");
   });
+
+  it("replaces the signed-in user only for the same id and role and notifies subscribers", async () => {
+    const harness = createHarness(authenticatedRoutes({ token: "new-token" }));
+    expect(harness.manager.replaceUser({ ...user, profilePhotoVersion: 1 })).toBe(false);
+    await harness.manager.login({ email: user.email, password: "password" });
+    const before = harness.manager.getSnapshot();
+    const listener = jest.fn();
+    harness.manager.subscribe(listener);
+
+    expect(harness.manager.replaceUser({ ...user, id: "user-2", profilePhotoVersion: 1 })).toBe(false);
+    expect(harness.manager.replaceUser({ ...user, role: "admin", profilePhotoVersion: 1 })).toBe(false);
+    expect(harness.manager.replaceUser({ ...user, profilePhotoVersion: 0 })).toBe(false);
+    expect(harness.manager.replaceUser({ ...user, storageKey: "private" })).toBe(false);
+    expect(listener).not.toHaveBeenCalled();
+    expect(harness.manager.getSnapshot()).toBe(before);
+
+    expect(harness.manager.replaceUser({ ...user, profilePhotoVersion: 3 })).toBe(true);
+    const after = harness.manager.getSnapshot();
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(after);
+    expect(after).toMatchObject({
+      status: "authenticated",
+      generation: before.generation,
+      failure: null,
+      session: { user: { ...user, profilePhotoVersion: 3 }, authorization }
+    });
+    expect(Object.isFrozen(after)).toBe(true);
+    expect(Object.isFrozen(after.session)).toBe(true);
+    expect(Object.isFrozen(after.session?.user)).toBe(true);
+    expect(after.session?.authorization).toBe(before.session?.authorization);
+    expect(harness.tokenState.getRequestToken()).toMatchObject({ token: "new-token", accepted: true });
+
+    expect(harness.manager.replaceUser(user)).toBe(true);
+    expect(harness.manager.getSnapshot().session?.user).not.toHaveProperty("profilePhotoVersion");
+  });
 });

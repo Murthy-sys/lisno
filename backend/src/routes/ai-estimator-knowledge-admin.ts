@@ -33,6 +33,7 @@ import type {
   AiEstimatorKnowledgeReferenceService
 } from "../services/ai-estimator-knowledge-reference.service.js";
 import type { AuthService } from "../services/auth.service.js";
+import { procurementVendorProfileSchema } from "../services/procurement-vendor-profile.js";
 
 const stableIdSchema = z.string().trim().min(1).max(128);
 const shortTextSchema = z.string().trim().min(1).max(240);
@@ -258,6 +259,7 @@ const commonMasterFields = {
 } as const;
 
 const commonMasterCreateSchema = z.object(commonMasterFields).strict();
+const vendorCreateSchema = z.object({ ...commonMasterFields, code: commonMasterFields.code.optional(), procurementProfile: procurementVendorProfileSchema.optional(), confirmPhysicalAddressVerification: z.boolean().optional() }).strict();
 const surfaceCreateSchema = z
   .object({
     code: commonMasterFields.code.optional(),
@@ -299,6 +301,7 @@ const commonMasterUpdateSchema = z
   .object(commonMasterUpdateFields)
   .strict()
   .refine(hasMasterChange, { message: "At least one reusable-value field must be changed." });
+const vendorUpdateSchema = z.object({ ...commonMasterUpdateFields, procurementProfile: procurementVendorProfileSchema.optional(), confirmPhysicalAddressVerification: z.boolean().optional() }).strict().refine(hasMasterChange, { message: "At least one vendor field must be changed." });
 const surfaceUpdateSchema = z
   .object({ ...commonMasterUpdateFields })
   .strict()
@@ -404,7 +407,7 @@ export interface AiEstimatorKnowledgeAdminRouterServices {
 
 const masterRoutes = [
   { path: "uoms", kind: "uoms", createSchema: uomCreateSchema, updateSchema: uomUpdateSchema },
-  { path: "vendors", kind: "vendors", createSchema: commonMasterCreateSchema, updateSchema: commonMasterUpdateSchema },
+  { path: "vendors", kind: "vendors", createSchema: vendorCreateSchema, updateSchema: vendorUpdateSchema },
   { path: "taxes", kind: "taxes", createSchema: taxCreateSchema, updateSchema: taxUpdateSchema },
   { path: "priorities", kind: "priorities", createSchema: commonMasterCreateSchema, updateSchema: commonMasterUpdateSchema },
   { path: "surfaces", kind: "surfaces", createSchema: surfaceCreateSchema, updateSchema: surfaceUpdateSchema },
@@ -418,6 +421,13 @@ export function createAiEstimatorKnowledgeAdminRouter(
   const router = Router();
   const protectedRoute = authenticate(auth);
   const prefix = "/admin/ai-estimator-knowledge";
+
+  router.get(`${prefix}/vendors/:id`, protectedRoute,
+    requireOperation("GET /admin/ai-estimator-knowledge/vendors/:id"),
+    handler(async (request, response) => {
+      response.set("Cache-Control", "private, no-store");
+      return services.reference.getVendorDetail(request.authenticatedUser!, String(request.params.id));
+    }));
 
   router.get(
     `${prefix}/quality-control-options`,
@@ -672,13 +682,15 @@ function registerMasterRoutes(
     ...paginationFields,
     search: z.string().trim().min(1).max(240).optional(),
     status: z.enum(AI_ESTIMATOR_KNOWLEDGE_MASTER_STATUSES).optional(),
-    includeArchived: includeArchivedSchema
+    includeArchived: includeArchivedSchema,
+    ...(master.kind === "vendors" ? { vendorType: z.enum(["execution", "supplier"]).optional(), mainBasketId: stableIdSchema.optional(), subBasketId: stableIdSchema.optional(), includeDirectoryOverview: includeArchivedSchema } : {})
   }).strict();
 
   router.get(basePath, protectedRoute, requireOperation(listOperation), validateQuery(listSchema),
     handler(async (request, response) => {
       const { filters, pagination } = splitPagination(response.locals.validatedQuery);
-      return pageEnvelope(await service.listMasters(request.authenticatedUser!, master.kind as AiEstimatorKnowledgeMasterType, filters, pagination), pagination);
+      const page = await service.listMasters(request.authenticatedUser!, master.kind as AiEstimatorKnowledgeMasterType, filters, pagination);
+      return { ...pageEnvelope(page, pagination), ...(master.kind === "vendors" && filters.includeDirectoryOverview === true && page.directoryOverview ? { directoryOverview: page.directoryOverview } : {}) };
     }));
   router.post(basePath, protectedRoute, requireOperation(createOperation), validateBody(master.createSchema),
     handler(async (request) => service.createMaster(request.authenticatedUser!, master.kind, request.body), 201));

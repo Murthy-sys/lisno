@@ -1,4 +1,4 @@
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -78,6 +78,72 @@ function itemDetail(overrides: Partial<KnowledgeItemDetail> = {}): KnowledgeItem
 }
 
 describe("knowledge mutation cache synchronization", () => {
+  it("refreshes a fresh global vendor overview after a vendor mutation without changing unrelated catalogs", async () => {
+    const client = queryClient();
+    let overview = { totalVendors: 9, activeVendors: 7, underReviewVendors: 4 };
+    const load = vi.fn(async () => ({ directoryOverview: { ...overview } }));
+    const options = { queryKey: knowledgeQueryKeys.vendorDirectoryOverview(), queryFn: load, staleTime: 60_000 };
+    await client.fetchQuery(options);
+    client.setQueryData(knowledgeQueryKeys.masterCatalog("uoms"), { items: [] });
+    const observer = new QueryObserver(client, options);
+    const unsubscribe = observer.subscribe(() => {});
+    try {
+      overview = { totalVendors: 8, activeVendors: 6, underReviewVendors: 3 };
+      await syncKnowledgeMasterMutation(client, "vendors");
+      expect(load).toHaveBeenCalledTimes(2);
+      expect(client.getQueryData(options.queryKey)).toEqual({ directoryOverview: overview });
+      expect(client.getQueryState(knowledgeQueryKeys.masterCatalog("uoms"))?.isInvalidated).toBe(false);
+    } finally {
+      unsubscribe(); client.clear();
+    }
+  });
+  it.each(["Main Basket", "Sub Basket"])("refreshes fresh vendor lists and private details after a %s mutation", async (kind) => {
+    const client = queryClient();
+    const listKey = knowledgeQueryKeys.masterList("vendors", { limit: 20, offset: 0 });
+    const detailKey = knowledgeQueryKeys.vendorDetail("vendor-1");
+    const unrelatedKey = knowledgeQueryKeys.masterCatalog("uoms");
+    const before = {
+      mainBasket: { id: "basket-1", name: "Old basket", status: "active" },
+      subBasket: { id: "sub-1", name: "Old group" }
+    };
+    const after = kind === "Main Basket"
+      ? { ...before, mainBasket: { ...before.mainBasket, name: "Renamed basket", status: "inactive" } }
+      : { ...before, subBasket: { ...before.subBasket, name: "Renamed group" } };
+    let summary = before;
+    const loadList = vi.fn(async () => ({ items: [{ id: "vendor-1", procurementSummary: summary }] }));
+    const loadDetail = vi.fn(async () => ({ id: "vendor-1", procurementSummary: summary, procurementProfile: { email: "synthetic@example.test" } }));
+    const listOptions = { queryKey: listKey, queryFn: loadList, staleTime: 30_000 };
+    const detailOptions = { queryKey: detailKey, queryFn: loadDetail, staleTime: 30_000 };
+    await Promise.all([client.fetchQuery(listOptions), client.fetchQuery(detailOptions)]);
+    client.setQueryData(unrelatedKey, { items: [{ id: "unit-1" }] });
+    const listObserver = new QueryObserver(client, listOptions);
+    const detailObserver = new QueryObserver(client, detailOptions);
+    const unsubscribeList = listObserver.subscribe(() => {});
+    const unsubscribeDetail = detailObserver.subscribe(() => {});
+    expect(listObserver.getCurrentResult().isStale).toBe(false);
+    expect(detailObserver.getCurrentResult().isStale).toBe(false);
+    summary = after;
+
+    try {
+      if (kind === "Main Basket") {
+        await syncKnowledgeBasketMutation(client, {
+          ...actor, id: "basket-1", name: "Renamed basket", description: null,
+          displayOrder: 1, status: "inactive", version: 2
+        });
+      } else {
+        await refreshKnowledgeSubBasketCatalog(client, "basket-1");
+      }
+      expect(loadList).toHaveBeenCalledTimes(2);
+      expect(loadDetail).toHaveBeenCalledTimes(2);
+      expect(client.getQueryData(listKey)).toEqual({ items: [{ id: "vendor-1", procurementSummary: after }] });
+      expect(client.getQueryData(detailKey)).toMatchObject({ procurementSummary: after, procurementProfile: { email: "synthetic@example.test" } });
+      expect(JSON.stringify(client.getQueryData(listKey))).not.toContain("procurementProfile");
+      expect(client.getQueryState(unrelatedKey)?.isInvalidated).toBe(false);
+    } finally {
+      unsubscribeList(); unsubscribeDetail(); client.clear();
+    }
+  });
+
   it("refreshes shared vendor options and suggestions across projects while preserving item drafts", async () => {
     const client = queryClient();
     const keys = [projectProcurementKeys.vendorSearch("timber"), vendorSuggestionKeys.page("one", 0), vendorSuggestionKeys.page("two", 20)];

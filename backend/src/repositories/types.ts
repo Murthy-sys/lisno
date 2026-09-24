@@ -90,8 +90,23 @@ export interface UserRecord {
   authorizedClientIds: string[];
   avatar?: string;
   title?: string;
+  /** Present only while a processed profile photo exists. The storage key is internal and never public. */
+  profilePhoto?: UserProfilePhotoRecord;
+  /** Internal monotonic compare-and-set counter for profile photo writes; absent means 0. */
+  profilePhotoRevision?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface UserProfilePhotoRecord {
+  storageKey: string;
+  version: number;
+  updatedAt: string;
+}
+
+export interface UserProfilePhotoState {
+  revision: number;
+  photo: UserProfilePhotoRecord | null;
 }
 
 export interface PasswordResetRequestRecord {
@@ -272,6 +287,7 @@ export interface ProjectRecord {
   designWorkflowStages?: ProjectDesignWorkflowStage[];
   id: string;
   name: string;
+  nameVersion?: number;
   clientId: string | null;
   clientName: string;
   clientEmail: string;
@@ -1117,6 +1133,18 @@ export interface AppRepository {
     expectedSessionVersion: number,
     change: { passwordHash: string; updatedAt: string }
   ): Promise<UserRecord>;
+  findUserProfilePhotoState(userId: string): Promise<UserProfilePhotoState | null>;
+  /** CAS on the profile photo revision; the new photo version equals expectedRevision + 1. */
+  setUserProfilePhoto(
+    userId: string,
+    expectedRevision: number,
+    change: { storageKey: string; updatedAt: string }
+  ): Promise<UserRecord>;
+  /** CAS on the profile photo revision; removes the photo and advances the revision. */
+  clearUserProfilePhoto(
+    userId: string,
+    expectedRevision: number
+  ): Promise<UserRecord>;
   pageAllLeads(filters: LeadFilters, pagination: PaginationInput): Promise<PageResult<LeadRecord>>;
   pageLeadsForOwner(ownerId: string, filters: LeadFilters, pagination: PaginationInput): Promise<PageResult<LeadRecord>>;
   findLeadById(id: string): Promise<LeadRecord | null>;
@@ -1150,6 +1178,7 @@ export interface AppRepository {
     pagination: PaginationInput
   ): Promise<PageResult<EstimatorOption>>;
   findProjectById(id: string): Promise<ProjectRecord | null>;
+  renameProjectName(id: string, name: string, expectedVersion: number, updatedAt: string): Promise<ProjectRecord | null>;
   linkUnclaimedProjectsToClient(
     emailNormalized: string,
     clientId: string,

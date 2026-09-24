@@ -608,6 +608,42 @@ describe("camera capture", () => {
     expect(harness.stored()).toBeNull();
   });
 
+  it("offers a square crop at quality 0.9 only when requested for library and camera", async () => {
+    const harness = createHarness();
+    jest.mocked(harness.imagePicker.launchImageLibraryAsync).mockResolvedValueOnce(selectedImage());
+    jest.mocked(harness.imagePicker.launchCameraAsync).mockResolvedValueOnce(selectedImage());
+
+    await expect(
+      harness.service.pickImage(imagePolicy, scope, { squareCrop: true })
+    ).resolves.toMatchObject({ status: "selected" });
+    await expect(
+      harness.service.capturePhoto(imagePolicy, scope, { squareCrop: true })
+    ).resolves.toMatchObject({ status: "selected" });
+
+    expect(harness.imagePicker.launchImageLibraryAsync).toHaveBeenCalledWith({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      aspect: [1, 1],
+      allowsMultipleSelection: false,
+      selectionLimit: 1,
+      quality: 0.9,
+      exif: false,
+      base64: false
+    });
+    expect(harness.imagePicker.launchCameraAsync).toHaveBeenCalledWith({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      aspect: [1, 1],
+      allowsMultipleSelection: false,
+      selectionLimit: 1,
+      cameraType: ImagePicker.CameraType.back,
+      quality: 0.9,
+      exif: false,
+      base64: false
+    });
+    expect(harness.stored()).toBeNull();
+  });
+
   it("returns cancellation and distinct temporary and permanent permission outcomes", async () => {
     const cancelled = createHarness();
     await expect(cancelled.service.capturePhoto(imagePolicy, scope)).resolves.toEqual({

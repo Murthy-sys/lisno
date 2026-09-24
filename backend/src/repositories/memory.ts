@@ -130,6 +130,8 @@ const mutationMethods = new Set<keyof AppRepository>([
   "createUser",
   "updateUser",
   "updateUserCredentials",
+  "setUserProfilePhoto",
+  "clearUserProfilePhoto",
   "linkUnclaimedProjectsToClient",
   "createFloor",
   "createDesignStage",
@@ -1196,6 +1198,52 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(updated);
     },
 
+    async findUserProfilePhotoState(userId) {
+      const user = state.users.find((candidate) => candidate.id === userId);
+      if (!user) return null;
+      return {
+        revision: user.profilePhotoRevision ?? 0,
+        photo: user.profilePhoto ? clone(user.profilePhoto) : null
+      };
+    },
+
+    async setUserProfilePhoto(userId, expectedRevision, change) {
+      const index = state.users.findIndex((user) => user.id === userId);
+      if (index < 0) {
+        throw new RepositoryNotFoundError(`User ${userId} was not found.`);
+      }
+      const current = state.users[index]!;
+      if ((current.profilePhotoRevision ?? 0) !== expectedRevision) {
+        throw new RepositoryConflictError(`User ${userId} profile photo changed concurrently.`);
+      }
+      const updated: UserRecord = {
+        ...current,
+        profilePhoto: {
+          storageKey: change.storageKey,
+          version: expectedRevision + 1,
+          updatedAt: change.updatedAt
+        },
+        profilePhotoRevision: expectedRevision + 1
+      };
+      state.users[index] = updated;
+      return clone(updated);
+    },
+
+    async clearUserProfilePhoto(userId, expectedRevision) {
+      const index = state.users.findIndex((user) => user.id === userId);
+      if (index < 0) {
+        throw new RepositoryNotFoundError(`User ${userId} was not found.`);
+      }
+      const current = state.users[index]!;
+      if ((current.profilePhotoRevision ?? 0) !== expectedRevision) {
+        throw new RepositoryConflictError(`User ${userId} profile photo changed concurrently.`);
+      }
+      const { profilePhoto: _removed, ...rest } = current;
+      const updated: UserRecord = { ...rest, profilePhotoRevision: expectedRevision + 1 };
+      state.users[index] = updated;
+      return clone(updated);
+    },
+
     async pageAllLeads(filters, pagination) {
       const search = filters.search?.trim().toLowerCase();
       const leads = state.leads
@@ -1352,6 +1400,15 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
           title: user.title ?? null
         }));
       return paginate(options, pagination);
+    },
+
+    async renameProjectName(id, name, expectedVersion, updatedAt) {
+      const project = state.projects.find(row => row.id === id);
+      if (!project || (project.nameVersion ?? 1) !== expectedVersion) return null;
+      project.name = name;
+      project.nameVersion = expectedVersion + 1;
+      project.updatedAt = updatedAt;
+      return clone(project);
     },
 
     async findProjectById(id) {

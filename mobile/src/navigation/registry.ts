@@ -142,7 +142,7 @@ const DOMAIN_BY_ROLE = Object.freeze({
   client: null
 } as const satisfies Readonly<Record<Role, FeatureId | null>>);
 
-export type RootTabId = "landing" | "domain" | "messages" | "more";
+export type RootTabId = "landing" | "domain" | "messages" | "profile" | "more";
 
 export interface RootTab {
   readonly id: RootTabId;
@@ -214,6 +214,7 @@ export function rootTabsForAuthorization(
     ...(messages
       ? [Object.freeze({ id: "messages" as const, label: "Messages", destination: messages })]
       : []),
+    Object.freeze({ id: "profile", label: "Profile", destination: null }),
     Object.freeze({ id: "more", label: "More", destination: null })
   ]);
 }

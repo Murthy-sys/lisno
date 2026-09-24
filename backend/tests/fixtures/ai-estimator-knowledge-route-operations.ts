@@ -18,6 +18,12 @@ const adminOperation = {
 } as const;
 
 export const EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS = [
+  { key: "GET /admin/ai-estimator-knowledge/vendors/:id", permission: "ai_estimator_knowledge.configuration.read", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "read", superAdminBehavior: "global_read", availability: "ai_estimator_knowledge" },
+  { key: "GET /admin/ai-estimator-knowledge/vendors/:id/photo", permission: "ai_estimator_knowledge.configuration.read", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "read", superAdminBehavior: "global_read", availability: "ai_estimator_knowledge" },
+  { key: "PUT /admin/ai-estimator-knowledge/vendors/:id/photo", permission: "ai_estimator_knowledge.configuration.update", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "ai_estimator_knowledge" },
+  { key: "DELETE /admin/ai-estimator-knowledge/vendors/:id/photo", permission: "ai_estimator_knowledge.configuration.update", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "ai_estimator_knowledge" },
+  { key: "GET /admin/ai-estimator-knowledge/vendors/:id/allocation-baseline", permission: "ai_estimator_knowledge.configuration.read", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "read", superAdminBehavior: "global_read", availability: "ai_estimator_knowledge" },
+  { key: "POST /admin/ai-estimator-knowledge/vendors/:id/allocation-baseline/:itemId", permission: "ai_estimator_knowledge.configuration.update", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "ai_estimator_knowledge" },
   { key: "GET /admin/ai-estimator-knowledge/baskets", permission: "ai_estimator_knowledge.configuration.read", ...readOperation },
   { key: "GET /admin/ai-estimator-knowledge/baskets/:basketId/quality", permission: "ai_estimator_knowledge.configuration.read", ...readOperation },
   { key: "GET /admin/ai-estimator-knowledge/quality-control-options", permission: "ai_estimator_knowledge.configuration.read", ...readOperation },

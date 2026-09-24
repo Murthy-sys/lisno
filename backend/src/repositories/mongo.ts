@@ -1517,6 +1517,71 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       throw new RepositoryConflictError(`User ${userId} changed concurrently.`);
     },
 
+    async findUserProfilePhotoState(userId) {
+      const query = UserModel.findById(userId).select({ profilePhoto: 1, profilePhotoRevision: 1 });
+      if (session) query.session(session);
+      const document = await query.lean().exec() as PlainDocument | null;
+      if (!document) return null;
+      return {
+        revision: typeof document.profilePhotoRevision === "number" ? document.profilePhotoRevision : 0,
+        photo: document.profilePhoto?.storageKey
+          ? {
+              storageKey: String(document.profilePhoto.storageKey),
+              version: Number(document.profilePhoto.version),
+              updatedAt: iso(document.profilePhoto.updatedAt)
+            }
+          : null
+      };
+    },
+
+    async setUserProfilePhoto(userId, expectedRevision, change) {
+      const query = UserModel.findOneAndUpdate(
+        { _id: userId, ...profilePhotoRevisionFilter(expectedRevision) },
+        {
+          $set: {
+            profilePhoto: {
+              storageKey: change.storageKey,
+              version: expectedRevision + 1,
+              updatedAt: date(change.updatedAt)
+            },
+            profilePhotoRevision: expectedRevision + 1
+          }
+        },
+        { new: true, runValidators: true, timestamps: false }
+      ).select("+passwordHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (document) return mapUser(document);
+
+      const existsQuery = UserModel.exists({ _id: userId });
+      if (session) existsQuery.session(session);
+      if (!(await existsQuery.exec())) {
+        throw new RepositoryNotFoundError(`User ${userId} was not found.`);
+      }
+      throw new RepositoryConflictError(`User ${userId} profile photo changed concurrently.`);
+    },
+
+    async clearUserProfilePhoto(userId, expectedRevision) {
+      const query = UserModel.findOneAndUpdate(
+        { _id: userId, ...profilePhotoRevisionFilter(expectedRevision) },
+        {
+          $unset: { profilePhoto: "" },
+          $set: { profilePhotoRevision: expectedRevision + 1 }
+        },
+        { new: true, runValidators: true, timestamps: false }
+      ).select("+passwordHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (document) return mapUser(document);
+
+      const existsQuery = UserModel.exists({ _id: userId });
+      if (session) existsQuery.session(session);
+      if (!(await existsQuery.exec())) {
+        throw new RepositoryNotFoundError(`User ${userId} was not found.`);
+      }
+      throw new RepositoryConflictError(`User ${userId} profile photo changed concurrently.`);
+    },
+
     async pageAllLeads(filters, pagination) {
       const filter: PlainDocument = {};
       if (filters.stage) filter.stage = filters.stage;
@@ -1679,6 +1744,13 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         title: document.title ?? null
       }));
       return { items, total };
+    },
+
+    async renameProjectName(id, name, expectedVersion, updatedAt) {
+      const revision = expectedVersion === 1 ? { $or: [{ nameVersion: 1 }, { nameVersion: { $exists: false } }] } : { nameVersion: expectedVersion };
+      const query = ProjectModel.findOneAndUpdate({ _id: id, ...revision }, { $set: { name, nameVersion: expectedVersion + 1, updatedAt: date(updatedAt) } }, { returnDocument: "after", runValidators: true, ...(session ? { session } : {}) }).lean();
+      const document = await query.exec();
+      return document ? mapProject(document) : null;
     },
 
     async findProjectById(id) {
@@ -3638,9 +3710,27 @@ function mapUser(document: PlainDocument): UserRecord {
     authorizedClientIds: [...(document.authorizedClientIds ?? [])],
     ...(document.avatar ? { avatar: document.avatar } : {}),
     ...(document.title ? { title: document.title } : {}),
+    ...(document.profilePhoto?.storageKey
+      ? {
+          profilePhoto: {
+            storageKey: String(document.profilePhoto.storageKey),
+            version: Number(document.profilePhoto.version),
+            updatedAt: iso(document.profilePhoto.updatedAt)
+          }
+        }
+      : {}),
+    ...(typeof document.profilePhotoRevision === "number"
+      ? { profilePhotoRevision: document.profilePhotoRevision }
+      : {}),
     createdAt: iso(document.createdAt),
     updatedAt: iso(document.updatedAt)
   };
+}
+
+function profilePhotoRevisionFilter(expectedRevision: number): PlainDocument {
+  return expectedRevision === 0
+    ? { $or: [{ profilePhotoRevision: 0 }, { profilePhotoRevision: { $exists: false } }] }
+    : { profilePhotoRevision: expectedRevision };
 }
 
 function mapPasswordReset(document: PlainDocument): PasswordResetRequestRecord {
@@ -3779,6 +3869,7 @@ function mapProject(document: PlainDocument): ProjectRecord {
       }))
     } : {}),
     name: document.name,
+    nameVersion: document.nameVersion ?? 1,
     clientId: document.clientId ?? null,
     clientName: document.clientName ?? "",
     clientEmail: document.clientEmail ?? "",

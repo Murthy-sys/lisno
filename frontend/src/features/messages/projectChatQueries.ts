@@ -92,3 +92,11 @@ export function useChatAttachmentPolicy(projectId: string, enabled: boolean) {
   useEffect(() => { if (query.data) configureTransfers(query.data.limits.maxConcurrentTransfers); }, [query.data, configureTransfers]);
   return { ...query, unsupported: query.error instanceof ApiError && query.error.status === 404 };
 }
+
+export function useChatActionTypes(projectId: string, enabled = true) {
+  const chat = useProjectChat();
+  const query = useQuery({ queryKey: chatKeys.actionTypes(chat.scope, projectId), queryFn: ({ signal }) => projectChatApi.actionTypes(projectId, signal), enabled: enabled && chat.enabled && !chat.denied.has(projectId), retry, staleTime: 15_000, refetchOnWindowFocus: true });
+  const { verifyAccess } = chat;
+  useEffect(() => { if (isChatDenied(query.error)) void verifyAccess(projectId); }, [projectId, query.error, verifyAccess]);
+  return query;
+}

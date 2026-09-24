@@ -660,6 +660,7 @@ export interface ProjectProcurementItem {
   };
   vendor: ProcurementVendorReference | null;
   pricePaise: number;
+  allocatedWorkPaise?: number | null;
   estimateSource: ProcurementEstimateSource | null;
   version: number;
   createdAt: string;

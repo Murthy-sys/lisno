@@ -268,7 +268,7 @@ export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocu
     : undefined;
   const identityMatches = impact?.basketId === basket.id && impact?.subBasketId === subBasket.id;
   const blockReason = disabledReason || mutationBlock || (impact && !identityMatches ? "The deletion preview does not match this Sub-Basket. Close this dialog and refresh the catalog." : undefined);
-  const canDelete = Boolean(impact && confirmationName === impact.subBasketName && reason.trim()
+  const canDelete = Boolean(impact && !(impact.vendorReferenceCount ?? 0) && confirmationName === impact.subBasketName && reason.trim()
     && identityMatches && !blockReason && !busy && !impactQuery.isFetching && !impactQuery.isError && !saved);
 
   return <Dialog title={inline ? "Remove Sub-Basket?" : "Delete Sub-Basket?"} eyebrow={basket.name} role="alertdialog"
@@ -295,6 +295,7 @@ export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocu
                   <div><dt>Items deleted with it</dt><dd>{impact.mainLineCount}</dd></div>
                   <div><dt>References removed elsewhere</dt><dd>{impact.referenceCount}</dd></div>
                 </dl>
+                {(impact.vendorReferenceCount ?? 0) > 0 ? <InlineMessage tone="error" title="Permanent deletion is blocked">{impact.vendorReferenceCount} retained vendors reference this Sub Basket. Reassign their classification before deleting it.</InlineMessage> : null}
                 <InlineMessage tone="warning" title="This action cannot be undone">
                   {impact.mainLineCount ? "All items in this Sub-Basket, their revisions, sections and price versions will be deleted." : "This Sub-Basket is empty. Deleting it removes the group itself."}
                   {" "}References to this group and its items will be removed. Its Main Basket and sibling groups remain.

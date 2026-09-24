@@ -1,13 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
-import { useEffect, useRef } from "react";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import type { AuthenticatedSession } from "../../contracts/session";
 import { ApiError } from "../../core/http/apiClient";
 import { privateQueryKey } from "../../core/query/queryClient";
 import { canPerformOperation } from "../../core/session/operationCapabilities";
-import { useInvalidateEvent } from "../../core/query/useInvalidation";
 import type { FeatureDestination } from "../../navigation/registry";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { BrandLoader } from "../../ui/brand";
@@ -16,7 +14,7 @@ import { colors, fonts, radii, spacing, typography } from "../../ui/tokens";
 import { FEATURE_DEFINITIONS } from "./featureDefinitions";
 import { dashboardMetrics, extractRecords, recordId, recordSubtitle, recordTitle } from "./recordPresentation";
 import { OperationalTaskAction } from "../operations/OperationalTaskAction";
-import { NotificationAction } from "../notifications/NotificationAction";
+import { NotificationsScreen } from "../notifications/NotificationsScreen";
 import { AccessRequestActions } from "../access/AccessRequestActions";
 import { CreateAccessRequest } from "../access/CreateAccessRequest";
 import { LeadCreateForm } from "../leads/LeadCreateForm";
@@ -33,35 +31,6 @@ function requestScope(context: ReturnType<typeof useConfiguredRuntime>, session:
     environmentId: context.environment.environment.id,
     userId: session.user.id
   };
-}
-
-function NotificationRealtimeBridge({ onSnapshot }: { readonly onSnapshot: () => void }) {
-  const context = useConfiguredRuntime();
-  const invalidate = useInvalidateEvent();
-  const callback = useRef(onSnapshot);
-  callback.current = onSnapshot;
-  useEffect(() => {
-    const stream = context.runtime.realtime.createStream({
-      path: "/notifications/events",
-      onEvent: (event) => { if (event.event === "notifications") callback.current(); },
-      heartbeatTimeoutMs: 45_000,
-      isDeniedEvent: (event) => {
-        if (event.event !== "state") return false;
-        try {
-          return (JSON.parse(event.data) as { status?: unknown }).status === "denied";
-        } catch {
-          return false;
-        }
-      },
-      onResync: () => callback.current(),
-      onDenied: () => {
-        void invalidate("access-changed").then(() => callback.current());
-      }
-    });
-    stream.start();
-    return () => stream.stop();
-  }, [context.runtime.realtime, invalidate]);
-  return null;
 }
 
 export function FeatureWorkspace({ destination, session }: { readonly destination: FeatureDestination; readonly session: AuthenticatedSession }) {
@@ -106,6 +75,10 @@ function GenericFeatureWorkspace({ destination, session }: { readonly destinatio
     );
   }
 
+  if (destination.id === "notifications") {
+    return <NotificationsScreen definition={definition} data={query.data} refreshing={query.isRefetching} onRefresh={() => void query.refetch()} />;
+  }
+
   const records = extractRecords(query.data);
   const metrics = destination.id === "dashboard" ? dashboardMetrics(query.data) : [];
 
@@ -120,7 +93,6 @@ function GenericFeatureWorkspace({ destination, session }: { readonly destinatio
         <Text style={styles.description}>{definition.description}</Text>
         {query.isRefetching ? <Text accessibilityLiveRegion="polite" style={styles.updating}>Updating…</Text> : null}
       </View>
-      {destination.id === "notifications" ? <NotificationRealtimeBridge onSnapshot={() => void query.refetch()} /> : null}
 
       {destination.id === "access-self" && canPerformOperation(session, "POST /access-requests") ? <CreateAccessRequest role={session.user.role} /> : null}
       {destination.id === "leads" && canPerformOperation(session, "POST /leads") ? <LeadCreateForm /> : null}
@@ -159,7 +131,6 @@ function GenericFeatureWorkspace({ destination, session }: { readonly destinatio
                   {detailEndpoint ? <Text accessibilityElementsHidden style={styles.chevron}>›</Text> : null}
                 </Pressable>
                 {destination.id === "work" ? <OperationalTaskAction record={record} role={session.user.role} /> : null}
-                {destination.id === "notifications" ? <NotificationAction record={record} /> : null}
                 {destination.id === "access-self" && canPerformOperation(session, "POST /access-requests/:requestId/cancel") ? <AccessRequestActions record={record} mode="self" /> : null}
                 {destination.id === "access-review" ? <AccessRequestActions record={record} mode="review" /> : null}
                 {destination.id === "client-responses" && session.authorization.permissions.includes("estimation.client_response_tasks.decide") ? <ProxyDecisionAction record={record} queue="estimate" /> : null}

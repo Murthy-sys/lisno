@@ -14,6 +14,7 @@ import type { AiEstimatorKnowledgeItemService } from "../src/services/ai-estimat
 import type { AiEstimatorKnowledgeQualityControlOptionService } from "../src/services/ai-estimator-knowledge-quality-control-option.service.js";
 import type { AiEstimatorKnowledgeReferenceService } from "../src/services/ai-estimator-knowledge-reference.service.js";
 import type { AuthService, PublicUser } from "../src/services/auth.service.js";
+import { vendorProfileFixture } from "./procurement-vendor-profile.fixture.js";
 
 const superAdmin: PublicUser = {
   id: "super-admin-1",
@@ -38,6 +39,7 @@ function authService(actor?: PublicUser): AuthService {
 
 function services() {
   const reference = {
+    getVendorDetail: vi.fn(async () => ({ id: "vendor-1", procurementProfile: vendorProfileFixture() })),
     listSubBaskets: vi.fn(async () => ({ items: [{ id: "child-1", basketId: "basket-1" }], total: 1 })),
     createSubBasket: vi.fn(async () => ({ id: "child-1", basketId: "basket-1" })),
     updateSubBasket: vi.fn(async () => ({ id: "child-1", basketId: "basket-1", name: "False Ceiling Lights", version: 2 })),
@@ -140,6 +142,67 @@ function appFor(testServices: AiEstimatorKnowledgeAdminRouterServices, actor?: P
 }
 
 describe("AI Estimator Knowledge HTTP routes", () => {
+  it("validates the full vendor profile and exposes detail only to Super Admin", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const profile = vendorProfileFixture();
+    const create = await request(app).post("/api/v1/admin/ai-estimator-knowledge/vendors").set("Authorization", "Bearer super-admin-token")
+      .send({ name: "Synthetic vendor", procurementProfile: { ...profile, aadhar: "1234 5678 9012", pan: "abcde1234f" } });
+    expect(create.status).toBe(201);
+    expect(testServices.reference.createMaster).toHaveBeenCalledWith(superAdmin, "vendors", { name: "Synthetic vendor", procurementProfile: profile });
+    const invalid = await request(app).patch("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-1").set("Authorization", "Bearer super-admin-token")
+      .send({ expectedVersion: 1, procurementProfile: { ...profile, supplier: false } });
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.error.fields["procurementProfile.supplier"]).toBeTruthy();
+    const detail = await request(app).get("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-1").set("Authorization", "Bearer super-admin-token");
+    expect(detail.status).toBe(200);
+    expect(testServices.reference.getVendorDetail).toHaveBeenCalledWith(superAdmin, "vendor-1");
+    for (const role of ROLE_CODES.filter(value => value !== "super_admin")) {
+      const denied = await request(appFor(testServices, { ...superAdmin, role })).get("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-1").set("Authorization", "Bearer role-token");
+      expect(denied.status, role).toBe(403);
+    }
+  });
+  it("passes vendor classification filters while rejecting them on other masters", async () => {
+    const testServices = services(); const app = appFor(testServices);
+    const filters = { vendorType: "supplier", mainBasketId: "basket-1", subBasketId: "sub-1" };
+    expect((await request(app).get("/api/v1/admin/ai-estimator-knowledge/vendors").query(filters).set("Authorization", "Bearer super-admin-token")).status).toBe(200);
+    expect(testServices.reference.listMasters).toHaveBeenCalledWith(superAdmin, "vendors", filters, { limit: 20, offset: 0 });
+    expect((await request(app).get("/api/v1/admin/ai-estimator-knowledge/uoms").query(filters).set("Authorization", "Bearer super-admin-token")).status).toBe(400);
+  });
+  it("adds an explicitly requested vendor overview without changing items or pagination", async () => {
+    const testServices = services(); const app = appFor(testServices);
+    const directoryOverview = { totalVendors: 19, activeVendors: 11, underReviewVendors: 7 };
+    vi.mocked(testServices.reference.listMasters).mockResolvedValue({ items: [], total: 6, directoryOverview });
+    const path = "/api/v1/admin/ai-estimator-knowledge/vendors";
+    const requested = await request(app).get(path).query({ includeDirectoryOverview: "true", search: "Supplier", limit: 5, offset: 5 }).set("Authorization", "Bearer super-admin-token");
+    expect(requested.status).toBe(200);
+    expect(requested.body.data).toEqual({ items: [], pagination: { limit: 5, offset: 5, total: 6, hasMore: true }, directoryOverview });
+    expect(testServices.reference.listMasters).toHaveBeenLastCalledWith(superAdmin, "vendors", { includeDirectoryOverview: true, search: "Supplier" }, { limit: 5, offset: 5 });
+    for (const query of [{}, { includeDirectoryOverview: "false" }]) {
+      const unchanged = await request(app).get(path).query(query).set("Authorization", "Bearer super-admin-token");
+      expect(unchanged.status).toBe(200);
+      expect(unchanged.body.data).toEqual({ items: [], pagination: { limit: 20, offset: 0, total: 6, hasMore: true } });
+    }
+  });
+  it("restricts directory overview to a valid boolean query on the authorized vendor operation", async () => {
+    const testServices = services(); const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/vendors";
+    for (const includeDirectoryOverview of ["1", "yes", "", "TRUE", ["true", "false"]]) {
+      expect((await request(app).get(path).query({ includeDirectoryOverview }).set("Authorization", "Bearer super-admin-token")).status).toBe(400);
+    }
+    for (const kind of ["uoms", "taxes", "priorities", "surfaces", "modes"]) {
+      for (const includeDirectoryOverview of ["true", "false"]) {
+        expect((await request(app).get(`/api/v1/admin/ai-estimator-knowledge/${kind}`).query({ includeDirectoryOverview }).set("Authorization", "Bearer super-admin-token")).status).toBe(400);
+      }
+    }
+    expect((await request(app).get(path).query({ includeDirectoryOverview: "true" })).status).toBe(401);
+    for (const role of ROLE_CODES.filter(value => value !== "super_admin")) {
+      const denied = await request(appFor(testServices, { ...superAdmin, id: `denied-${role}`, role })).get(path).query({ includeDirectoryOverview: "true" }).set("Authorization", "Bearer role-token");
+      expect(denied.status, role).toBe(403);
+      expect(denied.body).not.toHaveProperty("data");
+    }
+    expect(testServices.reference.listMasters).not.toHaveBeenCalled();
+  });
   it("lists and creates normalized reusable Quality Control values", async () => {
     const testServices = services();
     const app = appFor(testServices);

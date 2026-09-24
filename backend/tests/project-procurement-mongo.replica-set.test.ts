@@ -326,8 +326,8 @@ describe("saved Configuration vendors for project procurement", () => {
     const reused = await service.createVendor(other, { name: "wood   supply" });
     expect(reused).toEqual({ ...created, created: false });
     expect(await ProjectProcurementItemModel.countDocuments()).toBe(0);
-    const first = await service.create(actor, "project-a", { ...fields, vendorId: created.vendor.id });
-    const second = await service.create(other, "project-b", { ...fields, estimateId: "estimate-project-b", vendorId: created.vendor.id, pricePaise: 30001 });
+    const first = await service.create(actor, "project-a", { ...fields, vendorId: created.vendor.id, allocatedWorkPaise: 500_000 });
+    const second = await service.create(other, "project-b", { ...fields, estimateId: "estimate-project-b", vendorId: created.vendor.id, allocatedWorkPaise: 500_000, pricePaise: 30001 });
     expect(first.vendor).toEqual(created.vendor);
     expect(second.vendor).toEqual(created.vendor);
     expect((await service.listVendors(other, { q: "SUPPLY", limit: 20, offset: 0 })).items).toEqual([created.vendor]);
@@ -395,22 +395,22 @@ describe("saved Configuration vendors for project procurement", () => {
     const firstVendor = (await service.createVendor(actor, { name: "One" })).vendor;
     const secondVendor = (await service.createVendor(actor, { name: "Two" })).vendor;
     const unassigned = await service.create(actor, "project-a", fields);
-    const first = await service.create(actor, "project-a", { ...fields, vendorId: firstVendor.id });
-    const second = await service.create(actor, "project-a", { ...fields, vendorId: secondVendor.id });
-    await expect(service.create(other, "project-a", { ...fields, vendorId: firstVendor.id })).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_DUPLICATE" });
-    await expect(service.update(other, "project-a", second.id, { ...fields, vendorId: firstVendor.id, expectedVersion: 1 })).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_DUPLICATE" });
+    const first = await service.create(actor, "project-a", { ...fields, vendorId: firstVendor.id, allocatedWorkPaise: 500_000 });
+    const second = await service.create(actor, "project-a", { ...fields, vendorId: secondVendor.id, allocatedWorkPaise: 500_000 });
+    await expect(service.create(other, "project-a", { ...fields, vendorId: firstVendor.id, allocatedWorkPaise: 500_000 })).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_DUPLICATE" });
+    await expect(service.update(other, "project-a", second.id, { ...fields, vendorId: firstVendor.id, allocatedWorkPaise: 500_000, expectedVersion: 1 })).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_DUPLICATE" });
     const cleared = await service.update(actor, "project-a", first.id, { ...fields, itemName: "Different", expectedVersion: 1 });
     expect(cleared.vendor).toBeNull();
     expect(await service.get(actor, "project-a", unassigned.id)).toEqual(unassigned);
   });
   it.each(["inactive", "archived", "unavailable"] as const)("keeps a vendor snapshot after it becomes %s, while rejecting new selections", async (status) => {
     const saved = (await service.createVendor(actor, { name: "Historical Vendor" })).vendor;
-    const item = await service.create(actor, "project-a", { ...fields, vendorId: saved.id });
+    const item = await service.create(actor, "project-a", { ...fields, vendorId: saved.id, allocatedWorkPaise: 500_000 });
     if (status === "unavailable") await AiEstimatorKnowledgeVendorModel.deleteOne({ _id: saved.id });
     else await AiEstimatorKnowledgeVendorModel.updateOne({ _id: saved.id }, { $set: { status, name: "Renamed Vendor", code: "RENAMED", ...(status === "archived" ? { archivedAt: now, archivedById: actor.id } : {}) } });
-    const updated = await service.update(actor, "project-a", item.id, { ...fields, vendorId: saved.id, pricePaise: 56001, expectedVersion: 1 });
+    const updated = await service.update(actor, "project-a", item.id, { ...fields, vendorId: saved.id, allocatedWorkPaise: 500_000, pricePaise: 56001, expectedVersion: 1 });
     expect(updated.vendor).toEqual({ ...saved, status });
-    await expect(service.create(actor, "project-b", { ...fields, estimateId: "estimate-project-b", vendorId: saved.id })).rejects.toMatchObject({ code: "VALIDATION_ERROR", fields: { vendorId: expect.any(String) } });
+    await expect(service.create(actor, "project-b", { ...fields, estimateId: "estimate-project-b", vendorId: saved.id, allocatedWorkPaise: 500_000 })).rejects.toMatchObject({ code: "VALIDATION_ERROR", fields: { vendorId: expect.any(String) } });
     const cleared = await service.update(actor, "project-a", item.id, { ...fields, expectedVersion: 2 });
     expect(cleared.vendor).toBeNull();
   });
@@ -422,7 +422,7 @@ describe("saved Configuration vendors for project procurement", () => {
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const append = audit.appendInMongoTransaction.bind(audit);
     vi.spyOn(audit, "appendInMongoTransaction").mockImplementationOnce(async (...args) => { selected(); await gate; return append(...args); });
-    const creation = service.create(actor, "project-a", { ...fields, vendorId: saved.id });
+    const creation = service.create(actor, "project-a", { ...fields, vendorId: saved.id, allocatedWorkPaise: 500_000 });
     await selection;
     const archive = mongoose.connection.transaction(async (session) => AiEstimatorKnowledgeVendorModel.findOneAndUpdate({ _id: saved.id, status: "active" }, {
       $set: { status: "archived", archivedAt: now, archivedById: actor.id }, $inc: { version: 1 }
@@ -432,6 +432,6 @@ describe("saved Configuration vendors for project procurement", () => {
     await archive;
     expect((await service.get(actor, "project-a", created.id)).vendor).toEqual({ ...saved, status: "archived" });
     expect(await AiEstimatorKnowledgeVendorModel.findById(saved.id).lean()).toMatchObject({ dependencyEpoch: 1 });
-    await expect(service.create(actor, "project-b", { ...fields, estimateId: "estimate-project-b", vendorId: saved.id })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    await expect(service.create(actor, "project-b", { ...fields, estimateId: "estimate-project-b", vendorId: saved.id, allocatedWorkPaise: 500_000 })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 });

@@ -13,6 +13,7 @@ import { AiEstimatorKnowledgeTaxRuleModel } from "../src/models/AiEstimatorKnowl
 import { AiEstimatorKnowledgeTaxVersionModel } from "../src/models/AiEstimatorKnowledgeTaxVersion.js";
 import { AiEstimatorKnowledgeUomModel } from "../src/models/AiEstimatorKnowledgeUom.js";
 import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowledgeVendor.js";
+import { legacyVendorProfileFixture, vendorProfileFixture } from "./procurement-vendor-profile.fixture.js";
 
 const actor = {
   createdById: "user-super-admin",
@@ -27,6 +28,23 @@ const completeness = {
 };
 
 describe("AI estimator knowledge models", () => {
+  it("validates vendor execution arrays and normalizes legacy scalar model values", async () => {
+    const vendor = (profile: unknown) => new AiEstimatorKnowledgeVendorModel({
+      _id: "selection-vendor", code: "SELECTION", name: "Selection vendor", displayOrder: 0, ...actor,
+      procurementProfile: profile
+    });
+    const both = vendor({ ...vendorProfileFixture(), executionType: ["material_labour", "labor"] });
+    await expect(both.validate()).resolves.toBeUndefined();
+    expect(both.procurementProfile.executionType).toEqual(["labor", "material_labour"]);
+    const legacy = vendor(legacyVendorProfileFixture());
+    await expect(legacy.validate()).resolves.toBeUndefined();
+    expect(legacy.procurementProfile.executionType).toEqual(["labor"]);
+    for (const executionType of [[], null, ["labor", "labor"], ["material_labour", "material_labour"], ["labor", "unknown"], ["labor", null]]) {
+      await expect(vendor({ ...vendorProfileFixture(), executionType }).validate()).rejects.toThrow(/executionType/u);
+    }
+    await expect(vendor({ ...vendorProfileFixture(), vendorType: "supplier", executionType: null, supplier: false }).validate()).resolves.toBeUndefined();
+    await expect(vendor({ ...vendorProfileFixture(), vendorType: "supplier", executionType: ["labor"], supplier: true }).validate()).rejects.toThrow(/supplier/u);
+  });
   it("keeps every collection feature-specific, strict, and version-key free", () => {
     const models = [
       AiEstimatorKnowledgeBasketModel,

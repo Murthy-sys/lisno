@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
 import { chatTestPeople, chatTestPolicy } from "./projectChatFixtures";
+import { isChatDueDate } from "./ChatTrackedAction";
 import { emptyChatDraft, type ChatDraft } from "./projectChatState";
 
 beforeEach(() => { window.matchMedia = vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }); });
@@ -118,4 +119,20 @@ describe("project message composer", () => {
     render(<ComposerHarness initial={{ ...emptyChatDraft(), reply: { id: "photo", author: chatTestPeople[1], body: "", attachmentSummary: { count: 1, kind: "image", filename: "kitchen.jpg" } } }} />);
     expect(screen.getByText("Photo")).toBeVisible();
   });
+});
+
+
+it("validates calendar dates without accepting overflow dates", () => {
+  expect(isChatDueDate("2026-02-29")).toBe(false);
+  expect(isChatDueDate("2028-02-29")).toBe(true);
+  expect(isChatDueDate("2026-04-31")).toBe(false);
+  expect(isChatDueDate("2026-10-01T00:00:00Z")).toBe(false);
+});
+
+it("keeps mention names and roles in one adjacent group", async () => {
+  render(<ComposerHarness />);
+  await userEvent.type(screen.getByRole("textbox", { name: "Message the project team" }), "@Alex");
+  const options = within(screen.getByRole("listbox")).getAllByRole("option");
+  expect(options[0].firstElementChild).toHaveClass("project-chat-mention-person");
+  expect(options[0].firstElementChild).toHaveTextContent("Alex Team · Plumber");
 });

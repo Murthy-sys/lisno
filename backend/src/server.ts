@@ -33,6 +33,7 @@ type ServerApp = {
   startNotificationDelivery?: () => void;
   closeProjectChat?: () => Promise<void>;
   cleanupProjectChatAttachments?: () => Promise<unknown>;
+  cleanupProcurementVendorPhotos?: () => Promise<unknown>;
   listen(port: number, callback: (error?: Error) => void): Server;
   listen(port: number, host: string, callback: (error?: Error) => void): Server;
 };
@@ -164,7 +165,7 @@ export async function startServer(
     receiptMaintenance = startReceiptMaintenanceScheduler(
       storage,
       dependencies,
-      async () => { await app?.cleanupProjectChatAttachments?.(); }
+      async () => { await Promise.allSettled([app?.cleanupProjectChatAttachments?.(), app?.cleanupProcurementVendorPhotos?.()]); }
     );
     (dependencies.writeOutput ?? ((message) => process.stdout.write(message)))(
       `Backend ready at http://${dependencies.bindHost ?? "localhost"}:${env.PORT}\n`

@@ -2,6 +2,10 @@ import { createProjectVendorSuggestionRouter } from "./routes/project-vendor-sug
 import { createProjectVendorSuggestionService } from "./services/project-vendor-suggestions.service.js";
 import { createProjectProcurementRouter } from "./routes/project-procurement.js";
 import { createProjectProcurementService } from "./services/project-procurement.service.js";
+import { createProcurementVendorBaselineService } from "./services/procurement-vendor-baseline.service.js";
+import { createProcurementVendorBaselineRouter } from "./routes/procurement-vendor-baseline.js";
+import { createProcurementVendorPhotoService } from "./services/procurement-vendor-photo.service.js";
+import { createProcurementVendorPhotoRouter } from "./routes/procurement-vendor-photo.js";
 import type { ChatMentionMailer } from "./services/chat-mention-mailer.js";
 import { createNotificationService } from "./services/notifications.service.js";
 import { createNotificationEventsHub } from "./services/notification-events.service.js";
@@ -57,6 +61,8 @@ import { createAiEstimatorKnowledgeAdminRouter } from "./routes/ai-estimator-kno
 import { createAiEstimatorKnowledgeContextRouter } from "./routes/ai-estimator-knowledge-context.js";
 import { apiDocsRouter } from "./routes/api-docs.js";
 import { createAuthRouter } from "./routes/auth.js";
+import { createProfilePhotosRouter } from "./routes/profile-photos.js";
+import { createProfilePhotoService } from "./services/profile-photo.service.js";
 import { createPasswordResetsRouter } from "./routes/password-resets.js";
 import { createEvaluationsRouter } from "./routes/evaluations.js";
 import { createDesignVersionsRouter } from "./routes/design-versions.js";
@@ -208,6 +214,12 @@ export function createApp(dependencies: AppDependencies) {
     clock,
     developmentDemoAuthorization: dependencies.developmentDemoAuthorization
   });
+  const profilePhotoService = createProfilePhotoService({
+    repository,
+    audit: auditService,
+    storage,
+    clock
+  });
   const authRateLimit = createAuthRateLimit({
     windowMs: dependencies.authRateLimit?.windowMs ?? 15 * 60_000,
     maxAttempts: dependencies.authRateLimit?.maxAttempts ?? 20,
@@ -328,6 +340,8 @@ export function createApp(dependencies: AppDependencies) {
   });
   const projectVendorSuggestionService = createProjectVendorSuggestionService({ audit: auditService, now: clock });
   const projectProcurementService = createProjectProcurementService({ audit: auditService, now: clock });
+  const procurementVendorBaselineService = createProcurementVendorBaselineService({ audit: auditService, now: clock });
+  const procurementVendorPhotoService = createProcurementVendorPhotoService({ audit: auditService, storage, maxUploadBytes, now: clock });
   const procurementService = createProcurementService({
     storage,
     audit: auditService,
@@ -431,7 +445,8 @@ export function createApp(dependencies: AppDependencies) {
   // Annotation documents are capped at 256 KiB by their domain schema.
   app.use(express.json({ limit: "300kb" }));
   app.use("/api/v1", healthRouter);
-  app.use("/api/v1", createAuthRouter(authService, authRateLimit));
+  app.use("/api/v1", createAuthRouter(authService, authRateLimit, profilePhotoService));
+  app.use("/api/v1", createProfilePhotosRouter(authService, profilePhotoService));
   app.use("/api/v1", createNotificationsRouter(authService, notifications, notificationStream));
   app.use("/api/v1", createProjectChatRouter(authService, projectChatService, projectChatTyping));
   app.use("/api/v1", createProjectChatAttachmentsRouter(authService, chatAttachments));
@@ -496,6 +511,8 @@ export function createApp(dependencies: AppDependencies) {
     createProcurementRouter(authService, procurementService, maxUploadBytes)
   );
   app.use("/api/v1", createProjectVendorSuggestionRouter(authService, projectVendorSuggestionService));
+  app.use("/api/v1", createProcurementVendorBaselineRouter(authService, procurementVendorBaselineService));
+  app.use("/api/v1", createProcurementVendorPhotoRouter({ authService, photoService: procurementVendorPhotoService, maxUploadBytes }));
   app.use(
     "/api/v1",
     createProjectProcurementRouter(authService, projectProcurementService)
@@ -575,7 +592,8 @@ export function createApp(dependencies: AppDependencies) {
   return Object.assign(app, {
     startNotificationDelivery: () => notificationEmail.start(),
     closeProjectChat: async () => { await Promise.all([projectChatStream.close(), notificationStream.close(), notificationEmail.stop()]); },
-    cleanupProjectChatAttachments: () => chatAttachments.cleanup()
+    cleanupProjectChatAttachments: () => chatAttachments.cleanup(),
+    cleanupProcurementVendorPhotos: () => procurementVendorPhotoService.cleanup()
   });
 }
 

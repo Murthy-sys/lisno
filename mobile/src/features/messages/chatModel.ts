@@ -131,8 +131,37 @@ export interface PresentedChatSummary {
   readonly setupWarnings: readonly string[];
 }
 
+export type PresentedLastMessageAttachmentKind = "image" | "video" | "audio" | "document" | "archive";
+
+export interface PresentedLastMessageAttachment {
+  readonly id: string;
+  readonly kind: PresentedLastMessageAttachmentKind;
+  readonly filename: string;
+  readonly hasPreview: boolean;
+}
+
+export interface PresentedLastMessage {
+  readonly id: string;
+  readonly author: { readonly id: string; readonly name: string; readonly role: string | null };
+  readonly excerpt: string;
+  readonly createdAt: string;
+  readonly attachments: readonly PresentedLastMessageAttachment[];
+  readonly attachmentCount: number;
+}
+
 export interface PresentedConversation extends PresentedChatSummary {
   readonly lastMessageAt: string | null;
+  /**
+   * `null` means the server reported no messages yet; `undefined` means an older
+   * server did not send a preview at all.
+   */
+  readonly lastMessage?: PresentedLastMessage | null;
+}
+
+export interface PresentedConversationTotals {
+  readonly unread: number;
+  readonly critical: number;
+  readonly important: number;
 }
 
 export interface PresentedOffsetPagination {
@@ -145,6 +174,8 @@ export interface PresentedOffsetPagination {
 export interface PresentedConversationPage {
   readonly items: readonly PresentedConversation[];
   readonly pagination: PresentedOffsetPagination;
+  /** Absent when an older server does not report list-wide totals. */
+  readonly totals?: PresentedConversationTotals;
 }
 
 export interface PresentedMessagePage {
@@ -429,6 +460,56 @@ export function presentChatSummary(value: unknown, expectedProjectId?: string): 
   return summary && (!expectedProjectId || summary.project.id === expectedProjectId) ? summary : null;
 }
 
+const LAST_MESSAGE_ATTACHMENT_KINDS: readonly PresentedLastMessageAttachmentKind[] = [
+  "image", "video", "audio", "document", "archive"
+];
+
+function presentLastMessageAttachment(value: unknown): PresentedLastMessageAttachment | null {
+  if (!isRecord(value)) return null;
+  const id = nonEmptyString(value.id);
+  const filename = nonEmptyString(value.filename);
+  const kind = LAST_MESSAGE_ATTACHMENT_KINDS.find((candidate) => candidate === value.kind);
+  if (!id || !filename || !kind) return null;
+  return { id, kind, filename, hasPreview: value.hasPreview === true };
+}
+
+/**
+ * Tolerant preview parser: `undefined` for an absent or malformed preview (so the
+ * row falls back to its secondary text) and `null` only for an explicit null.
+ */
+function presentLastMessage(value: unknown): PresentedLastMessage | null | undefined {
+  if (value === null) return null;
+  if (!isRecord(value) || !isRecord(value.author)) return undefined;
+  const id = nonEmptyString(value.id);
+  const authorId = nonEmptyString(value.author.id);
+  const authorName = nonEmptyString(value.author.name);
+  const createdAt = nonEmptyString(value.createdAt);
+  if (!id || !authorId || !authorName || !createdAt || typeof value.excerpt !== "string") return undefined;
+  const attachments = Array.isArray(value.attachments)
+    ? value.attachments.flatMap((item) => {
+      const attachment = presentLastMessageAttachment(item);
+      return attachment ? [attachment] : [];
+    }).slice(0, 3)
+    : [];
+  const reportedCount = naturalNumber(value.attachmentCount);
+  return {
+    id,
+    author: { id: authorId, name: authorName.trim(), role: nonEmptyString(value.author.role) },
+    excerpt: value.excerpt.replace(/\s+/g, " ").trim(),
+    createdAt,
+    attachments,
+    attachmentCount: Math.max(reportedCount ?? 0, attachments.length)
+  };
+}
+
+function presentConversationTotals(value: unknown): PresentedConversationTotals | undefined {
+  if (!isRecord(value)) return undefined;
+  const unread = naturalNumber(value.unread);
+  const critical = naturalNumber(value.critical);
+  const important = naturalNumber(value.important);
+  return unread === null || critical === null || important === null ? undefined : { unread, critical, important };
+}
+
 export function presentConversationPage(value: unknown): PresentedConversationPage | null {
   if (!isRecord(value) || !Array.isArray(value.items) || !isRecord(value.pagination)) return null;
   const limit = positiveNumber(value.pagination.limit);
@@ -440,9 +521,13 @@ export function presentConversationPage(value: unknown): PresentedConversationPa
     const summary = presentSummary(item);
     if (!summary || !isRecord(item)) return [];
     const lastMessageAt = nullableString(item.lastMessageAt);
-    return lastMessageAt === undefined ? [] : [{ ...summary, lastMessageAt }];
+    if (lastMessageAt === undefined) return [];
+    const lastMessage = presentLastMessage(item.lastMessage);
+    return [lastMessage === undefined ? { ...summary, lastMessageAt } : { ...summary, lastMessageAt, lastMessage }];
   });
-  return { items, pagination: { limit, offset, total, hasMore: value.pagination.hasMore } };
+  const totals = presentConversationTotals(value.totals);
+  const pagination = { limit, offset, total, hasMore: value.pagination.hasMore };
+  return totals ? { items, pagination, totals } : { items, pagination };
 }
 
 export function presentMessages(value: unknown): readonly PresentedMessage[] {
@@ -599,19 +684,33 @@ function countLabel(count: number, singular: string, plural = `${singular}s`): s
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
+/** The one-line row preview: "Author: excerpt", "You: excerpt", or an attachment summary. */
+export function lastMessagePreviewText(lastMessage: PresentedLastMessage, currentUserId?: string | null): string {
+  const author = currentUserId && lastMessage.author.id === currentUserId ? "You" : lastMessage.author.name;
+  const body = lastMessage.excerpt || (lastMessage.attachmentCount > 0
+    ? lastMessage.attachments[0]?.filename ?? countLabel(lastMessage.attachmentCount, "attachment")
+    : "");
+  return body ? `${author}: ${body}` : author;
+}
+
 export function conversationAccessibilitySummary(
   conversation: PresentedConversation,
-  activityLabel?: string | null
+  activityLabel?: string | null,
+  currentUserId?: string | null
 ): string {
-  const parts = [
-    conversation.project.name,
-    conversation.project.status,
-    countLabel(conversation.participantCount, "participant")
-  ];
+  const parts = [conversation.project.name];
   if (conversation.counts.unread > 0) parts.push(countLabel(conversation.counts.unread, "unread message"));
   if (conversation.counts.unreadMentions > 0) parts.push(countLabel(conversation.counts.unreadMentions, "unread mention"));
   if (conversation.counts.openCritical > 0) parts.push(countLabel(conversation.counts.openCritical, "open critical issue"));
-  if (activityLabel) parts.push(`Last activity ${activityLabel}`);
+  if (conversation.counts.openImportant > 0) parts.push(countLabel(conversation.counts.openImportant, "open important issue"));
+  if (conversation.lastMessage === null) parts.push("No messages yet");
+  else if (conversation.lastMessage) {
+    parts.push(`last message from ${lastMessagePreviewText(conversation.lastMessage, currentUserId)}`);
+    if (conversation.lastMessage.attachmentCount > 0) {
+      parts.push(countLabel(conversation.lastMessage.attachmentCount, "attachment"));
+    }
+  }
+  if (activityLabel) parts.push(activityLabel);
   return parts.join(", ");
 }
 

@@ -393,9 +393,30 @@ describe("ProjectProcurementItems", () => {
     await user.click(await screen.findByRole("option", { name: "Shared Timber" }));
     await user.selectOptions(screen.getByRole("combobox", { name: "UOM" }), uom.id);
     await user.type(screen.getByRole("textbox", { name: "Price (INR)" }), "88.01");
+    await user.type(screen.getByRole("textbox", { name: "Allocated work (INR)" }), "30000");
     await user.click(within(panel).getByRole("button", { name: "Add item" }));
-    await waitFor(() => expect(itemPosts).toHaveBeenCalledWith({ itemName: "Plywood", brand: "Greenply", uomId: uom.id, vendorId: savedVendor.id, pricePaise: 8801, ...sourceFor("project-two") }));
+    await waitFor(() => expect(itemPosts).toHaveBeenCalledWith({ itemName: "Plywood", brand: "Greenply", uomId: uom.id, vendorId: savedVendor.id, pricePaise: 8801, allocatedWorkPaise: 3000000, ...sourceFor("project-two") }));
     expect(view.queryClient.getQueryState(projectProcurementKeys.list("project-one", "", 0, sourceFor()))?.isInvalidated).toBe(false);
+  });
+
+  it("preserves an unknown legacy amount on price-only edits and displays cap errors without losing input", async () => {
+    const vendor = { id: "vendor-existing", name: "Existing Vendor", code: "EX", status: "active" as const };
+    const writes: Record<string, unknown>[] = [];
+    server.use(http.get("/api/v1/procurement/projects/project-one/items", () => page([{ ...item, vendor }])),
+      http.patch("/api/v1/procurement/projects/project-one/items/:id", async ({ request }) => {
+        const body = await request.json() as Record<string, unknown>; writes.push(body);
+        if ("allocatedWorkPaise" in body) return HttpResponse.json({ error: { code: "PROCUREMENT_VENDOR_ALLOCATION_BASELINE_INCOMPLETE", message: "Historical allocation baseline is incomplete. Ask Super Admin to record missing amounts.", fields: { allocatedWorkPaise: "Historical allocation baseline is incomplete." } } }, { status: 409 });
+        return HttpResponse.json({ data: { ...item, vendor } });
+      }));
+    start(); const user = await edit();
+    expect(screen.getByRole("textbox", { name: "Allocated work (INR)" })).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(writes).toHaveLength(1)); expect(writes[0]).not.toHaveProperty("allocatedWorkPaise");
+    await user.click(await screen.findByRole("button", { name: "Edit Plywood, Greenply" }));
+    await user.type(screen.getByRole("textbox", { name: "Allocated work (INR)" }), "50000.01");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByText(/Ask Super Admin/); expect(screen.getByRole("textbox", { name: "Allocated work (INR)" })).toHaveValue("50000.01");
+    expect(writes[1]).toMatchObject({ allocatedWorkPaise: 5000001, pricePaise: 12005 });
   });
 
   it("requires typed vendor text to be selected, saved or cleared and protects unsaved quick-add input", async () => {
@@ -501,8 +522,9 @@ describe("ProjectProcurementItems", () => {
     expect(screen.queryByRole("option", { name: "Electrical Supply" })).not.toBeInTheDocument();
     await user.keyboard("{ArrowDown}{Enter}");
     expect(input).toHaveValue("Orion Supply");
+    await user.type(screen.getByRole("textbox", { name: "Allocated work (INR)" }), "100");
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(writes).toHaveBeenCalledWith(expect.objectContaining({ vendorId: orion.id })));
+    await waitFor(() => expect(writes).toHaveBeenCalledWith(expect.objectContaining({ vendorId: orion.id, allocatedWorkPaise: 10000 })));
   });
 
   it("keeps a late response for an old vendor query unselectable after the search changes", async () => {

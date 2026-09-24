@@ -709,7 +709,7 @@ function PermanentDeleteBasketDialog({
   const busy = impactQuery.isFetching || mutation.isPending || requiresFreshImpact || refreshing;
   const nameMatches = Boolean(impact && confirmationName === impact.basketName);
   const canSubmit = Boolean(
-    impact && nameMatches && reason.trim() && !busy && !impactQuery.isError && !saved
+    impact && !(impact.vendorReferenceCount ?? 0) && nameMatches && reason.trim() && !busy && !impactQuery.isError && !saved
   );
   const mutationError = mutation.error;
   const mutationErrorMessage =
@@ -821,11 +821,7 @@ function PermanentDeleteBasketDialog({
   );
 }
 
-/*
- * Nothing here can stop the deletion any more, so this is a manifest rather
- * than a gate: it names everything that goes at the same time, before the
- * reader types the Basket name to confirm.
- */
+/* Retained vendor classifications block deletion; other references describe its impact. */
 function BasketDeletionImpactSummary({ impact }: {
   readonly impact: KnowledgeBasketDeletionImpact;
 }) {
@@ -846,6 +842,7 @@ function BasketDeletionImpactSummary({ impact }: {
           <dd>{impact.historicalReferenceCount}</dd>
         </div>
       </dl>
+      {(impact.vendorReferenceCount ?? 0) > 0 ? <InlineMessage tone="error" title="Permanent deletion is blocked">{impact.vendorReferenceCount} retained vendors reference this Main Basket. Reassign their classification before deleting it.</InlineMessage> : null}
       <InlineMessage tone="warning" title="This action cannot be undone">
         <p>
           {impact.mainLineCount === 0

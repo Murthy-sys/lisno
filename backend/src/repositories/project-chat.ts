@@ -1,5 +1,5 @@
 import type { NotificationTransactions } from "./notifications.js";
-import type { ChatAttachment, ChatAttachmentPolicy, ChatEvent, ChatFilter, ChatMessage, ChatPerson } from "../contracts/project-chat.js";
+import type { ChatActionType, ChatAttachment, ChatAttachmentPolicy, ChatEvent, ChatFilter, ChatMessage, ChatPerson } from "../contracts/project-chat.js";
 import type { Role } from "../domain/roles.js";
 import type { EstimateWorkflowLine, ProjectWorkflowTaskKind } from "../domain/project-workflow.js";
 import type { AppRepository, LeadRecord, ProjectAccessGrantRecord, ProjectRecord, UserRecord } from "./types.js";
@@ -30,7 +30,22 @@ export interface ChatWorkflowSource {
     sourceSectionId: string | null;
     sourceLineItemKey: string | null;
 }
+export interface ChatExclusion {
+    id: string;
+    projectId: string;
+    userId: string;
+    person: ChatPerson;
+    active: boolean;
+    version: number;
+    history: Array<{ active: boolean; version: number; actor: ChatPerson; reason: string; occurredAt: string }>;
+}
+export interface ChatActionTypeRecord extends ChatActionType {
+    normalizedName: string;
+    createdBy: string;
+    createdAt: string;
+}
 export interface ChatSources {
+    exclusions?: ChatExclusion[];
     project: ProjectRecord;
     users: UserRecord[];
     leads: LeadRecord[];
@@ -191,6 +206,9 @@ export interface ChatTransaction extends ChatAttachmentTransactions, Notificatio
         excludeIds: string[];
         limit: number;
     }): Promise<UserRecord[]>;
+    actionTypes(): Promise<ChatActionTypeRecord[]>;
+    saveActionType(type: ChatActionTypeRecord): Promise<void>;
+    saveExclusion(exclusion: ChatExclusion): Promise<void>;
     selections(projectId: string): Promise<ChatSelection[]>;
     saveSelection(selection: ChatSelection): Promise<void>;
     findSelection(projectId: string, id: string): Promise<ChatSelection | null>;

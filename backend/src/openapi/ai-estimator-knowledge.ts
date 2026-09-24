@@ -228,7 +228,11 @@ export const AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS: Readonly<
   ],
   ...Object.fromEntries(masterFamilies.map((family) => [
     `GET ${admin}/${family}`,
-    [searchParameter, masterStatusParameter, includeArchivedParameter]
+    [searchParameter, masterStatusParameter, includeArchivedParameter, ...(family === "vendors" ? [{
+      name: "includeDirectoryOverview", in: "query", required: false,
+      schema: { type: "boolean", default: false },
+      description: "When true, include global non-archived vendor counts independently of all list filters and pagination. Omitted or false preserves the standard page response."
+    }] : [])]
   ]))
 };
 
@@ -450,10 +454,11 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     name: masterProperties.name,
     managementContext: { type: "string", enum: ["configuration"], description: "Configuration permits rename without changing child lifecycle. Omit to retain draft-only group validation." }
   }),
-  KnowledgeSubBasketDeletionImpact: strictObject(["basketId", "subBasketId", "subBasketName", "version", "mainLineCount", "referenceCount", "impactToken"], {
+  KnowledgeSubBasketDeletionImpact: strictObject(["basketId", "subBasketId", "subBasketName", "version", "mainLineCount", "referenceCount", "vendorReferenceCount", "impactToken"], {
     basketId: id, subBasketId: id, subBasketName: masterProperties.name, version,
     mainLineCount: { type: "integer", minimum: 0 },
     referenceCount: { type: "integer", minimum: 0 },
+    vendorReferenceCount: { type: "integer", minimum: 0, description: "Retained vendor profiles that prevent permanent deletion." },
     impactToken: { type: "string", pattern: "^[a-f0-9]{64}$", description: "Identity/version fingerprint of the confirmed impact; not an authorization credential." }
   }),
   KnowledgePermanentDeleteSubBasketRequest: strictObject(["expectedVersion", "confirmationName", "reason", "impactToken"], {
@@ -1306,6 +1311,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       "mainLineCount",
       "subBasketCount",
       "historicalReferenceCount",
+      "vendorReferenceCount",
       "bootstrapOwned"
     ],
     {
@@ -1315,6 +1321,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       mainLineCount: { type: "integer", minimum: 0 },
       subBasketCount: { type: "integer", minimum: 0 },
       historicalReferenceCount: { type: "integer", minimum: 0 },
+      vendorReferenceCount: { type: "integer", minimum: 0, description: "Retained vendor profiles that prevent permanent deletion." },
       bootstrapOwned: { type: "boolean" }
     }
   ),

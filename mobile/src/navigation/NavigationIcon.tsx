@@ -2,7 +2,7 @@ import Svg, { Circle, Path } from "react-native-svg";
 
 import type { RootTab } from "./registry";
 
-type NavigationIconName = "home" | "projects" | "design" | "procurement" | "finance" | "messages" | "more" | "notifications";
+export type NavigationIconName = "home" | "projects" | "design" | "procurement" | "finance" | "messages" | "more" | "notifications" | "person" | "sign-out" | "chat" | "chevron";
 
 function iconForTab(tab: RootTab): NavigationIconName {
   if (tab.id === "more" || tab.id === "messages") return tab.id;
@@ -42,7 +42,11 @@ export function NavigationIcon({ name, color, selected = false, size = 24 }: { r
       {name === "finance" ? <Path d="M5 3.5h14V21l-3-1.5-4 1.5-4-1.5L5 21V3.5ZM8.5 7h7M8.5 10.5h7M8.5 15h2M14 15h1.5" /> : null}
       {name === "messages" ? <Path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-9l-6 3v-3a2 2 0 0 1-1-2V6a2 2 0 0 1 2-2ZM7 9h10M7 13h6" /> : null}
       {name === "more" ? <><Circle cx={5} cy={12} r={1.4} fill={color} stroke="none" /><Circle cx={12} cy={12} r={1.4} fill={color} stroke="none" /><Circle cx={19} cy={12} r={1.4} fill={color} stroke="none" /></> : null}
-      {name === "notifications" ? <Path d="M8.5 19a3.5 3.5 0 0 0 7 0M5 16.5h14l-2-3V9a5 5 0 0 0-10 0v4.5l-2 3ZM11 3h2" /> : null}
+      {name === "notifications" ? <Path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0" /> : null}
+      {name === "person" ? <><Circle cx={12} cy={8} r={3.6} /><Path d="M5 20a7 7 0 0 1 14 0" /></> : null}
+      {name === "sign-out" ? <Path d="M14 4H6a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h8M10 12h10M17 9l3 3-3 3" /> : null}
+      {name === "chat" ? <Path d="M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-5 4v-4a2 2 0 0 1-1-2V6a2 2 0 0 1 2-2Z" /> : null}
+      {name === "chevron" ? <Path d="M9 6l6 6-6 6" /> : null}
     </Svg>
   );
 }

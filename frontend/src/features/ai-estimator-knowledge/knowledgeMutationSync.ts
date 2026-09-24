@@ -206,6 +206,8 @@ export async function refreshKnowledgeSubBasketCatalog(
   basketId: string
 ): Promise<void> {
   const results = await Promise.allSettled([
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.masterLists("vendors") }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.vendorDetails() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.items() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists(basketId) }, { throwOnError: true }),
@@ -276,6 +278,8 @@ export async function syncKnowledgeBasketMutation(
   );
 
   const refreshed = await Promise.allSettled([
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.masterLists("vendors") }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.vendorDetails() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketLists() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.items() }, { throwOnError: true }),
@@ -517,6 +521,9 @@ export async function syncKnowledgeMasterMutation(
 
   await Promise.allSettled([
     ...(masterType === "vendors" ? [
+      queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.vendorDetails() }),
+      queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketDeletionImpacts() }),
+      queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts() }),
       queryClient.invalidateQueries({ queryKey: projectProcurementKeys.vendors }),
       queryClient.invalidateQueries({ queryKey: vendorSuggestionKeys.all })
     ] : []),

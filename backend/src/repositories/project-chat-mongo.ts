@@ -1,3 +1,4 @@
+import { ProjectChatActionTypeModel, ProjectChatExclusionModel } from "../models/ProjectChatAction.js";
 import { ChatNotificationModel } from "../models/ChatNotification.js";
 import type { NotificationRecord } from "./notifications.js";
 import mongoose, { type ClientSession, type Model } from "mongoose";
@@ -15,7 +16,7 @@ import { ProjectChatTypingModel, ProjectChatTypingRateModel } from "../models/Pr
 import { createChatAttachmentOperations } from "./project-chat-attachment-operations.js";
 import { createMongoRepository } from "./mongo.js";
 import type { AppRepository, ProjectRecord, UserRecord } from "./types.js";
-import type { ChatAttachmentRecord, ChatMessageScan, ChatSources, ChatStoredMessage, ChatTransaction, ChatTypingRecord, ChatTypingRateRecord, ProjectChatRepository } from "./project-chat.js";
+import type { ChatExclusion, ChatAttachmentRecord, ChatMessageScan, ChatSources, ChatStoredMessage, ChatTransaction, ChatTypingRecord, ChatTypingRateRecord, ProjectChatRepository } from "./project-chat.js";
 import { ApiError } from "../middleware/errors.js";
 export function createMongoProjectChatRepository(_repository?: AppRepository): ProjectChatRepository {
     const run = async <T>(write: boolean, operation: (tx: ChatTransaction) => Promise<T>): Promise<T> => {
@@ -113,14 +114,15 @@ function mongoTransaction(app: AppRepository, session: ClientSession): ChatTrans
             const workflowTasks = await find<ChatSources["workflowTasks"][number]>(ProjectWorkflowTaskModel, { projectId });
             const designTasks = await find<ChatSources["designTasks"][number]>(TaskModel, { projectId });
             const grants = await find<ChatSources["grants"][number]>(ProjectAccessGrantModel, { projectId, active: true });
+            const exclusions = await find<ChatExclusion>(ProjectChatExclusionModel, { projectId });
             const selections = await ProjectChatParticipantAssignmentModel.find({ projectId, active: true }).select({ userId: 1 }).session(session).lean();
-            const ids = new Set([project.clientId, project.initiatingDesignerId, project.assignedEstimatorId, project.managerId, ...project.assignedDesignerIds, ...leads.map((lead) => lead.ownerId), ...estimates.flatMap((estimate) => [estimate.ownerId, estimate.assignedDesignerId, estimate.assignedManagerId, estimate.designPlanDesignerId]), ...workflowTasks.map((task) => task.assigneeUserId), ...designTasks.map((task) => task.ownerId), ...grants.map((grant) => grant.userId), ...selections.map((selection) => selection.userId)].filter(Boolean));
+            const ids = new Set([project.clientId, project.initiatingDesignerId, project.assignedEstimatorId, project.managerId, ...project.assignedDesignerIds, ...leads.map((lead) => lead.ownerId), ...estimates.flatMap((estimate) => [estimate.ownerId, estimate.assignedDesignerId, estimate.assignedManagerId, estimate.designPlanDesignerId]), ...workflowTasks.map((task) => task.assigneeUserId), ...designTasks.map((task) => task.ownerId), ...grants.map((grant) => grant.userId), ...selections.map((selection) => selection.userId), ...exclusions.map(row => row.userId)].filter(Boolean));
             const users = await find<UserRecord>(UserModel, { _id: { $in: [...ids] }, active: true });
             const superAdmins = (await UserModel.find({ role: "super_admin", active: true }).limit(2).session(session).lean()).map((row) => record<UserRecord>(row));
             for (const user of superAdmins)
                 if (!users.some((candidate) => candidate.id === user.id))
                     users.push(user);
-            return { project: record<ProjectRecord>(project), users, leads, estimates, workflowTasks, designTasks, grants };
+            return { project: record<ProjectRecord>(project), users, leads, estimates, workflowTasks, designTasks, grants, exclusions };
         },
         async projectPage(input) {
             const [page] = await ProjectModel.aggregate([
@@ -167,6 +169,13 @@ function mongoTransaction(app: AppRepository, session: ClientSession): ChatTrans
             const query = { active: true, role: { $in: input.roles }, _id: { $nin: input.excludeIds }, ...(input.search ? { $or: [{ name: { $regex: escaped, $options: "i" } }, { role: { $in: roleMatches } }] } : {}) };
             return (await UserModel.find(query).sort({ name: 1, _id: 1 }).limit(input.limit).session(session).lean()).map((row) => record<UserRecord>(row));
         },
+        async actionTypes() { return find(ProjectChatActionTypeModel, {}); },
+        async saveActionType(row) { await ProjectChatActionTypeModel.create([document(row)], { session }); },
+        async saveExclusion(row) {
+            if (row.version === 1) { await ProjectChatExclusionModel.create([document(row)], { session }); return; }
+            const result = await ProjectChatExclusionModel.updateOne({ _id: row.id, projectId: row.projectId, userId: row.userId, version: row.version - 1 }, { $set: { person: row.person, active: row.active, version: row.version }, $push: { history: row.history[row.history.length - 1] } }, { session, runValidators: true });
+            if (result.matchedCount !== 1) throw new ApiError(409, "CHAT_CONFLICT", "The participant changed.");
+        },
         async selections(projectId) { return find(ProjectChatParticipantAssignmentModel, { projectId, active: true }); },
         async findSelection(projectId, id) { return record(await ProjectChatParticipantAssignmentModel.findOne({ _id: id, projectId }).session(session).lean()); },
         async saveSelection(value) {
@@ -201,7 +210,7 @@ function mongoTransaction(app: AppRepository, session: ClientSession): ChatTrans
             }
             const result = await ProjectChatMessageModel.updateOne(
                 { _id: value.id, projectId: value.projectId, version: value.version - 1 },
-                { $set: { priority: value.priority, issueStatus: value.issueStatus, raisedBy: value.raisedBy, responsible: value.responsible, version: value.version } },
+                { $set: { priority: value.priority, issueStatus: value.issueStatus, raisedBy: value.raisedBy, responsible: value.responsible, version: value.version, ...(value.action ? { "action.dueDate": value.action.dueDate } : {}) } },
                 { session, runValidators: true }
             );
             if (result.matchedCount !== 1) throw new ApiError(409, "CHAT_CONFLICT", "The message changed.");

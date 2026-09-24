@@ -98,6 +98,10 @@ export interface KnowledgeReferenceListParams {
   readonly limit?: number;
   readonly offset?: number;
   readonly includeArchived?: boolean;
+  readonly vendorType?: "execution" | "supplier";
+  readonly includeDirectoryOverview?: boolean;
+  readonly mainBasketId?: string;
+  readonly subBasketId?: string;
 }
 
 export interface KnowledgeMainLineListParams {

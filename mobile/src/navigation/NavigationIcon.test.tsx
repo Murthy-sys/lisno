@@ -48,4 +48,59 @@ describe("NavigationIcon", () => {
     expect(svgProps(defaulted).width).toBe(24);
     expect(svgProps(defaulted).height).toBe(24);
   });
+
+  it.each(["person", "sign-out"] as const)("renders the %s glyph with its stroke from color, hidden from screen readers", async (name) => {
+    const view = await render(<View testID="icon-host"><NavigationIcon name={name} color="#123456" size={20} /></View>);
+    const props = svgProps(view);
+    expect(props.width).toBe(20);
+    expect(props.vbWidth).toBe(24);
+    expect(props.stroke).toBe("#123456");
+    expect(props.accessible).toBe(false);
+    expect(props.accessibilityElementsHidden).toBe(true);
+    expect(props.importantForAccessibility).toBe("no-hide-descendants");
+    expect(view.queryAllByRole("image")).toHaveLength(0);
+  });
+
+  it("renders the redesigned notifications bell path, hidden from screen readers", async () => {
+    const view = await render(<View testID="icon-host"><NavigationIcon name="notifications" color="#123456" size={20} /></View>);
+    const props = svgProps(view);
+    expect(props.accessible).toBe(false);
+    expect(props.accessibilityElementsHidden).toBe(true);
+    expect(props.importantForAccessibility).toBe("no-hide-descendants");
+    expect(view.queryAllByRole("image")).toHaveLength(0);
+    const paths: string[] = [];
+    const walk = (node: unknown) => {
+      if (!node || typeof node !== "object") return;
+      const host = node as HostNode;
+      if (host.type === "RNSVGPath" && typeof host.props?.d === "string") paths.push(host.props.d);
+      host.children?.forEach(walk);
+    };
+    walk(view.getByTestId("icon-host", { includeHiddenElements: true }));
+    expect(paths).toEqual(["M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"]);
+    expect(paths[0]).not.toContain("M11 3h2");
+  });
+
+  it.each([
+    ["chat", "M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-5 4v-4a2 2 0 0 1-1-2V6a2 2 0 0 1 2-2Z"],
+    ["chevron", "M9 6l6 6-6 6"],
+  ] as const)("renders the %s glyph path with its stroke from color, hidden from screen readers", async (name, d) => {
+    const view = await render(<View testID="icon-host"><NavigationIcon name={name} color="#123456" size={20} /></View>);
+    const props = svgProps(view);
+    expect(props.width).toBe(20);
+    expect(props.vbWidth).toBe(24);
+    expect(props.stroke).toBe("#123456");
+    expect(props.accessible).toBe(false);
+    expect(props.accessibilityElementsHidden).toBe(true);
+    expect(props.importantForAccessibility).toBe("no-hide-descendants");
+    expect(view.queryAllByRole("image")).toHaveLength(0);
+    const paths: string[] = [];
+    const walk = (node: unknown) => {
+      if (!node || typeof node !== "object") return;
+      const host = node as HostNode;
+      if (host.type === "RNSVGPath" && typeof host.props?.d === "string") paths.push(host.props.d);
+      host.children?.forEach(walk);
+    };
+    walk(view.getByTestId("icon-host", { includeHiddenElements: true }));
+    expect(paths).toEqual([d]);
+  });
 });
