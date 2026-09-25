@@ -1,6 +1,7 @@
 /** @type {import('jest').Config} */
 module.exports = {
   preset: "jest-expo",
+  modulePaths: ["<rootDir>/node_modules"],
   setupFilesAfterEnv: ["<rootDir>/test-support/setup.ts"],
   testMatch: ["<rootDir>/**/*.test.ts", "<rootDir>/**/*.test.tsx"],
   testPathIgnorePatterns: ["/node_modules/", "/e2e/", "/dist/"],

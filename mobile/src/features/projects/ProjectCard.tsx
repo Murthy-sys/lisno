@@ -4,7 +4,7 @@ import Svg, { Circle, Path, Rect } from "react-native-svg";
 import { colors, fonts } from "../../ui/tokens";
 import { projectStatusLabels, type ProjectItem, type ProjectStatus } from "./projectsModel";
 
-const statusColors: Record<ProjectStatus, { ink: string; background: string; dot: string }> = {
+export const statusColors: Record<ProjectStatus, { ink: string; background: string; dot: string }> = {
   active: { ink: "#25633d", background: "#e8f2e6", dot: "#369650" },
   planning: { ink: colors.inkMuted, background: colors.surfaceMuted, dot: "#889882" },
   on_hold: { ink: "#805a21", background: "#f6eddd", dot: "#c79a55" },

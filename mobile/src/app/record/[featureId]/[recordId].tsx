@@ -20,6 +20,7 @@ export default function RecordRoute() {
       {...(destination.id === "messages"
         ? { immersiveBelowWidth: 600, navigationRailBreakpoint: 840 }
         : {})}
+      {...(destination.id === "projects" ? { backPlacement: "content" as const } : {})}
     >
       <RecordDetailScreen destination={destination} recordId={recordId} session={context.session.session} />
     </AdaptiveAppScaffold>

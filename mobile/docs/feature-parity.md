@@ -1,6 +1,6 @@
 # Mobile feature parity inventory
 
-Date: 2026-09-19
+Date: 2026-09-25
 Status: Integrated implementation audit. Core Android delivery and the capabilities listed below are implemented; the remaining rows are explicitly open and do not count as completed parity.
 
 ## Implemented delivery
@@ -14,7 +14,7 @@ Status: Integrated implementation audit. Core Android delivery and the capabilit
 | Leads and Client estimate decisions | `src/features/leads`, `src/features/estimates`, `src/features/reviews` | Partial: lead creation/stage/activity, Client estimate PDF/decision and proof-backed admin decisions work; full estimate authoring/publication remains open |
 | Procurement and finance | `src/features/procurement`, `src/features/finance` | Partial: approved items, receipt-backed expense recording, finance buckets/ledger and paise-safe direct/overhead entries work; full item/vendor/document/payment-control breadth remains open |
 | Management, users and access | `src/features/management`, `src/features/admin`, `src/features/access` | Partial: team/detail, evaluation, invitations, user activation and access request/review actions work; full KPI/audit/grant administration remains open |
-| Knowledge | `src/features/knowledge` | Partial: catalog search/detail/history/create/duplicate/activate/deactivate works; dense editors, reusable reference management, simulator and workbook quality tooling remain open |
+| Configuration | `src/features/knowledge`, `../shared/knowledge` | Implemented: grouped catalog/search/all filters, normal and temporary items, hierarchy and reusable-value management, vendor profiles/files/baselines, Overview, Mode/specifications/server simulators, Recommendations, shared basket Quality with native XLSX review/import/export, history/saved summary and guarded versioned saves. Device certification remains pending. |
 | Chat and notifications | `src/features/messages`, `src/features/notifications`, `src/platform/realtime`, `src/platform/audio` | Partial: dedicated adaptive conversation list/thread UI, cursor history, realtime arrival handling, safe visible-message read state, content-fit text/reply/issues, permission-aware bidirectional swipe-to-reply without permanent message chevrons, named accessible message actions, compact responsive Photo/Camera/File choices, scoped picker recovery, exact policy-limit enforcement, staged authenticated uploads, native keyboard focus, explicit-send 248 dp phone voice notes, authenticated tap-to-view full-screen images without a redundant Open action, participant roster and capability-gated audited participant addition, denial, heartbeat recovery, bounded foreground SSE and notification conversation links work; mentions, participant removal, typing and target-message navigation remain open |
 | Native foundations | `src/platform/files`, `src/platform/audio`, `src/platform/realtime`, `src/platform/annotations` | Implemented and unit-tested; the arm64-v8a debug APK compiles with the local JDK/SDK, while device certification of SSE, audio and interaction breadth remains pending |
 
@@ -27,7 +27,6 @@ These are working web capabilities that are not yet complete in this Android rep
 - Complex furniture dimension and site-measurement multi-media workflow actions, Designer assignment and all payment-confirmation queue composition.
 - Procurement item/vendor/suggestion CRUD and every supporting-document screen.
 - Finance charts, document retrieval and full payment controls; management KPI task drill-down and audit history.
-- Knowledge section editors, simulator, reusable masters/surfaces, relationship/delete-impact flows and XLSX checklist/import/export.
 - Chat mentions, participant revocation, typing, conversation filtering, video playback and target-message navigation.
 - Complete Android hardware/device validation, TalkBack/rotation/width/font-scale matrix and end-to-end flows against an isolated backend. Arm64 debug APK compilation, install, launch and the reference messaging flow are proven on the available API 37 emulator.
 
@@ -101,3 +100,9 @@ No “Coming soon” screen counts as completed parity for a working existing fe
 ## Verification trace
 
 Each implementation row must add links to its mobile screen/module and focused test. Final verification covers all sixteen roles, asymmetric project relationships, two unequal finance projects, conflict/idempotency/proof cases, native file/audio/annotation/workbook round trips, responsive widths, TalkBack, Back behavior and separate Remote/Local configured launches.
+
+## Configuration verification (2026-09-25)
+
+Configuration uses the same API contracts, validation, value conversions and workbook rules as the frontend through `shared/knowledge`. Native interactions use phone-sized selectors and dialogs, with explicit save/discard and conflict review. Mode saves acknowledge each section before continuing; Quality has an independent Main Basket version. ZIP preflight limits actual decompressed output before ExcelJS parsing.
+
+Focused regressions: `KnowledgeItemWorkspace.test.tsx`, `knowledgeWorkspaceDraft.test.ts`, `KnowledgeCatalogWorkspace.test.tsx`, `KnowledgeCatalogVendor.test.tsx`, `KnowledgeVendorBaseline.test.tsx`, `KnowledgeModeEditor.test.tsx`, `KnowledgeModeSimulator.test.tsx`, `KnowledgeRecommendationsEditor.test.tsx`, `KnowledgeQualityEditor.test.tsx`, `KnowledgeQualityWorkbook.test.ts`, and `knowledgeWorkbookArchive.test.ts`. See the [implementation plan](../../docs/superpowers/plans/2026-09-25-mobile-configuration-parity.md) for final evidence and platform limits.

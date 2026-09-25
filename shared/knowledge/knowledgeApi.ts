@@ -1,0 +1,660 @@
+import type {
+  KnowledgeBasket,
+  KnowledgeBasketQuality,
+  KnowledgeSubBasket,
+  KnowledgeSubBasketListResponse,
+  KnowledgeSubBasketDeletionImpact,
+  KnowledgePermanentDeleteSubBasketResult,
+  KnowledgeBasketDeletionImpact,
+  KnowledgeMainLineDeletionResult,
+  KnowledgeBasketListResponse,
+  KnowledgeContext,
+  KnowledgeHistoryResponse,
+  KnowledgeItemDetail,
+  KnowledgeItemListResponse,
+  KnowledgeItemStatus,
+  KnowledgeJsonObject,
+  KnowledgeMainLine,
+  KnowledgeMainLineListResponse,
+  KnowledgeMaster,
+  KnowledgeMasterListResponse,
+  KnowledgeMasterStatus,
+  KnowledgeMasterType,
+  KnowledgeModeKind,
+  KnowledgeExecutionSource,
+  KnowledgePreview,
+  KnowledgeCreateQualityControlOptionInput,
+  KnowledgeQualityControlOption,
+  KnowledgeQualityControlOptionKind,
+  KnowledgeQualityControlOptionListResponse,
+  KnowledgePermanentDeleteBasketResult,
+  KnowledgeSectionEnvelope,
+  KnowledgeSectionMutationEnvelope,
+  KnowledgeSectionKey,
+  KnowledgeSurface,
+  KnowledgeSurfaceListResponse
+} from "./knowledgeTypes";
+
+const ADMIN_PREFIX = "/admin/ai-estimator-knowledge";
+const CONTEXT_PATH = "/ai-estimator-knowledge/context";
+
+function segment(value: string): string {
+  return encodeURIComponent(value);
+}
+
+type QueryParamValue =
+  | string
+  | number
+  | boolean
+  | readonly string[]
+  | null
+  | undefined;
+
+function withQuery<TParams extends { [K in keyof TParams]: QueryParamValue }>(
+  path: string,
+  params: TParams
+): string {
+  const query = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(params).sort(([left], [right]) =>
+    left.localeCompare(right)
+  )) {
+    if (value === undefined || value === null || value === "") continue;
+    if (Array.isArray(value)) {
+      for (const item of value) query.append(key, item);
+      continue;
+    }
+    query.set(key, String(value));
+  }
+
+  const serialized = query.toString();
+  return serialized ? `${path}?${serialized}` : path;
+}
+
+export interface KnowledgeListParams {
+  readonly search?: string;
+  readonly basketId?: string;
+  readonly status?: KnowledgeItemStatus;
+  readonly priorityId?: string;
+  readonly modeId?: string;
+  readonly surfaceId?: string;
+  readonly uomId?: string;
+  readonly vendorId?: string;
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+export interface KnowledgePageParams {
+  readonly search?: string;
+  readonly status?: KnowledgeMasterStatus | KnowledgeItemStatus;
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+export interface KnowledgeReferenceListParams {
+  readonly search?: string;
+  readonly status?: KnowledgeMasterStatus;
+  readonly limit?: number;
+  readonly offset?: number;
+  readonly includeArchived?: boolean;
+  readonly vendorType?: "execution" | "supplier";
+  readonly includeDirectoryOverview?: boolean;
+  readonly mainBasketId?: string;
+  readonly subBasketId?: string;
+}
+
+export interface KnowledgeMainLineListParams {
+  readonly search?: string;
+  readonly limit?: number;
+  readonly offset?: number;
+  readonly includeArchived?: boolean;
+}
+
+export interface KnowledgeSectionUpdate<TPayload extends KnowledgeJsonObject> {
+  readonly expectedVersion: number;
+  readonly expectedAggregateVersion?: number;
+  readonly applicability?: "configured" | "not_configured" | "not_applicable";
+  readonly payload: TPayload;
+}
+
+export interface KnowledgeExpectedVersionCommand {
+  readonly expectedVersion: number;
+  readonly reason?: string;
+}
+
+export interface KnowledgeContextRequest {
+  readonly mainBasketId: string;
+  readonly mainLineId: string;
+  readonly specificationId?: string;
+  readonly quantity?: string;
+  readonly uomId?: string;
+  readonly surfaceId?: string;
+  readonly modeId?: string;
+  readonly modeKind?: KnowledgeModeKind;
+  readonly executionSource?: KnowledgeExecutionSource;
+}
+
+export interface KnowledgePreviewRequest {
+  readonly subVendorCalculation?: {
+    readonly baseRatePaise: number;
+    readonly lowQuantityLimit: string;
+    readonly impactBps?: number;
+    readonly subVendorMarginBps: number;
+  };
+  readonly pmcCalculation?: {
+    readonly baseRatePaise: number;
+    readonly lowQuantityLimit: string;
+    readonly impactBps?: number;
+    readonly pmcMarginBps: number;
+  };
+  readonly inHouseCalculation?: {
+    readonly labor: NonNullable<KnowledgePreviewRequest["modeCalculation"]>;
+    readonly material: NonNullable<KnowledgePreviewRequest["modeCalculation"]>;
+  };
+  readonly modeCalculationMarkupBasis?: "starting" | "minimum";
+  readonly modeCalculationDiscountBps?: number;
+  readonly modeCalculation?: {
+    readonly baseRatePaise: number;
+    readonly lowQuantityLimit: string;
+    readonly impactBps?: number;
+    readonly minimumMarkupBps: number;
+    readonly startingMarkupBps: number;
+  };
+  readonly priceVersionId?: string | null;
+  readonly taxVersionId?: string | null;
+  readonly unitRatePaise?: number | null;
+  readonly quantityAdjustmentBps?: number | null;
+  readonly quantity?: string | null;
+  readonly quantityScale: number;
+  readonly wastageBps?: number | null;
+  readonly taxRateBps?: number | null;
+  readonly taxTreatment?: "exclusive" | "inclusive" | null;
+  readonly startMarginBps?: number | null;
+  readonly bottomMarginBps?: number | null;
+  readonly pmcMarkupBps?: number | null;
+  readonly duration?: {
+    readonly productivity: string;
+    readonly productivityScale: number;
+    readonly unit: "minutes" | "hours" | "days" | "weeks";
+    readonly minimum?: string | null;
+    readonly maximum?: string | null;
+  } | null;
+}
+
+export interface KnowledgeCreateBasketInput {
+  readonly name: string;
+  readonly description?: string | null;
+  readonly displayOrder?: number;
+}
+
+export interface KnowledgeUpdateBasketInput {
+  readonly expectedVersion: number;
+  readonly name?: string;
+  readonly description?: string | null;
+  readonly displayOrder?: number;
+  readonly status?: "active" | "inactive";
+}
+
+export interface KnowledgePermanentDeleteBasketInput {
+  readonly expectedVersion: number;
+  readonly confirmationName: string;
+  readonly reason: string;
+}
+
+export interface KnowledgeCreateMainLineInput {
+  readonly itemType?: "main_line" | "temporary";
+  readonly subBasketId?: string;
+  readonly subBasketName?: string;
+  readonly name: string;
+  readonly description?: string | null;
+  readonly displayOrder?: number;
+}
+
+export interface KnowledgeUpdateMainLineInput {
+  readonly expectedVersion: number;
+  readonly name?: string;
+  readonly description?: string | null;
+  readonly displayOrder?: number;
+  readonly draftSubBasketGuard?: KnowledgeDraftSubBasketGuard;
+  readonly draftItemGuard?: KnowledgeDraftItemGuard;
+}
+
+export interface KnowledgeDraftSubBasketGuard {
+  readonly subBasketId: string;
+  readonly expectedVersion: number;
+}
+
+export interface KnowledgeDraftItemGuard {
+  readonly basketId: string;
+  readonly subBasketId: null;
+}
+
+export interface KnowledgePermanentDeleteMainLineInput extends KnowledgeExpectedVersionCommand {
+  readonly draftSubBasketGuard?: KnowledgeDraftSubBasketGuard;
+  readonly draftItemGuard?: KnowledgeDraftItemGuard;
+}
+
+export interface KnowledgeUpdateSubBasketInput {
+  readonly expectedVersion: number;
+  readonly name: string;
+  readonly managementContext?: "configuration";
+}
+
+export interface KnowledgePermanentDeleteSubBasketInput extends KnowledgePermanentDeleteBasketInput {
+  readonly impactToken: string;
+  readonly draftOnly?: true;
+}
+
+export interface KnowledgeTaxVersionInput {
+  readonly rateBps: number;
+  readonly treatment: "exclusive" | "inclusive";
+  readonly applicability: string;
+  readonly effectiveFrom: string;
+  readonly effectiveTo?: string | null;
+  readonly status?: "draft" | "active" | "inactive";
+}
+
+export interface KnowledgeCreateMasterInput {
+  readonly code: string;
+  readonly name: string;
+  readonly description?: string | null;
+  readonly displayOrder?: number;
+  readonly decimalScale?: number;
+  readonly taxVersion?: KnowledgeTaxVersionInput;
+}
+
+export interface KnowledgeUpdateMasterInput extends Partial<KnowledgeCreateMasterInput> {
+  readonly expectedVersion: number;
+  readonly status?: "active" | "inactive";
+}
+
+export interface KnowledgeCreateSurfaceInput {
+  readonly code?: string;
+  readonly name: string;
+  readonly description?: string | null;
+}
+
+export interface KnowledgeUpdateSurfaceInput {
+  readonly expectedVersion: number;
+  readonly name?: string;
+  readonly description?: string | null;
+  readonly status?: "active" | "inactive";
+}
+
+export interface KnowledgeCreateRevisionInput {
+  readonly expectedVersion: number;
+  readonly reason?: string;
+}
+
+export interface KnowledgeActivationInput {
+  readonly expectedVersion: number;
+  readonly reason?: string;
+}
+
+export interface KnowledgeDuplicateInput {
+  readonly expectedVersion: number;
+  readonly reason?: string;
+  readonly name?: string;
+}
+
+export interface KnowledgeTransport {
+  get<T>(path: string, options?: { readonly signal?: AbortSignal }): Promise<T>;
+  post<T>(path: string, body?: unknown, options?: { readonly signal?: AbortSignal; readonly showGlobalLoader?: boolean }): Promise<T>;
+  put<T>(path: string, body?: unknown): Promise<T>;
+  patch<T>(path: string, body?: unknown): Promise<T>;
+  delete<T>(path: string, body?: unknown): Promise<T>;
+}
+
+export function createKnowledgeApi(apiClient: KnowledgeTransport) {
+function listKnowledgeItems(
+  params: KnowledgeListParams = {}
+): Promise<KnowledgeItemListResponse> {
+  return apiClient.get<KnowledgeItemListResponse>(
+    withQuery(`${ADMIN_PREFIX}/items`, params)
+  );
+}
+
+function getKnowledgeItem(mainLineId: string): Promise<KnowledgeItemDetail> {
+  return apiClient.get<KnowledgeItemDetail>(
+    `${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}`
+  );
+}
+
+function getKnowledgeHistory(
+  mainLineId: string,
+  params: Pick<KnowledgePageParams, "limit" | "offset"> = {}
+): Promise<KnowledgeHistoryResponse> {
+  return apiClient.get<KnowledgeHistoryResponse>(
+    withQuery(`${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}/history`, params)
+  );
+}
+
+function getKnowledgeSection<TPayload extends KnowledgeJsonObject>(
+  mainLineId: string,
+  revisionId: string,
+  sectionKey: KnowledgeSectionKey
+): Promise<KnowledgeSectionEnvelope<TPayload>> {
+  return apiClient.get<KnowledgeSectionEnvelope<TPayload>>(
+    `${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}/revisions/${segment(revisionId)}/sections/${segment(sectionKey)}`
+  );
+}
+
+function updateKnowledgeSection<TPayload extends KnowledgeJsonObject>(
+  mainLineId: string,
+  revisionId: string,
+  sectionKey: KnowledgeSectionKey,
+  input: KnowledgeSectionUpdate<TPayload>
+): Promise<KnowledgeSectionMutationEnvelope<TPayload>> {
+  return apiClient.put<KnowledgeSectionMutationEnvelope<TPayload>>(
+    `${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}/revisions/${segment(revisionId)}/sections/${segment(sectionKey)}`,
+    input
+  );
+}
+
+function createKnowledgeRevision(
+  mainLineId: string,
+  input: KnowledgeCreateRevisionInput
+): Promise<KnowledgeItemDetail> {
+  return apiClient.post<KnowledgeItemDetail>(
+    `${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}/revisions`,
+    input
+  );
+}
+
+function activateKnowledgeRevision(
+  mainLineId: string,
+  revisionId: string,
+  input: KnowledgeActivationInput
+): Promise<KnowledgeItemDetail> {
+  return apiClient.post<KnowledgeItemDetail>(
+    `${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}/revisions/${segment(revisionId)}/activate`,
+    input
+  );
+}
+
+function deactivateKnowledgeItem(
+  mainLineId: string,
+  input: KnowledgeExpectedVersionCommand
+): Promise<KnowledgeItemDetail> {
+  return apiClient.post<KnowledgeItemDetail>(
+    `${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}/deactivate`,
+    input
+  );
+}
+
+function duplicateKnowledgeItem(
+  mainLineId: string,
+  input: KnowledgeDuplicateInput
+): Promise<KnowledgeItemDetail> {
+  return apiClient.post<KnowledgeItemDetail>(
+    `${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}/duplicate`,
+    input
+  );
+}
+
+function listKnowledgeBaskets(
+  params: KnowledgeReferenceListParams = {}
+): Promise<KnowledgeBasketListResponse> {
+  return apiClient.get<KnowledgeBasketListResponse>(
+    withQuery(`${ADMIN_PREFIX}/baskets`, params)
+  );
+}
+
+function createKnowledgeBasket(
+  input: KnowledgeCreateBasketInput
+): Promise<KnowledgeBasket> {
+  return apiClient.post<KnowledgeBasket>(`${ADMIN_PREFIX}/baskets`, input);
+}
+
+function updateKnowledgeBasket(
+  basketId: string,
+  input: KnowledgeUpdateBasketInput
+): Promise<KnowledgeBasket> {
+  return apiClient.patch<KnowledgeBasket>(
+    `${ADMIN_PREFIX}/baskets/${segment(basketId)}`,
+    input
+  );
+}
+
+function getKnowledgeBasketDeletionImpact(
+  basketId: string
+): Promise<KnowledgeBasketDeletionImpact> {
+  return apiClient.get<KnowledgeBasketDeletionImpact>(
+    `${ADMIN_PREFIX}/baskets/${segment(basketId)}/deletion-impact`
+  );
+}
+
+function permanentlyDeleteKnowledgeBasket(
+  basketId: string,
+  input: KnowledgePermanentDeleteBasketInput
+): Promise<KnowledgePermanentDeleteBasketResult> {
+  return apiClient.delete<KnowledgePermanentDeleteBasketResult>(
+    `${ADMIN_PREFIX}/baskets/${segment(basketId)}`,
+    input
+  );
+}
+
+function listKnowledgeMainLines(
+  basketId: string,
+  params: KnowledgeMainLineListParams = {}
+): Promise<KnowledgeMainLineListResponse> {
+  return apiClient.get<KnowledgeMainLineListResponse>(
+    withQuery(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/main-lines`, params)
+  );
+}
+
+function createKnowledgeMainLine(
+  basketId: string,
+  input: KnowledgeCreateMainLineInput
+): Promise<KnowledgeItemDetail> {
+  return apiClient.post<KnowledgeItemDetail>(
+    `${ADMIN_PREFIX}/baskets/${segment(basketId)}/main-lines`,
+    input
+  );
+}
+
+function updateKnowledgeMainLine(
+  mainLineId: string,
+  input: KnowledgeUpdateMainLineInput
+): Promise<KnowledgeItemDetail> {
+  return apiClient.patch<KnowledgeItemDetail>(
+    `${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}`,
+    input
+  );
+}
+
+function permanentlyDeleteKnowledgeMainLine(
+  mainLineId: string,
+  input: KnowledgePermanentDeleteMainLineInput
+): Promise<KnowledgeMainLineDeletionResult> {
+  return apiClient.delete<KnowledgeMainLineDeletionResult>(
+    `${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}`,
+    input
+  );
+}
+
+function listKnowledgeMasters(
+  type: KnowledgeMasterType,
+  params: KnowledgeReferenceListParams = {}
+): Promise<KnowledgeMasterListResponse> {
+  return apiClient.get<KnowledgeMasterListResponse>(
+    withQuery(`${ADMIN_PREFIX}/${type}`, params)
+  );
+}
+
+function listKnowledgeSurfaces(
+  params: KnowledgeReferenceListParams = {}
+): Promise<KnowledgeSurfaceListResponse> {
+  return apiClient.get<KnowledgeSurfaceListResponse>(
+    withQuery(`${ADMIN_PREFIX}/surfaces`, params)
+  );
+}
+
+function createKnowledgeSurface(
+  input: KnowledgeCreateSurfaceInput
+): Promise<KnowledgeSurface> {
+  return apiClient.post<KnowledgeSurface>(`${ADMIN_PREFIX}/surfaces`, input);
+}
+
+function updateKnowledgeSurface(
+  id: string,
+  input: KnowledgeUpdateSurfaceInput
+): Promise<KnowledgeSurface> {
+  return apiClient.patch<KnowledgeSurface>(
+    `${ADMIN_PREFIX}/surfaces/${segment(id)}`,
+    input
+  );
+}
+
+function createKnowledgeMaster(
+  type: KnowledgeMasterType,
+  input: KnowledgeCreateMasterInput
+): Promise<KnowledgeMaster> {
+  return apiClient.post<KnowledgeMaster>(`${ADMIN_PREFIX}/${type}`, input);
+}
+
+function updateKnowledgeMaster(
+  type: KnowledgeMasterType,
+  id: string,
+  input: KnowledgeUpdateMasterInput
+): Promise<KnowledgeMaster> {
+  return apiClient.patch<KnowledgeMaster>(
+    `${ADMIN_PREFIX}/${type}/${segment(id)}`,
+    input
+  );
+}
+
+function archiveKnowledgeMaster(
+  type: KnowledgeMasterType,
+  id: string,
+  input: KnowledgeExpectedVersionCommand
+): Promise<KnowledgeMaster> {
+  return apiClient.delete<KnowledgeMaster>(
+    `${ADMIN_PREFIX}/${type}/${segment(id)}`,
+    input
+  );
+}
+
+function previewKnowledge(
+  input: KnowledgePreviewRequest,
+  options?: { readonly signal?: AbortSignal; readonly showGlobalLoader?: boolean }
+): Promise<KnowledgePreview> {
+  return options === undefined
+    ? apiClient.post<KnowledgePreview>(`${ADMIN_PREFIX}/preview`, input)
+    : apiClient.post<KnowledgePreview>(`${ADMIN_PREFIX}/preview`, input, options);
+}
+
+function resolveKnowledgeContext(
+  input: KnowledgeContextRequest
+): Promise<KnowledgeContext> {
+  return apiClient.post<KnowledgeContext>(CONTEXT_PATH, input);
+}
+
+function listKnowledgeSubBaskets(basketId: string, params: Pick<KnowledgePageParams, "search" | "limit" | "offset"> = {}): Promise<KnowledgeSubBasketListResponse> {
+  return apiClient.get<KnowledgeSubBasketListResponse>(withQuery(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets`, params));
+}
+
+function createKnowledgeSubBasket(basketId: string, input: { readonly name: string }): Promise<KnowledgeSubBasket> {
+  return apiClient.post<KnowledgeSubBasket>(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets`, input);
+}
+
+function updateKnowledgeSubBasket(
+  basketId: string,
+  subBasketId: string,
+  input: KnowledgeUpdateSubBasketInput
+): Promise<KnowledgeSubBasket> {
+  return apiClient.patch<KnowledgeSubBasket>(
+    `${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets/${segment(subBasketId)}`,
+    input
+  );
+}
+
+function getKnowledgeBasketQuality(basketId: string): Promise<KnowledgeBasketQuality> {
+  return apiClient.get<KnowledgeBasketQuality>(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/quality`);
+}
+
+function getKnowledgeSubBasketDeletionImpact(
+  basketId: string,
+  subBasketId: string
+): Promise<KnowledgeSubBasketDeletionImpact> {
+  return apiClient.get<KnowledgeSubBasketDeletionImpact>(
+    `${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets/${segment(subBasketId)}/deletion-impact`
+  );
+}
+
+function permanentlyDeleteKnowledgeSubBasket(
+  basketId: string,
+  subBasketId: string,
+  input: KnowledgePermanentDeleteSubBasketInput
+): Promise<KnowledgePermanentDeleteSubBasketResult> {
+  return apiClient.delete<KnowledgePermanentDeleteSubBasketResult>(
+    `${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets/${segment(subBasketId)}`,
+    input
+  );
+}
+
+function listKnowledgeQualityControlOptions(
+  kind: KnowledgeQualityControlOptionKind
+): Promise<KnowledgeQualityControlOptionListResponse> {
+  return apiClient.get<KnowledgeQualityControlOptionListResponse>(
+    withQuery(`${ADMIN_PREFIX}/quality-control-options`, { kind })
+  );
+}
+
+function createKnowledgeQualityControlOption(
+  input: KnowledgeCreateQualityControlOptionInput
+): Promise<KnowledgeQualityControlOption> {
+  return apiClient.post<KnowledgeQualityControlOption>(
+    `${ADMIN_PREFIX}/quality-control-options`,
+    input
+  );
+}
+
+function updateKnowledgeBasketQuality(basketId: string, input: {
+  readonly expectedVersion: number;
+  readonly parameters: readonly KnowledgeJsonObject[];
+}): Promise<KnowledgeBasketQuality> {
+  return apiClient.put<KnowledgeBasketQuality>(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/quality`, input);
+}
+
+return {
+  listKnowledgeItems,
+  getKnowledgeItem,
+  getKnowledgeHistory,
+  getKnowledgeSection,
+  updateKnowledgeSection,
+  createKnowledgeRevision,
+  activateKnowledgeRevision,
+  deactivateKnowledgeItem,
+  duplicateKnowledgeItem,
+  listKnowledgeBaskets,
+  createKnowledgeBasket,
+  updateKnowledgeBasket,
+  getKnowledgeBasketDeletionImpact,
+  permanentlyDeleteKnowledgeBasket,
+  listKnowledgeMainLines,
+  createKnowledgeMainLine,
+  updateKnowledgeMainLine,
+  permanentlyDeleteKnowledgeMainLine,
+  listKnowledgeMasters,
+  listKnowledgeSurfaces,
+  createKnowledgeSurface,
+  updateKnowledgeSurface,
+  createKnowledgeMaster,
+  updateKnowledgeMaster,
+  archiveKnowledgeMaster,
+  previewKnowledge,
+  resolveKnowledgeContext,
+  listKnowledgeSubBaskets,
+  createKnowledgeSubBasket,
+  updateKnowledgeSubBasket,
+  getKnowledgeBasketQuality,
+  getKnowledgeSubBasketDeletionImpact,
+  permanentlyDeleteKnowledgeSubBasket,
+  listKnowledgeQualityControlOptions,
+  createKnowledgeQualityControlOption,
+  updateKnowledgeBasketQuality
+};
+}
+
+export type KnowledgeApi = ReturnType<typeof createKnowledgeApi>;
