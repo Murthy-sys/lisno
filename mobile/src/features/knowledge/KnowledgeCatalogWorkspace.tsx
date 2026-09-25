@@ -1,538 +1,163 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
-import {
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View
-} from "react-native";
-
+import { useEffect, useState } from "react";
+import { RefreshControl, ScrollView, View } from "react-native";
+import type { KnowledgeListParams } from "../../../../shared/knowledge/knowledgeApi";
+import type { KnowledgeBasket, KnowledgeItemStatus, KnowledgeMaster, KnowledgeMasterType } from "../../../../shared/knowledge/knowledgeTypes";
 import type { AuthenticatedSession } from "../../contracts/session";
-import { ApiError } from "../../core/http/apiClient";
-import { useInvalidateEvent } from "../../core/query/useInvalidation";
-import { privateQueryKey } from "../../core/query/queryClient";
-import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
-import { BrandLoader } from "../../ui/brand";
 import { Button, Field, StateView } from "../../ui/primitives";
-import { colors, fonts, radii, spacing, typography } from "../../ui/tokens";
-import {
-  knowledgeActivateCommand,
-  knowledgeCreateCommand,
-  knowledgeDeactivateCommand,
-  knowledgeDetailPath,
-  knowledgeDuplicateCommand,
-  knowledgeHistoryPath,
-  knowledgeListPath,
-  supportsKnowledgeAction,
-  validateKnowledgeCreate,
-  validateKnowledgeDuplicate,
-  type KnowledgeBasket,
-  type KnowledgeCreateDraft,
-  type KnowledgeCreateInput,
-  type KnowledgeDuplicateDraft,
-  type KnowledgeItemDetail,
-  type KnowledgeItemSummary,
-  type KnowledgePage,
-  type KnowledgeRevision
-} from "./knowledgeCatalogModel";
+import { KnowledgeBasketDeletion, KnowledgeBasketEditor, KnowledgeCatalogManagement } from "./KnowledgeCatalogManagement";
+import { KnowledgeReusableValues } from "./KnowledgeReusableValues";
+import { KnowledgeItemWorkspace } from "./KnowledgeItemWorkspace";
+import { allKnowledgePages, useKnowledgeContext, type KnowledgeMobileContext } from "./knowledgeRuntime";
+import { KnowledgeModal, KnowledgeSelect, KnowledgeText, knowledgeStyles as s } from "./knowledgeUi";
+import { catalogError, closeCatalogDraft } from "./knowledgeCatalogForms";
+import { useScreenBack } from "../../navigation/useScreenBack";
+import { KnowledgeCatalogHeader, type KnowledgeCatalogAction } from "./KnowledgeCatalogHeader";
+import { KnowledgeBasketCarousel } from "./KnowledgeBasketCarousel";
+import { KnowledgeCatalogMenu, type KnowledgeMenuAction, type KnowledgeMenuAnchor } from "./KnowledgeCatalogMenu";
 
 const PAGE_SIZE = 20;
-const CREATE_EMPTY: KnowledgeCreateDraft = {
-  basketId: "",
-  subBasketName: "",
-  name: "",
-  description: ""
-};
+const FILTER_TYPES = ["uoms", "vendors", "priorities", "surfaces", "modes"] as const;
+type Filter = "basketId" | "status" | "priorityId" | "modeId" | "surfaceId" | "uomId" | "vendorId";
+type Filters = Record<Filter, string>;
+const EMPTY_FILTERS: Filters = { basketId: "", status: "", priorityId: "", modeId: "", surfaceId: "", uomId: "", vendorId: "" };
+const REFERENCE_FILTERS: readonly { key: Exclude<Filter, "status" | "basketId">; type: KnowledgeMasterType; label: string }[] = [
+  { key: "priorityId", type: "priorities", label: "Priority" }, { key: "modeId", type: "modes", label: "Mode" }, { key: "surfaceId", type: "surfaces", label: "Surface" }, { key: "uomId", type: "uoms", label: "UOM" }, { key: "vendorId", type: "vendors", label: "Vendor" }
+];
 
-type MutationCommand =
-  | { readonly kind: "create"; readonly basketId: string; readonly input: KnowledgeCreateInput }
-  | { readonly kind: "duplicate"; readonly item: KnowledgeItemDetail; readonly input: { readonly name: string; readonly reason?: string } }
-  | { readonly kind: "activate"; readonly item: KnowledgeItemDetail }
-  | { readonly kind: "deactivate"; readonly item: KnowledgeItemDetail; readonly reason: string };
-
-type ItemCommand = "duplicate" | "activate" | "deactivate";
-
-function requestError(error: unknown, fallback: string): string {
-  if (error instanceof ApiError) {
-    if (error.code === "VERSION_CONFLICT") {
-      return "This knowledge item changed elsewhere. Refresh it before choosing another action.";
-    }
-    if (error.code === "KNOWLEDGE_ACTIVATION_BLOCKED") return error.message;
-    if (error.status === 403) return "Your current access does not allow this action.";
-  }
-  return fallback;
-}
-
-function timestamp(value: string | null): string {
-  if (!value) return "Not activated";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "Date unavailable" : date.toLocaleString();
-}
-
-function statusLabel(value: string): string {
-  return value.replaceAll("_", " ");
-}
-
-function KnowledgeStatus({ value }: { readonly value: string }) {
-  return (
-    <View accessibilityLabel={`Status ${statusLabel(value)}`} style={styles.status}>
-      <Text style={styles.statusText}>{statusLabel(value)}</Text>
-    </View>
-  );
-}
-
-export interface KnowledgeCatalogWorkspaceProps {
-  readonly session: AuthenticatedSession;
-}
+export interface KnowledgeCatalogWorkspaceProps { readonly session: AuthenticatedSession }
 
 export function KnowledgeCatalogWorkspace({ session }: KnowledgeCatalogWorkspaceProps) {
-  const context = useConfiguredRuntime();
-  const invalidate = useInvalidateEvent();
-  const permissions = session.authorization.permissions;
-  const canRead = permissions.includes("ai_estimator_knowledge.configuration.read");
-  const canCreate = permissions.includes("ai_estimator_knowledge.configuration.create");
-  const canLifecycle = permissions.includes("ai_estimator_knowledge.configuration.lifecycle");
-  const scope = useMemo(() => ({
-    environmentId: context.environment.environment.id,
-    userId: session.user.id
-  }), [context.environment.environment.id, session.user.id]);
-  const [search, setSearch] = useState("");
-  const [appliedSearch, setAppliedSearch] = useState("");
-  const [offset, setOffset] = useState(0);
-  const [selectedMainLineId, setSelectedMainLineId] = useState<string | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [createDraft, setCreateDraft] = useState<KnowledgeCreateDraft>(CREATE_EMPTY);
-  const [itemCommand, setItemCommand] = useState<ItemCommand | null>(null);
-  const [duplicateDraft, setDuplicateDraft] = useState<KnowledgeDuplicateDraft>({ name: "", reason: "" });
-  const [deactivationReason, setDeactivationReason] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [conflictVersion, setConflictVersion] = useState<number | null>(null);
-
-  const listPath = knowledgeListPath({ search: appliedSearch, limit: PAGE_SIZE, offset });
-  const itemsQuery = useQuery({
-    queryKey: privateQueryKey(scope, "knowledge", "catalog", appliedSearch, offset),
-    queryFn: ({ signal }) => context.runtime.api.authenticated.get<KnowledgePage<KnowledgeItemSummary>>(listPath, { signal }),
-    enabled: canRead && context.environment.status === "ready"
-  });
-  const basketsQuery = useQuery({
-    queryKey: privateQueryKey(scope, "knowledge", "baskets"),
-    queryFn: ({ signal }) => context.runtime.api.authenticated.get<KnowledgePage<KnowledgeBasket>>(
-      "/admin/ai-estimator-knowledge/baskets?limit=100&offset=0",
-      { signal }
-    ),
-    enabled: canRead && canCreate && context.environment.status === "ready"
-  });
-  const detailQuery = useQuery({
-    queryKey: privateQueryKey(scope, "knowledge", "detail", selectedMainLineId),
-    queryFn: ({ signal }) => context.runtime.api.authenticated.get<KnowledgeItemDetail>(
-      knowledgeDetailPath(selectedMainLineId!),
-      { signal }
-    ),
-    enabled: canRead && Boolean(selectedMainLineId) && context.environment.status === "ready"
-  });
-  const historyQuery = useQuery({
-    queryKey: privateQueryKey(scope, "knowledge", "history", selectedMainLineId),
-    queryFn: ({ signal }) => context.runtime.api.authenticated.get<KnowledgePage<KnowledgeRevision>>(
-      knowledgeHistoryPath(selectedMainLineId!),
-      { signal }
-    ),
-    enabled: canRead && Boolean(selectedMainLineId) && context.environment.status === "ready"
-  });
-
-  const activeBaskets = (basketsQuery.data?.items ?? []).filter((basket) => basket.status === "active");
-
-  useEffect(() => {
-    if (!createOpen || !activeBaskets.length) return;
-    if (activeBaskets.some((basket) => basket.id === createDraft.basketId)) return;
-    setCreateDraft((current) => ({ ...current, basketId: activeBaskets[0]?.id ?? "" }));
-  }, [activeBaskets, createDraft.basketId, createOpen]);
-
-  useEffect(() => {
-    setItemCommand(null);
-    setFormError(null);
-    setNotice(null);
-    setConflictVersion(null);
-  }, [selectedMainLineId]);
-
-  useEffect(() => {
-    if (
-      conflictVersion !== null &&
-      detailQuery.data &&
-      detailQuery.data.version !== conflictVersion
-    ) {
-      setConflictVersion(null);
-      setFormError(null);
-    }
-  }, [conflictVersion, detailQuery.data]);
-
-  const mutation = useMutation({
-    mutationFn: async (command: MutationCommand) => {
-      if (command.kind === "create") {
-        const request = knowledgeCreateCommand(command.basketId, command.input);
-        return context.runtime.api.authenticated.post<KnowledgeItemDetail>(request.path, request.body);
-      }
-      if (command.kind === "duplicate") {
-        const request = knowledgeDuplicateCommand(command.item, command.input);
-        return context.runtime.api.authenticated.post<KnowledgeItemDetail>(request.path, request.body);
-      }
-      if (command.kind === "activate") {
-        const request = knowledgeActivateCommand(command.item);
-        return context.runtime.api.authenticated.post<KnowledgeItemDetail>(request.path, request.body);
-      }
-      const request = knowledgeDeactivateCommand(command.item, command.reason);
-      return context.runtime.api.authenticated.post<KnowledgeItemDetail>(request.path, request.body);
-    },
-    retry: false,
-    onSuccess: async (result, command) => {
-      setSelectedMainLineId(result.mainLineId);
-      setItemCommand(null);
-      setCreateOpen(false);
-      setCreateDraft(CREATE_EMPTY);
-      setDuplicateDraft({ name: "", reason: "" });
-      setDeactivationReason("");
-      setFormError(null);
-      setConflictVersion(null);
-      setNotice(
-        command.kind === "create"
-          ? "Knowledge item created as a Draft."
-          : command.kind === "duplicate"
-            ? "Knowledge item duplicated as a separate Draft."
-            : command.kind === "activate"
-              ? "Draft revision activated."
-              : "Knowledge item deactivated."
-      );
-      await invalidate("knowledge-changed");
-    },
-    onError: async (cause, command) => {
-      if (cause instanceof ApiError && cause.code === "VERSION_CONFLICT" && command.kind !== "create") {
-        setConflictVersion(command.item.version);
-        await invalidate("knowledge-changed");
-      }
-      setFormError(requestError(cause, "The knowledge action could not be completed. Try again."));
-    }
-  });
-
-  const openItemCommand = (command: ItemCommand, item: KnowledgeItemDetail) => {
-    setFormError(null);
-    setNotice(null);
-    setItemCommand(command);
-    if (command === "duplicate") {
-      setDuplicateDraft({ name: `${item.mainLineName} copy`, reason: "" });
-    }
-    if (command === "deactivate") setDeactivationReason("");
-  };
-
-  const submitCreate = () => {
-    const result = validateKnowledgeCreate(createDraft, activeBaskets);
-    setFormError(result.error ?? null);
-    if (result.value) {
-      mutation.mutate({ kind: "create", basketId: result.value.basketId, input: result.value.input });
-    }
-  };
-
-  const submitItemCommand = (item: KnowledgeItemDetail) => {
-    if (conflictVersion !== null || !itemCommand) return;
-    setFormError(null);
-    if (itemCommand === "activate") {
-      mutation.mutate({ kind: "activate", item });
-      return;
-    }
-    if (itemCommand === "deactivate") {
-      try {
-        knowledgeDeactivateCommand(item, deactivationReason);
-        mutation.mutate({ kind: "deactivate", item, reason: deactivationReason });
-      } catch (error) {
-        setFormError(error instanceof Error ? error.message : "Enter a valid deactivation reason.");
-      }
-      return;
-    }
-    const result = validateKnowledgeDuplicate(duplicateDraft);
-    setFormError(result.error ?? null);
-    if (result.value) mutation.mutate({ kind: "duplicate", item, input: result.value });
-  };
-
-  if (!canRead) {
-    return (
-      <StateView
-        tone="denied"
-        title="Knowledge catalog unavailable"
-        message="Your current session does not include knowledge configuration access."
-      />
-    );
-  }
-
-  if (itemsQuery.isPending) {
-    return <View style={styles.center}><BrandLoader label="Loading knowledge catalog" tone="dark" /></View>;
-  }
-
-  if (itemsQuery.isError) {
-    return (
-      <StateView
-        tone="error"
-        title="Knowledge catalog could not be loaded"
-        message={requestError(itemsQuery.error, "Check your connection and try again.")}
-        actionLabel="Retry"
-        onAction={() => void itemsQuery.refetch()}
-      />
-    );
-  }
-
-  const page = itemsQuery.data;
-  const detail = detailQuery.data;
-  const commandBlocked = mutation.isPending || conflictVersion !== null;
-
-  return (
-    <ScrollView
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
-      refreshControl={(
-        <RefreshControl
-          refreshing={itemsQuery.isRefetching}
-          tintColor={colors.violet}
-          onRefresh={() => void itemsQuery.refetch()}
-        />
-      )}
-    >
-      <View style={styles.heading}>
-        <Text style={styles.eyebrow}>CONFIGURATION</Text>
-        <Text accessibilityRole="header" style={styles.pageTitle}>AI Estimator Knowledge</Text>
-        <Text style={styles.copy}>Review structured estimation rules and their revision lifecycle.</Text>
-      </View>
-
-      <View style={styles.searchRow}>
-        <View style={styles.searchField}>
-          <Field
-            label="Search knowledge"
-            value={search}
-            placeholder="Main Line or description"
-            returnKeyType="search"
-            onSubmitEditing={() => {
-              setOffset(0);
-              setAppliedSearch(search.trim());
-            }}
-            onChangeText={setSearch}
-          />
-        </View>
-        <View style={styles.searchAction}>
-          <Button
-            label="Search"
-            onPress={() => {
-              setOffset(0);
-              setAppliedSearch(search.trim());
-            }}
-          />
-        </View>
-      </View>
-
-      {canCreate ? (
-        createOpen ? (
-          <View accessibilityLabel="Create knowledge item" style={styles.panel}>
-            <Text accessibilityRole="header" style={styles.sectionTitle}>Add estimation item</Text>
-            <Text style={styles.copy}>The new Main Line starts as a Draft in an active Main Basket.</Text>
-            {basketsQuery.isPending ? <Text style={styles.copy}>Loading Main Baskets…</Text> : null}
-            {basketsQuery.isError ? (
-              <Button label="Retry Main Baskets" variant="secondary" onPress={() => void basketsQuery.refetch()} />
-            ) : null}
-            {!basketsQuery.isPending && !basketsQuery.isError && activeBaskets.length === 0 ? (
-              <Text style={styles.warning}>Create or activate a Main Basket before adding an item.</Text>
-            ) : null}
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Main Basket</Text>
-              <View accessibilityRole="radiogroup" style={styles.choices}>
-                {activeBaskets.map((basket) => {
-                  const selected = basket.id === createDraft.basketId;
-                  return (
-                    <Pressable
-                      key={basket.id}
-                      accessibilityRole="radio"
-                      accessibilityState={{ selected, disabled: mutation.isPending }}
-                      disabled={mutation.isPending}
-                      onPress={() => setCreateDraft((current) => ({ ...current, basketId: basket.id }))}
-                      style={[styles.choice, selected ? styles.choiceSelected : null]}
-                    >
-                      <Text style={[styles.choiceText, selected ? styles.choiceTextSelected : null]}>{basket.name}</Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-            <Field label="Sub Basket" value={createDraft.subBasketName} editable={!mutation.isPending} onChangeText={(value) => setCreateDraft((current) => ({ ...current, subBasketName: value }))} />
-            <Field label="Main Line name" value={createDraft.name} editable={!mutation.isPending} onChangeText={(value) => setCreateDraft((current) => ({ ...current, name: value }))} />
-            <Field label="Description (optional)" value={createDraft.description} editable={!mutation.isPending} multiline onChangeText={(value) => setCreateDraft((current) => ({ ...current, description: value }))} />
-            {formError ? <Text accessibilityLiveRegion="assertive" style={styles.error}>{formError}</Text> : null}
-            <View style={styles.actions}>
-              <View style={styles.action}><Button label="Cancel" variant="quiet" disabled={mutation.isPending} onPress={() => { setCreateOpen(false); setFormError(null); }} /></View>
-              <View style={styles.action}><Button label="Create Draft" loading={mutation.isPending} disabled={activeBaskets.length === 0} onPress={submitCreate} /></View>
-            </View>
-          </View>
-        ) : (
-          <Button label="Add estimation item" onPress={() => { setCreateOpen(true); setFormError(null); setNotice(null); }} />
-        )
-      ) : null}
-
-      {notice ? <Text accessibilityLiveRegion="polite" style={styles.success}>{notice}</Text> : null}
-
-      {selectedMainLineId ? (
-        <View style={styles.panel}>
-          <View style={styles.sectionHeading}>
-            <Text accessibilityRole="header" style={styles.sectionTitle}>Item detail</Text>
-            <Button label="Close detail" variant="quiet" disabled={mutation.isPending} onPress={() => setSelectedMainLineId(null)} />
-          </View>
-          {detailQuery.isPending ? <BrandLoader label="Loading item detail" tone="dark" /> : null}
-          {detailQuery.isError ? (
-            <StateView tone="error" title="Item detail could not be loaded" message={requestError(detailQuery.error, "Try loading this item again.")} actionLabel="Retry" onAction={() => void detailQuery.refetch()} />
-          ) : null}
-          {detail ? (
-            <>
-              <View style={styles.sectionHeading}>
-                <View style={styles.flex}>
-                  <Text style={styles.itemTitle}>{detail.mainLineName}</Text>
-                  <Text style={styles.copy}>{detail.basketName}{detail.subBasketName ? ` · ${detail.subBasketName}` : ""}</Text>
-                </View>
-                <KnowledgeStatus value={detail.status} />
-              </View>
-              {detail.description ? <Text style={styles.copy}>{detail.description}</Text> : null}
-              <Text style={styles.copy}>Completeness {detail.completeness.percentage}% · Server version {detail.version}</Text>
-              {detail.blockers.length > 0 ? (
-                <View style={styles.findings}>
-                  <Text style={styles.warning}>Activation blockers</Text>
-                  {detail.blockers.map((finding) => <Text key={`${finding.code}-${finding.sectionKey}`} style={styles.copy}>• {finding.message}</Text>)}
-                </View>
-              ) : null}
-              {formError ? <Text accessibilityLiveRegion="assertive" style={styles.error}>{formError}</Text> : null}
-              {itemCommand ? (
-                <View style={styles.command}>
-                  <Text accessibilityRole="header" style={styles.sectionTitle}>
-                    {itemCommand === "duplicate" ? "Duplicate this item?" : itemCommand === "activate" ? "Activate this revision?" : "Deactivate this item?"}
-                  </Text>
-                  {itemCommand === "duplicate" ? (
-                    <>
-                      <Field label="Duplicate name" value={duplicateDraft.name} editable={!mutation.isPending} onChangeText={(value) => setDuplicateDraft((current) => ({ ...current, name: value }))} />
-                      <Field label="Reason (optional)" value={duplicateDraft.reason} editable={!mutation.isPending} multiline onChangeText={(value) => setDuplicateDraft((current) => ({ ...current, reason: value }))} />
-                    </>
-                  ) : itemCommand === "deactivate" ? (
-                    <Field label="Reason" value={deactivationReason} editable={!mutation.isPending} multiline onChangeText={setDeactivationReason} />
-                  ) : (
-                    <Text style={styles.copy}>The active revision will become available to the knowledge context service.</Text>
-                  )}
-                  <View style={styles.actions}>
-                    <View style={styles.action}><Button label="Cancel" variant="quiet" disabled={mutation.isPending} onPress={() => { setItemCommand(null); setFormError(null); }} /></View>
-                    <View style={styles.action}>
-                      <Button
-                        label={itemCommand === "duplicate" ? "Confirm duplicate" : itemCommand === "activate" ? "Confirm activation" : "Confirm deactivation"}
-                        variant={itemCommand === "deactivate" ? "danger" : "primary"}
-                        loading={mutation.isPending}
-                        disabled={commandBlocked || (itemCommand === "activate" && detail.blockers.length > 0)}
-                        onPress={() => submitItemCommand(detail)}
-                      />
-                    </View>
-                  </View>
-                </View>
-              ) : (
-                <View style={styles.actions}>
-                  {canCreate && supportsKnowledgeAction(detail, "duplicate") ? <View style={styles.action}><Button label="Duplicate" variant="secondary" disabled={commandBlocked} onPress={() => openItemCommand("duplicate", detail)} /></View> : null}
-                  {canLifecycle && supportsKnowledgeAction(detail, "review_and_activate") ? <View style={styles.action}><Button label="Activate Draft" disabled={commandBlocked || detail.blockers.length > 0} onPress={() => openItemCommand("activate", detail)} /></View> : null}
-                  {canLifecycle && supportsKnowledgeAction(detail, "deactivate") ? <View style={styles.action}><Button label="Deactivate" variant="danger" disabled={commandBlocked} onPress={() => openItemCommand("deactivate", detail)} /></View> : null}
-                </View>
-              )}
-              <View style={styles.history}>
-                <Text accessibilityRole="header" style={styles.sectionTitle}>Revision history</Text>
-                {historyQuery.isPending ? <Text style={styles.copy}>Loading revision history…</Text> : null}
-                {historyQuery.isError ? <Button label="Retry history" variant="secondary" onPress={() => void historyQuery.refetch()} /> : null}
-                {historyQuery.data?.items.length === 0 ? <Text style={styles.copy}>No revisions are available.</Text> : null}
-                {historyQuery.data?.items.map((revision) => (
-                  <View key={revision.id} style={styles.historyRow}>
-                    <View style={styles.flex}>
-                      <Text style={styles.itemTitle}>Revision {revision.revisionNumber}</Text>
-                      <Text style={styles.copy}>{revision.activatedAt ? `Activated ${timestamp(revision.activatedAt)}` : `Updated ${timestamp(revision.updatedAt)}`}</Text>
-                    </View>
-                    <KnowledgeStatus value={revision.status} />
-                  </View>
-                ))}
-              </View>
-            </>
-          ) : null}
-        </View>
-      ) : null}
-
-      {page.items.length === 0 ? (
-        <StateView title="No knowledge items" message={appliedSearch ? "No items match this search." : "No estimation knowledge has been configured."} />
-      ) : (
-        <View style={styles.list}>
-          {page.items.map((item) => (
-            <Pressable
-              key={item.mainLineId}
-              accessibilityRole="button"
-              accessibilityLabel={`Open ${item.mainLineName}`}
-              onPress={() => setSelectedMainLineId(item.mainLineId)}
-              style={({ pressed }) => [styles.item, pressed ? styles.pressed : null]}
-            >
-              <View style={styles.sectionHeading}>
-                <View style={styles.flex}>
-                  <Text style={styles.itemTitle}>{item.mainLineName}</Text>
-                  <Text style={styles.copy}>{item.basketName}{item.subBasketName ? ` · ${item.subBasketName}` : ""}</Text>
-                </View>
-                <KnowledgeStatus value={item.status} />
-              </View>
-              {item.description ? <Text numberOfLines={2} style={styles.copy}>{item.description}</Text> : null}
-              <Text style={styles.meta}>Completeness {item.completeness.percentage}% · Revision {item.revisionNumber ?? "—"}</Text>
-            </Pressable>
-          ))}
-        </View>
-      )}
-
-      <View style={styles.pagination}>
-        <Text accessibilityLiveRegion="polite" style={styles.copy}>
-          {page.pagination.total === 0 ? "0 items" : `Showing ${page.pagination.offset + 1}–${Math.min(page.pagination.offset + page.items.length, page.pagination.total)} of ${page.pagination.total}`}
-        </Text>
-        <View style={styles.actions}>
-          <View style={styles.action}><Button label="Previous" variant="quiet" disabled={offset === 0} onPress={() => setOffset((current) => Math.max(0, current - PAGE_SIZE))} /></View>
-          <View style={styles.action}><Button label="Next" variant="secondary" disabled={!page.pagination.hasMore} onPress={() => setOffset((current) => current + PAGE_SIZE)} /></View>
-        </View>
-      </View>
-    </ScrollView>
-  );
+  const context = useKnowledgeContext(session);
+  if (!context.canRead) return <StateView title="Configuration access required" message="Your current access does not allow you to read configuration." tone="denied" />;
+  return <KnowledgeCatalogContent key={context.scopeKey} session={session} context={context} />;
 }
 
-const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  content: { flexGrow: 1, width: "100%", maxWidth: 980, alignSelf: "center", padding: spacing.lg, paddingBottom: spacing.huge, gap: spacing.lg },
-  heading: { gap: spacing.xs },
-  eyebrow: { color: colors.violet, fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1.4 },
-  pageTitle: { color: colors.ink, ...typography.pageTitle },
-  copy: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 12, lineHeight: 19 },
-  meta: { color: colors.info, fontFamily: fonts.medium, fontSize: 11 },
-  searchRow: { flexDirection: "row", alignItems: "flex-end", gap: spacing.sm },
-  searchField: { flex: 1 },
-  searchAction: { minWidth: 112 },
-  panel: { gap: spacing.sm, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radii.surface, backgroundColor: colors.surface, padding: spacing.md },
-  command: { gap: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radii.control, backgroundColor: colors.surfaceMuted, padding: spacing.md },
-  sectionHeading: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm },
-  sectionTitle: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 17 },
-  flex: { flex: 1, gap: spacing.xxs },
-  fieldGroup: { gap: 6 },
-  label: { color: colors.ink, fontFamily: fonts.medium, fontSize: 14 },
-  choices: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
-  choice: { minHeight: 42, justifyContent: "center", borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radii.pill, backgroundColor: colors.surface, paddingHorizontal: spacing.md },
-  choiceSelected: { borderColor: colors.violet, backgroundColor: colors.violetSoft },
-  choiceText: { color: colors.inkMuted, fontFamily: fonts.medium, fontSize: 12 },
-  choiceTextSelected: { color: colors.violet },
-  error: { color: colors.danger, fontFamily: fonts.medium, fontSize: 12, lineHeight: 18 },
-  warning: { color: colors.warning, fontFamily: fonts.medium, fontSize: 12, lineHeight: 18 },
-  success: { color: colors.success, fontFamily: fonts.medium, fontSize: 12, lineHeight: 18 },
-  findings: { gap: spacing.xs, borderRadius: radii.control, backgroundColor: colors.warningSoft, padding: spacing.sm },
-  status: { borderRadius: radii.pill, backgroundColor: colors.infoSoft, paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs },
-  statusText: { color: colors.info, fontFamily: fonts.semibold, fontSize: 11, textTransform: "capitalize" },
-  actions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
-  action: { flexGrow: 1, minWidth: 124 },
-  list: { gap: spacing.sm },
-  item: { gap: spacing.xs, borderWidth: 1, borderColor: colors.border, borderRadius: radii.surface, backgroundColor: colors.surface, padding: spacing.md },
-  pressed: { opacity: 0.74, borderColor: colors.violet },
-  history: { gap: spacing.sm, paddingTop: spacing.sm },
-  historyRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm },
-  itemTitle: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 15 },
-  pagination: { gap: spacing.sm, alignItems: "center" }
-});
+function KnowledgeCatalogContent({ session, context }: KnowledgeCatalogWorkspaceProps & { readonly context: KnowledgeMobileContext }) {
+  const back = useScreenBack();
+  const [search, setSearch] = useState("");
+  const [appliedSearch, setAppliedSearch] = useState("");
+  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [appliedFilters, setAppliedFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const [expandedBaskets, setExpandedBaskets] = useState<Readonly<Record<string, boolean>>>({});
+  const [menu, setMenu] = useState<{ kind: "basket" | "item"; id: string; anchor: KnowledgeMenuAnchor } | null>(null);
+  const [editingBasket, setEditingBasket] = useState<KnowledgeBasket | null>(null);
+  const [deletingBasket, setDeletingBasket] = useState<KnowledgeBasket | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [createItem, setCreateItem] = useState<{ itemType: "main_line" | "temporary"; basketId: string } | null>(null);
+  const [createBasket, setCreateBasket] = useState(false);
+  const [management, setManagement] = useState(false);
+  const [reusable, setReusable] = useState(false);
+  const params: KnowledgeListParams = { search: appliedSearch, ...Object.fromEntries(Object.entries(appliedFilters).filter(([, value]) => value)), limit: PAGE_SIZE, offset };
+  const items = useQuery({ queryKey: context.key("catalog", params), queryFn: () => context.api.listKnowledgeItems(params), enabled: context.ready && context.canRead });
+  const baskets = useQuery({ queryKey: context.key("baskets", "catalog"), queryFn: () => allKnowledgePages(page => context.api.listKnowledgeBaskets(page)), enabled: context.ready && context.canRead });
+  const masters = useQuery({ queryKey: context.key("masters", "catalog-filters"), queryFn: async () => Object.fromEntries(await Promise.all(FILTER_TYPES.map(async type => [type, await allKnowledgePages(page => context.api.listKnowledgeMasters(type, { ...page, includeArchived: true }))] as const))) as Record<KnowledgeMasterType, readonly KnowledgeMaster[]>, enabled: context.ready && context.canRead });
+  const groups = new Map<string, { basket: KnowledgeBasket | undefined; name: string; items: NonNullable<typeof items.data>["items"][number][] }>();
+  const filtered = Boolean(appliedSearch || Object.values(appliedFilters).some(Boolean));
+  if (!filtered) for (const basket of baskets.data ?? []) groups.set(basket.id, { basket, name: basket.name, items: [] });
+  for (const item of items.data?.items ?? []) {
+    const group = groups.get(item.basketId) ?? { basket: baskets.data?.find(basket => basket.id === item.basketId), name: item.basketName, items: [] };
+    group.items.push(item); groups.set(item.basketId, group);
+  }
+  const catalogState = masters.isPending ? "loading" : masters.isError ? "error" : "ready";
+  useEffect(() => {
+    if (items.isSuccess && !items.isFetching && offset > 0 && offset >= items.data.pagination.total) {
+      setOffset(Math.max(0, Math.floor((items.data.pagination.total - 1) / PAGE_SIZE) * PAGE_SIZE));
+    }
+  }, [items.isSuccess, items.isFetching, items.data, offset]);
+  const firstBasketId = groups.keys().next().value;
+  const menuBasket = menu?.kind === "basket" ? baskets.data?.find(basket => basket.id === menu.id) : undefined;
+  const menuItem = menu?.kind === "item" ? items.data?.items.find(item => item.mainLineId === menu.id) : undefined;
+  const menuActions: KnowledgeMenuAction[] = [];
+  if (context.ready && context.canRead && menuBasket) {
+    if (context.canUpdate && menuBasket.status !== "archived") menuActions.push({ id: "edit", label: "Edit main line", icon: "edit", onPress: () => setEditingBasket(menuBasket) });
+    if (context.canCreate && menuBasket.status === "active") {
+      menuActions.push({ id: "add", label: "Add estimation item", icon: "add", onPress: () => setCreateItem({ itemType: "main_line", basketId: menuBasket.id }) });
+      menuActions.push({ id: "temporary", label: "Add temporary item", icon: "temporary", onPress: () => setCreateItem({ itemType: "temporary", basketId: menuBasket.id }) });
+    }
+    if (context.canLifecycle) menuActions.push({ id: "delete", label: "Delete main line", icon: "delete", destructive: true, onPress: () => setDeletingBasket(menuBasket) });
+  }
+  if (context.ready && context.canRead && menuItem) menuActions.push({ id: "open", label: "Open item", icon: "open", onPress: () => setSelectedId(menuItem.mainLineId) });
+  if (selectedId) return <KnowledgeItemWorkspace session={session} mainLineId={selectedId} onBack={() => setSelectedId(null)} onOpenItem={setSelectedId} />;
+  const apply = () => { setAppliedSearch(search.trim()); setAppliedFilters({ ...filters }); setOffset(0); setFilterOpen(false); };
+  function openAction(action: KnowledgeCatalogAction) {
+    if (action === "values") setReusable(true);
+    else if (action === "baskets") setManagement(true);
+    else if (context.canCreate && action === "basket") setCreateBasket(true);
+    else if (context.canCreate) setCreateItem({ itemType: action === "temporary" ? "temporary" : "main_line", basketId: "" });
+  }
+  return <ScrollView contentContainerStyle={s.screen} keyboardShouldPersistTaps="handled" refreshControl={<RefreshControl refreshing={items.isRefetching} onRefresh={() => { void context.refresh(); void items.refetch(); void baskets.refetch(); void masters.refetch(); }} />}>
+    <KnowledgeCatalogHeader
+      search={search} onSearchChange={setSearch} onSearch={apply}
+      onFilters={() => { setFilters({ ...appliedFilters }); setFilterOpen(true); }}
+      filterCount={Object.values(appliedFilters).filter(Boolean).length}
+      canCreate={context.canCreate} onAction={openAction}
+      onBack={back.onBack} backVisible={back.visible} backDisabled={back.disabled}
+    />
+    {filtered ? <Button label="Clear filters" variant="quiet" onPress={() => { setSearch(""); setAppliedSearch(""); setFilters(EMPTY_FILTERS); setAppliedFilters(EMPTY_FILTERS); setOffset(0); }} /> : null}
+    {items.isPending ? <KnowledgeText>Loading configuration…</KnowledgeText> : null}
+    {items.isError ? <StateView title="Configuration unavailable" message={catalogError(items.error)} actionLabel="Retry configuration" onAction={() => void items.refetch()} /> : null}
+    {baskets.isError ? <StateView title="Main baskets unavailable" message="Some basket actions are unavailable until the catalog loads." actionLabel="Retry main baskets" onAction={() => void baskets.refetch()} /> : null}
+    <View style={{ gap: 8 }}>
+      {Array.from(groups, ([basketId, group]) => {
+        const expanded = expandedBaskets[basketId] ?? basketId === firstBasketId;
+        const canManage = context.ready && group.basket && ((context.canCreate && group.basket.status === "active") || (context.canUpdate && group.basket.status !== "archived") || context.canLifecycle);
+        return <KnowledgeBasketCarousel key={basketId} basketId={basketId} name={group.name} items={group.items} expanded={expanded}
+          onToggle={() => setExpandedBaskets(current => ({ ...current, [basketId]: !expanded }))}
+          onOpenItem={setSelectedId} onItemMenu={(item, anchor) => setMenu({ kind: "item", id: item.mainLineId, anchor })}
+          {...(canManage ? { onBasketMenu: (anchor: KnowledgeMenuAnchor) => setMenu({ kind: "basket", id: basketId, anchor }) } : {})}
+          uoms={masters.data?.uoms ?? []} priorities={masters.data?.priorities ?? []} catalogState={catalogState} isLoading={items.isPending} />;
+      })}
+    </View>
+    {items.isSuccess && !groups.size ? <StateView title="No matching items" message="Try another search or clear your filters." /> : null}
+    {items.data ? <><KnowledgeText>{items.data.pagination.total ? `Showing ${offset + 1}–${offset + items.data.items.length} of ${items.data.pagination.total}` : "No items"}</KnowledgeText><View style={s.row}><Button label="Previous page" variant="secondary" disabled={offset === 0 || items.isFetching} onPress={() => setOffset(current => Math.max(0, current - PAGE_SIZE))} /><Button label="Next page" variant="secondary" disabled={!items.data.pagination.hasMore || items.isFetching} onPress={() => setOffset(current => current + PAGE_SIZE)} /></View></> : null}
+    {menu && menuActions.length > 0 ? <KnowledgeCatalogMenu key={`${menu.kind}:${menu.id}`} name={menuBasket?.name ?? menuItem?.mainLineName ?? "Configuration"} anchor={menu.anchor} actions={menuActions} onClose={() => setMenu(null)} /> : null}
+    {editingBasket ? <KnowledgeBasketEditor context={context} basket={editingBasket} onClose={() => setEditingBasket(null)} onSaved={() => { setEditingBasket(null); void baskets.refetch(); }} /> : null}
+    {deletingBasket ? <KnowledgeBasketDeletion context={context} basket={deletingBasket} onClose={() => setDeletingBasket(null)} onDeleted={() => { setDeletingBasket(null); setOffset(0); void baskets.refetch(); void items.refetch(); }} /> : null}
+    {filterOpen ? <KnowledgeModal title="Configuration filters" onClose={() => setFilterOpen(false)}>
+      <KnowledgeSelect label="Main basket" value={filters.basketId} placeholder="All main baskets" options={(baskets.data ?? []).map(value => ({ value: value.id, label: value.name }))} disabled={!baskets.isSuccess} onChange={value => setFilters(current => ({ ...current, basketId: value }))} />
+      <KnowledgeSelect label="Item status" value={filters.status} placeholder="All statuses" options={(["draft", "active", "inactive", "archived"] as const).map(value => ({ value, label: value }))} onChange={value => setFilters(current => ({ ...current, status: value as KnowledgeItemStatus }))} />
+      {REFERENCE_FILTERS.map(filter => <KnowledgeSelect key={filter.key} label={filter.label} value={filters[filter.key]} placeholder={`All ${filter.label.toLocaleLowerCase()} values`} options={(masters.data?.[filter.type] ?? []).map(value => ({ value: value.id, label: `${value.name}${value.status === "active" ? "" : ` (${value.status})`}` }))} disabled={!masters.isSuccess} onChange={value => setFilters(current => ({ ...current, [filter.key]: value }))} />)}
+      {masters.isPending ? <KnowledgeText>Loading all filter options…</KnowledgeText> : null}
+      {masters.isError ? <StateView title="Filter options unavailable" message={catalogError(masters.error)} actionLabel="Retry filter options" onAction={() => void masters.refetch()} /> : null}
+      <Button label="Apply filters" onPress={apply} />
+    </KnowledgeModal> : null}
+    {createItem ? <KnowledgeCreateItem context={context} initialBasketId={createItem.basketId} itemType={createItem.itemType} onClose={() => setCreateItem(null)} onCreated={id => { setCreateItem(null); setSelectedId(id); }} /> : null}
+    {createBasket ? <KnowledgeBasketEditor context={context} onClose={() => setCreateBasket(false)} onSaved={() => { setCreateBasket(false); void baskets.refetch(); }} /> : null}
+    {management ? <KnowledgeCatalogManagement context={context} onClose={() => setManagement(false)} /> : null}
+    {reusable ? <KnowledgeReusableValues context={context} onClose={() => setReusable(false)} /> : null}
+  </ScrollView>;
+}
+
+export function KnowledgeCreateItem({ context, initialBasketId = "", itemType, onClose, onCreated }: { readonly context: KnowledgeMobileContext; readonly initialBasketId?: string; readonly itemType: "main_line" | "temporary"; readonly onClose: () => void; readonly onCreated: (mainLineId: string) => void }) {
+  const [basketId, setBasketId] = useState(initialBasketId);
+  const [subBasketId, setSubBasketId] = useState("");
+  const [subBasketName, setSubBasketName] = useState("");
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [selectedType, setSelectedType] = useState(itemType);
+  const baskets = useQuery({ queryKey: context.key("baskets", "create-item"), queryFn: () => allKnowledgePages(page => context.api.listKnowledgeBaskets({ ...page, status: "active" })), enabled: context.ready && context.canRead });
+  const subBaskets = useQuery({ queryKey: context.key("sub-baskets", basketId), queryFn: () => allKnowledgePages(page => context.api.listKnowledgeSubBaskets(basketId, page)), enabled: context.ready && context.canRead && Boolean(basketId) });
+  const valid = context.ready && context.canRead && context.canCreate && name.trim().length > 0 && baskets.isSuccess && baskets.data.some(basket => basket.id === basketId && basket.status === "active") && subBaskets.isSuccess && (!subBasketId || (subBasketId === "__new" ? subBasketName.trim().length > 0 : subBaskets.data.some(subBasket => subBasket.id === subBasketId && subBasket.basketId === basketId)));
+  const mutation = useMutation({ mutationFn: async () => {
+    if (!valid) throw new Error("Choose a main basket and enter an item name.");
+    return context.api.createKnowledgeMainLine(basketId, { itemType: selectedType, name: name.trim(), description: description.trim() || null, ...(subBasketId === "__new" ? { subBasketName: subBasketName.trim() } : subBasketId ? { subBasketId } : {}) });
+  }, retry: false, onSuccess: async item => { await context.refresh(); onCreated(item.mainLineId); } });
+  const dirty = basketId !== initialBasketId || Boolean(subBasketId || subBasketName || name || description) || selectedType !== itemType;
+  return <KnowledgeModal title={`Add ${selectedType === "temporary" ? "temporary" : "estimation"} item`} busy={mutation.isPending} onClose={() => closeCatalogDraft(dirty, onClose)}>
+    <KnowledgeSelect label="Item type" value={selectedType} allowEmpty={false} disabled={mutation.isPending} onChange={value => setSelectedType(value as typeof itemType)} options={[{ value: "main_line", label: "Estimation item" }, { value: "temporary", label: "Temporary item" }]} />
+    <KnowledgeSelect label="Main basket" value={basketId} placeholder="Select main basket" options={(baskets.data ?? []).map(basket => ({ value: basket.id, label: basket.name }))} disabled={!baskets.isSuccess || mutation.isPending} onChange={value => { setBasketId(value); setSubBasketId(""); setSubBasketName(""); }} />
+    {baskets.isPending ? <KnowledgeText>Loading main baskets…</KnowledgeText> : null}
+    {baskets.isError ? <StateView title="Main baskets unavailable" message={catalogError(baskets.error)} actionLabel="Retry main baskets" onAction={() => void baskets.refetch()} /> : null}
+    <KnowledgeSelect label="Sub-basket (optional)" value={subBasketId} placeholder="No sub-basket" disabled={!basketId || !subBaskets.isSuccess || mutation.isPending} options={[...(subBaskets.data ?? []).map(subBasket => ({ value: subBasket.id, label: subBasket.name })), { value: "__new", label: "Create a new sub-basket with this item" }]} onChange={setSubBasketId} />
+    {basketId && subBaskets.isPending ? <KnowledgeText>Loading sub-baskets…</KnowledgeText> : null}
+    {subBaskets.isError ? <StateView title="Sub-baskets unavailable" message={catalogError(subBaskets.error)} actionLabel="Retry sub-baskets" onAction={() => void subBaskets.refetch()} /> : null}
+    {subBasketId === "__new" ? <Field label="New sub-basket name" value={subBasketName} onChangeText={setSubBasketName} maxLength={240} editable={!mutation.isPending} /> : null}
+    <Field label="Item name" value={name} onChangeText={setName} maxLength={240} editable={!mutation.isPending} />
+    <Field label="Description" value={description} onChangeText={setDescription} maxLength={4000} multiline editable={!mutation.isPending} />
+    {mutation.isError ? <KnowledgeText error>{catalogError(mutation.error)}</KnowledgeText> : null}
+    <Button label="Create item" disabled={!valid} loading={mutation.isPending} onPress={() => mutation.mutate()} />
+  </KnowledgeModal>;
+}

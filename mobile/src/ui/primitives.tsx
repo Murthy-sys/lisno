@@ -63,21 +63,23 @@ export function Field({
   label,
   error,
   keyboardType,
+  compact = false,
   ...props
 }: TextInputProps & {
   readonly label: string;
   readonly error?: string | undefined;
   readonly keyboardType?: KeyboardTypeOptions;
+  readonly compact?: boolean;
 }) {
   return (
     <View style={styles.fieldGroup}>
-      <Text style={styles.fieldLabel}>{label}</Text>
+      <Text style={[styles.fieldLabel, compact && styles.compactLabel]}>{label}</Text>
       <TextInput
         accessibilityLabel={label}
         accessibilityHint={error}
         keyboardType={keyboardType}
         placeholderTextColor={colors.inkMuted}
-        style={[styles.field, error ? styles.fieldError : null]}
+        style={[styles.field, compact && styles.compactField, error ? styles.fieldError : null]}
         {...props}
       />
       {error ? <Text accessibilityLiveRegion="polite" style={styles.errorText}>{error}</Text> : null}
@@ -91,7 +93,8 @@ export function Button({
   disabled = false,
   loading = false,
   variant = "primary",
-  accessibilityHint
+  accessibilityHint,
+  size = "default"
 }: {
   readonly label: string;
   readonly onPress: () => void;
@@ -99,6 +102,7 @@ export function Button({
   readonly loading?: boolean;
   readonly variant?: "primary" | "secondary" | "danger" | "quiet";
   readonly accessibilityHint?: string;
+  readonly size?: "default" | "compact";
 }) {
   const inactive = disabled || loading;
   const foreground = variant === "primary" ? colors.primaryInk : variant === "danger" ? colors.danger : colors.primary;
@@ -111,13 +115,14 @@ export function Button({
       onPress={onPress}
       style={({ pressed }) => [
         styles.button,
+        size === "compact" && styles.compactButton,
         styles[`${variant}Button`],
         pressed && !inactive ? styles[`${variant}ButtonPressed`] : null,
         inactive ? styles.buttonDisabled : null
       ]}
     >
       {loading ? <ActivityIndicator color={foreground} /> : null}
-      <Text style={[styles.buttonText, styles[`${variant}ButtonText`]]}>{label}</Text>
+      <Text style={[styles.buttonText, size === "compact" && styles.compactButtonText, styles[`${variant}ButtonText`]]}>{label}</Text>
     </Pressable>
   );
 }
@@ -184,6 +189,10 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm
   },
   fieldError: { borderColor: colors.danger },
+  compactLabel: { fontSize: 12, lineHeight: 17 },
+  compactField: { minHeight: 44, fontSize: 14, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 5 },
+  compactButton: { minHeight: 44, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 5 },
+  compactButtonText: { fontSize: 12, lineHeight: 17 },
   errorText: { color: colors.danger, fontFamily: fonts.regular, fontSize: 12 },
   button: {
     minHeight: 52,

@@ -55,7 +55,12 @@ function GenericRecordDetailScreen({ destination, recordId, session }: { readonl
     return <ScrollView contentContainerStyle={styles.content}><ProcurementProject projectId={recordId} data={query.data} session={session} onRefresh={() => void query.refetch()} /></ScrollView>;
   }
   if (destination.id === "projects") {
-    return <ScrollView contentContainerStyle={styles.content}><ProjectStructure data={query.data} session={session} onRefresh={() => void query.refetch()} /></ScrollView>;
+    return (
+      <ScrollView contentContainerStyle={[styles.content, styles.projectContent]}>
+        {query.isRefetching ? <Text accessibilityLiveRegion="polite" style={styles.updating}>Updating…</Text> : null}
+        <ProjectStructure data={query.data} session={session} onRefresh={() => void query.refetch()} />
+      </ScrollView>
+    );
   }
 
   const record = displayedRecord(query.data);
@@ -88,6 +93,7 @@ function GenericRecordDetailScreen({ destination, recordId, session }: { readonl
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   content: { flexGrow: 1, width: "100%", maxWidth: 860, alignSelf: "center", padding: spacing.lg, paddingBottom: spacing.huge, gap: spacing.xl },
+  projectContent: { maxWidth: 1200, gap: spacing.sm },
   heading: { gap: spacing.xs },
   eyebrow: { color: colors.violet, fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1.4 },
   title: { color: colors.ink, ...typography.pageTitle },

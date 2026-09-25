@@ -66,7 +66,7 @@ export const FEATURE_DESTINATIONS = Object.freeze([
   destination("users", "Users", "identity.users.read", ["super_admin"]),
   destination(
     "configuration",
-    "Estimation configuration",
+    "Configuration",
     "ai_estimator_knowledge.configuration.read",
     ["super_admin"]
   ),

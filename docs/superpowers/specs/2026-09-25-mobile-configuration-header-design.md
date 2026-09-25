@@ -1,0 +1,7 @@
+# Mobile Configuration header and Actions sheet
+
+The user supplied a visual reference and authorized implementation through the search/filter row only. Existing approvals permit continuing without new gates. The current catalog exposes five separate action buttons and a labeled search field with separate Search and Filters buttons, taking excessive vertical space.
+
+Match the reference with a warm header, Back and outlined Actions controls, Configuration title/supporting copy, compact information notice, and one search field with search/filter icons. Actions opens a native bottom sheet with icons, descriptions and chevrons; preserve all existing permitted actions, including Add temporary item below the pictured entries. Keep existing destinations, permissions, filter state, search submission and every basket/card below the search unchanged. Use existing fonts, palette, React Native Modal and SVG technology; no dependencies or backend changes.
+
+Acceptance: actions hidden until Actions is pressed; all existing allowed actions open their original screens; read-only users never gain create controls; sheet closes by close/outside/Android Back; search works by keyboard and icon, filters retain existing semantics; header remains usable at320,380 andtablet widths. Move the route's shared Back placement into content for Configuration to avoid duplication. Verify native rendered interactions, typecheck, Android bundle and reference screenshots. No deployment or live writes.
