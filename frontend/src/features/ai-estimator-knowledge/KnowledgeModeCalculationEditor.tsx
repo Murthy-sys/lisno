@@ -6,6 +6,7 @@ import { KnowledgeModeCalculationSimulator } from "./KnowledgeModeCalculationSim
 import { modeCalculationDraft, parseModeCalculationDraft, type ModeCalculationScope, type ModeCalculationSettings } from "./knowledgeModeCalculation";
 import type { KnowledgePendingCalculation } from "./knowledgeModePendingChanges";
 import type { KnowledgeJsonValue } from "./knowledgeTypes";
+import "./knowledge-mode-calculation-reference.css";
 
 export interface KnowledgeModeCalculationUom {
   readonly scopeKey: string;
@@ -97,14 +98,15 @@ export function KnowledgeModeCalculationEditor({ value, uom, readOnly, validatio
     }
   }
 
-  return <div ref={rootRef}>
+  return <div ref={rootRef} className="knowledge-mode-calculation-editor">
     {active ? <KnowledgeModeCalculationTable value={draft} uomLabel={uom.label} uomMessage={uom.message}
-      scope={scope} marginControl={marginControl}
+      scope={scope} marginControl={marginControl} showGuidanceIcon
       title={contextLabel ? `${contextLabel} calculations` : undefined}
       readOnly={readOnly} errors={errors} onChange={change}
       actions={<div className="knowledge-mode-calculation__actions">
         {uom.onRetry ? <Button variant="secondary" onClick={uom.onRetry}>Retry UOM</Button> : null}
-        <Button variant="secondary" onClick={() => setSimulator({ scopeKey: uom.scopeKey, initialDraft: { ...draft }, pmcMarginBps, pmcMinimumMarginBps, subVendorMarginBps, subVendorMinimumMarginBps })}>
+        <Button variant="secondary" leadingIcon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="2.5" width="14" height="19" rx="2" /><path d="M8 6.5h8M8 10.5h1m6 0h1M8 14h1m6 0h1M8 17.5h1m3-7h1m-1 3.5h1m2 0v3.5m-3 0h1" /></svg>}
+          onClick={() => setSimulator({ scopeKey: uom.scopeKey, initialDraft: { ...draft }, pmcMarginBps, pmcMinimumMarginBps, subVendorMarginBps, subVendorMinimumMarginBps })}>
           Test calculations
         </Button>
       </div>}

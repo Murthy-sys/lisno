@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import { normalizeEmail } from "../domain/email.js";
 import { ApiError } from "../middleware/errors.js";
 import type {
+  AdminProjectListInput,
+  AdminProjectPage,
   AdminProjectSummary,
   AppRepository,
   EstimatorOption,
@@ -38,7 +40,7 @@ export interface SalesManagerOption {
 }
 
 export interface AdminProjectService {
-  list(actor: PublicUser, pagination: PaginationInput): Promise<PageResult<AdminProjectSummary>>;
+  list(actor: PublicUser, input: AdminProjectListInput): Promise<AdminProjectPage>;
   get(actor: PublicUser, projectId: string): Promise<AdminProjectSummary>;
   estimators(actor: PublicUser, search: string, pagination: PaginationInput): Promise<PageResult<EstimatorOption>>;
   salesManagers(actor: PublicUser, search: string, pagination: PaginationInput): Promise<PageResult<SalesManagerOption>>;
@@ -57,8 +59,8 @@ export function createAdminProjectService(
   };
 
   return {
-    async list(actor, pagination) {
-      return repository.pageAdminProjects(await readActor(actor), pagination);
+    async list(actor, input) {
+      return repository.pageAdminProjects(await readActor(actor), input);
     },
 
     async get(actor, projectId) {

@@ -68,6 +68,7 @@ import {
   type AccessRequestFilters,
   type AccessRequestRecord,
   type AdminProjectApprovedEstimateBaseline,
+  type AdminProjectStatusCounts,
   type AuditEventRecord,
   type AuditFilters,
   type EstimateSummaryRecord,
@@ -90,6 +91,7 @@ import {
   type NewDesignVersion,
   type ProjectHierarchy,
   type ProjectRecord,
+  type ProjectStatus,
   type ProjectAccessGrantRecord,
   type PasswordResetRequestRecord,
   type TaskEventRecord,
@@ -102,6 +104,7 @@ import {
 
 type PlainDocument = Record<string, any>;
 const MAX_DUPLICATE_KEY_TRANSACTION_ATTEMPTS = 2;
+const adminProjectNameCollator = new Intl.Collator("en", { sensitivity: "accent", numeric: false });
 
 export function createMongoRepository(session?: ClientSession): AppRepository {
   const executeSessionCompatibleReadPair = async <First, Second>(
@@ -1681,26 +1684,63 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return { items: documents.map(mapProject), total };
     },
 
-    async pageAdminProjects(actor, pagination) {
-      const filter = await projectFilterForUserInModule(actor, "projects");
-      if (filter === null) return { items: [], total: 0 };
-      const itemQuery = ProjectModel.find(filter)
-        .sort({ createdAt: -1, _id: -1 })
-        .skip(pagination.offset)
-        .limit(pagination.limit)
-        .lean();
-      const countQuery = ProjectModel.countDocuments(filter);
-      if (session) {
-        itemQuery.session(session);
-        countQuery.session(session);
-      }
-      const [documents, total] = await executeSessionCompatibleReadPair(
-        () => itemQuery.exec(),
+    async pageAdminProjects(actor, input) {
+      const sortByName = input.sort === "name_asc" || input.sort === "name_desc";
+      const scope = await projectFilterForUserInModule(actor, "projects");
+      const statusCounts: AdminProjectStatusCounts = {
+        all: 0, planning: 0, active: 0, on_hold: 0, completed: 0
+      };
+      if (scope === null) return { items: [], total: 0, statusCounts };
+      const search = input.search?.trim();
+      const pattern = search ? new RegExp(escapeRegex(search), "i") : null;
+      const filter = pattern ? {
+        $and: [scope, { $or: [{ name: pattern }, { clientName: pattern }, { location: pattern }] }]
+      } : scope;
+      const itemFilter = input.status ? { $and: [filter, { status: input.status }] } : filter;
+      const readItems = async () => {
+        if (!sortByName) {
+          const query = ProjectModel.find(itemFilter).collation({ locale: "simple" })
+            .sort({ createdAt: -1, _id: -1 }).skip(input.offset).limit(input.limit).lean();
+          if (session) query.session(session);
+          return query.exec();
+        }
+        // Database collation would also loosen authorization ID comparisons.
+        // Sort scoped names in memory, then hydrate only the selected page.
+        const namesQuery = ProjectModel.find(itemFilter).collation({ locale: "simple" })
+          .select({ _id: 1, name: 1 }).lean();
+        if (session) namesQuery.session(session);
+        const names = await namesQuery.exec();
+        names.sort((left, right) =>
+          (input.sort === "name_asc" ? 1 : -1) * adminProjectNameCollator.compare(String(left.name), String(right.name)) ||
+          Buffer.compare(Buffer.from(idOf(left)), Buffer.from(idOf(right))));
+        const selectedIds = names.slice(input.offset, input.offset + input.limit).map(idOf);
+        if (selectedIds.length === 0) return [];
+        const itemQuery = ProjectModel.find({ $and: [itemFilter, { _id: { $in: selectedIds } }] })
+          .collation({ locale: "simple" }).lean();
+        if (session) itemQuery.session(session);
+        const byId = new Map((await itemQuery.exec()).map((document) => [idOf(document), document]));
+        return selectedIds.flatMap((id) => {
+          const document = byId.get(id);
+          return document ? [document] : [];
+        });
+      };
+      const countQuery = ProjectModel.aggregate<{ _id: ProjectStatus; count: number }>([
+        { $match: filter },
+        { $group: { _id: "$status", count: { $sum: 1 } } }
+      ]).collation({ locale: "simple" });
+      if (session) countQuery.session(session);
+      const [documents, counts] = await executeSessionCompatibleReadPair(
+        readItems,
         () => countQuery.exec()
       );
+      for (const { _id, count } of counts) {
+        statusCounts[_id] = count;
+        statusCounts.all += count;
+      }
       return {
         items: await loadAdminProjectSummaries(documents, actor),
-        total
+        total: input.status ? statusCounts[input.status] : statusCounts.all,
+        statusCounts
       };
     },
 

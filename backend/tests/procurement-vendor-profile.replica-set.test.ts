@@ -4,11 +4,13 @@ import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowle
 import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeSubBasketModel } from "../src/models/AiEstimatorKnowledgeSubBasket.js";
 import { AiEstimatorKnowledgeDisplayOrderSequenceModel } from "../src/models/AiEstimatorKnowledgeDisplayOrderSequence.js";
+import { ProcurementVendorSaveCommandModel } from "../src/models/ProcurementVendorSaveCommand.js";
 import { createAiEstimatorKnowledgeReferenceService } from "../src/services/ai-estimator-knowledge-reference.service.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
-import { legacyVendorProfileFixture, vendorProfileFixture } from "./procurement-vendor-profile.fixture.js";
+import { legacyVendorProfileFixture, vendorBankAccountFixture, vendorProfileFixture } from "./procurement-vendor-profile.fixture.js";
+import { vendorSaveCommand } from "../src/services/procurement-vendor-save-command.js";
 
 const actor = { id: "vendor-test-admin", role: "super_admin" as const, name: "Synthetic Admin", email: "admin@example.invalid" };
 const actorGuard = { requireReadActor: async () => actor, requireMutationActor: async () => actor };
@@ -17,7 +19,7 @@ const audit = createAuditService(createMemoryRepository());
 const reference = createAiEstimatorKnowledgeReferenceService({ actorGuard, audit });
 beforeAll(async () => {
   replica = await startMongoReplicaSet("procurement-vendor-profile");
-  await Promise.all([AuditEventModel, AiEstimatorKnowledgeVendorModel, AiEstimatorKnowledgeBasketModel, AiEstimatorKnowledgeSubBasketModel, AiEstimatorKnowledgeDisplayOrderSequenceModel].map(model => model.syncIndexes()));
+  await Promise.all([AuditEventModel, AiEstimatorKnowledgeVendorModel, AiEstimatorKnowledgeBasketModel, AiEstimatorKnowledgeSubBasketModel, AiEstimatorKnowledgeDisplayOrderSequenceModel, ProcurementVendorSaveCommandModel].map(model => model.syncIndexes()));
 }, 120_000);
 beforeEach(async () => { await replica.clear(); });
 afterAll(async () => { await replica.stop(); });
@@ -29,6 +31,90 @@ async function fixture() {
 }
 
 describe("vendor profile shared persistence", () => {
+  it("requires organization on new profiles but permits legacy profile completion and old committed replays", async () => {
+    const { profile } = await fixture();
+    const { organizationType: _organizationType, bankAccount: _bankAccount, ...legacyProfile } = profile;
+    const oldInput = { name: "Legacy committed vendor", procurementProfile: legacyProfile, idempotencyKey: "legacy-committed-create" };
+    for (const procurementProfile of [legacyProfile, { ...legacyProfile, organizationType: null }]) {
+      await expect(reference.createMaster(actor, "vendors", { ...oldInput, procurementProfile })).rejects.toMatchObject({ code: "VALIDATION_ERROR", fields: { "procurementProfile.organizationType": expect.any(String) } });
+    }
+    expect(await AiEstimatorKnowledgeVendorModel.countDocuments()).toBe(0);
+    expect(await ProcurementVendorSaveCommandModel.countDocuments()).toBe(0);
+    const legacy = await reference.createMaster(actor, "vendors", { name: oldInput.name });
+    await reference.updateMaster(actor, "vendors", legacy.id, { expectedVersion: 1, procurementProfile: legacyProfile });
+    expect(await reference.getVendorDetail(actor, legacy.id)).toMatchObject({ procurementProfile: { organizationType: null, bankAccount: null }, procurementSummary: { profileComplete: true } });
+    const command = vendorSaveCommand(actor.id, null, oldInput)!;
+    await ProcurementVendorSaveCommandModel.create({ _id: command.id, fingerprint: command.fingerprint, result: legacy });
+    const auditCount = await AuditEventModel.countDocuments();
+    expect(await reference.createMaster(actor, "vendors", oldInput)).toEqual(legacy);
+    expect(await AiEstimatorKnowledgeVendorModel.countDocuments()).toBe(1);
+    expect(await AuditEventModel.countDocuments()).toBe(auditCount);
+  });
+  it("roundtrips private banking details, preserves omitted fields, and explicitly clears them", async () => {
+    const { profile } = await fixture();
+    const bankAccount = vendorBankAccountFixture();
+    const input = { name: "Private banking vendor", procurementProfile: { ...profile, bankAccount: { ...bankAccount, ifscCode: " synb0123456 ", accountNumber: ` ${bankAccount.accountNumber} ` } }, idempotencyKey: "create-private-bank" };
+    const created = await reference.createMaster(actor, "vendors", input);
+    expect((await reference.getVendorDetail(actor, created.id)).procurementProfile).toMatchObject({ organizationType: "company", bankAccount });
+    const persisted = await AiEstimatorKnowledgeVendorModel.findById(created.id).lean();
+    expect(persisted?.procurementProfile.bankAccount).toEqual(bankAccount);
+    const { organizationType: _organizationType, bankAccount: _bankAccount, ...olderClient } = profile;
+    const updated = await reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 1, procurementProfile: { ...olderClient, position: "Director" }, idempotencyKey: "preserve-private-bank" });
+    expect((await reference.getVendorDetail(actor, created.id)).procurementProfile).toMatchObject({ organizationType: "company", bankAccount, position: "Director" });
+    const page = await reference.listMasters(actor, "vendors", {}, { limit: 20, offset: 0 });
+    const publicPayloads = JSON.stringify([created, updated, page, await AuditEventModel.find().lean(), await ProcurementVendorSaveCommandModel.find().lean()]);
+    for (const value of Object.values(bankAccount)) if (value) expect(publicPayloads).not.toContain(value);
+    expect(created).not.toHaveProperty("procurementProfile");
+    expect(page.items[0]?.procurementSummary).toMatchObject({ profileComplete: true });
+    await reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 2, procurementProfile: { ...olderClient, organizationType: null, bankAccount: null } });
+    expect(await reference.getVendorDetail(actor, created.id)).toMatchObject({ procurementProfile: { organizationType: null, bankAccount: null }, procurementSummary: { profileComplete: true } });
+  });
+  it("normalizes legacy missing additions without dropping identity, verification or bank data on older edits", async () => {
+    const { profile } = await fixture();
+    const created = await reference.createMaster(actor, "vendors", { name: "Stored legacy banking fields", procurementProfile: { ...profile, currentAddressVerifiedPhysically: true } });
+    await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: created.id }, { $unset: { "procurementProfile.organizationType": "", "procurementProfile.bankAccount": "" } });
+    const detail = await reference.getVendorDetail(actor, created.id);
+    expect(detail).toMatchObject({ procurementProfile: { organizationType: null, bankAccount: null, email: profile.email, physicalAddressVerifiedById: actor.id, currentAddressVerifiedPhysically: true }, procurementSummary: { profileComplete: true } });
+    const { organizationType: _organizationType, bankAccount: _bankAccount, ...legacyProfile } = profile;
+    await reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 1, procurementProfile: { ...legacyProfile, currentAddressVerifiedPhysically: true } });
+    expect((await reference.getVendorDetail(actor, created.id)).procurementProfile).toMatchObject({ organizationType: null, bankAccount: null, physicalAddressVerifiedAt: detail.procurementProfile?.physicalAddressVerifiedAt });
+  });
+  it("audits normalized bank changes by field name only and rejects invalid writes without mutation", async () => {
+    const { profile } = await fixture();
+    const bankAccount = vendorBankAccountFixture();
+    const created = await reference.createMaster(actor, "vendors", { name: "Bank change audit", procurementProfile: { ...profile, bankAccount } });
+    const changedFields = async (version: number) => (await AuditEventModel.findOne({ entityId: created.id, action: "ai_estimator_knowledge_master_updated", "newValues.version": version }).lean())?.newValues.changedProfileFields;
+    await reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 1, procurementProfile: { ...profile, bankAccount: { ...bankAccount, ifscCode: " synb0123456 " } } });
+    expect(await changedFields(2)).toEqual([]);
+    const changedBank = { ...bankAccount, accountNumber: "0098765432101234" };
+    await reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 2, procurementProfile: { ...profile, organizationType: "firm", bankAccount: changedBank } });
+    expect(await changedFields(3)).toEqual(["organizationType", "bankAccount"]);
+    const before = await reference.getVendorDetail(actor, created.id);
+    const auditCount = await AuditEventModel.countDocuments();
+    for (const change of [{ organizationType: "invalid" }, { bankAccount: { ...bankAccount, accountNumber: 123456 } }, { bankAccount: { ...bankAccount, ifscCode: "invalid" } }, { bankAccount: { ...bankAccount, unknownField: "private-value" } }]) {
+      await expect(reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 3, procurementProfile: { ...profile, ...change } as typeof profile })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    }
+    expect(await reference.getVendorDetail(actor, created.id)).toEqual(before);
+    expect(await AuditEventModel.countDocuments()).toBe(auditCount);
+    const events = JSON.stringify(await AuditEventModel.find({ entityId: created.id }).lean());
+    for (const value of [...Object.values(bankAccount), changedBank.accountNumber]) if (value) expect(events).not.toContain(value);
+  });
+  it("replays equivalent bank saves, rejects changed contents and preserves optimistic concurrency", async () => {
+    const { profile } = await fixture();
+    const bankAccount = vendorBankAccountFixture();
+    const input = { name: "Bank replay vendor", procurementProfile: { ...profile, bankAccount }, idempotencyKey: "bank-replay-create" };
+    const created = await reference.createMaster(actor, "vendors", input);
+    expect(await reference.createMaster(actor, "vendors", { ...input, procurementProfile: { ...profile, bankAccount: { ...bankAccount, ifscCode: " synb0123456 ", accountNumber: ` ${bankAccount.accountNumber} ` } } })).toEqual(created);
+    await expect(reference.createMaster(actor, "vendors", { ...input, procurementProfile: { ...profile, organizationType: "individual", bankAccount } })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    const update = { expectedVersion: 1, procurementProfile: { ...profile, bankAccount }, idempotencyKey: "bank-replay-update" };
+    const updated = await reference.updateMaster(actor, "vendors", created.id, update);
+    expect(await reference.updateMaster(actor, "vendors", created.id, { ...update, procurementProfile: { ...profile, bankAccount: { ...bankAccount, bankName: ` ${bankAccount.bankName} ` } } })).toEqual(updated);
+    await expect(reference.updateMaster(actor, "vendors", created.id, { ...update, procurementProfile: { ...profile, bankAccount: null } })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    await expect(reference.updateMaster(actor, "vendors", created.id, { ...update, idempotencyKey: "bank-stale-update", procurementProfile: { ...profile, bankAccount: null } })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    expect(await reference.getVendorDetail(actor, created.id)).toMatchObject({ version: 2, procurementProfile: { bankAccount } });
+    expect(await AiEstimatorKnowledgeVendorModel.countDocuments()).toBe(1);
+    expect(await AuditEventModel.countDocuments({ entityId: created.id })).toBe(2);
+  });
   it("returns global directory counts independently of filters and pages, then refreshes after verification and archive", async () => {
     const { profile, parent, child } = await fixture();
     const verified = { ...profile, currentAddressVerifiedPhysically: true };
@@ -121,7 +207,7 @@ describe("vendor profile shared persistence", () => {
     expect((await reference.getVendorDetail(actor, created.id)).procurementProfile?.executionType).toEqual(["material_labour"]);
     await expect(reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 1, procurementProfile: profile })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
     await reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 2, procurementProfile: { ...profile, vendorType: "supplier", executionType: null, supplier: false } });
-    expect((await reference.getVendorDetail(actor, created.id)).procurementProfile).toMatchObject({ vendorType: "supplier", executionType: null, supplier: false });
+    expect((await reference.getVendorDetail(actor, created.id)).procurementProfile).toMatchObject({ vendorType: "supplier", executionType: null, supplier: true });
     await reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 3, procurementProfile: { ...profile, executionType: ["labor", "material_labour"] } });
     expect((await reference.getVendorDetail(actor, created.id)).procurementProfile).toMatchObject({ vendorType: "execution", executionType: ["labor", "material_labour"], supplier: null });
   });
@@ -172,6 +258,33 @@ describe("vendor profile shared persistence", () => {
     await reference.updateMaster(actor, "vendors", legacy.id, { expectedVersion: 2, description: "Legacy metadata edit", status: "inactive" });
     expect((await reference.getVendorDetail(actor, legacy.id)).procurementProfile).toMatchObject(profile);
     await expect(reference.updateMaster(actor, "vendors", legacy.id, { expectedVersion: 1, procurementProfile: profile })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+  });
+  it("preserves removed Reference and Description while saving normalized GST and Supplier fields", async () => {
+    const { profile } = await fixture();
+    const created = await reference.createMaster(actor, "vendors", { name: "Registration fields", description: "Existing directory text", procurementProfile: profile });
+    const { reference: _reference, supplier: _supplier, ...input } = profile;
+    await reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 1, procurementProfile: { ...input, vendorType: "supplier", executionType: null, gstRegistered: true, gstNumber: " 29abcde1234f1z5 " } });
+    expect(await reference.getVendorDetail(actor, created.id)).toMatchObject({ description: "Existing directory text", procurementProfile: { reference: profile.reference, gstNumber: "29ABCDE1234F1Z5", supplier: true } });
+    await expect(reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 2, procurementProfile: { ...input, gstRegistered: true, gstNumber: null } })).rejects.toMatchObject({ code: "VALIDATION_ERROR", fields: { "procurementProfile.gstNumber": expect.any(String) } });
+    await reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 2, procurementProfile: { ...input, gstNumber: "draft-number", gstRegistered: false } });
+    expect((await reference.getVendorDetail(actor, created.id)).procurementProfile).toMatchObject({ gstNumber: null, reference: profile.reference });
+    const newVendor = await reference.createMaster(actor, "vendors", { name: "No hidden fields", procurementProfile: input });
+    expect(await reference.getVendorDetail(actor, newVendor.id)).toMatchObject({ description: null, procurementProfile: { reference: null } });
+  });
+  it("retains legacy registration Yes details without evidence, physical verification, and directory counts", async () => {
+    const { profile, parent, child } = await fixture();
+    const created = await reference.createMaster(actor, "vendors", { name: "Legacy registrations", procurementProfile: { ...profile, currentAddressVerifiedPhysically: true } });
+    await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: created.id }, { $set: { "procurementProfile.gstRegistered": true, "procurementProfile.msmeRegistered": true }, $unset: { "procurementProfile.gstNumber": "" } });
+    const detail = await reference.getVendorDetail(actor, created.id);
+    expect(detail).toMatchObject({ msmeCertificate: null, procurementProfile: { gstNumber: null, gstRegistered: true, msmeRegistered: true, email: profile.email, currentAddressVerifiedPhysically: true, physicalAddressVerifiedById: actor.id }, procurementSummary: { profileComplete: false, mainBasket: { id: parent.id }, subBasket: { id: child.id }, currentAddressVerifiedPhysically: true } });
+    const page = await reference.listMasters(actor, "vendors", { includeDirectoryOverview: true }, { limit: 10, offset: 0 });
+    expect(page.directoryOverview).toMatchObject({ underReviewVendors: 0 });
+    expect(page.items[0]?.procurementSummary).toMatchObject({ profileComplete: false, vendorType: "execution" });
+    expect(JSON.stringify(page)).not.toContain("gstNumber");
+    expect(JSON.stringify(page)).not.toContain("msmeCertificate");
+    await reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 1, description: "Metadata only" });
+    expect((await reference.getVendorDetail(actor, created.id)).procurementProfile).toEqual(detail.procurementProfile);
+    await expect(reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 2, procurementProfile: { ...profile, gstRegistered: true } })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
   it("stamps verification, resets changed address, and requires explicit reconfirmation", async () => {
     const { profile } = await fixture();

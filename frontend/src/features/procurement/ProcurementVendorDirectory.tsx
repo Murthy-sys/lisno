@@ -16,7 +16,7 @@ import type { KnowledgeMaster, KnowledgeMasterStatus } from "../ai-estimator-kno
 import { ProcurementVendorEditor } from "./ProcurementVendorEditor";
 import { procurementError } from "./procurementPresentation";
 import { DirectoryIcon, VendorDirectoryHeader, VendorDirectoryOverview } from "./VendorDirectoryOverview";
-import { VendorDirectoryPagination, VendorDirectoryTable } from "./VendorDirectoryTable";
+import { VendorDirectoryPagination, VendorDirectoryTable, type VendorDirectoryPageSize } from "./VendorDirectoryTable";
 import "./vendorDirectory.css";
 
 const emptyFilters = { search: "", status: "" as KnowledgeMasterStatus | "", vendorType: "" as "" | "execution" | "supplier", mainBasketId: "", subBasketId: "" };
@@ -33,6 +33,7 @@ export function ProcurementVendorDirectory() {
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState(emptyFilters);
   const [offset, setOffset] = useState(0);
+  const [pageSize, setPageSize] = useState<VendorDirectoryPageSize>(10);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editor, setEditor] = useState<{ vendor: KnowledgeMaster; readOnly: boolean } | "new" | null>(null);
   const [archive, setArchive] = useState<KnowledgeMaster | null>(null);
@@ -41,7 +42,7 @@ export function ProcurementVendorDirectory() {
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const baskets = useQuery({ queryKey: [...knowledgeQueryKeys.basketLists(), "directory-catalog"], queryFn: () => collectAllKnowledgeMasterPages((page) => listKnowledgeBaskets({ ...page, includeArchived: true }), "Main Basket"), enabled: canRead });
   const subs = useQuery({ queryKey: [...knowledgeQueryKeys.subBasketLists(filters.mainBasketId), "directory-catalog"], queryFn: () => collectAllKnowledgeMasterPages((page) => listKnowledgeSubBaskets(filters.mainBasketId, page), "Sub Basket"), enabled: canRead && Boolean(filters.mainBasketId) });
-  const params = { vendorType: filters.vendorType || undefined, mainBasketId: filters.mainBasketId || undefined, subBasketId: filters.subBasketId || undefined, search: filters.search || undefined, status: filters.status || undefined, includeArchived: filters.status === "archived" || undefined, offset, limit: 5 };
+  const params = { vendorType: filters.vendorType || undefined, mainBasketId: filters.mainBasketId || undefined, subBasketId: filters.subBasketId || undefined, search: filters.search || undefined, status: filters.status || undefined, includeArchived: filters.status === "archived" || undefined, offset, limit: pageSize };
   const query = useQuery({ queryKey: knowledgeQueryKeys.masterList("vendors", params), queryFn: () => listKnowledgeMasters("vendors", params), enabled: canRead });
   const overview = useQuery({ queryKey: knowledgeQueryKeys.vendorDirectoryOverview(), queryFn: () => listKnowledgeMasters("vendors", { includeDirectoryOverview: true, limit: 1, offset: 0 }), enabled: canRead });
   const mutation = useMutation({
@@ -61,14 +62,15 @@ export function ProcurementVendorDirectory() {
   }, [visibleIds]);
   useEffect(() => {
     if (total !== undefined && !query.isError && !query.isFetching && offset >= total && offset > 0) {
-      setOffset(Math.max(0, Math.ceil(total / 5) - 1) * 5); setSelected(new Set());
+      setOffset(Math.max(0, Math.ceil(total / pageSize) - 1) * pageSize); setSelected(new Set());
     }
-  }, [total, offset, query.isError, query.isFetching]);
+  }, [total, offset, pageSize, query.isError, query.isFetching]);
   function changeFilters(next: Partial<typeof filters>) { setFilters((current) => ({ ...current, ...next })); setOffset(0); setSelected(new Set()); }
   function searchChanged(value: string) { setSearch(value); cancelSearch(); searchTimer.current = setTimeout(() => { changeFilters({ search: value.trim() }); searchTimer.current = null; }, 300); }
   function apply(event: FormEvent) { event.preventDefault(); cancelSearch(); changeFilters({ search: search.trim() }); }
   function reset() { cancelSearch(); setSearch(""); setFilters(emptyFilters); setOffset(0); setSelected(new Set()); }
   function pageChanged(next: number) { setOffset(next); setSelected(new Set()); }
+  function pageSizeChanged(next: VendorDirectoryPageSize) { setPageSize(next); setOffset(0); setSelected(new Set()); }
   if (!canRead || denied(query.error) || denied(overview.error) || denied(baskets.error) || denied(subs.error)) return <PageState state="error" message="You do not have permission to configure vendors." />;
   return <div className="vendor-directory">
     <VendorDirectoryHeader />
@@ -88,9 +90,8 @@ export function ProcurementVendorDirectory() {
       {selected.size ? <div className="vendor-directory__selected"><span role="status">{selected.size} {selected.size === 1 ? "vendor" : "vendors"} selected on this page</span><Button variant="quiet" onClick={() => setSelected(new Set())}>Clear selection</Button></div> : null}
       {query.isPending ? <PageState state="loading" message="Loading vendors…" /> : query.isError ? <PageState state="error" message={procurementError(query.error, "Vendors could not be loaded.")} action={{ label: "Retry vendors", onAction: () => void query.refetch() }} /> : !query.data.items.length ? <PageState state="empty" message={Object.values(filters).some(Boolean) ? "No vendors match this view. Adjust the filters or reset your search." : "No vendors configured yet. Add a vendor to get started."} /> : <VendorDirectoryTable items={query.data.items} selected={selected} onSelection={setSelected} canUpdate={canUpdate} canArchive={canArchive} onEdit={(vendor) => setEditor({ vendor, readOnly: false })} onView={(vendor) => setEditor({ vendor, readOnly: true })} onArchive={(vendor) => { setArchive(vendor); setReason(""); mutation.reset(); }} />}
       {query.isFetching && !query.isPending ? <p className="vendor-directory__notice" role="status">Refreshing vendors…</p> : null}
-      {!query.isError && query.data ? <VendorDirectoryPagination offset={offset} count={query.data.items.length} total={query.data.pagination.total} busy={query.isFetching} onPage={pageChanged} /> : null}
+      {!query.isError && query.data ? <VendorDirectoryPagination offset={offset} count={query.data.items.length} total={query.data.pagination.total} pageSize={pageSize} busy={query.isFetching} onPage={pageChanged} onPageSize={pageSizeChanged} /> : null}
     </section>
-    <aside className="vendor-directory__performance"><DirectoryIcon name="chart" /><div><strong>Vendor performance</strong><p>Vendor KPI and performance recommendations are not available yet.</p></div></aside>
     {editor && (editor === "new" ? canCreate : canRead) ? <ProcurementVendorEditor key={editor === "new" ? "new" : `${editor.vendor.id}-${editor.readOnly}`} canCreateBasket={canCreate && (editor === "new" || !editor.readOnly)} canUpdate={canUpdate && (editor === "new" || !editor.readOnly)} existing={editor === "new" ? undefined : editor.vendor} onClose={() => setEditor(null)} onSaved={(vendor) => setNotice(`${vendor.name} saved.`)} /> : null}
     {archive && canArchive ? <Dialog title="Archive vendor?" eyebrow="Vendor directory" description={`${archive.name} will no longer be available for new selections. Existing project records remain available.`} onClose={() => setArchive(null)} busy={mutation.isPending} role="alertdialog">
       <Field id={`${id}-reason`} label="Reason" required>{(props) => <Textarea {...props} disabled={mutation.isPending} maxLength={1000} value={reason} onChange={(event) => setReason(event.target.value)} />}</Field>

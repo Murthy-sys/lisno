@@ -1,3 +1,5 @@
+import { ProcurementVendorCertificateUploadModel, ProcurementVendorCertificateCleanupModel } from "../src/models/ProcurementVendorCertificateUpload.js";
+import { ProcurementVendorSaveCommandModel } from "../src/models/ProcurementVendorSaveCommand.js";
 import { ProjectProcurementItemModel } from "../src/models/ProjectProcurementItem.js";
 import { ChatNotificationModel } from "../src/models/ChatNotification.js";
 import { ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel } from "../src/models/ProjectChat.js";
@@ -511,6 +513,9 @@ describe("production server bootstrap", () => {
       events.push("ai-estimator-knowledge-vendor-index");
       return AiEstimatorKnowledgeVendorModel as never;
     });
+    for (const model of [ProcurementVendorCertificateUploadModel, ProcurementVendorCertificateCleanupModel, ProcurementVendorSaveCommandModel]) {
+      vi.spyOn(model, "init").mockImplementation(async () => { events.push(model.modelName + "-index"); return model as never; });
+    }
     vi.spyOn(AiEstimatorKnowledgeTaxRuleModel, "init").mockImplementation(async () => {
       events.push("ai-estimator-knowledge-tax-rule-index");
       return AiEstimatorKnowledgeTaxRuleModel as never;
@@ -584,6 +589,9 @@ describe("production server bootstrap", () => {
       "ai-estimator-knowledge-price-version-index",
       "ai-estimator-knowledge-uom-index",
       "ai-estimator-knowledge-vendor-index",
+      "ProcurementVendorCertificateUpload-index",
+      "ProcurementVendorCertificateCleanup-index",
+      "ProcurementVendorSaveCommand-index",
       "ai-estimator-knowledge-tax-rule-index",
       "ai-estimator-knowledge-tax-version-index",
       "ai-estimator-knowledge-priority-index",
@@ -1024,12 +1032,14 @@ describe("production server bootstrap", () => {
     expect(connect).not.toHaveBeenCalled();
   });
 
-  it("runs receipt, chat and vendor photo cleanup without overlap and drains them on shutdown", async () => {
+  it("runs receipt, chat, vendor photo and certificate cleanup without overlap and drains them on shutdown", async () => {
     const server = fakeServer();
     let tick: (() => void) | undefined;
     let releaseRun: (() => void) | undefined;
     let releaseChat: (() => void) | undefined;
     let releaseVendorPhotos: (() => void) | undefined;
+    let releaseCertificates: (() => void) | undefined;
+    const cleanupCertificates = vi.fn(() => new Promise<void>(resolve => { releaseCertificates = resolve; }));
     const cleanupChat = vi.fn(() => new Promise<void>(resolve => { releaseChat = resolve; }));
     const cleanupVendorPhotos = vi.fn(() => new Promise<void>(resolve => { releaseVendorPhotos = resolve; }));
     const maintenanceRunner = vi.fn(
@@ -1057,7 +1067,8 @@ describe("production server bootstrap", () => {
           return server;
         }),
         cleanupProjectChatAttachments: cleanupChat,
-        cleanupProcurementVendorPhotos: cleanupVendorPhotos
+        cleanupProcurementVendorPhotos: cleanupVendorPhotos,
+        cleanupProcurementVendorCertificates: cleanupCertificates
       }),
       receiptMaintenanceIntervalMs: 30_000,
       receiptMaintenanceRunner: maintenanceRunner,
@@ -1075,6 +1086,7 @@ describe("production server bootstrap", () => {
     expect(maintenanceRunner).toHaveBeenCalledOnce();
     expect(cleanupChat).toHaveBeenCalledOnce();
     expect(cleanupVendorPhotos).toHaveBeenCalledOnce();
+    expect(cleanupCertificates).toHaveBeenCalledOnce();
 
     let stopped = false;
     const stopping = runtime.stop().then(() => {
@@ -1091,6 +1103,10 @@ describe("production server bootstrap", () => {
     expect(stopped).toBe(false);
     expect(disconnect).not.toHaveBeenCalled();
     releaseVendorPhotos?.();
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    expect(disconnect).not.toHaveBeenCalled();
+    releaseCertificates?.();
     await stopping;
     expect(disconnect).toHaveBeenCalledOnce();
     tick?.();

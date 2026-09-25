@@ -1,3 +1,5 @@
+import { ProcurementVendorCertificateUploadModel, ProcurementVendorCertificateCleanupModel } from "./ProcurementVendorCertificateUpload.js";
+import { ProcurementVendorSaveCommandModel } from "./ProcurementVendorSaveCommand.js";
 import { ProjectProcurementItemModel } from "./ProjectProcurementItem.js";
 import { ChatNotificationModel } from "./ChatNotification.js";
 import { prepareEstimateClientReviewIndexes } from "./EstimateClientReviewRound.js";
@@ -54,6 +56,9 @@ export async function initializeApplicationIndexes(): Promise<void> {
   await AiEstimatorKnowledgePriceVersionModel.init();
   await AiEstimatorKnowledgeUomModel.init();
   await AiEstimatorKnowledgeVendorModel.init();
+  await ProcurementVendorCertificateUploadModel.init();
+  await ProcurementVendorCertificateCleanupModel.init();
+  await ProcurementVendorSaveCommandModel.init();
   await AiEstimatorKnowledgeTaxRuleModel.init();
   await AiEstimatorKnowledgeTaxVersionModel.init();
   await AiEstimatorKnowledgePriorityModel.init();

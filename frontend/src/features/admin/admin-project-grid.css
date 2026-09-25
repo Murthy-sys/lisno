@@ -1,416 +1,270 @@
-/*
- * Admin projects: card grid view (default) and grid/list toggle.
- * The list view keeps its existing styles in access-administration.css and admin-home.css.
- * Palette harmonises with the sage/olive shell.
- */
-
-.admin-projects {
-  --admin-projects-ink: #1f2a1c;
+/* Projects collection. All treatments are scoped to this page. */
+.admin-projects.access-administration {
+  --admin-projects-ink: #252d20;
   --admin-projects-olive: #3d4a32;
-  --admin-projects-muted: #5f6a58;
-  --admin-projects-hairline: #e3e5dc;
-  --admin-projects-bone: #e7ebe1;
-  --admin-projects-bone-light: #f1f3ec;
-  --admin-projects-card: #ffffff;
-  --admin-projects-focus: var(--focus-ring, 0 0 0 3px #8b78fa);
+  --admin-projects-muted: #62685b;
+  --admin-projects-hairline: #dcded3;
+  --admin-projects-bone: #e5e6dd;
+  --admin-projects-card: #fcfbf8;
+  inline-size: 100%;
+  gap: 14px;
 }
 
-.admin-projects .ui-page-header__title {
-  font-family: "Fraunces", Georgia, serif;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+.admin-projects__hero {
+  display: grid;
+  gap: 26px;
+  min-inline-size: 0;
+  padding: 20px 0 12px;
+  background-color: #f5f4ee;
+  background-image:
+    linear-gradient(180deg, transparent 45%, rgb(245 244 238 / 12%) 70%, rgb(245 244 238 / 72%) 100%),
+    linear-gradient(90deg, #f5f4ee 0%, rgb(245 244 238 / 98%) 25%, rgb(245 244 238 / 82%) 43%, rgb(245 244 238 / 20%) 68%, rgb(245 244 238 / 6%) 100%),
+    url("../../assets/projects-living-room.webp");
+  background-repeat: no-repeat;
+  background-position: center, center, right bottom;
+  background-size: cover, cover, 75% auto;
+}
+
+.admin-projects .admin-projects__hero .ui-page-header {
+  margin: 0;
+  min-block-size: 116px;
+  align-items: center;
+}
+
+.ui-app-shell .admin-projects .admin-projects__hero .ui-page-header__title {
+  font-family: var(--font-interface, "Poppins", sans-serif);
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
   color: var(--admin-projects-ink);
 }
 
-/* Toolbar */
-
-.admin-projects__toolbar {
+.admin-projects__hero .ui-page-header__description { color: #535b4d; }
+.ui-app-shell .admin-projects .admin-projects__hero .ui-page-header__actions .ui-button { border-radius: 3px; box-shadow: none !important; transform: none; transition: none; }
+.admin-projects__hero .ui-button:focus-visible { outline: 2px solid var(--admin-projects-olive); outline-offset: 3px; }
+.admin-projects__toolbar,
+.admin-projects__tools,
+.admin-projects__statuses {
   display: flex;
-  justify-content: flex-end;
-  margin-block-end: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  min-inline-size: 0;
 }
-
-.admin-projects__view-toggle {
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--admin-projects-hairline);
-  border-radius: 10px;
-  background: var(--admin-projects-card);
+.admin-projects__toolbar {
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding-block: 4px;
 }
-
+.admin-projects__statuses { gap: 2px; }
+.admin-projects__tools { gap: 8px; margin-inline-start: auto; }
+.admin-projects__status-button,
+.admin-projects__filter-button,
 .admin-projects__view-button {
-  display: inline-grid;
-  place-items: center;
-  inline-size: 36px;
-  block-size: 32px;
-  padding: 0;
-  border: 0;
-  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-block-size: 44px;
+  min-inline-size: 44px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 3px;
   background: transparent;
   color: var(--admin-projects-muted);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
   cursor: pointer;
-  transition: background-color 150ms ease, color 150ms ease;
 }
-
-.admin-projects__view-button svg {
-  inline-size: 18px;
-  block-size: 18px;
+.admin-projects__status-button[aria-pressed="true"] {
+  background: var(--admin-projects-olive);
+  border-color: var(--admin-projects-olive);
+  color: #fff;
 }
-
-.admin-projects__view-button:hover {
-  background: var(--admin-projects-bone-light);
-  color: var(--admin-projects-ink);
+.admin-projects__status-count {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+  font-weight: 500;
 }
-
+.admin-projects__view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--admin-projects-hairline);
+  border-radius: 3px;
+  background: var(--admin-projects-card);
+}
+.admin-projects__view-button { padding: 0; }
 .admin-projects__view-button[aria-pressed="true"] {
   background: var(--admin-projects-olive);
-  color: #ffffff;
+  color: #fff;
 }
-
-.admin-projects__view-button:focus-visible {
-  outline: none;
-  box-shadow: var(--admin-projects-focus);
+.admin-projects__filter-button {
+  border-color: var(--admin-projects-hairline);
+  background: var(--admin-projects-card);
+  color: var(--admin-projects-ink);
 }
-
-/* Grid */
-
+.admin-projects__filter-button[aria-expanded="true"] { border-color: var(--admin-projects-olive); }
+.admin-projects__tools svg { inline-size: 18px; block-size: 18px; flex: none; }
+.admin-projects__sort {
+  display: inline-flex;
+  align-items: center;
+  min-inline-size: 0;
+  gap: 6px;
+  padding-inline-start: 10px;
+  border: 1px solid var(--admin-projects-hairline);
+  border-radius: 3px;
+  background: var(--admin-projects-card);
+  color: var(--admin-projects-muted);
+  font-size: 0.8125rem;
+}
+.admin-projects__sort select {
+  min-block-size: 44px;
+  max-inline-size: 100%;
+  border: 0;
+  padding: 8px 8px 8px 0;
+  border-radius: 0;
+  background-color: transparent;
+  color: var(--admin-projects-ink);
+  font: inherit;
+  cursor: pointer;
+}
+.admin-projects__filters {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--admin-projects-hairline);
+  background: #f5f4ee;
+}
+.admin-projects__filters > label { font-size: 0.8125rem; font-weight: 600; }
+.admin-projects__search-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.admin-projects__search-row input {
+  flex: 1 1 240px;
+  min-inline-size: 0;
+  min-block-size: 44px;
+  padding: 8px 12px;
+  border: 1px solid #aeb4a4;
+  border-radius: 3px;
+  background: var(--admin-projects-card);
+  color: var(--admin-projects-ink);
+  font: inherit;
+}
+.admin-projects__search-summary,
+.admin-projects__updating { margin: 0; color: var(--admin-projects-muted); font-size: 0.8125rem; overflow-wrap: anywhere; }
+.admin-projects__updating { padding-block: 4px; }
+.admin-projects__collection { container-type: inline-size; min-inline-size: 0; }
 .admin-project-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 20px;
-  margin: 0 0 20px;
+  align-items: start;
+  gap: 12px;
+  margin: 0;
   padding: 0;
   list-style: none;
   min-inline-size: 0;
 }
-
-@media (min-width: 640px) {
-  .admin-project-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 1024px) {
-  .admin-project-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 1280px) {
-  .admin-project-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-
-.admin-project-grid__item {
-  display: flex;
-  min-inline-size: 0;
-}
-
-/* Loading state: let the skeleton grid fill the page instead of centring. */
-.admin-projects .ui-page-state--loading:has(.admin-project-grid--skeleton) {
-  place-content: start stretch;
-}
-
-.admin-projects .ui-page-state--loading .ui-state__skeleton:has(.admin-project-grid--skeleton) {
-  min-inline-size: 0;
-}
-
-/* Card */
-
+@container (min-width: 540px) { .admin-project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (min-width: 800px) { .admin-project-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@container (min-width: 1040px) { .admin-project-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.admin-project-grid__item { min-inline-size: 0; }
 .admin-project-tile {
-  display: flex;
-  flex-direction: column;
   inline-size: 100%;
   min-inline-size: 0;
   overflow: hidden;
   border: 1px solid var(--admin-projects-hairline);
-  border-radius: 12px;
+  border-radius: 3px;
   background: var(--admin-projects-card);
   color: var(--admin-projects-ink);
-  box-shadow: 0 1px 2px rgba(31, 42, 28, 0.04);
-  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
 }
-
-.admin-project-tile:not(.admin-project-tile--skeleton):hover {
-  transform: translateY(-2px);
-  border-color: #d3d8c8;
-  box-shadow: 0 10px 24px -12px rgba(31, 42, 28, 0.22);
-}
-
-.admin-project-tile:focus-within {
-  border-color: var(--admin-projects-olive);
-}
-
+.admin-project-tile__image { position: relative; }
 .admin-project-tile__media {
   display: block;
-  flex: none;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 2 / 1;
   inline-size: 100%;
   block-size: auto;
-  max-inline-size: 100%;
   object-fit: cover;
+  object-position: center;
   background: var(--admin-projects-bone);
 }
-
-/* Shimmer only on the loading skeleton's grey block, never on the real photo. */
-.admin-project-tile--skeleton .admin-project-tile__media {
-  background: linear-gradient(
-    100deg,
-    var(--admin-projects-bone) 30%,
-    var(--admin-projects-bone-light) 50%,
-    var(--admin-projects-bone) 70%
-  );
-  background-size: 300% 100%;
-  animation: admin-project-shimmer 1.8s ease-in-out infinite;
-}
-
-@keyframes admin-project-shimmer {
-  from {
-    background-position: 100% 0;
-  }
-  to {
-    background-position: 0 0;
-  }
-}
-
-.admin-project-tile__body {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 6px;
-  padding: 12px 14px;
-  min-inline-size: 0;
-}
-
 .admin-project-tile__status {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 10px;
+  position: absolute;
+  inset-inline-start: 10px;
+  inset-block-start: 10px;
+  max-inline-size: calc(100% - 20px);
+  padding: 4px 10px;
+  border: 1px solid #d6d9cd;
   border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
+  background: #f7f7f1;
+  color: #3e4835;
+  font-size: 0.6875rem;
+  font-weight: 700;
   line-height: 1.4;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
-
-/* Chip tones: text colours meet WCAG AA (>= 4.5:1) on their fills. */
-.admin-project-tile__status[data-tone="info"] {
-  background: #e6effb;
-  color: #1d4f91;
-}
-
-.admin-project-tile__status[data-tone="neutral"] {
-  background: #eceee8;
-  color: #4a5245;
-}
-
-.admin-project-tile__status[data-tone="success"] {
-  background: #e3f1e4;
-  color: #256b33;
-}
-
-.admin-project-tile__status[data-tone="danger"] {
-  background: #fbe7e5;
-  color: #a1281d;
-}
-
-.admin-project-tile__status[data-tone="complete"] {
-  background: #dff1ef;
-  color: #17655d;
-}
-
-.admin-project-tile__link {
-  display: grid;
-  gap: 4px;
-  min-inline-size: 0;
-  border-radius: 6px;
-  color: inherit;
-  text-decoration: none;
-}
-
-.admin-project-tile__link:focus-visible {
-  outline: none;
-  box-shadow: var(--admin-projects-focus);
-}
-
+.admin-project-tile__status[data-tone="info"] { background: #f3f0e5; color: #595029; }
+.admin-project-tile__status[data-tone="success"],
+.admin-project-tile__status[data-tone="complete"] { background: #e9eedf; color: #374823; }
+.admin-project-tile__status[data-tone="danger"] { background: #f2e9e1; color: #754326; }
+.admin-project-tile__body { display: grid; gap: 10px; padding: 12px; min-inline-size: 0; }
+.admin-project-tile__link { display: grid; gap: 9px; min-inline-size: 0; color: inherit; text-decoration: none; }
 .admin-project-tile__title {
   margin: 0;
   min-inline-size: 0;
   overflow: hidden;
   font-size: 1rem;
   font-weight: 700;
-  line-height: 1.3;
-  color: var(--admin-projects-ink);
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.admin-project-tile__link:hover .admin-project-tile__title {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.admin-project-tile__meta {
-  display: grid;
-  gap: 2px;
-  margin: 0;
-}
-
-.admin-project-tile__meta dd {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-  min-inline-size: 0;
-  font-size: 0.8125rem;
-  line-height: 1.35;
-  color: var(--admin-projects-muted);
-}
-
-.admin-project-tile__meta dd span {
-  min-inline-size: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.admin-project-tile__meta svg {
-  flex: none;
-  inline-size: 14px;
-  block-size: 14px;
-  color: var(--admin-projects-olive);
-}
-
-.admin-project-tile__next-action {
-  margin: 0;
-  font-size: 0.75rem;
-  line-height: 1.35;
-  color: var(--admin-projects-muted);
-  overflow-wrap: anywhere;
-}
-
-.admin-project-tile__summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-block-start: auto;
-  padding-block-start: 4px;
-  min-inline-size: 0;
-}
-
-.admin-project-tile__amount {
-  flex: 0 1 auto;
-  min-inline-size: 0;
-  margin: 0 0 0 auto;
+.admin-project-tile__meta,
+.admin-project-tile__details { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin: 0; }
+.admin-project-tile__details { grid-template-columns: minmax(0, 1fr) fit-content(58%); }
+.admin-project-tile__meta > div,
+.admin-project-tile__details > div { min-inline-size: 0; }
+.admin-project-tile__meta dd,
+.admin-project-tile__details dd { display: flex; align-items: center; gap: 5px; margin: 0; min-inline-size: 0; color: var(--admin-projects-muted); font-size: 0.75rem; line-height: 1.45; }
+.admin-project-tile__meta dd span,
+.admin-project-tile__details dd span { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-project-tile__meta > div:last-child dd { justify-content: flex-end; }
+.admin-project-tile__meta svg,
+.admin-project-tile__details svg { flex: none; inline-size: 13px; block-size: 13px; }
+.admin-project-tile__details .admin-project-tile__amount dd {
+  display: block;
   text-align: end;
-}
-
-.admin-project-tile__amount dd {
-  margin: 0;
-  font-size: 0.95rem;
+  font-size: 0.8125rem;
   font-weight: 600;
-  line-height: 1.3;
   font-variant-numeric: tabular-nums;
   color: var(--admin-projects-ink);
   overflow-wrap: anywhere;
 }
-
-.admin-project-tile__avatars {
-  display: flex;
-  flex: none;
+.admin-project-tile__actions { display: flex; }
+.admin-project-tile__actions .button { min-block-size: 44px; inline-size: 100%; justify-content: center; border-radius: 3px; font-size: 0.8125rem; box-shadow: none; transform: none; }
+.admin-projects .ui-page-state--loading:has(.admin-project-grid--skeleton) { display: block; }
+.admin-projects .ui-page-state--loading .ui-state__skeleton:has(.admin-project-grid--skeleton) { inline-size: 100%; }
+.admin-project-tile__bone { display: block; min-block-size: 12px; inline-size: 75%; background: var(--admin-projects-bone); }
+.admin-project-tile__bone--chip { inline-size: 64px; }
+.admin-project-tile__bone--title { min-block-size: 18px; inline-size: 85%; }
+.admin-project-tile__bone--amount { inline-size: 50%; margin-inline-start: auto; }
+.admin-projects :is(.admin-projects__status-button, .admin-projects__view-button, .admin-projects__filter-button, .admin-projects__sort select, .admin-projects__search-row input, .admin-project-tile__link):focus-visible {
+  outline: 2px solid var(--admin-projects-olive);
+  outline-offset: 2px;
 }
-
-.admin-project-tile__avatar {
-  display: inline-grid;
-  place-items: center;
-  inline-size: 28px;
-  block-size: 28px;
-  border: 2px solid var(--admin-projects-card);
-  border-radius: 50%;
-  background: var(--admin-projects-olive);
-  color: #ffffff;
-  font-size: 0.6875rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+/* Keep the existing shared list, but make every page control touch-sized. */
+.ui-app-shell .admin-projects :is(.ui-button, .button) { min-block-size: 44px !important; }
+@media (max-width: 900px) {
+  .admin-projects__hero { background-size: cover, cover, auto 100%; }
 }
-
-.admin-project-tile__avatar + .admin-project-tile__avatar {
-  margin-inline-start: -6px;
-  background: #6b7a5c;
-}
-
-.admin-project-tile__actions {
-  display: flex;
-  margin-block-start: 2px;
-}
-
-.admin-project-tile__actions > * {
-  flex: 1 1 auto;
-  min-inline-size: 0;
-}
-
-.admin-project-tile__actions .button {
-  justify-content: center;
-  min-block-size: 32px;
-  block-size: 32px;
-  padding-block: 0;
-}
-
-.admin-project-tile__actions .button--primary {
-  border-color: var(--button-primary-bg);
-  background: var(--button-primary-bg);
-  color: var(--button-primary-ink);
-}
-
-.admin-project-tile__actions .button--primary:hover {
-  border-color: var(--button-primary-bg-hover);
-  background: var(--button-primary-bg-hover);
-}
-
-/* Skeleton cards */
-
-.admin-project-tile__bone {
-  display: block;
-  block-size: 12px;
-  inline-size: 80%;
-  border-radius: 6px;
-  background: var(--admin-projects-bone);
-}
-
-.admin-project-tile__bone--chip {
-  block-size: 20px;
-  inline-size: 38%;
-  border-radius: 999px;
-}
-
-.admin-project-tile__bone--title {
-  block-size: 16px;
-  inline-size: 65%;
-}
-
-.admin-project-tile__bone--amount {
-  align-self: flex-end;
-  inline-size: 35%;
-  margin-block-start: 4px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .admin-project-tile,
-  .admin-projects__view-button {
-    transition: none;
+@media (max-width: 540px) {
+  .admin-projects__hero {
+    padding-block: 16px 8px;
+    gap: 18px;
+    background-image:
+      linear-gradient(180deg, rgb(245 244 238 / 76%) 0%, rgb(245 244 238 / 90%) 62%, #f5f4ee 100%),
+      url("../../assets/projects-living-room.webp");
+    background-position: center, 65% center;
   }
-
-  .admin-project-tile:not(.admin-project-tile--skeleton):hover {
-    transform: none;
-  }
-
-  .admin-project-tile--skeleton .admin-project-tile__media {
-    animation: none;
-    background: var(--admin-projects-bone);
-  }
+  .ui-app-shell .admin-projects .admin-projects__hero .ui-page-header__title { font-size: 1.75rem; }
+  .admin-projects__tools { margin-inline-start: 0; inline-size: 100%; gap: 6px; }
+  .admin-projects__sort { flex: 1 1 auto; }
+  .admin-projects__status-button { padding-inline: 8px; }
 }

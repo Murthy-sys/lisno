@@ -13,7 +13,9 @@ import { ProjectModel } from "../src/models/Project.js";
 import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
 import { UserModel } from "../src/models/User.js";
 import { createMongoRepository } from "../src/repositories/mongo.js";
-import type { AppRepository } from "../src/repositories/types.js";
+import { createMemoryRepository } from "../src/repositories/memory.js";
+import type { AdminProjectListInput, AppRepository, ProjectStatus, SeedData } from "../src/repositories/types.js";
+import { demoSeedData } from "../src/seed/data.js";
 import { sha256Hex } from "../src/domain/estimate-client-review.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import type { EstimateClientReviewStorage } from "../src/services/estimate-client-review-storage.js";
@@ -85,6 +87,132 @@ const input = {
   nextActionAt: "2026-08-25T10:30:00+05:30",
   estimatorId: "mongo-estimator"
 };
+
+async function insertProjectCollection() {
+  await Promise.all([
+    insertUser("list-admin", "admin"),
+    insertUser("list-other-admin", "admin"),
+    insertUser("list-empty-admin", "admin"),
+    insertUser("list-super-admin", "super_admin")
+  ]);
+  const mongo = createMongoRepository();
+  const users = await Promise.all(["list-admin", "list-other-admin", "list-empty-admin", "list-super-admin"]
+    .map(async (id) => (await mongo.findUserById(id))!));
+  const statuses: ProjectStatus[] = ["planning", "active", "on_hold", "completed"];
+  const projects = Array.from({ length: 28 }, (_, index) => ({
+    ...demoSeedData.projects[0]!,
+    id: `project-list-${String(index).padStart(2, "0")}`,
+    name: index === 0 ? "alpha" : index === 1 ? "Alpha" : index === 2 ? "beta" :
+      index === 23 ? "Willow [A+B]" : index === 24 ? "Hidden [A+B]" : `Project ${index}`,
+    clientId: null, initiatingDesignerId: null, assignedEstimatorId: null, assignedDesignerIds: [], managerId: null,
+    clientName: index === 22 ? "Client [A+B]" : `Client ${index}`,
+    clientMobile: "9000000000", clientAddress: "Synthetic address",
+    location: index === 21 ? "[A+B] City" : "Pune",
+    status: statuses[index % statuses.length]!,
+    createdAt: NOW, updatedAt: NOW
+  }));
+  const grants: SeedData["projectAccessGrants"] = projects.map((project, index) => ({
+    id: `grant-list-${index}`, projectId: project.id,
+    userId: index < 24 ? "list-admin" : "list-other-admin",
+    module: "projects", source: "admin_initiator", accessRequestId: null,
+    grantedById: "list-admin", active: true, grantedAt: NOW,
+    revokedAt: null, revokedById: null, revocationReason: null, version: 1,
+    createdAt: NOW, updatedAt: NOW
+  }));
+  grants.push(
+    { ...grants[24]!, id: "wrong-module", userId: "list-admin", module: "design" },
+    { ...grants[25]!, id: "revoked-grant", userId: "list-admin", active: false, revokedAt: NOW, revokedById: "list-admin", revocationReason: "Scope fixture" },
+    { ...grants[26]!, id: "wrong-source", userId: "list-admin", source: "access_request", accessRequestId: "access-list-fixture" }
+  );
+  await ProjectModel.insertMany(projects.map(({ id, ...project }) => ({ _id: id, ...project })));
+  await ProjectAccessGrantModel.insertMany(grants.map(({ id, version, ...grant }) => ({ _id: id, __v: version, ...grant })));
+  const memory = createMemoryRepository({
+    ...structuredClone(demoSeedData), users, projects,
+    projectAccessGrants: grants, leads: [], estimateSummaries: []
+  });
+  return { mongo, memory, users };
+}
+
+describe("Admin project collection Mongo selection", () => {
+  it("matches memory scopes, search, status totals and ordering across multiple pages", async () => {
+    const { mongo, memory, users } = await insertProjectCollection();
+    const queries: AdminProjectListInput[] = [
+      { limit: 20, offset: 0 },
+      { limit: 20, offset: 20 },
+      { limit: 2, offset: 4, status: "active" },
+      { limit: 2, offset: 0, sort: "name_asc" },
+      { limit: 2, offset: 2, sort: "name_asc" },
+      { limit: 2, offset: 0, sort: "name_desc" },
+      { limit: 2, offset: 22, sort: "name_desc" },
+      { limit: 20, offset: 0, search: "  [a+b]  " },
+      { limit: 20, offset: 0, search: "[a+b]", status: "completed" },
+      { limit: 20, offset: 0, search: "[a+b]", status: "planning" },
+      { limit: 20, offset: 0, search: "cLiEnT 20" },
+      { limit: 20, offset: 0, search: ".*" },
+      { limit: 20, offset: 0, search: "\\" },
+      { limit: 20, offset: 0, search: "Hidden" },
+      { limit: 20, offset: 0, search: "  " },
+      { limit: 20, offset: 30 }
+    ];
+    for (const actor of users) {
+      for (const query of queries) {
+        const expected = await memory.pageAdminProjects(actor, query);
+        expect(await mongo.pageAdminProjects(actor, query), `${actor.id}: ${JSON.stringify(query)}`).toEqual(expected);
+      }
+    }
+    const first = await mongo.pageAdminProjects(users[0]!, queries[0]!);
+    expect(first.total).toBe(24);
+    expect(first.items).toHaveLength(20);
+    expect(first.items[0]!.id).toBe("project-list-23");
+    expect(first.statusCounts).toEqual({ all: 24, planning: 6, active: 6, on_hold: 6, completed: 6 });
+    const alpha = await mongo.pageAdminProjects(users[0]!, queries[3]!);
+    expect(alpha.items.map(({ id }) => id)).toEqual(["project-list-00", "project-list-01"]);
+  });
+
+  it("returns scoped search counts through the route and supports session-bound reads", async () => {
+    const { mongo, users } = await insertProjectCollection();
+    const app = createApp({ repository: mongo, auth, clock });
+    const response = await request(app).get("/api/v1/admin/projects")
+      .query({ search: " [a+b] ", status: "completed", sort: "name_desc" })
+      .set("Authorization", bearer("list-admin", "admin")).expect(200);
+    expect(response.body.data.items.map(({ id }: { id: string }) => id)).toEqual(["project-list-23"]);
+    expect(response.body.data.pagination).toEqual({ limit: 20, offset: 0, total: 1, hasMore: false });
+    expect(response.body.data.statusCounts).toEqual({ all: 3, planning: 0, active: 1, on_hold: 1, completed: 1 });
+    const transactional = await mongo.runInTransaction((transaction) => transaction.pageAdminProjects(users[0]!, {
+      search: " [a+b] ", status: "completed", sort: "name_desc", limit: 20, offset: 0
+    }));
+    expect(transactional.items).toEqual(response.body.data.items);
+    expect(transactional.statusCounts).toEqual(response.body.data.statusCounts);
+    expect(transactional.total).toBe(1);
+  });
+
+  it("keeps case-variant IDs distinct for authorization and stable equal-name pagination", async () => {
+    const { mongo, memory, users } = await insertProjectCollection();
+    const actor = users[0]!;
+    const template = (await mongo.findProjectById("project-list-00"))!;
+    for (const repository of [mongo, memory]) {
+      for (const [index, id] of ["project-Case", "project-case", "PROJECT-CASE"].entries()) {
+        await repository.createProject({ ...template, id, name: index === 1 ? "twin home" : "Twin Home" });
+        if (index < 2) await repository.createProjectAccessGrant({
+          projectId: id, userId: actor.id, module: "projects", source: "admin_initiator",
+          accessRequestId: null, grantedById: actor.id, grantedAt: NOW, createdAt: NOW, updatedAt: NOW
+        });
+      }
+    }
+    for (const sort of ["name_asc", "name_desc"] as const) {
+      for (const offset of [0, 1]) {
+        const query = { search: "twin", sort, limit: 1, offset };
+        const actual = await mongo.pageAdminProjects(actor, query);
+        expect(actual).toEqual(await memory.pageAdminProjects(actor, query));
+        expect(actual.items.map(({ id }) => id)).toEqual([offset === 0 ? "project-Case" : "project-case"]);
+        expect(actual.statusCounts).toEqual({ all: 2, planning: 2, active: 0, on_hold: 0, completed: 0 });
+        expect(actual.total).toBe(2);
+      }
+    }
+    const global = await mongo.pageAdminProjects(users[3]!, { search: "twin", sort: "name_asc", limit: 20, offset: 0 });
+    expect(global.items.map(({ id }) => id)).toEqual(["PROJECT-CASE", "project-Case", "project-case"]);
+  });
+});
 
 describe("Admin project Mongo transactions", () => {
   it("coordinates authorization before reading the Admin or estimator", async () => {

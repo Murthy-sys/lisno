@@ -1,0 +1,55 @@
+/* A shared paint coordinate keeps the image continuous across the sticky bar
+   and workspace without adding height or changing any overlay containing block. */
+.ui-app-shell.ui-common-shell[data-configuration-backdrop="true"] {
+  --configuration-canvas: var(--color-surface);
+  --configuration-backdrop-height: 360px;
+  --configuration-image-wash-start: 96%;
+  --configuration-image-wash-end: 30%;
+  --configuration-backdrop-image: url("../../assets/configuration-header.webp");
+}
+
+.ui-app-shell.ui-common-shell[data-configuration-backdrop="true"] > :is(.workspace-topbar, .ui-workspace) {
+  --configuration-paint-offset: 0px;
+  background-color: var(--configuration-canvas);
+  background-image:
+    linear-gradient(
+      to bottom,
+      transparent 0,
+      color-mix(in srgb, var(--configuration-canvas) 12%, transparent) 110px,
+      var(--configuration-canvas) var(--configuration-backdrop-height)
+    ),
+    linear-gradient(
+      to right,
+      color-mix(in srgb, var(--configuration-canvas) var(--configuration-image-wash-start), transparent) 0%,
+      color-mix(in srgb, var(--configuration-canvas) 82%, transparent) 38%,
+      color-mix(in srgb, var(--configuration-canvas) var(--configuration-image-wash-end), transparent) 100%
+    ),
+    var(--configuration-backdrop-image);
+  /* The local image is 3:1. Both surfaces use the same proportional cover size,
+     based on their shared column width, including when the sidebar collapses. */
+  background-size:
+    100% calc(100% + var(--configuration-paint-offset)),
+    100% var(--configuration-backdrop-height),
+    max(100%, calc(var(--configuration-backdrop-height) * 3)) auto;
+  background-position: right calc(0px - var(--configuration-paint-offset));
+  background-repeat: no-repeat;
+  background-origin: border-box;
+}
+
+.ui-app-shell.ui-common-shell[data-configuration-backdrop="true"] > .ui-workspace {
+  --configuration-paint-offset: calc(var(--workspace-topbar-height) + var(--workspace-safe-top));
+}
+
+@media (max-width: 1024px) {
+  .ui-app-shell.ui-common-shell[data-configuration-backdrop="true"] {
+    --configuration-backdrop-height: 320px;
+  }
+}
+
+@media (max-width: 540px) {
+  .ui-app-shell.ui-common-shell[data-configuration-backdrop="true"] {
+    --configuration-backdrop-height: 260px;
+    --configuration-image-wash-start: 96%;
+    --configuration-image-wash-end: 70%;
+  }
+}

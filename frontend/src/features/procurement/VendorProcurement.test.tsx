@@ -140,7 +140,15 @@ describe("vendor procurement", () => {
   });
   it("updates a complete configured vendor availability using CAS", async () => {
     role = "super_admin"; const writes: unknown[] = [];
-    server.use(http.patch("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-one", async ({ request }) => { const body = await request.json() as Record<string, unknown>; writes.push(body); return data({ ...master, ...body, version: 4 }); }));
+    let savedDetail = { ...completeVendor, ...master };
+    server.use(
+      http.get("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-one", () => data(savedDetail)),
+      http.patch("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-one", async ({ request }) => {
+        const body = await request.json() as Record<string, unknown>; writes.push(body);
+        savedDetail = { ...savedDetail, status: body.status as typeof savedDetail.status, version: 4 };
+        return data({ ...master, status: savedDetail.status, version: 4 });
+      })
+    );
     start(); const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Edit Timber House" }));
     const panel = await screen.findByRole("dialog", { name: "Vendor details" });
@@ -153,7 +161,7 @@ describe("vendor procurement", () => {
     role = "super_admin"; const requests: URLSearchParams[] = [];
     server.use(http.get("/api/v1/admin/ai-estimator-knowledge/vendors", ({ request }) => { const params = new URL(request.url).searchParams; requests.push(params); return data({ items: [master], pagination: { total: 41, offset: Number(params.get("offset")), limit: 20, hasMore: true } }); }));
     start(); const user = userEvent.setup(); await screen.findByRole("rowheader", { name: /Timber House/ });
-    await user.click(screen.getByRole("button", { name: "Next" })); await waitFor(() => expect(requests.at(-1)?.get("offset")).toBe("5"));
+    await user.click(screen.getByRole("button", { name: "Next" })); await waitFor(() => expect(requests.at(-1)?.get("offset")).toBe("10"));
     await user.selectOptions(screen.getByRole("combobox", { name: "Vendor Type" }), "supplier");
     await waitFor(() => expect(requests.at(-1)?.get("vendorType")).toBe("supplier")); expect(requests.at(-1)?.get("offset")).toBe("0");
     await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), "basket-one"); await screen.findByRole("option", { name: vendorSubBasket.name });

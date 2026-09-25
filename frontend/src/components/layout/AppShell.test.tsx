@@ -115,6 +115,9 @@ describe("AppShell", () => {
       expect(screen.getAllByRole("main")).toHaveLength(1);
       expect(screen.getByRole("main")).toHaveAttribute("data-role", role);
       expect(screen.getByRole("main")).toHaveAttribute("tabindex", "-1");
+      expect(screen.getByRole("main").closest(".ui-app-shell")).not.toHaveAttribute(
+        "data-configuration-backdrop"
+      );
       expect(
         document.querySelector('[aria-live][aria-label="Page title"]')
       ).toBeNull();
@@ -160,6 +163,56 @@ describe("AppShell", () => {
     await user.keyboard("{Enter}");
 
     expect(main).toHaveFocus();
+  });
+
+  it.each([
+    "/admin/configuration/estimation",
+    "/admin/configuration/estimation/items/material-study?section=quality",
+    "/admin/configuration/estimation/reusable-values"
+  ])("shares the decorative backdrop on Configuration route %s while content loads", async (path) => {
+    installAuthenticatedSession({
+      id: "configuration-admin",
+      name: "Configuration Admin",
+      email: "configuration@lisno.example",
+      role: "super_admin"
+    });
+    renderApp([path]);
+
+    const navigation = await screen.findByRole("navigation", { name: "Primary navigation" });
+    const main = screen.getByRole("main");
+    expect(main.closest(".ui-app-shell")).toHaveAttribute("data-configuration-backdrop", "true");
+    expect(within(navigation).getByRole("link", { name: "Configuration" })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    expect(screen.getByRole("banner", { name: "Workspace tools" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Configuration Admin" })).toBeVisible();
+  });
+
+  it("adds and removes the backdrop as the existing sidebar navigates into and out of Configuration", async () => {
+    const user = userEvent.setup();
+    installAuthenticatedSession({
+      id: "configuration-admin",
+      name: "Configuration Admin",
+      email: "configuration@lisno.example",
+      role: "super_admin"
+    });
+    const { router } = renderApp(["/admin/projects"]);
+    const navigation = await screen.findByRole("navigation", { name: "Primary navigation" });
+    const shell = screen.getByRole("main").closest(".ui-app-shell");
+    expect(shell).not.toHaveAttribute("data-configuration-backdrop");
+
+    await user.click(within(navigation).getByRole("link", { name: "Configuration" }));
+    expect(router.state.location.pathname).toBe("/admin/configuration/estimation");
+    expect(screen.getByRole("main").closest(".ui-app-shell")).toBe(shell);
+    expect(shell).toHaveAttribute("data-configuration-backdrop", "true");
+
+    await user.click(within(navigation).getByRole("link", { name: "All Projects" }));
+    expect(router.state.location.pathname).toBe("/admin/projects");
+    expect(screen.getByRole("main").closest(".ui-app-shell")).toBe(shell);
+    expect(shell).not.toHaveAttribute("data-configuration-backdrop");
+    expect(screen.getByRole("button", { name: "Configuration Admin" })).toBeVisible();
   });
 
   it("connects the mobile trigger to the Drawer and closes it after navigation", async () => {

@@ -26,6 +26,42 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents scoped project search, stable sorting and status counts before status selection", () => {
+    const schemas = componentSchemas();
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const operation = paths["/admin/projects"]!.get!;
+    expect(operation.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "status", in: "query", schema: { type: "string", enum: ["planning", "active", "on_hold", "completed"] } }),
+      expect.objectContaining({ name: "search", in: "query", schema: { type: "string", maxLength: 120, default: "" } }),
+      expect.objectContaining({ name: "sort", in: "query", schema: { type: "string", enum: ["newest", "name_asc", "name_desc"], default: "newest" } }),
+      expect.objectContaining({ name: "limit" }),
+      expect.objectContaining({ name: "offset" })
+    ]));
+    expect(operation.responses["2XX"].content["application/json"].schema.properties.data.$ref).toBe("#/components/schemas/AdminProjectPage");
+    expect(schemas.AdminProjectPage!.required).toEqual(["items", "pagination", "statusCounts"]);
+    expect(schemas.AdminProjectPage!.properties.statusCounts.$ref).toBe("#/components/schemas/AdminProjectStatusCounts");
+    expect(schemas.AdminProjectStatusCounts!.required).toEqual(["all", "planning", "active", "on_hold", "completed"]);
+    expect(schemas.AdminProjectStatusCounts!.description).toContain("before the selected status filter");
+  });
+  it("documents nullable private organization and banking fields with legacy-compatible input", () => {
+    const schemas = componentSchemas();
+    const input = schemas.KnowledgeVendorProfileInput!;
+    expect(input.properties.organizationType).toMatchObject({ type: "string", nullable: true, enum: ["individual", "company", "firm", "associated_person", "huf", "trust", "govt", null] });
+    expect(input.required).not.toContain("organizationType");
+    expect(input.required).not.toContain("bankAccount");
+    expect(input.properties.bankAccount).toMatchObject({ type: "object", nullable: true, additionalProperties: false, required: ["accountHolderName", "bankName", "accountNumber", "ifscCode"] });
+    expect(input.properties.bankAccount.properties.accountNumber).toMatchObject({ type: "string", minLength: 1, maxLength: 34, pattern: "^[0-9]{1,34}$" });
+    expect(input.properties.bankAccount.properties.ifscCode).toMatchObject({ type: "string", pattern: "^[A-Z]{4}0[A-Z0-9]{6}$" });
+    for (const name of ["KnowledgeVendorProfile", "KnowledgeVendorStoredProfile"]) {
+      expect(schemas[name]!.required).toEqual(expect.arrayContaining(["organizationType", "bankAccount"]));
+      expect(schemas[name]!.properties.bankAccount.required).toContain("branchName");
+    }
+    expect(schemas.KnowledgeVendorCreateRequest!.description).toContain("requires a non-null organizationType");
+    expect(schemas.KnowledgeVendorDetail!.properties.procurementProfile.properties).toHaveProperty("bankAccount");
+    for (const name of ["KnowledgeMaster", "KnowledgeVendor", "KnowledgeVendorSummary"]) {
+      for (const field of ["organizationType", "bankAccount", "accountHolderName", "bankName", "accountNumber", "ifscCode", "branchName"]) expect(schemas[name]!.properties).not.toHaveProperty(field);
+    }
+  });
   it("documents optional global vendor overview and safe execution summary without changing other masters", () => {
     const schemas = componentSchemas();
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
@@ -66,7 +102,41 @@ describe("OpenAPI and Swagger UI", () => {
     }
     expect(schemas.KnowledgeVendor!.required).toContain("procurementSummary");
     expect(schemas.KnowledgeMaster!.required).not.toContain("procurementSummary");
-    expect(schemas.KnowledgeVendorDetail!.required).toEqual(expect.arrayContaining(["procurementProfile", "procurementSummary", "geoTaggedPicture"]));
+    expect(schemas.KnowledgeVendorDetail!.required).toEqual(expect.arrayContaining(["procurementProfile", "procurementSummary", "geoTaggedPicture", "msmeCertificate"]));
+  });
+  it("documents conditional vendor registration and private certificate upload/download contracts", () => {
+    const schemas = componentSchemas();
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const profile = schemas.KnowledgeVendorProfileInput!;
+    expect(profile.properties.gstNumber).toMatchObject({ type: "string", nullable: true });
+    expect(profile.required).not.toContain("reference");
+    expect(profile.required).not.toContain("supplier");
+    for (const name of ["KnowledgeVendorCreateRequest", "KnowledgeVendorUpdateRequest"]) {
+      expect(schemas[name]!.properties).toHaveProperty("msmeCertificateUploadId");
+      expect(schemas[name]!.properties).toHaveProperty("idempotencyKey");
+    }
+    for (const [path, permission, required] of [
+      ["/admin/ai-estimator-knowledge/vendors/msme-certificate-uploads", "create", ["certificate", "idempotencyKey"]],
+      ["/admin/ai-estimator-knowledge/vendors/{id}/msme-certificate-uploads", "update", ["certificate", "idempotencyKey", "expectedVersion"]]
+    ] as const) {
+      const operation = paths[path]!.post!;
+      expect(operation["x-lisno-permission"]).toBe(`ai_estimator_knowledge.configuration.${permission}`);
+      const schemaRef = operation.requestBody.content["multipart/form-data"].schema.$ref as string;
+      const upload = schemas[schemaRef.split("/").at(-1)!]!;
+      expect(upload.required).toEqual(expect.arrayContaining([...required]));
+      expect(upload.properties.certificate).toMatchObject({ type: "string", format: "binary" });
+      expect(upload.additionalProperties).toBe(false);
+      expect(operation.responses).toHaveProperty("413");
+      expect(operation.responses).toHaveProperty("415");
+    }
+    const download = paths["/admin/ai-estimator-knowledge/vendors/{id}/msme-certificate"]!.get!;
+    expect(download["x-lisno-permission"]).toBe("ai_estimator_knowledge.configuration.read");
+    expect(Object.keys(download.responses["200"].content).sort()).toEqual(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
+    expect(download.responses["200"].description).toMatch(/no-store/);
+    expect(paths["/admin/ai-estimator-knowledge/vendors/msme-certificate-upload-policy"]!.get!["x-lisno-permission"]).toBe("ai_estimator_knowledge.configuration.read");
+    for (const name of ["KnowledgeMaster", "KnowledgeVendor", "KnowledgeVendorSummary"]) {
+      for (const key of ["gstNumber", "procurementProfile", "msmeCertificate", "msmeCertificateUploadId", "storageReference", "sha256"]) expect(schemas[name]!.properties).not.toHaveProperty(key);
+    }
   });
   it("documents request-scoped plan replacement uploads with their exact multipart and response contract", () => {
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
@@ -567,7 +637,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 254 routes without versioning paths twice", () => {
+  it("contains all 258 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -576,7 +646,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 13);
-    expect(operationCount).toBe(254);
+    expect(operationCount).toBe(258);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -586,7 +656,7 @@ describe("OpenAPI and Swagger UI", () => {
     const knowledgeOperations = HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability }) => availability === "ai_estimator_knowledge"
     );
-    expect(knowledgeOperations).toHaveLength(59);
+    expect(knowledgeOperations).toHaveLength(63);
 
     for (const registered of knowledgeOperations) {
       const { method, path } = splitHumanOperationKey(registered.key);
@@ -604,6 +674,12 @@ describe("OpenAPI and Swagger UI", () => {
           required: true,
           "x-lisno-schema-completeness": "exact",
           content: { "multipart/form-data": { schema: { $ref: "#/components/schemas/KnowledgeVendorPhotoUpload" } } }
+        });
+      } else if (registered.key.endsWith("/msme-certificate-uploads")) {
+        expect(documented?.requestBody, registered.key).toMatchObject({
+          required: true,
+          "x-lisno-schema-completeness": "exact",
+          content: { "multipart/form-data": { schema: { $ref: expect.stringMatching(/^#\/components\/schemas\/KnowledgeVendorCertificate/u) } } }
         });
       } else if (method !== "GET") {
         expect(documented?.requestBody, registered.key).toMatchObject({

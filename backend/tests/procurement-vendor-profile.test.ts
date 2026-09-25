@@ -1,9 +1,80 @@
 import { describe, expect, it } from "vitest";
-import { procurementVendorProfileSchema, storedProcurementVendorProfile, validateProcurementVendorProfile } from "../src/services/procurement-vendor-profile.js";
-import { legacyVendorProfileFixture, vendorProfileFixture } from "./procurement-vendor-profile.fixture.js";
+import { procurementVendorProfileSchema, procurementVendorProfileComplete, storedProcurementVendorProfile, validateProcurementVendorProfile } from "../src/services/procurement-vendor-profile.js";
+import { legacyVendorProfileFixture, vendorBankAccountFixture, vendorProfileFixture } from "./procurement-vendor-profile.fixture.js";
+import { vendorSaveCommand } from "../src/services/procurement-vendor-save-command.js";
 
 describe("procurement vendor profile validation", () => {
-  it("accepts each classification, including an explicit supplier false", () => {
+  it("accepts the seven organization types and preserves legacy null/omission without changing completeness", () => {
+    for (const organizationType of ["individual", "company", "firm", "associated_person", "huf", "trust", "govt", null]) {
+      expect(validateProcurementVendorProfile({ ...vendorProfileFixture(), organizationType }).organizationType).toBe(organizationType);
+    }
+    for (const organizationType of ["Company", "association", "", 1, {}, []]) {
+      expect(procurementVendorProfileSchema.safeParse({ ...vendorProfileFixture(), organizationType }).success).toBe(false);
+    }
+    const { organizationType: _organizationType, bankAccount: _bankAccount, ...legacy } = vendorProfileFixture();
+    expect(validateProcurementVendorProfile(legacy)).toMatchObject({ organizationType: null, bankAccount: null });
+    const stored = storedProcurementVendorProfile(legacy);
+    expect(stored).toMatchObject({ ...legacy, organizationType: null, bankAccount: null });
+    expect(procurementVendorProfileComplete(stored, null)).toBe(true);
+    const input = procurementVendorProfileSchema.parse(legacy);
+    expect(input).not.toHaveProperty("organizationType");
+    expect(input).not.toHaveProperty("bankAccount");
+  });
+  it("normalizes complete bank details while preserving leading zeroes and optional branch", () => {
+    const bankAccount = vendorBankAccountFixture();
+    expect(validateProcurementVendorProfile({ ...vendorProfileFixture(), bankAccount: {
+      accountHolderName: ` ${bankAccount.accountHolderName} `, bankName: ` ${bankAccount.bankName} `,
+      accountNumber: ` ${bankAccount.accountNumber} `, ifscCode: " synb0123456 "
+    } }).bankAccount).toEqual({ ...bankAccount, branchName: null });
+    for (const branchName of [undefined, null, "", "  "]) {
+      expect(validateProcurementVendorProfile({ ...vendorProfileFixture(), bankAccount: { ...bankAccount, branchName } }).bankAccount?.branchName).toBeNull();
+    }
+    for (const accountNumber of ["0", "0".repeat(34)]) {
+      expect(validateProcurementVendorProfile({ ...vendorProfileFixture(), bankAccount: { ...bankAccount, accountNumber } }).bankAccount?.accountNumber).toBe(accountNumber);
+    }
+  });
+  it("rejects incomplete, extra, numeric and malformed bank data without including values in errors", () => {
+    const bankAccount = vendorBankAccountFixture();
+    for (const field of ["accountHolderName", "bankName", "accountNumber", "ifscCode"]) {
+      const incomplete = { ...bankAccount } as Record<string, unknown>;
+      delete incomplete[field];
+      expect(procurementVendorProfileSchema.safeParse({ ...vendorProfileFixture(), bankAccount: incomplete }).success, field).toBe(false);
+    }
+    for (const invalid of [{}, [], "bank", 1,
+      { ...bankAccount, accountHolderName: " " }, { ...bankAccount, accountHolderName: "a".repeat(241) },
+      { ...bankAccount, bankName: " " }, { ...bankAccount, bankName: "b".repeat(241) },
+      { ...bankAccount, branchName: "c".repeat(241) }, { ...bankAccount, accountNumber: 123456 },
+      ...["", "1 234", "001-23", "1e10", "+123", "1.23", "1".repeat(35)].map(accountNumber => ({ ...bankAccount, accountNumber })),
+      ...["", "SYNB1123456", "SYNB012345", "SYNB01234567", "SYN_0123456"].map(ifscCode => ({ ...bankAccount, ifscCode })),
+      { ...bankAccount, pin: "private-extra-value" }
+    ]) {
+      expect(() => validateProcurementVendorProfile({ ...vendorProfileFixture(), bankAccount: invalid })).toThrow();
+    }
+    try { validateProcurementVendorProfile({ ...vendorProfileFixture(), bankAccount: { ...bankAccount, ifscCode: "private-invalid-value" } }); }
+    catch (error) {
+      expect(error).toMatchObject({ fields: { "procurementProfile.bankAccount.ifscCode": expect.any(String) } });
+      expect(JSON.stringify(error)).not.toContain("private-invalid-value");
+      expect(JSON.stringify(error)).not.toContain(bankAccount.accountNumber);
+    }
+  });
+  it("fingerprints normalized banking contents while distinguishing omission, null and changed values", () => {
+    const bankAccount = vendorBankAccountFixture();
+    const input = { expectedVersion: 1, idempotencyKey: "synthetic-banking-save", procurementProfile: { ...vendorProfileFixture(), bankAccount } };
+    const command = vendorSaveCommand("synthetic-actor", "synthetic-vendor", input);
+    expect(vendorSaveCommand("synthetic-actor", "synthetic-vendor", { ...input, procurementProfile: { ...input.procurementProfile,
+      bankAccount: { branchName: " Synthetic Branch ", ifscCode: " synb0123456 ", accountNumber: ` ${bankAccount.accountNumber} `, bankName: " Synthetic Bank ", accountHolderName: " Synthetic Account Holder " }
+    } })).toEqual(command);
+    for (const change of [{ organizationType: "firm" as const }, { bankAccount: null }, { bankAccount: { ...bankAccount, accountNumber: "0098765432101234" } }]) {
+      const changed = vendorSaveCommand("synthetic-actor", "synthetic-vendor", { ...input, procurementProfile: { ...input.procurementProfile, ...change } });
+      expect(changed?.id).toBe(command?.id);
+      expect(changed?.fingerprint).not.toBe(command?.fingerprint);
+    }
+    const { organizationType: _organizationType, bankAccount: _bankAccount, ...legacy } = input.procurementProfile;
+    const omitted = vendorSaveCommand("synthetic-actor", "synthetic-vendor", { ...input, procurementProfile: legacy });
+    const cleared = vendorSaveCommand("synthetic-actor", "synthetic-vendor", { ...input, procurementProfile: { ...legacy, organizationType: null, bankAccount: null } });
+    expect(omitted?.fingerprint).not.toBe(cleared?.fingerprint);
+  });
+  it("accepts each classification and derives Supplier without a secondary answer", () => {
     for (const classification of [
       { vendorType: "execution", executionType: "labor", supplier: null },
       { vendorType: "execution", executionType: "material_labour", supplier: null },
@@ -11,8 +82,11 @@ describe("procurement vendor profile validation", () => {
       { vendorType: "execution", executionType: ["material_labour"], supplier: null },
       { vendorType: "execution", executionType: ["labor", "material_labour"], supplier: null },
       { vendorType: "supplier", executionType: null, supplier: true },
-      { vendorType: "supplier", executionType: null, supplier: false }
+      { vendorType: "supplier", executionType: null, supplier: false },
+      { vendorType: "supplier", executionType: null, supplier: null },
+      { vendorType: "supplier", executionType: null, supplier: undefined }
     ]) expect(procurementVendorProfileSchema.safeParse({ ...vendorProfileFixture(), ...classification }).success).toBe(true);
+    expect(validateProcurementVendorProfile({ ...vendorProfileFixture(), vendorType: "supplier", executionType: null, supplier: false }).supplier).toBe(true);
   });
   it("normalizes scalar and reversed selections without mutating submitted arrays", () => {
     expect(validateProcurementVendorProfile(legacyVendorProfileFixture()).executionType).toEqual(["labor"]);
@@ -38,18 +112,36 @@ describe("procurement vendor profile validation", () => {
     for (const classification of [
       { vendorType: "execution", executionType: null, supplier: null },
       { vendorType: "execution", executionType: "labor", supplier: false },
-      { vendorType: "supplier", executionType: null, supplier: null },
       { vendorType: "supplier", executionType: "labor", supplier: true },
       { vendorType: "supplier", executionType: ["labor", "material_labour"], supplier: false }
     ]) expect(procurementVendorProfileSchema.safeParse({ ...vendorProfileFixture(), ...classification }).success).toBe(false);
   });
-  it("requires every field and rejects forged server metadata", () => {
-    for (const field of Object.keys(vendorProfileFixture())) {
+  it("requires visible fields and rejects forged server metadata", () => {
+    for (const field of Object.keys(vendorProfileFixture()).filter(key => !["supplier", "gstNumber", "reference", "organizationType", "bankAccount"].includes(key))) {
       const value = { ...vendorProfileFixture() } as Record<string, unknown>;
       delete value[field];
       expect(procurementVendorProfileSchema.safeParse(value).success, field).toBe(false);
     }
     expect(procurementVendorProfileSchema.safeParse({ ...vendorProfileFixture(), physicalAddressVerifiedById: "forged" }).success).toBe(false);
+  });
+  it("accepts omitted Reference, requires valid GST only for Yes, and normalizes its value", () => {
+    const { reference: _reference, ...profile } = vendorProfileFixture();
+    expect(validateProcurementVendorProfile(profile)).toMatchObject({ reference: null, gstNumber: null });
+    for (const gstNumber of [undefined, null, "", "29ABCDE1234F1Z", "29ABCDE1234F0Z5"]) {
+      expect(procurementVendorProfileSchema.safeParse({ ...profile, gstRegistered: true, gstNumber }).success).toBe(false);
+    }
+    expect(validateProcurementVendorProfile({ ...profile, gstRegistered: true, gstNumber: " 29abcde1234f1z5 " }).gstNumber).toBe("29ABCDE1234F1Z5");
+    expect(validateProcurementVendorProfile({ ...profile, gstRegistered: false, gstNumber: "draft-invalid" }).gstNumber).toBeNull();
+  });
+  it("reads legacy registration Yes without evidence while marking its profile incomplete", () => {
+    const { gstNumber: _gstNumber, reference: _reference, ...profile } = vendorProfileFixture();
+    const legacy = storedProcurementVendorProfile({ ...profile, vendorType: "supplier", executionType: null, supplier: false,
+      gstRegistered: true, msmeRegistered: true, currentAddressVerifiedPhysically: true,
+      physicalAddressVerifiedAt: "2026-09-01T00:00:00.000Z", physicalAddressVerifiedById: "synthetic-admin" });
+    expect(legacy).toMatchObject({ supplier: false, reference: null, gstNumber: null, email: profile.email, mainBasketId: profile.mainBasketId, currentAddressVerifiedPhysically: true });
+    expect(procurementVendorProfileComplete(legacy, null)).toBe(false);
+    expect(procurementVendorProfileComplete({ ...legacy!, gstNumber: "29ABCDE1234F1Z5" }, null)).toBe(false);
+    expect(procurementVendorProfileComplete({ ...legacy!, gstNumber: "29ABCDE1234F1Z5" }, { id: "certificate-id" })).toBe(true);
   });
   it("keeps paise exact, null different from zero, and rejects unsafe amounts", () => {
     expect(validateProcurementVendorProfile({ ...vendorProfileFixture(), turnoverVerifiedPaise: 0 })).toMatchObject({ turnoverSelfDeclaredPaise: 12_345_678, turnoverVerifiedPaise: 0 });

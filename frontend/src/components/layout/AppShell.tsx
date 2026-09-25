@@ -13,17 +13,25 @@ import { NotificationProvider } from "../../features/notifications/NotificationP
 import { NotificationBanners } from "../../features/notifications/NotificationBell";
 import "../../features/notifications/notifications.css";
 import "./common-shell.css";
+import "./configuration-shell.css";
+
+const configurationBackdropPaths = [
+  "/admin/configuration/estimation",
+  "/admin/configuration/estimation/items/:itemId",
+  "/admin/configuration/estimation/reusable-values"
+] as const;
 
 export function AppShell() {
   const auth = useAuth();
   const { pathname } = useLocation();
   const messaging = Boolean(matchPath("/project-messages", pathname) || matchPath("/projects/:projectId/messages", pathname));
+  const configurationBackdrop = configurationBackdropPaths.some((path) => matchPath(path, pathname));
   if (!auth.user || !auth.authorization) return null;
 
   return (
     <NotificationProvider>
     <ProjectChatProvider>
-    <div className={messaging ? "project-messaging-app ui-common-shell" : "ui-app-shell ui-common-shell"} data-role={messaging ? undefined : auth.user.role}>
+    <div className={messaging ? "project-messaging-app ui-common-shell" : "ui-app-shell ui-common-shell"} data-role={messaging ? undefined : auth.user.role} data-configuration-backdrop={configurationBackdrop ? "true" : undefined}>
       <SkipLink />
       {!messaging ? <aside className="ui-sidebar-rail" aria-label="Application sidebar">
         <Sidebar

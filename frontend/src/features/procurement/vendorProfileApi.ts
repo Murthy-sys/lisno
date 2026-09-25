@@ -1,11 +1,13 @@
 import { apiClient } from "../../api/client";
-import type { KnowledgeMaster, ProcurementVendorProfile, ProcurementVendorDetail, ProcurementVendorPhotoMutationResult, ProcurementVendorBaselineInput, ProcurementVendorBaselinePage, ProcurementVendorBaselineResult } from "../ai-estimator-knowledge/knowledgeTypes";
+import type { KnowledgeMaster, ProcurementVendorProfileInput, ProcurementVendorCertificateDescriptor, ProcurementVendorCertificateUploadPolicy, ProcurementVendorCertificateUploadResult, ProcurementVendorDetail, ProcurementVendorPhotoMutationResult, ProcurementVendorBaselineInput, ProcurementVendorBaselinePage, ProcurementVendorBaselineResult } from "../ai-estimator-knowledge/knowledgeTypes";
 
 const path = (id: string) => `/admin/ai-estimator-knowledge/vendors/${encodeURIComponent(id)}`;
 export interface VendorProfileInput {
   name: string;
   description?: string | null;
-  procurementProfile: ProcurementVendorProfile;
+  procurementProfile: ProcurementVendorProfileInput;
+  msmeCertificateUploadId?: string;
+  idempotencyKey?: string;
   confirmPhysicalAddressVerification?: boolean;
   status?: "active" | "inactive";
 }
@@ -26,3 +28,13 @@ export function uploadVendorPhoto(id: string, photo: File, expectedVersion: numb
 export const removeVendorPhoto = (id: string, expectedVersion: number) => apiClient.delete<ProcurementVendorPhotoMutationResult>(`${path(id)}/photo`, { expectedVersion });
 export const getVendorBaseline = (id: string, offset: number) => apiClient.get<ProcurementVendorBaselinePage>(`${path(id)}/allocation-baseline?limit=20&offset=${offset}`);
 export const completeVendorBaseline = (id: string, itemId: string, input: ProcurementVendorBaselineInput) => apiClient.post<ProcurementVendorBaselineResult>(`${path(id)}/allocation-baseline/${encodeURIComponent(itemId)}`, input);
+
+export const getVendorCertificateUploadPolicy = (signal?: AbortSignal) => apiClient.get<ProcurementVendorCertificateUploadPolicy>("/admin/ai-estimator-knowledge/vendors/msme-certificate-upload-policy", { signal });
+export function stageVendorMsmeCertificate(file: File, idempotencyKey: string, existing?: { id: string; expectedVersion: number }) {
+  const body = new FormData();
+  body.append("certificate", file);
+  body.append("idempotencyKey", idempotencyKey);
+  if (existing) body.append("expectedVersion", String(existing.expectedVersion));
+  return apiClient.postMultipart<ProcurementVendorCertificateUploadResult>(existing ? `${path(existing.id)}/msme-certificate-uploads` : "/admin/ai-estimator-knowledge/vendors/msme-certificate-uploads", body);
+}
+export const downloadVendorMsmeCertificate = (certificate: ProcurementVendorCertificateDescriptor, signal?: AbortSignal) => apiClient.getBlob(certificate.url, { signal, maxBytes: certificate.byteSize });

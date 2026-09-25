@@ -704,7 +704,18 @@ export interface DesignerAssignmentOption {
   email: string;
 }
 
-export type AdminProjectPage = PageData<AdminProjectSummary>;
+export interface AdminProjectListInput extends PaginationInput {
+  status?: ProjectStatus;
+  search?: string;
+  sort?: "newest" | "name_asc" | "name_desc";
+}
+
+export type AdminProjectStatusCounts = Record<ProjectStatus | "all", number>;
+
+export type AdminProjectPage = PageData<AdminProjectSummary> & {
+  /** Older API deployments may omit counts; do not infer them from one page. */
+  statusCounts?: AdminProjectStatusCounts;
+};
 
 export type InitiatedAdminProjectSummary = AdminProjectSummary & {
   lead: NonNullable<AdminProjectSummary["lead"]>;

@@ -8,7 +8,7 @@ import { tokenStorage } from "../../api/client";
 import type { AdminProjectSummary } from "../../api/types";
 import { renderApp } from "../../test/render";
 import { server } from "../../test/server";
-import { adminProjectsPath, estimatorOptionsPath } from "./adminProjectsApi";
+import { adminProjectKeys, adminProjectsPath, estimatorOptionsPath } from "./adminProjectsApi";
 
 const admin = {
   id: "admin-1",
@@ -118,6 +118,14 @@ describe("Admin project API paths", () => {
     expect(estimatorOptionsPath("asha rao", { limit: 20, offset: 0 })).toBe(
       "/admin/estimators?search=asha+rao&limit=20&offset=0"
     );
+  });
+  it("encodes literal project search and includes each server-side control in the query identity", () => {
+    const input = { limit: 20, offset: 40, status: "active" as const, search: "  Client [A]. Pune  ", sort: "name_desc" as const };
+    expect(adminProjectsPath(input)).toBe("/admin/projects?limit=20&offset=40&status=active&search=Client+%5BA%5D.+Pune&sort=name_desc");
+    expect(adminProjectsPath({ limit: 20, offset: 0, search: "  " })).toBe("/admin/projects?limit=20&offset=0");
+    for (const change of [{ status: "planning" as const }, { search: "Mumbai" }, { sort: "name_asc" as const }, { offset: 0 }]) {
+      expect(adminProjectKeys.page({ ...input, ...change })).not.toEqual(adminProjectKeys.page(input));
+    }
   });
 });
 
@@ -237,7 +245,7 @@ describe("AdminProjectsPage", () => {
 
       const list = await screen.findByRole("list", { name: collectionName });
       expect(within(list).getByText("Estimation Approval")).toBeVisible();
-      expect(within(list).getByText("Assign Designer to upload design")).toBeVisible();
+      expect(within(list).queryByText("Assign Designer to upload design")).not.toBeInTheDocument();
       expect(within(list).getByText("Client-approved value (incl. GST)")).toBeVisible();
       expect(within(list).getByText(/₹2,78,704/)).toBeVisible();
       expect(within(list).queryByText("project kickoff")).not.toBeInTheDocument();
@@ -279,11 +287,88 @@ describe("AdminProjectsPage", () => {
     expect(screen.getByRole("status", { name: "Content status" })).toHaveTextContent(
       "Loading projects"
     );
+    expect(screen.getByRole("group", { name: "Project status" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Sort projects" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Filter" })).toBeVisible();
 
     resolveFirst();
     expect(await screen.findByText("Projects unavailable.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "All" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByText("No projects initiated yet.")).toBeVisible();
+    expect(screen.getByRole("group", { name: "Project layout" })).toBeVisible();
+    expect(document.querySelectorAll(".admin-projects__status-count")).toHaveLength(0);
+  });
+
+  it("submits status, sorting and literal search server-side, resets pagination and recovers from filtered emptiness", async () => {
+    installSession();
+    const requests: URLSearchParams[] = [];
+    server.use(http.get("/api/v1/admin/projects", ({ request }) => {
+      const params = new URL(request.url).searchParams;
+      requests.push(params);
+      const offset = Number(params.get("offset"));
+      const searching = !!params.get("search");
+      return HttpResponse.json({ data: { ...page(searching ? [] : [{ ...project, name: `Project ${offset}` }], offset, searching ? 0 : 30, !searching && offset === 0).data,
+        statusCounts: searching ? { all: 0, planning: 0, active: 0, on_hold: 0, completed: 0 } : { all: 30, planning: 19, active: 7, on_hold: 3, completed: 1 }
+      } });
+    }));
+    const user = userEvent.setup();
+    renderApp(["/admin/projects"]);
+    expect(await screen.findByRole("button", { name: "All 30" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    await screen.findByText("Project 20");
+    await user.click(screen.getByRole("button", { name: "Active 7" }));
+    await waitFor(() => expect(requests.at(-1)?.get("status")).toBe("active"));
+    expect(requests.at(-1)?.get("offset")).toBe("0");
+    expect(await screen.findByRole("button", { name: "Active 7" })).toHaveAttribute("aria-pressed", "true");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sort projects" }), "name_asc");
+    await waitFor(() => expect(requests.at(-1)?.get("sort")).toBe("name_asc"));
+    await user.click(screen.getByRole("button", { name: "Filter" }));
+    const search = screen.getByRole("searchbox", { name: "Search project, client or city" });
+    expect(search).toHaveAttribute("maxlength", "120");
+    const beforeTyping = requests.length;
+    fireEvent.change(search, { target: { value: "  North [A].  " } });
+    expect(requests).toHaveLength(beforeTyping);
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    await screen.findByText("No projects match these filters.");
+    expect(requests.at(-1)?.get("search")).toBe("North [A].");
+    expect(requests.at(-1)?.get("status")).toBe("active");
+    expect(requests.at(-1)?.get("offset")).toBe("0");
+    expect(screen.getByRole("button", { name: "Active 0" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Filter (1)" })).toHaveAttribute("aria-expanded", "true");
+    await user.click(screen.getByRole("button", { name: "Reset filters" }));
+    await screen.findByText("Project 0");
+    expect(requests.at(-1)?.has("status")).toBe(false);
+    expect(requests.at(-1)?.has("search")).toBe(false);
+    expect(search).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Sort projects" })).toHaveValue("name_asc");
+  });
+
+  it("marks previous filtered results busy, hides stale counts and disables quick view until the response arrives", async () => {
+    installSession();
+    let release!: () => void;
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    server.use(http.get("/api/v1/admin/projects", async ({ request }) => {
+      const active = new URL(request.url).searchParams.get("status") === "active";
+      if (active) await waiting;
+      return HttpResponse.json({ data: { ...page([{ ...project, name: active ? "Active result" : project.name }], 0, 22, true).data,
+        statusCounts: { all: 22, planning: 20, active: 2, on_hold: 0, completed: 0 }
+      } });
+    }));
+    const user = userEvent.setup();
+    renderApp(["/admin/projects"]);
+    await screen.findByRole("article", { name: project.name });
+    await user.click(screen.getByRole("button", { name: "List view" }));
+    await user.click(screen.getByRole("button", { name: "Active 2" }));
+    expect(await screen.findByText("Updating projects… Previous results remain visible.")).toBeVisible();
+    expect(screen.getByRole("list", { name: "My Projects" })).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Quick view Asha home" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
+    expect(document.querySelectorAll(".admin-projects__status-count")).toHaveLength(0);
+    release();
+    expect(await screen.findByRole("button", { name: "Quick view Active result" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Active 2" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("Updating projects… Previous results remain visible.")).not.toBeInTheDocument();
   });
 
   it("renders populated nullable handoff data and exact encoded detail links", async () => {
@@ -487,11 +572,16 @@ describe("AdminProjectsPage", () => {
       name: "Missing baseline",
       estimate: approvedEstimate("project-missing-baseline", { approvedBaseline: null })
     };
+    const zeroBaselineProject: AdminProjectSummary = {
+      ...approvedProject, id: "project-zero", name: "Zero baseline",
+      estimate: approvedEstimate("project-zero", { approvedBaseline: { ...approvedProject.estimate!.approvedBaseline!, total: 0, subtotal: 0, gst: 0 } })
+    };
     const amountCases = [
       [approvedProject.name, "₹2,78,704", "Client-approved value (incl. GST)"],
       [draftProject.name, "Draft · ₹9,75,000", "Estimate"],
       [project.name, "No estimate yet", "Estimate"],
-      [missingBaselineProject.name, "Approved baseline unavailable", "Client-approved value (incl. GST)"]
+      [missingBaselineProject.name, "Approved baseline unavailable", "Client-approved value (incl. GST)"],
+      [zeroBaselineProject.name, "₹0", "Client-approved value (incl. GST)"]
     ] as const;
 
     function amountTextIn(article: HTMLElement, label: string) {
@@ -510,24 +600,24 @@ describe("AdminProjectsPage", () => {
       const listButton = within(layout).getByRole("button", { name: "List view" });
       expect(gridButton).toHaveAttribute("aria-pressed", "true");
       expect(listButton).toHaveAttribute("aria-pressed", "false");
-      expect(screen.getByRole("list", { name: "My Projects" })).toHaveClass("admin-project-grid");
+      expect(await screen.findByRole("list", { name: "My Projects" })).toHaveClass("admin-project-grid");
 
       await user.click(listButton);
       expect(listButton).toHaveAttribute("aria-pressed", "true");
       expect(gridButton).toHaveAttribute("aria-pressed", "false");
-      expect(screen.getByRole("list", { name: "My Projects" })).toHaveClass("admin-projects__list");
+      expect(await screen.findByRole("list", { name: "My Projects" })).toHaveClass("admin-projects__list");
       expect(window.localStorage.getItem(VIEW_STORAGE_KEY)).toBe("list");
       first.unmount();
 
       renderApp(["/admin/projects"]);
       expect(await screen.findByRole("button", { name: "List view" })).toHaveAttribute("aria-pressed", "true");
-      expect(screen.getByRole("list", { name: "My Projects" })).toHaveClass("admin-projects__list");
+      expect(await screen.findByRole("list", { name: "My Projects" })).toHaveClass("admin-projects__list");
       await user.click(screen.getByRole("button", { name: "Grid view" }));
       expect(screen.getByRole("list", { name: "My Projects" })).toHaveClass("admin-project-grid");
       expect(window.localStorage.getItem(VIEW_STORAGE_KEY)).toBe("grid");
     });
 
-    it("renders compact card fields from real data with a hidden default image and team avatars, without created time or quick view", async () => {
+    it("renders paired compact card fields with a decorative photo, without workflow rows or team avatars", async () => {
       installSession();
       server.use(http.get("/api/v1/admin/projects", () => HttpResponse.json(page([approvedProject, draftProject]))));
       renderApp(["/admin/projects"]);
@@ -541,13 +631,16 @@ describe("AdminProjectsPage", () => {
       expect(within(approved).getByText("Kiran Mehta")).toBeVisible();
       expect(within(approved).getByText("Mumbai")).toBeVisible();
       expect(within(approved).getByText("Villa")).toBeVisible();
-      expect(within(approved).getByText("Schedule site visit")).toBeVisible();
+      expect(within(approved).queryByText("Schedule site visit")).not.toBeInTheDocument();
       expect(within(approved).getByText("Active")).toHaveAttribute("data-tone", "success");
-      expect(within(approved).getByRole("img", { name: "Sales: Ravi Estimator" })).toHaveTextContent("RE");
-      expect(within(approved).getByRole("img", { name: "Designer: Divya Kapoor" })).toHaveTextContent("DK");
+      expect(within(approved).queryByRole("img", { name: "Sales: Ravi Estimator" })).not.toBeInTheDocument();
+      expect(within(approved).queryByRole("img", { name: "Designer: Divya Kapoor" })).not.toBeInTheDocument();
+      expect(within(approved).getByRole("heading", { name: "Approved villa" })).toHaveAttribute("title", "Approved villa");
+      expect(approved.querySelector(".admin-project-tile__meta")?.textContent).toBe("ClientKiran MehtaLocationMumbai");
+      expect(approved.querySelector(".admin-project-tile__details")?.textContent).toContain("Property typeVillaClient-approved value (incl. GST)₹2,78,704");
       const media = approved.querySelector("img.admin-project-tile__media");
       expect(media).not.toBeNull();
-      expect(media?.getAttribute("src")).toMatch(/project-card-default/);
+      expect(media?.getAttribute("src")).toMatch(/projects-living-room/);
       expect(media).toHaveAttribute("alt", "");
       expect(media).toHaveAttribute("aria-hidden", "true");
       expect(media).toHaveAttribute("loading", "lazy");
@@ -557,7 +650,7 @@ describe("AdminProjectsPage", () => {
 
       const draft = within(list).getByRole("article", { name: "Draft flat" });
       expect(within(draft).getByText("Property not captured")).toBeVisible();
-      expect(within(draft).getByText("No action pending")).toBeVisible();
+      expect(within(draft).queryByText("No action pending")).not.toBeInTheDocument();
       expect(within(draft).getByText("On Hold")).toHaveAttribute("data-tone", "danger");
       expect(within(draft).queryByRole("img", { name: /^Sales:/ })).not.toBeInTheDocument();
       expect(within(draft).queryByRole("img", { name: /^Designer:/ })).not.toBeInTheDocument();
@@ -570,7 +663,7 @@ describe("AdminProjectsPage", () => {
       installSession();
       server.use(
         http.get("/api/v1/admin/projects", () =>
-          HttpResponse.json(page([approvedProject, draftProject, project, missingBaselineProject]))
+          HttpResponse.json(page([approvedProject, draftProject, project, missingBaselineProject, zeroBaselineProject]))
         )
       );
       const user = userEvent.setup();

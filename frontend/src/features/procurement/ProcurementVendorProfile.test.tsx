@@ -10,12 +10,14 @@ import { server } from "../../test/server";
 import type { ProcurementVendorDetail, ProcurementVendorProfile } from "../ai-estimator-knowledge/knowledgeTypes";
 import { knowledgeQueryKeys } from "../ai-estimator-knowledge/knowledgeQueryKeys";
 import { ProcurementVendorEditor } from "./ProcurementVendorEditor";
-import { completeVendor, completeVendorProfile, vendorBasket, vendorMetadata, vendorSubBasket } from "./vendorProfile.fixtures";
-import { VENDOR_TEXT_FIELDS } from "./vendorProfileDraft";
+import { completeVendor, completeVendorProfile, sampleVendorBankAccount, vendorBasket, vendorMetadata, vendorSubBasket } from "./vendorProfile.fixtures";
+import { VENDOR_BANK_FIELDS, VENDOR_TEXT_FIELDS, type VendorBankField } from "./vendorProfileDraft";
 
 const response = (value: unknown, status = 200) => HttpResponse.json({ data: value }, { status });
 const page = (items: unknown[], offset = 0, hasMore = false) => response({ items, pagination: { total: items.length + offset, limit: 100, offset, hasMore } });
-const safe = (vendor: ProcurementVendorDetail) => { const { procurementProfile, geoTaggedPicture, ...summary } = vendor; return summary; };
+const safe = (vendor: ProcurementVendorDetail) => { const { procurementProfile, geoTaggedPicture, msmeCertificate, ...summary } = vendor; return summary; };
+const savedCertificate = { id: "certificate-one", originalFilename: "synthetic-msme.pdf", mimeType: "application/pdf" as const, byteSize: 4, uploadedAt: vendorMetadata.updatedAt, url: "/admin/ai-estimator-knowledge/vendors/vendor-one/msme-certificate?v=certificate-one" };
+const stagedCertificate = { uploadId: "upload-one", originalFilename: "synthetic-msme.pdf", mimeType: "application/pdf", byteSize: 4, expiresAt: "2099-01-01T00:00:00Z" };
 let stored: ProcurementVendorDetail;
 let writes: Record<string, unknown>[];
 function start(existing = true, canCreateBasket = true, canUpdate = true) {
@@ -29,13 +31,17 @@ async function answer(user: ReturnType<typeof userEvent.setup>, label: string, o
 }
 async function fillNew(user: ReturnType<typeof userEvent.setup>) {
   fireEvent.change(screen.getByRole("textbox", { name: "Entity Name" }), { target: { value: "New Synthetic Vendor" } });
+  await user.selectOptions(screen.getByRole("combobox", { name: "Vendor Organization Type" }), "company");
   for (const [key, label] of Object.entries(VENDOR_TEXT_FIELDS)) fireEvent.change(screen.getByRole("textbox", { name: label }), { target: { value: completeVendorProfile[key as keyof ProcurementVendorProfile] } });
   await answer(user, "Vendor Type", "Execution"); await user.click(screen.getByRole("checkbox", { name: "Labor" }));
-  await answer(user, "GST Registered", "No"); await answer(user, "MSME Registered", "Yes"); await answer(user, "Current Address Verified Physically", "No");
+  await answer(user, "GST Registered", "No"); await answer(user, "MSME Registered", "No"); await answer(user, "Current Address Verified Physically", "No");
   fireEvent.change(screen.getByRole("textbox", { name: "Turnover (Self Declared) (INR)" }), { target: { value: "100000" } });
   await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), vendorBasket.id);
   await screen.findByRole("option", { name: vendorSubBasket.name });
   await user.selectOptions(screen.getByRole("combobox", { name: "Sub Basket" }), vendorSubBasket.id);
+}
+function fillBank() {
+  for (const [key, label] of Object.entries(VENDOR_BANK_FIELDS)) fireEvent.change(screen.getByRole("textbox", { name: label }), { target: { value: sampleVendorBankAccount[key as VendorBankField] ?? "" } });
 }
 beforeEach(() => {
   stored = structuredClone(completeVendor); writes = [];
@@ -44,25 +50,126 @@ beforeEach(() => {
   server.use(
     http.get("/api/v1/admin/ai-estimator-knowledge/baskets", () => page([vendorBasket])),
     http.get("/api/v1/admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets", ({ params }) => page(params.basketId === vendorBasket.id ? [vendorSubBasket] : [])),
+    http.get("/api/v1/admin/ai-estimator-knowledge/vendors/msme-certificate-upload-policy", () => response({ maxUploadBytes: 1048576, allowedMimeTypes: ["application/pdf", "image/jpeg", "image/png", "image/webp"], uploadLifetimeSeconds: 3600 })),
     http.get("/api/v1/admin/ai-estimator-knowledge/vendors/:id", () => response(stored)),
     http.get("/api/v1/admin/ai-estimator-knowledge/vendors", () => page([safe(stored)])),
     http.patch("/api/v1/admin/ai-estimator-knowledge/vendors/:id", async ({ request }) => {
       const input = await request.json() as Record<string, unknown>; writes.push(input);
-      stored = { ...stored, name: input.name as string, status: input.status as "active", version: stored.version + 1, procurementProfile: { ...input.procurementProfile as ProcurementVendorProfile, physicalAddressVerifiedAt: null, physicalAddressVerifiedById: null } };
+      stored = { ...stored, name: input.name as string, status: input.status as "active", version: stored.version + 1, procurementProfile: { ...stored.procurementProfile, ...input.procurementProfile as ProcurementVendorProfile, physicalAddressVerifiedAt: null, physicalAddressVerifiedById: null } };
+      stored.msmeCertificate = stored.procurementProfile?.msmeRegistered ? input.msmeCertificateUploadId ? { ...savedCertificate, id: "certificate-new" } : stored.msmeCertificate : null;
       return response(safe(stored));
     }),
     http.post("/api/v1/admin/ai-estimator-knowledge/vendors", async ({ request }) => {
       const input = await request.json() as Record<string, unknown>; writes.push(input);
-      stored = { ...stored, id: "vendor-created", name: input.name as string, procurementProfile: { ...input.procurementProfile as ProcurementVendorProfile, physicalAddressVerifiedAt: null, physicalAddressVerifiedById: null } };
+      stored = { ...stored, id: "vendor-created", name: input.name as string, procurementProfile: { ...stored.procurementProfile, ...input.procurementProfile as ProcurementVendorProfile, physicalAddressVerifiedAt: null, physicalAddressVerifiedById: null } };
+      stored.msmeCertificate = stored.procurementProfile?.msmeRegistered ? { ...savedCertificate, id: "certificate-created", url: "/admin/ai-estimator-knowledge/vendors/vendor-created/msme-certificate?v=certificate-created" } : null;
       return response(safe(stored), 201);
     })
   );
 });
 describe("Procurement vendor profile", () => {
-  it.each(["labor", "material_labour", "both", "supplier_yes", "supplier_no"])("saves and reloads %s with exact conditional fields", async (branch) => {
+  it("shows the supplied organization options in order, requires a new selection, and allows empty bank details", async () => {
+    const view = start(false); const user = userEvent.setup(); await screen.findByRole("option", { name: vendorBasket.name });
+    const organization = screen.getByRole("combobox", { name: "Vendor Organization Type" });
+    expect(organization).toHaveValue(""); expect(organization).toBeRequired();
+    expect(within(organization).getAllByRole("option").map((option) => option.textContent)).toEqual(["Select organization type", "Individual", "Company", "Firm", "Associated Person", "HUF", "Trust", "GOVT"]);
+    expect(within(screen.getByRole("region", { name: "Vendor Information" })).getByRole("combobox", { name: "Vendor Organization Type" })).toBe(organization);
+    const bank = screen.getByRole("region", { name: "Bank Account Details" });
+    for (const input of within(bank).getAllByRole("textbox")) expect(input).not.toBeRequired();
+    await fillNew(user); await user.selectOptions(organization, "");
+    await user.click(screen.getByRole("button", { name: "Save vendor" }));
+    await waitFor(() => expect(organization).toHaveFocus()); expect(organization).toHaveAccessibleDescription("Choose a Vendor Organization Type."); expect(writes).toHaveLength(0);
+    await user.selectOptions(organization, "associated_person"); expect(organization).not.toHaveAttribute("aria-invalid");
+    await user.click(screen.getByRole("button", { name: "Save vendor" })); await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    expect(writes[0]).toMatchObject({ procurementProfile: { organizationType: "associated_person", bankAccount: null } });
+  });
+
+  it.each(["execution", "supplier"])("creates, reloads, edits and clears normalized banking for %s vendors", async (vendorType) => {
+    const view = start(false); const user = userEvent.setup(); await screen.findByRole("option", { name: vendorBasket.name }); await fillNew(user);
+    if (vendorType === "supplier") await answer(user, "Vendor Type", "Supplier");
+    fillBank();
+    const account = screen.getByRole("textbox", { name: "Account Number" }); expect(account).toHaveAttribute("type", "text"); expect(account).toHaveAttribute("inputmode", "numeric"); expect(account).toHaveAttribute("maxlength", "34");
+    fireEvent.change(screen.getByRole("textbox", { name: "IFSC Code" }), { target: { value: "demo0123456" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Account Holder Name" }), { target: { value: "  Synthetic Account Holder  " } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Branch Name" }), { target: { value: "  " } });
+    await user.click(screen.getByRole("button", { name: "Save vendor" })); await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    expect(writes[0]).toMatchObject({ procurementProfile: { vendorType, organizationType: "company", bankAccount: { ...sampleVendorBankAccount, branchName: null } } });
+    view.unmount(); const edited = start(); expect(await screen.findByRole("textbox", { name: "Account Number" })).toHaveValue(sampleVendorBankAccount.accountNumber);
+    expect(screen.getByRole("textbox", { name: "IFSC Code" })).toHaveValue("DEMO0123456"); expect(screen.getByRole("textbox", { name: "Branch Name" })).toHaveValue("");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Vendor Organization Type" }), "trust");
+    fireEvent.change(screen.getByRole("textbox", { name: "Account Number" }), { target: { value: "0000000987" } });
+    await user.click(screen.getByRole("button", { name: "Save changes" })); await waitFor(() => expect(edited.saved).toHaveBeenCalledOnce());
+    expect(writes[1]).toMatchObject({ expectedVersion: stored.version - 1, procurementProfile: { organizationType: "trust", bankAccount: { accountNumber: "0000000987" } } });
+    edited.unmount(); const cleared = start(); await screen.findByRole("textbox", { name: "Account Number" });
+    for (const label of Object.values(VENDOR_BANK_FIELDS)) fireEvent.change(screen.getByRole("textbox", { name: label }), { target: { value: "" } });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Vendor Organization Type" }), "");
+    await user.click(screen.getByRole("button", { name: "Save changes" })); await waitFor(() => expect(cleared.saved).toHaveBeenCalledOnce());
+    expect(writes[2]).toMatchObject({ procurementProfile: { organizationType: null, bankAccount: null } });
+    cleared.unmount(); start(); expect(await screen.findByRole("textbox", { name: "Account Number" })).toHaveValue("");
+  });
+
+  it("links partial bank errors, focuses the first missing field, and clears errors when the optional section is emptied", async () => {
+    const view = start(); const user = userEvent.setup(); await screen.findByRole("textbox", { name: "Account Number" });
+    const branch = screen.getByRole("textbox", { name: "Branch Name" });
+    fireEvent.change(branch, { target: { value: "Synthetic Branch" } });
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Account Holder Name" })).toHaveFocus());
+    for (const label of ["Account Holder Name", "Bank Name", "Account Number", "IFSC Code"]) {
+      const input = screen.getByRole("textbox", { name: label }); expect(input).toBeRequired(); expect(input).toHaveAttribute("aria-invalid", "true"); expect(input).toHaveAccessibleDescription(/Enter/);
+    }
+    expect(branch).not.toBeRequired(); expect(writes).toHaveLength(0);
+    fireEvent.change(branch, { target: { value: "" } });
+    for (const input of within(screen.getByRole("region", { name: "Bank Account Details" })).getAllByRole("textbox")) { expect(input).not.toHaveAttribute("aria-invalid"); expect(input).not.toBeRequired(); }
+    await user.click(screen.getByRole("button", { name: "Save changes" })); await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    expect(writes[0]).toMatchObject({ procurementProfile: { bankAccount: null } });
+  });
+
+  it("maps nested server bank errors and clears only the corrected field", async () => {
+    server.use(http.patch("/api/v1/admin/ai-estimator-knowledge/vendors/:id", () => HttpResponse.json({ error: { code: "VALIDATION_ERROR", message: "Review bank details", fields: { "procurementProfile.bankAccount.accountNumber": "Check the account number.", "procurementProfile.bankAccount.ifscCode": "Check the IFSC code." } } }, { status: 400 })));
+    start(); const user = userEvent.setup(); await screen.findByRole("textbox", { name: "Account Number" }); fillBank();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    const account = screen.getByRole("textbox", { name: "Account Number" }); await waitFor(() => expect(account).toHaveFocus()); expect(account).toHaveAccessibleDescription("Check the account number.");
+    fireEvent.change(account, { target: { value: "000456" } }); expect(account).not.toHaveAttribute("aria-invalid");
+    expect(screen.getByRole("textbox", { name: "IFSC Code" })).toHaveAccessibleDescription("Check the IFSC code.");
+    fireEvent.change(screen.getByRole("textbox", { name: "IFSC Code" }), { target: { value: "ABCD0123456" } }); expect(screen.queryByText("Check the IFSC code.")).not.toBeInTheDocument();
+  });
+
+  it("allows editing a legacy profile missing organization and banking fields", async () => {
+    const { organizationType, bankAccount, ...legacy } = stored.procurementProfile!;
+    server.use(http.get("/api/v1/admin/ai-estimator-knowledge/vendors/:id", () => response({ ...stored, procurementProfile: legacy })));
+    const view = start(); const user = userEvent.setup(); const organization = await screen.findByRole("combobox", { name: "Vendor Organization Type" });
+    expect(organization).toHaveValue(""); expect(organization).not.toBeRequired(); expect(screen.getByRole("textbox", { name: "Account Number" })).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: "Save changes" })); await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    expect(writes[0]).toMatchObject({ procurementProfile: { organizationType: null, bankAccount: null } });
+  });
+
+  it.each(["readonly", "archived"])("keeps stored organization and banking disabled for %s details", async (state) => {
+    stored.procurementProfile!.bankAccount = { ...sampleVendorBankAccount }; if (state === "archived") stored = { ...stored, status: "archived" };
+    start(true, false, state !== "readonly");
+    const organization = await screen.findByRole("combobox", { name: "Vendor Organization Type" }); expect(organization).toBeDisabled(); expect(organization).toHaveValue("company");
+    for (const label of Object.values(VENDOR_BANK_FIELDS)) expect(screen.getByRole("textbox", { name: label })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Account Number" })).toHaveValue(sampleVendorBankAccount.accountNumber); expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+  });
+
+  it("preserves organization and bank drafts across cancel and conflict until a deliberate reload", async () => {
+    stored.procurementProfile!.bankAccount = { ...sampleVendorBankAccount };
+    server.use(http.patch("/api/v1/admin/ai-estimator-knowledge/vendors/:id", () => HttpResponse.json({ error: { code: "VERSION_CONFLICT", message: "Vendor changed" } }, { status: 409 })));
+    start(); const user = userEvent.setup(); await screen.findByRole("textbox", { name: "Account Number" });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Vendor Organization Type" }), "govt");
+    fireEvent.change(screen.getByRole("textbox", { name: "Account Number" }), { target: { value: "0000000999" } });
+    await user.click(screen.getByRole("button", { name: "Cancel" })); await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(screen.getByRole("textbox", { name: "Account Number" })).toHaveValue("0000000999");
+    await user.click(screen.getByRole("button", { name: "Save changes" })); await screen.findByText("Vendor changed");
+    expect(screen.getByRole("textbox", { name: "Account Number" })).toHaveValue("0000000999"); expect(screen.getByRole("combobox", { name: "Vendor Organization Type" })).toHaveValue("govt");
+    expect(screen.getByRole("textbox", { name: "Account Number" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Reload latest and replace entries" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Account Number" })).toHaveValue(sampleVendorBankAccount.accountNumber)); expect(screen.getByRole("combobox", { name: "Vendor Organization Type" })).toHaveValue("company");
+  });
+
+  it.each(["labor", "material_labour", "both", "supplier"])("saves and reloads %s with exact conditional fields", async (branch) => {
     const view = start(); const user = userEvent.setup();
     await screen.findByRole("textbox", { name: "Entity Name" });
-    if (branch.startsWith("supplier")) { await answer(user, "Vendor Type", "Supplier"); await answer(user, "Supplier", branch.endsWith("yes") ? "Yes" : "No"); }
+    if (branch.startsWith("supplier")) { await answer(user, "Vendor Type", "Supplier"); }
     else {
       for (const [value, label] of [["labor", "Labor"], ["material_labour", "Material + Labour"]]) {
         const checkbox = screen.getByRole("checkbox", { name: label }) as HTMLInputElement;
@@ -74,12 +181,12 @@ describe("Procurement vendor profile", () => {
     await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
     expect(writes[0]).toMatchObject({ expectedVersion: 1, procurementProfile: {
       vendorType: branch.startsWith("supplier") ? "supplier" : "execution", executionType: branch.startsWith("supplier") ? null : branch === "both" ? ["labor", "material_labour"] : [branch],
-      supplier: branch.startsWith("supplier") ? branch.endsWith("yes") : null, turnoverVerifiedPaise: null, turnoverSelfDeclaredPaise: 10000000
+      supplier: branch.startsWith("supplier") ? true : null, turnoverVerifiedPaise: null, turnoverSelfDeclaredPaise: 10000000
     } });
     view.unmount(); start(); await screen.findByRole("textbox", { name: "Entity Name" });
     if (branch.startsWith("supplier")) {
       expect(screen.getByRole("radio", { name: "Supplier" })).toBeChecked();
-      expect(within(screen.getByRole("group", { name: /^Supplier/ })).getByRole("radio", { name: branch.endsWith("yes") ? "Yes" : "No" })).toBeChecked();
+      expect(screen.queryByRole("group", { name: /^Supplier/ })).not.toBeInTheDocument();
       expect(screen.queryByRole("checkbox", { name: "Labor" })).not.toBeInTheDocument();
     } else {
       expect(screen.getByRole("checkbox", { name: "Labor" })).toHaveProperty("checked", branch === "labor" || branch === "both");
@@ -119,16 +226,15 @@ describe("Procurement vendor profile", () => {
   it("clears conditional choices when switching Vendor Type without losing other entries", async () => {
     const view = start(); const user = userEvent.setup(); await screen.findByRole("textbox", { name: "Entity Name" });
     await user.click(screen.getByRole("checkbox", { name: "Material + Labour" }));
-    await answer(user, "Vendor Type", "Supplier"); await answer(user, "Supplier", "Yes");
+    await answer(user, "Vendor Type", "Supplier");
     await answer(user, "Vendor Type", "Execution");
     expect(screen.getByRole("checkbox", { name: "Labor" })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Material + Labour" })).not.toBeChecked();
     await answer(user, "Vendor Type", "Supplier");
-    expect(within(screen.getByRole("group", { name: /^Supplier/ })).getByRole("radio", { name: "Yes" })).not.toBeChecked();
-    expect(within(screen.getByRole("group", { name: /^Supplier/ })).getByRole("radio", { name: "No" })).not.toBeChecked();
-    await answer(user, "Supplier", "No"); await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(screen.queryByRole("group", { name: /^Supplier/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
-    expect(writes[0]).toMatchObject({ name: "Timber House", procurementProfile: { executionType: null, supplier: false, position: "Owner" } });
+    expect(writes[0]).toMatchObject({ name: "Timber House", procurementProfile: { executionType: null, supplier: true, position: "Owner" } });
   });
   it.each(["labor", "material_labour"] as const)("displays legacy %s detail as a single checkbox and saves an array", async (legacy) => {
     server.use(http.get("/api/v1/admin/ai-estimator-knowledge/vendors/:id", () => response({ ...stored, procurementProfile: { ...stored.procurementProfile, executionType: legacy } })));
@@ -229,39 +335,28 @@ describe("Procurement vendor profile", () => {
     const results = await axe.run(screen.getByRole("dialog", { name: "Vendor details" }), { rules: { "color-contrast": { enabled: false } } });
     expect(results.violations).toEqual([]);
   });
-  it.each(["single", "both"])("recovers a lost create response with equivalent %s arrays and keeps private detail out of shared caches", async (selection) => {
-    server.use(http.post("/api/v1/admin/ai-estimator-knowledge/vendors", async ({ request }) => {
+  it.each([false, true])("replays an uncertain save with the exact command and keeps private detail out of shared caches (existing %s)", async (existing) => {
+    const handler = async ({ request }: { request: Request }) => {
       const input = await request.json() as Record<string, unknown>; writes.push(input);
-      stored = { ...stored, name: input.name as string, procurementProfile: { ...input.procurementProfile as ProcurementVendorProfile, physicalAddressVerifiedAt: null, physicalAddressVerifiedById: null } };
-      stored.procurementProfile!.executionType = [...stored.procurementProfile!.executionType!].reverse();
-      return HttpResponse.json({ error: { code: "TEMPORARY", message: "Response lost" } }, { status: 503 });
-    }));
-    const view = start(false); view.client.setQueryData(knowledgeQueryKeys.masterCatalog("vendors"), { items: [safe(stored)] });
-    const user = userEvent.setup(); await screen.findByRole("option", { name: vendorBasket.name }); await fillNew(user);
-    if (selection === "both") await user.click(screen.getByRole("checkbox", { name: "Material + Labour" }));
-    await user.click(screen.getByRole("button", { name: "Save vendor" })); await waitFor(() => expect(view.saved).toHaveBeenCalledOnce()); expect(writes).toHaveLength(1);
+      stored = { ...stored, id: existing ? stored.id : "vendor-created", name: input.name as string, procurementProfile: { ...stored.procurementProfile!, ...input.procurementProfile as ProcurementVendorProfile } };
+      return writes.length === 1 ? HttpResponse.json({ error: { code: "TEMPORARY", message: "Response lost" } }, { status: 503 }) : response(safe(stored));
+    };
+    server.use(existing ? http.patch("/api/v1/admin/ai-estimator-knowledge/vendors/:id", handler) : http.post("/api/v1/admin/ai-estimator-knowledge/vendors", handler));
+    const view = start(existing); view.client.setQueryData(knowledgeQueryKeys.masterCatalog("vendors"), { items: [safe(stored)] });
+    const user = userEvent.setup(); await screen.findByRole("option", { name: vendorBasket.name });
+    if (!existing) await fillNew(user);
+    fillBank();
+    await user.click(screen.getByRole("button", { name: existing ? "Save changes" : "Save vendor" }));
+    await screen.findByRole("button", { name: "Retry vendor save" });
+    expect(view.saved).not.toHaveBeenCalled(); expect(screen.getByRole("textbox", { name: "Entity Name" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Account Number" })).toBeDisabled(); expect(screen.getByRole("combobox", { name: "Vendor Organization Type" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Retry vendor save" }));
+    await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    expect(writes).toHaveLength(2); expect(writes[1]).toEqual(writes[0]); expect(writes[0].idempotencyKey).toEqual(expect.any(String));
     const shared = view.client.getQueriesData({ queryKey: knowledgeQueryKeys.masterLists("vendors") });
-    expect(JSON.stringify(shared)).not.toContain("aadhar"); expect(JSON.stringify(shared)).not.toContain("sample@example.test");
-  });
-  it.each(["execution selections", "another profile field"])("does not reconcile a lost create response when %s differ", async (difference) => {
-    server.use(http.post("/api/v1/admin/ai-estimator-knowledge/vendors", async ({ request }) => {
-      const input = await request.json() as Record<string, unknown>; writes.push(input);
-      stored = { ...stored, name: input.name as string, procurementProfile: { ...input.procurementProfile as ProcurementVendorProfile, physicalAddressVerifiedAt: null, physicalAddressVerifiedById: null } };
-      if (difference === "execution selections") stored.procurementProfile!.executionType = ["labor"];
-      else stored.procurementProfile!.position = "Different position";
-      return HttpResponse.json({ error: { code: "TEMPORARY", message: "Response lost" } }, { status: 503 });
-    }));
-    const view = start(false); const user = userEvent.setup();
-    await screen.findByRole("option", { name: vendorBasket.name }); await fillNew(user);
-    await user.click(screen.getByRole("checkbox", { name: "Material + Labour" }));
-    await user.click(screen.getByRole("button", { name: "Save vendor" }));
-    await screen.findByText(/An existing vendor uses this Entity Name with different details/);
-    expect(view.saved).not.toHaveBeenCalled(); expect(view.closed).not.toHaveBeenCalled();
-    expect(screen.getByRole("checkbox", { name: "Labor" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Material + Labour" })).toBeChecked();
-    await user.click(screen.getByRole("button", { name: "Check saved vendor" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Check saved vendor" })).toBeEnabled());
-    expect(view.saved).not.toHaveBeenCalled(); expect(writes).toHaveLength(1);
+    expect(JSON.stringify(shared)).not.toContain("aadhar"); expect(JSON.stringify(shared)).not.toContain("sample@example.test"); expect(JSON.stringify(shared)).not.toContain("msmeCertificate");
+    expect(JSON.stringify(shared)).not.toContain("bankAccount"); expect(JSON.stringify(shared)).not.toContain(sampleVendorBankAccount.accountNumber); expect(JSON.stringify(shared)).not.toContain(sampleVendorBankAccount.accountHolderName);
+    expect(writes[0]).toMatchObject({ procurementProfile: { bankAccount: sampleVendorBankAccount } });
   });
   it("preserves a stale draft until deliberate reload and hides creation for read-only viewers", async () => {
     server.use(http.patch("/api/v1/admin/ai-estimator-knowledge/vendors/:id", () => HttpResponse.json({ error: { code: "VERSION_CONFLICT", message: "Vendor changed" } }, { status: 409 })));
@@ -274,4 +369,179 @@ describe("Procurement vendor profile", () => {
     view.unmount(); start(true, false, false); await screen.findByRole("textbox", { name: "Entity Name" });
     expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument(); expect(screen.queryByRole("button", { name: "Add Main Basket" })).not.toBeInTheDocument(); expect(screen.getByRole("textbox", { name: "AADHAR" })).toBeDisabled();
   });
+  it("places contact fields in Vendor Information and omits removed fields without erasing stored values", async () => {
+    const view = start(); const user = userEvent.setup();
+    const information = await screen.findByRole("region", { name: "Vendor Information" });
+    for (const name of ["Email", "Phone Number", "Address"]) expect(within(information).getByRole("textbox", { name })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Contact Information" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Directory description|^Reference/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    expect(writes[0]).not.toHaveProperty("description"); expect(writes[0].procurementProfile).not.toHaveProperty("reference");
+    expect(stored.description).toBe("Timber supply"); expect(stored.procurementProfile!.reference).toBe("Synthetic reference");
+    expect(stored.procurementProfile).toMatchObject({ email: "sample@example.test", phoneNumber: "+91 90000 00000", address: "Synthetic office address" });
+  });
+  it("requires a formatted GST Number, focuses its error, normalizes and reloads the saved value", async () => {
+    const view = start(); const user = userEvent.setup(); await screen.findByRole("textbox", { name: "Entity Name" });
+    await answer(user, "GST Registered", "Yes");
+    const gst = screen.getByRole("textbox", { name: "GST Number" }); expect(gst).toBeRequired();
+    for (const value of ["", "invalid"]) {
+      fireEvent.change(gst, { target: { value } }); await user.click(screen.getByRole("button", { name: "Save changes" }));
+      await waitFor(() => expect(gst).toHaveFocus()); expect(gst).toHaveAccessibleDescription(/valid 15-character/); expect(writes).toHaveLength(0);
+    }
+    fireEvent.change(gst, { target: { value: "27abcde1234f1z5" } });
+    await user.click(screen.getByRole("button", { name: "Save changes" })); await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    expect(writes[0]).toMatchObject({ procurementProfile: { gstRegistered: true, gstNumber: "27ABCDE1234F1Z5" } });
+    view.unmount(); start(); expect(await screen.findByRole("textbox", { name: "GST Number" })).toHaveValue("27ABCDE1234F1Z5");
+  });
+  it("keeps legacy registration data visible and clears GST and MSME requirements when No is selected", async () => {
+    stored.procurementProfile!.gstRegistered = true; stored.procurementProfile!.msmeRegistered = true;
+    const view = start(); const user = userEvent.setup(); await screen.findByRole("textbox", { name: "GST Number" });
+    expect(screen.getByRole("textbox", { name: "Position" })).toHaveValue("Owner");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(screen.getByText("Upload an MSME Certificate.")).toBeVisible();
+    await answer(user, "GST Registered", "No"); await answer(user, "MSME Registered", "No");
+    expect(screen.queryByRole("textbox", { name: "GST Number" })).not.toBeInTheDocument(); expect(screen.queryByLabelText(/^MSME Certificate/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Upload an MSME Certificate.")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save changes" })); await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    expect(writes[0]).toMatchObject({ procurementProfile: { gstRegistered: false, gstNumber: null, msmeRegistered: false } });
+    expect(writes[0]).not.toHaveProperty("msmeCertificateUploadId");
+  });
+  it("stages required evidence before creating a vendor with both GST and MSME Yes", async () => {
+    const uploads: FormData[] = [];
+    vi.spyOn(apiClient, "postMultipart").mockImplementation(async (_url, body) => { uploads.push(body); expect(writes).toHaveLength(0); return stagedCertificate as never; });
+    const view = start(false); const user = userEvent.setup(); await screen.findByRole("option", { name: vendorBasket.name }); await fillNew(user);
+    await answer(user, "GST Registered", "Yes"); fireEvent.change(screen.getByRole("textbox", { name: "GST Number" }), { target: { value: "27ABCDE1234F1Z5" } });
+    await answer(user, "MSME Registered", "Yes"); await screen.findByText(/Maximum 1 MB/);
+    await user.click(screen.getByRole("button", { name: "Save vendor" }));
+    await waitFor(() => expect(screen.getByLabelText(/^MSME Certificate/)).toHaveFocus()); expect(writes).toHaveLength(0);
+    await user.upload(screen.getByLabelText(/^MSME Certificate/), new File(["%PDF"], "synthetic-msme.pdf", { type: "application/pdf" }));
+    expect(uploads).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Save vendor" })); await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    expect(uploads).toHaveLength(1); expect(uploads[0].get("expectedVersion")).toBeNull();
+    expect(writes[0]).toMatchObject({ msmeCertificateUploadId: "upload-one", procurementProfile: { gstNumber: "27ABCDE1234F1Z5", msmeRegistered: true } });
+    view.unmount(); start(); expect(await screen.findByText("Saved certificate: synthetic-msme.pdf")).toBeVisible();
+  });
+  it("retains the file and upload identity after uncertain staging without saving a vendor", async () => {
+    const uploads: FormData[] = [];
+    vi.spyOn(apiClient, "postMultipart").mockImplementation(async (_url, body) => { uploads.push(body); if (uploads.length === 1) throw new ApiError(503, "TEMPORARY", "Upload response lost"); return stagedCertificate as never; });
+    const view = start(); const user = userEvent.setup(); await screen.findByRole("textbox", { name: "Entity Name" }); await answer(user, "MSME Registered", "Yes"); await screen.findByText(/Maximum 1 MB/);
+    await user.upload(screen.getByLabelText(/^MSME Certificate/), new File(["%PDF"], "synthetic-msme.pdf", { type: "application/pdf" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" })); await screen.findByText(/certificate upload was not confirmed/);
+    expect(writes).toHaveLength(0); expect(view.saved).not.toHaveBeenCalled(); expect(screen.getByText("Selected: synthetic-msme.pdf")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Save changes" })); await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    expect(uploads).toHaveLength(2); expect(uploads[0].get("idempotencyKey")).toEqual(uploads[1].get("idempotencyKey")); expect(uploads[1].get("expectedVersion")).toBe("1");
+  });
+  it("replays a staged save after an uncertain result without uploading or creating again", async () => {
+    const upload = vi.spyOn(apiClient, "postMultipart").mockResolvedValue(stagedCertificate as never);
+    server.use(http.post("/api/v1/admin/ai-estimator-knowledge/vendors", async ({ request }) => {
+      const input = await request.json() as Record<string, unknown>; writes.push(input);
+      stored = { ...stored, id: "vendor-created", name: input.name as string, procurementProfile: { ...stored.procurementProfile!, ...input.procurementProfile as ProcurementVendorProfile }, msmeCertificate: savedCertificate };
+      return writes.length === 1 ? HttpResponse.json({ error: { code: "TEMPORARY", message: "Response lost" } }, { status: 503 }) : response(safe(stored));
+    }));
+    const view = start(false); const user = userEvent.setup(); await screen.findByRole("option", { name: vendorBasket.name }); await fillNew(user); await answer(user, "MSME Registered", "Yes"); await screen.findByText(/Maximum 1 MB/);
+    await user.upload(screen.getByLabelText(/^MSME Certificate/), new File(["%PDF"], "synthetic-msme.pdf", { type: "application/pdf" }));
+    await user.click(screen.getByRole("button", { name: "Save vendor" })); await user.click(await screen.findByRole("button", { name: "Retry vendor save" }));
+    await waitFor(() => expect(view.saved).toHaveBeenCalledOnce()); expect(upload).toHaveBeenCalledOnce(); expect(writes[1]).toEqual(writes[0]);
+  });
+  it.each(["oversized", "unsupported", "empty"])("rejects a %s certificate before staging", async (kind) => {
+    const upload = vi.spyOn(apiClient, "postMultipart"); start(); const user = userEvent.setup({ applyAccept: false }); await screen.findByRole("textbox", { name: "Entity Name" });
+    await answer(user, "MSME Registered", "Yes"); await screen.findByText(/Maximum 1 MB/);
+    const file = new File([kind === "empty" ? "" : "content"], "certificate.pdf", { type: kind === "unsupported" ? "text/plain" : "application/pdf" });
+    if (kind === "oversized") Object.defineProperty(file, "size", { value: 1048577 });
+    await user.upload(screen.getByLabelText(/^MSME Certificate/), file); await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(screen.getByLabelText(/^MSME Certificate/)).toHaveAccessibleDescription(kind === "oversized" ? /bytes or smaller/ : /nonempty PDF/); expect(upload).not.toHaveBeenCalled(); expect(writes).toHaveLength(0);
+  });
+  it("requires the server upload policy and allows policy retry without discarding the selected file", async () => {
+    let attempts = 0;
+    server.use(http.get("/api/v1/admin/ai-estimator-knowledge/vendors/msme-certificate-upload-policy", () => ++attempts === 1 ? HttpResponse.json({ error: { code: "TEMPORARY", message: "Policy unavailable" } }, { status: 503 }) : response({ maxUploadBytes: 1048576, allowedMimeTypes: ["application/pdf"], uploadLifetimeSeconds: 3600 })));
+    vi.spyOn(apiClient, "postMultipart").mockResolvedValue(stagedCertificate as never);
+    const view = start(); const user = userEvent.setup(); await screen.findByRole("textbox", { name: "Entity Name" }); await answer(user, "MSME Registered", "Yes");
+    await screen.findByRole("button", { name: "Retry certificate requirements" });
+    await user.upload(screen.getByLabelText(/^MSME Certificate/), new File(["%PDF"], "synthetic-msme.pdf", { type: "application/pdf" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" })); expect(writes).toHaveLength(0);
+    expect(screen.getByLabelText(/^MSME Certificate/)).toHaveAccessibleDescription(/Load the certificate upload requirements/);
+    await user.click(screen.getByRole("button", { name: "Retry certificate requirements" })); await screen.findByText(/Maximum 1 MB/);
+    await user.click(screen.getByRole("button", { name: "Save changes" })); await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+  });
+  it.each(["viewer", "archived"])("reuses a saved certificate and keeps authenticated download available in %s views", async (access) => {
+    stored.procurementProfile!.msmeRegistered = true; stored.msmeCertificate = savedCertificate;
+    const upload = vi.spyOn(apiClient, "postMultipart");
+    const download = vi.spyOn(apiClient, "getBlob").mockResolvedValue({ blob: new Blob(["%PDF"], { type: "application/pdf" }), filename: undefined });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const view = start(); const user = userEvent.setup(); await screen.findByText("Saved certificate: synthetic-msme.pdf");
+    await user.click(screen.getByRole("button", { name: "Save changes" })); await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    expect(upload).not.toHaveBeenCalled(); expect(writes[0]).not.toHaveProperty("msmeCertificateUploadId");
+    view.unmount(); if (access === "archived") stored = { ...stored, status: "archived" }; start(true, false, access === "archived"); const button = await screen.findByRole("button", { name: "Download MSME certificate" }); expect(button).toBeEnabled();
+    expect(screen.queryByLabelText(/^MSME Certificate/)).not.toBeInTheDocument(); await user.click(button);
+    await waitFor(() => expect(download).toHaveBeenCalledWith(savedCertificate.url, expect.objectContaining({ maxBytes: 4 })));
+    expect(screen.getByRole("textbox", { name: "Position" })).toBeDisabled(); for (const radio of screen.getAllByRole("radio")) expect(radio).toBeDisabled();
+  });
+  it("preserves existing evidence on failed replacement, restages after version reload, then saves the selected file", async () => {
+    stored.procurementProfile!.msmeRegistered = true; stored.msmeCertificate = savedCertificate;
+    const uploads: FormData[] = [];
+    vi.spyOn(apiClient, "postMultipart").mockImplementation(async (_url, body) => { uploads.push(body); return { ...stagedCertificate, uploadId: `upload-${uploads.length}` } as never; });
+    let attempts = 0;
+    server.use(http.patch("/api/v1/admin/ai-estimator-knowledge/vendors/:id", async ({ request }) => {
+      const input = await request.json() as Record<string, unknown>; writes.push(input);
+      if (++attempts === 1) { stored = { ...stored, version: 2 }; return HttpResponse.json({ error: { code: "VERSION_CONFLICT", message: "Vendor changed" } }, { status: 409 }); }
+      stored = { ...stored, version: 3, msmeCertificate: { ...savedCertificate, originalFilename: "replacement.pdf", id: "certificate-new" } }; return response(safe(stored));
+    }));
+    const view = start(); const user = userEvent.setup(); await screen.findByText(/Maximum 1 MB/);
+    await user.upload(screen.getByLabelText(/^MSME Certificate/), new File(["%PDF"], "replacement.pdf", { type: "application/pdf" })); await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByText("Vendor changed"); expect(stored.msmeCertificate.id).toBe("certificate-one"); expect(view.saved).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Reload latest and replace entries" })); await screen.findByText(/Latest vendor loaded/);
+    expect(screen.getByText("Selected: replacement.pdf")).toBeVisible(); await user.click(screen.getByRole("button", { name: "Save changes" })); await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    expect(uploads[0].get("idempotencyKey")).not.toEqual(uploads[1].get("idempotencyKey")); expect(uploads[1].get("expectedVersion")).toBe("2"); expect(writes[0].idempotencyKey).not.toEqual(writes[1].idempotencyKey);
+  });
+  it("detaches a saved certificate only when MSME No is saved, and preserves evidence on cancel", async () => {
+    stored.procurementProfile!.msmeRegistered = true; stored.msmeCertificate = savedCertificate;
+    const view = start(); const user = userEvent.setup(); await screen.findByText("Saved certificate: synthetic-msme.pdf"); await answer(user, "MSME Registered", "No");
+    expect(stored.msmeCertificate).toEqual(savedCertificate); await user.click(screen.getByRole("button", { name: "Cancel" })); await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(writes).toHaveLength(0); expect(stored.msmeCertificate).toEqual(savedCertificate);
+    await user.click(screen.getByRole("button", { name: "Save changes" })); await waitFor(() => expect(view.saved).toHaveBeenCalledOnce()); expect(stored.msmeCertificate).toBeNull();
+  });
+
+  it("keeps staging controls disabled, then retries only the optional photo after the required certificate is saved", async () => {
+    let release!: (result: unknown) => void;
+    const staged = new Promise((resolve) => { release = resolve; });
+    const upload = vi.spyOn(apiClient, "postMultipart").mockImplementation(() => staged as never);
+    const photo = vi.spyOn(apiClient, "putMultipart").mockImplementation(async () => {
+      expect(stored.msmeCertificate).not.toBeNull();
+      if (photo.mock.calls.length === 1) throw new ApiError(503, "TEMPORARY", "Picture service unavailable");
+      return { vendorId: stored.id, version: stored.version + 1, geoTaggedPicture: null } as never;
+    });
+    const view = start(false); const user = userEvent.setup(); await screen.findByRole("option", { name: vendorBasket.name }); await fillNew(user); await answer(user, "MSME Registered", "Yes"); await screen.findByText(/Maximum 1 MB/);
+    await user.upload(screen.getByLabelText(/^MSME Certificate/), new File(["%PDF"], "synthetic-msme.pdf", { type: "application/pdf" }));
+    await user.upload(screen.getByLabelText("Geo Tagged Picture of the Vendor"), new File(["fake"], "synthetic.png", { type: "image/png" }));
+    const accessibility = await axe.run(screen.getByRole("dialog", { name: "Add vendor" }), { rules: { "color-contrast": { enabled: false } } }); expect(accessibility.violations).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "Save vendor" })); await screen.findByText("Uploading: synthetic-msme.pdf");
+    expect(screen.getByLabelText(/^MSME Certificate/)).toBeDisabled(); expect(screen.getByRole("button", { name: "Clear selected certificate" })).toBeDisabled(); expect(screen.getByRole("button", { name: "Save vendor" })).toBeDisabled(); expect(writes).toHaveLength(0);
+    await act(async () => release(stagedCertificate)); await screen.findByText(/Vendor saved, but the picture has not been confirmed/);
+    expect(view.saved).not.toHaveBeenCalled(); expect(writes).toHaveLength(1); expect(stored.msmeCertificate).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Retry picture attachment" })); await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    expect(upload).toHaveBeenCalledOnce(); expect(photo).toHaveBeenCalledTimes(2); expect(writes).toHaveLength(1);
+  });
+  it("normalizes a legacy Supplier No without another classification choice", async () => {
+    stored.procurementProfile = { ...stored.procurementProfile!, vendorType: "supplier", executionType: null, supplier: false };
+    const view = start(); const user = userEvent.setup(); expect(await screen.findByRole("radio", { name: "Supplier" })).toBeChecked();
+    expect(screen.queryByRole("group", { name: /^Supplier/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save changes" })); await waitFor(() => expect(view.saved).toHaveBeenCalledOnce()); expect(writes[0]).toMatchObject({ procurementProfile: { supplier: true, executionType: null } });
+  });
+
+  it("allows create-only users to save the profile and required certificate while keeping optional photo controls disabled", async () => {
+    const upload = vi.spyOn(apiClient, "postMultipart").mockResolvedValue(stagedCertificate as never);
+    const view = start(false, false, false); const user = userEvent.setup(); await screen.findByRole("option", { name: vendorBasket.name });
+    expect(screen.getByRole("textbox", { name: "Entity Name" })).toBeEnabled(); expect(screen.getByRole("button", { name: "Save vendor" })).toBeEnabled();
+    expect(screen.getByLabelText("Geo Tagged Picture of the Vendor")).toBeDisabled();
+    await fillNew(user); await answer(user, "GST Registered", "Yes"); const gst = screen.getByRole("textbox", { name: "GST Number" }); expect(gst).toBeEnabled();
+    fireEvent.change(gst, { target: { value: "27ABCDE1234F1Z5" } }); await answer(user, "MSME Registered", "Yes"); await screen.findByText(/Maximum 1 MB/);
+    expect(screen.getByLabelText(/^MSME Certificate/)).toBeEnabled();
+    await user.upload(screen.getByLabelText(/^MSME Certificate/), new File(["%PDF"], "synthetic-msme.pdf", { type: "application/pdf" }));
+    expect(screen.getByRole("button", { name: "Clear selected certificate" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Save vendor" })); await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    expect(upload).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/vendors/msme-certificate-uploads", expect.any(FormData));
+    expect(writes).toHaveLength(1); expect(writes[0]).toMatchObject({ msmeCertificateUploadId: "upload-one", procurementProfile: { gstNumber: "27ABCDE1234F1Z5", msmeRegistered: true } });
+  });
+
 });

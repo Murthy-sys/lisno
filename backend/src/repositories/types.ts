@@ -454,6 +454,18 @@ export interface AdminProjectSummary {
   estimate: AdminProjectEstimateSummary | null;
   createdAt: string;
 }
+
+export interface AdminProjectListInput extends PaginationInput {
+  status?: ProjectStatus;
+  search?: string;
+  sort?: "newest" | "name_asc" | "name_desc";
+}
+
+export type AdminProjectStatusCounts = Record<"all" | ProjectStatus, number>;
+
+export interface AdminProjectPage extends PageResult<AdminProjectSummary> {
+  statusCounts: AdminProjectStatusCounts;
+}
 export type NewLeadActivity = LeadActivityRecord;
 
 export interface FloorRecord {
@@ -1167,8 +1179,8 @@ export interface AppRepository {
   ): Promise<PageResult<ProjectRecord>>;
   pageAdminProjects(
     actor: UserRecord,
-    pagination: PaginationInput
-  ): Promise<PageResult<AdminProjectSummary>>;
+    input: AdminProjectListInput
+  ): Promise<AdminProjectPage>;
   findAdminProject(
     actor: UserRecord,
     projectId: string

@@ -45,6 +45,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     listKnowledgeMasters: vi.fn(),
     createKnowledgeMaster: vi.fn(),
     createKnowledgeSurface: vi.fn(),
+    updateKnowledgeSurface: vi.fn(),
     getKnowledgeItem: vi.fn(),
     updateKnowledgeMainLine: vi.fn(),
     permanentlyDeleteKnowledgeMainLine: vi.fn(),
@@ -824,7 +825,7 @@ describe("temporary item workspace", () => {
 
   it("lists temporary items under their Main Basket beside regular Main Lines and opens Basket-scoped creation", async () => {
     const user = userEvent.setup();
-    const temporary = { ...item, id: "temp-1", mainLineId: "temp-1", mainLineName: "Temporary pendant", itemType: "temporary" as const };
+    const temporary = { ...item, id: "temp-1", mainLineId: "temp-1", mainLineName: "Temporary pendant", itemType: "temporary" as const, completionRequired: true };
     const basket = { ...squareFoot, id: "basket-1", name: "Carpentry", status: "active" as const };
     vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({ items: [item, temporary], pagination: { ...page, total: 2 } });
     vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [basket], pagination: { ...page, total: 1 } });
@@ -833,7 +834,11 @@ describe("temporary item workspace", () => {
     expect(screen.getByRole("link", { name: "Wall panelling" })).toBeVisible();
     const temporaryCard = screen.getByRole("link", { name: "Temporary pendant" }).closest("article")!;
     expect(temporaryCard).toHaveAttribute("data-item-type", "temporary");
-    expect(within(temporaryCard).getByText("Temporary item · Must be completed")).toBeVisible();
+    const temporaryBadge = within(temporaryCard).getByText("Temporary item");
+    expect(temporaryBadge).toBeVisible();
+    expect(temporaryBadge).toHaveTextContent(/^Temporary item · Must be completed$/u);
+    expect(temporaryBadge).toHaveAttribute("title", "Temporary item · Must be completed");
+    expect(within(temporaryCard).getByRole("link", { name: "Temporary pendant" })).toHaveAccessibleDescription("Temporary item · Must be completed");
     expect(within(temporaryCard).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
     expect(within(temporaryCard).queryByRole("heading", { name: "Main Line info" })).not.toBeInTheDocument();
     expect(screen.queryByText("Overview · Mode · Quality Parameters")).not.toBeInTheDocument();
@@ -891,6 +896,56 @@ describe("temporary item workspace", () => {
 });
 
 describe("AI estimator knowledge screens", () => {
+  it("edits a reusable Surface from Overview without replacing the pending Main Line selection", async () => {
+    const user = userEvent.setup();
+    let currentSurface = wallSurface;
+    const overview = { uomId: squareFoot.id, surfaceIds: [wallSurface.id], hiddenCompatibility: { keep: true } };
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => ({
+      items: type === "surfaces" ? [currentSurface] : type === "uoms" ? [squareFoot, squareMetre] : [],
+      pagination: page
+    }));
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) => section(key, key === "overview" ? overview : {}));
+    vi.mocked(knowledgeApi.updateKnowledgeSurface).mockImplementation(async (_id, input) => {
+      currentSurface = { ...currentSurface, ...input, version: 2 };
+      return { ...currentSurface, masterType: "surfaces" };
+    });
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, key, input) => ({ ...section(key, input.payload, 2), aggregateVersion: 2 }));
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Unit of measure (UOM)" }), squareMetre.id);
+    await user.click(await screen.findByRole("button", { name: "Edit reusable surface Wall" }));
+    const editor = screen.getByRole("dialog", { name: "Edit Surface" });
+    expect(within(editor).getByText("Changes update this reusable Surface wherever it is used.")).toBeVisible();
+    await user.clear(within(editor).getByRole("textbox", { name: "Surface name" }));
+    await user.type(within(editor).getByRole("textbox", { name: "Surface name" }), "Shared wall");
+    await user.click(within(editor).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSurface).toHaveBeenCalledWith(wallSurface.id, {
+      name: "Shared wall", description: null, expectedVersion: wallSurface.version
+    }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit Surface" })).not.toBeInTheDocument());
+    expect(await screen.findByRole("button", { name: "Edit reusable surface Shared wall" })).toBeVisible();
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    expect(screen.getByRole("combobox", { name: "Unit of measure (UOM)" })).toHaveValue(squareMetre.id);
+    await user.click(screen.getByRole("button", { name: "Save Overview" }));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith("line-1", "revision-1", "overview", expect.objectContaining({
+      payload: { ...overview, uomId: squareMetre.id }
+    })));
+  });
+
+  it.each([true, false])("gates Overview reusable Surface editing by update permission (allowed=%s)", async (canUpdate) => {
+    vi.mocked(authorization.hasFrontendPermission).mockImplementation((_auth, permission) =>
+      permission === "ai_estimator_knowledge.configuration.create" ? false : permission === "ai_estimator_knowledge.configuration.update" ? canUpdate : true
+    );
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => ({ items: type === "surfaces" ? [wallSurface] : [], pagination: page }));
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) => section(key, key === "overview" ? { surfaceIds: [wallSurface.id] } : {}));
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await screen.findByRole("button", { name: "Applicable surfaces" });
+    if (canUpdate) expect(await screen.findByRole("button", { name: "Edit reusable surface Wall" })).toBeVisible();
+    else expect(screen.queryByRole("button", { name: "Edit reusable surface Wall" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add Surface" })).not.toBeInTheDocument();
+    expect(knowledgeApi.updateKnowledgeSurface).not.toHaveBeenCalled();
+  });
+
   it.each(["masters", "relationships"] as const)("hides cached %s names in the summary after access is denied", async (catalog) => {
     const target = { ...item, id: "related-line", mainLineId: "related-line", mainLineName: "Protected ceiling light", subBasketId: null };
     vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => ({
@@ -1336,7 +1391,9 @@ describe("AI estimator knowledge screens", () => {
     const card = title.closest("article")!;
     expect(within(card).getAllByRole("heading")).toHaveLength(1);
     expect(within(card).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
-    expect(within(card).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(card).getAllByRole("button")).toEqual([
+      within(card).getByRole("button", { name: "More actions for Wall panelling" })
+    ]);
     expect(card.querySelector("dl")).toBeNull();
     expect(within(card).queryByText("Draft")).not.toBeInTheDocument();
     expect(within(card).queryByText(item.description!)).not.toBeInTheDocument();

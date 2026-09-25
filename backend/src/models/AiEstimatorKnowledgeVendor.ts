@@ -1,4 +1,5 @@
 import { MAX_FINANCE_AMOUNT_PAISE } from "../domain/project-finance.js";
+import { VENDOR_ORGANIZATION_TYPES } from "../contracts/procurement-vendor.js";
 import {
   AI_ESTIMATOR_KNOWLEDGE_MASTER_STATUSES,
   AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT,
@@ -10,7 +11,16 @@ import { model, models, Schema } from "./mongoose.js";
 const requiredText = { type: String, required: true, minlength: 1, maxlength: AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT };
 const requiredLongText = { ...requiredText, maxlength: AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT };
 const money = { type: Number, min: 0, max: MAX_FINANCE_AMOUNT_PAISE, validate: Number.isSafeInteger };
+const bankAccountSchema = new Schema({
+  accountHolderName: { ...requiredText, trim: true },
+  bankName: { ...requiredText, trim: true },
+  accountNumber: { type: String, required: true, trim: true, match: /^[0-9]{1,34}$/u },
+  ifscCode: { type: String, required: true, trim: true, uppercase: true, match: /^[A-Z]{4}0[A-Z0-9]{6}$/u },
+  branchName: { type: String, trim: true, maxlength: 240, default: null }
+}, { _id: false, strict: "throw" });
 const procurementProfileSchema = new Schema({
+  organizationType: { type: String, enum: VENDOR_ORGANIZATION_TYPES, default: null },
+  bankAccount: { type: bankAccountSchema, default: null },
   vendorType: { type: String, enum: ["execution", "supplier"], required: true },
   executionType: {
     type: [{ type: String, enum: ["labor", "material_labour"] }],
@@ -21,8 +31,9 @@ const procurementProfileSchema = new Schema({
   supplier: { type: Boolean, default: null },
   nameOfRepresentative: requiredText, position: requiredText,
   gstRegistered: { type: Boolean, required: true }, msmeRegistered: { type: Boolean, required: true },
+  gstNumber: { type: String, default: null, maxlength: 15 },
   turnoverSelfDeclaredPaise: { ...money, required: true }, turnoverVerifiedPaise: { ...money, default: null, validate: (value: unknown) => value === null || Number.isSafeInteger(value) },
-  reference: requiredText, workProfile: requiredLongText,
+  reference: { type: String, default: null, maxlength: AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT }, workProfile: requiredLongText,
   email: { ...requiredText, maxlength: 320 }, phoneNumber: { ...requiredText, maxlength: 64 },
   address: requiredLongText, aadhar: { type: String, required: true, match: /^\d{12}$/u },
   pan: { type: String, required: true, match: /^[A-Z]{5}\d{4}[A-Z]$/u },
@@ -43,6 +54,9 @@ const procurementPhotoSchema = new Schema({
   sha256: { type: String, required: true, match: /^[a-f0-9]{64}$/u },
   uploadedAt: { type: String, required: true }, uploadedById: { type: String, required: true }
 }, { _id: false, strict: "throw" });
+const procurementCertificateSchema = procurementPhotoSchema.clone();
+// Replacing the path installs the certificate-specific enum validator as well.
+procurementCertificateSchema.add({ mimeType: { type: String, required: true, enum: ["application/pdf", "image/jpeg", "image/png", "image/webp"] } });
 
 const vendorSchema = new Schema(
   {
@@ -67,7 +81,8 @@ const vendorSchema = new Schema(
     archivedAt: { type: Date, default: null },
     archivedById: { type: String, ref: "User", default: null },
     procurementProfile: { type: procurementProfileSchema, default: undefined },
-    geoTaggedPicture: { type: procurementPhotoSchema, default: null }
+    geoTaggedPicture: { type: procurementPhotoSchema, default: null },
+    msmeCertificate: { type: procurementCertificateSchema, default: null }
   },
   { collection: "aiEstimatorKnowledgeVendors", timestamps: true, versionKey: false, strict: "throw" }
 );

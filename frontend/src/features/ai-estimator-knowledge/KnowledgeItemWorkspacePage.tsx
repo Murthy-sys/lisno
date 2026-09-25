@@ -39,8 +39,8 @@ import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 import { KnowledgeRevisionHistory } from "./KnowledgeRevisionHistory";
 import { KnowledgeSavedConfigurationSummary } from "./KnowledgeSavedConfigurationSummary";
 import { KnowledgeReferenceContextRail } from "./KnowledgeReferenceContextRail";
+import { latestKnowledgeSectionSave } from "./knowledgeLastSaved";
 import { pendingValuesEqual } from "./knowledgePendingChanges";
-import { KnowledgeSectionCommandBar } from "./KnowledgeSectionCommandBar";
 import { KnowledgeWorkspaceStatus } from "./KnowledgeWorkspaceStatus";
 import {
   syncKnowledgeLifecycleMutation,
@@ -70,7 +70,10 @@ import { KnowledgeTemporaryMainLineInfo } from "./KnowledgeTemporaryMainLineInfo
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
 import { KnowledgeUnsavedChangesDialog } from "./KnowledgeUnsavedChangesDialog";
 import { KnowledgeVersionConflictDialog } from "./KnowledgeVersionConflictDialog";
-import type { KnowledgeWorkspaceSectionKey } from "./knowledgeWorkspaceSections";
+import {
+  KNOWLEDGE_WORKSPACE_BACKEND_SECTIONS,
+  type KnowledgeWorkspaceSectionKey
+} from "./knowledgeWorkspaceSections";
 import type {
   KnowledgeItemDetail,
   KnowledgeJsonObject,
@@ -83,6 +86,7 @@ import { useUnsavedKnowledgeGuard } from "./useUnsavedKnowledgeGuard";
 import "./ai-estimator-knowledge.css";
 import "./knowledge-configuration-ui.css";
 import "./knowledge-reference-workspace.css";
+import "./knowledge-mode-sidebar.css";
 
 const MASTER_TYPES = ["uoms", "vendors", "taxes", "priorities", "surfaces", "modes"] as const satisfies readonly KnowledgeMasterType[];
 
@@ -92,6 +96,13 @@ interface ConflictState {
 }
 
 interface PendingEditorSession { readonly sourceKey: string }
+
+/* A stable `combine` keeps the page from re-rendering unless the time changes. */
+function latestSaveAcrossSectionQueries(
+  results: readonly { readonly data?: KnowledgeSectionEnvelope<KnowledgeJsonObject> }[]
+): string | null {
+  return latestKnowledgeSectionSave(results.map(({ data }) => data));
+}
 
 function KnowledgeWorkspaceRail({ children }: { readonly children: ReactNode }) {
   const rail = useRef<HTMLDivElement>(null);
@@ -166,6 +177,7 @@ export function KnowledgeItemWorkspacePage() {
   const [conflict, setConflict] = useState<ConflictState | null>(null);
   const [serverReview, setServerReview] = useState<ConflictState | null>(null);
   const [quickAdd, setQuickAdd] = useState<{ type: KnowledgeMasterType; select: (master: KnowledgeMaster) => void } | null>(null);
+  const [surfaceToEdit, setSurfaceToEdit] = useState<KnowledgeMaster | null>(null);
   const [lifecycleAction, setLifecycleAction] = useState<KnowledgeLifecycleAction | null>(null);
   const [lifecycleReason, setLifecycleReason] = useState("");
   const [command, setCommand] = useState<"revision" | "duplicate" | null>(null);
@@ -209,6 +221,25 @@ export function KnowledgeItemWorkspacePage() {
     queryKey: knowledgeQueryKeys.history(mainLineId, { limit: 100, offset: 0 }),
     queryFn: () => getKnowledgeHistory(mainLineId, { limit: 100, offset: 0 }),
     enabled: Boolean(mainLineId)
+  });
+  /*
+   * "Last saved" reads the active tab's section envelopes from the cache that
+   * the page and its panels already fill; Mode uses the later of its two.
+   * These observers never fetch. They still carry the real query function, not
+   * `skipToken`: every observer copies its options onto the shared query, and
+   * the refetch that follows each save runs with them.
+   */
+  const lastSavedRevisionId = activeSection === "quality" ? undefined : revision?.id;
+  const lastSavedSectionKeys: readonly KnowledgeSectionKey[] = KNOWLEDGE_WORKSPACE_BACKEND_SECTIONS[activeSection];
+  const lastSavedAt = useQueries({
+    queries: lastSavedRevisionId
+      ? lastSavedSectionKeys.map((sectionKey) => ({
+          queryKey: knowledgeQueryKeys.section(mainLineId, lastSavedRevisionId, sectionKey),
+          queryFn: () => getKnowledgeSection<KnowledgeJsonObject>(mainLineId, lastSavedRevisionId, sectionKey),
+          enabled: false
+        }))
+      : [],
+    combine: latestSaveAcrossSectionQueries
   });
   const relationshipBasketsQuery = useQuery({
     queryKey: [...knowledgeQueryKeys.basketLists(), "relationship-catalog"],
@@ -508,13 +539,6 @@ export function KnowledgeItemWorkspacePage() {
   const lifecycleError = lifecycleMutation.error instanceof ApiError && lifecycleMutation.error.code === "VERSION_CONFLICT" ? "This item changed elsewhere. Refresh before retrying." : lifecycleMutation.error?.message ?? null;
   const commandError = commandMutation.error instanceof ApiError && commandMutation.error.code === "VERSION_CONFLICT" ? "This item changed elsewhere. Refresh before retrying." : commandMutation.error?.message ?? null;
   const activeSectionLabel = KNOWLEDGE_WORKSPACE_SECTION_LABELS[activeSection];
-  const commandVersionLabel = activeSection === "mode"
-    ? revision
-      ? `Version ${revision.revisionNumber}`
-      : "Version unavailable"
-    : sectionQuery.data
-      ? `Version ${sectionQuery.data.version}`
-      : "Version unavailable";
   const referenceSection = activeSection === "recommendations" || activeSection === "quality" ? activeSection : undefined;
   const savedDetails = <>
     <KnowledgeRevisionHistory
@@ -536,7 +560,7 @@ export function KnowledgeItemWorkspacePage() {
   </>;
 
   return (
-    <div className="knowledge-page knowledge-page--item-workspace" data-reference-section={referenceSection}>
+    <div className="knowledge-page knowledge-page--item-workspace" data-reference-section={referenceSection} data-workspace-section={activeSection}>
       <PageHeader
         id="knowledge-item-title"
         breadcrumb={<Button variant="quiet" size="compact" leadingIcon={<ArrowLeft />} onClick={() => guard.requestNavigation(() => navigate("/admin/configuration/estimation"))}>Back to Main Baskets</Button>}
@@ -563,7 +587,18 @@ export function KnowledgeItemWorkspacePage() {
           This workspace is showing the last available item details. Retry before making decisions that depend on recent catalog changes.
         </InlineMessage>
       ) : null}
-      <KnowledgeWorkspaceStatus item={item} />
+      <KnowledgeWorkspaceStatus
+        item={item}
+        command={revision && activeSection !== "quality" ? {
+          sectionLabel: activeSectionLabel,
+          editable,
+          dirty: activeDirty,
+          saving: activeSaving,
+          saveError: activeSaveError,
+          lastSavedAt,
+          onSave: () => void saveActiveSection()
+        } : undefined}
+      />
       <KnowledgeTemporaryMainLineInfo item={item} onOpenMainLine={(id) => guard.requestNavigation(() => navigate(`/admin/configuration/estimation/items/${encodeURIComponent(id)}`))} />
       {announcement ? <p className="sr-only" role="status">{announcement}</p> : null}
       {item.status === "archived" ? <InlineMessage tone="warning" title="Archived configuration">This item and its revision history are read-only.</InlineMessage> : revision && !editable && revision.status !== "draft" && activeSection !== "quality" ? <InlineMessage tone="info" title="Active history is read-only">Create a Draft revision to change section data. The active revision remains available until a new Draft is activated.</InlineMessage> : null}
@@ -571,17 +606,6 @@ export function KnowledgeItemWorkspacePage() {
       <div className="knowledge-workspace-layout">
         <div className="knowledge-workspace-main">
           <KnowledgeSectionNavigation sections={item.itemType === "temporary" ? ["overview", "mode", "quality"] : undefined} activeSection={activeSection} onSectionChange={selectWorkspaceSection} panelBusy={activeSection === "mode" ? modeBusy : sectionQuery.isFetching}>
-            {revision && activeSection !== "quality" ? (
-              <KnowledgeSectionCommandBar
-                sectionLabel={activeSectionLabel}
-                versionLabel={commandVersionLabel}
-                editable={editable}
-                dirty={activeDirty}
-                saving={activeSaving}
-                saveError={activeSaveError}
-                onSave={() => void saveActiveSection()}
-              />
-            ) : null}
             {activeSection === "quality" ? (
               <KnowledgeBasketQualityPanel key={pendingSession.sourceKey} ref={qualityPanelRef} item={item} revisionId={revision?.id} canUpdate={canUpdate} canCreateQualityOptions={canCreateQualityOptions} onDirtyChange={setQualityDirty} onSavingChange={setQualitySaving} />
             ) : !revision ? (
@@ -637,6 +661,7 @@ export function KnowledgeItemWorkspacePage() {
                     referenceStates={{ masters: masterCatalogStates }}
                     editable={editable}
                     canQuickAdd={canCreate}
+                    onEditSurface={editable && canUpdate ? setSurfaceToEdit : undefined}
                     onOverviewPayloadChange={setPayload}
                     onOverviewDirty={(field) => {
                       setOverviewDirtyFields((current) => new Set(current).add(field));
@@ -673,6 +698,9 @@ export function KnowledgeItemWorkspacePage() {
         <KnowledgeSurfaceEditorDialog quickAdd onSaved={quickAdd.select} onClose={() => setQuickAdd(null)} />
       ) : (
         <KnowledgeMasterEditorDialog masterType={quickAdd.type} quickAdd onSaved={quickAdd.select} onClose={() => setQuickAdd(null)} />
+      ) : null}
+      {surfaceToEdit && editable && canUpdate ? (
+        <KnowledgeSurfaceEditorDialog existing={surfaceToEdit} onClose={() => setSurfaceToEdit(null)} />
       ) : null}
       {lifecycleAction ? <KnowledgeLifecycleDialog action={lifecycleAction} blockers={lifecycleAction === "activate" ? item.blockers : []} warnings={lifecycleAction === "activate" ? item.warnings : []} reason={lifecycleReason} onReasonChange={setLifecycleReason} onClose={() => { setLifecycleAction(null); lifecycleMutation.reset(); }} onConfirm={() => lifecycleMutation.mutate({ action: lifecycleAction, target: item })} busy={lifecycleMutation.isPending} error={lifecycleError} /> : null}
       {command ? <KnowledgeCommandDialog kind={command} reason={commandReason} duplicateName={duplicateName} onReasonChange={setCommandReason} onNameChange={setDuplicateName} onClose={() => { setCommand(null); commandMutation.reset(); }} onConfirm={() => commandMutation.mutate({ kind: command, target: item })} busy={commandMutation.isPending} error={commandError} /> : null}

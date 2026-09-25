@@ -44,6 +44,7 @@ import {
   type AppRepository,
   type AccessRequestRecord,
   type AccessRequestTransition,
+  type AdminProjectStatusCounts,
   type AuditEventRecord,
   type AuditFilters,
   type DesignExtractionJobRecord,
@@ -92,6 +93,7 @@ const byDateThenId = <T extends { id: string }>(
 const newestProjectFirst = (left: ProjectRecord, right: ProjectRecord) =>
   new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime() ||
   right.id.localeCompare(left.id);
+const adminProjectNameCollator = new Intl.Collator("en", { sensitivity: "accent", numeric: false });
 
 interface MemorySnapshot {
   state: SeedData;
@@ -1345,12 +1347,30 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return paginate(projects, pagination);
     },
 
-    async pageAdminProjects(actor, pagination) {
+    async pageAdminProjects(actor, input) {
+      const search = input.search?.trim();
+      const searchPattern = search
+        ? new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")
+        : null;
       const visible = (await implementation.listProjectsForUserInModule(actor, "projects"))
-        .sort(newestProjectFirst);
-      const selected = visible.slice(
-        pagination.offset,
-        pagination.offset + pagination.limit
+        .filter((project) => !searchPattern ||
+          [project.name, project.clientName, project.location].some((value) => searchPattern.test(value)));
+      const statusCounts: AdminProjectStatusCounts = {
+        all: visible.length, planning: 0, active: 0, on_hold: 0, completed: 0
+      };
+      for (const project of visible) statusCounts[project.status] += 1;
+      const filtered = visible.filter((project) => !input.status || project.status === input.status);
+      filtered.sort((left, right) => {
+        if (input.sort === "name_asc" || input.sort === "name_desc") {
+          return (input.sort === "name_asc" ? 1 : -1) * adminProjectNameCollator.compare(left.name, right.name) ||
+            Buffer.compare(Buffer.from(left.id), Buffer.from(right.id));
+        }
+        return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime() ||
+          Buffer.compare(Buffer.from(right.id), Buffer.from(left.id));
+      });
+      const selected = filtered.slice(
+        input.offset,
+        input.offset + input.limit
       );
       return {
         items: selected.map((project) =>
@@ -1362,7 +1382,8 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
             actor
           )
         ),
-        total: visible.length
+        total: filtered.length,
+        statusCounts
       };
     },
 

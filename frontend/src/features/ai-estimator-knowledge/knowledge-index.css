@@ -1,0 +1,1014 @@
+/* ==========================================================================
+   AI Estimator Knowledge Base index (card layout)
+   --------------------------------------------------------------------------
+   Only KnowledgeBaseIndexPage imports this file, and every rule is still
+   scoped to `.knowledge-page--index`, so the item workspace and the reusable
+   values page keep the shared presentation untouched.
+
+   Cascade note: the page's stylesheets are emitted before the global ones
+   (index.css, role-themes.css, admin-home.css), so equal specificity loses to
+   them. Rules here therefore start from
+   `.ui-app-shell[data-role] .knowledge-page.knowledge-page--index` (four
+   classes), which out-ranks both the shared knowledge rules and the role
+   theme without !important.
+   ========================================================================== */
+
+/* The index fills the workspace so the card grid has room for four columns;
+   every other page keeps the shell's 1440px measure. */
+.ui-workspace > .knowledge-page--index {
+  inline-size: 100%;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index {
+  --kx-olive: var(--button-primary-bg, #3d4a32);
+  --kx-olive-hover: var(--button-primary-bg-hover, #2f3a26);
+  --kx-olive-ink: var(--button-primary-ink, #f6f4ec);
+  --kx-progress: #4a6a3a;
+  --kx-ink: #1f231d;
+  --kx-ink-muted: #5b6058;
+  --kx-line: #e3e4de;
+  --kx-line-strong: #cfd2c8;
+  --kx-band: #f4f5f1;
+  --kx-panel: #fafaf8;
+  --kx-card: color-mix(in srgb, var(--color-surface-subtle) 18%, var(--color-surface));
+  --kx-tile: #eceee8;
+  --kx-thumb: #f1ece3;
+  --kx-thumb-ink: #7f7159;
+  --kx-hover: color-mix(in srgb, #3d4a32 7%, transparent);
+  --kx-danger: var(--button-negative-ink, #b42318);
+  --kx-danger-hover: color-mix(in srgb, #b42318 8%, transparent);
+  --kx-focus: var(--button-focus-ring, 0 0 0 3px color-mix(in srgb, #3d4a32 60%, transparent));
+  --kx-radius: 4px;
+  --kx-basket-tile: 32px;
+  --kx-header-pad-block: 0px;
+  --kx-chevron-zone: 44px;
+
+  gap: var(--space-3);
+}
+
+/* ------------------------------------------------------------------ header */
+
+/* Title block and commands share one row while they fit; the commands drop to
+   their own row (left-aligned) before they squeeze the title. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  padding-block-end: 0;
+  border-block-end: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-page-header .ui-page-header__content {
+  flex: 1 1 30rem;
+  min-inline-size: 0;
+  gap: var(--space-1);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-page-header .ui-page-header__description {
+  max-inline-size: 100ch;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-page-header .ui-page-header__actions {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  min-inline-size: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-page-header .ui-page-header__actions .ui-button {
+  min-block-size: 36px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: 4px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: normal;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-page-header .ui-page-header__actions .ui-button.ui-button--secondary {
+  border-color: var(--kx-line-strong);
+  background: var(--kx-card);
+  color: var(--kx-ink);
+  box-shadow: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-page-header .ui-page-header__actions .ui-button.ui-button--secondary:not(:disabled):hover {
+  border-color: var(--kx-olive);
+  background: color-mix(in srgb, #3d4a32 5%, var(--kx-card));
+  color: var(--kx-ink);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-page-header .ui-page-header__actions .ui-button.ui-button--primary {
+  border-color: var(--kx-olive);
+  background: var(--kx-olive);
+  color: var(--kx-olive-ink);
+  padding-inline: var(--space-3);
+  box-shadow: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-page-header .ui-page-header__actions .ui-button.ui-button--primary:not(:disabled):hover {
+  border-color: var(--kx-olive-hover);
+  background: var(--kx-olive-hover);
+  box-shadow: none;
+}
+
+/* admin-home.css prints a "+" before every admin page-header primary; this
+   button already carries its own Plus icon, so the glyph would double up. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-page-header .ui-page-header__actions .ui-button.ui-button--primary::before {
+  content: none;
+  display: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-page-header .ui-page-header__actions .ui-button__icon > svg {
+  inline-size: 16px;
+  block-size: 16px;
+}
+
+/* ------------------------------------------------------------------ notice */
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-notice-banner .ui-inline-message {
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border: 1px solid var(--kx-line);
+  border-radius: 4px;
+  background: var(--kx-band);
+  color: var(--kx-ink-muted);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-notice-banner .ui-inline-message__icon {
+  margin-block-start: 0;
+  color: var(--kx-ink-muted);
+}
+
+/* Keep the copy vertically centred against the dismiss target. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-notice-banner .ui-inline-message__copy {
+  padding-block: var(--space-1);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-notice-banner .ui-inline-message__action {
+  align-self: center;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .ui-button.knowledge-notice-dismiss {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 44px;
+  block-size: 44px;
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #4d4535;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .ui-button.knowledge-notice-dismiss:not(:disabled):hover {
+  border-color: transparent;
+  background: color-mix(in srgb, #b87718 12%, transparent);
+  color: #2d2618;
+}
+
+/* ------------------------------------------------ icon-only button anatomy */
+
+/* Icon-only Buttons render an empty label span and a hidden busy row; neither
+   may widen a fixed 44px target. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index :is(.knowledge-notice-dismiss, .knowledge-icon-action) .ui-button__content {
+  gap: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index :is(.knowledge-notice-dismiss, .knowledge-icon-action) .ui-button__content > span:not(.ui-button__icon):empty {
+  display: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index :is(.knowledge-notice-dismiss, .knowledge-icon-action):not([data-busy]) .ui-button__busy {
+  display: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index :is(.knowledge-notice-dismiss, .knowledge-icon-action) .ui-button__icon > svg {
+  inline-size: 20px;
+  block-size: 20px;
+}
+
+/* ----------------------------------------------------------------- toolbar */
+
+/* One slim row: the field, then Filters and Search at the same height. The
+   shared segmented treatment (joined edges, squared seams) is undone here so
+   the three read as separate controls like the header commands. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-search-bar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-inline-size: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-search-bar__field {
+  flex: 1 1 0;
+  max-inline-size: 42rem;
+  min-inline-size: 0;
+  gap: 0;
+}
+
+/* The label stays the input's programmatic name; the placeholder and the
+   magnifier carry the visible prompt. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-search-bar__field .ui-field__label {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  margin: -1px;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Width and style are restated because a layered base reset can otherwise
+   win over the primitive's border shorthand. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-search-bar .knowledge-search-control .ui-control {
+  block-size: auto;
+  min-block-size: 44px;
+  padding-inline-start: 36px;
+  border: 1px solid var(--kx-line-strong);
+  border-radius: 4px;
+  background: var(--kx-card);
+  font-size: var(--text-sm);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-search-bar .knowledge-search-control .ui-control:hover:not(:disabled) {
+  border-color: var(--kx-olive);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-search-bar .knowledge-search-control__icon {
+  inset-inline-start: 12px;
+  inline-size: 16px;
+  block-size: 16px;
+  color: var(--kx-ink-muted);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-search-bar__actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-search-bar__actions .knowledge-search-action {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 44px;
+  block-size: 44px;
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--kx-line-strong);
+  border-radius: var(--kx-radius);
+  background: var(--kx-card);
+  color: var(--kx-ink);
+  box-shadow: none;
+  transition: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-search-action svg {
+  inline-size: 18px;
+  block-size: 18px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-search-action.ui-icon-button--primary {
+  border-color: var(--kx-olive);
+  background: var(--kx-olive);
+  color: var(--kx-olive-ink);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-search-action:is(:hover, [aria-expanded="true"]) {
+  border-color: var(--kx-olive);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-search-action:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--kx-focus);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-filter-action-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-filter-count {
+  position: absolute;
+  inset-block-start: -4px;
+  inset-inline-end: -4px;
+  display: grid;
+  place-items: center;
+  min-inline-size: 18px;
+  block-size: auto;
+  min-block-size: 18px;
+  padding: 0 3px;
+  border: 1px solid var(--kx-panel);
+  border-radius: 4px;
+  background: var(--kx-olive);
+  color: var(--kx-olive-ink);
+  font-size: 0.6875rem;
+  line-height: 1.3;
+  pointer-events: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-filter-panel form,
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-groups {
+  gap: var(--space-3);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-filter-panel:has(.knowledge-advanced-filters:not([hidden])) {
+  padding: var(--space-3);
+  box-shadow: none;
+}
+
+/* ----------------------------------------------------------- basket panels */
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel.ui-surface {
+  border: 1px solid var(--kx-line);
+  border-radius: var(--kx-radius);
+  background: var(--kx-panel);
+  box-shadow: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel.ui-surface:focus-within {
+  border-color: var(--kx-line-strong);
+  box-shadow: none;
+}
+
+/* The reference carries no accent spine on open baskets. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel[data-expanded]::before {
+  content: none;
+  display: none;
+}
+
+/* Header band, left to right: chevron (placed in its own gutter), icon tile,
+   name and description, then the count and commands. It wraps the commands
+   under the title when the row runs out of room. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel > .knowledge-basket-panel__header {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-block-size: 45px;
+  margin: 0;
+  padding: var(--kx-header-pad-block) var(--space-3) var(--kx-header-pad-block) var(--kx-chevron-zone);
+  border-block-end: 0;
+  background: var(--kx-band);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel[data-expanded]:has(.knowledge-item-card) > .knowledge-basket-panel__header {
+  border-block-end: 1px solid var(--kx-line);
+  background: var(--kx-band);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  inline-size: var(--kx-basket-tile);
+  block-size: var(--kx-basket-tile);
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #2f3a2a;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__icon > svg {
+  inline-size: 22px;
+  block-size: 22px;
+  stroke-width: 1.75;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__heading {
+  display: grid;
+  flex: 1 1 12rem;
+  align-content: center;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__header h2.knowledge-basket-panel__title {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  margin: 0;
+  color: var(--kx-ink);
+  font-family: var(--font-interface);
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__toggle {
+  gap: 0;
+  inline-size: auto;
+  max-inline-size: 100%;
+  min-block-size: 36px;
+  margin-inline-start: -6px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: var(--kx-ink);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__toggle:hover {
+  background: var(--kx-hover);
+  color: var(--kx-ink);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--kx-focus);
+}
+
+/* Keep the chevron target clear of commands that wrap underneath the title. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__toggle::before {
+  content: "";
+  position: absolute;
+  inset-block-start: var(--kx-header-pad-block);
+  inset-inline-start: 0;
+  inline-size: var(--kx-chevron-zone);
+  block-size: 44px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__chevron {
+  position: absolute;
+  inset-block-start: calc(var(--kx-header-pad-block) + 22px);
+  inset-inline-start: 12px;
+  inline-size: 20px;
+  block-size: 20px;
+  translate: 0 -50%;
+  color: #3f443c;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel[data-expanded] .knowledge-basket-panel__chevron {
+  color: #3f443c;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__toggle:is(:hover, :focus-visible) .knowledge-basket-panel__chevron {
+  color: var(--kx-olive);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__header p.knowledge-basket-panel__description {
+  max-inline-size: 75ch;
+  margin: 0;
+  color: var(--kx-ink-muted);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__meta {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-inline-size: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__meta > .knowledge-count-pill {
+  align-self: center;
+  block-size: auto;
+  min-block-size: 24px;
+  padding-inline: var(--space-2);
+  border-color: #dcded6;
+  background: transparent;
+  color: #3d423a;
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+/* A shared phone rule stacks every row-actions group into a column of
+   full-width buttons; this one stays a wrapping row. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__meta .knowledge-row-actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-inline-size: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__meta .knowledge-row-actions .ui-button:not(.knowledge-icon-action) {
+  min-block-size: 36px;
+  padding: var(--space-1) var(--space-2);
+  border-color: var(--kx-line-strong);
+  border-radius: 4px;
+  background: var(--kx-card);
+  color: var(--kx-ink);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__meta .knowledge-row-actions .ui-button:not(.knowledge-icon-action):not(:disabled):hover {
+  border-color: var(--kx-olive);
+  background: color-mix(in srgb, #3d4a32 5%, var(--kx-card));
+  color: var(--kx-ink);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__meta .knowledge-row-actions .ui-button:not(.knowledge-icon-action) .ui-button__icon > svg {
+  inline-size: 16px;
+  block-size: 16px;
+}
+
+/* Edit and Delete are icon-only 44px targets: a neutral pencil and a red bin,
+   with no outline, set a little apart from the add commands. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__meta .ui-button.knowledge-icon-action {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  inline-size: 44px;
+  block-size: 44px;
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #353a33;
+  box-shadow: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__meta .ui-button:not(.knowledge-icon-action) + .ui-button.knowledge-icon-action {
+  margin-inline-start: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__meta .ui-button.knowledge-icon-action:not(:disabled):hover {
+  border-color: transparent;
+  background: var(--kx-hover);
+  color: var(--kx-ink);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__meta .ui-button.knowledge-icon-action.knowledge-icon-action--danger {
+  border-color: transparent;
+  background: transparent;
+  color: var(--kx-danger);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__meta .ui-button.knowledge-icon-action.knowledge-icon-action--danger:not(:disabled):hover {
+  border-color: transparent;
+  background: var(--kx-danger-hover);
+  color: var(--button-negative-ink-strong, #8f1d13);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__meta .ui-button.knowledge-icon-action:focus-visible {
+  outline: none;
+  box-shadow: var(--kx-focus);
+}
+
+/* Basket body: the card grid on the panel's quiet ground. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__body {
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--kx-panel);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__body:not(:has(.knowledge-item-card)) {
+  padding: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__body[hidden] {
+  display: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__body > .knowledge-item-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__body > .knowledge-item-grid:empty {
+  display: none;
+}
+
+/* ------------------------------------------------------------- item cards */
+
+/* Content determines card height; the placeholder now occupies the title row. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-item-card.knowledge-index-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-content: start;
+  gap: 6px;
+  min-inline-size: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--kx-line);
+  border-radius: var(--kx-radius);
+  background: var(--kx-card);
+  box-shadow: none;
+  transform: none;
+  overflow-wrap: anywhere;
+  transition: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-item-card.knowledge-index-card[data-item-type="temporary"] {
+  border: 1px solid var(--kx-line);
+  background: var(--kx-card);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-item-card.knowledge-index-card:is(:hover, :focus-within) {
+  border-color: var(--kx-line-strong);
+  box-shadow: none;
+  transform: none;
+}
+
+/* An open menu lifts its card over its neighbours. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-item-card.knowledge-index-card:has(.knowledge-index-menu__items) {
+  position: relative;
+  z-index: 2;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card__thumb {
+  display: grid;
+  place-items: center;
+  inline-size: 28px;
+  block-size: 28px;
+  border-radius: 4px;
+  background: var(--kx-thumb);
+  box-shadow: none;
+  color: var(--kx-thumb-ink);
+  flex: 0 0 28px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card__thumb > svg {
+  inline-size: 20px;
+  block-size: 20px;
+  stroke-width: 1.5;
+}
+
+/* Progress follows the title/badge without reserving empty thumbnail space. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card__body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-inline-size: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card__title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card__title h3 {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  margin: 0;
+  padding-block-start: 4px;
+  color: var(--kx-ink);
+  font: inherit;
+  font-family: var(--font-interface);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card .knowledge-item-link {
+  display: inline;
+  min-block-size: 0;
+  border-radius: 4px;
+  color: var(--kx-ink);
+  text-decoration: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card .knowledge-item-link:hover {
+  color: var(--kx-ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card .knowledge-item-link:focus-visible {
+  outline: none;
+  box-shadow: var(--kx-focus);
+}
+
+/* Compact amber badge, inline rather than a full-width strip. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card .knowledge-temporary-badge {
+  display: inline-flex;
+  justify-self: start;
+  align-items: center;
+  max-inline-size: 100%;
+  padding: 2px 8px;
+  border: 1px solid #efd39a;
+  border-radius: 4px;
+  background: #fdf0d0;
+  color: #6b4a0b;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card .knowledge-item-card__progress {
+  display: grid;
+  gap: var(--space-1);
+  inline-size: 100%;
+  margin-block-start: 0;
+  padding-block-end: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card .knowledge-item-card__progress > span {
+  color: #41463f;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card .ui-progress {
+  block-size: 4px;
+  background: #e8e9e3;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card .ui-progress__value {
+  background: var(--kx-progress);
+}
+
+/* ⋮ menu: a 44px trigger pulled into the card's corner, and a popover that
+   opens below-right of it, above neighbouring content. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-menu {
+  position: relative;
+  flex: 0 0 auto;
+  margin-block: -8px;
+  margin-inline-end: -6px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-menu > :is(button, .ui-button, .ui-icon-button) {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 44px;
+  block-size: 44px;
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #353a33;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-menu > :is(button, .ui-button, .ui-icon-button):hover,
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-menu > :is(button, .ui-button, .ui-icon-button)[aria-expanded="true"] {
+  border-color: transparent;
+  background: var(--kx-hover);
+  color: var(--kx-ink);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-menu > :is(button, .ui-button, .ui-icon-button):focus-visible {
+  outline: none;
+  box-shadow: var(--kx-focus);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-menu svg {
+  inline-size: 20px;
+  block-size: 20px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-menu .ui-button__content {
+  gap: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-menu .ui-button__content > span:not(.ui-button__icon):empty,
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-menu > :is(button, .ui-button):not([data-busy]) .ui-button__busy {
+  display: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-menu__items {
+  position: absolute;
+  inset-block-start: calc(100% + 4px);
+  inset-inline-end: 0;
+  z-index: 20;
+  display: grid;
+  gap: 2px;
+  min-inline-size: 168px;
+  margin: 0;
+  padding: 4px;
+  border: 1px solid var(--kx-line-strong);
+  border-radius: 4px;
+  background: var(--kx-card);
+  box-shadow: none;
+  list-style: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-menu__items > li {
+  display: block;
+  margin: 0;
+  padding: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-menu__items :is(button, [role="menuitem"]) {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  inline-size: 100%;
+  min-block-size: 44px;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--kx-ink);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-align: start;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-menu__items :is(button, [role="menuitem"]):is(:hover, :focus) {
+  background: var(--kx-hover);
+  color: var(--kx-ink);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-menu__items :is(button, [role="menuitem"]):focus-visible {
+  outline: none;
+  box-shadow: var(--kx-focus);
+}
+
+/* Metrics footer: muted facts on the left, the priority chip on the right. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card__metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-self: start;
+  gap: 2px 6px;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card__metrics > li {
+  margin-block: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-inline-size: 0;
+  color: var(--kx-ink-muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  max-inline-size: 100%;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-metric svg {
+  flex: 0 0 auto;
+  inline-size: 14px;
+  block-size: 14px;
+  color: #6c7168;
+}
+
+/* Tinted priority chip; the text and flag always show, so colour is never the
+   only signal. Every tone keeps at least 4.5:1 against its tint. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card__metrics > .knowledge-priority-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-block-size: 22px;
+  margin-block: 0;
+  margin-inline-start: auto;
+  padding: 2px 5px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: #f0f1ed;
+  color: #4d524a;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-inline-size: 100%;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-priority-chip svg {
+  flex: 0 0 auto;
+  inline-size: 12px;
+  block-size: 12px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-priority-chip[data-tone="high"] {
+  border-color: #f6d3cf;
+  background: #fdeeec;
+  color: #b0261b;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-priority-chip[data-tone="medium"] {
+  border-color: #f2dcae;
+  background: #fdf3de;
+  color: #87570c;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-priority-chip[data-tone="low"] {
+  border-color: #cfe5d4;
+  background: #ebf5ed;
+  color: #22683a;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-priority-chip[data-tone="none"] {
+  border-color: #e2e3dd;
+  background: #f3f4f0;
+  color: #52574f;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-priority-chip[data-tone="unavailable"] {
+  border-color: #d3d5cd;
+  border-style: dashed;
+  background: #f7f7f4;
+  color: #52574f;
+}
+
+/* ------------------------------------------------------------- responsive */
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-page-header .ui-page-header__title {
+  font-size: clamp(1.5rem, 1.2rem + 0.5vw, 1.75rem);
+  line-height: 1.2;
+}
+
+@media (max-width: 640px) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-page-header .ui-page-header__actions {
+    inline-size: 100%;
+    gap: var(--space-2);
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-page-header .ui-page-header__actions .ui-button {
+    flex: 1 1 9rem;
+    inline-size: auto;
+    min-block-size: 44px;
+    font-size: 0.75rem;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-search-bar__field {
+    flex: 1 1 0;
+    max-inline-size: none;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-search-bar .knowledge-search-control .ui-control {
+    font-size: 1rem;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__heading {
+    flex-basis: 8rem;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__meta {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+    margin-inline-start: calc(-1 * var(--kx-chevron-zone) + var(--space-3));
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__meta .knowledge-row-actions {
+    flex: 1 1 100%;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__meta .knowledge-row-actions .ui-button:not(.knowledge-icon-action) {
+    flex: 1 1 calc(50% - var(--space-1));
+    inline-size: auto;
+    min-block-size: 44px;
+    white-space: normal;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__toggle {
+    min-block-size: 44px;
+  }
+}
+
+@media (pointer: coarse) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index > .ui-page-header .ui-page-header__actions .ui-button,
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__meta .knowledge-row-actions .ui-button,
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-panel__toggle {
+    min-block-size: 44px;
+  }
+}

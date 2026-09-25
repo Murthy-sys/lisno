@@ -1,0 +1,187 @@
+/* Project reference composition, scoped away from other administration pages. */
+.ui-app-shell .admin-project-detail.admin-project-reference {
+  --project-detail-ink: #293122;
+  --project-detail-muted: #666c60;
+  --project-detail-line: #dedfd5;
+  --project-detail-paper: #fbfaf6;
+  --project-detail-olive: #3d4a32;
+  gap: 16px;
+  min-inline-size: 0;
+  inline-size: 100%;
+  max-inline-size: none;
+}
+
+.admin-project-reference__hero {
+  min-inline-size: 0;
+  padding: 20px 22px 24px;
+  background-color: #f2f0e8;
+  background-image:
+    linear-gradient(90deg, #f2f0e8 0%, rgb(242 240 232 / 97%) 28%, rgb(242 240 232 / 82%) 48%, rgb(242 240 232 / 12%) 100%),
+    url("../../assets/projects-living-room.webp");
+  background-size: cover, 72% auto;
+  background-position: center, right 63%;
+  background-repeat: no-repeat;
+  border-radius: 3px;
+}
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-reference__hero .ui-page-header {
+  min-block-size: 148px;
+  align-content: center;
+  gap: 14px 24px;
+}
+.ui-app-shell .admin-project-detail.admin-project-reference .ui-page-header__title {
+  color: var(--project-detail-ink);
+  font: 700 clamp(1.65rem, 2.2vw, 2.15rem)/1.2 var(--font-interface, sans-serif);
+  letter-spacing: -0.025em;
+  overflow-wrap: anywhere;
+}
+.ui-app-shell .admin-project-detail.admin-project-reference .ui-page-header__description {
+  max-inline-size: 38rem;
+  color: #545d4c;
+  font-size: 0.875rem;
+}
+.ui-app-shell .admin-project-detail.admin-project-reference .ui-page-header__metadata {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-block-start: 5px;
+  color: var(--project-detail-muted);
+  font-size: 0.75rem;
+}
+.admin-project-reference__identifier { overflow-wrap: anywhere; }
+.ui-app-shell .admin-project-detail.admin-project-reference .ui-page-header__actions .button {
+  min-block-size: 44px;
+  border-radius: 3px;
+  box-shadow: none;
+  transform: none;
+  transition: none;
+}
+.ui-app-shell .admin-project-detail.admin-project-reference .ui-page-header__breadcrumb a {
+  display: inline-flex;
+  min-block-size: 44px;
+  align-items: center;
+  gap: 7px;
+  color: var(--project-detail-olive);
+}
+.ui-app-shell .admin-project-detail.admin-project-reference > .project-chat-navigation {
+  margin: 0;
+  border-block-end: 1px solid var(--project-detail-line);
+  padding-block-end: 10px;
+}
+.admin-project-reference .project-chat-navigation nav a { min-block-size: 44px; }
+.admin-project-reference__facts {
+  min-inline-size: 0;
+}
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-reference__facts > dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(150px, 1.35fr);
+  gap: 10px;
+  margin: 0;
+}
+.admin-project-reference__facts dl > div {
+  min-inline-size: 0;
+  padding: 12px;
+  border: 1px solid var(--project-detail-line);
+  border-radius: 3px;
+  background: var(--project-detail-paper);
+}
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-reference__facts dt {
+  margin-block-end: 6px;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--project-detail-muted);
+}
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-reference__facts dd {
+  margin: 0;
+  color: var(--project-detail-ink);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.admin-project-reference__estimate-status { display: block; margin-block-start: 3px; color: var(--project-detail-muted); font-size: 0.6875rem; }
+.admin-project-reference__layout,
+.admin-project-reference__main,
+.admin-project-reference__sidebar { display: grid; min-inline-size: 0; align-content: start; gap: 16px; }
+.admin-project-reference__main > *,
+.admin-project-reference__sidebar > * { min-inline-size: 0; }
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-detail__sections { gap: 16px; }
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-detail__section {
+  border-color: var(--project-detail-line);
+  border-radius: 3px;
+  background: var(--project-detail-paper);
+  box-shadow: none;
+  transition: none;
+}
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-detail__section-trigger { gap: 10px; min-block-size: 64px; padding: 12px 16px; }
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-detail__section .admin-project-detail__section-icon {
+  inline-size: 28px;
+  block-size: 28px;
+  border-radius: 3px;
+  background: #eaece1;
+  color: var(--project-detail-olive);
+}
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-detail__section-title { font-size: 0.9375rem; color: var(--project-detail-ink); }
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-detail__section-subtitle { font-size: 0.6875rem; color: var(--project-detail-muted); }
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-detail__section-body { padding-inline: 16px; transition: none; }
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-detail__section-chevron { transition: none; }
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-detail__section--open .admin-project-detail__section-body { padding-block-end: 16px; border-color: var(--project-detail-line); }
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-detail__section-body h3 { margin-block-start: 15px; font-size: 0.6875rem; letter-spacing: 0.04em; color: var(--project-detail-olive); }
+.admin-project-reference__detail-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; }
+.admin-project-reference__detail-groups > div { min-inline-size: 0; }
+.admin-project-reference__estimate-group { grid-column: 1 / -1; }
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-detail__sections .admin-project-detail__section-body dl {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 11px;
+  margin-block-start: 10px;
+}
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-reference__detail-groups dl > div { display: grid; grid-template-columns: minmax(84px, 0.75fr) minmax(0, 1.25fr); gap: 8px; align-items: baseline; }
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-reference__detail-groups dd { margin: 0; }
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-detail__sections .admin-project-reference__estimate-group dl { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; }
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-detail__section-body dt { color: var(--project-detail-muted); font-size: 0.6875rem; font-weight: 400; letter-spacing: normal; text-transform: none; }
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-detail__section-body dd { margin-block-start: 4px; color: var(--project-detail-ink); font-size: 0.8125rem; line-height: 1.5; }
+.admin-project-reference__image { margin: 0; border: 1px solid var(--project-detail-line); border-radius: 3px; overflow: hidden; background: var(--project-detail-paper); }
+.admin-project-reference__image img { display: block; inline-size: 100%; block-size: auto; aspect-ratio: 1.65 / 1; object-fit: cover; object-position: center; }
+.admin-project-reference__image figcaption { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: space-between; padding: 10px 12px; color: var(--project-detail-ink); font-size: 0.75rem; }
+.admin-project-reference__image figcaption span { color: var(--project-detail-muted); font-size: 0.6875rem; }
+.admin-project-reference__aside-section { border: 1px solid var(--project-detail-line); border-radius: 3px; background: var(--project-detail-paper); padding: 16px; }
+.admin-project-reference__aside-section h2 { margin: 0 0 14px; color: var(--project-detail-ink); font-size: 0.9375rem; font-weight: 600; }
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-reference__aside-section dl { gap: 0; }
+.admin-project-reference__aside-section dl > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: baseline; gap: 10px; padding-block: 10px; border-block-end: 1px solid var(--project-detail-line); }
+.admin-project-reference__aside-section dl > div:first-child { padding-block-start: 0; }
+.admin-project-reference__aside-section dl > div:last-child { border-block-end: 0; padding-block-end: 0; }
+.admin-project-reference__aside-section dt { color: var(--project-detail-muted); font-size: 0.6875rem; }
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-reference__aside-section dd { margin: 0; text-align: end; color: var(--project-detail-ink); font-size: 0.8125rem; font-weight: 500; }
+.admin-project-reference__people { display: grid; gap: 15px; list-style: none; padding: 0; margin: 0; }
+.admin-project-reference__people li { display: flex; align-items: flex-start; min-inline-size: 0; gap: 10px; }
+.admin-project-reference__people li > div { display: grid; gap: 2px; min-inline-size: 0; font-size: 0.6875rem; color: var(--project-detail-muted); overflow-wrap: anywhere; }
+.admin-project-reference__people strong { color: var(--project-detail-ink); font-size: 0.8125rem; font-weight: 600; }
+.admin-project-reference__person-mark { display: grid; place-items: center; flex: 0 0 32px; block-size: 32px; border-radius: 50%; background: #e9ecdf; color: var(--project-detail-olive); font-size: 0.8125rem; font-weight: 600; }
+.admin-project-reference__person-role { font-size: 0.625rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.ui-app-shell .admin-project-detail.admin-project-reference .admin-project-reference__main > .ui-surface { border-radius: 3px; box-shadow: none; }
+.admin-project-reference__hero a:focus-visible { outline: 2px solid var(--project-detail-olive); outline-offset: 3px; }
+@media (min-width: 1280px) {
+  .admin-project-reference__layout { grid-template-columns: minmax(0, 1fr) 300px; align-items: start; }
+}
+@media (min-width: 700px) and (max-width: 1279px) {
+  .admin-project-reference__sidebar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-project-reference__image { grid-row: span 2; }
+}
+@media (max-width: 1000px) {
+  .ui-app-shell .admin-project-detail.admin-project-reference .admin-project-reference__facts > dl { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .admin-project-reference__hero {
+    padding: 12px 14px 18px;
+    background-image: linear-gradient(90deg, rgb(242 240 232 / 98%), rgb(242 240 232 / 92%)), url("../../assets/projects-living-room.webp");
+    background-size: cover, auto 100%;
+    background-position: center, 68% center;
+  }
+  .ui-app-shell .admin-project-detail.admin-project-reference .admin-project-reference__hero .ui-page-header { min-block-size: 0; }
+  .ui-app-shell .admin-project-detail.admin-project-reference .ui-page-header__metadata { gap: 8px; }
+  .ui-app-shell .admin-project-detail.admin-project-reference .admin-project-reference__facts > dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-project-reference__facts dl > div:last-child { grid-column: 1 / -1; }
+  .admin-project-reference__detail-groups { grid-template-columns: minmax(0, 1fr); }
+  .ui-app-shell .admin-project-detail.admin-project-reference .admin-project-detail__sections .admin-project-detail__section-body dl { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+}

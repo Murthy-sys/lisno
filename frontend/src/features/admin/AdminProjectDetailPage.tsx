@@ -4,6 +4,7 @@ import { ArrowLeft, FileEdit, MessageSquare, User } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
+import projectInterior from "../../assets/projects-living-room.webp";
 import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { PageHeader } from "../../components/ui/PageHeader";
@@ -23,9 +24,11 @@ import { WorkerAssignmentPanel } from "./WorkerAssignmentPanel";
 import { ProjectFinancePanel } from "../finance/ProjectFinancePanel";
 import { ProjectWorkflowSnapshot } from "../finance/FinanceProjectWorkflowControl";
 import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
+import "./admin-project-detail.css";
 
 const money = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
 const dateTime = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" });
+const date = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeZone: "UTC" });
 
 function deliveryLabel(value: string) {
   return value === "sent"
@@ -92,23 +95,53 @@ export function AdminProjectDetailPage() {
       }
       : null
     : undefined;
+  const estimateLabel = estimateApproved ? "Client-approved value (incl. GST)" : "Current estimate value (incl. GST)";
+  const estimateValue = estimateApproved
+    ? approvedBaseline ? money.format(approvedBaseline.total) : "Approved baseline unavailable"
+    : project.estimate ? money.format(project.estimate.total) : "No estimate yet";
+  const createdDate = new Date(project.createdAt);
+  const createdLabel = Number.isNaN(createdDate.getTime()) ? "Not captured" : date.format(createdDate);
+  const initialBudget = project.budgetMin === null || project.budgetMax === null
+    ? "Not captured" : `${money.format(project.budgetMin)} – ${money.format(project.budgetMax)}`;
+  const people = [
+    ...(project.estimator ? [{ role: "Sales", name: project.estimator.name, email: project.estimator.email }] : []),
+    ...(project.estimate?.designPlanDesigner ? [{ role: "Designer", name: project.estimate.designPlanDesigner.name, email: project.estimate.designPlanDesigner.email }] : []),
+    { role: "Client", name: project.client.name, email: project.client.email }
+  ];
 
   return (
-    <section className="access-administration admin-project-detail" aria-labelledby="admin-project-detail-title">
+    <section className="access-administration admin-project-detail admin-project-reference" aria-labelledby="admin-project-detail-title">
+      <div className="admin-project-reference__hero">
       <PageHeader
         id="admin-project-detail-title"
         eyebrow="Project administration"
         title={project.name}
         description="Review the commercial handoff and assign approved design work."
         breadcrumb={<Link to="/admin/projects"><ArrowLeft aria-hidden="true" /> Back to {auth.user?.role === "super_admin" ? "All Projects" : "My Projects"}</Link>}
-        metadata={<StatusBadge tone="info" label={adminProjectStatusLabel(project)} />}
+        metadata={<>
+          <StatusBadge tone="info" label={adminProjectStatusLabel(project)} />
+          <span className="admin-project-reference__identifier">Project ID: {project.id}</span>
+          <span>Created <time dateTime={project.createdAt}>{createdLabel}</time></span>
+        </>}
         actions={assignmentPending && canAssignDesigner ? (
           <a className="button button--primary" href="#design-assignment-title">
             Assign Designer
           </a>
         ) : undefined}
       />
+      </div>
       <ProjectChatNavigation projectId={projectId} overviewTo={`/admin/projects/${projectId}`} />
+      <div className="admin-project-reference__layout">
+      <div className="admin-project-reference__main">
+      <section className="admin-project-reference__facts" aria-label="Project summary">
+        <dl>
+          <div><dt>Client</dt><dd>{project.client.name}</dd></div>
+          <div><dt>Location</dt><dd>{project.location}</dd></div>
+          <div><dt>Property type</dt><dd>{project.propertyType ?? "Not captured"}</dd></div>
+          <div><dt>Created</dt><dd><time dateTime={project.createdAt}>{createdLabel}</time></dd></div>
+          <div><dt>{estimateLabel}</dt><dd>{estimateValue}{project.estimate && !estimateApproved ? <span className="admin-project-reference__estimate-status">{formatWorkflowLabel(project.estimate.status)}</span> : null}</dd></div>
+        </dl>
+      </section>
       <Surface as="section" className="admin-project-detail__surface" aria-label="Project details">
         <div className="admin-project-detail__sections">
           <AdminDetailSection
@@ -116,24 +149,40 @@ export function AdminProjectDetailPage() {
             tone="warm"
             title="Project information"
             subtitle="Client, property and budget details"
+            defaultOpen
           >
+            <div className="admin-project-reference__detail-groups">
+            <div>
             <h3>Project</h3>
-            <dl><div><dt>Location</dt><dd>{project.location}</dd></div><div><dt>Property type</dt><dd>{project.propertyType ?? "Not captured"}</dd></div><div><dt>Initial client budget range</dt><dd>{project.budgetMin === null || project.budgetMax === null ? "Not captured" : `${money.format(project.budgetMin)} – ${money.format(project.budgetMax)}`}</dd></div></dl>
+            <dl><div><dt>Location</dt><dd>{project.location}</dd></div><div><dt>Property type</dt><dd>{project.propertyType ?? "Not captured"}</dd></div><div><dt>Initial client budget range</dt><dd>{initialBudget}</dd></div></dl>
+            </div>
+            <div>
             <h3>Client</h3>
             <dl><div><dt>Name</dt><dd>{project.client.name}</dd></div><div><dt>Email</dt><dd>{project.client.email}</dd></div><div><dt>Mobile</dt><dd>{project.client.mobile}</dd></div></dl>
+            </div>
+            </div>
           </AdminDetailSection>
           <AdminDetailSection
             icon={<User aria-hidden="true" />}
             tone="cool"
             title="Assignment & progress"
             subtitle="Sales assignment and lead progress"
+            defaultOpen
           >
+            <div className="admin-project-reference__detail-groups">
+            <div>
             <h3>Sales</h3>
             <dl><div><dt>Assigned to</dt><dd>{project.estimator?.name ?? "Unassigned handoff"}</dd></div>{project.estimator ? <div><dt>Email</dt><dd>{project.estimator.email}</dd></div> : null}</dl>
+            </div>
+            <div>
             <h3>Lead progress</h3>
             {project.lead ? <dl><div><dt>Stage</dt><dd>{formatWorkflowLabel(project.lead.stage)}</dd></div><div><dt>Next action</dt><dd>{nextAction}</dd></div><div><dt>Next action date</dt><dd><time dateTime={project.lead.nextActionAt}>{dateTime.format(new Date(project.lead.nextActionAt))}</time></dd></div></dl> : <p>Unassigned handoff</p>}
+            </div>
+            <div className="admin-project-reference__estimate-group">
             <h3>Estimate</h3>
-            {project.estimate ? <dl><div><dt>Status</dt><dd>{formatWorkflowLabel(project.estimate.status)}</dd></div><div><dt>{estimateApproved ? "Client-approved value (incl. GST)" : "Current estimate value (incl. GST)"}</dt><dd>{estimateApproved ? approvedBaseline ? money.format(approvedBaseline.total) : "Approved baseline unavailable" : money.format(project.estimate.total)}</dd></div>{approvedBaseline ? <div><dt>Approved estimate baseline</dt><dd>Version {approvedBaseline.estimateVersion}</dd></div> : null}</dl> : <p>No estimate yet</p>}
+            {project.estimate ? <dl><div><dt>Status</dt><dd>{formatWorkflowLabel(project.estimate.status)}</dd></div><div><dt>{estimateLabel}</dt><dd>{estimateValue}</dd></div>{approvedBaseline ? <div><dt>Approved estimate baseline</dt><dd>Version {approvedBaseline.estimateVersion}</dd></div> : null}</dl> : <p>No estimate yet</p>}
+            </div>
+            </div>
           </AdminDetailSection>
         </div>
       </Surface>
@@ -181,6 +230,32 @@ export function AdminProjectDetailPage() {
           )}
         </AdminDetailSection>
       ) : null}
+      </div>
+      <aside className="admin-project-reference__sidebar" aria-label="Project reference and people">
+        <figure className="admin-project-reference__image" aria-label="Interior reference">
+          <figcaption>Interior reference <span>Illustrative artwork</span></figcaption>
+          <img src={projectInterior} alt="" width={2172} height={724} loading="lazy" decoding="async" />
+        </figure>
+        <section className="admin-project-reference__aside-section" aria-labelledby="admin-project-quick-summary-title">
+          <h2 id="admin-project-quick-summary-title">Quick summary</h2>
+          <dl>
+            <div><dt>Project status</dt><dd>{adminProjectStatusLabel(project)}</dd></div>
+            <div><dt>Estimate status</dt><dd>{project.estimate ? formatWorkflowLabel(project.estimate.status) : "No estimate yet"}</dd></div>
+            <div><dt>{estimateLabel}</dt><dd>{estimateValue}</dd></div>
+            <div><dt>Initial client budget range</dt><dd>{initialBudget}</dd></div>
+          </dl>
+        </section>
+        <section className="admin-project-reference__aside-section" aria-labelledby="admin-project-people-title">
+          <h2 id="admin-project-people-title">Team members</h2>
+          <ul className="admin-project-reference__people">
+            {people.map(person => <li key={person.role}>
+              <span className="admin-project-reference__person-mark" aria-hidden="true">{person.name.trim().slice(0, 1).toUpperCase()}</span>
+              <div><span className="admin-project-reference__person-role">{person.role}</span><strong>{person.name}</strong><span>{person.email}</span></div>
+            </li>)}
+          </ul>
+        </section>
+      </aside>
+      </div>
     </section>
   );
 }

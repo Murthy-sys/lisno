@@ -1,3 +1,5 @@
+import { createProcurementVendorCertificateService } from "./services/procurement-vendor-certificate.service.js";
+import { createProcurementVendorCertificateRouter } from "./routes/procurement-vendor-certificate.js";
 import { createProjectVendorSuggestionRouter } from "./routes/project-vendor-suggestions.js";
 import { createProjectVendorSuggestionService } from "./services/project-vendor-suggestions.service.js";
 import { createProjectProcurementRouter } from "./routes/project-procurement.js";
@@ -341,6 +343,7 @@ export function createApp(dependencies: AppDependencies) {
   const projectVendorSuggestionService = createProjectVendorSuggestionService({ audit: auditService, now: clock });
   const projectProcurementService = createProjectProcurementService({ audit: auditService, now: clock });
   const procurementVendorBaselineService = createProcurementVendorBaselineService({ audit: auditService, now: clock });
+  const procurementVendorCertificateService = createProcurementVendorCertificateService({ storage, maxUploadBytes, now: clock });
   const procurementVendorPhotoService = createProcurementVendorPhotoService({ audit: auditService, storage, maxUploadBytes, now: clock });
   const procurementService = createProcurementService({
     storage,
@@ -480,6 +483,7 @@ export function createApp(dependencies: AppDependencies) {
     "/api/v1",
     createSuperAdminDashboardRouter(authService, superAdminDashboardService)
   );
+  app.use("/api/v1", createProcurementVendorCertificateRouter({ authService, certificateService: procurementVendorCertificateService, maxUploadBytes }));
   app.use(
     "/api/v1",
     createAiEstimatorKnowledgeAdminRouter(authService, {
@@ -593,7 +597,8 @@ export function createApp(dependencies: AppDependencies) {
     startNotificationDelivery: () => notificationEmail.start(),
     closeProjectChat: async () => { await Promise.all([projectChatStream.close(), notificationStream.close(), notificationEmail.stop()]); },
     cleanupProjectChatAttachments: () => chatAttachments.cleanup(),
-    cleanupProcurementVendorPhotos: () => procurementVendorPhotoService.cleanup()
+    cleanupProcurementVendorPhotos: () => procurementVendorPhotoService.cleanup(),
+    cleanupProcurementVendorCertificates: () => procurementVendorCertificateService.cleanup()
   });
 }
 

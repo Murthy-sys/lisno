@@ -93,7 +93,13 @@
 .vendor-profile__form { display: grid; gap: var(--space-4); min-width: 0; container: vendor-form / inline-size; }
 .vendor-profile__fields { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); min-width: 0; border: 0; padding: 0; margin: 0; }
 .vendor-profile__section { min-width: 0; }
-.vendor-profile__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4) var(--space-5); }
+.vendor-profile__section--bank .ui-panel-section__icon { display: none; }
+.vendor-profile__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: var(--space-4) var(--space-5); }
+.vendor-profile__registrations { grid-column: 1 / -1; min-width: 0; }
+.vendor-profile__registration { display: grid; align-items: start; align-content: start; gap: var(--space-3) var(--space-5); min-width: 0; }
+.vendor-profile__registration--expanded { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.vendor-profile__certificate { display: grid; gap: var(--space-2); min-width: 0; overflow-wrap: anywhere; }
+.vendor-profile__certificate .ui-file-input { max-inline-size: 100%; min-inline-size: 0; }
 .vendor-profile__classification { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4) var(--space-5); min-width: 0; }
 .vendor-profile__radio-group { min-width: 0; margin: 0; padding: 0; border: 0; }
 .vendor-profile__radio-group legend { margin: 0; padding: 0; color: var(--color-text); font: 600 var(--text-sm)/1.4 var(--font-interface); }
@@ -167,7 +173,7 @@
 @container vendor-form (min-width: 880px) {
   .vendor-profile__classification > :first-child .vendor-profile__options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .vendor-profile__fields { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
-  .vendor-profile__section--classification, .vendor-profile__section--information, .vendor-profile__section--contact { grid-column: 1 / -1; }
+  .vendor-profile__section--classification, .vendor-profile__section--information, .vendor-profile__section--bank { grid-column: 1 / -1; }
   .vendor-profile__section--identity { grid-column: 1; grid-row: span 2; }
   .vendor-profile__section--baskets, .vendor-profile__section--documentation { grid-column: 2; }
 }
@@ -175,7 +181,7 @@
   .ui-drawer.ui-drawer--contextual.vendor-profile { inline-size: 100%; }
 }
 @media (max-width: 640px) {
-  .vendor-profile__grid { grid-template-columns: minmax(0, 1fr); }
+  .vendor-profile__grid, .vendor-profile__registration--expanded { grid-template-columns: minmax(0, 1fr); }
   .vendor-profile .ui-control { min-height: 44px; font-size: 16px; }
   .vendor-profile .ui-drawer__body .ui-button { min-block-size: var(--control-height-large); }
   .vendor-profile__basket-row { grid-template-columns: minmax(0, 1fr); }

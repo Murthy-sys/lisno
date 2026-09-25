@@ -37,7 +37,7 @@ const query = (value: unknown) => ({
 
 function recordedQuery(value: unknown) {
   const recorder: Record<string, ReturnType<typeof vi.fn>> = {};
-  for (const method of ["select", "sort", "skip", "limit", "lean", "session"]) {
+  for (const method of ["select", "sort", "skip", "limit", "lean", "session", "collation"]) {
     recorder[method] = vi.fn(() => recorder);
   }
   recorder.exec = vi.fn().mockResolvedValue(value);
@@ -1361,8 +1361,8 @@ describe("Mongo repository contracts", () => {
     const projectFind = vi.spyOn(ProjectModel, "find").mockReturnValueOnce(
       projectQuery as never
     );
-    const countQuery = yieldingRecordedQuery(2, "project-count", execution);
-    const count = vi.spyOn(ProjectModel, "countDocuments").mockReturnValueOnce(
+    const countQuery = yieldingRecordedQuery([{ _id: "planning", count: 2 }], "project-count", execution);
+    const count = vi.spyOn(ProjectModel, "aggregate").mockReturnValueOnce(
       countQuery as never
     );
     const leadDocument = {
@@ -1441,6 +1441,7 @@ describe("Mongo repository contracts", () => {
       )
     ).resolves.toEqual({
       total: 2,
+      statusCounts: { all: 2, planning: 2, active: 0, on_hold: 0, completed: 0 },
       items: [expect.objectContaining({
         id: "project-admin-page",
         estimator: {
@@ -1489,7 +1490,11 @@ describe("Mongo repository contracts", () => {
       source: "admin_initiator"
     });
     expect(projectFind).toHaveBeenCalledWith(scope);
-    expect(count).toHaveBeenCalledWith(scope);
+    expect(count).toHaveBeenCalledWith([
+      { $match: scope },
+      { $group: { _id: "$status", count: { $sum: 1 } } }
+    ]);
+    expect(projectQuery.collation).toHaveBeenCalledWith({ locale: "simple" });
     expect(projectQuery.sort).toHaveBeenCalledWith({ createdAt: -1, _id: -1 });
     expect(projectQuery.skip).toHaveBeenCalledWith(1);
     expect(projectQuery.limit).toHaveBeenCalledWith(1);
@@ -1572,6 +1577,64 @@ describe("Mongo repository contracts", () => {
       "estimate-join",
       "review-round-join"
     ]);
+  });
+
+  it("composes a search disjunction with repository scope and counts before selected status", async () => {
+    const projectQuery = recordedQuery([]);
+    const projectFind = vi.spyOn(ProjectModel, "find").mockReturnValueOnce(projectQuery as never);
+    const countQuery = recordedQuery([{ _id: "planning", count: 3 }, { _id: "active", count: 2 }]);
+    const aggregate = vi.spyOn(ProjectModel, "aggregate").mockReturnValueOnce(countQuery as never);
+    // This repository role combines legacy project relationships as an $or.
+    const actor = { ...demoSeedData.users[0]!, id: "scoped-designer", role: "designer" as const, active: true };
+    await expect(createMongoRepository().pageAdminProjects(actor, {
+      limit: 20, offset: 20, search: " [a+b] ", status: "planning", sort: "name_asc"
+    })).resolves.toEqual({
+      items: [], total: 3,
+      statusCounts: { all: 5, planning: 3, active: 2, on_hold: 0, completed: 0 }
+    });
+    const pattern = /\[a\+b\]/i;
+    const scopeAndSearch = { $and: [
+      { $or: [
+        { initiatingDesignerId: actor.id }, { assignedDesignerIds: actor.id }
+      ] },
+      { $or: [{ name: pattern }, { clientName: pattern }, { location: pattern }] }
+    ] };
+    expect(projectFind).toHaveBeenCalledWith({ $and: [scopeAndSearch, { status: "planning" }] });
+    expect(aggregate).toHaveBeenCalledWith([
+      { $match: scopeAndSearch }, { $group: { _id: "$status", count: { $sum: 1 } } }
+    ]);
+    expect(projectQuery.collation).toHaveBeenCalledWith({ locale: "simple" });
+    expect(projectQuery.select).toHaveBeenCalledWith({ _id: 1, name: 1 });
+    expect(countQuery.collation).toHaveBeenCalledWith({ locale: "simple" });
+  });
+
+  it("serializes name projection, exact-ID page hydration and counts within one session", async () => {
+    const session = { id: "name-sort-session" } as never;
+    const execution: QueryExecution = { active: null, order: [], overlaps: [] };
+    const grantQuery = recordedQuery([{ projectId: "project-Case" }, { projectId: "project-case" }]);
+    vi.spyOn(ProjectAccessGrantModel, "find").mockReturnValueOnce(grantQuery as never);
+    const namesQuery = yieldingRecordedQuery([
+      { _id: "project-case", name: "Twin Home" }, { _id: "project-Case", name: "twin home" }
+    ], "names", execution);
+    const hydratedQuery = yieldingRecordedQuery([], "hydrate", execution);
+    const projectFind = vi.spyOn(ProjectModel, "find")
+      .mockReturnValueOnce(namesQuery as never).mockReturnValueOnce(hydratedQuery as never);
+    const countsQuery = yieldingRecordedQuery([{ _id: "planning", count: 2 }], "counts", execution);
+    vi.spyOn(ProjectModel, "aggregate").mockReturnValueOnce(countsQuery as never);
+    const actor = { ...demoSeedData.users[0]!, id: "scoped-admin", role: "admin" as const, active: true };
+    await createMongoRepository(session).pageAdminProjects(actor, { limit: 1, offset: 1, sort: "name_desc" });
+    const scope = { _id: { $in: ["project-Case", "project-case"] } };
+    expect(projectFind).toHaveBeenNthCalledWith(1, scope);
+    expect(projectFind).toHaveBeenNthCalledWith(2, { $and: [scope, { _id: { $in: ["project-case"] } }] });
+    expect(namesQuery.select).toHaveBeenCalledWith({ _id: 1, name: 1 });
+    for (const recorder of [grantQuery, namesQuery, hydratedQuery, countsQuery]) {
+      expect(recorder.session).toHaveBeenCalledWith(session);
+    }
+    for (const recorder of [namesQuery, hydratedQuery, countsQuery]) {
+      expect(recorder.collation).toHaveBeenCalledWith({ locale: "simple" });
+    }
+    expect(execution.order).toEqual(["names", "hydrate", "counts"]);
+    expect(execution.overlaps).toEqual([]);
   });
 
   it("combines Admin detail ID with exact scope before joining and hides out-of-scope IDs", async () => {

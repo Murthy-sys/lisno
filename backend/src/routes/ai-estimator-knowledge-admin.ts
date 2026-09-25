@@ -259,7 +259,15 @@ const commonMasterFields = {
 } as const;
 
 const commonMasterCreateSchema = z.object(commonMasterFields).strict();
-const vendorCreateSchema = z.object({ ...commonMasterFields, code: commonMasterFields.code.optional(), procurementProfile: procurementVendorProfileSchema.optional(), confirmPhysicalAddressVerification: z.boolean().optional() }).strict();
+const vendorSaveFields = { msmeCertificateUploadId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u).optional(), idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{8,200}$/u).optional() };
+function validateVendorCertificateCommand(input: { msmeCertificateUploadId?: string; idempotencyKey?: string; procurementProfile?: { msmeRegistered: boolean } }, context: z.RefinementCtx) {
+  if (input.msmeCertificateUploadId !== undefined && (!input.procurementProfile?.msmeRegistered || !input.idempotencyKey)) {
+    context.addIssue({ code: "custom", path: ["msmeCertificate"], message: "A certificate upload requires MSME Yes and a stable save identity." });
+  }
+}
+const vendorCreateSchema = z.object({ ...commonMasterFields, ...vendorSaveFields, code: commonMasterFields.code.optional(), procurementProfile: procurementVendorProfileSchema.optional(), confirmPhysicalAddressVerification: z.boolean().optional() }).strict().superRefine(validateVendorCertificateCommand).superRefine((input, context) => {
+  if (input.procurementProfile?.msmeRegistered && !input.msmeCertificateUploadId) context.addIssue({ code: "custom", path: ["msmeCertificate"], message: "Upload an MSME certificate before saving." });
+});
 const surfaceCreateSchema = z
   .object({
     code: commonMasterFields.code.optional(),
@@ -301,7 +309,7 @@ const commonMasterUpdateSchema = z
   .object(commonMasterUpdateFields)
   .strict()
   .refine(hasMasterChange, { message: "At least one reusable-value field must be changed." });
-const vendorUpdateSchema = z.object({ ...commonMasterUpdateFields, procurementProfile: procurementVendorProfileSchema.optional(), confirmPhysicalAddressVerification: z.boolean().optional() }).strict().refine(hasMasterChange, { message: "At least one vendor field must be changed." });
+const vendorUpdateSchema = z.object({ ...commonMasterUpdateFields, ...vendorSaveFields, procurementProfile: procurementVendorProfileSchema.optional(), confirmPhysicalAddressVerification: z.boolean().optional() }).strict().refine(input => Object.entries(input).some(([key, value]) => key !== "expectedVersion" && key !== "idempotencyKey" && value !== undefined), { message: "At least one vendor field must be changed." }).superRefine(validateVendorCertificateCommand);
 const surfaceUpdateSchema = z
   .object({ ...commonMasterUpdateFields })
   .strict()

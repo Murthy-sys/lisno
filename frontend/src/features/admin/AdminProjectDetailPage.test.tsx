@@ -179,6 +179,41 @@ const approvedPendingBucket: ProjectFinanceBucket = {
 };
 
 describe("AdminProjectDetailPage", () => {
+  it("presents captured summary facts, clearly labelled reference artwork and only known team members", async () => {
+    installSession();
+    server.use(http.get("/api/v1/admin/projects/project-1", () => HttpResponse.json({ data: project })));
+    const user = userEvent.setup();
+    renderApp(["/admin/projects/project-1"]);
+    const summary = await screen.findByRole("region", { name: "Project summary" });
+    for (const value of ["Asha Shah", "Pune", "3BHK", "23 Aug 2026", "Current estimate value (incl. GST)", "₹9,75,000", "Draft"]) {
+      expect(within(summary).getByText(value)).toBeVisible();
+    }
+    expect(within(summary).getByText("Created").nextElementSibling?.querySelector("time")).toHaveAttribute("datetime", project.createdAt);
+    expect(within(summary).queryByText("Initial client budget range")).not.toBeInTheDocument();
+    const information = screen.getByRole("button", { name: "Project information" });
+    expect(information).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Assignment & progress" })).toHaveAttribute("aria-expanded", "true");
+    information.focus();
+    await user.keyboard("{Enter}");
+    expect(information).toHaveAttribute("aria-expanded", "false");
+    await user.keyboard("{Enter}");
+    expect(information).toHaveAttribute("aria-expanded", "true");
+    const people = screen.getByRole("region", { name: "Team members" });
+    expect(within(people).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(people).getByText("Ravi Estimator")).toBeVisible();
+    expect(within(people).getByText("Asha Shah")).toBeVisible();
+    expect(within(people).queryByText("Designer")).not.toBeInTheDocument();
+    const artwork = screen.getByRole("figure", { name: "Interior reference" });
+    expect(within(artwork).getByText("Illustrative artwork")).toBeVisible();
+    expect(artwork.querySelector("img")).toHaveAttribute("alt", "");
+    expect(artwork.querySelector("img")?.getAttribute("src")).toContain("projects-living-room");
+    for (const name of ["Edit project", "More", "Timeline", "Documents", "Financials", "Start date", "Target date", "Project manager"]) {
+      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+      expect(screen.queryByRole("tab", { name })).not.toBeInTheDocument();
+      expect(screen.queryByText(name, { exact: true })).not.toBeInTheDocument();
+    }
+  });
+
   it("renders loading, retry, captured identity, handoff progress, and estimate data", async () => {
     installSession();
     let requests = 0;
@@ -257,7 +292,8 @@ describe("AdminProjectDetailPage", () => {
     renderApp(["/admin/projects/project-1"]);
     expect(await screen.findByRole("heading", { name: "Asha home" })).toBeVisible();
     expect(screen.getAllByText("Unassigned handoff")).toHaveLength(2);
-    expect(screen.getByText("No estimate yet")).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "Project details" })).getByText("No estimate yet")).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "Project summary" })).getByText("No estimate yet")).toBeVisible();
   });
 
   it("normalizes a legacy approved handoff and exposes Designer assignment", async () => {
@@ -294,7 +330,8 @@ describe("AdminProjectDetailPage", () => {
 
     renderApp(["/admin/projects/project-1"]);
 
-    expect(await screen.findByText("Estimation Approval")).toBeVisible();
+    const heading = await screen.findByRole("heading", { name: "Asha home" });
+    expect(within(heading.closest("header")!).getByText("Estimation Approval")).toBeVisible();
     const detail = screen.getByRole("region", { name: "Project details" });
     expect(within(detail).getByText("Assign Designer to upload design")).toBeVisible();
     expect(within(detail).queryByText("project kickoff")).not.toBeInTheDocument();
@@ -493,7 +530,7 @@ describe("AdminProjectDetailPage", () => {
     const financeRequests: string[] = [];
     server.use(
       http.get("/api/v1/admin/projects/project-murthy", () =>
-        HttpResponse.json({ data: approvedPendingProject })
+        HttpResponse.json({ data: { ...approvedPendingProject, estimate: { ...approvedPendingProject.estimate, total: 999_999 } } })
       ),
       http.get("/api/v1/admin/designers", () => HttpResponse.json({ data: [] })),
       http.get("/api/v1/finance/projects/project-murthy", ({ request }) => {
@@ -519,6 +556,12 @@ describe("AdminProjectDetailPage", () => {
     expect(within(projectDetails).getByText(/₹8,00,000\s*–\s*₹12,00,000/)).toBeVisible();
     expect(within(projectDetails).getByText("Client-approved value (incl. GST)")).toBeVisible();
     expect(within(projectDetails).getByText(/₹2,78,704/)).toBeVisible();
+    for (const name of ["Project summary", "Quick summary"]) {
+      const summary = screen.getByRole("region", { name });
+      expect(within(summary).getByText("Client-approved value (incl. GST)")).toBeVisible();
+      expect(within(summary).getByText("₹2,78,704")).toBeVisible();
+    }
+    expect(screen.queryByText("₹9,99,999")).not.toBeInTheDocument();
 
     expect(await screen.findByRole("heading", { name: "murthy-1 finance" })).toBeVisible();
     const breakdown = screen.getByRole("list", { name: "Cost budget breakdown" });
@@ -526,7 +569,7 @@ describe("AdminProjectDetailPage", () => {
       .toHaveTextContent("₹1,88,952.00");
     expect(within(breakdown).getByText("Recorded expenses").closest("li"))
       .toHaveTextContent("₹0.00");
-    const gauge = screen.getByRole("figure");
+    const gauge = within(screen.getByRole("region", { name: "murthy-1 finance" })).getByRole("figure");
     expect(within(gauge).getByText("₹1,88,952.00")).toBeVisible();
     expect(within(gauge).getByText("left to spend")).toBeVisible();
     expect(screen.getByText("pending design")).toBeVisible();
@@ -610,7 +653,10 @@ describe("AdminProjectDetailPage", () => {
 
     renderApp(["/admin/projects/project-murthy"]);
 
-    expect(await screen.findByText("Approved baseline unavailable")).toBeVisible();
+    const details = await screen.findByRole("region", { name: "Project details" });
+    expect(within(details).getByText("Approved baseline unavailable")).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "Project summary" })).getByText("Approved baseline unavailable")).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "Quick summary" })).getByText("Approved baseline unavailable")).toBeVisible();
     expect(screen.getByText(/approved Estimate baseline is missing/i)).toBeVisible();
     expect(screen.queryByText(/₹10,62,000/)).not.toBeInTheDocument();
     expect(financeRequests).toBe(0);

@@ -222,6 +222,7 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "GET /auth/authorization": "AuthorizationSnapshot",
   "GET /admin/sales-managers": "SalesManagerOptionPage",
   "GET /admin/users": "UserDirectoryPage",
+  "GET /admin/projects": "AdminProjectPage",
   "GET /admin/designers": "DesignerOptionList",
   "POST /admin/projects/:projectId/design-assignment": "DesignPlanTask",
   "GET /designer/design-plan-tasks": "DesignPlanTaskList",
@@ -286,6 +287,8 @@ const attachmentOperations = new Set<string>([
 ]);
 
 const multipartOperations = new Set<string>([
+  "POST /admin/ai-estimator-knowledge/vendors/msme-certificate-uploads",
+  "POST /admin/ai-estimator-knowledge/vendors/:id/msme-certificate-uploads",
   "PUT /admin/ai-estimator-knowledge/vendors/:id/photo",
   "PUT /auth/me/profile-photo",
   "POST /projects/:projectId/chat/attachments",
@@ -493,6 +496,23 @@ const queryParametersByOperation: Readonly<
   Record<string, readonly OpenApiParameter[]>
 > = {
   ...CHAT_QUERY_PARAMETERS,
+  "GET /admin/projects": [
+    {
+      name: "status", in: "query", required: false,
+      schema: { type: "string", enum: ["planning", "active", "on_hold", "completed"] },
+      description: "Optional project status. Applied before pagination; statusCounts remain independent of this selection."
+    },
+    {
+      name: "search", in: "query", required: false,
+      schema: { type: "string", maxLength: 120, default: "" },
+      description: "Trimmed, literal case-insensitive search across project name, client name and city/location, within the actor's authorized project scope."
+    },
+    {
+      name: "sort", in: "query", required: false,
+      schema: { type: "string", enum: ["newest", "name_asc", "name_desc"], default: "newest" },
+      description: "Newest sorts by creation time then ID descending. Name sorts use case-insensitive English collation (accents significant, non-numeric), with exact binary ID ascending for ties."
+    }
+  ],
   "GET /users/:userId/profile-photo": [{ name: "v", in: "query", required: false, schema: { type: "string", pattern: "^[1-9][0-9]{0,15}$" }, description: "Optional profilePhotoVersion used only to vary the client cache key." }],
   "GET /procurement/suggestion-projects": [{ name: "q", in: "query", required: false, schema: { type: "string", maxLength: 100 } }],
   "GET /procurement/projects/:projectId/vendor-suggestions": [{ name: "q", in: "query", required: false, schema: { type: "string", maxLength: 100 } }],
@@ -1073,6 +1093,13 @@ function responsesFor(key: HumanJwtOperationKeyShape): Readonly<Record<string, O
     return {
       ...binaryResponses("image/jpeg", "Processed 512 x 512 JPEG without metadata. Served only to the user or an actor who can already read users; otherwise 404 without disclosing existence. Cache-Control private, max-age=86400, with a version-derived ETag."),
       "304": { description: "The If-None-Match ETag matches the current photo version." }
+    };
+  }
+  if (key === "GET /admin/ai-estimator-knowledge/vendors/:id/msme-certificate") {
+    return {
+      ...binaryResponses(["application/pdf", "image/jpeg", "image/png", "image/webp"], "Current MSME certificate attachment, authenticated Super Admin only. Private, no-store and nosniff; an optional v must match the attached certificate identity. Stale or unavailable certificates return 404."),
+      "422": { $ref: "#/components/responses/UnprocessableKnowledge" },
+      "503": { $ref: "#/components/responses/ServiceUnavailable" }
     };
   }
   if (key === "GET /admin/ai-estimator-knowledge/vendors/:id/photo") {
@@ -1808,6 +1835,32 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
           format: "password",
           description: "Must exactly match password."
         }
+      }
+    },
+    AdminProjectStatusCounts: {
+      type: "object",
+      additionalProperties: false,
+      required: ["all", "planning", "active", "on_hold", "completed"],
+      description: "Totals over all authorized search matches before the selected status filter or pagination. No inaccessible projects are included.",
+      properties: {
+        all: { type: "integer", minimum: 0 },
+        planning: { type: "integer", minimum: 0 },
+        active: { type: "integer", minimum: 0 },
+        on_hold: { type: "integer", minimum: 0 },
+        completed: { type: "integer", minimum: 0 }
+      }
+    },
+    AdminProjectPage: {
+      type: "object",
+      additionalProperties: false,
+      required: ["items", "pagination", "statusCounts"],
+      properties: {
+        items: {
+          type: "array",
+          items: { type: "object", additionalProperties: true, description: "Existing Admin project summary, including its authoritative estimate and approved baseline when available." }
+        },
+        pagination: { $ref: "#/components/schemas/Pagination", description: "Total includes both search and selected status filters." },
+        statusCounts: { $ref: "#/components/schemas/AdminProjectStatusCounts" }
       }
     },
     AdminProjectInitiationRequest: {

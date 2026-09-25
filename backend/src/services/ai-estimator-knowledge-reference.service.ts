@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession, type Model } from "mongoose";
 
-import type { ProcurementVendorProfile, ProcurementVendorSummary, ProcurementVendorDetailFields, ProcurementVendorDirectoryOverview } from "../contracts/procurement-vendor.js";
-import { prepareProcurementVendorProfile, procurementVendorSummaries, storedProcurementVendorProfile, procurementVendorPhotoDescriptor } from "./procurement-vendor-profile.js";
+import type { ProcurementVendorProfileInput, ProcurementVendorSummary, ProcurementVendorDetailFields, ProcurementVendorDirectoryOverview } from "../contracts/procurement-vendor.js";
+import { prepareProcurementVendorProfile, procurementVendorSummaries, storedProcurementVendorProfile, procurementVendorPhotoDescriptor, procurementVendorProfileComplete } from "./procurement-vendor-profile.js";
+import { consumeProcurementVendorCertificate, procurementVendorCertificateDescriptor } from "./procurement-vendor-certificate.service.js";
+import { vendorSaveCommand, readVendorSaveCommand, recordVendorSaveCommand } from "./procurement-vendor-save-command.js";
 import type {
   KnowledgePrioritySemanticTier,
   KnowledgeTaxVersion
@@ -237,7 +239,9 @@ export interface AiEstimatorKnowledgePermanentDeleteBasketResult {
 
 export interface AiEstimatorKnowledgeCreateMasterInput {
   readonly code?: string;
-  readonly procurementProfile?: ProcurementVendorProfile;
+  readonly procurementProfile?: ProcurementVendorProfileInput;
+  readonly msmeCertificateUploadId?: string;
+  readonly idempotencyKey?: string;
   readonly confirmPhysicalAddressVerification?: boolean;
   readonly name: string;
   readonly description?: string | null;
@@ -249,6 +253,8 @@ export interface AiEstimatorKnowledgeCreateMasterInput {
 
 export interface AiEstimatorKnowledgeCreateSurfaceInput {
   readonly procurementProfile?: never;
+  readonly msmeCertificateUploadId?: never;
+  readonly idempotencyKey?: never;
   readonly confirmPhysicalAddressVerification?: never;
   readonly code?: string;
   readonly name: string;
@@ -260,7 +266,9 @@ export interface AiEstimatorKnowledgeCreateSurfaceInput {
 }
 
 export interface AiEstimatorKnowledgeUpdateMasterInput {
-  readonly procurementProfile?: ProcurementVendorProfile;
+  readonly procurementProfile?: ProcurementVendorProfileInput;
+  readonly msmeCertificateUploadId?: string;
+  readonly idempotencyKey?: string;
   readonly confirmPhysicalAddressVerification?: boolean;
   readonly expectedVersion: number;
   readonly code?: string;
@@ -274,6 +282,8 @@ export interface AiEstimatorKnowledgeUpdateMasterInput {
 
 export interface AiEstimatorKnowledgeUpdateSurfaceInput {
   readonly procurementProfile?: never;
+  readonly msmeCertificateUploadId?: never;
+  readonly idempotencyKey?: never;
   readonly confirmPhysicalAddressVerification?: never;
   readonly expectedVersion: number;
   readonly code?: string;
@@ -886,7 +896,7 @@ export function createAiEstimatorKnowledgeReferenceService(
       const row = await AiEstimatorKnowledgeVendorModel.findById(id).lean().exec() as Row | null;
       if (!row) notFound();
       const summaries = await procurementVendorSummaries([row]);
-      return { ...masterDto("vendors", row), procurementSummary: summaries.get(id)!, procurementProfile: storedProcurementVendorProfile(row.procurementProfile), geoTaggedPicture: procurementVendorPhotoDescriptor(id, row.geoTaggedPicture) };
+      return { ...masterDto("vendors", row), procurementSummary: summaries.get(id)!, procurementProfile: storedProcurementVendorProfile(row.procurementProfile), geoTaggedPicture: procurementVendorPhotoDescriptor(id, row.geoTaggedPicture), msmeCertificate: procurementVendorCertificateDescriptor(id, row.msmeCertificate) };
     },
 
     async listMasters(actor, masterType, filters, pagination) {
@@ -929,6 +939,10 @@ export function createAiEstimatorKnowledgeReferenceService(
         const authorized = await actorGuard.requireMutationActor(actor, session);
         const model = requireMasterModel(masterType);
         validateMasterCreate(masterType, input);
+        const command = masterType === "vendors" ? vendorSaveCommand(authorized.id, null, input) : null;
+        const replay = await readVendorSaveCommand<AiEstimatorKnowledgeMasterDto>(command, session);
+        if (replay) return replay;
+        if (masterType === "vendors" && input.procurementProfile !== undefined && input.procurementProfile?.organizationType == null) throw new ApiError(400, "VALIDATION_ERROR", "Choose a Vendor Organization Type.", { "procurementProfile.organizationType": "Choose a Vendor Organization Type." });
         const timestamp = now();
         const id = `knowledge-${singular(masterType)}-${createId()}`;
         const code = masterType === "surfaces"
@@ -959,6 +973,8 @@ export function createAiEstimatorKnowledgeReferenceService(
         }
         const procurementProfile = masterType === "vendors" && input.procurementProfile !== undefined
           ? await prepareProcurementVendorProfile(input.procurementProfile, null, authorized.id, timestamp, input.confirmPhysicalAddressVerification, session) : undefined;
+        const msmeCertificate = procurementProfile ? await consumeProcurementVendorCertificate({ actorId: authorized.id, vendorId: id, creating: true,
+          registered: procurementProfile.msmeRegistered, uploadId: input.msmeCertificateUploadId, previous: null, now: timestamp, session }) : undefined;
         const [created] = await model.create([{
           _id: id,
           code,
@@ -969,7 +985,7 @@ export function createAiEstimatorKnowledgeReferenceService(
           displayOrder,
           status: input.status ?? "active",
           ...(masterType === "uoms" ? { decimalScale: input.decimalScale } : {}),
-          ...(procurementProfile ? { procurementProfile } : {}),
+          ...(procurementProfile ? { procurementProfile, msmeCertificate } : {}),
           version: 1,
           createdById: authorized.id,
           updatedById: authorized.id,
@@ -993,13 +1009,15 @@ export function createAiEstimatorKnowledgeReferenceService(
             : { masterType, status: created.get("status"), version: created.get("version"), displayOrder: created.get("displayOrder") }
         }, session);
         const row = created.toObject() as Row;
-        return masterDto(
+        const result = masterDto(
           masterType,
           row,
           masterType === "taxes"
             ? (await taxVersionsByRuleIds([id], session)).get(id) ?? []
             : undefined
         );
+        await recordVendorSaveCommand(command, result, session);
+        return result;
       }));
     },
 
@@ -1008,6 +1026,9 @@ export function createAiEstimatorKnowledgeReferenceService(
         const authorized = await actorGuard.requireMutationActor(actor, session);
         const model = requireMasterModel(masterType);
         validateMasterUpdate(masterType, input);
+        const command = masterType === "vendors" ? vendorSaveCommand(authorized.id, id, input) : null;
+        const replay = await readVendorSaveCommand<AiEstimatorKnowledgeMasterDto>(command, session);
+        if (replay) return replay;
         const current = await model.findById(id).session(session).lean().exec() as Row | null;
         requireCurrent(current, input.expectedVersion);
         if (current.status === "archived") archived();
@@ -1036,7 +1057,13 @@ export function createAiEstimatorKnowledgeReferenceService(
           set.displayOrder = input.displayOrder;
         }
         if (input.status !== undefined) set.status = input.status;
-        if (masterType === "vendors" && input.procurementProfile !== undefined) set.procurementProfile = await prepareProcurementVendorProfile(input.procurementProfile, current.procurementProfile, authorized.id, timestamp, input.confirmPhysicalAddressVerification, session);
+        if (masterType === "vendors" && input.procurementProfile !== undefined) {
+          const profile = await prepareProcurementVendorProfile(input.procurementProfile, current.procurementProfile, authorized.id, timestamp, input.confirmPhysicalAddressVerification, session);
+          set.procurementProfile = profile;
+          set.msmeCertificate = await consumeProcurementVendorCertificate({ actorId: authorized.id, vendorId: id, creating: false,
+            expectedVersion: input.expectedVersion, registered: profile.msmeRegistered, uploadId: input.msmeCertificateUploadId,
+            previous: current.msmeCertificate, now: timestamp, session });
+        }
         let dependencyEpochFilter: Record<string, unknown> = {};
         if (masterType === "uoms" && input.decimalScale !== undefined) {
           if (Number(current.decimalScale) !== input.decimalScale) {
@@ -1089,20 +1116,22 @@ export function createAiEstimatorKnowledgeReferenceService(
           oldValues: masterAuditState(current, masterType),
           newValues: { ...masterAuditState(updated!, masterType), ...(masterType === "vendors" && input.procurementProfile ? { changedProfileFields: Object.keys(input.procurementProfile).filter(key => {
             const nextValue = (set.procurementProfile as unknown as Row)[key];
-            if (key === "executionType") {
-              const previousSelections = storedProcurementVendorProfile(current.procurementProfile)?.executionType;
-              return JSON.stringify(previousSelections) !== JSON.stringify(nextValue);
+            if (key === "executionType" || key === "bankAccount" || key === "organizationType") {
+              const previousValue = storedProcurementVendorProfile(current.procurementProfile)?.[key] ?? null;
+              return JSON.stringify(previousValue) !== JSON.stringify(nextValue);
             }
             return (current.procurementProfile as Row | undefined)?.[key] !== nextValue;
           }) } : {}) }
         }, session);
-        return masterDto(
+        const result = masterDto(
           masterType,
           updated!,
           masterType === "taxes"
             ? (await taxVersionsByRuleIds([id], session)).get(id) ?? []
             : undefined
         );
+        await recordVendorSaveCommand(command, result, session);
+        return result;
       }));
     },
 
@@ -1460,6 +1489,8 @@ function validateMasterSpecificInput(
   creating: boolean
 ): void {
   if (input.procurementProfile !== undefined && masterType !== "vendors") throw new ApiError(400, "VALIDATION_ERROR", "procurementProfile is valid only for vendors.");
+  if (input.msmeCertificateUploadId !== undefined && (masterType !== "vendors" || input.procurementProfile === undefined || typeof input.msmeCertificateUploadId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/u.test(input.msmeCertificateUploadId) || input.idempotencyKey === undefined)) throw new ApiError(400, "VALIDATION_ERROR", "A certificate upload requires a vendor profile and stable save identity.", { msmeCertificate: "Upload a certificate and retry the vendor save." });
+  if (input.idempotencyKey !== undefined && (masterType !== "vendors" || typeof input.idempotencyKey !== "string" || !/^[A-Za-z0-9_-]{8,200}$/u.test(input.idempotencyKey))) throw new ApiError(400, "VALIDATION_ERROR", "Use a stable vendor save identity.", { idempotencyKey: "Use 8 to 200 letters, digits, underscores, or hyphens." });
   if (input.confirmPhysicalAddressVerification !== undefined && (masterType !== "vendors" || input.procurementProfile === undefined || typeof input.confirmPhysicalAddressVerification !== "boolean")) throw new ApiError(400, "VALIDATION_ERROR", "Verification confirmation requires a vendor profile.");
   if (masterType === "uoms") {
     if ((creating || input.decimalScale !== undefined) && (!Number.isSafeInteger(input.decimalScale) || input.decimalScale! < 0 || input.decimalScale! > 3)) {
@@ -1915,7 +1946,7 @@ function masterAuditState(
 ): Record<string, unknown> {
   if (masterType === "vendors") {
     const profile = storedProcurementVendorProfile(row.procurementProfile);
-    return { ...auditState(row), profileComplete: !!profile, currentAddressVerifiedPhysically: profile?.currentAddressVerifiedPhysically ?? null, physicalAddressVerifiedAt: profile?.physicalAddressVerifiedAt ?? null, physicalAddressVerifiedById: profile?.physicalAddressVerifiedById ?? null, mainBasketId: profile?.mainBasketId ?? null, subBasketId: profile?.subBasketId ?? null };
+    return { ...auditState(row), profileComplete: procurementVendorProfileComplete(profile, row.msmeCertificate), msmeCertificateId: procurementVendorCertificateDescriptor(String(row._id), row.msmeCertificate)?.id ?? null, currentAddressVerifiedPhysically: profile?.currentAddressVerifiedPhysically ?? null, physicalAddressVerifiedAt: profile?.physicalAddressVerifiedAt ?? null, physicalAddressVerifiedById: profile?.physicalAddressVerifiedById ?? null, mainBasketId: profile?.mainBasketId ?? null, subBasketId: profile?.subBasketId ?? null };
   }
   if (masterType !== "surfaces") return auditState(row);
   return {

@@ -25,15 +25,20 @@ interface Props {
   readonly readOnly: boolean;
   readonly errors?: Partial<Record<keyof KnowledgeModeCalculationDraft, string>>;
   readonly actions?: ReactNode;
+  readonly showGuidanceIcon?: boolean;
   readonly onChange: (field: keyof KnowledgeModeCalculationDraft, value: string) => void;
 }
 
 export function KnowledgeModeCalculationTable({
-  value, uomLabel, uomMessage, readOnly, errors = {}, actions, onChange, title = "Calculations", scope, marginControl
+  value, uomLabel, uomMessage, readOnly, errors = {}, actions, onChange, title = "Calculations", scope, marginControl, showGuidanceIcon = false
 }: Props) {
   const id = useId();
   const usesMargin = scope === "pmc" || scope === "sub_vendor";
   const marginLabel = scope === "sub_vendor" ? "Lisno" : "PMC";
+  const guidance = <>
+    <p className="knowledge-mode-calculation__note">UOM follows Overview. The configured Impact applies at or below the quantity limit.</p>
+    {uomMessage ? <p id={`${id}-uom-message`} className="knowledge-mode-calculation__hint">{uomMessage}</p> : null}
+  </>;
 
   function editableField(field: keyof KnowledgeModeCalculationDraft, label: ReactNode, affix?: string, leading = false) {
     return <Field id={`${id}-${field}`} label={label} error={errors[field]}>
@@ -66,8 +71,10 @@ export function KnowledgeModeCalculationTable({
             {editableField("lowQuantityLimit", "Low Quantity Limit")}
             {editableField("impactRate", <>Impact<span className="sr-only"> (%)</span></>, "%")}
           </div>
-          <p className="knowledge-mode-calculation__note">UOM follows Overview. The configured Impact applies at or below the quantity limit.</p>
-          {uomMessage ? <p id={`${id}-uom-message`} className="knowledge-mode-calculation__hint">{uomMessage}</p> : null}
+          {showGuidanceIcon ? <div className="knowledge-mode-calculation__guidance">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 10.5v6M12 7.5h.01" /></svg>
+            <div>{guidance}</div>
+          </div> : guidance}
         </div>
         {usesMargin ? <div className="knowledge-mode-calculation__group knowledge-mode-calculation__pmc" role="group" aria-labelledby={`${id}-margin-title`}>
           <h4 id={`${id}-margin-title`}>{marginLabel} Margin</h4>

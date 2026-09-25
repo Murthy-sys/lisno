@@ -123,11 +123,11 @@ export function KnowledgeModeDescriptionEditor({ description, pmc, inHouse, read
           </div>
         </>
       ) : (
-        <p className="knowledge-mode-description__text">
-          <span>{description}</span>{!readOnly ? <>{" "}<IconButton
+        <p className="knowledge-mode-description__text knowledge-mode-description__display">
+          <span className="knowledge-mode-description__value" tabIndex={0} title={description}>{description}</span>{!readOnly ? <IconButton
             ref={editRef} label="Edit Mode paragraph" variant="quiet" icon={<Pencil aria-hidden="true" />}
             onClick={() => { setText(description); setLocalError(undefined); }}
-          /></> : null}
+          /> : null}
         </p>
       )}
     </div>

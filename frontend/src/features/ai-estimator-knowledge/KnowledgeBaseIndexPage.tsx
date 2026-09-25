@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-query";
 import {
   ChevronDown,
+  Layers,
   ListTree,
   Pencil,
   Plus,
@@ -17,7 +18,7 @@ import {
   X
 } from "lucide-react";
 import { useId, useMemo, useRef, useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
@@ -26,10 +27,10 @@ import { Button } from "../../components/ui/Button";
 import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Dialog } from "../../components/ui/Dialog";
 import { Field, Input, Select, Textarea } from "../../components/ui/Field";
+import { IconButton } from "../../components/ui/IconButton";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
-import { ProgressBar } from "../../components/ui/ProgressBar";
 import { Surface } from "../../components/ui/Surface";
 import {
   createKnowledgeBasket,
@@ -47,6 +48,8 @@ import { KNOWLEDGE_ITEM_STATUS_LABELS } from "./knowledgePresentation";
 import { KnowledgeBasketManagementDialog } from "./KnowledgeBasketManagementDialog";
 import { CreateKnowledgeItemDialog } from "./CreateKnowledgeItemDialog";
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
+import { KnowledgeIndexItemCard } from "./KnowledgeIndexItemCard";
+import type { CatalogState } from "./knowledgeIndexPresentation";
 import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
 import { KnowledgeLifecycleDialog } from "./KnowledgeLifecycleDialogs";
 import type {
@@ -60,6 +63,7 @@ import type {
 } from "./knowledgeTypes";
 import "./ai-estimator-knowledge.css";
 import "./knowledge-configuration-ui.css";
+import "./knowledge-index.css";
 
 const PAGE_SIZE = 20;
 const FILTER_MASTER_TYPES = [
@@ -113,7 +117,10 @@ export function KnowledgeBaseIndexPage() {
   const [announcement, setAnnouncement] = useState("");
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [collapsedBaskets, setCollapsedBaskets] = useState<readonly string[]>([]);
+  /* Component state only: the safety notice returns on the next visit. */
+  const [noticeDismissed, setNoticeDismissed] = useState(false);
   const manageBasketsButtonRef = useRef<HTMLButtonElement>(null);
+  const filterCountDescriptionId = useId();
 
   const canCreate = hasFrontendPermission(
     auth.authorization,
@@ -165,6 +172,16 @@ export function KnowledgeBaseIndexPage() {
       ) as Readonly<Record<(typeof FILTER_MASTER_TYPES)[number], readonly KnowledgeMaster[]>>,
     [masterQueries]
   );
+  /* Cards resolve unit and priority names from these two catalogs, so they share
+     one state: still loading while either loads, degraded when either failed. */
+  const priorityCatalogQuery = masterQueries[FILTER_MASTER_TYPES.indexOf("priorities")];
+  const uomCatalogQuery = masterQueries[FILTER_MASTER_TYPES.indexOf("uoms")];
+  const cardCatalogState: CatalogState =
+    priorityCatalogQuery.isPending || uomCatalogQuery.isPending
+      ? "loading"
+      : priorityCatalogQuery.isError || uomCatalogQuery.isError
+        ? "error"
+        : "ready";
   const hasActiveFilters = Object.values(appliedFilters).some(Boolean);
   /* Unfiltered, every live basket gets a card even with no items yet — otherwise
      a freshly configured basket is invisible until its first item exists. */
@@ -244,6 +261,11 @@ export function KnowledgeBaseIndexPage() {
     );
   }
 
+  function dismissNotice() {
+    setNoticeDismissed(true);
+    window.setTimeout(() => document.getElementById("knowledge-search")?.focus(), 0);
+  }
+
   function returnFocusToBasketManagerButton() {
     window.setTimeout(() => manageBasketsButtonRef.current?.focus(), 0);
   }
@@ -254,7 +276,7 @@ export function KnowledgeBaseIndexPage() {
   }
 
   return (
-    <div className="knowledge-page">
+    <div className="knowledge-page knowledge-page--index">
       <PageHeader
         id="knowledge-base-title"
         eyebrow="Configuration"
@@ -305,7 +327,9 @@ export function KnowledgeBaseIndexPage() {
           </>
         }
       />
-      <KnowledgeSafetyNotice />
+      {noticeDismissed ? null : (
+        <KnowledgeSafetyNotice onDismiss={dismissNotice} />
+      )}
       {announcement ? (
         <p className="sr-only" role="status">
           {announcement}
@@ -342,22 +366,37 @@ export function KnowledgeBaseIndexPage() {
               )}
             </Field>
             <div className="knowledge-search-bar__actions">
-              <Button
-                type="button"
-                variant="secondary"
-                leadingIcon={<SlidersHorizontal />}
-                aria-expanded={advancedFiltersOpen}
-                aria-controls="knowledge-advanced-filters"
-                onClick={() => setAdvancedFiltersOpen((open) => !open)}
-              >
-                Filters
+              <span className="knowledge-filter-action-wrap">
+                <IconButton
+                  type="button"
+                  variant="secondary"
+                  className="knowledge-search-action"
+                  label="Filters"
+                  tooltip="Filters"
+                  icon={<SlidersHorizontal aria-hidden="true" />}
+                  aria-expanded={advancedFiltersOpen}
+                  aria-controls="knowledge-advanced-filters"
+                  aria-describedby={advancedFilterCount > 0 ? filterCountDescriptionId : undefined}
+                  onClick={() => setAdvancedFiltersOpen((open) => !open)}
+                />
                 {advancedFilterCount > 0 ? (
-                  <span className="knowledge-filter-count" aria-hidden="true">
-                    {advancedFilterCount}
-                  </span>
+                  <>
+                    <span className="knowledge-filter-count" aria-hidden="true">
+                      {advancedFilterCount}
+                    </span>
+                    <span className="sr-only" id={filterCountDescriptionId}>
+                      {advancedFilterCount} {advancedFilterCount === 1 ? "filter" : "filters"} selected
+                    </span>
+                  </>
                 ) : null}
-              </Button>
-              <Button type="submit">Search</Button>
+              </span>
+              <IconButton
+                type="submit"
+                className="knowledge-search-action"
+                label="Search"
+                tooltip="Search"
+                icon={<Search aria-hidden="true" />}
+              />
             </div>
           </div>
 
@@ -472,6 +511,9 @@ export function KnowledgeBaseIndexPage() {
           {groupedItems.map(([basketId, group]) => {
             const expanded = !collapsedBaskets.includes(basketId);
             const panelId = `knowledge-basket-panel-${basketId}`;
+            /* A filtered group whose basket record is not loaded has no description. */
+            const basketDescription = (basketsQuery.data?.items ?? [])
+              .find(({ id }) => id === basketId)?.description?.trim();
             return (
             <Surface
               key={basketId}
@@ -480,18 +522,26 @@ export function KnowledgeBaseIndexPage() {
               data-expanded={expanded || undefined}
             >
               <div className="knowledge-section-heading knowledge-basket-panel__header">
-                <h2 className="knowledge-basket-panel__title">
-                  <button
-                    type="button"
-                    className="knowledge-basket-panel__toggle"
-                    aria-expanded={expanded}
-                    aria-controls={panelId}
-                    onClick={() => toggleBasket(basketId)}
-                  >
-                    <ChevronDown className="knowledge-basket-panel__chevron" aria-hidden="true" />
-                    <span>{group.basketName}</span>
-                  </button>
-                </h2>
+                <span className="knowledge-basket-panel__icon" aria-hidden="true">
+                  <Layers />
+                </span>
+                <div className="knowledge-basket-panel__heading">
+                  <h2 className="knowledge-basket-panel__title">
+                    <button
+                      type="button"
+                      className="knowledge-basket-panel__toggle"
+                      aria-expanded={expanded}
+                      aria-controls={panelId}
+                      onClick={() => toggleBasket(basketId)}
+                    >
+                      <ChevronDown className="knowledge-basket-panel__chevron" aria-hidden="true" />
+                      <span>{group.basketName}</span>
+                    </button>
+                  </h2>
+                  {basketDescription ? (
+                    <p className="knowledge-basket-panel__description">{basketDescription}</p>
+                  ) : null}
+                </div>
                 <div className="knowledge-basket-panel__meta">
                   <span className="knowledge-count-pill">
                     {group.items.length} {group.items.length === 1 ? "item" : "items"}
@@ -502,35 +552,42 @@ export function KnowledgeBaseIndexPage() {
                         but not shown: several baskets each offer this command, and
                         "Add estimation item" alone would name them all alike. */}
                     {canCreate ? <Button size="compact" variant="secondary" leadingIcon={<Plus />} onClick={() => setItemDialogOpen(true)}>Add estimation item<span className="sr-only"> to {group.basketName}</span></Button> : null}
-                    {canCreate ? <Button size="compact" variant="secondary" onClick={() => setTemporaryBasketId(basketId)}>Add temporary item<span className="sr-only"> to {group.basketName}</span></Button> : null}
-                    {canUpdate ? <Button size="compact" variant="quiet" leadingIcon={<Pencil />} onClick={() => setBasketEditor((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}>Edit basket</Button> : null}
-                    {canLifecycle ? <Button size="compact" variant="destructive-outline" leadingIcon={<Trash2 />} onClick={() => setBasketDelete((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}>Delete<span className="sr-only"> {group.basketName}</span></Button> : null}
+                    {canCreate ? <Button size="compact" variant="secondary" leadingIcon={<Plus />} onClick={() => setTemporaryBasketId(basketId)}>Add temporary item<span className="sr-only"> to {group.basketName}</span></Button> : null}
+                    {/* Icon-only: the name carries the basket, the tooltip the command. */}
+                    {canUpdate ? (
+                      <Button
+                        variant="quiet"
+                        className="knowledge-icon-action"
+                        aria-label={`Edit basket ${group.basketName}`}
+                        title="Edit basket"
+                        leadingIcon={<Pencil />}
+                        onClick={() => setBasketEditor((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}
+                      />
+                    ) : null}
+                    {canLifecycle ? (
+                      <Button
+                        variant="destructive-outline"
+                        className="knowledge-icon-action knowledge-icon-action--danger"
+                        aria-label={`Delete ${group.basketName}`}
+                        title="Delete basket"
+                        leadingIcon={<Trash2 />}
+                        onClick={() => setBasketDelete((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}
+                      />
+                    ) : null}
                   </div>
                 </div>
               </div>
               <div id={panelId} className="knowledge-basket-panel__body" hidden={!expanded}>
               <div className="knowledge-item-grid">
                 {group.items.map((item) => (
-                  <article key={item.id} className="knowledge-item-card" data-item-type={item.itemType ?? "main_line"}>
-                    <h3>
-                      <Link
-                        className="knowledge-item-link"
-                        to={`/admin/configuration/estimation/items/${encodeURIComponent(item.mainLineId)}`}
-                        aria-describedby={item.itemType === "temporary" ? `temporary-kind-${item.id}` : undefined}
-                      >
-                        {item.mainLineName}
-                      </Link>
-                    </h3>
-                    {item.itemType === "temporary" && <span id={`temporary-kind-${item.id}`} className="knowledge-temporary-badge">Temporary item · Must be completed</span>}
-                    <div className="knowledge-item-card__progress">
-                      <span>{item.completeness.percentage}% complete</span>
-                      <ProgressBar
-                        value={item.completeness.percentage}
-                        label={`${item.mainLineName} completeness`}
-                        valueText={`${item.completeness.percentage}% complete`}
-                      />
-                    </div>
-                  </article>
+                  <KnowledgeIndexItemCard
+                    key={item.id}
+                    item={item}
+                    uoms={masters.uoms}
+                    priorities={masters.priorities}
+                    catalogState={cardCatalogState}
+                    onOpen={() => navigate(`/admin/configuration/estimation/items/${encodeURIComponent(item.mainLineId)}`)}
+                  />
                 ))}
               </div>
               </div>

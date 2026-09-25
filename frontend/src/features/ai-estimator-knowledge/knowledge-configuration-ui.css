@@ -361,7 +361,10 @@
   white-space: normal;
 }
 
-/* Overview proportions follow the space left by the workspace navigation. */
+/* Overview proportions follow the space left by the workspace navigation:
+   UOM and Surfaces sit side by side at 1:2 once both cards have usable width
+   (a 1440px desktop with the sidebar and rail included), and stack below it
+   with UOM first. The cards align at the top at their own heights. */
 .knowledge-page--item-workspace .knowledge-workspace-section--overview {
   container: knowledge-overview / inline-size;
 }
@@ -371,13 +374,9 @@
   align-items: start;
 }
 
-@container knowledge-overview (min-width: 56rem) {
+@container knowledge-overview (min-width: 44rem) {
   .knowledge-page--item-workspace .knowledge-workspace-section--overview .knowledge-overview {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 3fr);
-  }
-
-  .knowledge-page--item-workspace .knowledge-workspace-section--overview .knowledge-overview__uom-control-row {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   }
 }
 
@@ -404,6 +403,37 @@
   color: var(--role-ink-muted, var(--color-text-muted));
   font-size: var(--text-sm);
   line-height: 1.6;
+}
+
+/* Workspace card headings (UOM, Surfaces, Revision history) lead with a quiet,
+   decorative icon tile; the heading and its description sit beside it, and any
+   state label keeps the heading's trailing edge. */
+.knowledge-card-heading__identity {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-inline-size: 0;
+}
+
+.knowledge-card-heading__identity > div {
+  min-inline-size: 0;
+}
+
+.knowledge-card-heading__icon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  inline-size: 44px;
+  block-size: 44px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--button-primary-bg) 8%, var(--role-deck, var(--color-surface)));
+  color: var(--role-ink, var(--color-text));
+}
+
+.knowledge-card-heading__icon svg {
+  inline-size: 22px;
+  block-size: 22px;
 }
 
 .ui-app-shell[data-role] .knowledge-page :is(.knowledge-repeater__row, .knowledge-budget-rule, .knowledge-pmc-scope__list, .knowledge-mode-calculation__group, .knowledge-quality-inspection, .knowledge-item-card) {

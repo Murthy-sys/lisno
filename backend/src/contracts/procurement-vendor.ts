@@ -1,15 +1,29 @@
 /** Public procurement shapes. Never include storage keys, hashes, or raw file metadata. */
+export const VENDOR_ORGANIZATION_TYPES = ["individual", "company", "firm", "associated_person", "huf", "trust", "govt"] as const;
+export type VendorOrganizationType = typeof VENDOR_ORGANIZATION_TYPES[number];
+
+export interface VendorBankAccount {
+  accountHolderName: string;
+  bankName: string;
+  accountNumber: string;
+  ifscCode: string;
+  branchName: string | null;
+}
+
 export interface ProcurementVendorProfile {
+  organizationType: VendorOrganizationType | null;
+  bankAccount: VendorBankAccount | null;
   vendorType: "execution" | "supplier";
   executionType: ("labor" | "material_labour")[] | null;
   supplier: boolean | null;
   nameOfRepresentative: string;
   position: string;
   gstRegistered: boolean;
+  gstNumber: string | null;
   msmeRegistered: boolean;
   turnoverSelfDeclaredPaise: number;
   turnoverVerifiedPaise: number | null;
-  reference: string;
+  reference: string | null;
   workProfile: string;
   email: string;
   phoneNumber: string;
@@ -20,6 +34,37 @@ export interface ProcurementVendorProfile {
   currentAddressVerifiedPhysically: boolean;
   mainBasketId: string;
   subBasketId: string;
+}
+
+/** Omitted compatibility fields are normalized or retained by the server. */
+export type ProcurementVendorProfileInput = Omit<ProcurementVendorProfile, "reference" | "gstNumber" | "supplier" | "organizationType" | "bankAccount"> & {
+  organizationType?: VendorOrganizationType | null;
+  bankAccount?: Omit<VendorBankAccount, "branchName"> & { branchName?: string | null } | null;
+  reference?: string | null;
+  gstNumber?: string | null;
+  supplier?: boolean | null;
+};
+
+export type ProcurementVendorCertificateMimeType = "application/pdf" | "image/jpeg" | "image/png" | "image/webp";
+export interface ProcurementVendorCertificateDescriptor {
+  id: string;
+  originalFilename: string;
+  mimeType: ProcurementVendorCertificateMimeType;
+  byteSize: number;
+  uploadedAt: string;
+  url: string;
+}
+export interface ProcurementVendorCertificateUploadPolicy {
+  maxUploadBytes: number;
+  allowedMimeTypes: ProcurementVendorCertificateMimeType[];
+  uploadLifetimeSeconds: number;
+}
+export interface ProcurementVendorCertificateUploadResult {
+  uploadId: string;
+  originalFilename: string;
+  mimeType: ProcurementVendorCertificateMimeType;
+  byteSize: number;
+  expiresAt: string;
 }
 
 export interface ProcurementVendorStoredProfile extends ProcurementVendorProfile {
@@ -55,6 +100,7 @@ export interface ProcurementVendorDetailFields {
   procurementSummary: ProcurementVendorSummary;
   procurementProfile: ProcurementVendorStoredProfile | null;
   geoTaggedPicture: ProcurementVendorPhotoDescriptor | null;
+  msmeCertificate: ProcurementVendorCertificateDescriptor | null;
 }
 
 export interface ProcurementVendorPhotoMutationResult {

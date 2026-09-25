@@ -88,93 +88,99 @@ export function KnowledgePmcScopeChecklist({ list, items, oppositeItems, context
 
   return (
     <fieldset className="knowledge-pmc-scope__list" aria-label={contextLabel ? `${contextLabel} ${title}` : undefined}>
-      <legend>{title}</legend>
-      <div className="knowledge-pmc-scope__items">
-        {items.map((item, index) => {
-          const selectedOpposite = oppositeSelectedNames.has(normalizePmcScopeName(item.name));
-          const unavailable = selectedOpposite && !item.selected;
-          const conflict = selectedOpposite && item.selected;
-          const explanation = conflict ? "Selected in both lists. Uncheck one before saving." : `Selected in ${oppositeTitle}.`;
-          const explanationId = `${id}-selection-${index}`;
-          const option = (
-              <label className={unavailable ? "knowledge-pmc-scope__unavailable" : undefined} tabIndex={unavailable ? 0 : undefined}>
-                <Checkbox
-                  checked={item.selected}
-                  disabled={readOnly || unavailable}
-                  aria-label={contextLabel ? `${contextLabel} ${singular}: ${item.name}` : item.name}
-                  aria-describedby={selectedOpposite ? explanationId : undefined}
-                  aria-invalid={conflict || undefined}
-                  onChange={(event) => {
-                    if (readOnly || (event.target.checked && selectedOpposite)) return;
-                    onChange(items.map((entry) => entry.id === item.id
-                      ? { ...entry, selected: event.target.checked }
-                      : entry));
-                  }}
-                />
-                <span>{item.name}{selectedOpposite ? <small className={unavailable ? "sr-only" : "knowledge-pmc-scope__status"} id={explanationId}>{explanation}</small> : null}</span>
-              </label>
-          );
-          return (
-            <div className="knowledge-pmc-scope__item" key={item.id}>
-              {unavailable ? <Tooltip label={explanation}>{option}</Tooltip> : option}
-              {!readOnly ? <IconButton
-                ref={(node) => {
-                  if (node) deleteButtonRefs.current.set(item.id, node);
-                  else deleteButtonRefs.current.delete(item.id);
-                }}
-                className="knowledge-pmc-scope__delete"
-                label={`Delete ${singular.toLowerCase()} ${item.name}`}
-                title={`Delete ${singular.toLowerCase()} ${item.name}`}
-                icon={<Trash2 aria-hidden="true" />} variant="quiet"
-                onClick={() => deleteItem(item.id)}
-              /> : null}
-            </div>
-          );
-        })}
-        {items.length === 0 ? <p className="knowledge-pmc-scope__empty">No {list} added.</p> : null}
-      </div>
-      {!readOnly ? (
-        <div className="knowledge-pmc-scope__add">
-          {adding ? (
-            <>
-              <Field id={`${id}-name`} label={`${singular} name`} error={error}>
-                {(props) => (
-                  <Input
-                    {...props}
-                    ref={inputRef}
-                    value={name}
-                    maxLength={240}
-                    disabled={atLimit}
-                    onChange={(event) => {
-                      setName(event.target.value);
-                      setError(undefined);
+      <legend className="sr-only">{title}</legend>
+      <div className="knowledge-pmc-scope__body" data-adding={adding}>
+        <div className="knowledge-pmc-scope__content">
+          <span className="knowledge-pmc-scope__title" aria-hidden="true">{title}</span>
+          <div className="knowledge-pmc-scope__items">
+            {items.map((item, index) => {
+              const selectedOpposite = oppositeSelectedNames.has(normalizePmcScopeName(item.name));
+              const unavailable = selectedOpposite && !item.selected;
+              const conflict = selectedOpposite && item.selected;
+              const explanation = conflict ? "Selected in both lists. Uncheck one before saving." : `Selected in ${oppositeTitle}.`;
+              const explanationId = `${id}-selection-${index}`;
+              const option = (
+                  <label className={unavailable ? "knowledge-pmc-scope__unavailable" : undefined} tabIndex={unavailable ? 0 : undefined}>
+                    <Checkbox
+                      checked={item.selected}
+                      disabled={readOnly || unavailable}
+                      aria-label={contextLabel ? `${contextLabel} ${singular}: ${item.name}` : item.name}
+                      aria-describedby={selectedOpposite ? explanationId : undefined}
+                      aria-invalid={conflict || undefined}
+                      onChange={(event) => {
+                        if (readOnly || (event.target.checked && selectedOpposite)) return;
+                        onChange(items.map((entry) => entry.id === item.id
+                          ? { ...entry, selected: event.target.checked }
+                          : entry));
+                      }}
+                    />
+                    <span>{item.name}{selectedOpposite ? <small className={unavailable ? "sr-only" : "knowledge-pmc-scope__status"} id={explanationId}>{explanation}</small> : null}</span>
+                  </label>
+              );
+              return (
+                <div className="knowledge-pmc-scope__item" key={item.id}>
+                  {unavailable ? <Tooltip label={explanation}>{option}</Tooltip> : option}
+                  {!readOnly ? <IconButton
+                    ref={(node) => {
+                      if (node) deleteButtonRefs.current.set(item.id, node);
+                      else deleteButtonRefs.current.delete(item.id);
                     }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        addItem();
-                      } else if (event.key === "Escape") {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        closeEditor();
-                      }
-                    }}
-                  />
-                )}
-              </Field>
-              <div className="knowledge-pmc-scope__actions">
-                <Button type="button" variant="destructive-outline" onClick={closeEditor}>Cancel</Button>
-                <Button type="button" disabled={atLimit} onClick={addItem}>Save</Button>
-              </div>
-            </>
-          ) : (
-            <Button ref={addButtonRef} type="button" variant="secondary" disabled={atLimit} onClick={() => setAdding(true)}>
-              Add {singular}
-            </Button>
-          )}
-          {atLimit ? <p>Maximum {MAX_PMC_SCOPE_ITEMS} {list} reached.</p> : null}
+                    className="knowledge-pmc-scope__delete"
+                    label={`Delete ${singular.toLowerCase()} ${item.name}`}
+                    title={`Delete ${singular.toLowerCase()} ${item.name}`}
+                    icon={<Trash2 aria-hidden="true" />} variant="quiet"
+                    onClick={() => deleteItem(item.id)}
+                  /> : null}
+                </div>
+              );
+            })}
+            {items.length === 0 ? <p className="knowledge-pmc-scope__empty">No {list} added.</p> : null}
+          </div>
         </div>
-      ) : null}
+        {!readOnly ? (
+          <div className="knowledge-pmc-scope__add">
+            {adding ? (
+              <>
+                <Field id={`${id}-name`} label={`${singular} name`} error={error}>
+                  {(props) => (
+                    <Input
+                      {...props}
+                      ref={inputRef}
+                      value={name}
+                      maxLength={240}
+                      disabled={atLimit}
+                      onChange={(event) => {
+                        setName(event.target.value);
+                        setError(undefined);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          addItem();
+                        } else if (event.key === "Escape") {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          closeEditor();
+                        }
+                      }}
+                    />
+                  )}
+                </Field>
+                <div className="knowledge-pmc-scope__actions">
+                  <Button type="button" variant="destructive-outline" onClick={closeEditor}>Cancel</Button>
+                  <Button type="button" disabled={atLimit} onClick={addItem}>Save</Button>
+                </div>
+              </>
+            ) : (
+              <Button ref={addButtonRef} type="button" variant="secondary" disabled={atLimit} onClick={() => setAdding(true)}
+                leadingIcon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>}>
+                Add {singular}
+              </Button>
+            )}
+            {atLimit ? <p>Maximum {MAX_PMC_SCOPE_ITEMS} {list} reached.</p> : null}
+          </div>
+        ) : null}
+      </div>
     </fieldset>
   );
 }

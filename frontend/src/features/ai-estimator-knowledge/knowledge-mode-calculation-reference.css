@@ -1,0 +1,161 @@
+/* Configuration-only layout; simulator dialogs keep their established controls. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor {
+  min-inline-size: 0;
+  container: mode-calculation-editor / inline-size;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor > .knowledge-mode-calculation {
+  gap: 8px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor .knowledge-mode-calculation__header h3 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.4;
+  font-weight: 650;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor .knowledge-mode-calculation__groups {
+  inline-size: 100%;
+  max-inline-size: none;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor .knowledge-mode-calculation__group {
+  padding: 10px 12px;
+  gap: 8px;
+  border-color: var(--color-border);
+  border-radius: var(--radius-field);
+  background: var(--color-surface-subtle);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor .knowledge-mode-calculation__group h4 {
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 650;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor .knowledge-mode-calculation__rate-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 8px 12px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor :is(.knowledge-mode-calculation__group .ui-field, .knowledge-mode-calculation__fixed) {
+  gap: 4px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor :is(.ui-field__label, .knowledge-mode-calculation__fixed dt) {
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 550;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor .knowledge-mode-calculation__fixed dd {
+  min-block-size: 40px;
+  padding: 6px 4px;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor .knowledge-pmc-margin__control {
+  inline-size: 100%;
+  max-inline-size: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor :is(.knowledge-mode-calculation__control, .knowledge-pmc-margin__control .ui-input) {
+  min-block-size: 40px;
+  block-size: 40px;
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--color-surface);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor .knowledge-mode-calculation__guidance {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor .knowledge-mode-calculation__guidance > svg {
+  inline-size: 18px;
+  block-size: 18px;
+  margin-block-start: 1px;
+  color: var(--color-text-muted);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor :is(.knowledge-mode-calculation__note, .knowledge-mode-calculation__hint, .knowledge-lisno-margin > .ui-field__hint) {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor .knowledge-mode-calculation__actions {
+  align-content: start;
+  gap: 8px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor .knowledge-mode-calculation__actions > .ui-button {
+  min-block-size: 40px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor .knowledge-mode-calculation__actions svg {
+  inline-size: 18px;
+  block-size: 18px;
+}
+
+@container mode-calculation-editor (min-width: 560px) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor .knowledge-mode-calculation__rate-fields {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, .9fr) minmax(0, 1.25fr) minmax(0, .85fr);
+  }
+}
+
+@container mode-calculation-editor (min-width: 720px) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor .knowledge-mode-calculation__groups {
+    grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr);
+  }
+}
+
+@container mode-calculation-editor (min-width: 1080px) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor > .knowledge-mode-calculation {
+    grid-template-columns: minmax(0, 1fr) 11rem;
+    column-gap: 12px;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor .knowledge-mode-calculation__header {
+    display: contents;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor .knowledge-mode-calculation__header h3 {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor .knowledge-mode-calculation__groups {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor .knowledge-mode-calculation__actions {
+    grid-column: 2;
+    grid-row: 1 / 3;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    border-inline-start: 1px solid var(--color-border);
+    padding-inline-start: 12px;
+  }
+}
+
+@media (max-width: 600px), (pointer: coarse) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation-editor :is(.knowledge-mode-calculation__control, .knowledge-pmc-margin__control .ui-input, .knowledge-mode-calculation__actions > .ui-button) {
+    min-block-size: 44px;
+    block-size: auto;
+  }
+}

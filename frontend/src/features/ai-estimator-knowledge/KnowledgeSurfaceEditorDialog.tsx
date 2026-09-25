@@ -132,8 +132,10 @@ export function KnowledgeSurfaceEditorDialog({
       title={`${existing ? "Edit" : "Add"} Surface`}
       eyebrow="Estimation configuration"
       description={quickAdd
-        ? "Save this Surface, then save Mode to apply it to the Main Line."
-        : "Create a reusable Surface for Main Lines and the estimator."}
+        ? "Save this Surface, then save the section to apply it to the Main Line."
+        : existing
+          ? "Changes update this reusable Surface wherever it is used."
+          : "Create a reusable Surface for Main Lines and the estimator."}
       onClose={onClose}
       busy={mutation.isPending}
       width="medium"

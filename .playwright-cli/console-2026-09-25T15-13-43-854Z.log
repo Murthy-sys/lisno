@@ -1,0 +1,14 @@
+[     597ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4201/@fs/tmp/lisno-mode-reference-qa/.vite-cache/deps/react-dom_client.js?v=ffe49d60:20102
+[     793ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:4201/src/features/ai-estimator-knowledge/KnowledgeModePanel.tsx:0
+[     797ms] [ERROR] Error handled by React Router default ErrorBoundary: TypeError: Failed to fetch dynamically imported module: http://127.0.0.1:4201/src/features/ai-estimator-knowledge/KnowledgeItemWorkspacePage.tsx @ http://127.0.0.1:4201/@fs/tmp/lisno-mode-reference-qa/.vite-cache/deps/react-router-dom.js?v=ffe49d60:6569
+[     798ms] [ERROR] Error handled by React Router default ErrorBoundary: TypeError: Failed to fetch dynamically imported module: http://127.0.0.1:4201/src/features/ai-estimator-knowledge/KnowledgeItemWorkspacePage.tsx @ http://127.0.0.1:4201/@fs/tmp/lisno-mode-reference-qa/.vite-cache/deps/react-router-dom.js?v=ffe49d60:6569
+[    1321ms] [ERROR] %o
+
+%s
+
+%s
+ TypeError: Failed to fetch dynamically imported module: http://127.0.0.1:4201/src/features/ai-estimator-knowledge/KnowledgeItemWorkspacePage.tsx The above error occurred in one of your React components. React will try to recreate this component tree from scratch using the error boundary you provided, RenderErrorBoundary. @ http://127.0.0.1:4201/@fs/tmp/lisno-mode-reference-qa/.vite-cache/deps/react-dom_client.js?v=ffe49d60:7000
+[    1321ms] [ERROR] React Router caught the following error during render TypeError: Failed to fetch dynamically imported module: http://127.0.0.1:4201/src/features/ai-estimator-knowledge/KnowledgeItemWorkspacePage.tsx @ http://127.0.0.1:4201/@fs/tmp/lisno-mode-reference-qa/.vite-cache/deps/react-router-dom.js?v=ffe49d60:6608
+[  148405ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4201/@fs/tmp/lisno-mode-reference-qa/.vite-cache/deps/react-dom_client.js?v=ffe49d60:20102
+[  709148ms] [LOG] [vite] server connection lost. Polling for restart... @ http://127.0.0.1:4201/@vite/client:963
+[  709271ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4201/@fs/tmp/lisno-mode-reference-qa/.vite-cache/deps/react-dom_client.js?v=ffe49d60:20102
