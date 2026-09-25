@@ -41,7 +41,7 @@
 .knowledge-recommendations__group-heading > div { min-inline-size: 0; flex: 1; }
 .knowledge-recommendations__group-heading h4 { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin: 0; color: var(--recommendation-accent); font-size: 13px; line-height: 1.4; font-weight: 650; }
 .knowledge-recommendations__group-heading p { margin: 3px 0 0; color: var(--color-text-muted); font-size: 11px; line-height: 1.5; }
-.knowledge-recommendations .knowledge-recommendations__group-heading > .ui-button { flex: 0 0 auto; min-block-size: 32px; padding: 5px 8px; border-radius: 4px; font-size: 11px; gap: 4px; background: var(--color-surface); }
+.knowledge-recommendations .knowledge-recommendations__group-heading > .ui-button { flex: 0 0 auto; min-block-size: 32px; padding: 5px 8px; border-radius: 4px; font-size: 11px; gap: 4px; }
 .knowledge-recommendations__group-heading > .ui-button svg { width: 13px; height: 13px; }
 .knowledge-recommendations__count { display: inline-grid; place-items: center; min-inline-size: 19px; block-size: 18px; padding-inline: 4px; border-radius: 4px; background: color-mix(in srgb, currentColor 7%, transparent); font-size: 10px; font-weight: 600; }
 .knowledge-recommendations__table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 11px; line-height: 1.5; }
@@ -95,6 +95,11 @@
 .knowledge-recommendations__menu-items { position: absolute; inset-inline-end: 0; inset-block-start: 30px; z-index: 8; display: grid; min-inline-size: 150px; padding: 4px; border: 1px solid var(--color-border-strong); border-radius: 6px; background: var(--color-surface); box-shadow: 0 8px 24px rgb(0 0 0 / 12%); }
 .knowledge-recommendations__menu-items > button { min-block-size: 36px; padding: 7px 10px; border: 0; border-radius: 3px; background: transparent; color: var(--color-text); font: inherit; font-size: 12px; text-align: start; cursor: pointer; }
 .knowledge-recommendations__menu-items > button:hover { background: var(--color-surface-subtle); }
+/* The negative "Remove rule" entry stays a full-width menu row: red ink and a 1px red outline sized to the row. */
+.knowledge-recommendations__menu-items > button.ui-button.ui-button--destructive-outline,
+.ui-app-shell[data-role] .knowledge-page .knowledge-recommendations__menu-items > button.ui-button.ui-button--destructive-outline { display: block; inline-size: 100%; max-inline-size: 100%; min-block-size: 36px; margin-block-start: 2px; padding: 7px 10px; border: 1px solid var(--button-negative-border); border-radius: 3px; background: transparent; color: var(--button-negative-ink); font: inherit; font-size: 12px; line-height: inherit; text-align: start; white-space: normal; }
+.knowledge-recommendations__menu-items > button.ui-button.ui-button--destructive-outline:not(:disabled):hover,
+.ui-app-shell[data-role] .knowledge-page .knowledge-recommendations__menu-items > button.ui-button.ui-button--destructive-outline:not(:disabled):hover { border-color: var(--button-negative-ink-strong); background: var(--button-negative-hover); color: var(--button-negative-ink-strong); transform: none; }
 .knowledge-recommendations :is(button, summary):focus-visible { outline: 2px solid var(--color-info, #2563eb); outline-offset: 3px; }
 .knowledge-recommendations__editor .knowledge-budget-rule { padding: 0; border: 0; border-radius: 0; }
 .knowledge-recommendations__editor .knowledge-budget-rule__condition,
@@ -107,14 +112,28 @@
 .knowledge-budget-rule__sub-items { display: grid; gap: 9px; padding: 11px 12px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-surface-subtle); }
 .knowledge-budget-rule__sub-items-heading { display: flex; align-items: center; gap: 12px; }
 .knowledge-budget-rule__sub-items-heading > div { min-inline-size: 0; flex: 1; }
-.knowledge-budget-rule__sub-items-heading h5 { margin: 0; font-size: 12px; line-height: 1.4; }
+.knowledge-budget-rule__sub-items-heading h3 { margin: 0; font-size: 12px; line-height: 1.4; }
+.knowledge-budget-rule__sub-items-heading p strong { color: var(--color-text); font-weight: 650; }
+.knowledge-budget-rule__sub-items-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .knowledge-budget-rule__sub-items-heading p,
 .knowledge-budget-rule__sub-items-empty { margin: 2px 0 0; color: var(--color-text-muted); font-size: 11px; line-height: 1.5; }
+.knowledge-budget-rule__catalog-state { margin: 0; padding: 8px 10px; border: 1px dashed var(--color-border); border-radius: 4px; color: var(--color-text-muted); font-size: 11px; line-height: 1.45; }
+.knowledge-budget-rule__frozen { display: flex; align-items: flex-start; gap: 9px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--color-warning, #a25f08) 28%, var(--color-border)); border-radius: 4px; background: color-mix(in srgb, var(--color-warning, #a25f08) 6%, var(--color-surface)); color: var(--color-text); }
+.knowledge-budget-rule__frozen > svg { flex: 0 0 15px; inline-size: 15px; block-size: 15px; margin-block-start: 1px; color: var(--color-warning, #8a5407); }
+.knowledge-budget-rule__frozen strong { display: block; font-size: 11px; }
+.knowledge-budget-rule__frozen p { margin: 2px 0 0; color: var(--color-text-muted); font-size: 10px; line-height: 1.5; }
 .knowledge-budget-rule__sub-item-list { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; border: 1px solid var(--color-border); border-radius: 4px; overflow: hidden; }
-.knowledge-budget-rule__sub-item-list li { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 9px; min-block-size: 37px; padding: 7px 9px; background: var(--color-surface); color: var(--color-text-muted); font-size: 10px; }
+.knowledge-budget-rule__sub-item-list li { display: flex; align-items: center; gap: 8px 12px; min-inline-size: 0; min-block-size: 44px; padding: 7px 9px; background: var(--color-surface); color: var(--color-text-muted); font-size: 10px; }
 .knowledge-budget-rule__sub-item-list li + li { border-block-start: 1px solid var(--color-border); }
-.knowledge-budget-rule__sub-item-list .knowledge-budget-rule__sub-item-name { flex: 1 1 150px; color: var(--color-text); font-size: 11px; font-weight: 650; }
+.knowledge-budget-rule__sub-item-content { display: flex; align-items: center; flex: 1 1 auto; flex-wrap: wrap; gap: 5px 9px; min-inline-size: 0; }
+.knowledge-budget-rule__sub-item-list .knowledge-budget-rule__sub-item-name { flex: 1 1 150px; min-inline-size: 0; color: var(--color-text); font-size: 11px; font-weight: 650; overflow-wrap: anywhere; }
+.knowledge-budget-rule__sub-item-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; }
+.knowledge-budget-rule__sub-item-actions .ui-button { min-block-size: 30px; padding: 4px 7px; font-size: 10px; }
+.knowledge-budget-rule__sub-item-actions .ui-button__icon svg { inline-size: 12px; block-size: 12px; }
+.knowledge-budget-rule__sub-item-open { flex: 0 0 auto; color: var(--color-text); font-size: 10px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
 .knowledge-budget-rule__sub-item--new { box-shadow: inset 3px 0 0 #158060; }
+.knowledge-draft-catalog-dialog .ui-inline-message .ui-button { margin-block-start: 8px; }
+body:has(.ui-app-shell[data-role]) .ui-dialog:has(.knowledge-draft-catalog-dialog) .ui-dialog__header .eyebrow { color: var(--color-text-muted); }
 
 @container (max-width: 720px) {
   .knowledge-recommendations__table { display: block; }
@@ -132,5 +151,10 @@
   .knowledge-recommendations__group-heading > div { flex-basis: calc(100% - 26px); }
   .knowledge-recommendations__menu > summary { width: 36px; height: 36px; }
   .knowledge-budget-rule__sub-items-heading { align-items: stretch; flex-direction: column; }
-  .knowledge-budget-rule__sub-items-heading > .ui-button { align-self: stretch; }
+  .knowledge-budget-rule__sub-items-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); inline-size: 100%; }
+  .knowledge-budget-rule__sub-items-actions > .ui-button { inline-size: 100%; }
+  .knowledge-budget-rule__sub-item-list li { align-items: stretch; flex-direction: column; }
+  .knowledge-budget-rule__sub-item-actions { inline-size: 100%; }
+  .knowledge-budget-rule__sub-item-actions > .ui-button { flex: 1 1 0; min-block-size: 36px; }
+  .knowledge-budget-rule__sub-item-open { align-self: flex-start; min-block-size: 34px; padding-block: 8px; }
 }

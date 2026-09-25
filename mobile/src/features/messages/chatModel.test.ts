@@ -4,6 +4,7 @@ import {
   conversationAccessibilitySummary,
   conversationActivityInput,
   conversationProject,
+  lastMessagePreviewText,
   createClientMessageId,
   createClientUploadId,
   mergeConversationPages,
@@ -68,6 +69,18 @@ function message(overrides: Record<string, unknown> = {}): PresentedMessage {
   return result;
 }
 
+function rawLastMessage(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "message-last",
+    author: { id: "user-ramesh", name: "Ramesh Kumar", role: "designer" },
+    excerpt: "Hi team,\n  the design   is ready",
+    createdAt: "2026-09-16T10:24:00.000Z",
+    attachments: [{ id: "attachment-a", kind: "document", filename: "site-plan.pdf", hasPreview: false }],
+    attachmentCount: 1,
+    ...overrides
+  };
+}
+
 function conversation(projectId: string, overrides: Record<string, unknown> = {}): PresentedConversation {
   const page = presentConversationPage({
     items: [{ ...rawSummary(projectId), lastMessageAt: null, ...overrides }],
@@ -78,6 +91,21 @@ function conversation(projectId: string, overrides: Record<string, unknown> = {}
 }
 
 describe("mobile chat presenters", () => {
+  it("keeps legacy mobile messages and summaries readable with additive web action metadata", () => {
+    const action = { typeId: "action", typeName: "Action", originalDueDate: "2026-10-03", dueDate: "2026-10-05" };
+    const raw = rawMessage({ priority: "important", issueStatus: "open", action,
+      issueHistory: [{ action: "reschedule", actionMetadata: action, note: "Access arranged for Monday" }],
+      capabilities: { ...rawMessage().capabilities, canReschedule: true }
+    });
+    expect(presentMessages({ items: [raw] })).toHaveLength(1);
+    expect(presentMessages({ items: [raw] })[0]).toMatchObject({ id: "message-a", priority: "important", issueStatus: "open" });
+    const summary = rawSummary();
+    expect(presentChatSummary({ ...summary, project: { ...summary.project, nameVersion: 2 }, capabilities: { ...summary.capabilities, canRenameProject: false } }))
+      .toEqual(summary);
+    expect(presentChatParticipantPage({ items: [{ ...person("client-a", "Maya", "client"), sources: [], selection: null, removalVersion: 0, canRemove: false }], setupWarnings: [], removed: [] })?.items)
+      .toHaveLength(1);
+  });
+
   it("uses the nested stable project identity from a conversation", () => {
     expect(conversationProject({ project: { id: "p1", name: "Courtyard" } })).toEqual({ id: "p1", name: "Courtyard" });
   });
@@ -99,6 +127,53 @@ describe("mobile chat presenters", () => {
       items: [{ ...rawSummary(), lastMessageAt: null }],
       pagination: { limit: 30, offset: 0, total: 42, hasMore: true }
     });
+  });
+
+  it("parses list totals and last-message previews tolerantly for old and new servers", () => {
+    const pagination = { limit: 30, offset: 0, total: 3, hasMore: false };
+    const result = presentConversationPage({
+      items: [
+        { ...rawSummary("project-a"), lastMessageAt: "2026-09-16T10:24:00.000Z", lastMessage: rawLastMessage({
+          attachments: [
+            { id: "image-a", kind: "image", filename: "a.jpg", hasPreview: true },
+            { id: "bad", kind: "spreadsheet", filename: "x.xls", hasPreview: false },
+            { id: "image-b", kind: "image", filename: "b.jpg" },
+            { id: "doc-c", kind: "document", filename: "c.pdf", hasPreview: false },
+            { id: "doc-d", kind: "document", filename: "d.pdf", hasPreview: false }
+          ],
+          attachmentCount: 5,
+          storageKey: "private/object"
+        }) },
+        { ...rawSummary("project-b"), lastMessageAt: null, lastMessage: null },
+        { ...rawSummary("project-c"), lastMessageAt: null, lastMessage: { id: "broken" } }
+      ],
+      pagination,
+      totals: { unread: 4, critical: 2, important: 0 }
+    });
+
+    expect(result?.totals).toEqual({ unread: 4, critical: 2, important: 0 });
+    expect(result?.items[0]?.lastMessage).toEqual({
+      id: "message-last",
+      author: { id: "user-ramesh", name: "Ramesh Kumar", role: "designer" },
+      excerpt: "Hi team, the design is ready",
+      createdAt: "2026-09-16T10:24:00.000Z",
+      attachments: [
+        { id: "image-a", kind: "image", filename: "a.jpg", hasPreview: true },
+        { id: "image-b", kind: "image", filename: "b.jpg", hasPreview: false },
+        { id: "doc-c", kind: "document", filename: "c.pdf", hasPreview: false }
+      ],
+      attachmentCount: 5
+    });
+    expect(result?.items[1]?.lastMessage).toBeNull();
+    expect(result?.items[2]).toBeDefined();
+    expect(result?.items[2]).not.toHaveProperty("lastMessage");
+
+    const legacy = presentConversationPage({ items: [{ ...rawSummary(), lastMessageAt: null }], pagination });
+    expect(legacy).not.toHaveProperty("totals");
+    expect(legacy?.items[0]).not.toHaveProperty("lastMessage");
+    expect(presentConversationPage({
+      items: [], pagination, totals: { unread: -1, critical: 0, important: 0 }
+    })).not.toHaveProperty("totals");
   });
 
   it("drops malformed conversation records and rejects malformed page metadata", () => {
@@ -438,14 +513,34 @@ describe("mobile chat display helpers", () => {
     expect(conversationActivityInput("not-a-date", now)).toBeNull();
   });
 
-  it("summarizes real conversation counts and omits zero-value badges", () => {
+  it("summarizes real conversation counts, the last message, and omits zero-value badges", () => {
     expect(conversationAccessibilitySummary(conversation("project-a"), "10:30 AM")).toBe(
-      "Courtyard residence, active, 5 participants, 4 unread messages, 3 unread mentions, 2 open critical issues, Last activity 10:30 AM"
+      "Courtyard residence, 4 unread messages, 3 unread mentions, 2 open critical issues, 1 open important issue, 10:30 AM"
     );
     expect(conversationAccessibilitySummary(conversation("project-a", {
       counts: { openCritical: 0, openImportant: 0, unread: 0, unreadMentions: 0 },
       participantCount: 1
-    }))).toBe("Courtyard residence, active, 1 participant");
+    }))).toBe("Courtyard residence");
+    expect(conversationAccessibilitySummary(conversation("project-a", {
+      counts: { openCritical: 0, openImportant: 0, unread: 0, unreadMentions: 0 },
+      lastMessage: null
+    }))).toBe("Courtyard residence, No messages yet");
+    const withPreview = conversation("project-a", {
+      counts: { openCritical: 0, openImportant: 0, unread: 1, unreadMentions: 0 },
+      lastMessage: rawLastMessage({ attachmentCount: 2 })
+    });
+    expect(conversationAccessibilitySummary(withPreview, "Yesterday")).toBe(
+      "Courtyard residence, 1 unread message, last message from Ramesh Kumar: Hi team, the design is ready, 2 attachments, Yesterday"
+    );
+    expect(conversationAccessibilitySummary(withPreview, "Yesterday", "user-ramesh")).toContain("last message from You: Hi team");
+  });
+
+  it("builds one-line previews for own, other, and attachment-only messages", () => {
+    const value = conversation("project-a", { lastMessage: rawLastMessage() }).lastMessage!;
+    expect(lastMessagePreviewText(value)).toBe("Ramesh Kumar: Hi team, the design is ready");
+    expect(lastMessagePreviewText(value, "user-ramesh")).toBe("You: Hi team, the design is ready");
+    const attachmentOnly = conversation("project-a", { lastMessage: rawLastMessage({ excerpt: "" }) }).lastMessage!;
+    expect(lastMessagePreviewText(attachmentOnly)).toBe("Ramesh Kumar: site-plan.pdf");
   });
 
   it("summarizes message content, attachment names, issue state, and timestamp", () => {

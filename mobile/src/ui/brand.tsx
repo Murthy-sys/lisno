@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { StatusBar } from "expo-status-bar";
 import {
   AccessibilityInfo,
   Animated,
@@ -138,7 +139,7 @@ export function BrandLoader({
     [rotation]
   );
   const iconBackground = tone === "light" ? colors.surface : colors.midnight;
-  const ringTrack = tone === "light" ? "rgba(255,255,255,0.16)" : "rgba(30,24,59,0.12)";
+  const ringTrack = tone === "light" ? "rgba(238,240,230,0.16)" : colors.border;
 
   return (
     <View
@@ -164,7 +165,7 @@ export function BrandLoader({
                 cy="36"
                 r="33"
                 fill="none"
-                stroke={colors.gold}
+                stroke={tone === "light" ? colors.accent : colors.primary}
                 strokeDasharray="42 166"
                 strokeLinecap="round"
                 strokeWidth="2"
@@ -206,7 +207,8 @@ export function StartupBrand({
   }, [prefersReducedMotion, reveal]);
 
   return (
-    <View style={styles.startup}>
+    <View style={styles.startup} testID="startup-brand">
+      <StatusBar style="light" />
       <Animated.View
         style={{
           opacity: reveal,
@@ -229,6 +231,7 @@ export function StartupBrand({
 
 const styles = StyleSheet.create({
   startup: {
+    backgroundColor: colors.shell,
     alignItems: "center",
     gap: spacing.huge
   },
@@ -253,7 +256,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2
   },
   lightText: {
-    color: "rgba(255,255,255,0.78)"
+    color: colors.shellMuted
   },
   darkText: {
     color: colors.inkMuted

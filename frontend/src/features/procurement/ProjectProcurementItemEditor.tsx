@@ -7,6 +7,7 @@ import { Button } from "../../components/ui/Button";
 import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field, Input, Select } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
+import { dashboardKeys } from "../admin/dashboard/superAdminDashboardApi";
 import {
   createProjectProcurementItem,
   getProjectProcurementItem,
@@ -42,6 +43,7 @@ function draftFor(item: ProjectProcurementItem | null) {
     itemName: item?.itemName ?? "",
     brand: item?.brand ?? "",
     uomId: item?.uom.id ?? "",
+    allocation: item?.allocatedWorkPaise == null ? "" : `${Math.floor(item.allocatedWorkPaise / 100)}.${String(item.allocatedWorkPaise % 100).padStart(2, "0")}`,
     price: item ? `${Math.floor(item.pricePaise / 100)}.${String(item.pricePaise % 100).padStart(2, "0")}` : ""
   };
 }
@@ -71,7 +73,11 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
       ? updateProjectProcurementItem(projectId, baseItem.id, { ...input, expectedVersion: baseItem.version })
       : createProjectProcurementItem(projectId, input as ProjectProcurementItemInput & ProcurementParentSource),
     onSuccess: async (saved) => {
-      await queryClient.invalidateQueries({ queryKey: projectProcurementKeys.lists(projectId) });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: projectProcurementKeys.lists(projectId) }),
+        queryClient.invalidateQueries({ queryKey: procurementKeys.projects }),
+        queryClient.invalidateQueries({ queryKey: dashboardKeys.all })
+      ]);
       onSaved(saved);
     },
     onError: (error) => {
@@ -123,7 +129,10 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
     const itemName = draft.itemName.normalize("NFKC").trim().replace(/\s+/gu, " ");
     const brand = draft.brand.normalize("NFKC").trim().replace(/\s+/gu, " ");
     const pricePaise = rupeesToPaise(draft.price);
+    const allocatedWorkPaise = rupeesToPaise(draft.allocation);
+    const allocationUnchanged = Boolean(baseItem && vendor?.id === baseItem.vendor?.id && draft.allocation === initialDraft.allocation);
     const nextErrors: Record<string, string> = {};
+    if (vendor && !allocationUnchanged && (allocatedWorkPaise === null || allocatedWorkPaise > MAX_PROCUREMENT_ITEM_PRICE_PAISE)) nextErrors.allocatedWorkPaise = "Enter a positive allocated work amount with up to two decimal places.";
     const selectedSource = source ?? baseItem?.estimateSource ?? assignment;
     if ((!baseItem || assignment) && !selectedSource) nextErrors.estimateSource = "Choose a current approved estimate item.";
     if (!itemName || itemName.length > 200) nextErrors.itemName = "Enter an item name of up to 200 characters.";
@@ -139,6 +148,7 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
       return;
     }
     save.mutate({ itemName, brand, uomId: draft.uomId, vendorId: vendor?.id ?? null, pricePaise: pricePaise!,
+      ...(!vendor || allocationUnchanged ? {} : { allocatedWorkPaise: allocatedWorkPaise! }),
       ...(selectedSource ? { estimateId: selectedSource.estimateId, estimateVersion: selectedSource.estimateVersion, sourceLineItemKey: selectedSource.sourceLineItemKey } : {}) });
   }
 
@@ -157,7 +167,7 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
       fallbackFocusRef={fallbackFocusRef}
       footer={({ requestClose }) => (
         <div className="project-procurement-items-editor__actions">
-          <Button variant="secondary" onClick={requestClose} disabled={busy}>Cancel</Button>
+          <Button variant="destructive-outline" onClick={requestClose} disabled={busy}>Cancel</Button>
           <Button type="submit" form="project-procurement-items-form" busy={save.isPending}
             busyLabel="Saving…" disabled={busy || conflict || sourceConflict || (!unchangedUom && (!uoms.data?.length || uoms.isError))}>
             {baseItem ? "Save changes" : "Add item"}
@@ -194,6 +204,7 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
           </Field>
           <ProcurementVendorField key={vendorFieldRevision} projectId={projectId} suggestionsDisabled={sourceStale || sourceConflict} value={vendor} error={errors.vendorId}
             onChange={(selected) => {
+              if (selected?.id !== vendor?.id) setDraft((previous) => ({ ...previous, allocation: "" }));
               setVendor(selected);
               setErrors((previous) => ({ ...previous, vendorId: "" }));
               if (!conflict && !sourceConflict) save.reset();
@@ -216,6 +227,10 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
             hint="Unit price in rupees per selected UOM. Up to 2 decimal places.">
             {(props) => <Input {...props} type="text" inputMode="decimal" value={draft.price} maxLength={20} onChange={(event) => change("price", event.target.value)} placeholder="0.00" />}
           </Field>
+          {vendor ? <Field id="procurement-item-allocation" label="Allocated work (INR)" required={!baseItem || vendor.id !== baseItem.vendor?.id || baseItem.allocatedWorkPaise != null} error={errors.allocatedWorkPaise}
+            hint={baseItem?.allocatedWorkPaise == null && vendor.id === baseItem?.vendor?.id ? "Not recorded. Leave unchanged for unrelated edits. Missing historical values must be corrected by Super Admin before new unverified work is allocated." : "Total committed work including applicable tax, separate from unit price. The vendor limit applies across all projects."}>
+            {(props) => <Input {...props} inputMode="decimal" value={draft.allocation} maxLength={20} onChange={(event) => change("allocation", event.target.value)} placeholder={baseItem?.allocatedWorkPaise == null && vendor.id === baseItem?.vendor?.id ? "Not recorded" : "0.00"} />}
+          </Field> : null}
         </fieldset>
       </form>
     </ContextPanel>

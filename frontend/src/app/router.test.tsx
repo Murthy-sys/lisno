@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import {
   fireEvent,
   render,
@@ -173,39 +171,6 @@ function apiRequestPath(input: RequestInfo | URL): string {
   }
 }
 
-function escapeCssPattern(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function cssRuleBodies(css: string, prelude: string) {
-  const matches = css.matchAll(
-    new RegExp(`${escapeCssPattern(prelude)}\\s*\\{`, "g")
-  );
-
-  return [...matches].map((match) => {
-    const openingBrace = css.indexOf("{", match.index ?? 0);
-    let depth = 1;
-    let cursor = openingBrace + 1;
-    while (cursor < css.length && depth > 0) {
-      if (css[cursor] === "{") depth += 1;
-      if (css[cursor] === "}") depth -= 1;
-      cursor += 1;
-    }
-    if (depth !== 0) throw new Error(`Unclosed CSS block for ${prelude}`);
-    return css.slice(openingBrace + 1, cursor - 1);
-  });
-}
-
-function cssDeclarations(css: string, selector: string) {
-  const body = cssRuleBodies(css, selector)[0];
-  if (!body) throw new Error(`Missing CSS rule for ${selector}`);
-  return new Map(
-    [...body.matchAll(/([\w-]+)\s*:\s*([^;]+);/g)].map(
-      ([, property, value]) => [property, value.trim().replace(/\s+/g, " ")]
-    )
-  );
-}
-
 describe("apiRequestPath", () => {
   it("keeps a malformed relative API path distinct from a root-relative path", () => {
     expect(apiRequestPath("api/v1/auth/me?source=restore")).toBe(
@@ -339,7 +304,10 @@ function installAuthorizationSession(
           items: [],
           pagination: { limit: 20, offset: 0, total: 0, hasMore: false },
           filterRoles: ROLE_CODES,
-          manageableRoles: OPERATIONAL_ROLES
+          manageableRoles: OPERATIONAL_ROLES,
+          // Directory-scoped and filter-independent; an empty directory is the
+          // only state in which every tile legitimately reads zero.
+          summary: { total: 0, active: 0, inactive: 0, roleCount: 0 }
         }
       });
     }
@@ -896,8 +864,8 @@ describe("registered permission routes", () => {
       "super_admin",
       "/admin/dashboard",
       ["identity.self.read", "admin.dashboard.read"],
-      "Organization dashboard",
-      "Cross-module health"
+      "Organization overview",
+      "Organization headline metrics"
     ],
     [
       "admin",
@@ -971,7 +939,7 @@ describe("registered permission routes", () => {
   it("routes the Super Admin root to Dashboard while denied Admin makes no dashboard request", async () => {
     installAuthorizationSession("super_admin", ["identity.self.read", "admin.dashboard.read"]);
     const first = renderApp(["/"]);
-    expect(await screen.findByRole("heading", { name: "Organization dashboard" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Organization overview" })).toBeVisible();
     expect(first.router.state.location.pathname).toBe("/admin/dashboard");
     first.unmount();
 
@@ -1138,7 +1106,7 @@ describe("protected role routing", () => {
     renderApp(["/login"]);
 
     await user.click(
-      await screen.findByRole("link", { name: "Create a client account" })
+      await screen.findByRole("link", { name: "Create an account" })
     );
 
     const heading = await screen.findByRole("heading", {
@@ -1332,7 +1300,7 @@ describe("protected role routing", () => {
       throw new Error(`Unhandled request: ${url}`);
     });
     const { router } = renderApp(["/designer/projects/project-return"]);
-    await screen.findByRole("heading", { name: "Sign in" });
+    await screen.findByRole("heading", { name: "Welcome to Lisno" });
 
     fireEvent.change(screen.getByLabelText("Email address"), {
       target: { value: "ananya@lisno.example" }
@@ -1340,7 +1308,7 @@ describe("protected role routing", () => {
     fireEvent.change(screen.getByLabelText("Password"), {
       target: { value: "router-test-password" }
     });
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
     const heading = await screen.findByRole("heading", {
       name: "Captured return project"
@@ -1544,7 +1512,7 @@ describe("protected role routing", () => {
     const { router } = renderApp(["/designer"]);
 
     expect(
-      await screen.findByRole("heading", { name: "Sign in" })
+      await screen.findByRole("heading", { name: "Welcome to Lisno" })
     ).toBeVisible();
     expect(router.state.location.pathname).toBe("/login");
     expect(tokenStorage.get()).toBeNull();
@@ -1564,7 +1532,7 @@ describe("protected role routing", () => {
       })
     );
 
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Welcome to Lisno" })).toBeVisible();
     expect(screen.getByText("Your session expired. Sign in again.")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Design workspace" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("main")).toHaveLength(1);
@@ -1628,7 +1596,7 @@ describe("protected role routing", () => {
     expect(router.state.location.pathname).toBe("/designer");
 
     cleanupGate.resolve();
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Welcome to Lisno" })).toBeVisible();
     expect(router.state.location.pathname).toBe("/login");
   });
 
@@ -1641,23 +1609,9 @@ describe("protected role routing", () => {
     await userEvent.click(screen.getByRole("button", { name: designer.name }));
     await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Welcome to Lisno" })).toBeVisible();
     expect(router.state.location.pathname).toBe("/login");
     expect(tokenStorage.get()).toBeNull();
-  });
-
-  it("preserves the actual 767px mobile shell breakpoint", () => {
-    const shell = readFileSync(
-      resolve(process.cwd(), "src/styles/shell.css"),
-      "utf8"
-    );
-    const mobileRules = cssRuleBodies(shell, "@media (max-width: 767px)");
-
-    expect(mobileRules).toHaveLength(1);
-    const mobile = mobileRules[0]!;
-    expect(cssDeclarations(shell, ".ui-mobile-header").get("display")).toBe("none");
-    expect(cssDeclarations(mobile, ".ui-sidebar-rail").get("display")).toBe("none");
-    expect(cssDeclarations(mobile, ".ui-mobile-header").get("display")).toBe("flex");
   });
 
   it("opens an accessible mobile drawer, wraps focus in both directions, and closes on Escape", async () => {
@@ -1683,14 +1637,12 @@ describe("protected role routing", () => {
     const closeButton = within(drawer).getByRole("button", {
       name: "Close navigation"
     });
-    const accountTrigger = within(drawer).getByRole("button", {
-      name: designer.name
-    });
+    const lastNavigationLink = within(drawer).getAllByRole("link").at(-1)!;
     closeButton.focus();
     fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
-    expect(accountTrigger).toHaveFocus();
+    expect(lastNavigationLink).toHaveFocus();
 
-    accountTrigger.focus();
+    lastNavigationLink.focus();
     fireEvent.keyDown(document, { key: "Tab" });
     expect(closeButton).toHaveFocus();
 

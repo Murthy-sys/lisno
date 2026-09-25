@@ -1,17 +1,22 @@
 import { randomUUID } from "node:crypto";
-import type { ChatActor, ChatAttachmentPolicy, ChatConversation, ChatEvent, ChatMessage, ChatParticipantPage, ChatPerson, ChatSummary, ProjectChatService } from "../contracts/project-chat.js";
+import type { ChatActionType, ChatActor, ChatAttachmentPolicy, ChatConversation, ChatConversationTotals, ChatCounts, ChatEvent, ChatLastMessage, ChatMessage, ChatParticipantPage, ChatPerson, ChatSummary, ProjectChatService } from "../contracts/project-chat.js";
 import { hasPermission, type PermissionCode } from "../domain/authorization.js";
 import { canSelectChatPerson, resolveChatMembership, type ChatMembership } from "../domain/project-chat-membership.js";
-import { chatConflict, chatCursor, chatFingerprint, chatForbidden, chatInvalid, chatIssueSchema, chatListQuerySchema, chatManager, chatMessageQuerySchema, chatNotFound, chatOptionsQuerySchema, chatParticipantSchema, chatPerson, chatReadSchema, chatRevokeSchema, chatSendSchema, issueCapabilities, parseChatCursor, parseChatInput, transitionChatIssue } from "../domain/project-chat.js";
+import { chatActionTypeSchema, chatProjectNameSchema, chatRemovalSchema, chatConflict, chatCursor, chatExcerpt, chatFingerprint, chatForbidden, chatInvalid, chatIssueSchema, chatManager, chatMessageQuerySchema, chatNotFound, chatOptionsQuerySchema, chatParticipantSchema, chatPerson, chatReadSchema, chatRevokeSchema, chatSendSchema, issueCapabilities, parseChatCursor, parseChatInput, projectMessagesQuerySchema, transitionChatIssue } from "../domain/project-chat.js";
 import { ROLE_CODES } from "../domain/roles.js";
 import { ApiError } from "../middleware/errors.js";
 import { createMemoryProjectChatRepository } from "../repositories/project-chat-memory.js";
-import type { ChatSelection, ChatSources, ChatStoredMessage, ChatTransaction, ProjectChatRepository } from "../repositories/project-chat.js";
+import type { ChatExclusion, ChatSelection, ChatSources, ChatStoredMessage, ChatTransaction, ProjectChatRepository } from "../repositories/project-chat.js";
 import type { AppRepository, UserRecord } from "../repositories/types.js";
 import type { AuditService, AuditWrite } from "./audit.service.js";
 import { systemClock, type Clock } from "./workflow.js";
 import { authenticatedChatUser, projectChatContext } from "./project-chat-context.js";
 import { createProjectChatAttachmentPolicy } from "../domain/project-chat-attachment-policy.js";
+const BUILT_IN_ACTION_TYPES: readonly ChatActionType[] = [
+    { id: "action", name: "Action", priority: "important", builtIn: true },
+    { id: "escalation", name: "Escalation", priority: "critical", builtIn: true }
+];
+const normalizedActionName = (name: string) => name.normalize("NFKC").trim().toLowerCase();
 interface Context {
     sources: ChatSources;
     membership: ChatMembership;
@@ -38,18 +43,41 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
     const canManage = (actor: ChatActor, ctx: Context) => ctx.membership.selectionManagers.has(actor.id) && hasPermission(actor.role, "chat.participants.manage");
     function participantPage(actor: ChatActor, ctx: Context): ChatParticipantPage {
         const admin = canManage(actor, ctx);
-        return { items: ctx.membership.participants.map((person) => ({ ...person, sources: admin ? person.sources : [], selection: admin ? person.selection : null })), setupWarnings: admin ? ctx.membership.warnings : [] };
+        const exclusions = ctx.sources.exclusions ?? [];
+        return {
+            items: ctx.membership.participants.map(person => {
+                const removalBlockedReason = person.id === actor.id ? "You cannot remove yourself." : person.id === ctx.sources.project.clientId ? "The linked Client must remain in the conversation." : person.role === "super_admin" ? "The Super Admin must remain in the conversation." : null;
+                return { ...person, sources: admin ? person.sources : [], selection: admin ? person.selection : null, ...(admin ? { removalVersion: exclusions.find(row => row.userId === person.id)?.version ?? 0, canRemove: removalBlockedReason === null, removalBlockedReason } : {}) };
+            }),
+            ...(admin ? { removed: exclusions.filter(row => row.active).map(row => {
+                const user = ctx.sources.users.find(user => user.id === row.userId && user.active);
+                return { ...chatPerson(user ?? row.person), removalVersion: row.version, canRestore: Boolean(user && canSelectChatPerson(user, ctx.membership)) };
+            }) } : {}),
+            setupWarnings: admin ? ctx.membership.warnings : []
+        };
     }
-    async function summary(tx: ChatTransaction, actor: ChatActor, ctx: Context): Promise<ChatSummary> {
+    async function summary(tx: ChatTransaction, actor: ChatActor, ctx: Context, counts?: ChatCounts): Promise<ChatSummary> {
         const project = ctx.sources.project;
         const state = await tx.state(project.id);
         const read = await tx.readState(project.id, actor.id);
-        return { project: { id: project.id, name: project.name, status: project.status }, counts: await tx.counts(project.id, actor.id, read?.sequence ?? 0), participantCount: ctx.membership.participants.length, cursor: chatCursor(project.id, state.sequence), lastReadSequence: read?.sequence ?? 0, latestMessageSequence: state.latestMessageSequence, capabilities: { canSend: hasPermission(actor.role, "chat.send"), canManageParticipants: canManage(actor, ctx), canManageIssues: chatManager(actor) }, setupWarnings: canManage(actor, ctx) ? ctx.membership.warnings : [] };
+        return { project: { id: project.id, name: project.name, status: project.status, nameVersion: project.nameVersion ?? 1 }, counts: counts ?? await tx.counts(project.id, actor.id, read?.sequence ?? 0), participantCount: ctx.membership.participants.length, cursor: chatCursor(project.id, state.sequence), lastReadSequence: read?.sequence ?? 0, latestMessageSequence: state.latestMessageSequence, capabilities: { canSend: hasPermission(actor.role, "chat.send"), canManageParticipants: canManage(actor, ctx), canManageIssues: chatManager(actor), canRenameProject: canManage(actor, ctx) && hasPermission(actor.role, "chat.project_name.manage") }, setupWarnings: canManage(actor, ctx) ? ctx.membership.warnings : [] };
     }
     async function present(tx: ChatTransaction, actor: ChatActor, ctx: Context, row: ChatStoredMessage): Promise<ChatMessage> {
         const responsible = row.responsible ? ctx.membership.participants.find((person) => person.id === row.responsible!.id) : null;
         const message: ChatMessage = { ...row, attachments: row.attachments ?? [], responsible: row.responsible ? { ...row.responsible, ...(responsible ? chatPerson(responsible) : {}), available: Boolean(responsible) } : null, issueHistory: await tx.history(row.projectId, row.id), capabilities: issueCapabilities(actor, row) };
         return message;
+    }
+    async function conversationCounts(tx: ChatTransaction, actor: ChatActor, projectId: string): Promise<ChatCounts> {
+        return tx.counts(projectId, actor.id, (await tx.readState(projectId, actor.id))?.sequence ?? 0);
+    }
+    /** Newest saved message, read through the same scan and bound the thread history uses; metadata only, never storage references. */
+    async function lastMessage(tx: ChatTransaction, actor: ChatActor, projectId: string): Promise<ChatLastMessage | null> {
+        const state = await tx.state(projectId);
+        const [row] = await tx.messages({ projectId, userId: actor.id, filter: "all", atMost: state.latestMessageSequence, limit: 1, ascending: false });
+        if (!row)
+            return null;
+        const attachments = row.attachments ?? [];
+        return { id: row.id, author: chatPerson(row.author), excerpt: chatExcerpt(row.body), createdAt: row.createdAt, attachments: attachments.slice(0, 3).map((attachment) => ({ id: attachment.id, kind: attachment.kind, filename: attachment.filename, hasPreview: attachment.preview !== null })), attachmentCount: attachments.length };
     }
     const findMessage = async (tx: ChatTransaction, projectId: string, id: string) => { const row = await tx.message(projectId, id); if (!row)
         chatNotFound(); return row; };
@@ -73,42 +101,137 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
     function currentPerson(ctx: Context, id: string): ChatPerson { const person = ctx.membership.participants.find((candidate) => candidate.id === id); if (!person)
         chatInvalid("A selected person is no longer a participant. Update the message and retry."); return chatPerson(person); }
     async function recordIssue(tx: ChatTransaction, actor: ChatActor, ctx: Context, message: ChatStoredMessage, action: ChatMessage["issueHistory"][number]["action"], note: string, at: string) {
-        const entry = { id: `chat-issue-${randomUUID()}`, action, actor: chatPerson(ctx.user), occurredAt: at, note, priority: message.priority, status: message.issueStatus, responsibleUserId: message.responsible?.id ?? null };
+        const entry = { id: `chat-issue-${randomUUID()}`, action, actor: chatPerson(ctx.user), occurredAt: at, note, priority: message.priority, status: message.issueStatus, responsibleUserId: message.responsible?.id ?? null, ...(message.action ? { actionMetadata: { ...message.action } } : {}) };
         await tx.appendHistory({ id: entry.id, messageId: message.id, projectId: message.projectId, version: message.version, entry });
     }
+    async function actionTypes(tx: ChatTransaction): Promise<ChatActionType[]> {
+        return [...BUILT_IN_ACTION_TYPES, ...(await tx.actionTypes()).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)).map(({id, name, priority, builtIn}) => ({id, name, priority, builtIn}))];
+    }
+    async function changeParticipant(actor: ChatActor, projectId: string, userId: string, input: unknown, removing: boolean): Promise<ChatParticipantPage> {
+        const value = parseChatInput(chatRemovalSchema, input);
+        return store.mutate(async tx => {
+            let ctx = await context(tx, actor, projectId, "chat.participants.manage");
+            if (!canManage(actor, ctx)) chatForbidden();
+            const kind = removing ? "participant.remove" : "participant.restore";
+            const payload = { userId, ...value };
+            if (await replay(tx, actor, projectId, kind, value.idempotencyKey, payload)) return participantPage(actor, ctx);
+            const user = await tx.app.findUserById(userId);
+            if (!user) chatNotFound();
+            if (userId === actor.id || userId === ctx.sources.project.clientId || user.role === "super_admin") chatForbidden();
+            const prior = (ctx.sources.exclusions ?? []).find(row => row.userId === userId);
+            if ((prior?.version ?? 0) !== value.expectedVersion || Boolean(prior?.active) === removing) chatConflict();
+            if (removing && !ctx.membership.participants.some(person => person.id === userId)) chatNotFound();
+            if (!removing && (!user.active || !canSelectChatPerson(user, ctx.membership))) chatInvalid("This person is no longer eligible for this conversation.");
+            const at = clock().toISOString();
+            const version = value.expectedVersion + 1;
+            const exclusion: ChatExclusion = { id: prior?.id ?? `chat-exclusion-${randomUUID()}`, projectId, userId, person: chatPerson(user), active: removing, version, history: [...(prior?.history ?? []), { active: removing, version, actor: chatPerson(ctx.user), reason: value.reason, occurredAt: at }] };
+            await tx.saveExclusion(exclusion);
+            if (!removing) {
+                // Restoring is explicit membership selection, revalidated against today's trade source.
+                const restored = resolveChatMembership({ ...ctx.sources, exclusions: (ctx.sources.exclusions ?? []).filter(row => row.userId !== userId) }, await tx.selections(projectId));
+                if (!restored.participants.some(person => person.id === userId)) {
+                    const priorSelection = (await tx.selections(projectId)).find(row => row.userId === userId);
+                    if (priorSelection) await tx.saveSelection({ ...priorSelection, active: false, version: priorSelection.version + 1, revokedBy: chatPerson(ctx.user), revokedAt: at, revocationReason: value.reason });
+                    await tx.saveSelection({ id: `chat-selection-${randomUUID()}`, projectId, userId, selectedRole: user.role, active: true, version: 1, selectedBy: chatPerson(ctx.user), selectedAt: at, reason: value.reason, tradeReference: ctx.membership.eligibleTrades.get(user.role) ?? null, revokedBy: null, revokedAt: null, revocationReason: null });
+                }
+            }
+            await remember(tx, actor, projectId, kind, value.idempotencyKey, payload, exclusion.id);
+            await audit(tx, { actorId: actor.id, action: removing ? "project_chat.participant_removed" : "project_chat.participant_restored", entityType: "project_chat_participant", entityId: exclusion.id, occurredAt: at, oldValues: { active: prior?.active ?? false, version: prior?.version ?? 0 }, newValues: { projectId, userId, active: removing, version }, reason: value.reason });
+            await event(tx, actor, projectId, "participants.changed", exclusion.id, version, at);
+            ctx = await context(tx, actor, projectId);
+            return participantPage(actor, ctx);
+        });
+    }
     return {
+        actionTypes: (actor, projectId) => store.snapshot(async tx => {
+            const ctx = await context(tx, actor, projectId);
+            return { items: await actionTypes(tx), canCreate: actor.role === "super_admin" && ctx.membership.selectionManagers.has(actor.id) && hasPermission(actor.role, "chat.action_types.manage") };
+        }),
+        async createActionType(actor, projectId, input) {
+            const value = parseChatInput(chatActionTypeSchema, input);
+            return store.mutate(async tx => {
+                const ctx = await context(tx, actor, projectId, "chat.action_types.manage");
+                if (actor.role !== "super_admin" || !ctx.membership.selectionManagers.has(actor.id) || await tx.app.countActiveUsersByRole("super_admin") !== 1) chatForbidden();
+                const catalogueId = "__chat_action_types__";
+                const existing = await replay(tx, actor, catalogueId, "action_type.create", value.idempotencyKey, value);
+                const types = await actionTypes(tx);
+                if (existing) { const type = types.find(row => row.id === existing); if (!type) chatNotFound(); return type; }
+                const normalizedName = normalizedActionName(value.name);
+                if (types.some(row => normalizedActionName(row.name) === normalizedName)) chatConflict("An action type with this name already exists.");
+                const type: ChatActionType = { id: `chat-action-type-${randomUUID()}`, name: value.name, priority: "important", builtIn: false };
+                const at = clock().toISOString();
+                await tx.saveActionType({ ...type, normalizedName, createdBy: actor.id, createdAt: at });
+                await remember(tx, actor, catalogueId, "action_type.create", value.idempotencyKey, value, type.id);
+                await audit(tx, { actorId: actor.id, action: "project_chat.action_type_created", entityType: "project_chat_action_type", entityId: type.id, occurredAt: at, newValues: { name: type.name } });
+                return type;
+            });
+        },
+        removeParticipant: (actor, projectId, userId, input) => changeParticipant(actor, projectId, userId, input, true),
+        restoreParticipant: (actor, projectId, userId, input) => changeParticipant(actor, projectId, userId, input, false),
+        async renameProject(actor, projectId, input) {
+            const value = parseChatInput(chatProjectNameSchema, input);
+            return store.mutate(async tx => {
+                const ctx = await context(tx, actor, projectId, "chat.project_name.manage");
+                if (!canManage(actor, ctx)) chatForbidden();
+                if (await replay(tx, actor, projectId, "project.rename", value.idempotencyKey, value)) return summary(tx, actor, ctx);
+                const at = clock().toISOString();
+                const project = await tx.app.renameProjectName(projectId, value.name, value.expectedVersion, at);
+                if (!project) chatConflict("The project name changed. Refresh before saving again.");
+                await remember(tx, actor, projectId, "project.rename", value.idempotencyKey, value, projectId);
+                await audit(tx, { actorId: actor.id, action: "project_chat.project_renamed", entityType: "project", entityId: projectId, occurredAt: at, oldValues: { name: ctx.sources.project.name, nameVersion: ctx.sources.project.nameVersion ?? 1 }, newValues: { name: project.name, nameVersion: project.nameVersion } });
+                // Existing clients already refetch the conversation summary for this event.
+                await event(tx, actor, projectId, "participants.changed", projectId, project.nameVersion!, at);
+                return summary(tx, actor, { ...ctx, sources: { ...ctx.sources, project } });
+            });
+        },
         async list(actor, input) {
-            const query = parseChatInput(chatListQuerySchema, input);
+            const query = parseChatInput(projectMessagesQuerySchema, input);
+            const pagination = (total: number) => ({ limit: query.limit, offset: query.offset, total, hasMore: query.offset + query.limit < total });
             return store.snapshot(async (tx) => {
                 const user = await authenticated(tx, actor);
+                // Every authorized conversation is counted so totals and filtered paging are exact; sources,
+                // summaries and the last-message preview are hydrated only for the returned page.
+                const authorized: Array<{ id: string; name: string; lastMessageAt: string | null; counts: ChatCounts; ctx?: Context }> = [];
                 if (actor.role === "super_admin") {
                     if (await tx.app.countActiveUsersByRole("super_admin") !== 1) {
-                        return {items: [], pagination: {...query, total: 0, hasMore: false}};
+                        return { items: [], pagination: pagination(0), totals: { unread: 0, critical: 0, important: 0 } };
                     }
-                    const page = await tx.projectPage(query);
-                    const items: ChatConversation[] = [];
-                    for (const metadata of page.items) {
-                        const ctx = await context(tx, actor, metadata.id);
-                        items.push({...await summary(tx, actor, ctx), lastMessageAt: metadata.lastMessageAt});
+                    // projectPage is already in list order; walk it to cover the whole portfolio in this snapshot.
+                    for (let offset = 0, total = 1; offset < total;) {
+                        const page = await tx.projectPage({ limit: 500, offset });
+                        total = page.total;
+                        if (!page.items.length) break;
+                        offset += page.items.length;
+                        for (const row of page.items)
+                            authorized.push({ ...row, counts: await conversationCounts(tx, actor, row.id) });
                     }
-                    return {items, pagination: {...query, total: page.total, hasMore: query.offset + query.limit < page.total}};
                 }
-                // Current non-global membership determines the exact total; unread/issue counts are
-                // deliberately deferred until after pagination so off-page history is never counted.
-                const authorized: Array<{ctx: Context; lastMessageAt: string | null}> = [];
-                for (const projectId of await tx.candidateProjectIds(user)) {
-                    const sources = await tx.sources(projectId);
-                    if (!sources) continue;
-                    const membership = resolveChatMembership(sources, await tx.selections(projectId));
-                    if (!membership.participants.some((person) => person.id === actor.id)) continue;
-                    authorized.push({ctx: {sources, membership, user}, lastMessageAt: (await tx.state(projectId)).lastMessageAt});
+                else {
+                    for (const projectId of await tx.candidateProjectIds(user)) {
+                        const sources = await tx.sources(projectId);
+                        if (!sources) continue;
+                        const membership = resolveChatMembership(sources, await tx.selections(projectId));
+                        if (!membership.participants.some((person) => person.id === actor.id)) continue;
+                        authorized.push({ id: projectId, name: sources.project.name, lastMessageAt: (await tx.state(projectId)).lastMessageAt, counts: await conversationCounts(tx, actor, projectId), ctx: {sources, membership, user} });
+                    }
+                    authorized.sort((a, b) => (b.lastMessageAt ?? "").localeCompare(a.lastMessageAt ?? "") || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
                 }
-                authorized.sort((a, b) => (b.lastMessageAt ?? "").localeCompare(a.lastMessageAt ?? "") || a.ctx.sources.project.name.localeCompare(b.ctx.sources.project.name) || a.ctx.sources.project.id.localeCompare(b.ctx.sources.project.id));
+                const totals: ChatConversationTotals = {
+                    unread: authorized.filter((row) => row.counts.unread > 0).length,
+                    critical: authorized.reduce((sum, row) => sum + row.counts.openCritical, 0),
+                    important: authorized.reduce((sum, row) => sum + row.counts.openImportant, 0)
+                };
+                const search = query.search.toLocaleLowerCase();
+                const matches = authorized.filter((row) => (!search || row.name.toLocaleLowerCase().includes(search)) && (query.filter === "all"
+                    || (query.filter === "unread" && row.counts.unread > 0)
+                    || (query.filter === "critical" && row.counts.openCritical > 0)
+                    || (query.filter === "important" && row.counts.openImportant > 0)));
                 const items: ChatConversation[] = [];
-                for (const item of authorized.slice(query.offset, query.offset + query.limit)) {
-                    items.push({...await summary(tx, actor, item.ctx), lastMessageAt: item.lastMessageAt});
+                for (const row of matches.slice(query.offset, query.offset + query.limit)) {
+                    const ctx = row.ctx ?? await context(tx, actor, row.id);
+                    items.push({ ...await summary(tx, actor, ctx, row.counts), lastMessageAt: row.lastMessageAt, lastMessage: await lastMessage(tx, actor, row.id) });
                 }
-                return {items, pagination: {...query, total: authorized.length, hasMore: query.offset + query.limit < authorized.length}};
+                return { items, pagination: pagination(matches.length), totals };
             });
         },
         summary: (actor, projectId) => store.snapshot(async (tx) => summary(tx, actor, await context(tx, actor, projectId))),
@@ -121,7 +244,7 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
                     chatForbidden();
                 const selected = new Set(ctx.membership.participants.filter((person) => person.selection).map((person) => person.id));
                 const roles = ROLE_CODES.filter((role) => canSelectChatPerson({ id: "", name: "", role }, ctx.membership));
-                const rows = await tx.directory({ search: query.search, roles, excludeIds: [...selected], limit: query.limit + 1 });
+                const rows = await tx.directory({ search: query.search, roles, excludeIds: [...selected, ...(ctx.sources.exclusions ?? []).filter(row => row.active).map(row => row.userId)], limit: query.limit + 1 });
                 return { items: rows.slice(0, query.limit).map(chatPerson), hasMore: rows.length > query.limit };
             });
         },
@@ -136,6 +259,7 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
                 const user = await tx.app.findUserById(value.userId);
                 if (!user || !user.active || !canSelectChatPerson(user, ctx.membership))
                     chatInvalid("Choose an eligible active project participant.");
+                if (ctx.sources.exclusions?.some(row => row.userId === user.id && row.active)) chatConflict("Restore this removed participant explicitly before selecting them again.");
                 const prior = (await tx.selections(projectId)).find((row) => row.userId === user.id);
                 const at = clock().toISOString();
                 if (prior) {
@@ -236,7 +360,11 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
                     previousEnd = mention.end;
                 }
                 const responsible = value.responsibleUserId ? currentPerson(ctx, value.responsibleUserId) : null;
-                if (responsible && value.priority === "normal")
+                const type = value.action ? (await actionTypes(tx)).find(row => row.id === value.action!.typeId) : null;
+                if (value.action && (!type || !responsible || !value.body.trim())) chatInvalid("Choose an action type, responsible participant, due date and message details.");
+                const priority = type?.priority ?? value.priority;
+                const action = type && value.action ? { typeId: type.id, typeName: type.name, dueDate: value.action.dueDate, originalDueDate: value.action.dueDate } : null;
+                if (responsible && priority === "normal")
                     chatInvalid("Raise Important or Critical before assigning a discussion issue.");
                 const reply = value.replyToId ? await findMessage(tx, projectId, value.replyToId) : null;
                 const at = clock().toISOString();
@@ -247,7 +375,7 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
                 const sequence = await tx.allocate(projectId, at);
                 const firstReplyAttachment = reply?.attachments?.[0];
                 const replyTo = reply ? {id: reply.id, author: reply.author, body: reply.body, ...(firstReplyAttachment ? {attachmentSummary: {count: reply.attachments.length, kind: firstReplyAttachment.kind, filename: firstReplyAttachment.filename}} : {})} : null;
-                const message: ChatStoredMessage = { id: messageId, projectId, author: chatPerson(ctx.user), body: value.body, attachments, mentions: value.mentions, createdAt: at, sequence, clientMessageId: value.clientMessageId, replyTo, priority: value.priority, issueStatus: value.priority === "normal" ? null : "open", raisedBy: value.priority === "normal" ? null : chatPerson(ctx.user), responsible: responsible ? { ...responsible, available: true } : null, version: 1 };
+                const message: ChatStoredMessage = { id: messageId, projectId, author: chatPerson(ctx.user), body: value.body, attachments, mentions: value.mentions, createdAt: at, sequence, clientMessageId: value.clientMessageId, replyTo, ...(action ? { action } : {}), priority, issueStatus: priority === "normal" ? null : "open", raisedBy: priority === "normal" ? null : chatPerson(ctx.user), responsible: responsible ? { ...responsible, available: true } : null, version: 1 };
                 await tx.saveMessage(message);
                 if (value.mentions.length) {
                     const recipients = new Map(value.mentions.map(mention => [mention.userId, "chat.mention" as "chat.mention" | "chat.mention.oversight"]));
@@ -296,7 +424,7 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
                 await tx.saveMessage(saved);
                 await recordIssue(tx, actor, ctx, saved, value.action, value.note ?? "", at);
                 await remember(tx, actor, projectId, "message.issue", value.idempotencyKey, payload, message.id);
-                await audit(tx, { actorId: actor.id, action: "project_chat.issue_changed", entityType: "project_chat_message", entityId: message.id, occurredAt: at, oldValues: { priority: stored.priority, status: stored.issueStatus, version: stored.version, responsibleUserId: stored.responsible?.id ?? null }, newValues: { projectId, action: value.action, priority: saved.priority, status: saved.issueStatus, version: saved.version, responsibleUserId: saved.responsible?.id ?? null }, reason: value.note ?? null });
+                await audit(tx, { actorId: actor.id, action: "project_chat.issue_changed", entityType: "project_chat_message", entityId: message.id, occurredAt: at, oldValues: { priority: stored.priority, status: stored.issueStatus, version: stored.version, responsibleUserId: stored.responsible?.id ?? null, actionMetadata: stored.action ?? null }, newValues: { projectId, action: value.action, priority: saved.priority, status: saved.issueStatus, version: saved.version, responsibleUserId: saved.responsible?.id ?? null, actionMetadata: saved.action ?? null }, reason: value.note ?? null });
                 await event(tx, actor, projectId, "issue.changed", message.id, message.version, at);
                 return present(tx, actor, ctx, saved);
             });

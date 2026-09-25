@@ -11,13 +11,15 @@ import type {
 const dateFormatter = new Intl.DateTimeFormat("en-IN", {
   day: "numeric",
   month: "short",
-  year: "numeric"
+  year: "numeric",
+  timeZone: "UTC"
 });
 const timeFormatter = new Intl.DateTimeFormat("en-IN", {
   day: "numeric",
   month: "short",
   hour: "numeric",
-  minute: "2-digit"
+  minute: "2-digit",
+  timeZone: "UTC"
 });
 
 export { formatBps, formatPaise };

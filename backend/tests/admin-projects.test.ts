@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { createApp as createApplication } from "../src/app.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
-import type { AppRepository, UserRecord } from "../src/repositories/types.js";
+import type { AppRepository, ProjectStatus, UserRecord } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
 import { createAdminProjectService } from "../src/services/admin-project.service.js";
 import { createAuditService } from "../src/services/audit.service.js";
@@ -23,6 +23,124 @@ const clock = () => new Date("2026-08-23T10:00:00.000Z");
 function bearer(id: string, role: string): string {
   return `Bearer ${jwt.sign({ id, role }, JWT_SECRET, { expiresIn: 900 })}`;
 }
+
+function projectListSeed() {
+  const seed = structuredClone(demoSeedData);
+  const admin = seed.users.find(({ id }) => id === "user-admin")!;
+  seed.users.push(...["other", "empty"].map((suffix) => ({
+    ...admin, id: `user-admin-${suffix}`, email: `${suffix}@projects.test`, emailNormalized: `${suffix}@projects.test`
+  })));
+  const template = seed.projects[0]!;
+  const statuses: ProjectStatus[] = ["planning", "active", "on_hold", "completed"];
+  seed.projects = Array.from({ length: 28 }, (_, index) => ({
+    ...template,
+    id: `project-list-${String(index).padStart(2, "0")}`,
+    name: index === 0 ? "alpha" : index === 1 ? "Alpha" : index === 2 ? "beta" :
+      index === 23 ? "Willow [A+B]" : index === 24 ? "Hidden [A+B]" : `Project ${index}`,
+    clientName: index === 22 ? "Client [A+B]" : `Client ${index}`,
+    location: index === 21 ? "[A+B] City" : "Pune",
+    status: statuses[index % statuses.length]!,
+    createdAt: "2026-09-01T10:00:00.000Z"
+  }));
+  seed.projectAccessGrants = seed.projects.map((project, index) => ({
+    id: `grant-list-${index}`, projectId: project.id,
+    userId: index < 24 ? "user-admin" : "user-admin-other",
+    module: "projects", source: "admin_initiator", accessRequestId: null,
+    grantedById: "user-admin", active: true, grantedAt: template.createdAt,
+    revokedAt: null, revokedById: null, revocationReason: null, version: 1,
+    createdAt: template.createdAt, updatedAt: template.createdAt
+  }));
+  seed.projectAccessGrants.push(
+    { ...seed.projectAccessGrants[24]!, id: "wrong-module", userId: "user-admin", module: "design" },
+    { ...seed.projectAccessGrants[25]!, id: "revoked-grant", userId: "user-admin", active: false, revokedAt: template.createdAt, revokedById: "user-admin", revocationReason: "Scope fixture" },
+    { ...seed.projectAccessGrants[26]!, id: "wrong-source", userId: "user-admin", source: "access_request", accessRequestId: "access-list-fixture" }
+  );
+  seed.leads = [];
+  seed.estimateSummaries = [];
+  return seed;
+}
+
+describe("Admin project collection selection", () => {
+  it("paginates over all scoped projects and counts statuses before selection", async () => {
+    const app = createApp({ repository: createMemoryRepository(projectListSeed()), auth, clock });
+    const list = (query = {}, userId = "user-admin", role = "admin") => request(app)
+      .get("/api/v1/admin/projects").query(query).set("Authorization", bearer(userId, role)).expect(200);
+    const first = (await list()).body.data;
+    expect(first.items).toHaveLength(20);
+    expect(first.items[0].id).toBe("project-list-23");
+    expect(first.pagination).toEqual({ limit: 20, offset: 0, total: 24, hasMore: true });
+    expect(first.statusCounts).toEqual({ all: 24, planning: 6, active: 6, on_hold: 6, completed: 6 });
+    const next = (await list({ offset: 20 })).body.data;
+    expect(next.items.map(({ id }: { id: string }) => id)).toEqual(["project-list-03", "project-list-02", "project-list-01", "project-list-00"]);
+    expect(next.pagination).toEqual({ limit: 20, offset: 20, total: 24, hasMore: false });
+    expect(next.statusCounts).toEqual(first.statusCounts);
+    const active = (await list({ status: "active", limit: 2, offset: 4 })).body.data;
+    expect(active.items.map(({ id }: { id: string }) => id)).toEqual(["project-list-05", "project-list-01"]);
+    expect(active.pagination).toEqual({ limit: 2, offset: 4, total: 6, hasMore: false });
+    expect(active.statusCounts).toEqual(first.statusCounts);
+    const other = (await list({}, "user-admin-other")).body.data;
+    expect(other.statusCounts).toEqual({ all: 4, planning: 1, active: 1, on_hold: 1, completed: 1 });
+    expect(other.items.every(({ id }: { id: string }) => !first.items.some((item: { id: string }) => item.id === id))).toBe(true);
+    const empty = (await list({}, "user-admin-empty")).body.data;
+    expect(empty).toEqual({ items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false }, statusCounts: { all: 0, planning: 0, active: 0, on_hold: 0, completed: 0 } });
+    const global = (await list({}, "user-super-admin", "super_admin")).body.data;
+    expect(global.pagination.total).toBe(28);
+    expect(global.statusCounts).toEqual({ all: 28, planning: 7, active: 7, on_hold: 7, completed: 7 });
+  });
+
+  it("searches name, client and city literally without leaking another Admin's matches", async () => {
+    const app = createApp({ repository: createMemoryRepository(projectListSeed()), auth, clock });
+    const list = (query: Record<string, string | number>) => request(app)
+      .get("/api/v1/admin/projects").query(query).set("Authorization", bearer("user-admin", "admin")).expect(200);
+    const matches = (await list({ search: "  [a+b]  ", status: "completed" })).body.data;
+    expect(matches.items.map(({ id }: { id: string }) => id)).toEqual(["project-list-23"]);
+    expect(matches.statusCounts).toEqual({ all: 3, planning: 0, active: 1, on_hold: 1, completed: 1 });
+    expect(matches.pagination.total).toBe(1);
+    const noStatusMatches = (await list({ search: "[a+b]", status: "planning" })).body.data;
+    expect(noStatusMatches.items).toEqual([]);
+    expect(noStatusMatches.pagination.total).toBe(0);
+    expect(noStatusMatches.statusCounts).toEqual(matches.statusCounts);
+    for (const search of ["Hidden", ".*", "^", "\\"]) {
+      const empty = (await list({ search })).body.data;
+      expect(empty.items).toEqual([]);
+      expect(empty.statusCounts.all).toBe(0);
+    }
+    expect((await list({ search: "  " })).body.data.pagination.total).toBe(24);
+    expect((await list({ search: "cLiEnT 20" })).body.data.items[0].id).toBe("project-list-20");
+  });
+
+  it("sorts mixed-case names before pagination with stable ID ties", async () => {
+    const app = createApp({ repository: createMemoryRepository(projectListSeed()), auth, clock });
+    const list = (sort: string, offset = 0) => request(app).get("/api/v1/admin/projects")
+      .query({ sort, limit: 2, offset }).set("Authorization", bearer("user-admin", "admin")).expect(200);
+    const asc = (await list("name_asc")).body.data;
+    expect(asc.items.map(({ id }: { id: string }) => id)).toEqual(["project-list-00", "project-list-01"]);
+    expect((await list("name_asc", 2)).body.data.items[0].id).toBe("project-list-02");
+    const desc = (await list("name_desc")).body.data;
+    expect(desc.items.map(({ id }: { id: string }) => id)).toEqual(["project-list-23", "project-list-09"]);
+    expect((await list("name_desc", 22)).body.data.items.map(({ id }: { id: string }) => id)).toEqual(["project-list-00", "project-list-01"]);
+    expect(desc.statusCounts).toEqual(asc.statusCounts);
+    const pastEnd = (await list("newest", 30)).body.data;
+    expect(pastEnd.items).toEqual([]);
+    expect(pastEnd.pagination).toEqual({ limit: 2, offset: 30, total: 24, hasMore: false });
+  });
+
+  it.each([
+    { status: "archived" }, { sort: "cost" }, { search: "a".repeat(121) },
+    { unknown: "value" }, { status: ["active", "planning"] }, { search: ["a", "b"] }
+  ])("rejects unsupported or malformed selection %j", async (query) => {
+    const app = createApp({ repository: createMemoryRepository(projectListSeed()), auth, clock });
+    await request(app).get("/api/v1/admin/projects").query(query)
+      .set("Authorization", bearer("user-admin", "admin")).expect(400);
+  });
+
+  it("keeps list permission enforcement with filters", async () => {
+    const app = createApp({ repository: createMemoryRepository(projectListSeed()), auth, clock });
+    await request(app).get("/api/v1/admin/projects?search=Client&status=active").expect(401);
+    await request(app).get("/api/v1/admin/projects?search=Client&status=active")
+      .set("Authorization", bearer("user-estimator-sales", "estimator_sales")).expect(403);
+  });
+});
 
 describe("Admin-initiated projects", () => {
   it("keeps fallback-assigned Client-response history safe while exposing the task only to its assignee or Super Admin", async () => {

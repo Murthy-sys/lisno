@@ -10,7 +10,7 @@ import type { ProjectProcurementService } from "../src/services/project-procurem
 
 const actor: PublicUser = { id: "buyer", name: "Buyer", email: "buyer@example.test", role: "procurement" };
 const fields = { estimateId: "estimate-a", estimateVersion: 1, sourceLineItemKey: "line-a", itemName: "Plywood", brand: "Timber", uomId: "sheet", vendorId: null, pricePaise: 12345 };
-const item = { id: "item-1", projectId: "project-a", estimateSource: null, vendor: null, itemName: "Plywood", brand: "Timber", pricePaise: 12345,
+const item = { id: "item-1", projectId: "project-a", estimateSource: null, vendor: null, itemName: "Plywood", brand: "Timber", pricePaise: 12345, allocatedWorkPaise: null,
   uom: { id: "sheet", name: "Sheet", code: "SHT", status: "active" as const },
   version: 1, createdAt: "2026-09-17T00:00:00.000Z", updatedAt: "2026-09-17T00:00:00.000Z" };
 const vendor = { id: "vendor-1", code: "V1", name: "Saved Vendor", status: "active" as const };

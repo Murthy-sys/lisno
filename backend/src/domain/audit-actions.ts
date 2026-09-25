@@ -115,6 +115,9 @@ export const DESIGN_PLAN_WORKFLOW_AUDIT_ACTIONS = [
 ] as const;
 
 export const PROCUREMENT_AUDIT_ACTIONS = [
+  "procurement_vendor_allocation_baseline_recorded",
+  "procurement_vendor_photo_updated",
+  "procurement_vendor_photo_removed",
   "procurement_expense_recorded",
   "project_procurement_item_created",
   "project_vendor_suggestion_created",
@@ -125,6 +128,8 @@ export const PROCUREMENT_AUDIT_ACTIONS = [
 export const AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS = [
   "ai_estimator_knowledge_basket_created",
   "ai_estimator_knowledge_sub_basket_created",
+  "ai_estimator_knowledge_sub_basket_updated",
+  "ai_estimator_knowledge_sub_basket_permanently_deleted",
   "ai_estimator_knowledge_basket_updated",
   "ai_estimator_knowledge_basket_archived",
   "ai_estimator_knowledge_basket_permanently_deleted",
@@ -157,7 +162,16 @@ export const PROJECT_CHAT_AUDIT_ACTIONS = [
   "project_chat.issue_changed",
   "project_chat.participant_added",
   "project_chat.read_changed",
-  "project_chat.participant_revoked"
+  "project_chat.participant_revoked",
+  "project_chat.participant_removed",
+  "project_chat.participant_restored",
+  "project_chat.action_type_created",
+  "project_chat.project_renamed"
+] as const;
+
+export const IDENTITY_PROFILE_PHOTO_AUDIT_ACTIONS = [
+  "identity.profile_photo.updated",
+  "identity.profile_photo.removed"
 ] as const;
 
 export const AUDIT_ACTIONS = [
@@ -169,6 +183,7 @@ export const AUDIT_ACTIONS = [
   ...ESTIMATE_CLIENT_REVIEW_AUDIT_ACTIONS,
   ...DESIGN_PLAN_WORKFLOW_AUDIT_ACTIONS,
   ...PROCUREMENT_AUDIT_ACTIONS,
+  ...IDENTITY_PROFILE_PHOTO_AUDIT_ACTIONS,
   ...AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS
 ] as const;
 

@@ -33,6 +33,7 @@ import type {
   AiEstimatorKnowledgeReferenceService
 } from "../services/ai-estimator-knowledge-reference.service.js";
 import type { AuthService } from "../services/auth.service.js";
+import { procurementVendorProfileSchema } from "../services/procurement-vendor-profile.js";
 
 const stableIdSchema = z.string().trim().min(1).max(128);
 const shortTextSchema = z.string().trim().min(1).max(240);
@@ -126,6 +127,23 @@ const expectedVersionCommandSchema = z
   })
   .strict();
 
+const draftSubBasketGuardSchema = z.object({
+  subBasketId: stableIdSchema,
+  expectedVersion: expectedVersionSchema
+}).strict();
+
+const draftItemGuardSchema = z.object({
+  basketId: stableIdSchema,
+  subBasketId: z.null()
+}).strict();
+
+const exclusiveDraftGuard = (input: { draftSubBasketGuard?: unknown; draftItemGuard?: unknown }) =>
+  input.draftSubBasketGuard === undefined || input.draftItemGuard === undefined;
+const exclusiveDraftGuardIssue = {
+  message: "Provide either a Draft Sub Basket guard or a Draft item guard, not both.",
+  path: ["draftItemGuard"]
+};
+
 const mainLineListQuerySchema = z
   .object({
     ...paginationFields,
@@ -154,14 +172,38 @@ const mainLineUpdateSchema = z
     expectedVersion: expectedVersionSchema,
     name: shortTextSchema.optional(),
     description: z.string().trim().min(1).max(4_000).nullable().optional(),
-    displayOrder: displayOrderSchema.optional()
+    displayOrder: displayOrderSchema.optional(),
+    draftSubBasketGuard: draftSubBasketGuardSchema.optional(),
+    draftItemGuard: draftItemGuardSchema.optional()
   })
   .strict()
   .refine(
-    ({ expectedVersion: _expectedVersion, ...changes }) =>
+    ({ expectedVersion: _expectedVersion, draftSubBasketGuard: _draftSubBasketGuard, draftItemGuard: _draftItemGuard, ...changes }) =>
       Object.values(changes).some((value) => value !== undefined),
     { message: "At least one Main Line field must be changed." }
-  );
+  )
+  .refine(exclusiveDraftGuard, exclusiveDraftGuardIssue);
+
+const mainLineDeleteSchema = z.object({
+  expectedVersion: expectedVersionSchema,
+  reason: z.string().trim().min(1).max(1_000),
+  draftSubBasketGuard: draftSubBasketGuardSchema.optional(),
+  draftItemGuard: draftItemGuardSchema.optional()
+}).strict().refine(exclusiveDraftGuard, exclusiveDraftGuardIssue);
+
+const subBasketUpdateSchema = z.object({
+  expectedVersion: expectedVersionSchema,
+  name: shortTextSchema,
+  managementContext: z.literal("configuration").optional()
+}).strict();
+
+const subBasketDeleteSchema = z.object({
+  expectedVersion: expectedVersionSchema,
+  confirmationName: z.string().min(1).max(240),
+  reason: z.string().trim().min(1).max(1_000),
+  impactToken: z.string().regex(/^[a-f0-9]{64}$/u),
+  draftOnly: z.literal(true).optional()
+}).strict();
 
 const itemListQuerySchema = z
   .object({
@@ -217,6 +259,15 @@ const commonMasterFields = {
 } as const;
 
 const commonMasterCreateSchema = z.object(commonMasterFields).strict();
+const vendorSaveFields = { msmeCertificateUploadId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u).optional(), idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{8,200}$/u).optional() };
+function validateVendorCertificateCommand(input: { msmeCertificateUploadId?: string; idempotencyKey?: string; procurementProfile?: { msmeRegistered: boolean } }, context: z.RefinementCtx) {
+  if (input.msmeCertificateUploadId !== undefined && (!input.procurementProfile?.msmeRegistered || !input.idempotencyKey)) {
+    context.addIssue({ code: "custom", path: ["msmeCertificate"], message: "A certificate upload requires MSME Yes and a stable save identity." });
+  }
+}
+const vendorCreateSchema = z.object({ ...commonMasterFields, ...vendorSaveFields, code: commonMasterFields.code.optional(), procurementProfile: procurementVendorProfileSchema.optional(), confirmPhysicalAddressVerification: z.boolean().optional() }).strict().superRefine(validateVendorCertificateCommand).superRefine((input, context) => {
+  if (input.procurementProfile?.msmeRegistered && !input.msmeCertificateUploadId) context.addIssue({ code: "custom", path: ["msmeCertificate"], message: "Upload an MSME certificate before saving." });
+});
 const surfaceCreateSchema = z
   .object({
     code: commonMasterFields.code.optional(),
@@ -258,6 +309,7 @@ const commonMasterUpdateSchema = z
   .object(commonMasterUpdateFields)
   .strict()
   .refine(hasMasterChange, { message: "At least one reusable-value field must be changed." });
+const vendorUpdateSchema = z.object({ ...commonMasterUpdateFields, ...vendorSaveFields, procurementProfile: procurementVendorProfileSchema.optional(), confirmPhysicalAddressVerification: z.boolean().optional() }).strict().refine(input => Object.entries(input).some(([key, value]) => key !== "expectedVersion" && key !== "idempotencyKey" && value !== undefined), { message: "At least one vendor field must be changed." }).superRefine(validateVendorCertificateCommand);
 const surfaceUpdateSchema = z
   .object({ ...commonMasterUpdateFields })
   .strict()
@@ -363,7 +415,7 @@ export interface AiEstimatorKnowledgeAdminRouterServices {
 
 const masterRoutes = [
   { path: "uoms", kind: "uoms", createSchema: uomCreateSchema, updateSchema: uomUpdateSchema },
-  { path: "vendors", kind: "vendors", createSchema: commonMasterCreateSchema, updateSchema: commonMasterUpdateSchema },
+  { path: "vendors", kind: "vendors", createSchema: vendorCreateSchema, updateSchema: vendorUpdateSchema },
   { path: "taxes", kind: "taxes", createSchema: taxCreateSchema, updateSchema: taxUpdateSchema },
   { path: "priorities", kind: "priorities", createSchema: commonMasterCreateSchema, updateSchema: commonMasterUpdateSchema },
   { path: "surfaces", kind: "surfaces", createSchema: surfaceCreateSchema, updateSchema: surfaceUpdateSchema },
@@ -377,6 +429,13 @@ export function createAiEstimatorKnowledgeAdminRouter(
   const router = Router();
   const protectedRoute = authenticate(auth);
   const prefix = "/admin/ai-estimator-knowledge";
+
+  router.get(`${prefix}/vendors/:id`, protectedRoute,
+    requireOperation("GET /admin/ai-estimator-knowledge/vendors/:id"),
+    handler(async (request, response) => {
+      response.set("Cache-Control", "private, no-store");
+      return services.reference.getVendorDetail(request.authenticatedUser!, String(request.params.id));
+    }));
 
   router.get(
     `${prefix}/quality-control-options`,
@@ -473,6 +532,35 @@ export function createAiEstimatorKnowledgeAdminRouter(
     validateBody(z.object({ name: shortTextSchema }).strict()),
     handler(async (request) => services.reference.createSubBasket(request.authenticatedUser!, String(request.params.basketId), request.body), 201)
   );
+  router.patch(
+    `${prefix}/baskets/:basketId/sub-baskets/:subBasketId`,
+    protectedRoute,
+    requireOperation("PATCH /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets/:subBasketId"),
+    validateBody(subBasketUpdateSchema),
+    handler(async (request) => services.reference.updateSubBasket(
+      request.authenticatedUser!,
+      String(request.params.basketId),
+      String(request.params.subBasketId),
+      request.body
+    ))
+  );
+  router.get(
+    `${prefix}/baskets/:basketId/sub-baskets/:subBasketId/deletion-impact`,
+    protectedRoute,
+    requireOperation("GET /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets/:subBasketId/deletion-impact"),
+    handler(async (request) => services.reference.getSubBasketDeletionImpact(
+      request.authenticatedUser!, String(request.params.basketId), String(request.params.subBasketId)
+    ))
+  );
+  router.delete(
+    `${prefix}/baskets/:basketId/sub-baskets/:subBasketId`,
+    protectedRoute,
+    requireOperation("DELETE /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets/:subBasketId"),
+    validateBody(subBasketDeleteSchema),
+    handler(async (request) => services.reference.permanentlyDeleteSubBasket(
+      request.authenticatedUser!, String(request.params.basketId), String(request.params.subBasketId), request.body
+    ))
+  );
   router.get(
     `${prefix}/baskets/:basketId/main-lines`,
     protectedRoute,
@@ -501,7 +589,7 @@ export function createAiEstimatorKnowledgeAdminRouter(
     `${prefix}/main-lines/:mainLineId`,
     protectedRoute,
     requireOperation("DELETE /admin/ai-estimator-knowledge/main-lines/:mainLineId"),
-    validateBody(archiveSchema),
+    validateBody(mainLineDeleteSchema),
     handler(async (request) => services.item.permanentlyDeleteMainLine(request.authenticatedUser!, String(request.params.mainLineId), request.body))
   );
   router.get(
@@ -602,13 +690,15 @@ function registerMasterRoutes(
     ...paginationFields,
     search: z.string().trim().min(1).max(240).optional(),
     status: z.enum(AI_ESTIMATOR_KNOWLEDGE_MASTER_STATUSES).optional(),
-    includeArchived: includeArchivedSchema
+    includeArchived: includeArchivedSchema,
+    ...(master.kind === "vendors" ? { vendorType: z.enum(["execution", "supplier"]).optional(), mainBasketId: stableIdSchema.optional(), subBasketId: stableIdSchema.optional(), includeDirectoryOverview: includeArchivedSchema } : {})
   }).strict();
 
   router.get(basePath, protectedRoute, requireOperation(listOperation), validateQuery(listSchema),
     handler(async (request, response) => {
       const { filters, pagination } = splitPagination(response.locals.validatedQuery);
-      return pageEnvelope(await service.listMasters(request.authenticatedUser!, master.kind as AiEstimatorKnowledgeMasterType, filters, pagination), pagination);
+      const page = await service.listMasters(request.authenticatedUser!, master.kind as AiEstimatorKnowledgeMasterType, filters, pagination);
+      return { ...pageEnvelope(page, pagination), ...(master.kind === "vendors" && filters.includeDirectoryOverview === true && page.directoryOverview ? { directoryOverview: page.directoryOverview } : {}) };
     }));
   router.post(basePath, protectedRoute, requireOperation(createOperation), validateBody(master.createSchema),
     handler(async (request) => service.createMaster(request.authenticatedUser!, master.kind, request.body), 201));

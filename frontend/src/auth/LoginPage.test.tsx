@@ -98,7 +98,7 @@ async function signIn() {
   fireEvent.change(screen.getByLabelText("Password"), {
     target: { value: password }
   });
-  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
 }
 
 function invalidCredentialsHandler() {
@@ -116,10 +116,9 @@ function invalidCredentialsHandler() {
 }
 
 describe("LoginPage", () => {
-  it("renders the redesigned hero copy and the real logo asset", () => {
+  it("renders the sage hero copy, card copy, and background asset", () => {
     renderApp(["/login"]);
 
-    expect(screen.getByText("DESIGN OPERATIONS, IN FOCUS")).toBeVisible();
     expect(
       screen.getByRole("heading", { name: "From first sketch to final handoff." })
     ).toBeVisible();
@@ -131,14 +130,28 @@ describe("LoginPage", () => {
     expect(
       screen.getByText("Clear ownership. Timely reviews. Beautiful outcomes.")
     ).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Sign in" })).toBeVisible();
-
-    expect(screen.getAllByRole("img", { name: "LISNO" }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "Welcome to Lisno" })).toBeVisible();
+    expect(screen.getByText("Sign in to continue")).toBeVisible();
+    expect(screen.getAllByRole("img", { name: "Lisno" })).toHaveLength(1);
+    expect(screen.getByRole("checkbox", { name: "Remember me" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Sign In" })).toBeVisible();
 
     const background = screen.getByAltText("");
-    expect(background).toHaveAttribute("src", "/login-hero.png");
+    expect(background.getAttribute("src")).toMatch(/login_screen/);
     expect(background).toHaveAttribute("loading", "eager");
     expect(background).toHaveAttribute("fetchpriority", "high");
+  });
+
+  it("omits Google sign-in and keeps decorative copy out of the accessibility tree", () => {
+    renderApp(["/login"]);
+
+    expect(screen.queryByRole("button", { name: /google/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /google/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/^or$/i)).not.toBeInTheDocument();
+
+    const script = screen.getByText(/for a better/);
+    expect(script).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByText("Better Living").closest("[aria-hidden='true']")).not.toBeNull();
   });
 
   it("renders login fields and the password toggle", () => {
@@ -150,13 +163,17 @@ describe("LoginPage", () => {
     expect(email).toHaveAttribute("autocomplete", "email");
     expect(passwordControl).toHaveAttribute("id", "login-password");
     expect(passwordControl).toHaveAttribute("autocomplete", "current-password");
+    expect(email).toHaveAttribute("placeholder", "Email address");
+    expect(passwordControl).toHaveAttribute("placeholder", "Password");
     expect(screen.getByRole("button", { name: "Show password" })).toBeVisible();
   });
 
   it("links prospective clients to the account signup form", async () => {
     renderApp(["/login"]);
 
-    await userEvent.click(screen.getByRole("link", { name: "Create a client account" }));
+    const createAccount = screen.getByRole("link", { name: "Create an account" });
+    expect(createAccount).toHaveAttribute("href", "/signup");
+    await userEvent.click(createAccount);
 
     expect(await screen.findByRole("heading", { name: "Create your client account" })).toBeVisible();
   });
@@ -167,7 +184,7 @@ describe("LoginPage", () => {
     const passwordControl = screen.getByLabelText("Password");
     const visibilityToggle = screen.getByRole("button", { name: "Show password" });
     const forgotPassword = screen.getByRole("link", { name: "Forgot password?" });
-    const submit = screen.getByRole("button", { name: "Sign in" });
+    const submit = screen.getByRole("button", { name: "Sign In" });
 
     expect(forgotPassword).toHaveAttribute("href", "/forgot-password");
     expect(
@@ -187,7 +204,7 @@ describe("LoginPage", () => {
   it("shows field-level messages for both fields and focuses email first", async () => {
     renderApp(["/login"]);
 
-    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await userEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
     expect(
       await screen.findByText("Enter the email address on your Lisno account.")
@@ -200,7 +217,7 @@ describe("LoginPage", () => {
     renderApp(["/login"]);
     await userEvent.type(screen.getByLabelText("Email address"), "person@lisno.example");
 
-    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await userEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
     expect(await screen.findByText("Enter your password.")).toBeVisible();
     expect(screen.getByLabelText("Password")).toHaveFocus();
@@ -211,7 +228,7 @@ describe("LoginPage", () => {
     await userEvent.type(screen.getByLabelText("Email address"), "not-an-email");
     await userEvent.type(screen.getByLabelText("Password"), password);
 
-    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await userEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
     expect(
       await screen.findByText("That email address doesn’t look right.")
@@ -223,7 +240,7 @@ describe("LoginPage", () => {
     await userEvent.type(screen.getByLabelText("Email address"), "person@lisno.example");
     await userEvent.type(screen.getByLabelText("Password"), "short");
 
-    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await userEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
     expect(
       await screen.findByText("Passwords are at least 8 characters.")
@@ -232,7 +249,7 @@ describe("LoginPage", () => {
 
   it("re-validates a field live once the form has been submitted", async () => {
     renderApp(["/login"]);
-    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await userEvent.click(screen.getByRole("button", { name: "Sign In" }));
     await screen.findByText("Enter the email address on your Lisno account.");
 
     await userEvent.type(screen.getByLabelText("Email address"), "person@lisno.example");
@@ -250,7 +267,7 @@ describe("LoginPage", () => {
 
     await userEvent.type(screen.getByLabelText("Email address"), "unknown@example.com");
     await userEvent.type(screen.getByLabelText("Password"), "incorrect1");
-    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await userEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
     expect(
       await screen.findByRole("alert", { name: "Sign-in message" })
@@ -271,7 +288,7 @@ describe("LoginPage", () => {
 
     await userEvent.type(screen.getByLabelText("Email address"), "person@lisno.example");
     await userEvent.type(screen.getByLabelText("Password"), "incorrect1");
-    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await userEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
     expect(
       await screen.findByRole("alert", { name: "Sign-in message" })
@@ -292,7 +309,7 @@ describe("LoginPage", () => {
 
     await userEvent.type(screen.getByLabelText("Email address"), "person@lisno.example");
     await userEvent.type(screen.getByLabelText("Password"), "incorrect1");
-    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await userEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
     const resend = await screen.findByRole("button", { name: "Resend verification email" });
     await userEvent.click(resend);
@@ -314,7 +331,7 @@ describe("LoginPage", () => {
       fireEvent.change(screen.getByLabelText("Password"), {
         target: { value: "incorrect1" }
       });
-      fireEvent.click(screen.getByRole("button", { name: /^Sign in$/ }));
+      fireEvent.click(screen.getByRole("button", { name: /^Sign In$/ }));
       await waitFor(() =>
         expect(screen.getByRole("alert", { name: "Sign-in message" })).toBeInTheDocument()
       );
@@ -327,7 +344,7 @@ describe("LoginPage", () => {
     await vi.advanceTimersByTimeAsync(30_000);
 
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Sign in" })).not.toBeDisabled()
+      expect(screen.getByRole("button", { name: "Sign In" })).not.toBeDisabled()
     );
     vi.useRealTimers();
   });
@@ -434,7 +451,7 @@ describe("LoginPage", () => {
 
     await userEvent.type(screen.getByLabelText("Email address"), "person@example.com");
     await userEvent.type(screen.getByLabelText("Password"), "incorrect1");
-    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await userEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
     expect(await screen.findByRole("alert", { name: "Sign-in message" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Session expired" })).toHaveTextContent(
@@ -483,7 +500,7 @@ describe("LoginPage", () => {
       )
     );
     const { router } = renderApp(["/designer/projects/project-safe"]);
-    await screen.findByRole("heading", { name: "Sign in" });
+    await screen.findByRole("heading", { name: "Welcome to Lisno" });
 
     await signIn();
 
@@ -507,7 +524,7 @@ describe("LoginPage", () => {
       )
     );
     const { router } = renderApp(["/manager"]);
-    await screen.findByRole("heading", { name: "Sign in" });
+    await screen.findByRole("heading", { name: "Welcome to Lisno" });
 
     await signIn();
 
@@ -544,7 +561,7 @@ describe("LoginPage", () => {
       "person@lisno.example"
     );
     await userEvent.type(screen.getByLabelText("Password"), "incorrect1");
-    const submitButton = screen.getByRole("button", { name: "Sign in" });
+    const submitButton = screen.getByRole("button", { name: "Sign In" });
     const settledClassName = submitButton.className;
     await userEvent.click(submitButton);
 
@@ -724,7 +741,7 @@ describe("LoginPage", () => {
       fireEvent.change(screen.getByLabelText("Password"), {
         target: { value: password }
       });
-      fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+      fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
       expect(await screen.findByRole("heading", { name: heading })).toBeVisible();
       expect(router.state.location.pathname).toBe(path);

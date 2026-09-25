@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { ApiError } from "../api/client";
 import type { ClientSignupInput } from "../api/types";
+import loginBackground from "../assets/login_screen.png";
 import { useAuth } from "./AuthProvider";
 import "./login-page.css";
 
@@ -159,32 +160,30 @@ export function SignupPage() {
   });
 
   return (
-    <main className="login-screen">
+    <main className="login-screen login-screen--sage">
       <a href="#signup-form" className="login-skip-link">
         Skip to account creation
       </a>
+      <span className="login-logo" role="img" aria-label="Lisno" />
       <img
         className="login-bg"
-        src="/login-hero.png"
+        src={loginBackground}
         alt=""
         loading="eager"
         fetchPriority="high"
       />
-      <div className="login-scrim login-scrim--diagonal" aria-hidden="true" />
-      <div className="login-scrim login-scrim--base" aria-hidden="true" />
+      <div className="login-scrim" aria-hidden="true" />
+
+      <p className="login-script" aria-hidden="true">
+        Spaces
+        <br />
+        for a better
+        <br />
+        tomorrow
+      </p>
 
       <div className="login-grid">
         <section className="login-hero" aria-label="Lisno client portal">
-          <div className="login-hero__brand">
-            <span className="login-hero__logo" role="img" aria-label="LISNO" />
-            <span className="login-hero__wordmark">LISNO</span>
-          </div>
-
-          <div className="login-hero__eyebrow">
-            <span className="login-rule login-rule--hero" aria-hidden="true" />
-            <span>YOUR PROJECT, IN VIEW</span>
-          </div>
-
           <h2 className="login-hero__title">Follow every design decision.</h2>
 
           <p className="login-hero__body">
@@ -192,9 +191,13 @@ export function SignupPage() {
             one place.
           </p>
 
-          <div className="login-hero__footer">
-            <p>Clear updates. Confident approvals. Beautiful outcomes.</p>
-          </div>
+          <span className="login-hero__rule" aria-hidden="true" />
+
+          <p className="login-hero__tagline">
+            Clear updates. Confident approvals.{" "}
+            <br />
+            Beautiful outcomes.
+          </p>
         </section>
 
         <div className="login-card-wrap">
@@ -205,10 +208,6 @@ export function SignupPage() {
             noValidate
             aria-busy={isSubmitting}
           >
-            <div className="login-card__eyebrow">
-              <span className="login-rule login-rule--card" aria-hidden="true" />
-              <span>CLIENT PORTAL</span>
-            </div>
             <h1 id="signup-title" className="login-card__title">
               Create your client account
             </h1>
@@ -411,14 +410,19 @@ export function SignupPage() {
               )}
             </button>
 
-            <hr className="login-hairline" />
-
             <p className="login-footer-text">
               Already have an account? <Link to="/login">Sign in</Link>
             </p>
           </form>
         </div>
       </div>
+
+      <p className="login-strip" aria-hidden="true">
+        <span>Spaces</span>
+        <span>People</span>
+        <span>Ideas</span>
+        <span>Better Living</span>
+      </p>
     </main>
   );
 }

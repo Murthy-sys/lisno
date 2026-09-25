@@ -3,6 +3,12 @@ import { Modal } from "react-native";
 
 import { ChatImageViewer, type ChatImageViewerProps } from "./ChatImageViewer";
 
+jest.mock("expo-status-bar", () => {
+  const React = jest.requireActual("react") as typeof import("react");
+  const { View } = jest.requireActual("react-native") as typeof import("react-native");
+  return { StatusBar: ({ style }: { style: string }) => React.createElement(View, { testID: "viewer-status-bar", accessibilityLabel: style }) };
+});
+
 function viewerProps(overrides: Partial<ChatImageViewerProps> = {}): ChatImageViewerProps {
   return {
     visible: true,
@@ -17,6 +23,13 @@ function viewerProps(overrides: Partial<ChatImageViewerProps> = {}): ChatImageVi
 }
 
 describe("ChatImageViewer", () => {
+  it("releases its light system-icon override when the dark viewer closes", async () => {
+    const view = await render(<ChatImageViewer {...viewerProps({ visible: true })} />);
+    expect(view.getByTestId("viewer-status-bar", { includeHiddenElements: true }).props.accessibilityLabel).toBe("light");
+    await view.rerender(<ChatImageViewer {...viewerProps({ visible: false })} />);
+    expect(view.queryByTestId("viewer-status-bar", { includeHiddenElements: true })).toBeNull();
+  });
+
   it("renders a local artifact in a dark full-screen contain viewer", async () => {
     const view = await render(<ChatImageViewer {...viewerProps()} />);
     const modal = view.container.queryAll((instance) => instance.type === "Modal")[0];

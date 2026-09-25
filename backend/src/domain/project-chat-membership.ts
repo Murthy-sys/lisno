@@ -141,6 +141,12 @@ export function resolveChatMembership(sources: ChatSources, selections: readonly
         add(user.id, user.role, "selection", selection.id);
         members.get(user.id)!.selection = { id: selection.id, version: selection.version };
     }
+    // Exclusions apply after every membership source, never to the protected identities.
+    for (const exclusion of sources.exclusions ?? []) {
+        if (!exclusion.active || exclusion.projectId !== project.id || exclusion.userId === project.clientId || (superAdmins.length === 1 && exclusion.userId === superAdmins[0]!.id)) continue;
+        members.delete(exclusion.userId);
+        selectionManagers.delete(exclusion.userId);
+    }
     for (const role of eligibleTrades.keys()) {
         if (![...members.values()].some((person) => person.role === role)) {
             warnings.add("Participant not selected for one or more approved trades.");

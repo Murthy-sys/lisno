@@ -192,21 +192,16 @@
   justify-content: center;
   min-block-size: var(--control-height);
   padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--color-border-strong);
+  border-width: 1px;
+  border-style: solid;
   border-radius: var(--radius-control);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font: inherit;
-  font-weight: 600;
+  font-size: inherit;
+  line-height: inherit;
   cursor: pointer;
 }
 
-.ui-app-shell[data-role] .design-review-card .ui-button--success,
-.ui-app-shell[data-role] .design-review-card .ui-button--primary {
-  background: var(--color-brand-midnight);
-  border-color: var(--color-brand-midnight);
-  color: var(--color-surface);
-}
+/* Colors come from the shared variants in primitives.css: primary uses the --button-primary-* tokens,
+   success stays --color-success, and destructive/destructive-outline render red ink + red outline. */
 
 .design-review-card .ui-button:hover:not(:disabled) {
   box-shadow: var(--shadow-soft);
@@ -215,6 +210,10 @@
 .design-review-card :is(.ui-button, .ui-textarea, .ui-file-input):focus-visible {
   outline: 2px solid var(--color-brand-midnight);
   outline-offset: 3px;
+}
+
+.design-review-card .ui-button:focus-visible {
+  outline-color: var(--button-primary-bg);
 }
 
 .design-review-card :is(.ui-button, .ui-textarea, .ui-file-input):disabled {

@@ -11,6 +11,7 @@ export interface ChatLocalAttachment {
 }
 
 export interface ChatDraft {
+  action?: { typeId: string; dueDate: string };
   body: string;
   mentions: ChatMention[];
   priority: ChatPriority;

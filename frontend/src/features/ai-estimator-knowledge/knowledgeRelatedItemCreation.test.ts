@@ -105,6 +105,14 @@ describe("related item creation reconciliation", () => {
     expect(await reconcileRelatedItemCreation({ ...input, itemType: "temporary", subBasketName: "" })).toEqual({ kind: "match", item: temporaryDetail });
   });
 
+  it("reconciles explicit direct-parent creation without requiring an unrelated Sub-Basket read", async () => {
+    vi.mocked(api.listKnowledgeMainLines).mockResolvedValue(page([{ ...line, itemType: "temporary", subBasketId: null }]));
+    const temporaryDetail = { ...detail, itemType: "temporary" as const, subBasketId: null };
+    vi.mocked(api.getKnowledgeItem).mockResolvedValue(temporaryDetail);
+    expect(await reconcileRelatedItemCreation({ basketId: input.basketId, name: input.name, itemType: "temporary" })).toEqual({ kind: "match", item: temporaryDetail });
+    expect(api.listKnowledgeSubBaskets).not.toHaveBeenCalled();
+  });
+
   it("does not report absence if a later page fails", async () => {
     vi.mocked(api.listKnowledgeMainLines).mockResolvedValueOnce(page([{ ...line, name: "Surface light" }], 0, true)).mockRejectedValueOnce(new Error("Offline"));
     await expect(reconcileRelatedItemCreation(input)).rejects.toThrow("Offline");

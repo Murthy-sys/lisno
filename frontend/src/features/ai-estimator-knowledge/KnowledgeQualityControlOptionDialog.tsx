@@ -112,7 +112,7 @@ export function KnowledgeQualityControlOptionDialog({ kind, returnFocusRef, onSa
     width="medium"
     className="knowledge-context-panel knowledge-quality-option-panel"
     footer={({ requestClose }) => <div className="knowledge-dialog-actions">
-      <Button type="button" variant="quiet" disabled={busy} onClick={requestClose}>Cancel</Button>
+      <Button type="button" variant="destructive-outline" disabled={busy} onClick={requestClose}>Cancel</Button>
       {existing ? <Button type="button" disabled={busy} onClick={() => { onSaved(existing.value, existing.name, false); onClose(); }}>Use existing value</Button>
         : <Button type="submit" form={formId} busy={busy} disabled={!valid || busy}>Add {labels.noun}</Button>}
     </div>}

@@ -5,7 +5,7 @@
 :is(.ui-app-shell[data-role], body) :is(.vendor-procurement__heading, .vendor-procurement__projects) p { margin: 5px 0 0; font-size: 12px; color: var(--color-text-muted); line-height: 1.6; }
 :is(.ui-app-shell[data-role], body) .vendor-procurement__filters { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; padding: 0 0 18px; border-bottom: 1px solid var(--color-border); margin: 0; }
 :is(.ui-app-shell[data-role], body) .vendor-procurement__filters .ui-field { flex: 1 1 170px; max-width: 380px; }
-:is(.ui-app-shell[data-role], body) :is(.vendor-procurement, .vendor-suggestions-panel, .procurement-suggested-vendors) .ui-button { min-height: 36px; font-size: 12px; font-weight: 500; padding: 7px 11px; box-shadow: none; border-radius: 6px; }
+:is(.ui-app-shell[data-role], body) :is(.vendor-procurement, .vendor-suggestions-panel, .procurement-suggested-vendors) .ui-button { min-height: 36px; font-size: 12px; padding: 7px 11px; box-shadow: none; border-radius: 6px; }
 :is(.ui-app-shell[data-role], body) :is(.vendor-procurement, .vendor-suggestions-panel) .ui-control { min-width: 0; min-height: 38px; font-size: 13px; }
 :is(.ui-app-shell[data-role], body) :is(.vendor-procurement, .vendor-suggestions-panel) .ui-field__label { font-size: 12px; }
 .vendor-procurement__table-wrap { max-width: 100%; min-width: 0; overflow-x: auto; border: 1px solid var(--color-border); border-radius: 8px; }
@@ -62,4 +62,131 @@
   .vendor-procurement__projects > li { gap: 12px; }
   .vendor-procurement__projects > li > div:first-child { flex-basis: 100%; }
   .vendor-suggestions-list li { flex-wrap: wrap; }
+}
+
+/* Vendor profile side panel (Add vendor / Vendor details). The drawer root carries `.vendor-profile`;
+   section cards come from PanelSection (`.ui-panel-section`, layer components). This file is unlayered,
+   so these rules only place sections and style vendor controls; they never restyle the card or its title. */
+.ui-drawer.ui-drawer--contextual.vendor-profile { inline-size: min(1040px, 100%); }
+/* Reserve copy and close-button space around the decorative header artwork. */
+.vendor-profile > .ui-drawer__header { min-block-size: 124px; }
+.vendor-profile > .ui-drawer__header::before {
+  background: url("../../assets/vendor-drawer-header.webp") center bottom / contain no-repeat;
+  opacity: .3;
+  inline-size: clamp(220px, 32vw, 360px);
+  block-size: 120px;
+  inset-block: auto 0;
+  inset-inline-end: 64px;
+}
+.vendor-profile > .ui-drawer__header::after { display: none; }
+.vendor-profile > .ui-drawer__header > .ui-drawer__heading {
+  flex: 1 1 auto;
+  padding-inline-end: calc(clamp(220px, 32vw, 360px) + 16px);
+}
+.vendor-profile > .ui-drawer__header .ui-drawer__description { overflow-wrap: anywhere; }
+@media (max-width: 767px) {
+  .vendor-profile > .ui-drawer__header { min-block-size: 0; }
+  .vendor-profile > .ui-drawer__header::before { display: none; }
+  .vendor-profile > .ui-drawer__header > .ui-drawer__heading { padding-inline-end: 0; }
+}
+.vendor-profile .ui-drawer__body { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: var(--space-4); }
+.vendor-profile__form { display: grid; gap: var(--space-4); min-width: 0; container: vendor-form / inline-size; }
+.vendor-profile__fields { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); min-width: 0; border: 0; padding: 0; margin: 0; }
+.vendor-profile__section { min-width: 0; }
+.vendor-profile__section--bank .ui-panel-section__icon { display: none; }
+.vendor-profile__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: var(--space-4) var(--space-5); }
+.vendor-profile__registrations { grid-column: 1 / -1; min-width: 0; }
+.vendor-profile__registration { display: grid; align-items: start; align-content: start; gap: var(--space-3) var(--space-5); min-width: 0; }
+.vendor-profile__registration--expanded { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.vendor-profile__certificate { display: grid; gap: var(--space-2); min-width: 0; overflow-wrap: anywhere; }
+.vendor-profile__certificate .ui-file-input { max-inline-size: 100%; min-inline-size: 0; }
+.vendor-profile__classification { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4) var(--space-5); min-width: 0; }
+.vendor-profile__radio-group { min-width: 0; margin: 0; padding: 0; border: 0; }
+.vendor-profile__radio-group legend { margin: 0; padding: 0; color: var(--color-text); font: 600 var(--text-sm)/1.4 var(--font-interface); }
+.vendor-profile__radio-group legend > span[aria-hidden="true"] { color: var(--color-danger); }
+.vendor-profile__radio-group .ui-checkbox { inline-size: var(--space-5); block-size: var(--space-5); min-inline-size: var(--space-5); min-block-size: var(--space-5); flex: none; margin: 0; }
+.vendor-profile__radio-group .ui-radio { inline-size: var(--space-5); block-size: var(--space-5); flex: none; margin: 0; }
+.vendor-profile__radio-group:not(.vendor-profile__radio-group--cards) > div { display: flex; flex-wrap: wrap; gap: 0 var(--space-6); }
+.vendor-profile__radio-group:not(.vendor-profile__radio-group--cards) label { display: inline-flex; align-items: center; gap: var(--space-3); min-height: var(--control-height-large); font-size: var(--text-md); cursor: pointer; }
+.vendor-profile__radio-group--cards { display: grid; gap: var(--space-2); }
+.vendor-profile__radio-group--cards legend { margin-block-end: var(--space-2); }
+.vendor-profile__options { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2) var(--space-3); min-width: 0; }
+.vendor-profile__option { position: relative; display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; min-block-size: var(--control-height-large); padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-field); background: var(--color-surface); color: var(--color-text); transition: border-color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard); }
+/* The label's overlay makes the whole card, including the caption outside the label, toggle the native input. */
+.vendor-profile__option-label { display: flex; align-items: center; gap: var(--space-3); min-width: 0; border-radius: inherit; font: var(--type-body); font-weight: 600; cursor: pointer; }
+.vendor-profile__option-label::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+.vendor-profile__option-title, .vendor-profile__option-caption { min-width: 0; overflow-wrap: anywhere; }
+.vendor-profile__option-meta { display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding-inline-start: calc(var(--space-5) + var(--space-3)); color: var(--color-text-muted); font: var(--type-metadata); }
+.vendor-profile__option-icon { display: inline-flex; flex: none; color: var(--button-primary-bg); }
+.vendor-profile__option-icon svg { inline-size: var(--space-5); block-size: var(--space-5); }
+.vendor-profile__option:hover:not(:has(input:checked, input:disabled, input[aria-invalid="true"])) { border-color: var(--color-border-strong); }
+.vendor-profile__option:has(input:checked) { border-color: var(--button-primary-bg); background: color-mix(in srgb, var(--button-primary-bg) 5%, var(--color-surface)); box-shadow: inset 0 0 0 1px var(--button-primary-bg); }
+.vendor-profile__option:has(input:focus-visible) { outline: 2px solid transparent; outline-offset: 2px; box-shadow: var(--focus-ring); }
+.vendor-profile__option:has(input:checked):has(input:focus-visible) { box-shadow: inset 0 0 0 1px var(--button-primary-bg), var(--focus-ring); }
+.vendor-profile__option:has(input[aria-invalid="true"]) { border-color: var(--color-danger); }
+.vendor-profile__option:has(input:disabled) { opacity: .72; cursor: not-allowed; }
+.vendor-profile__option:has(input:disabled) .vendor-profile__option-label { cursor: not-allowed; }
+/* The card draws the focus ring (the transparent outline shows in forced-colors mode); drop the control's own ring only where :has() works. */
+@supports selector(:has(*)) {
+  .vendor-profile__option :is(.ui-radio, .ui-checkbox):focus-visible { outline: none; box-shadow: none; }
+}
+.vendor-profile__adorned { position: relative; display: grid; min-width: 0; }
+.vendor-profile__adorned-icon { position: absolute; z-index: 1; inset-block-start: 50%; inset-inline-start: var(--space-3); display: flex; color: var(--color-text-muted); pointer-events: none; transform: translateY(-50%); }
+.vendor-profile__adorned--multiline .vendor-profile__adorned-icon { inset-block-start: calc(var(--space-3) + var(--space-1) / 2); transform: none; }
+.vendor-profile__adorned-icon svg { inline-size: 18px; block-size: 18px; }
+.vendor-profile__adorned > .ui-control { padding-inline-start: calc(var(--space-3) + 18px + var(--space-2)); }
+.vendor-profile__counter { justify-self: end; margin: 0; color: var(--color-text-muted); font: var(--type-metadata); font-variant-numeric: tabular-nums; }
+.vendor-profile__basket-rows { display: grid; gap: var(--space-3); min-width: 0; }
+.vendor-profile__basket-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--space-3); min-width: 0; }
+.vendor-profile__basket-row > :only-child { grid-column: 1 / -1; }
+/* Offset by the field label line plus the field gap so the button sits level with, and as tall as, the panel select. */
+.vendor-profile__basket-row > .ui-button { min-block-size: var(--control-height-large); margin-block-start: calc(var(--text-sm) * 1.4 + var(--space-1)); }
+.vendor-profile__dropzone { position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--space-2) var(--space-3); min-width: 0; min-block-size: 88px; padding: var(--space-4); border: 1px dashed var(--color-border-strong); border-radius: var(--radius-field); background: var(--color-surface); color: var(--color-text-muted); font: var(--type-metadata); text-align: center; transition: border-color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard); }
+.vendor-profile__dropzone strong { color: var(--color-text); font-weight: 600; }
+.vendor-profile__dropzone-icon { display: flex; flex: none; color: var(--button-primary-bg); }
+.vendor-profile__dropzone-icon svg { inline-size: var(--space-5); block-size: var(--space-5); }
+/* The native file input keeps click, keyboard and drop behaviour but invisibly covers the whole zone. */
+.vendor-profile__dropzone .ui-file-input { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; margin: 0; padding: 0; border: 0; opacity: 0; cursor: pointer; }
+.vendor-profile__dropzone:hover:not(:has(.ui-file-input:disabled, [aria-invalid="true"])) { border-color: var(--button-primary-bg); background: color-mix(in srgb, var(--button-primary-bg) 4%, var(--color-surface)); }
+.vendor-profile__dropzone:has(.ui-file-input:focus-visible) { outline: 2px solid transparent; outline-offset: 2px; box-shadow: var(--focus-ring); }
+.vendor-profile__dropzone:has([aria-invalid="true"]) { border-color: var(--color-danger); }
+.vendor-profile__dropzone:has(.ui-file-input:disabled) { background: var(--color-surface-subtle); opacity: .72; }
+.vendor-profile__dropzone .ui-file-input:disabled { cursor: not-allowed; }
+.vendor-profile__correction { display: grid; gap: var(--space-3); min-width: 0; padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-field); background: var(--color-surface-subtle); }
+.vendor-profile__inline-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.vendor-profile__photo { display: block; max-width: 100%; width: 260px; max-height: 240px; object-fit: contain; object-position: left; }
+.vendor-profile__baseline-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; }
+.vendor-profile__baseline-list li { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; border-bottom: 1px solid var(--color-border); padding-bottom: 14px; }
+.vendor-profile__baseline-list li > div { flex: 1 1 230px; min-width: 0; display: grid; gap: 5px; overflow-wrap: anywhere; }
+.vendor-profile__baseline-list small { color: var(--color-text-muted); font-size: 11px; }
+/* Vendor Type cards sit side by side while the group has the full row (520-639px) or a wide column (880px+);
+   they stack in the narrower split column (640-879px) so captions do not wrap to four or five lines. */
+@container vendor-form (min-width: 520px) {
+  .vendor-profile__classification > :first-child .vendor-profile__options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container vendor-form (min-width: 640px) {
+  .vendor-profile__classification { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+  .vendor-profile__classification > * + * { padding-inline-start: var(--space-5); border-inline-start: 1px solid var(--color-border); }
+  .vendor-profile__classification > :first-child .vendor-profile__options { grid-template-columns: minmax(0, 1fr); }
+}
+/* DOM order is unchanged: identity fills column 1 across two rows; baskets then documentation stack in column 2. */
+@container vendor-form (min-width: 880px) {
+  .vendor-profile__classification > :first-child .vendor-profile__options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vendor-profile__fields { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  .vendor-profile__section--classification, .vendor-profile__section--information, .vendor-profile__section--bank { grid-column: 1 / -1; }
+  .vendor-profile__section--identity { grid-column: 1; grid-row: span 2; }
+  .vendor-profile__section--baskets, .vendor-profile__section--documentation { grid-column: 2; }
+}
+@media (max-width: 767px) {
+  .ui-drawer.ui-drawer--contextual.vendor-profile { inline-size: 100%; }
+}
+@media (max-width: 640px) {
+  .vendor-profile__grid, .vendor-profile__registration--expanded { grid-template-columns: minmax(0, 1fr); }
+  .vendor-profile .ui-control { min-height: 44px; font-size: 16px; }
+  .vendor-profile .ui-drawer__body .ui-button { min-block-size: var(--control-height-large); }
+  .vendor-profile__basket-row { grid-template-columns: minmax(0, 1fr); }
+  .vendor-profile__basket-row > .ui-button { justify-self: start; margin-block-start: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vendor-profile__option, .vendor-profile__dropzone { transition: none; }
 }

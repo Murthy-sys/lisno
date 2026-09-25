@@ -660,6 +660,7 @@ export interface ProjectProcurementItem {
   };
   vendor: ProcurementVendorReference | null;
   pricePaise: number;
+  allocatedWorkPaise?: number | null;
   estimateSource: ProcurementEstimateSource | null;
   version: number;
   createdAt: string;
@@ -703,7 +704,18 @@ export interface DesignerAssignmentOption {
   email: string;
 }
 
-export type AdminProjectPage = PageData<AdminProjectSummary>;
+export interface AdminProjectListInput extends PaginationInput {
+  status?: ProjectStatus;
+  search?: string;
+  sort?: "newest" | "name_asc" | "name_desc";
+}
+
+export type AdminProjectStatusCounts = Record<ProjectStatus | "all", number>;
+
+export type AdminProjectPage = PageData<AdminProjectSummary> & {
+  /** Older API deployments may omit counts; do not infer them from one page. */
+  statusCounts?: AdminProjectStatusCounts;
+};
 
 export type InitiatedAdminProjectSummary = AdminProjectSummary & {
   lead: NonNullable<AdminProjectSummary["lead"]>;
@@ -823,9 +835,17 @@ export interface UserDirectoryItem {
   updatedAt: string;
 }
 
+export interface UserDirectorySummary {
+  total: number;
+  active: number;
+  inactive: number;
+  roleCount: number;
+}
+
 export interface UserDirectoryPage extends PageData<UserDirectoryItem> {
   filterRoles: Role[];
   manageableRoles: Exclude<Role, "super_admin">[];
+  summary: UserDirectorySummary;
 }
 
 export type UpdateManagedUserInput =
@@ -1293,6 +1313,25 @@ export interface EstimateDesignUpload {
   canRetry: boolean;
   canDelete: boolean;
   deleteBlockedReason?: string;
+  purpose: "ordinary" | "drawing_replacement" | "plan_request_replacement";
+  requestReplacement: EstimateDesignRequestReplacementSummary | null;
+}
+
+export interface EstimateDesignRequestReplacementSummary {
+  requestId: string;
+  requestVersion: number;
+  sourcePageId: string;
+  targetCount: number;
+  matches: Array<{
+    drawingId: string;
+    requestedRevisionId: string;
+    detectedTitle: string;
+    resultRevisionId: string | null;
+    matchReason: "normalized_title" | "mapping_tuple" | null;
+    pageNumber: number | null;
+  }>;
+  ignoredPageNumbers: number[];
+  ignoredPageCount: number;
 }
 
 export interface EstimateDesignSourcePage {

@@ -20,6 +20,7 @@ import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import { assertProcurementProjectAccess, requireProcurementActor, procurementItemSourceSnapshot } from "./procurement.service.js";
 import { requireProcurementVendorReader } from "./project-vendor-suggestions.service.js";
+import { prepareProcurementAllocation } from "./procurement-vendor-allocation.service.js";
 
 type Row = Record<string, any>;
 type Statuses = Map<string, ProcurementReferenceStatus>;
@@ -96,11 +97,13 @@ export function createProjectProcurementService(input: { audit: AuditService; no
         const fields = validate(projectProcurementItemSchema, value);
         const source = sourceForInput(await procurementItemSourceSnapshot(projectId, session, true), fields);
         const uom = await activeReference(AiEstimatorKnowledgeUomModel, fields.uomId, "uomId", session);
-        const vendor = fields.vendorId ? await activeReference(AiEstimatorKnowledgeVendorModel, fields.vendorId, "vendorId", session) : null;
+        const allocation = await prepareProcurementAllocation(fields, session);
+        const vendor = allocation.vendor;
         const timestamp = now();
         const [document] = await ProjectProcurementItemModel.create([{
           _id: `procurement-item-${randomUUID()}`, projectId, ...storedFields(fields), ...source,
           ...referenceSnapshot("uom", uom), ...referenceSnapshot("vendor", vendor),
+          allocatedWorkPaise: allocation.allocatedWorkPaise, allocationTrackingVersion: allocation.allocationTrackingVersion,
           version: 1, createdById: actor.id, updatedById: actor.id,
           createdAt: timestamp, updatedAt: timestamp
         }], { session });
@@ -131,12 +134,14 @@ export function createProjectProcurementService(input: { audit: AuditService; no
         }
         const uom = fields.uomId === current.uomId ? null : await activeReference(AiEstimatorKnowledgeUomModel, fields.uomId, "uomId", session);
         const vendorChanged = fields.vendorId !== current.vendorId;
-        const vendor = vendorChanged && fields.vendorId ? await activeReference(AiEstimatorKnowledgeVendorModel, fields.vendorId, "vendorId", session) : null;
+        const allocation = await prepareProcurementAllocation({ current, ...fields }, session);
+        const vendor = allocation.vendor;
         const timestamp = now();
         const updated = await ProjectProcurementItemModel.findOneAndUpdate({ _id: itemId, projectId, version: fields.expectedVersion }, {
           $set: {
             ...storedFields(fields), ...(source ?? {}), ...(uom ? referenceSnapshot("uom", uom) : {}),
             ...(vendorChanged ? referenceSnapshot("vendor", vendor) : {}),
+            allocatedWorkPaise: allocation.allocatedWorkPaise, allocationTrackingVersion: allocation.allocationTrackingVersion,
             updatedById: actor.id, updatedAt: timestamp
           },
           $inc: { version: 1 }
@@ -253,7 +258,7 @@ function dto(row: Row, referenceStatus: { uoms: Statuses; vendors: Statuses }): 
     id: String(row._id), projectId: row.projectId, estimateSource: itemSource(row), itemName: row.itemName, brand: row.brand,
     uom: { id: row.uomId, code: row.uomCode, name: row.uomName, status: referenceStatus.uoms.get(row.uomId) ?? "unavailable" },
     vendor: row.vendorId ? { id: row.vendorId, code: row.vendorCode, name: row.vendorName, status: referenceStatus.vendors.get(row.vendorId) ?? "unavailable" } : null,
-    pricePaise: row.pricePaise, version: row.version,
+    pricePaise: row.pricePaise, allocatedWorkPaise: row.allocatedWorkPaise ?? null, version: row.version,
     createdAt: new Date(row.createdAt).toISOString(), updatedAt: new Date(row.updatedAt).toISOString()
   };
 }

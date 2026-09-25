@@ -4,12 +4,32 @@ import { normalizeChatParticipantSearch } from "./chatParticipants";
 
 type ChatQueryScope = Pick<RequestScope, "environmentId" | "userId">;
 
+export type ConversationListFilter = "all" | "unread" | "critical" | "important";
+
+export interface ConversationListView {
+  readonly filter: ConversationListFilter;
+  readonly search: string;
+}
+
+export const CONVERSATION_SEARCH_MAX_LENGTH = 100;
+
+/** Trims and bounds the project-name search exactly as it is sent to the server. */
+export function normalizeConversationSearch(search: string): string {
+  return search.trim().slice(0, CONVERSATION_SEARCH_MAX_LENGTH).trim();
+}
+
 export const chatQueryKeys = {
   all(scope: ChatQueryScope): PrivateQueryKey {
     return privateQueryKey(scope, "chat");
   },
-  conversations(scope: ChatQueryScope): PrivateQueryKey {
-    return privateQueryKey(scope, "chat", "conversations");
+  /**
+   * Without a view this is the family prefix used for invalidation; with a view it
+   * identifies one filtered/searched list, which the prefix still matches.
+   */
+  conversations(scope: ChatQueryScope, view?: ConversationListView): PrivateQueryKey {
+    return view
+      ? privateQueryKey(scope, "chat", "conversations", view.filter, normalizeConversationSearch(view.search))
+      : privateQueryKey(scope, "chat", "conversations");
   },
   project(scope: ChatQueryScope, projectId: string): PrivateQueryKey {
     return privateQueryKey(scope, "chat", "project", projectId);

@@ -172,7 +172,7 @@ export function ProjectStructureDialog({
       dirty={JSON.stringify(form) !== JSON.stringify(initialForm(action))}
       footer={({ requestClose }) => (
         <div className="project-panel-actions">
-          <Button variant="secondary" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
+          <Button variant="destructive-outline" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
           <Button type="submit" form={formId} busy={mutation.isPending} busyLabel="Creating…">Create {action.kind}</Button>
         </div>
       )}

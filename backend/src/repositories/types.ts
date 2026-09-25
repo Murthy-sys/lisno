@@ -32,7 +32,8 @@ import type {
   DashboardProjectRow,
   DashboardWorkforceFilters,
   DashboardWorkforceRow,
-  SuperAdminDashboardOverview
+  SuperAdminDashboardOverview,
+  SuperAdminDashboardPeriodDays
 } from "../contracts/super-admin-dashboard.js";
 
 export type ProjectStatus = "planning" | "active" | "on_hold" | "completed";
@@ -89,8 +90,23 @@ export interface UserRecord {
   authorizedClientIds: string[];
   avatar?: string;
   title?: string;
+  /** Present only while a processed profile photo exists. The storage key is internal and never public. */
+  profilePhoto?: UserProfilePhotoRecord;
+  /** Internal monotonic compare-and-set counter for profile photo writes; absent means 0. */
+  profilePhotoRevision?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface UserProfilePhotoRecord {
+  storageKey: string;
+  version: number;
+  updatedAt: string;
+}
+
+export interface UserProfilePhotoState {
+  revision: number;
+  photo: UserProfilePhotoRecord | null;
 }
 
 export interface PasswordResetRequestRecord {
@@ -248,6 +264,13 @@ export interface UserDirectoryFilters {
   active?: boolean;
 }
 
+export interface UserDirectorySummary {
+  total: number;
+  active: number;
+  inactive: number;
+  roleCount: number;
+}
+
 export interface UserResponsibilityCounts {
   ownedActiveLeads: number;
   ownedActiveEstimates: number;
@@ -264,6 +287,7 @@ export interface ProjectRecord {
   designWorkflowStages?: ProjectDesignWorkflowStage[];
   id: string;
   name: string;
+  nameVersion?: number;
   clientId: string | null;
   clientName: string;
   clientEmail: string;
@@ -429,6 +453,18 @@ export interface AdminProjectSummary {
   } | null;
   estimate: AdminProjectEstimateSummary | null;
   createdAt: string;
+}
+
+export interface AdminProjectListInput extends PaginationInput {
+  status?: ProjectStatus;
+  search?: string;
+  sort?: "newest" | "name_asc" | "name_desc";
+}
+
+export type AdminProjectStatusCounts = Record<"all" | ProjectStatus, number>;
+
+export interface AdminProjectPage extends PageResult<AdminProjectSummary> {
+  statusCounts: AdminProjectStatusCounts;
 }
 export type NewLeadActivity = LeadActivityRecord;
 
@@ -1073,7 +1109,9 @@ export interface AppRepository {
     observedAt: string;
     startAt: string;
     endAt: string;
-    periodDays: 7 | 30 | 90;
+    previousStartAt: string;
+    previousEndAt: string;
+    periodDays: SuperAdminDashboardPeriodDays;
   }): Promise<SuperAdminDashboardOverview>;
   pageSuperAdminDashboardProjects(
     observedAt: string,
@@ -1083,7 +1121,7 @@ export interface AppRepository {
     observedAt: string;
     startAt: string;
     endAt: string;
-    periodDays: 7 | 30 | 90;
+    periodDays: SuperAdminDashboardPeriodDays;
     filters: DashboardWorkforceFilters;
   }): Promise<DashboardPageResult<DashboardWorkforceRow>>;
   createUser(input: NewUser): Promise<UserRecord>;
@@ -1094,6 +1132,7 @@ export interface AppRepository {
     pagination: PaginationInput
   ): Promise<PageResult<UserRecord>>;
   countActiveUsersByRole(role: Role): Promise<number>;
+  summarizeUsers(visibleRoles: readonly Role[]): Promise<UserDirectorySummary>;
   countUserResponsibilities(userId: string): Promise<UserResponsibilityCounts>;
   updateUser(
     userId: string,
@@ -1105,6 +1144,18 @@ export interface AppRepository {
     expectedVersion: number,
     expectedSessionVersion: number,
     change: { passwordHash: string; updatedAt: string }
+  ): Promise<UserRecord>;
+  findUserProfilePhotoState(userId: string): Promise<UserProfilePhotoState | null>;
+  /** CAS on the profile photo revision; the new photo version equals expectedRevision + 1. */
+  setUserProfilePhoto(
+    userId: string,
+    expectedRevision: number,
+    change: { storageKey: string; updatedAt: string }
+  ): Promise<UserRecord>;
+  /** CAS on the profile photo revision; removes the photo and advances the revision. */
+  clearUserProfilePhoto(
+    userId: string,
+    expectedRevision: number
   ): Promise<UserRecord>;
   pageAllLeads(filters: LeadFilters, pagination: PaginationInput): Promise<PageResult<LeadRecord>>;
   pageLeadsForOwner(ownerId: string, filters: LeadFilters, pagination: PaginationInput): Promise<PageResult<LeadRecord>>;
@@ -1128,8 +1179,8 @@ export interface AppRepository {
   ): Promise<PageResult<ProjectRecord>>;
   pageAdminProjects(
     actor: UserRecord,
-    pagination: PaginationInput
-  ): Promise<PageResult<AdminProjectSummary>>;
+    input: AdminProjectListInput
+  ): Promise<AdminProjectPage>;
   findAdminProject(
     actor: UserRecord,
     projectId: string
@@ -1139,6 +1190,7 @@ export interface AppRepository {
     pagination: PaginationInput
   ): Promise<PageResult<EstimatorOption>>;
   findProjectById(id: string): Promise<ProjectRecord | null>;
+  renameProjectName(id: string, name: string, expectedVersion: number, updatedAt: string): Promise<ProjectRecord | null>;
   linkUnclaimedProjectsToClient(
     emailNormalized: string,
     clientId: string,

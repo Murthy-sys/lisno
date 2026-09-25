@@ -1,6 +1,6 @@
 import type { NotificationRecord } from "./notifications.js";
 import { chatConflict } from "../domain/project-chat.js";
-import type { ChatAttachmentRecord, ChatEstimateSource, ChatHistoryRow, ChatMessageScan, ChatOperation, ChatReadState, ChatSelection, ChatSources, ChatState, ChatStoredEvent, ChatStoredMessage, ChatTransaction, ChatTypingRecord, ChatTypingRateRecord, ChatWorkflowSource, ProjectChatRepository } from "./project-chat.js";
+import type { ChatActionTypeRecord, ChatExclusion, ChatAttachmentRecord, ChatEstimateSource, ChatHistoryRow, ChatMessageScan, ChatOperation, ChatReadState, ChatSelection, ChatSources, ChatState, ChatStoredEvent, ChatStoredMessage, ChatTransaction, ChatTypingRecord, ChatTypingRateRecord, ChatWorkflowSource, ProjectChatRepository } from "./project-chat.js";
 import { createChatAttachmentOperations } from "./project-chat-attachment-operations.js";
 import type { AppRepository, ProjectRecord, UserRecord } from "./types.js";
 import type { ProjectModule } from "../domain/authorization.js";
@@ -11,6 +11,8 @@ export interface MemoryChatSources {
     projectIds?: string[];
 }
 interface MemoryChatState {
+    exclusions: ChatExclusion[];
+    actionTypes: ChatActionTypeRecord[];
     notifications: NotificationRecord[];
     selections: ChatSelection[];
     messages: ChatStoredMessage[];
@@ -26,7 +28,7 @@ interface MemoryChatState {
 const modules: ProjectModule[] = ["projects", "design", "procurement", "finance", "execution"];
 const copy = <T>(value: T): T => structuredClone(value);
 export function createMemoryProjectChatRepository(repository: AppRepository, supplemental: MemoryChatSources = {}): ProjectChatRepository {
-    let state: MemoryChatState = { notifications: [], selections: [], messages: [], states: {}, reads: [], operations: [], events: [], histories: [], attachments: [], typing: [], typingRates: [] };
+    let state: MemoryChatState = { exclusions: [], actionTypes: [], notifications: [], selections: [], messages: [], states: {}, reads: [], operations: [], events: [], histories: [], attachments: [], typing: [], typingRates: [] };
     let tail: Promise<void> = Promise.resolve();
     const run = async <T>(write: boolean, operation: (tx: ChatTransaction) => Promise<T>): Promise<T> => {
         const previous = tail;
@@ -120,7 +122,7 @@ function memoryTransaction(app: AppRepository, state: MemoryChatState, supplemen
                 for (const module of modules)
                     grants.push(...(await app.listActiveProjectAccessGrants(user.id, module)).filter((grant) => grant.projectId === projectId));
             const leads = (await app.pageAllLeads({}, { limit: Number.MAX_SAFE_INTEGER, offset: 0 })).items;
-            return copy({ project, users, grants, leads, estimates: supplemental.estimates ?? [], workflowTasks: supplemental.workflowTasks ?? [], designTasks: await app.listTasks({ projectId }) });
+            return copy({ project, users, grants, leads, exclusions: state.exclusions.filter(row => row.projectId === projectId), estimates: supplemental.estimates ?? [], workflowTasks: supplemental.workflowTasks ?? [], designTasks: await app.listTasks({ projectId }) });
         },
         async projectPage(input) {
             const rows = (await allProjects(await app.listUsers())).map((project) => ({
@@ -131,6 +133,16 @@ function memoryTransaction(app: AppRepository, state: MemoryChatState, supplemen
         },
         async candidateProjectIds() { return (await allProjects(await app.listUsers())).map((project) => project.id); },
         async directory(input) { return (await app.listUsers()).filter((user) => user.active && input.roles.includes(user.role) && !input.excludeIds.includes(user.id) && `${user.name} ${user.role.replaceAll("_", " ")}`.toLocaleLowerCase().includes(input.search.toLocaleLowerCase())).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)).slice(0, input.limit); },
+        async actionTypes() { return copy(state.actionTypes); },
+        async saveActionType(row) {
+            if (state.actionTypes.some(item => item.id === row.id || item.normalizedName === row.normalizedName)) chatConflict("An action type with this name already exists.");
+            state.actionTypes.push(copy(row));
+        },
+        async saveExclusion(row) {
+            const previous = state.exclusions.find(item => item.projectId === row.projectId && item.userId === row.userId);
+            if (row.version !== (previous?.version ?? 0) + 1 || (previous && previous.id !== row.id)) chatConflict();
+            upsert(state.exclusions, previous ? { ...previous, person: row.person, active: row.active, version: row.version, history: [...previous.history, row.history[row.history.length - 1]!] } : row);
+        },
         async selections(projectId) { return copy(state.selections.filter((row) => row.projectId === projectId && row.active)); },
         async findSelection(projectId, id) { return copy(state.selections.find((row) => row.projectId === projectId && row.id === id) ?? null); },
         async saveSelection(selection) {
@@ -157,7 +169,7 @@ function memoryTransaction(app: AppRepository, state: MemoryChatState, supplemen
             const existing = state.messages.find((row) => row.id === message.id);
             if (message.version !== (existing?.version ?? 0) + 1) chatConflict();
             if (!existing && state.messages.some((row) => row.projectId === message.projectId && (row.sequence === message.sequence || (row.author.id === message.author.id && row.clientMessageId === message.clientMessageId)))) chatConflict();
-            upsert(state.messages, existing ? {...existing,priority:message.priority,issueStatus:message.issueStatus,raisedBy:message.raisedBy,responsible:message.responsible,version:message.version} : message);
+            upsert(state.messages, existing ? {...existing,priority:message.priority,issueStatus:message.issueStatus,raisedBy:message.raisedBy,responsible:message.responsible,version:message.version,...(existing.action ? {action: {...existing.action, dueDate: message.action?.dueDate ?? existing.action.dueDate}} : {})} : message);
         },
         async history(projectId, messageId) { return copy(state.histories.filter((row) => row.projectId === projectId && row.messageId === messageId).sort((a, b) => b.version - a.version).slice(0, 50).reverse().map((row) => row.entry)); },
         async appendHistory(row) {

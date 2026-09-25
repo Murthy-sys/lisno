@@ -232,7 +232,7 @@ function RejectionDialog({ section, comment, error, requestError, busy, onCommen
     onClose={onClose}
     footer={({ requestClose }) => <>
       <Button onClick={onSubmit} disabled={busy}>Send request</Button>
-      <Button variant="secondary" onClick={requestClose} disabled={busy}>Cancel</Button>
+      <Button variant="destructive-outline" onClick={requestClose} disabled={busy}>Cancel</Button>
     </>}
   >
     <Field id={`reject-${section.id}`} label="Modification comment" hint={`${comment.length}/1000 characters`} error={error} required>

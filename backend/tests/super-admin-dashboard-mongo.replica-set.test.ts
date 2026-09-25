@@ -3,6 +3,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { FinanceLedgerEntryModel } from "../src/models/FinanceLedgerEntry.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
+import { EstimateClientResponseProofModel } from "../src/models/EstimateClientResponseProof.js";
+import { DesignPlanReviewRoundModel } from "../src/models/DesignPlanReviewRound.js";
+import { DesignPlanResponseProofModel } from "../src/models/DesignPlanResponseProof.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { ProjectFinanceBucketModel } from "../src/models/ProjectFinanceBucket.js";
 import { ProjectModel } from "../src/models/Project.js";
@@ -435,6 +438,646 @@ function reviewRound(input: {
 }
 
 describe("Super Admin dashboard Mongo pre-pagination filters", () => {
+  it("derives Client cohorts and matched-period events from authoritative database records", async () => {
+    const currentClient = {
+      ...worker("client-current", "Current Client"),
+      role: "client" as const,
+      createdAt: new Date("2026-08-25T08:00:00.000Z"),
+      updatedAt: new Date("2026-08-25T08:00:00.000Z")
+    };
+    const previousClient = {
+      ...worker("client-previous", "Previous Client"),
+      role: "client" as const,
+      active: false,
+      createdAt: new Date("2026-08-18T08:00:00.000Z"),
+      updatedAt: new Date("2026-08-18T08:00:00.000Z")
+    };
+    const wrongRole = worker("worker-client-reference", "Wrong role reference");
+    const adminActor = { ...worker("dashboard-owner", "Dashboard Admin"), role: "admin" as const };
+    await UserModel.create([currentClient, previousClient, wrongRole, adminActor]);
+
+    const currentProject = {
+      ...project("comparison-current", "Current project", "2026-09-30T00:00:00.000Z"),
+      clientId: currentClient._id,
+      status: "completed" as const,
+      actualEndAt: new Date("2026-08-29T09:00:00.000Z"),
+      createdAt: new Date("2026-08-25T09:00:00.000Z")
+    };
+    const previousProject = {
+      ...project("comparison-previous", "Previous project", "2026-08-20T00:00:00.000Z"),
+      clientId: previousClient._id,
+      status: "completed" as const,
+      actualEndAt: new Date("2026-08-20T09:00:00.000Z"),
+      createdAt: new Date("2026-08-18T09:00:00.000Z")
+    };
+    const unlinkedProject = {
+      ...project("comparison-unlinked", "Unlinked project", "2026-09-30T00:00:00.000Z"),
+      createdAt: new Date("2026-08-26T09:00:00.000Z")
+    };
+    const invalidProject = {
+      ...project("comparison-invalid", "Invalid Client project", "2026-09-30T00:00:00.000Z"),
+      clientId: wrongRole._id,
+      // This falls after the previous partial-day cutoff and before the current calendar window.
+      createdAt: new Date("2026-08-23T18:00:00.000Z")
+    };
+    const activeClientProject = {
+      ...project("comparison-active-client", "Active Client project", "2026-09-30T00:00:00.000Z"),
+      clientId: currentClient._id,
+      status: "active" as const,
+      createdAt: new Date("2026-07-01T09:00:00.000Z")
+    };
+    const onHoldClientProject = {
+      ...project("comparison-on-hold-client", "On-hold Client project", "2026-09-30T00:00:00.000Z"),
+      clientId: previousClient._id,
+      status: "on_hold" as const,
+      createdAt: new Date("2026-07-02T09:00:00.000Z")
+    };
+    await ProjectModel.create([
+      currentProject, previousProject, unlinkedProject, invalidProject,
+      activeClientProject, onHoldClientProject
+    ]);
+
+    await ProjectWorkflowTaskModel.create([
+      {
+        ...executionTask("comparison-task-current", "comparison-finance", null),
+        kind: "site_execution",
+        assigneeRole: "site_manager",
+        sourceSectionId: null,
+        sourceLineItemKey: null,
+        status: "completed",
+        progress: 100,
+        completedAt: new Date("2026-08-28T10:00:00.000Z")
+      },
+      {
+        ...executionTask("comparison-task-previous", "comparison-approval-previous", null),
+        kind: "site_execution",
+        assigneeRole: "site_manager",
+        sourceSectionId: null,
+        sourceLineItemKey: null,
+        status: "completed",
+        progress: 100,
+        completedAt: new Date("2026-08-19T10:00:00.000Z")
+      }
+    ]);
+
+    await approvedFinanceProject({
+      id: "comparison-finance", subtotalRupees: 1_000, directSpendPaise: 700
+    });
+    await approvedFinanceProject({
+      id: "comparison-expense", subtotalRupees: 800, directSpendPaise: 0
+    });
+    await approvedFinanceProject({
+      id: "comparison-approval-previous", subtotalRupees: 500,
+      directSpendPaise: 0, withBucket: false
+    });
+    const currentRound = {
+      ...reviewRound({
+        id: "comparison-finance:v1-approved", projectId: "comparison-finance",
+        estimateVersion: 1, sendGeneration: 1, status: "approved", decision: "approve"
+      }),
+      projectId: null,
+      decisionSource: "client_portal",
+      decidedById: currentClient._id,
+      decidedAt: new Date("2026-08-25T10:00:00.000Z")
+    };
+    const previousRound = {
+      ...reviewRound({
+        id: "comparison-approval-previous:v1-approved",
+        projectId: "comparison-approval-previous", estimateVersion: 1,
+        sendGeneration: 1, status: "approved", decision: "approve"
+      }),
+      decisionSource: "admin_proof",
+      decidedById: adminActor._id,
+      decidedAt: new Date("2026-08-19T10:00:00.000Z")
+    };
+    const currentRetryRound = {
+      ...currentRound,
+      _id: "comparison-finance:v1-approved-retry",
+      sendGeneration: 2,
+      dedupeKey: "comparison-finance:v1-approved-retry:dedupe",
+      pdfFilename: "comparison-finance-v1-approved-retry.pdf",
+      pdfSha256: "comparison-finance-v1-approved-retry:pdf",
+      pdfStorageReference: "comparison-finance-v1-approved-retry:storage"
+    };
+    await EstimateClientReviewRoundModel.collection.insertMany([
+      currentRound,
+      currentRetryRound,
+      previousRound
+    ]);
+    await Promise.all([
+      EstimateModel.collection.updateOne(
+        { _id: "comparison-finance:estimate" },
+        {
+          $set: {
+            clientDecisionAt: currentRound.decidedAt,
+            reviews: [{ actorId: currentClient._id, action: "client_approved", note: "Approved", occurredAt: currentRound.decidedAt }],
+            designPlanStatus: "approved",
+            designPlanVersion: 1,
+            designPlanApprovedAt: new Date("2026-08-26T10:00:00.000Z"),
+            designPlanApprovedById: currentClient._id,
+            designPlanApprovalSource: "client_portal"
+          }
+        }
+      ),
+      EstimateModel.collection.updateOne(
+        { _id: "comparison-approval-previous:estimate" },
+        {
+          $set: {
+            clientDecisionAt: previousRound.decidedAt,
+            reviews: [{ actorId: adminActor._id, action: "client_approved", note: "Approved", occurredAt: previousRound.decidedAt }],
+            designPlanStatus: "approved",
+            designPlanVersion: 1,
+            designPlanApprovedAt: new Date("2026-08-21T10:00:00.000Z"),
+            designPlanApprovedById: adminActor._id,
+            designPlanApprovalSource: "admin_proof"
+          }
+        }
+      ),
+      EstimateModel.collection.updateOne(
+        { _id: "comparison-expense:estimate" },
+        {
+          $set: {
+            clientDecisionAt: new Date("2026-07-15T10:00:00.000Z"),
+            reviews: [{ actorId: currentClient._id, action: "client_approved", note: "Approved", occurredAt: new Date("2026-07-15T10:00:00.000Z") }],
+            designPlanStatus: "approved",
+            designPlanVersion: 1,
+            designPlanApprovedAt: new Date("2026-07-16T10:00:00.000Z"),
+            designPlanApprovedById: currentClient._id,
+            designPlanApprovalSource: "client_portal"
+          }
+        }
+      )
+    ]);
+    await EstimateClientResponseProofModel.create({
+      _id: "comparison-estimate-previous-proof",
+      reviewRoundId: previousRound._id,
+      estimateId: previousRound.estimateId,
+      storageReference: "comparison-estimate-previous-proof-storage",
+      originalFilename: "estimate-approval.pdf",
+      mimeType: "application/pdf",
+      byteSize: 1,
+      sha256: "a".repeat(64),
+      uploadedById: adminActor._id,
+      uploadedAt: previousRound.decidedAt
+    });
+    await DesignPlanReviewRoundModel.create([
+      {
+        _id: "comparison-design-current",
+        estimateId: "comparison-finance:estimate",
+        projectId: "comparison-finance",
+        leadId: "comparison-finance:lead",
+        designPlanVersion: 1,
+        recipientEmail: "current-design@example.test",
+        clientName: "Current Client",
+        projectName: "comparison-finance",
+        submittedRevisionIds: ["comparison-design-current:revision"],
+        attachments: [{
+          uploadId: "comparison-design-current:upload",
+          filename: "current-design.pdf",
+          mimeType: "application/pdf",
+          byteSize: 1,
+          sha256: "c".repeat(64),
+          storageReference: "comparison-design-current:storage"
+        }],
+        submittedById: adminActor._id,
+        submittedAt: new Date("2026-08-25T10:00:00.000Z"),
+        assignedAdminId: adminActor._id,
+        deliveryStatus: "sent",
+        status: "approved",
+        decision: "approve",
+        decisionSource: "client_portal",
+        decisionNote: "Approved",
+        decidedById: currentClient._id,
+        decidedByName: currentClient.name,
+        decidedByRole: "client",
+        version: 2,
+        decidedAt: new Date("2026-08-26T10:00:00.000Z")
+      },
+      {
+        _id: "comparison-design-previous",
+        estimateId: "comparison-approval-previous:estimate",
+        projectId: "comparison-approval-previous",
+        leadId: "comparison-approval-previous:lead",
+        designPlanVersion: 1,
+        recipientEmail: "previous-design@example.test",
+        clientName: "Previous Client",
+        projectName: "comparison-approval-previous",
+        submittedRevisionIds: ["comparison-design-previous:revision"],
+        attachments: [{
+          uploadId: "comparison-design-previous:upload",
+          filename: "previous-design.pdf",
+          mimeType: "application/pdf",
+          byteSize: 1,
+          sha256: "d".repeat(64),
+          storageReference: "comparison-design-previous:storage"
+        }],
+        submittedById: adminActor._id,
+        submittedAt: new Date("2026-08-20T10:00:00.000Z"),
+        assignedAdminId: adminActor._id,
+        deliveryStatus: "sent",
+        status: "approved",
+        decision: "approve",
+        decisionSource: "admin_proof",
+        decisionNote: "Approved from stored proof",
+        decidedById: adminActor._id,
+        decidedByName: adminActor.name,
+        decidedByRole: "admin",
+        version: 2,
+        decidedAt: new Date("2026-08-21T10:00:00.000Z")
+      }
+    ]);
+    await DesignPlanResponseProofModel.create({
+      _id: "comparison-design-previous-proof",
+      reviewRoundId: "comparison-design-previous",
+      estimateId: "comparison-approval-previous:estimate",
+      storageReference: "comparison-design-previous-proof-storage",
+      originalFilename: "design-approval.pdf",
+      mimeType: "application/pdf",
+      byteSize: 1,
+      sha256: "b".repeat(64),
+      uploadedById: adminActor._id,
+      uploadedAt: new Date("2026-08-21T10:00:00.000Z")
+    });
+    await ProjectFinanceBucketModel.collection.updateOne(
+      { _id: "comparison-expense:bucket" },
+      {
+        $set: {
+          estimateReviewRoundId: null,
+          designPlanVersion: 1,
+          status: "open",
+          openedAt: new Date("2026-08-26T10:00:00.000Z"),
+          openedById: currentClient._id
+        }
+      }
+    );
+    await FinanceLedgerEntryModel.create([
+      {
+        _id: "comparison-ledger-current",
+        bucketId: "comparison-expense:bucket",
+        projectId: "comparison-expense",
+        type: "direct_spend",
+        expenseClass: "other",
+        category: "Current expense",
+        amountPaise: 500,
+        incurredAt: new Date("2026-08-27T10:00:00.000Z"),
+        description: "Current comparison expense",
+        idempotencyKey: "comparison-ledger-current-key",
+        status: "posted",
+        version: 1,
+        createdById: "dashboard-owner"
+      },
+      {
+        _id: "comparison-ledger-previous",
+        bucketId: "comparison-expense:bucket",
+        projectId: "comparison-expense",
+        type: "direct_spend",
+        expenseClass: "other",
+        category: "Previous expense",
+        amountPaise: 200,
+        incurredAt: new Date("2026-08-20T10:00:00.000Z"),
+        description: "Previous comparison expense",
+        idempotencyKey: "comparison-ledger-previous-key",
+        status: "posted",
+        version: 1,
+        createdById: "dashboard-owner"
+      }
+    ]);
+
+    const overview = await mongoSuperAdminDashboardOverview({
+      observedAt: OBSERVED_AT,
+      startAt: "2026-08-24T00:00:00.000Z",
+      endAt: OBSERVED_AT,
+      previousStartAt: "2026-08-17T00:00:00.000Z",
+      previousEndAt: "2026-08-23T12:00:00.000Z",
+      periodDays: 7
+    });
+
+    expect(overview.clients).toEqual({
+      accountsStatus: "available",
+      relationshipsStatus: "available",
+      accountsUnavailableReason: null,
+      relationshipsUnavailableReason: null,
+      registeredAccounts: 2,
+      activeAccounts: 1,
+      inactiveAccounts: 1,
+      accountsCreatedInPeriod: 1,
+      clientsWithProjects: 2,
+      clientsWithActiveProjects: 1,
+      unlinkedProjects: 4,
+      invalidProjectClientLinks: 1
+    });
+    expect(overview.projects.completedInPeriod).toBe(1);
+    expect(overview.comparison.metrics).toMatchObject({
+      projects_created: { current: 2, previous: 1 },
+      clients_created: { current: 1, previous: 1, changeKind: "no_change" },
+      projects_completed: { current: 1, previous: 1 },
+      execution_tasks_completed: { current: 1, previous: 1 },
+      estimates_approved: { current: 1, previous: 1 },
+      design_plans_approved: { current: 1, previous: 1 },
+      recorded_expenses_paise: {
+        current: 500,
+        previous: 200,
+        delta: 300,
+        changeBps: 15_000
+      }
+    });
+    expect(overview.comparison.currentBuckets).toHaveLength(7);
+    expect(overview.comparison.previousBuckets).toHaveLength(7);
+
+    const crossWindowRetryRound = {
+      ...currentRound,
+      _id: "comparison-finance:v1-approved-cross-window-retry",
+      sendGeneration: 3,
+      dedupeKey: "comparison-finance:v1-approved-cross-window-retry:dedupe",
+      pdfFilename: "comparison-finance-v1-approved-cross-window-retry.pdf",
+      pdfSha256: "comparison-finance-v1-approved-cross-window-retry:pdf",
+      pdfStorageReference: "comparison-finance-v1-approved-cross-window-retry:storage",
+      decidedAt: new Date("2026-08-20T10:00:00.000Z")
+    };
+    await EstimateClientReviewRoundModel.collection.insertOne(crossWindowRetryRound);
+    const conflictingCrossWindowRetry = await mongoSuperAdminDashboardOverview({
+      observedAt: OBSERVED_AT,
+      startAt: "2026-08-24T00:00:00.000Z",
+      endAt: OBSERVED_AT,
+      previousStartAt: "2026-08-17T00:00:00.000Z",
+      previousEndAt: "2026-08-23T12:00:00.000Z",
+      periodDays: 7
+    });
+    expect(conflictingCrossWindowRetry.comparison.metrics.estimates_approved).toMatchObject({
+      current: null,
+      previous: null,
+      currentStatus: "unavailable",
+      previousStatus: "unavailable"
+    });
+    await EstimateClientReviewRoundModel.collection.deleteOne({
+      _id: crossWindowRetryRound._id
+    });
+
+    await Promise.all([
+      FinanceLedgerEntryModel.collection.updateOne(
+        { _id: "comparison-ledger-previous" },
+        { $set: { bucketId: "missing-bucket" } }
+      ),
+      EstimateClientReviewRoundModel.collection.updateOne(
+        { _id: previousRound._id },
+        { $set: { projectId: "missing-project" } }
+      ),
+      ProjectWorkflowTaskModel.collection.updateOne(
+        { _id: "comparison-task-previous" },
+        { $set: { estimateId: "missing-estimate" } }
+      )
+    ]);
+    const oneSided = await mongoSuperAdminDashboardOverview({
+      observedAt: OBSERVED_AT,
+      startAt: "2026-08-24T00:00:00.000Z",
+      endAt: OBSERVED_AT,
+      previousStartAt: "2026-08-17T00:00:00.000Z",
+      previousEndAt: "2026-08-23T12:00:00.000Z",
+      periodDays: 7
+    });
+    expect(oneSided.comparison.metrics.recorded_expenses_paise).toMatchObject({
+      current: 500,
+      previous: null,
+      currentStatus: "available",
+      previousStatus: "unavailable"
+    });
+    expect(oneSided.comparison.currentBuckets.some((bucket) =>
+      bucket.recordedExpensesPaise === 500
+    )).toBe(true);
+    expect(oneSided.comparison.previousBuckets.every((bucket) =>
+      bucket.recordedExpensesPaise === null
+    )).toBe(true);
+    expect(oneSided.comparison.metrics.estimates_approved).toMatchObject({
+      current: 1,
+      previous: null,
+      currentStatus: "available",
+      previousStatus: "unavailable"
+    });
+    expect(oneSided.comparison.metrics.design_plans_approved).toMatchObject({
+      current: 1,
+      previous: 1,
+      currentStatus: "available",
+      previousStatus: "available"
+    });
+    expect(oneSided.comparison.metrics.execution_tasks_completed).toMatchObject({
+      current: 1,
+      previous: null,
+      currentStatus: "available",
+      previousStatus: "unavailable"
+    });
+    expect(oneSided.dataQuality.unavailableMetricKeys).toEqual(expect.arrayContaining([
+      "comparison.recorded_expenses_paise.previous",
+      "comparison.estimates_approved.previous",
+      "comparison.execution_tasks_completed.previous"
+    ]));
+
+    await DesignPlanResponseProofModel.deleteOne({ _id: "comparison-design-previous-proof" });
+    const missingDesignProof = await mongoSuperAdminDashboardOverview({
+      observedAt: OBSERVED_AT,
+      startAt: "2026-08-24T00:00:00.000Z",
+      endAt: OBSERVED_AT,
+      previousStartAt: "2026-08-17T00:00:00.000Z",
+      previousEndAt: "2026-08-23T12:00:00.000Z",
+      periodDays: 7
+    });
+    expect(missingDesignProof.comparison.metrics.design_plans_approved).toMatchObject({
+      current: 1,
+      previous: null,
+      currentStatus: "available",
+      previousStatus: "unavailable"
+    });
+
+    await ProjectFinanceBucketModel.collection.updateOne(
+      { _id: "comparison-expense:bucket" },
+      { $inc: { approvedSubtotalPaise: 1 } }
+    );
+    const corruptBaseline = await mongoSuperAdminDashboardOverview({
+      observedAt: OBSERVED_AT,
+      startAt: "2026-08-24T00:00:00.000Z",
+      endAt: OBSERVED_AT,
+      previousStartAt: "2026-08-17T00:00:00.000Z",
+      previousEndAt: "2026-08-23T12:00:00.000Z",
+      periodDays: 7
+    });
+    expect(corruptBaseline.comparison.metrics.recorded_expenses_paise).toMatchObject({
+      current: null,
+      previous: null,
+      currentStatus: "unavailable",
+      previousStatus: "unavailable"
+    });
+
+    await UserModel.collection.updateOne(
+      { _id: currentClient._id },
+      { $set: { role: "worker_other" } }
+    );
+    const historicalActorRoleChanged = await mongoSuperAdminDashboardOverview({
+      observedAt: OBSERVED_AT,
+      startAt: "2026-08-24T00:00:00.000Z",
+      endAt: OBSERVED_AT,
+      previousStartAt: "2026-08-17T00:00:00.000Z",
+      previousEndAt: "2026-08-23T12:00:00.000Z",
+      periodDays: 7
+    });
+    expect(historicalActorRoleChanged.comparison.metrics.estimates_approved).toMatchObject({
+      current: 1,
+      currentStatus: "available"
+    });
+
+    await EstimateClientReviewRoundModel.collection.updateOne(
+      { _id: currentRetryRound._id },
+      { $set: { decidedById: previousClient._id } }
+    );
+    const conflictingRetryActor = await mongoSuperAdminDashboardOverview({
+      observedAt: OBSERVED_AT,
+      startAt: "2026-08-24T00:00:00.000Z",
+      endAt: OBSERVED_AT,
+      previousStartAt: "2026-08-17T00:00:00.000Z",
+      previousEndAt: "2026-08-23T12:00:00.000Z",
+      periodDays: 7
+    });
+    expect(conflictingRetryActor.comparison.metrics.estimates_approved).toMatchObject({
+      current: null,
+      currentStatus: "unavailable"
+    });
+    expect(conflictingRetryActor.dataQuality.unavailableMetricKeys).toContain(
+      "comparison.estimates_approved.current"
+    );
+  });
+
+  it("counts one unambiguous legacy Estimate approval and suppresses incomplete legacy history", async () => {
+    await UserModel.create({
+      ...worker("dashboard-client", "Legacy Client"),
+      role: "client"
+    });
+    await approvedFinanceProject({
+      id: "legacy-comparison-approval",
+      subtotalRupees: 1_000,
+      directSpendPaise: 0
+    });
+
+    const input = {
+      observedAt: OBSERVED_AT,
+      startAt: "2026-08-24T00:00:00.000Z",
+      endAt: OBSERVED_AT,
+      previousStartAt: "2026-08-17T00:00:00.000Z",
+      previousEndAt: "2026-08-23T12:00:00.000Z",
+      periodDays: 7 as const
+    };
+    const validLegacy = await mongoSuperAdminDashboardOverview(input);
+    expect(validLegacy.comparison.metrics.estimates_approved).toMatchObject({
+      current: 1,
+      currentStatus: "available"
+    });
+
+    await EstimateModel.collection.updateOne(
+      { _id: "legacy-comparison-approval:estimate" },
+      {
+        $push: {
+          reviews: {
+            actorId: "dashboard-client",
+            action: "client_approved",
+            note: "Duplicate incomplete history",
+            occurredAt: new Date("2026-08-25T00:00:00.000Z")
+          }
+        }
+      }
+    );
+    const ambiguousLegacy = await mongoSuperAdminDashboardOverview(input);
+    expect(ambiguousLegacy.comparison.metrics.estimates_approved).toMatchObject({
+      current: null,
+      currentStatus: "unavailable"
+    });
+    expect(ambiguousLegacy.dataQuality.unavailableMetricKeys).toContain(
+      "comparison.estimates_approved.current"
+    );
+  });
+
+  it("reconciles legacy execution source keys and pre-handoff Client response governance", async () => {
+    await approvedProcurementProject({
+      id: "legacy-execution-source",
+      lineAmountRupees: 1_000,
+      postedSpendPaise: 0,
+      taskProgress: 0
+    });
+    await EstimateModel.collection.updateOne(
+      { _id: "legacy-execution-source:estimate" },
+      { $unset: { "lineItems.0.id": "" } }
+    );
+    await ProjectWorkflowTaskModel.create({
+      ...executionTask("legacy-execution-source:completed", "legacy-execution-source", null),
+      sourceSectionId: "EL",
+      sourceLineItemKey: "legacy-estimate-line:legacy-execution-source:estimate:1:0",
+      status: "completed",
+      progress: 100,
+      completedAt: new Date("2026-08-29T10:00:00.000Z")
+    });
+
+    await LeadModel.create({
+      _id: "pre-handoff:lead",
+      projectId: null,
+      ownerId: "dashboard-owner",
+      clientName: "Pre-handoff Client",
+      clientEmail: "pre-handoff@example.test",
+      clientMobile: "9000000000",
+      projectName: "Pre-handoff project",
+      location: "Pune",
+      propertyType: "apartment",
+      source: "dashboard-test",
+      stage: "estimate_sent",
+      nextAction: "Client review",
+      nextActionAt: new Date("2026-09-30T00:00:00.000Z")
+    });
+    await EstimateModel.create({
+      _id: "pre-handoff:estimate",
+      leadId: "pre-handoff:lead",
+      projectId: null,
+      ownerId: "dashboard-owner",
+      version: 1,
+      status: "sent_to_client",
+      propertyType: "apartment",
+      rooms: [],
+      scopes: [],
+      lineItems: [],
+      subtotal: 0,
+      gst: 0,
+      total: 0,
+      approvalRequired: false,
+      designPlanStatus: null,
+      designPlanVersion: 0
+    });
+    await EstimateClientReviewRoundModel.collection.insertOne({
+      ...reviewRound({
+        id: "pre-handoff:round",
+        projectId: "pre-handoff",
+        estimateVersion: 1,
+        sendGeneration: 1,
+        status: "pending",
+        decision: null
+      }),
+      projectId: null
+    });
+
+    const overview = await mongoSuperAdminDashboardOverview({
+      observedAt: OBSERVED_AT,
+      startAt: PERIOD_START_AT,
+      endAt: PERIOD_END_AT,
+      periodDays: 7
+    });
+    expect(overview.execution).toMatchObject({
+      total: 1,
+      completed: 1,
+      completedInPeriod: 1
+    });
+    expect(overview.comparison.metrics.execution_tasks_completed).toMatchObject({
+      current: 1,
+      currentStatus: "available"
+    });
+    expect(overview.governance.pendingClientResponses).toBe(1);
+    expect(overview.dataQuality.unavailableMetricKeys).not.toContain(
+      "governance.pendingClientResponses"
+    );
+  });
+
   it("uses scalar lookup summaries before the project facet and produces execution stats", async () => {
     await Promise.all([
       LeadModel.createIndexes(),
@@ -613,7 +1256,11 @@ describe("Super Admin dashboard Mongo pre-pagination filters", () => {
     });
     await UserModel.create(worker("parity-worker", "Parity Worker"));
     await ProjectWorkflowTaskModel.create(
-      executionTask("parity-asymmetric:execution-task", "parity-asymmetric", "parity-worker")
+      {
+        ...executionTask("parity-asymmetric:execution-task", "parity-asymmetric", "parity-worker"),
+        sourceSectionId: "EL",
+        sourceLineItemKey: "parity-asymmetric:line"
+      }
     );
     const seedLead = structuredClone(demoSeedData.leads[0]!);
     const seedTask = structuredClone(demoSeedData.tasks[0]!);
@@ -719,17 +1366,30 @@ describe("Super Admin dashboard Mongo pre-pagination filters", () => {
 
   it("aggregates full-population risk and workforce facts while bounding top risk rows", async () => {
     await Promise.all([
-      ProjectModel.create([
-        project("project-a-clear", "A clear project", "2026-09-30T00:00:00.000Z"),
-        project("project-z-risk", "Z risk project", "2026-08-20T00:00:00.000Z")
-      ]),
+      ProjectModel.create(
+        project("project-a-clear", "A clear project", "2026-09-30T00:00:00.000Z")
+      ),
       UserModel.create([
         worker("worker-a-unassigned", "A Unassigned"),
         worker("worker-z-assigned", "Z Assigned")
       ])
     ]);
+    await approvedProcurementProject({
+      id: "project-z-risk",
+      lineAmountRupees: 1_000,
+      postedSpendPaise: 0,
+      taskProgress: 0
+    });
+    await ProjectModel.collection.updateOne(
+      { _id: "project-z-risk" },
+      { $set: { name: "Z risk project", plannedEndAt: new Date("2026-08-20T00:00:00.000Z") } }
+    );
     await ProjectWorkflowTaskModel.create([
-      executionTask("task-worker-z", "project-z-risk", "worker-z-assigned"),
+      {
+        ...executionTask("task-worker-z", "project-z-risk", "worker-z-assigned"),
+        sourceSectionId: "EL",
+        sourceLineItemKey: "project-z-risk:line"
+      },
       executionTask("task-orphan", "missing-project", "worker-z-assigned")
     ]);
 
@@ -1078,14 +1738,6 @@ describe("Super Admin dashboard Mongo pre-pagination filters", () => {
         "projects.atRisk", "risk.projectDistribution",
         "risk.factorDistribution", "risk.topProjects"
       ]
-    },
-    {
-      source: "projectTrend",
-      expectedMetricKeys: ["trends.projectsCreated", "trends.projectsCompleted"]
-    },
-    {
-      source: "approvalTrend",
-      expectedMetricKeys: ["trends.estimatesApproved", "trends.designPlansApproved"]
     },
     {
       source: "lineage",
@@ -1601,5 +2253,177 @@ describe("Super Admin dashboard Mongo pre-pagination filters", () => {
     expect(rowById.get("kpi-unavailable")?.kpi).toEqual({
       availability: "unavailable", scoreBps: null, eligibleComponentCount: 0
     });
+  });
+});
+
+describe("Super Admin dashboard Mongo one-year period", () => {
+  it("includes records older than 90 days in 365-day totals and compares the prior 365 days", async () => {
+    const annualClient = (id: string, createdAt: string) => ({
+      ...worker(id, id),
+      role: "client" as const,
+      createdAt: new Date(createdAt),
+      updatedAt: new Date(createdAt)
+    });
+    const recentClient = annualClient("annual-client-recent", "2026-08-20T08:00:00.000Z");
+    await UserModel.create([
+      recentClient,
+      annualClient("annual-client-older", "2026-02-01T08:00:00.000Z"),
+      annualClient("annual-client-previous", "2025-01-15T08:00:00.000Z"),
+      annualClient("annual-client-outside", "2024-06-01T08:00:00.000Z")
+    ]);
+
+    await ProjectModel.create([
+      { ...project("annual-recent", "Recent", "2026-12-31T00:00:00.000Z"), createdAt: new Date("2026-08-25T09:00:00.000Z") },
+      {
+        ...project("annual-older-completed", "Older completed", "2026-12-31T00:00:00.000Z"),
+        status: "completed" as const,
+        createdAt: new Date("2026-03-01T09:00:00.000Z"),
+        actualEndAt: new Date("2026-04-10T09:00:00.000Z")
+      },
+      { ...project("annual-older", "Older", "2026-12-31T00:00:00.000Z"), createdAt: new Date("2025-12-01T09:00:00.000Z") },
+      {
+        ...project("annual-previous-completed", "Previous completed", "2026-12-31T00:00:00.000Z"),
+        status: "completed" as const,
+        createdAt: new Date("2025-06-15T09:00:00.000Z"),
+        actualEndAt: new Date("2025-07-20T09:00:00.000Z")
+      },
+      { ...project("annual-outside", "Outside", "2026-12-31T00:00:00.000Z"), createdAt: new Date("2024-07-01T09:00:00.000Z") }
+    ]);
+
+    // Two finance projects (created 2026-08-01) with unequal ledgers across both 365-day windows.
+    for (const [id, subtotalRupees] of [["annual-finance-a", 1_000], ["annual-finance-b", 4_000]] as const) {
+      await approvedFinanceProject({ id, subtotalRupees, directSpendPaise: 0 });
+      await EstimateModel.collection.updateOne(
+        { _id: `${id}:estimate` },
+        {
+          $set: {
+            clientDecisionAt: new Date("2026-08-02T10:00:00.000Z"),
+            reviews: [{ actorId: recentClient._id, action: "client_approved", note: "Approved", occurredAt: new Date("2026-08-02T10:00:00.000Z") }],
+            designPlanStatus: "approved",
+            designPlanVersion: 1,
+            designPlanApprovedAt: new Date("2026-08-03T10:00:00.000Z"),
+            designPlanApprovedById: recentClient._id,
+            designPlanApprovalSource: "client_portal"
+          }
+        }
+      );
+      await ProjectFinanceBucketModel.collection.updateOne(
+        { _id: `${id}:bucket` },
+        {
+          $set: {
+            estimateReviewRoundId: null,
+            designPlanVersion: 1,
+            status: "open",
+            openedAt: new Date("2026-08-03T10:00:00.000Z"),
+            openedById: recentClient._id
+          }
+        }
+      );
+    }
+    const ledger = (id: string, projectId: string, amountPaise: number, incurredAt: string) => ({
+      _id: id,
+      bucketId: `${projectId}:bucket`,
+      projectId,
+      type: "direct_spend" as const,
+      expenseClass: "other" as const,
+      category: "Annual expense",
+      amountPaise,
+      incurredAt: new Date(incurredAt),
+      description: "Annual comparison expense",
+      idempotencyKey: `${id}:key`,
+      status: "posted" as const,
+      version: 1,
+      createdById: "dashboard-owner"
+    });
+    await FinanceLedgerEntryModel.create([
+      ledger("annual-ledger-a-recent", "annual-finance-a", 500, "2026-08-27T10:00:00.000Z"),
+      ledger("annual-ledger-a-older", "annual-finance-a", 1_200, "2025-10-10T10:00:00.000Z"),
+      ledger("annual-ledger-a-previous", "annual-finance-a", 300, "2025-02-02T10:00:00.000Z"),
+      ledger("annual-ledger-b-older", "annual-finance-b", 7_000, "2026-01-05T10:00:00.000Z"),
+      ledger("annual-ledger-b-previous", "annual-finance-b", 900, "2024-12-12T10:00:00.000Z"),
+      ledger("annual-ledger-b-outside", "annual-finance-b", 50, "2024-06-01T10:00:00.000Z")
+    ]);
+
+    const completedTask = (id: string, projectId: string, completedAt: string) => ({
+      ...executionTask(id, projectId, null),
+      kind: "site_execution" as const,
+      assigneeRole: "site_manager" as const,
+      sourceSectionId: null,
+      sourceLineItemKey: null,
+      status: "completed" as const,
+      progress: 100,
+      completedAt: new Date(completedAt)
+    });
+    await ProjectWorkflowTaskModel.create([
+      completedTask("annual-task-recent", "annual-finance-a", "2026-08-28T10:00:00.000Z"),
+      completedTask("annual-task-older", "annual-finance-b", "2025-11-11T10:00:00.000Z"),
+      completedTask("annual-task-previous", "annual-finance-a", "2025-03-03T10:00:00.000Z")
+    ]);
+
+    const yearStartedAt = performance.now();
+    const year = await mongoSuperAdminDashboardOverview({
+      observedAt: OBSERVED_AT,
+      startAt: "2025-08-31T00:00:00.000Z",
+      endAt: OBSERVED_AT,
+      previousStartAt: "2024-08-31T00:00:00.000Z",
+      previousEndAt: "2025-08-30T12:00:00.000Z",
+      periodDays: 365
+    });
+    const yearMs = performance.now() - yearStartedAt;
+    const quarterStartedAt = performance.now();
+    const quarter = await mongoSuperAdminDashboardOverview({
+      observedAt: OBSERVED_AT,
+      startAt: "2026-06-02T00:00:00.000Z",
+      endAt: OBSERVED_AT,
+      previousStartAt: "2026-03-04T00:00:00.000Z",
+      previousEndAt: "2026-06-01T12:00:00.000Z",
+      periodDays: 90
+    });
+    const quarterMs = performance.now() - quarterStartedAt;
+    console.info(
+      `[dashboard-timing] mongo overview periodDays=365: ${yearMs.toFixed(1)}ms; periodDays=90: ${quarterMs.toFixed(1)}ms`
+    );
+
+    expect(year.comparison.window).toMatchObject({
+      current: { days: 365, startAt: "2025-08-31T00:00:00.000Z" },
+      previous: { days: 365, startAt: "2024-08-31T00:00:00.000Z", endAt: "2025-08-30T12:00:00.000Z" }
+    });
+    expect(year.comparison.metrics).toMatchObject({
+      projects_created: { current: 5, previous: 1 },
+      clients_created: { current: 2, previous: 1 },
+      projects_completed: { current: 1, previous: 1 },
+      execution_tasks_completed: { current: 2, previous: 1 },
+      recorded_expenses_paise: {
+        current: 8_700,
+        previous: 1_200,
+        currentStatus: "available",
+        previousStatus: "available",
+        delta: 7_500
+      }
+    });
+    expect(year.comparison.currentBuckets).toHaveLength(365);
+    expect(year.comparison.previousBuckets).toHaveLength(365);
+    expect(year.comparison.currentBuckets[0]?.date).toBe("2025-08-31");
+    expect(year.comparison.currentBuckets.at(-1)?.date).toBe("2026-08-30");
+    expect(year.comparison.previousBuckets[0]?.date).toBe("2024-08-31");
+    expect(year.comparison.previousBuckets.at(-1)?.date).toBe("2025-08-30");
+    const bucketTotal = (buckets: typeof year.comparison.currentBuckets) =>
+      buckets.reduce((total, bucket) => total + (bucket.recordedExpensesPaise ?? 0), 0);
+    expect(bucketTotal(year.comparison.currentBuckets)).toBe(8_700);
+    expect(bucketTotal(year.comparison.previousBuckets)).toBe(1_200);
+    expect(year.comparison.currentBuckets.find((bucket) => bucket.date === "2025-10-10")?.recordedExpensesPaise)
+      .toBe(1_200);
+    expect(year.comparison.currentBuckets.find((bucket) => bucket.date === "2026-01-05")?.recordedExpensesPaise)
+      .toBe(7_000);
+
+    // The 90-day window must exclude the older records that the 365-day window includes.
+    expect(quarter.comparison.metrics).toMatchObject({
+      projects_created: { current: 3, previous: 0 },
+      clients_created: { current: 1, previous: 0 },
+      projects_completed: { current: 0, previous: 1 },
+      execution_tasks_completed: { current: 1, previous: 0 },
+      recorded_expenses_paise: { current: 500, previous: 0 }
+    });
+    expect(quarter.comparison.currentBuckets).toHaveLength(90);
   });
 });

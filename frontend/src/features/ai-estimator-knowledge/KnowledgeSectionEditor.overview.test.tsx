@@ -1,11 +1,14 @@
-import { render, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   KnowledgePrimaryUomEditor,
   KnowledgeSectionEditor
 } from "./KnowledgeSectionEditor";
+import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import type {
   KnowledgeJsonObject,
   KnowledgeMaster,
@@ -56,6 +59,23 @@ const masters = {
   surfaces: [surface]
 } as const;
 
+function renderWithQueryClient(element: ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false }
+    }
+  });
+  queryClient.setQueryData(
+    [...knowledgeQueryKeys.subBasketLists("basket-1"), "catalog"],
+    {
+      items: [],
+      pagination: { limit: 100, offset: 0, total: 0, hasMore: false }
+    }
+  );
+  return render(<QueryClientProvider client={queryClient}>{element}</QueryClientProvider>);
+}
+
 describe("knowledge Overview and primary UOM editors", () => {
   it("omits every legacy Overview control without changing the compatibility payload", () => {
     const payload: KnowledgeJsonObject = {
@@ -69,7 +89,7 @@ describe("knowledge Overview and primary UOM editors", () => {
     const onChange = vi.fn();
     const onDirty = vi.fn();
 
-    render(
+    renderWithQueryClient(
       <KnowledgeSectionEditor
         sectionKey="overview"
         payload={payload}
@@ -108,7 +128,8 @@ describe("knowledge Overview and primary UOM editors", () => {
     });
   });
 
-  it("retains structured description fields outside Overview", () => {
+  it("retains structured description fields outside Overview", async () => {
+    const user = userEvent.setup();
     const commonProps = {
       masters,
       relationshipBaskets: [],
@@ -123,7 +144,7 @@ describe("knowledge Overview and primary UOM editors", () => {
       onQuickAdd: () => undefined
     } as const;
 
-    render(
+    renderWithQueryClient(
       <>
         <KnowledgeSectionEditor
           {...commonProps}
@@ -180,11 +201,13 @@ describe("knowledge Overview and primary UOM editors", () => {
     expect(executionEditor).not.toBeNull();
     expect(advancedEditor).not.toBeNull();
 
-    expect(within(pricingEditor as HTMLElement).getByRole("textbox", { name: "Brief description" }))
+    await user.click(within(pricingEditor as HTMLElement).getByRole("button", { name: "Edit Specification 1: Premium" }));
+    const specificationEditor = screen.getByRole("dialog", { name: "Edit Specification" });
+    expect(within(specificationEditor).getByRole("textbox", { name: "Brief description" }))
       .toHaveValue("Specification detail");
-    expect(within(pricingEditor as HTMLElement).getByRole("combobox", { name: "Brand name" }))
+    expect(within(specificationEditor).getByRole("combobox", { name: "Brand name" }))
       .toHaveValue("brand-1");
-    expect(within(pricingEditor as HTMLElement).queryByRole("textbox", { name: "Description" }))
+    expect(within(specificationEditor).queryByRole("textbox", { name: "Description" }))
       .not.toBeInTheDocument();
     expect(within(recommendationsEditor as HTMLElement).getByRole("textbox", { name: "Reason" })).toHaveValue("Recommendation reason");
     expect(within(executionEditor as HTMLElement).getByRole("textbox", { name: "Description" })).toHaveValue("Execution detail");
@@ -209,7 +232,7 @@ describe("knowledge Overview and primary UOM editors", () => {
     const onChange = vi.fn();
     const onDirty = vi.fn();
 
-    render(
+    renderWithQueryClient(
       <KnowledgePrimaryUomEditor
         payload={payload}
         masters={masters}
@@ -252,7 +275,7 @@ describe("knowledge Overview and primary UOM editors", () => {
       select(master("uom-created-id", "uoms", "Created unit"));
     });
 
-    render(
+    renderWithQueryClient(
       <KnowledgePrimaryUomEditor
         payload={payload}
         masters={masters}
@@ -281,7 +304,7 @@ describe("knowledge Overview and primary UOM editors", () => {
     const onDirty = vi.fn();
     const onQuickAdd = vi.fn();
 
-    render(
+    renderWithQueryClient(
       <KnowledgePrimaryUomEditor
         payload={{ uomId: retiredUnit.id, description: "Archived overview" }}
         masters={masters}
@@ -304,5 +327,59 @@ describe("knowledge Overview and primary UOM editors", () => {
     expect(onChange).not.toHaveBeenCalled();
     expect(onDirty).not.toHaveBeenCalled();
     expect(onQuickAdd).not.toHaveBeenCalled();
+  });
+});
+
+describe("recommendation Sub-Basket catalog validation", () => {
+  const wholeSubBasketRule = {
+    id: "rule-1",
+    trigger: "removed",
+    action: "remove",
+    requirement: "must",
+    targetKind: "sub_basket",
+    targetType: null,
+    targetBasketId: "basket-1",
+    targetSubBasketId: "sub-1",
+    targetMainLineId: null,
+    reason: "False ceiling lights depend on the ceiling.",
+    active: true
+  } as const;
+
+  function renderRecommendations(options: { active?: boolean; catalogState?: { status: "loading" | "ready" | "error"; refreshing?: boolean; refreshErrorMessage?: string } } = {}) {
+    const onValidationChange = vi.fn();
+    renderWithQueryClient(<KnowledgeSectionEditor
+      sectionKey="recommendations"
+      payload={{ budgetAlterations: [{ ...wholeSubBasketRule, active: options.active ?? true }] }}
+      masters={masters}
+      relationshipBaskets={[]}
+      relationshipItems={[]}
+      currentMainLineId="source"
+      relationshipCatalogState={options.catalogState}
+      readOnly={false}
+      canQuickAdd={false}
+      resetKey="recommendations-empty-sub-basket"
+      onChange={() => undefined}
+      onDirty={() => undefined}
+      onValidationChange={onValidationChange}
+      onQuickAdd={() => undefined}
+    />);
+    return onValidationChange;
+  }
+
+  it("blocks save when an active Whole Sub-Basket is authoritatively empty", async () => {
+    const onValidationChange = renderRecommendations({ catalogState: { status: "ready" } });
+    expect(screen.getByRole("alert")).toHaveTextContent("Add at least one available sub-item");
+    await waitFor(() => expect(onValidationChange).toHaveBeenLastCalledWith(false));
+  });
+
+  it.each([
+    { label: "disabled", active: false, catalogState: { status: "ready" as const } },
+    { label: "unknown", active: true, catalogState: undefined },
+    { label: "refreshing", active: true, catalogState: { status: "ready" as const, refreshing: true } },
+    { label: "failed refresh", active: true, catalogState: { status: "ready" as const, refreshErrorMessage: "Offline" } }
+  ])("does not infer an empty-target error for a $label catalog", async ({ active, catalogState }) => {
+    const onValidationChange = renderRecommendations({ active, catalogState });
+    expect(screen.queryByText(/Add at least one available sub-item/u)).not.toBeInTheDocument();
+    await waitFor(() => expect(onValidationChange).toHaveBeenLastCalledWith(true));
   });
 });

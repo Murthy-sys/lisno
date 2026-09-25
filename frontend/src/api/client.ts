@@ -238,6 +238,18 @@ export const apiClient = {
   delete<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> {
     return request<T>(path, { ...options, method: "DELETE", body });
   },
+  async putMultipart<T>(path: string, body: FormData): Promise<T> {
+    const finish = beginApiRequest();
+    try {
+      const requestToken = tokenStorage.get();
+      const response = await fetchApi(path, {
+        method: "PUT", headers: buildHeaders(undefined, false, requestToken), body
+      }, requestToken);
+      return ((await response.json()) as ApiResponse<T>).data;
+    } finally {
+      finish();
+    }
+  },
   async postMultipart<T>(path: string, body: FormData, { showGlobalLoader = true }: LoadingOptions = {}): Promise<T> {
     const finish = showGlobalLoader ? beginApiRequest() : () => {};
     try {

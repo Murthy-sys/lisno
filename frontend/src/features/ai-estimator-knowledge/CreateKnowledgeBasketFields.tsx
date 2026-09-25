@@ -7,14 +7,16 @@ import { InlineMessage } from "../../components/ui/InlineMessage";
 import { createKnowledgeBasket, listKnowledgeBaskets } from "./knowledgeApi";
 import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
+import { requiresRelatedItemReconciliation } from "./knowledgeRelatedItemCreation";
 import type { KnowledgeBasket } from "./knowledgeTypes";
 
 export const ADD_MAIN_BASKET = "add-main-basket";
 
-export function CreateKnowledgeBasketFields({ onCreated, onCancel, onBusyChange }: {
+export function CreateKnowledgeBasketFields({ onCreated, onCancel, onBusyChange, onRefreshError }: {
   onCreated: (basket: KnowledgeBasket, notice: string) => void;
   onCancel: () => void;
   onBusyChange?: (busy: boolean) => void;
+  onRefreshError?: (message: string, basketId: string) => void;
 }) {
   const id = useId();
   const queryClient = useQueryClient();
@@ -52,10 +54,14 @@ export function CreateKnowledgeBasketFields({ onCreated, onCancel, onBusyChange 
     mutationFn: (requestedName: string) => createKnowledgeBasket({ name: requestedName }),
     onSuccess: async (basket) => {
       if (mounted.current) onCreated(basket, `Main Basket “${basket.name}” was added and selected.`);
-      await queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketLists() });
+      try {
+        await queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketLists() }, { throwOnError: true });
+      } catch {
+        onRefreshError?.("The Main Basket is saved, but the basket list could not refresh. Retry the catalog refresh before making further changes.", basket.id);
+      }
     },
     // Re-read the catalog after a lost response before allowing another POST.
-    onError: async (_error, requestedName) => { await reconcile(requestedName); },
+    onError: async (error, requestedName) => { if (requiresRelatedItemReconciliation(error)) await reconcile(requestedName); },
     onSettled: () => { submissionLocked.current = false; }
   });
   const busy = createBasket.isPending || recovery.kind === "checking";
@@ -63,8 +69,7 @@ export function CreateKnowledgeBasketFields({ onCreated, onCancel, onBusyChange 
     onBusyChange?.(busy);
     return () => onBusyChange?.(false);
   }, [busy, onBusyChange]);
-  const retryBlocked = (recovery.kind === "checking" || recovery.kind === "unresolved")
-    && normalizeName(recovery.requestedName) === normalizeName(name);
+  const retryBlocked = recovery.kind === "checking" || recovery.kind === "unresolved";
   function submit() {
     const requestedName = name.trim();
     if (!requestedName || busy || retryBlocked || submissionLocked.current) return;
@@ -83,7 +88,7 @@ export function CreateKnowledgeBasketFields({ onCreated, onCancel, onBusyChange 
       No matching Main Basket was found after checking the basket list. You can try adding it again.
     </InlineMessage> : null}
     <Field id={`${id}-name`} label="New Main Basket name" required error={createBasket.error instanceof ApiError ? createBasket.error.fields?.name : undefined}>
-      {(props) => <Input {...props} autoFocus maxLength={240} value={name} disabled={busy}
+      {(props) => <Input {...props} autoFocus maxLength={240} value={name} disabled={busy || retryBlocked}
         onChange={(event) => { setName(event.target.value); createBasket.reset(); }}
         onKeyDown={(event) => {
           if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); submit(); }
@@ -91,7 +96,7 @@ export function CreateKnowledgeBasketFields({ onCreated, onCancel, onBusyChange 
         }} />}
     </Field>
     <div className="knowledge-dialog-actions">
-      <Button type="button" variant="quiet" disabled={busy} onClick={onCancel}>Cancel new basket</Button>
+      <Button type="button" variant="destructive-outline" disabled={busy} onClick={onCancel}>Cancel new basket</Button>
       <Button type="button" busy={busy} disabled={!name.trim() || busy || retryBlocked} onClick={submit}>Save main basket</Button>
     </div>
   </div>;

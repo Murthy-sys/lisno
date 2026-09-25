@@ -65,6 +65,87 @@ describe("KnowledgeModeSurfacePanel", () => {
     expect(screen.queryByRole("list", { name: "Selected surface details" })).not.toBeInTheDocument();
   });
 
+  it("keeps the default presentation free of Overview table actions even when an editor is supplied", () => {
+    renderPanel({ onEditSurface: vi.fn() });
+
+    expect(screen.getByRole("list", { name: "Selected surface details" })).toBeVisible();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Edit reusable surface/u })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Remove .* from Main Line/u })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create Surface" })).not.toBeInTheDocument();
+  });
+
+  it("shows retained Overview rows in selection order and only edits known non-archived reusable surfaces", async () => {
+    const user = userEvent.setup();
+    const retired = { ...floorSurface, status: "inactive" as const };
+    const archived = { ...surface("surface-archived", "Archived ceiling"), status: "archived" as const };
+    const onEditSurface = vi.fn();
+    const { props } = renderPanel({
+      presentation: "overview",
+      selectedIds: [retired.id, "surface-unknown", archived.id, wallSurface.id],
+      surfaces: [wallSurface, retired, archived],
+      onEditSurface
+    });
+
+    const table = screen.getByRole("table", { name: "Selected surface details" });
+    expect(within(table).getAllByRole("rowheader").map((cell) => cell.textContent)).toEqual([
+      "Floor surfaceInactive", "Unavailable value", "Archived ceilingArchived", "Wall surface"
+    ]);
+    expect(within(table).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell")[0]?.textContent)).toEqual(["1", "2", "3", "4"]);
+    expect(within(table).queryByRole("columnheader", { name: "Category" })).not.toBeInTheDocument();
+    expect(within(table).queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(within(table).queryByRole("button", { name: "Edit reusable surface Archived ceiling" })).not.toBeInTheDocument();
+    expect(within(table).queryByRole("button", { name: "Edit reusable surface Unavailable value" })).not.toBeInTheDocument();
+    expect(within(table).getByRole("button", { name: "Remove Unavailable value from Main Line" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Edit reusable surface Floor surface" }));
+    expect(onEditSurface).toHaveBeenCalledExactlyOnceWith(retired);
+    expect(props.onChange).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Remove Archived ceiling from Main Line" }));
+    expect(props.onChange).toHaveBeenCalledExactlyOnceWith([retired.id, "surface-unknown", wallSurface.id]);
+    expect(onEditSurface).toHaveBeenCalledOnce();
+  });
+
+  it("allows Overview unselection without reusable edit permission and keeps both create shortcuts on the same workflow", async () => {
+    const user = userEvent.setup();
+    const counterSurface = surface("surface-counter-returned", "Counter surface");
+    const { props } = renderPanel({
+      presentation: "overview",
+      onQuickAdd: vi.fn((select) => select(counterSurface))
+    });
+
+    expect(screen.queryByRole("button", { name: /Edit reusable surface/u })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add Surface" }));
+    await user.click(screen.getByRole("button", { name: "Create Surface" }));
+    expect(props.onQuickAdd).toHaveBeenCalledTimes(2);
+    expect(props.onChange).toHaveBeenNthCalledWith(1, [wallSurface.id, counterSurface.id]);
+    expect(props.onChange).toHaveBeenNthCalledWith(2, [wallSurface.id, counterSurface.id]);
+    await user.click(screen.getByRole("button", { name: "Remove Wall surface from Main Line" }));
+    expect(props.onChange).toHaveBeenLastCalledWith([]);
+  });
+
+  it.each(["loading", "error"] as const)("does not offer Overview row actions while the catalog is %s", (status) => {
+    renderPanel({
+      presentation: "overview",
+      catalogState: { status },
+      onEditSurface: vi.fn()
+    });
+
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Edit reusable surface/u })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Remove .* from Main Line/u })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add Surface" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Create Surface" })).toBeDisabled();
+  });
+
+  it("keeps the empty Overview table honest without adding categories or selection checkboxes", () => {
+    renderPanel({ presentation: "overview", selectedIds: [] });
+
+    expect(screen.getByRole("table", { name: "Selected surface details" })).toHaveTextContent("No surfaces selected.");
+    expect(screen.queryByRole("button", { name: /Remove .* from Main Line/u })).not.toBeInTheDocument();
+  });
+
 
   it("shows the approved labels and selects the returned quick-add stable ID", async () => {
     const user = userEvent.setup();

@@ -22,7 +22,13 @@ export const estimateDesignExtractionJobSchema = new Schema({
   claimId: { type: String, default: null, maxlength: 128 },
   failureCode: { type: String, default: null, maxlength: 64 },
   failureMessage: { type: String, default: null, maxlength: 500 },
-  workerResultId: { type: String, default: null, maxlength: 128 }
+  workerResultId: { type: String, default: null, maxlength: 128 },
+  workerResultClaimDigest: {
+    type: String,
+    default: null,
+    maxlength: 64,
+    match: /^[a-f0-9]{64}$/u
+  }
 }, { timestamps: true, versionKey: false });
 
 estimateDesignExtractionJobSchema.index({ uploadId: 1 }, { unique: true });

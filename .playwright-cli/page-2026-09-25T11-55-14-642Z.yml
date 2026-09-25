@@ -1,0 +1,43 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - link "Skip to main content" [ref=e4] [cursor=pointer]:
+      - /url: "#main-content"
+    - complementary "Application sidebar" [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - img "Lisno" [ref=e8]
+          - generic [ref=e9]: INTERIOR WORKSPACE
+        - navigation "Primary navigation" [ref=e10]:
+          - link "Project messages" [ref=e11] [cursor=pointer]:
+            - /url: /project-messages
+          - link "Dashboard" [ref=e16] [cursor=pointer]:
+            - /url: /admin/dashboard
+          - link "All Projects" [ref=e23] [cursor=pointer]:
+            - /url: /admin/projects
+          - link "Users" [ref=e28] [cursor=pointer]:
+            - /url: /admin/users
+          - link "Configuration" [ref=e33] [cursor=pointer]:
+            - /url: /admin/configuration/estimation
+          - link "Procurement" [ref=e39] [cursor=pointer]:
+            - /url: /admin/procurement
+          - link "Client responses" [ref=e45] [cursor=pointer]:
+            - /url: /admin/client-responses
+          - link "Design approvals" [ref=e50] [cursor=pointer]:
+            - /url: /admin/design-approvals
+          - link "Access requests" [ref=e58] [cursor=pointer]:
+            - /url: /admin/access-requests
+          - link "Finance" [ref=e63] [cursor=pointer]:
+            - /url: /finance
+    - banner "Workspace tools" [ref=e68]:
+      - generic [ref=e69]:
+        - button "Notifications, 1 unread" [ref=e70] [cursor=pointer]:
+          - generic [aria-hidden] [ref=e74]: "1"
+        - button "QA Administrator" [ref=e76] [cursor=pointer]:
+          - generic [aria-hidden] [ref=e77]: QA
+          - generic [ref=e78]:
+            - generic [ref=e79]: QA Administrator
+            - generic [ref=e80]: Super Admin
+    - main [ref=e83]:
+      - status [ref=e84]: Loading item workspace…
+  - status "Application announcements" [ref=e85]
+  - region "Notifications"

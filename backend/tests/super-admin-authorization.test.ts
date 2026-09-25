@@ -574,7 +574,7 @@ function createEstimationRouterServiceEntryHarness(
   });
   const router = family === "design"
     ? createEstimateDesignsRouter(authService, design, 1024 * 1024)
-    : createEstimatePlanReviewRouter(authService, plans);
+    : createEstimatePlanReviewRouter(authService, plans, design, 1024 * 1024);
   const app = express();
   app.use(express.json());
   app.use(
@@ -1434,7 +1434,7 @@ type TaskNineRequestCase = ExpectedHumanJwtOperation & {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   body?: unknown;
-  multipart?: { version?: string };
+  multipart?: { version?: string; idempotencyKey?: string };
   serviceMethod?: string;
   successStatus: 200 | 201 | 204;
   existingActor: readonly [string, Role];
@@ -1530,6 +1530,7 @@ const TASK_NINE_SERVICE_METHODS: Partial<
   "PUT /estimate-design-drawings/:drawingId/estimate-item": "estimateDesign.assignEstimateItem",
   "DELETE /estimate-design-drawings/:drawingId": "estimateDesign.removeDrawing",
   "POST /estimate-design-drawings/:drawingId/replacement": "estimateDesign.replaceDrawing",
+  "POST /estimate-plan-change-requests/:requestId/replacement-upload": "estimateDesign.uploadPlanRequestReplacement",
   "POST /estimates/:estimateId/design-drawings/submit": "estimateDesign.submitDrawings",
   "GET /client/estimates/:estimateId/plan-review": "estimatePlan.listClient",
   "GET /client/estimate-plan-pages/:pageId/thumbnail": "estimatePlan.pageImage",
@@ -1555,6 +1556,7 @@ const TASK_NINE_CREATED_KEYS = new Set<ExpectedHumanJwtOperation["key"]>([
   "POST /estimates/:estimateId/design-uploads",
   "POST /estimate-design-source-pages/:pageId/drawings",
   "POST /estimate-design-drawings/:drawingId/replacement",
+  "POST /estimate-plan-change-requests/:requestId/replacement-upload",
   "POST /client/estimate-plan-pages/:pageId/change-requests",
   "POST /leads",
   "POST /leads/:leadId/activities"
@@ -1624,6 +1626,8 @@ function requestCaseFor(
     ? {}
     : operation.key === "POST /estimate-design-drawings/:drawingId/replacement"
       ? { version: "1" }
+      : operation.key === "POST /estimate-plan-change-requests/:requestId/replacement-upload"
+        ? { version: "1", idempotencyKey: "replacement-route-key" }
       : undefined;
   return {
     ...operation,
@@ -1647,9 +1651,17 @@ function requestCaseFor(
 const ESTIMATE_DESIGN_CASES = EXPECTED_HUMAN_JWT_OPERATIONS
   .slice(39, 53)
   .map((operation) => requestCaseFor(operation, "design"));
-const ESTIMATE_PLAN_REVIEW_CASES = EXPECTED_HUMAN_JWT_OPERATIONS
-  .slice(53, 65)
-  .map((operation) => requestCaseFor(operation, "plan"));
+const ESTIMATE_PLAN_REVIEW_CASES = [
+  ...EXPECTED_HUMAN_JWT_OPERATIONS.slice(53, 65),
+  {
+    key: "POST /estimate-plan-change-requests/:requestId/replacement-upload",
+    permission: "estimation.drawing.replace",
+    scope: { kind: "non_project", namespace: "estimation_ownership" },
+    operationClass: "personal",
+    superAdminBehavior: "deny_personal",
+    availability: "baseline"
+  } as const
+].map((operation) => requestCaseFor(operation, "plan"));
 const LEAD_CASES = EXPECTED_HUMAN_JWT_OPERATIONS
   .slice(65, 71)
   .map((operation) => requestCaseFor(operation, "lead"));
@@ -1685,6 +1697,9 @@ function taskNineRequest(
     });
     if (entry.multipart.version) {
       pending.field("version", entry.multipart.version);
+    }
+    if (entry.multipart.idempotencyKey) {
+      pending.field("idempotencyKey", entry.multipart.idempotencyKey);
     }
     return pending;
   }

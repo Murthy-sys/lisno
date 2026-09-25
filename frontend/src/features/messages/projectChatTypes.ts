@@ -64,7 +64,14 @@ export interface ChatMembershipSource {
   kind: "client" | "super_admin" | "project_assignment" | "estimate_assignment" | "workflow_assignment" | "access_grant" | "selection";
   id: string;
 }
+export interface ChatRemovedParticipant extends ChatPerson {
+  removalVersion: number;
+  canRestore: boolean;
+}
 export interface ChatParticipant extends ChatPerson {
+  removalVersion?: number;
+  canRemove?: boolean;
+  removalBlockedReason?: string;
   sources: ChatMembershipSource[];
   selection: { id: string; version: number } | null;
 }
@@ -73,7 +80,15 @@ export interface ChatMention {
   start: number;
   end: number;
 }
+export interface ChatActionType {
+  id: string; name: string; priority: "important" | "critical"; builtIn: boolean;
+}
+export interface ChatActionMetadata {
+  typeId: string; typeName: string; originalDueDate: string; dueDate: string;
+}
+export interface ChatActionTypes { items: ChatActionType[]; canCreate: boolean }
 export interface ChatIssueHistory {
+  actionMetadata?: ChatActionMetadata | null;
   id: string;
   action: ChatIssueAction;
   actor: ChatPerson;
@@ -100,7 +115,9 @@ export interface ChatMessage {
   responsible: (ChatPerson & { available: boolean }) | null;
   version: number;
   issueHistory: ChatIssueHistory[];
+  action?: ChatActionMetadata | null;
   capabilities: {
+    canReschedule?: boolean;
     canRaise: boolean;
     canResolve: boolean;
     canReopen: boolean;
@@ -115,13 +132,13 @@ export interface ChatCounts {
   unreadMentions: number;
 }
 export interface ChatSummary {
-  project: { id: string; name: string; status: string };
+  project: { id: string; name: string; status: string; nameVersion?: number };
   counts: ChatCounts;
   participantCount: number;
   cursor: string;
   lastReadSequence: number;
   latestMessageSequence: number;
-  capabilities: { canSend: boolean; canManageParticipants: boolean; canManageIssues: boolean };
+  capabilities: { canSend: boolean; canManageParticipants: boolean; canManageIssues: boolean; canRenameProject?: boolean };
   setupWarnings: string[];
 }
 export interface ChatConversation extends ChatSummary {
@@ -132,6 +149,7 @@ export interface ChatConversationPage {
   pagination: { limit: number; offset: number; total: number; hasMore: boolean };
 }
 export interface ChatParticipantPage {
+  removed?: ChatRemovedParticipant[];
   items: ChatParticipant[];
   setupWarnings: string[];
 }
@@ -154,6 +172,7 @@ export interface ChatMessageQuery {
   filter?: ChatFilter;
 }
 export interface ChatSendInput {
+  action?: { typeId: string; dueDate: string };
   body: string;
   attachmentIds?: string[];
   mentions: ChatMention[];
@@ -162,8 +181,9 @@ export interface ChatSendInput {
   responsibleUserId?: string | null;
   clientMessageId: string;
 }
-export type ChatIssueAction = "raise" | "escalate" | "resolve" | "reopen" | "lower" | "clear" | "assign";
+export type ChatIssueAction = "raise" | "escalate" | "resolve" | "reopen" | "lower" | "clear" | "assign" | "reschedule";
 export interface ChatIssueInput {
+  dueDate?: string;
   action: ChatIssueAction;
   expectedVersion: number;
   idempotencyKey: string;

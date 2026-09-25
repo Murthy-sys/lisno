@@ -365,54 +365,58 @@ export function KnowledgeModeConfigurationBuilder({
         </div>
       ) : null}
 
-      <fieldset className="knowledge-mode-configuration__mode-selector">
-        <legend>Mode</legend>
-        <div className="knowledge-mode-configuration__mode-options">
-          {KNOWLEDGE_MODE_OPTIONS.map((choice) => (
-            <label key={choice.modeKind}
-              className={`knowledge-mode-configuration__mode-choice knowledge-mode-configuration__mode-choice--${choice.modeKind}`}
-              data-selected={visibleModes[choice.modeKind]}>
-              <Checkbox
-                checked={visibleModes[choice.modeKind]}
-                aria-controls={`knowledge-mode-section-${choice.modeKind}`}
-                aria-describedby={visibleModes[choice.modeKind] ? `knowledge-mode-${choice.modeKind}-context` : undefined}
-                onChange={(event) => {
-                  const checked = event.target.checked;
-                  if (checked) showMode(choice.modeKind);
-                  else setVisibleModes((current) => ({ ...current, [choice.modeKind]: false }));
-                }}
-              />
-              {choice.modeKind === "pmc" ? <ClipboardCheck aria-hidden="true" /> : <HardHat aria-hidden="true" />}
-              <span>{choice.label}</span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
+      <div className="knowledge-mode-configuration__intro">
+        <fieldset className="knowledge-mode-configuration__mode-selector">
+          <legend>Mode</legend>
+          <div className="knowledge-mode-configuration__mode-options">
+            {KNOWLEDGE_MODE_OPTIONS.map((choice) => (
+              <label key={choice.modeKind}
+                className={`knowledge-mode-configuration__mode-choice knowledge-mode-configuration__mode-choice--${choice.modeKind}`}
+                data-selected={visibleModes[choice.modeKind]}>
+                <Checkbox
+                  checked={visibleModes[choice.modeKind]}
+                  aria-controls={`knowledge-mode-section-${choice.modeKind}`}
+                  aria-describedby={visibleModes[choice.modeKind] ? `knowledge-mode-${choice.modeKind}-context` : undefined}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    if (checked) showMode(choice.modeKind);
+                    else setVisibleModes((current) => ({ ...current, [choice.modeKind]: false }));
+                  }}
+                />
+                <span className="knowledge-mode-configuration__choice-glyph" aria-hidden="true">
+                  {choice.modeKind === "pmc" ? <ClipboardCheck /> : <HardHat />}
+                </span>
+                <span>{choice.label}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
 
-      <div className="knowledge-mode-configuration__shared" hidden={!visibleModes.pmc && !visibleModes.execution}
-        ref={(node) => {
-          if (node) fieldRefs.current.set("modeDescription", node);
-          else fieldRefs.current.delete("modeDescription");
-        }}
-      >
-        <h3 className="knowledge-mode-configuration__shared-title">Shared description</h3>
-        <KnowledgeModeDescriptionEditor
-          key={descriptionResetKey}
-          description={description}
-          pmc={partitioned.primary.pmc}
-          inHouse={inHouseConfiguration}
-          readOnly={readOnly}
-          validationAttempt={validationAttempt}
-          error={issueFor("modeDescription")}
-          onPendingChange={handlePendingDescriptionChange}
-          onPendingTextChange={onPendingDescriptionTextChange}
-          onSave={(text) => {
-            const modeDescription = text === generatedDescription ? null : text;
-            if (modeDescription === (payload.modeDescription ?? null)) return;
-            onDirty();
-            onChange({ ...payload, modeDescription });
+        <div className="knowledge-mode-configuration__shared" hidden={!visibleModes.pmc && !visibleModes.execution}
+          ref={(node) => {
+            if (node) fieldRefs.current.set("modeDescription", node);
+            else fieldRefs.current.delete("modeDescription");
           }}
-        />
+        >
+          <h3 className="knowledge-mode-configuration__shared-title">Shared description</h3>
+          <KnowledgeModeDescriptionEditor
+            key={descriptionResetKey}
+            description={description}
+            pmc={partitioned.primary.pmc}
+            inHouse={inHouseConfiguration}
+            readOnly={readOnly}
+            validationAttempt={validationAttempt}
+            error={issueFor("modeDescription")}
+            onPendingChange={handlePendingDescriptionChange}
+            onPendingTextChange={onPendingDescriptionTextChange}
+            onSave={(text) => {
+              const modeDescription = text === generatedDescription ? null : text;
+              if (modeDescription === (payload.modeDescription ?? null)) return;
+              onDirty();
+              onChange({ ...payload, modeDescription });
+            }}
+          />
+        </div>
       </div>
 
       <div className="knowledge-mode-configuration__sections">

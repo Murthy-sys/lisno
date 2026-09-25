@@ -9,6 +9,7 @@ const attachment = new Schema({
     preview: {type: new Schema({mimeType: {type: String, required: true}, byteSize: {type: Number, required: true, min: 1}, width: {type: Number, required: true, min: 1}, height: {type: Number, required: true, min: 1}}, {_id: false}), default: null}
 }, {_id: false});
 const attachmentSummary = new Schema({count: {type: Number, required: true, min: 1}, kind: {type: String, enum: attachmentKinds, required: true}, filename: {type: String, required: true, maxlength: 180}}, {_id: false});
+const actionMetadata = new Schema({ typeId: { type: String, required: true, immutable: true }, typeName: { type: String, required: true, maxlength: 60, immutable: true }, originalDueDate: { type: String, required: true, immutable: true }, dueDate: { type: String, required: true } }, { _id: false });
 const messageSchema = new Schema({
     _id: { type: String, required: true, immutable: true }, projectId: { type: String, required: true, immutable: true },
     author: { type: person, required: true, immutable: true }, body: { type: String, default: "", maxlength: 4000, immutable: true, validate: {validator: function(this: {attachments?: unknown[]}, value: string) { return Boolean(value?.trim().length || this.attachments?.length); }, message: "A message requires text or attachments."} },
@@ -18,6 +19,7 @@ const messageSchema = new Schema({
     replyTo: { type: new Schema({ id: { type: String, required: true }, author: { type: person, required: true }, body: { type: String, default: "", maxlength: 4000 }, attachmentSummary: {type: attachmentSummary} }, { _id: false }), default: null, immutable: true },
     priority: { type: String, enum: ["normal", "important", "critical"], required: true }, issueStatus: { type: String, enum: ["open", "resolved", null], default: null },
     raisedBy: { type: person, default: null }, responsible: { type: new Schema({ id: { type: String, required: true }, name: { type: String, required: true }, role: { type: String, enum: ROLE_CODES, required: true }, available: { type: Boolean, default: true } }, { _id: false }), default: null },
+    action: { type: actionMetadata, default: null },
     version: { type: Number, required: true, min: 1 }
 }, { versionKey: false });
 messageSchema.index({ projectId: 1, "author.id": 1, clientMessageId: 1 }, { unique: true });

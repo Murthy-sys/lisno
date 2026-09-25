@@ -6,11 +6,13 @@ import { ApiError } from "../../api/client";
 import type {
   PaginationInput,
   UserDirectoryItem,
-  UserDirectoryFilters
+  UserDirectoryFilters,
+  UserDirectorySummary
 } from "../../api/types";
 import { Button } from "../../components/ui/Button";
 import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field, Input, Select } from "../../components/ui/Field";
+import { MetricCard } from "../../components/ui/MetricCard";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
 import { StatusBadge } from "../../components/ui/StatusBadge";
@@ -31,10 +33,36 @@ const dateTime = new Intl.DateTimeFormat("en-GB", {
   timeZone: "UTC"
 });
 
+/**
+ * Table cells carry the compact date only; the ContextPanel keeps the
+ * full-precision `dateTime` formatter above.
+ */
+const dateOnly = new Intl.DateTimeFormat("en-GB", {
+  day: "2-digit",
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC"
+});
+
 function requestErrorMessage(error: unknown) {
   return error instanceof ApiError
     ? error.message
     : "We couldn't load the user directory.";
+}
+
+/**
+ * Presentation only. Never used as a key, a join value or an accessible name —
+ * the avatar that renders this is `aria-hidden`.
+ */
+function initialsOf(name: string) {
+  return name
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word.length > 0)
+    .slice(0, 2)
+    .map((word) => [...word][0] ?? "")
+    .join("")
+    .toUpperCase();
 }
 
 export function UserDirectoryPage() {
@@ -72,6 +100,12 @@ export function UserDirectoryPage() {
     (user) => user.id === selectedUser?.id
   );
   const pageData = usersQuery.data;
+  /**
+   * The contract types `summary` as required, but an older or partial response
+   * can still omit it at runtime. Widening to `| undefined` here keeps the
+   * guard below honest instead of trusting the declared type.
+   */
+  const directorySummary: UserDirectorySummary | undefined = pageData?.summary;
   const summaryUser = !usersQuery.isError && !usersQuery.isPlaceholderData
     ? pageData?.items.find((user) => user.id === summaryUserId)
     : undefined;
@@ -106,6 +140,15 @@ export function UserDirectoryPage() {
           ) : undefined
         }
       />
+
+      {directorySummary ? (
+        <div className="access-administration__metrics">
+          <MetricCard label="Total users" value={directorySummary.total} />
+          <MetricCard label="Active users" value={directorySummary.active} />
+          <MetricCard label="Inactive users" value={directorySummary.inactive} />
+          <MetricCard label="Different roles" value={directorySummary.roleCount} />
+        </div>
+      ) : null}
 
       <Surface
         as="section"
@@ -205,7 +248,7 @@ export function UserDirectoryPage() {
                   <th scope="col">Status</th>
                   <th scope="col">Created</th>
                   <th scope="col">Updated</th>
-                  <th scope="col"><span className="sr-only">Actions</span></th>
+                  <th scope="col">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -213,12 +256,19 @@ export function UserDirectoryPage() {
                   <tr key={user.id}>
                     <td>
                       <span className="access-administration__identity">
+                        <span className="access-administration__avatar" aria-hidden="true">
+                          {initialsOf(user.name)}
+                        </span>
                         <strong>{user.name}</strong>
                         <span>{user.email}</span>
                         {user.title ? <small>{user.title}</small> : null}
                       </span>
                     </td>
-                    <td>{ROLE_LABELS[user.role]}</td>
+                    <td>
+                      <span className="access-administration__role-chip">
+                        {ROLE_LABELS[user.role]}
+                      </span>
+                    </td>
                     <td>
                       <StatusBadge
                         tone={user.active ? "success" : "neutral"}
@@ -227,12 +277,12 @@ export function UserDirectoryPage() {
                     </td>
                     <td>
                       <time dateTime={user.createdAt}>
-                        {dateTime.format(new Date(user.createdAt))}
+                        {dateOnly.format(new Date(user.createdAt))}
                       </time>
                     </td>
                     <td>
                       <time dateTime={user.updatedAt}>
-                        {dateTime.format(new Date(user.updatedAt))}
+                        {dateOnly.format(new Date(user.updatedAt))}
                       </time>
                     </td>
                     <td>
@@ -268,6 +318,13 @@ export function UserDirectoryPage() {
                 pageData.pagination.total
               )} of {pageData.pagination.total}
             </p>
+            <span className="access-administration__page-indicator">
+              Page{" "}
+              {Math.floor(
+                pageData.pagination.offset /
+                  (pageData.pagination.limit || PAGE_SIZE)
+              ) + 1}
+            </span>
             <div>
               <Button
                 size="compact"

@@ -15,6 +15,7 @@ import type {
 
 const authState = vi.hoisted(() => ({
   role: "super_admin",
+  create: true,
   update: true,
   lifecycle: true
 }));
@@ -39,7 +40,9 @@ vi.mock("../../auth/authorization", () => ({
       ? authState.lifecycle
       : permission === "ai_estimator_knowledge.configuration.update"
         ? authState.update
-      : true
+      : permission === "ai_estimator_knowledge.configuration.create"
+        ? authState.create
+        : true
 }));
 
 vi.mock("./knowledgeApi", async (importOriginal) => {
@@ -112,9 +115,9 @@ function renderPage() {
 }
 
 async function openManagement(user: ReturnType<typeof userEvent.setup>) {
-  const trigger = await screen.findByRole("button", { name: "Manage main baskets" });
+  const trigger = await screen.findByRole("button", { name: "Manage baskets" });
   await user.click(trigger);
-  return screen.findByRole("dialog", { name: "Manage main baskets" });
+  return screen.findByRole("dialog", { name: "Manage baskets" });
 }
 
 async function openPermanentDelete(
@@ -135,6 +138,7 @@ async function openPermanentDelete(
 beforeEach(() => {
   vi.clearAllMocks();
   authState.role = "super_admin";
+  authState.create = true;
   authState.update = true;
   authState.lifecycle = true;
   vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({
@@ -191,9 +195,10 @@ describe("Super Admin permanent Main Basket deletion", () => {
   it("keeps the management action absent without lifecycle permission or the Super Admin role", async () => {
     authState.lifecycle = false;
     authState.update = false;
+    authState.create = false;
     const first = renderPage();
     expect(await screen.findByRole("heading", { name: "AI Estimator Knowledge Base" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Manage main baskets" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Manage baskets" })).not.toBeInTheDocument();
     first.unmount();
 
     authState.lifecycle = true;
@@ -201,7 +206,7 @@ describe("Super Admin permanent Main Basket deletion", () => {
     authState.role = "admin";
     renderPage();
     expect(await screen.findByRole("heading", { name: "AI Estimator Knowledge Base" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Manage main baskets" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Manage baskets" })).not.toBeInTheDocument();
   });
 
   it("lets an update-only Super Admin manage names without exposing permanent deletion", async () => {
@@ -311,6 +316,17 @@ describe("Super Admin permanent Main Basket deletion", () => {
     expect(await within(errorManagement).findByText(emptyBasket.name)).toBeVisible();
   });
 
+  it("blocks permanent Main Basket deletion while retained vendors reference it", async () => {
+    vi.mocked(knowledgeApi.getKnowledgeBasketDeletionImpact).mockResolvedValue({ ...eligibleImpact, vendorReferenceCount: 3 });
+    const user = userEvent.setup(); renderPage(); const dialog = await openPermanentDelete(user);
+    await within(dialog).findByText("Permanent deletion is blocked");
+    await user.type(within(dialog).getByRole("textbox", { name: "Type basket name to confirm" }), emptyBasket.name);
+    await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), "Remove duplicate");
+    expect(within(dialog).getByRole("button", { name: "Delete" })).toBeDisabled();
+    expect(within(dialog).getByText(/3 retained vendors/)).toBeVisible();
+    expect(knowledgeApi.permanentlyDeleteKnowledgeBasket).not.toHaveBeenCalled();
+  });
+
   it("names everything a deletion carries away instead of refusing it", async () => {
     const user = userEvent.setup();
     vi.mocked(knowledgeApi.getKnowledgeBasketDeletionImpact).mockResolvedValue({
@@ -396,8 +412,8 @@ describe("Super Admin permanent Main Basket deletion", () => {
       `Main basket “${emptyBasket.name}” was permanently deleted.`
     );
     await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "Manage main baskets" })).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Manage main baskets" })).toHaveFocus();
+      expect(screen.queryByRole("dialog", { name: "Manage baskets" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Manage baskets" })).toHaveFocus();
     });
   });
 

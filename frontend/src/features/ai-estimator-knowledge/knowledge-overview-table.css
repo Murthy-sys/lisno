@@ -1,0 +1,423 @@
+.knowledge-page.knowledge-page--item-workspace {
+  max-inline-size: none;
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section--overview .knowledge-overview.knowledge-overview--surface-table {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+}
+
+@container knowledge-overview (min-width: 48rem) {
+  .knowledge-page--item-workspace .knowledge-workspace-section--overview .knowledge-overview.knowledge-overview--surface-table {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 7fr);
+  }
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview.knowledge-overview--surface-table .ui-surface.knowledge-overview__configuration-card {
+  align-content: start;
+  padding: var(--space-2);
+  gap: var(--space-1);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview.knowledge-overview--surface-table .knowledge-section-heading {
+  align-items: start;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-block-end: var(--space-2);
+  border-block-end: 0;
+}
+
+.knowledge-overview--surface-table .knowledge-card-heading__identity {
+  flex: 1 1 14rem;
+}
+
+.knowledge-overview--surface-table .knowledge-mode-surfaces--overview {
+  min-inline-size: 0;
+  align-content: start;
+}
+
+.knowledge-overview--surface-table .knowledge-overview__configured-grid {
+  display: block;
+}
+
+.knowledge-page--item-workspace .knowledge-overview.knowledge-overview--surface-table .knowledge-overview__uom-control-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+
+.knowledge-overview-surfaces__header-actions {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  margin-inline-start: auto;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview--surface-table .knowledge-overview-surfaces__header-actions > .ui-button {
+  min-block-size: 44px;
+  min-inline-size: 0;
+  padding: var(--space-2) var(--space-3);
+  white-space: normal;
+}
+
+.knowledge-page--item-workspace .knowledge-overview--surface-table .knowledge-mode-surfaces__controls {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: end;
+  gap: var(--space-2);
+}
+
+.knowledge-page--item-workspace .knowledge-overview--surface-table .knowledge-mode-surfaces__controls > .knowledge-surface-multiselect {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  inline-size: auto;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview.knowledge-overview--surface-table :is(.knowledge-overview__quick-add, .knowledge-overview-surfaces__create, .knowledge-overview-surfaces__row-action) {
+  flex: 0 0 44px;
+  inline-size: 44px;
+  min-inline-size: 44px;
+  max-inline-size: 44px;
+  block-size: 44px;
+  min-block-size: 44px;
+  padding: 0;
+  margin: 0;
+  box-shadow: none;
+}
+
+.knowledge-overview--surface-table .knowledge-overview-surfaces__row-action .ui-button__icon svg {
+  inline-size: 19px;
+  block-size: 19px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview.knowledge-overview--surface-table :is(.knowledge-overview__quick-add, .knowledge-overview-surfaces__create, .knowledge-overview-surfaces__row-action):focus-visible {
+  outline: 2px solid var(--role-focus, var(--button-primary-bg));
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+.knowledge-overview--surface-table .knowledge-overview-surfaces__table {
+  inline-size: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  border-spacing: 0;
+  color: var(--role-ink, var(--color-text));
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.knowledge-overview-surfaces__number-column { inline-size: 2.25rem; }
+.knowledge-overview-surfaces__name-column { inline-size: 25%; }
+.knowledge-overview-surfaces__actions-column { inline-size: 104px; }
+
+.knowledge-overview-surfaces__table :is(th, td) {
+  padding: 10px 8px;
+  border-block-end: 1px solid var(--role-line, var(--color-border));
+  text-align: start;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-overview-surfaces__table thead th {
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview--surface-table .knowledge-overview-surfaces__table tbody th {
+  color: var(--role-ink, var(--color-text));
+  font-size: inherit;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.knowledge-overview-surfaces__table tbody tr:last-child > * {
+  border-block-end: 0;
+}
+
+.knowledge-overview-surfaces__number,
+.knowledge-overview-surfaces__description,
+.knowledge-overview-surfaces__empty {
+  color: var(--role-ink-muted, var(--color-text-muted));
+}
+
+.knowledge-overview-surfaces__description {
+  white-space: pre-wrap;
+}
+
+.knowledge-overview-surfaces__surface-status {
+  display: block;
+  margin-block-start: 2px;
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+.knowledge-overview-surfaces__row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0;
+}
+
+.knowledge-overview-surfaces__table .knowledge-overview-surfaces__empty {
+  padding-block: var(--space-5);
+  text-align: center;
+}
+
+@media (max-width: 600px) {
+  .knowledge-overview-surfaces__number-column { inline-size: 1.75rem; }
+  .knowledge-overview-surfaces__name-column { inline-size: 28%; }
+  .knowledge-overview-surfaces__actions-column { inline-size: 52px; }
+  .knowledge-overview-surfaces__table :is(th, td) { padding: 8px 4px; }
+  .knowledge-overview-surfaces__table thead th { font-size: 0.6875rem; }
+  .knowledge-overview-surfaces__row-actions { flex-direction: column; }
+  .knowledge-overview-surfaces__header-actions { justify-content: flex-start; margin-inline-start: 0; }
+}
+
+/* The shared phone heading becomes a column at 640px. Its desktop 14rem
+   identity flex-basis would then reserve height instead of width. */
+@media (max-width: 640px) {
+  .knowledge-overview--surface-table .knowledge-card-heading__identity {
+    flex: 0 1 auto;
+  }
+}
+
+@media (max-width: 600px) {
+  .knowledge-overview--surface-table .knowledge-overview-surfaces__actions-column {
+    inline-size: 60px;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview--surface-table .knowledge-overview-surfaces__table thead th {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: normal;
+    text-transform: none;
+  }
+
+  .knowledge-overview--surface-table .knowledge-overview-surfaces__table thead th:last-child {
+    white-space: nowrap;
+  }
+}
+
+/* Compact the workspace chrome and nested card spacing without shrinking controls. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-status {
+  min-block-size: calc(44px + 2 * var(--space-1) + 2px);
+  padding: var(--space-1) var(--space-3);
+  gap: var(--space-2) var(--space-4);
+}
+
+.knowledge-page.knowledge-page--item-workspace .knowledge-workspace-main {
+  gap: var(--space-2);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-section--overview {
+  margin-block-start: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-section-tabs-shell .knowledge-section-tabs {
+  border-block-end: 0;
+}
+
+.knowledge-page.knowledge-page--item-workspace .knowledge-overview .knowledge-mode-surfaces--overview {
+  gap: var(--space-2);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview-surfaces__table :is(th, td) {
+  padding-block: var(--space-1);
+}
+
+.knowledge-page.knowledge-page--item-workspace .knowledge-workspace-rail {
+  gap: var(--space-3);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace :is(.ui-surface.knowledge-workspace-history-rail, .ui-surface.knowledge-hierarchy-summary) {
+  padding: var(--space-3);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-workspace-history-rail {
+  gap: var(--space-2);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-workspace-history-rail .knowledge-section-heading {
+  padding-block-end: var(--space-2);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-workspace-history-rail .knowledge-history__entry {
+  padding: var(--space-2);
+  gap: var(--space-2);
+}
+
+.knowledge-page.knowledge-page--item-workspace .knowledge-workspace-history-rail .knowledge-history__entry-heading {
+  margin-block-end: 0;
+}
+
+.knowledge-page.knowledge-page--item-workspace .knowledge-hierarchy-summary > h2 {
+  margin-block-end: var(--space-2);
+}
+
+.knowledge-page.knowledge-page--item-workspace .knowledge-hierarchy-summary .knowledge-saved-summary {
+  margin-block-start: var(--space-3);
+}
+
+.knowledge-page.knowledge-page--item-workspace .knowledge-hierarchy-summary .knowledge-saved-summary__group {
+  margin-block-start: var(--space-2);
+  padding-block-start: var(--space-2);
+}
+
+.knowledge-page.knowledge-page--item-workspace .knowledge-hierarchy-summary .knowledge-saved-summary__group h3 {
+  margin-block-end: var(--space-1);
+}
+
+/* Overview typography and control density. Decorative icons need no touch target. */
+.knowledge-page.knowledge-page--item-workspace .knowledge-overview .knowledge-card-heading__identity {
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.knowledge-page.knowledge-page--item-workspace .knowledge-overview .knowledge-card-heading__icon {
+  inline-size: 28px;
+  block-size: 28px;
+}
+
+.knowledge-page.knowledge-page--item-workspace .knowledge-overview .knowledge-card-heading__icon svg {
+  inline-size: 18px;
+  block-size: 18px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview .knowledge-card-heading h2 {
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview .knowledge-card-heading p {
+  margin-block: 2px 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview :is(.ui-field__label, .knowledge-surface-multiselect__label) {
+  min-block-size: 0;
+  margin-block-end: var(--space-1);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.knowledge-page.knowledge-page--item-workspace .knowledge-overview.knowledge-overview--surface-table .knowledge-overview__uom-control-row,
+.knowledge-page.knowledge-page--item-workspace .knowledge-overview--surface-table .knowledge-mode-surfaces__controls {
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview.knowledge-overview--surface-table :is(.knowledge-overview__quick-add, .knowledge-overview-surfaces__create) {
+  flex-basis: 32px;
+  inline-size: 32px;
+  min-inline-size: 32px;
+  max-inline-size: 32px;
+  block-size: 32px;
+  min-block-size: 32px;
+  gap: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview.knowledge-overview--surface-table :is(.knowledge-overview__quick-add, .knowledge-overview-surfaces__create) .ui-button__icon svg {
+  inline-size: 18px;
+  block-size: 18px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview :is(.knowledge-overview__uom-control-row .ui-control, .knowledge-surface-multiselect__trigger) {
+  min-block-size: 36px;
+  padding-block: 6px;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview--surface-table .knowledge-overview-surfaces__header-actions > .ui-button {
+  min-block-size: 36px;
+  padding: var(--space-1) var(--space-2);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 640px), (pointer: coarse) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview.knowledge-overview--surface-table :is(.knowledge-overview__quick-add, .knowledge-overview-surfaces__create) {
+    flex-basis: 44px;
+    inline-size: 44px;
+    min-inline-size: 44px;
+    max-inline-size: 44px;
+    block-size: 44px;
+    min-block-size: 44px;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview :is(.knowledge-overview__uom-control-row .ui-control, .knowledge-surface-multiselect__trigger),
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview--surface-table .knowledge-overview-surfaces__header-actions > .ui-button {
+    min-block-size: 44px;
+  }
+}
+
+/* Icon-only shortcuts must not reserve the shared Button's empty label/busy copy. */
+.knowledge-page--item-workspace :is(.knowledge-overview__quick-add, .knowledge-overview-surfaces__create) .ui-button__content {
+  gap: 0;
+}
+
+.knowledge-page--item-workspace :is(.knowledge-overview__quick-add, .knowledge-overview-surfaces__create) .ui-button__content > span:not(.ui-button__icon):empty,
+.knowledge-page--item-workspace :is(.knowledge-overview__quick-add, .knowledge-overview-surfaces__create):not([data-busy]) .ui-button__busy {
+  display: none;
+}
+
+/* Label, percentage, compact col-3 meter, then the existing save commands. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-status {
+  display: grid;
+  grid-template-columns: max-content max-content minmax(8rem, 25%) minmax(0, 1fr);
+}
+
+.knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status__completeness {
+  display: contents;
+}
+
+.knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status__label {
+  grid-column: 1;
+  font-size: 0.8125rem;
+}
+
+.knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status__percentage {
+  grid-column: 2;
+  font-size: 0.875rem;
+}
+
+.knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status__completeness .ui-progress {
+  grid-column: 3;
+  inline-size: 100%;
+}
+
+.knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status__commands {
+  grid-column: 4;
+  justify-self: end;
+  justify-content: flex-end;
+}
+
+.knowledge-page.knowledge-page--item-workspace :is(.knowledge-workspace-status__state, .knowledge-workspace-status__last-saved) {
+  font-size: 0.8125rem;
+}
+
+@media (max-width: 900px) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-status {
+    grid-template-columns: minmax(0, max-content) max-content minmax(5rem, 1fr);
+  }
+
+  .knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status__commands {
+    grid-column: 1 / -1;
+    inline-size: 100%;
+  }
+}
+
+/* Offset only the Surface shortcut by its adjacent label line and label gap,
+   so its center follows the input even when selected names wrap on phones. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview.knowledge-overview--surface-table .knowledge-overview-surfaces__create {
+  margin-block-start: calc(1.05rem + var(--space-1));
+}

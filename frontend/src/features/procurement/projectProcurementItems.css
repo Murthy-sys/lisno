@@ -17,7 +17,7 @@
 :is(.ui-app-shell[data-role], body) .project-procurement-items__heading h2 { margin: 4px 0; font-size: 20px; font-weight: 600; line-height: 1.35; letter-spacing: -.025em; }
 :is(.ui-app-shell[data-role], body) .project-procurement-items__heading p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--color-text-muted); }
 :is(.ui-app-shell[data-role], body) .project-procurement-items__heading .project-procurement-items__eyebrow { color: var(--color-primary); font-weight: 600; }
-:is(.ui-app-shell[data-role], body) .project-procurement-items .ui-button { min-block-size: 34px; padding: 6px 10px; font-size: 12px; font-weight: 500; border-radius: 5px; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items .ui-button { min-block-size: 34px; padding: 6px 10px; font-size: 12px; border-radius: 5px; }
 :is(.ui-app-shell[data-role], body) .project-procurement-items__search { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 0; }
 :is(.ui-app-shell[data-role], body) .project-procurement-items__search .ui-input { flex: 1 1 180px; width: auto; min-inline-size: 0; max-inline-size: 420px; min-block-size: 36px; padding: 7px 10px; font-size: 12px; border-radius: 5px; }
 :is(.ui-app-shell[data-role], body) .project-procurement-items__summary,
@@ -113,7 +113,7 @@
 :is(.ui-app-shell[data-role], body) .estimate-procurement__approved { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 6px; background: var(--color-surface-subtle); border: 1px solid var(--color-border); color: var(--color-text-strong); font-size: 11px; font-weight: 500; white-space: nowrap; }
 :is(.ui-app-shell[data-role], body) .estimate-procurement__approved svg { width: 15px; height: 15px; }
 :is(.ui-app-shell[data-role], body) .estimate-procurement > .project-procurement-items__search { align-items: center; padding-bottom: 18px; border-bottom: 1px solid var(--color-border); }
-:is(.ui-app-shell[data-role], body) .estimate-procurement .ui-button { min-block-size: 36px; padding: 7px 11px; font-size: 12px; font-weight: 500; border-radius: 6px; box-shadow: none; }
+:is(.ui-app-shell[data-role], body) .estimate-procurement .ui-button { min-block-size: 36px; padding: 7px 11px; font-size: 12px; border-radius: 6px; box-shadow: none; }
 :is(.ui-app-shell[data-role], body) .estimate-procurement .ui-button svg { width: 16px; height: 16px; flex-shrink: 0; }
 :is(.ui-app-shell[data-role], body) .estimate-procurement__count { margin-left: auto; font-size: 11px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
 :is(.ui-app-shell[data-role], body) .estimate-procurement__section { min-width: 0; border: 1px solid var(--color-border); border-radius: 8px; overflow: clip; }

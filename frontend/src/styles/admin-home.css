@@ -13,7 +13,7 @@
 .ui-app-shell[data-role="admin"],
 .ui-app-shell[data-role="super_admin"] {
   --role-canvas: var(--color-bg);
-  --role-rail: var(--color-primary);
+  --role-rail: linear-gradient(180deg, #2f3a2a 0%, #283223 55%, #222b1e 100%);
   --role-band: var(--color-primary);
   --role-band-ink: var(--color-surface);
   --role-band-ink-muted: color-mix(in srgb, var(--color-surface) 72%, transparent);
@@ -102,10 +102,10 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
   .ui-app-shell[data-role="admin"] .ui-mobile-header,
   .ui-app-shell[data-role="super_admin"] .ui-mobile-header {
     align-items: center;
-    background: var(--color-surface);
-    border-block-end: 1px solid var(--color-border);
-    box-shadow: var(--shadow-soft);
-    color: var(--color-brand-midnight);
+    background: var(--role-rail);
+    border-block-end: 1px solid rgb(255 255 255 / 8%);
+    box-shadow: 0 10px 30px -18px rgb(12 16 10 / 70%);
+    color: var(--role-rail-ink);
     display: flex;
     inset-block-start: 0;
     inset-inline: 0;
@@ -121,12 +121,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
 
   .ui-app-shell[data-role="admin"] .ui-mobile-header__trigger,
   .ui-app-shell[data-role="super_admin"] .ui-mobile-header__trigger {
-    color: var(--color-primary);
-  }
-
-  .ui-app-shell[data-role="admin"] .ui-mobile-header .brand__logo,
-  .ui-app-shell[data-role="super_admin"] .ui-mobile-header .brand__logo {
-    filter: none;
+    color: var(--role-rail-ink);
   }
 
   .ui-app-shell[data-role="admin"] .ui-workspace,
@@ -161,26 +156,26 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
   inline-size: 6px;
   block-size: 6px;
   border-radius: var(--radius-pill);
-  background: var(--role-accent-bright);
-  box-shadow: 0 0 0 3px rgb(226 171 92 / 22%);
+  background: var(--role-rail-marker);
+  box-shadow: 0 0 0 3px rgb(169 184 154 / 22%);
 }
 
 .ui-app-shell[data-role="admin"] .ui-sidebar__link,
 .ui-app-shell[data-role="super_admin"] .ui-sidebar__link {
-  color: color-mix(in srgb, var(--role-band-ink) 82%, transparent);
+  color: var(--role-rail-ink);
   font-weight: 750;
 }
 
 .ui-app-shell[data-role="admin"] .ui-sidebar__link--active,
 .ui-app-shell[data-role="super_admin"] .ui-sidebar__link--active {
-  border: 1px solid rgb(226 171 92 / 28%);
-  background: rgb(255 255 255 / 6%);
+  border: 1px solid rgb(255 255 255 / 14%);
+  background: rgb(255 255 255 / 8%);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 4%);
 }
 
 .ui-app-shell[data-role="admin"] .ui-sidebar__link-arrow,
 .ui-app-shell[data-role="super_admin"] .ui-sidebar__link-arrow {
-  color: var(--role-accent-bright);
+  color: var(--role-rail-icon);
   opacity: 0.6;
 }
 
@@ -256,18 +251,19 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
    included) that never asked for one. */
 .ui-app-shell[data-role="admin"] .ui-page-header__actions .ui-button--primary,
 .ui-app-shell[data-role="super_admin"] .ui-page-header__actions .ui-button--primary {
-  border: 1px solid transparent;
-  background: var(--color-highlight);
-  color: var(--color-primary);
+  border: 1px solid var(--button-primary-bg);
+  background: var(--button-primary-bg);
+  color: var(--button-primary-ink);
   padding-inline: 1.5rem;
   min-block-size: var(--control-height);
-  box-shadow: 0 8px 18px -12px rgb(var(--role-shadow-tint) / 65%);
+  box-shadow: 0 8px 18px -12px rgb(31 42 28 / 65%);
 }
 
 .ui-app-shell[data-role="admin"] .ui-page-header__actions .ui-button--primary:hover:not(:disabled),
 .ui-app-shell[data-role="super_admin"] .ui-page-header__actions .ui-button--primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-highlight) 82%, var(--color-primary));
-  box-shadow: 0 10px 22px -12px rgb(var(--role-shadow-tint) / 75%);
+  border-color: var(--button-primary-bg-hover);
+  background: var(--button-primary-bg-hover);
+  box-shadow: 0 10px 22px -12px rgb(31 42 28 / 75%);
 }
 
 .ui-app-shell[data-role="admin"] .ui-page-header__actions .ui-button--primary::before,
@@ -378,17 +374,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
   transform: none;
 }
 
-/* ----------------------------------------------------------------- quiet */
-
-.ui-app-shell[data-role="admin"] .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop),
-.ui-app-shell[data-role="super_admin"] .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop) {
-  color: var(--color-primary);
-}
-
-.ui-app-shell[data-role="admin"] .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop):not(:disabled):hover,
-.ui-app-shell[data-role="super_admin"] .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop):not(:disabled):hover {
-  background: color-mix(in srgb, var(--role-accent) 10%, transparent);
-}
+/* Quiet buttons use the shared --button-quiet-* tokens (primitives.css). */
 
 /* --------------------------------------------------------- projects list */
 
@@ -502,21 +488,20 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
   padding-inline: var(--space-2);
 }
 
-/* Previous/Next page: filled navy, matching "View project"/"Initiate
-   project" elsewhere on this page, instead of the shared quiet/secondary
-   outline styles. !important because Previous page is variant="quiet" —
+/* Previous/Next page: filled with the primary button tokens, matching
+   "View project"/"Initiate project" elsewhere on this page, instead of the
+   shared quiet/secondary outline styles. !important because Previous page is variant="quiet" —
    its own .ui-button--quiet rule (below) has higher specificity than this
    plain-class selector and would otherwise keep its transparent
    background while this rule's color still won, risking illegible text. */
 .ui-app-shell[data-role="admin"] .admin-projects__pagination .ui-button,
 .ui-app-shell[data-role="super_admin"] .admin-projects__pagination .ui-button {
-  border: 1px solid transparent !important;
-  background: var(--color-primary) !important;
-  color: var(--color-bg) !important;
+  border: 1px solid var(--button-primary-bg) !important;
+  background: var(--button-primary-bg) !important;
+  color: var(--button-primary-ink) !important;
   min-block-size: var(--control-height-compact) !important;
   padding-inline: var(--space-3) !important;
   font-size: 0.8125rem !important;
-  font-weight: 400 !important;
   box-shadow: none !important;
 }
 
@@ -525,17 +510,17 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
    so hover only changes the background, not the outline. */
 .ui-app-shell[data-role="admin"] .admin-projects__pagination .ui-button:hover,
 .ui-app-shell[data-role="super_admin"] .admin-projects__pagination .ui-button:hover {
-  background: #2a2350 !important;
+  border-color: var(--button-primary-bg-hover) !important;
+  background: var(--button-primary-bg-hover) !important;
   box-shadow: none !important;
 }
 
 /* The real source of the "double border" — the shared .ui-button:focus-
-   visible ring is a violet box-shadow that, layered on this navy pill,
-   reads as two offset outlines. Keep a visible focus indicator, just in
-   the same navy family instead of the mismatched default violet. */
+   visible ring layered on this filled pill reads as two offset outlines.
+   Keep a visible focus indicator using the shared olive button ring. */
 .ui-app-shell[data-role="admin"] .admin-projects__pagination .ui-button:focus-visible,
 .ui-app-shell[data-role="super_admin"] .admin-projects__pagination .ui-button:focus-visible {
-  box-shadow: 0 0 0 3px rgb(30 24 59 / 35%) !important;
+  box-shadow: var(--button-focus-ring) !important;
   outline: none !important;
 }
 
@@ -1001,13 +986,13 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
    the final decision surface communicates the destructive action. */
 .ui-app-shell[data-role="admin"] .client-responses__row-actions .ui-button--quiet,
 .ui-app-shell[data-role="super_admin"] .client-responses__row-actions .ui-button--quiet {
-  border: 1px solid var(--role-line);
-  color: var(--color-primary);
+  border: 1px solid var(--button-secondary-border);
+  color: var(--button-quiet-ink);
 }
 
 .ui-app-shell[data-role="admin"] .client-responses__row-actions .ui-button--quiet:not(:disabled):hover,
 .ui-app-shell[data-role="super_admin"] .client-responses__row-actions .ui-button--quiet:not(:disabled):hover {
-  background: var(--color-surface-subtle);
-  border-color: var(--role-line-strong);
-  color: var(--color-primary);
+  background: var(--button-quiet-hover);
+  border-color: var(--button-primary-bg);
+  color: var(--button-quiet-ink);
 }

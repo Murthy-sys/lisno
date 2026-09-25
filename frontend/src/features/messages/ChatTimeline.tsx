@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Check, ChevronDown } from "lucide-react";
+import { chatDueDate } from "./ChatTrackedAction";
 import { ChatMessageAttachments } from "./ChatMessageAttachments";
 import { ChatFileTray } from "./ChatFileTray";
 import { attachmentSummaryText } from "./chatAttachments";
@@ -192,7 +193,8 @@ export function ChatTimeline({ projectId, messages, attempts, lastRead, hasOlder
             <div className={grouped || own ? "sr-only" : "project-chat-message__meta"}><strong style={{ color: chatSenderColor(message.author.id) }}>{message.author.name}</strong><span>{ROLE_LABELS[message.author.role]}</span></div>
             {items.length ? <div className="project-chat-message__menu"><ChatActionMenu label={`Message options from ${message.author.name}`} items={items} icon={<ChevronDown size={16} aria-hidden="true" />} /></div> : null}
             {message.replyTo ? <button type="button" className="project-chat-quote" onClick={() => onContext(message.replyTo!.id)} aria-label={`View original message from ${message.replyTo.author.name}`}><strong style={{ color: chatSenderColor(message.replyTo.author.id) }}>{message.replyTo.author.name}</strong><span>{message.replyTo.body || attachmentSummaryText(message.replyTo.attachmentSummary)}</span></button> : null}
-            {message.priority !== "normal" ? <button type="button" className={`project-chat-priority project-chat-priority--${message.priority} project-chat-message__issue`} onClick={() => onIssue(message)} aria-label={`View ${message.priority} issue details`}>{message.priority === "critical" ? "Critical" : "Important"} · {message.issueStatus === "resolved" ? "Resolved" : "Open"}</button> : null}
+            {message.priority !== "normal" ? <button type="button" className={`project-chat-priority project-chat-priority--${message.priority} project-chat-message__issue`} onClick={() => onIssue(message)} aria-label={`View ${message.priority} issue details`}>{message.action?.typeName ?? (message.priority === "critical" ? "Critical" : "Important")} · {message.issueStatus === "resolved" ? "Resolved" : "Open"}</button> : null}
+            {message.action ? <div className="project-chat-tracked-details"><span>Responsible: {message.responsible?.name ?? "Unavailable"}{message.responsible && !message.responsible.available ? " (unavailable)" : ""}</span><span>Due <time dateTime={message.action.dueDate}>{chatDueDate(message.action.dueDate)}</time></span>{message.raisedBy ? <span>Created by {message.raisedBy.name}</span> : null}</div> : null}
             <ChatMessageAttachments attachments={message.attachments ?? []} sender={message.author} audioTimestamp={audioOnly ? <MessageTime message={message} own={own} /> : undefined} />
             {!audioOnly ? <MessageBody message={message} own={own} /> : null}
           </article>
@@ -201,6 +203,7 @@ export function ChatTimeline({ projectId, messages, attempts, lastRead, hasOlder
       {hasNewer ? <Button variant="quiet" className="project-chat-timeline__pagination" busy={loadingNewer} onClick={onNewer}>Load newer messages</Button> : null}
       {attempts.map(attempt => <article className="project-chat-message project-chat-message--pending" key={attempt.input.clientMessageId} aria-label="Your outgoing message">
         {attempt.files?.length ? <ChatFileTray files={attempt.files} sender={ownSender} /> : null}
+        {attempt.input.action ? <p className="project-chat-tracked-details">Tracked action · Due {chatDueDate(attempt.input.action.dueDate)}</p> : null}
         {attempt.input.body ? <p className="project-chat-message__body">{attempt.input.body}</p> : null}
         <div role="status">{attempt.status === "sending" ? attempt.phase === "uploading" ? "Uploading attachments…" : attempt.phase === "cancelling" ? "Stopping transfer…" : "Sending…" : attempt.commitStarted ? "Delivery unconfirmed" : "Not sent"}</div>
         {attempt.status === "failed" ? <>{attempt.error && !attempt.files?.some(file => file.error === attempt.error) ? <p className="project-chat-error">{attempt.error}</p> : null}<div className="project-chat-message__actions"><Button variant="secondary" size="compact" disabled={!canSend} onClick={() => onRetry(attempt)}>Retry</Button>{!attempt.commitStarted ? <><Button variant="quiet" size="compact" disabled={!canSend} onClick={() => onEditAttempt(attempt)}>Edit message</Button>{onDiscard ? <Button variant="quiet" size="compact" onClick={() => onDiscard(attempt)}>Discard</Button> : null}</> : null}</div></> : onCancel ? <Button variant="quiet" size="compact" disabled={attempt.phase === "cancelling"} onClick={() => onCancel(attempt)}>Cancel transfer</Button> : null}

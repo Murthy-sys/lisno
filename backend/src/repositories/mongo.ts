@@ -68,6 +68,7 @@ import {
   type AccessRequestFilters,
   type AccessRequestRecord,
   type AdminProjectApprovedEstimateBaseline,
+  type AdminProjectStatusCounts,
   type AuditEventRecord,
   type AuditFilters,
   type EstimateSummaryRecord,
@@ -90,6 +91,7 @@ import {
   type NewDesignVersion,
   type ProjectHierarchy,
   type ProjectRecord,
+  type ProjectStatus,
   type ProjectAccessGrantRecord,
   type PasswordResetRequestRecord,
   type TaskEventRecord,
@@ -102,6 +104,7 @@ import {
 
 type PlainDocument = Record<string, any>;
 const MAX_DUPLICATE_KEY_TRANSACTION_ATTEMPTS = 2;
+const adminProjectNameCollator = new Intl.Collator("en", { sensitivity: "accent", numeric: false });
 
 export function createMongoRepository(session?: ClientSession): AppRepository {
   const executeSessionCompatibleReadPair = async <First, Second>(
@@ -1332,6 +1335,38 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return query.exec();
     },
 
+    async summarizeUsers(visibleRoles) {
+      if (visibleRoles.length === 0) {
+        return { total: 0, active: 0, inactive: 0, roleCount: 0 };
+      }
+      const pipeline: PipelineStage[] = [
+        { $match: { role: { $in: [...visibleRoles] } } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            active: { $sum: { $cond: [{ $eq: ["$active", true] }, 1, 0] } },
+            roles: { $addToSet: "$role" }
+          }
+        }
+      ];
+      const aggregate = UserModel.aggregate<{
+        total: number;
+        active: number;
+        roles: string[];
+      }>(pipeline);
+      if (session) aggregate.session(session);
+      const [result] = await aggregate.exec();
+      const total = result?.total ?? 0;
+      const active = result?.active ?? 0;
+      return {
+        total,
+        active,
+        inactive: total - active,
+        roleCount: result?.roles.length ?? 0
+      };
+    },
+
     async countUserResponsibilities(userId) {
       const leadQuery = LeadModel.countDocuments({
         ownerId: userId,
@@ -1485,6 +1520,71 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       throw new RepositoryConflictError(`User ${userId} changed concurrently.`);
     },
 
+    async findUserProfilePhotoState(userId) {
+      const query = UserModel.findById(userId).select({ profilePhoto: 1, profilePhotoRevision: 1 });
+      if (session) query.session(session);
+      const document = await query.lean().exec() as PlainDocument | null;
+      if (!document) return null;
+      return {
+        revision: typeof document.profilePhotoRevision === "number" ? document.profilePhotoRevision : 0,
+        photo: document.profilePhoto?.storageKey
+          ? {
+              storageKey: String(document.profilePhoto.storageKey),
+              version: Number(document.profilePhoto.version),
+              updatedAt: iso(document.profilePhoto.updatedAt)
+            }
+          : null
+      };
+    },
+
+    async setUserProfilePhoto(userId, expectedRevision, change) {
+      const query = UserModel.findOneAndUpdate(
+        { _id: userId, ...profilePhotoRevisionFilter(expectedRevision) },
+        {
+          $set: {
+            profilePhoto: {
+              storageKey: change.storageKey,
+              version: expectedRevision + 1,
+              updatedAt: date(change.updatedAt)
+            },
+            profilePhotoRevision: expectedRevision + 1
+          }
+        },
+        { new: true, runValidators: true, timestamps: false }
+      ).select("+passwordHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (document) return mapUser(document);
+
+      const existsQuery = UserModel.exists({ _id: userId });
+      if (session) existsQuery.session(session);
+      if (!(await existsQuery.exec())) {
+        throw new RepositoryNotFoundError(`User ${userId} was not found.`);
+      }
+      throw new RepositoryConflictError(`User ${userId} profile photo changed concurrently.`);
+    },
+
+    async clearUserProfilePhoto(userId, expectedRevision) {
+      const query = UserModel.findOneAndUpdate(
+        { _id: userId, ...profilePhotoRevisionFilter(expectedRevision) },
+        {
+          $unset: { profilePhoto: "" },
+          $set: { profilePhotoRevision: expectedRevision + 1 }
+        },
+        { new: true, runValidators: true, timestamps: false }
+      ).select("+passwordHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (document) return mapUser(document);
+
+      const existsQuery = UserModel.exists({ _id: userId });
+      if (session) existsQuery.session(session);
+      if (!(await existsQuery.exec())) {
+        throw new RepositoryNotFoundError(`User ${userId} was not found.`);
+      }
+      throw new RepositoryConflictError(`User ${userId} profile photo changed concurrently.`);
+    },
+
     async pageAllLeads(filters, pagination) {
       const filter: PlainDocument = {};
       if (filters.stage) filter.stage = filters.stage;
@@ -1584,26 +1684,63 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return { items: documents.map(mapProject), total };
     },
 
-    async pageAdminProjects(actor, pagination) {
-      const filter = await projectFilterForUserInModule(actor, "projects");
-      if (filter === null) return { items: [], total: 0 };
-      const itemQuery = ProjectModel.find(filter)
-        .sort({ createdAt: -1, _id: -1 })
-        .skip(pagination.offset)
-        .limit(pagination.limit)
-        .lean();
-      const countQuery = ProjectModel.countDocuments(filter);
-      if (session) {
-        itemQuery.session(session);
-        countQuery.session(session);
-      }
-      const [documents, total] = await executeSessionCompatibleReadPair(
-        () => itemQuery.exec(),
+    async pageAdminProjects(actor, input) {
+      const sortByName = input.sort === "name_asc" || input.sort === "name_desc";
+      const scope = await projectFilterForUserInModule(actor, "projects");
+      const statusCounts: AdminProjectStatusCounts = {
+        all: 0, planning: 0, active: 0, on_hold: 0, completed: 0
+      };
+      if (scope === null) return { items: [], total: 0, statusCounts };
+      const search = input.search?.trim();
+      const pattern = search ? new RegExp(escapeRegex(search), "i") : null;
+      const filter = pattern ? {
+        $and: [scope, { $or: [{ name: pattern }, { clientName: pattern }, { location: pattern }] }]
+      } : scope;
+      const itemFilter = input.status ? { $and: [filter, { status: input.status }] } : filter;
+      const readItems = async () => {
+        if (!sortByName) {
+          const query = ProjectModel.find(itemFilter).collation({ locale: "simple" })
+            .sort({ createdAt: -1, _id: -1 }).skip(input.offset).limit(input.limit).lean();
+          if (session) query.session(session);
+          return query.exec();
+        }
+        // Database collation would also loosen authorization ID comparisons.
+        // Sort scoped names in memory, then hydrate only the selected page.
+        const namesQuery = ProjectModel.find(itemFilter).collation({ locale: "simple" })
+          .select({ _id: 1, name: 1 }).lean();
+        if (session) namesQuery.session(session);
+        const names = await namesQuery.exec();
+        names.sort((left, right) =>
+          (input.sort === "name_asc" ? 1 : -1) * adminProjectNameCollator.compare(String(left.name), String(right.name)) ||
+          Buffer.compare(Buffer.from(idOf(left)), Buffer.from(idOf(right))));
+        const selectedIds = names.slice(input.offset, input.offset + input.limit).map(idOf);
+        if (selectedIds.length === 0) return [];
+        const itemQuery = ProjectModel.find({ $and: [itemFilter, { _id: { $in: selectedIds } }] })
+          .collation({ locale: "simple" }).lean();
+        if (session) itemQuery.session(session);
+        const byId = new Map((await itemQuery.exec()).map((document) => [idOf(document), document]));
+        return selectedIds.flatMap((id) => {
+          const document = byId.get(id);
+          return document ? [document] : [];
+        });
+      };
+      const countQuery = ProjectModel.aggregate<{ _id: ProjectStatus; count: number }>([
+        { $match: filter },
+        { $group: { _id: "$status", count: { $sum: 1 } } }
+      ]).collation({ locale: "simple" });
+      if (session) countQuery.session(session);
+      const [documents, counts] = await executeSessionCompatibleReadPair(
+        readItems,
         () => countQuery.exec()
       );
+      for (const { _id, count } of counts) {
+        statusCounts[_id] = count;
+        statusCounts.all += count;
+      }
       return {
         items: await loadAdminProjectSummaries(documents, actor),
-        total
+        total: input.status ? statusCounts[input.status] : statusCounts.all,
+        statusCounts
       };
     },
 
@@ -1647,6 +1784,13 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         title: document.title ?? null
       }));
       return { items, total };
+    },
+
+    async renameProjectName(id, name, expectedVersion, updatedAt) {
+      const revision = expectedVersion === 1 ? { $or: [{ nameVersion: 1 }, { nameVersion: { $exists: false } }] } : { nameVersion: expectedVersion };
+      const query = ProjectModel.findOneAndUpdate({ _id: id, ...revision }, { $set: { name, nameVersion: expectedVersion + 1, updatedAt: date(updatedAt) } }, { returnDocument: "after", runValidators: true, ...(session ? { session } : {}) }).lean();
+      const document = await query.exec();
+      return document ? mapProject(document) : null;
     },
 
     async findProjectById(id) {
@@ -3606,9 +3750,27 @@ function mapUser(document: PlainDocument): UserRecord {
     authorizedClientIds: [...(document.authorizedClientIds ?? [])],
     ...(document.avatar ? { avatar: document.avatar } : {}),
     ...(document.title ? { title: document.title } : {}),
+    ...(document.profilePhoto?.storageKey
+      ? {
+          profilePhoto: {
+            storageKey: String(document.profilePhoto.storageKey),
+            version: Number(document.profilePhoto.version),
+            updatedAt: iso(document.profilePhoto.updatedAt)
+          }
+        }
+      : {}),
+    ...(typeof document.profilePhotoRevision === "number"
+      ? { profilePhotoRevision: document.profilePhotoRevision }
+      : {}),
     createdAt: iso(document.createdAt),
     updatedAt: iso(document.updatedAt)
   };
+}
+
+function profilePhotoRevisionFilter(expectedRevision: number): PlainDocument {
+  return expectedRevision === 0
+    ? { $or: [{ profilePhotoRevision: 0 }, { profilePhotoRevision: { $exists: false } }] }
+    : { profilePhotoRevision: expectedRevision };
 }
 
 function mapPasswordReset(document: PlainDocument): PasswordResetRequestRecord {
@@ -3747,6 +3909,7 @@ function mapProject(document: PlainDocument): ProjectRecord {
       }))
     } : {}),
     name: document.name,
+    nameVersion: document.nameVersion ?? 1,
     clientId: document.clientId ?? null,
     clientName: document.clientName ?? "",
     clientEmail: document.clientEmail ?? "",

@@ -101,6 +101,33 @@ function grant(
   };
 }
 
+/**
+ * Deliberately asymmetric directory fixture for the summary assertions:
+ * - unequal role counts (3 designers, 2 admins, 1 client, 1 Super Admin),
+ * - two inactive users spread across two different roles,
+ * - most visible roles (procurement, finance_head, workers, ...) have no users.
+ *
+ * A symmetric fixture would let an off-by-one, a role leak, or a filter leak
+ * pass unnoticed.
+ */
+function asymmetricDirectorySeed(): SeedData {
+  const seed = emptyAdministrationSeed();
+  addUser(seed, "user-designer-alpha", "designer");
+  addUser(seed, "user-designer-beta", "designer");
+  addUser(seed, "user-designer-gamma", "designer", { active: false });
+  addUser(seed, "user-admin-one", "admin");
+  addUser(seed, "user-admin-two", "admin");
+  addUser(seed, "user-client-solo", "client", { active: false });
+  return seed;
+}
+
+const ASYMMETRIC_SUMMARY = {
+  total: 7,
+  active: 5,
+  inactive: 2,
+  roleCount: 4
+} as const;
+
 function setup(seed = emptyAdministrationSeed()) {
   const repository = createMemoryRepository(seed);
   const audit = createAuditService(repository);
@@ -136,6 +163,50 @@ describe("user administration service", () => {
     );
 
     expect(JSON.stringify(superPage)).not.toMatch(/password|hash|token|secret/i);
+  });
+
+  it("summarizes the visible directory with consistent totals and present roles only", async () => {
+    const seed = asymmetricDirectorySeed();
+    const superAdmin = canonicalSuperAdmin(seed);
+    const { repository, service } = setup(seed);
+
+    const page = await service.list(publicUser(superAdmin), {}, { limit: 20, offset: 0 });
+
+    // Exact shape: no extra, no missing field.
+    expect(Object.keys(page.summary).sort()).toEqual([
+      "active",
+      "inactive",
+      "roleCount",
+      "total"
+    ]);
+    expect(page.summary).toEqual(ASYMMETRIC_SUMMARY);
+    expect(page.summary.total).toBe(page.summary.active + page.summary.inactive);
+
+    // roleCount counts the roles PRESENT among visible users, never the roles
+    // the system defines.
+    const presentRoles = new Set(seed.users.map(({ role }) => role));
+    expect(page.summary.roleCount).toBe(presentRoles.size);
+    expect(page.summary.roleCount).toBeLessThan(ROLE_CODES.length);
+
+    // Visible roles that hold no user must still be offered as filters while
+    // contributing nothing to roleCount.
+    const emptyVisibleRoles = ROLE_CODES.filter((role) => !presentRoles.has(role));
+    expect(emptyVisibleRoles.length).toBeGreaterThan(0);
+    for (const role of emptyVisibleRoles) {
+      expect(page.filterRoles).toContain(role);
+    }
+
+    // Scoped directly at the repository: "procurement" is visible but empty, so
+    // it must not increment roleCount.
+    await expect(
+      repository.summarizeUsers(["designer", "procurement"])
+    ).resolves.toEqual({ total: 3, active: 2, inactive: 1, roleCount: 1 });
+    await expect(repository.summarizeUsers([])).resolves.toEqual({
+      total: 0,
+      active: 0,
+      inactive: 0,
+      roleCount: 0
+    });
   });
 
   it("requires both current and destination roles to be operational for Admin", async () => {
@@ -536,6 +607,10 @@ describe("user administration routes", () => {
           })
         ],
         pagination: { limit: 20, offset: 0, total: 1, hasMore: false },
+        // The seeded directory holds four users across four distinct roles, all
+        // active. The summary describes that whole directory even though the
+        // request above is filtered down to a single designer.
+        summary: { total: 4, active: 4, inactive: 0, roleCount: 4 },
         filterRoles: ROLE_CODES,
         manageableRoles: ROLE_CODES.filter((role) => role !== "super_admin")
       }
@@ -565,6 +640,49 @@ describe("user administration routes", () => {
       }
     });
     expect(JSON.stringify(mutation.body)).not.toMatch(/password|hash|token|secret/i);
+  });
+
+  it("keeps the directory summary identical across search, role and status filters", async () => {
+    const seed = asymmetricDirectorySeed();
+    const superAdmin = canonicalSuperAdmin(seed);
+    const app = createApp({
+      repository: createMemoryRepository(seed),
+      auth,
+      clock,
+      developmentDemoAuthorization: developmentDemoAuthentication()
+    });
+    const token = bearer(superAdmin);
+    const query = (suffix: string) =>
+      request(app)
+        .get(`/api/v1/admin/users?limit=20&offset=0${suffix}`)
+        .set("Authorization", token);
+
+    const [unfiltered, searched, byRole, byStatus] = await Promise.all([
+      query(""),
+      query("&search=gamma"),
+      query("&role=admin"),
+      query("&active=false")
+    ]);
+    const responses = [unfiltered, searched, byRole, byStatus];
+    for (const response of responses) {
+      expect(response.status).toBe(200);
+    }
+
+    // AC4: search / role / active must never reach the summary aggregation.
+    expect(
+      responses.map((response) => response.body.data.summary)
+    ).toEqual(responses.map(() => ASYMMETRIC_SUMMARY));
+
+    // The filters genuinely applied, so the equality above is not vacuous.
+    const ids = (response: (typeof responses)[number]) =>
+      (response.body.data.items as { id: string }[]).map(({ id }) => id);
+    expect(
+      responses.map((response) => response.body.data.pagination.total)
+    ).toEqual([7, 1, 2, 2]);
+    expect(ids(unfiltered)).toHaveLength(7);
+    expect(ids(searched)).toEqual(["user-designer-gamma"]);
+    expect(ids(byRole)).toEqual(["user-admin-one", "user-admin-two"]);
+    expect(ids(byStatus)).toEqual(["user-client-solo", "user-designer-gamma"]);
   });
 
   it("rejects every Admin directory request before input validation", async () => {

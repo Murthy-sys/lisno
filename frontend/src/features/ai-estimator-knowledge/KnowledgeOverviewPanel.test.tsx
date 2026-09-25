@@ -55,6 +55,12 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.getAllByRole("heading").map((heading) => heading.textContent)).toEqual(["UOM", "Surfaces"]);
     expect(screen.getByRole("button", { name: "Add Unit" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Add Surface" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Create Surface" })).toBeVisible();
+    const table = screen.getByRole("table", { name: "Selected surface details" });
+    expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
+      "#Number", "Surface name", "Description", "Actions"
+    ]);
+    expect(within(table).queryByRole("checkbox")).not.toBeInTheDocument();
     expect(screen.getAllByRole("combobox")).toHaveLength(1);
     expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
@@ -136,6 +142,40 @@ describe("KnowledgeOverviewPanel", () => {
       surfaceIds: [wall.id, floor.id]
     });
     expect(props.onOverviewDirty).toHaveBeenCalledTimes(2);
+
+    await user.click(screen.getByRole("button", { name: "Create Surface" }));
+    expect(props.onQuickAddSurface).toHaveBeenCalledTimes(2);
+    vi.mocked(props.onQuickAddSurface!).mock.calls[1]?.[0](floor);
+    expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({
+      ...overviewPayload,
+      surfaceIds: [wall.id, floor.id]
+    });
+    expect(props.onOverviewDirty).toHaveBeenLastCalledWith("surfaceIds");
+  });
+
+  it("unselects a table row only from Overview and opens reusable editing without dirtying its draft", async () => {
+    const user = userEvent.setup();
+    const onEditSurface = vi.fn();
+    const props = renderPanel({
+      overviewPayload: { ...overviewPayload, surfaceIds: [floor.id, "unresolved-surface", wall.id] },
+      onEditSurface
+    });
+
+    const edit = screen.getByRole("button", { name: "Edit reusable surface Wall" });
+    edit.focus();
+    await user.keyboard("{Enter}");
+    expect(onEditSurface).toHaveBeenCalledExactlyOnceWith(wall);
+    expect(props.onOverviewPayloadChange).not.toHaveBeenCalled();
+    expect(props.onOverviewDirty).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Remove Floor from Main Line" }));
+    expect(props.onOverviewDirty).toHaveBeenCalledExactlyOnceWith("surfaceIds");
+    expect(props.onOverviewPayloadChange).toHaveBeenCalledExactlyOnceWith({
+      ...overviewPayload,
+      surfaceIds: ["unresolved-surface", wall.id]
+    });
+    expect(onEditSurface).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Remove Unavailable value from Main Line" })).toBeDisabled();
   });
 
   it("keeps unresolved saved IDs readable without exposing them or replacing them on another edit", async () => {
@@ -259,25 +299,32 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.getByRole("button", { name: "Applicable surfaces" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Add Unit" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add Surface" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create Surface" })).not.toBeInTheDocument();
   });
 
   it("locks configuration controls during a save and shows Surface save progress", () => {
-    renderPanel({ saving: true, surfacesDirty: true });
+    renderPanel({ saving: true, surfacesDirty: true, onEditSurface: vi.fn() });
 
     expect(screen.getByRole("combobox", { name: "Unit of measure (UOM)" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Applicable surfaces" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Add Unit" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Add Surface" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Create Surface" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove Wall from Main Line" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Edit reusable surface Wall" })).toBeDisabled();
     expect(screen.getByText("Saving…")).toBeVisible();
   });
 
   it("keeps read-only Surface inspection accessible while preventing Overview changes", async () => {
     const user = userEvent.setup();
-    const props = renderPanel({ editable: false });
+    const props = renderPanel({ editable: false, onEditSurface: vi.fn() });
 
     expect(screen.getByRole("combobox", { name: "Unit of measure (UOM)" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Add Unit" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add Surface" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create Surface" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit reusable surface Wall" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove Wall from Main Line" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Applicable surfaces" }));
     expect(screen.getByRole("listbox", { name: "Surface options" })).toHaveAttribute("aria-readonly", "true");
     await user.click(screen.getByRole("option", { name: "Floor" }));

@@ -1,3 +1,4 @@
+import { ProjectChatActionTypeModel, ProjectChatExclusionModel } from "../../src/models/ProjectChatAction.js";
 import { UserModel } from "../../src/models/User.js";
 import { ProjectModel } from "../../src/models/Project.js";
 import { LeadModel } from "../../src/models/Lead.js";
@@ -15,7 +16,7 @@ import { createAuditService } from "../../src/services/audit.service.js";
 import { createProjectChatService } from "../../src/services/project-chat.service.js";
 import { chatFixtureData, CHAT_NOW } from "./project-chat.js";
 import type { ChatActor } from "../../src/contracts/project-chat.js";
-export const chatModels = [UserModel, ProjectModel, LeadModel, EstimateModel, ProjectWorkflowTaskModel, ProjectAccessGrantModel, AuditEventModel, AuthorizationCoordinationModel, ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel, ProjectChatAttachmentModel, ProjectChatTypingModel, ProjectChatTypingRateModel];
+export const chatModels = [ProjectChatActionTypeModel, ProjectChatExclusionModel, UserModel, ProjectModel, LeadModel, EstimateModel, ProjectWorkflowTaskModel, ProjectAccessGrantModel, AuditEventModel, AuthorizationCoordinationModel, ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel, ProjectChatAttachmentModel, ProjectChatTypingModel, ProjectChatTypingRateModel];
 export async function insertChatMongoFixture() {
     const { seed, estimates, workflowTasks } = chatFixtureData();
     const doc = ({ id, ...fields }: {

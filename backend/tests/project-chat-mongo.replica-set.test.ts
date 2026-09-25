@@ -92,17 +92,65 @@ describe("project chat Mongo transactions", () => {
         const sourceReads = vi.spyOn(EstimateModel,"find");
         const historyCounts = vi.spyOn(ProjectChatMessageModel,"countDocuments");
         try {
+            const started = performance.now();
             const page = await f.service.list(f.actor("super"), {limit:4,offset:0});
+            console.info(`[project-messages] Mongo Super Admin list over 26 conversations took ${(performance.now() - started).toFixed(1)} ms`);
             expect(page.pagination).toEqual({limit:4,offset:0,total:26,hasMore:true});
             expect(page.items.map((row)=>row.project.id)).toEqual(["global-20","a","b","global-00"]);
             expect(page.items[0]!.counts.openCritical).toBe(1);
             expect(page.items.slice(1).every((row)=>row.counts.openCritical===0)).toBe(true);
             expect(sourceReads).toHaveBeenCalledTimes(4);
-            expect(historyCounts).toHaveBeenCalledTimes(16);
+            // Whole-history counts cover all 26 authorized conversations once (4 count queries each) for exact totals.
+            expect(historyCounts).toHaveBeenCalledTimes(104);
+            expect(page.totals).toEqual({unread:0,critical:1,important:0});
             const tail = await f.service.list(f.actor("super"), {limit:4,offset:25});
             expect(tail.pagination).toEqual({limit:4,offset:25,total:26,hasMore:false});
             expect(tail.items.map((row)=>row.project.id)).toEqual(["global-23"]);
         } finally {sourceReads.mockRestore();historyCounts.mockRestore();}
     });
-
+    it("matches memory semantics for conversation filters, search, totals and last-message previews", async () => {
+        const f = await insertChatMongoFixture();
+        const {id, ...project} = chatProject("c", "client-a");
+        await ProjectModel.create({_id:id, ...project});
+        await f.service.send(f.actor("client-a"), "a", chatSend("Kick-off"));
+        await f.service.send(f.actor("designer-a"), "a", chatSend("Leak found", {priority:"critical"}));
+        await f.service.send(f.actor("manager-a"), "a", chatSend("Tile shade", {priority:"important"}));
+        await f.service.send(f.actor("client-b"), "b", chatSend("Hello from B"));
+        await f.service.send(f.actor("super"), "b", chatSend("Oversight note", {priority:"important"}));
+        await f.chatRepository.mutate(async (tx) => {
+            const sequence = await tx.allocate("a", "2026-09-16T10:05:00.000Z");
+            const attachments = Array.from({length:4}, (_, index) => ({id:`file-${index}`, kind:"image" as const, filename:`wall-${index}.jpg`, mimeType:"image/jpeg", byteSize:10, preview:index === 1 ? null : {mimeType:"image/webp", byteSize:5, width:4, height:3}}));
+            await tx.saveMessage({id:"seeded-latest", projectId:"a", author:{id:"client-a", name:"Client A", role:"client"}, body:`@Designer A  look\n${"x".repeat(200)}`, mentions:[{userId:"designer-a", start:0, end:11}], createdAt:"2026-09-16T10:05:00.000Z", sequence, clientMessageId:"seeded-latest-key", replyTo:null, priority:"normal", issueStatus:null, raisedBy:null, responsible:null, version:1, attachments});
+        });
+        const started = performance.now();
+        const all = await f.service.list(f.actor("super"), {limit:1, offset:0});
+        console.info(`[project-messages] Mongo list for 3 conversations took ${(performance.now() - started).toFixed(1)} ms`);
+        expect(all.items.map((row)=>row.project.id)).toEqual(["a"]);
+        expect(all.pagination).toEqual({limit:1, offset:0, total:3, hasMore:true});
+        expect(all.totals).toEqual({unread:2, critical:1, important:2});
+        const preview = all.items[0]!.lastMessage!;
+        expect(preview).toMatchObject({id:"seeded-latest", author:{id:"client-a", name:"Client A", role:"client"}, createdAt:"2026-09-16T10:05:00.000Z", attachmentCount:4});
+        expect(preview.excerpt).toHaveLength(120);
+        expect(preview.excerpt.startsWith("@Designer A look xxx")).toBe(true);
+        expect(preview.excerpt.endsWith("\u2026")).toBe(true);
+        expect(preview.attachments).toEqual([0, 1, 2].map((index) => ({id:`file-${index}`, kind:"image", filename:`wall-${index}.jpg`, hasPreview:index !== 1})));
+        const page = async (actorId: string, input: Record<string, unknown>) => f.service.list(f.actor(actorId), {limit:5, offset:0, ...input} as {limit: number; offset: number});
+        const ids = (value: Awaited<ReturnType<typeof page>>) => value.items.map((row)=>row.project.id);
+        expect(ids(await page("super", {}))).toEqual(["a","b","c"]);
+        expect((await page("super", {})).items[2]!.lastMessage).toBeNull();
+        expect(ids(await page("super", {filter:"unread"}))).toEqual(["a","b"]);
+        expect(ids(await page("super", {filter:"critical"}))).toEqual(["a"]);
+        expect(ids(await page("super", {filter:"important"}))).toEqual(["a","b"]);
+        const unreadTail = await f.service.list(f.actor("super"), {limit:1, offset:1, filter:"unread"} as {limit: number; offset: number});
+        expect(unreadTail.pagination).toEqual({limit:1, offset:1, total:2, hasMore:false});
+        const searched = await page("super", {search:"PROJECT C", filter:"all"});
+        expect(ids(searched)).toEqual(["c"]);
+        expect(searched.totals).toEqual({unread:2, critical:1, important:2});
+        const client = await page("client-a", {});
+        expect(ids(client)).toEqual(["a","c"]);
+        expect(client.totals).toEqual({unread:1, critical:1, important:1});
+        expect(ids(await page("client-a", {search:"project b"}))).toEqual([]);
+        expect(await page("electric-b", {})).toEqual({items:[], pagination:{limit:5, offset:0, total:0, hasMore:false}, totals:{unread:0, critical:0, important:0}});
+        expect(JSON.stringify(all)).not.toMatch(/Reference|https?:|storage/i);
+    });
 });

@@ -26,7 +26,12 @@ const initiationSchema = z.object({
   message: "Maximum budget must be at least the minimum budget."
 });
 
-const listQuerySchema = z.object(paginationShape).strict();
+const listQuerySchema = z.object({
+  ...paginationShape,
+  status: z.enum(["planning", "active", "on_hold", "completed"]).optional(),
+  search: z.string().trim().max(120).default(""),
+  sort: z.enum(["newest", "name_asc", "name_desc"]).default("newest")
+}).strict();
 const estimatorQuerySchema = z.object({
   search: z.string().trim().max(100).default(""),
   limit: z.coerce.number().int().min(1).max(50).default(20),
@@ -47,12 +52,13 @@ export function createAdminProjectsRouter(
     validateQuery(listQuerySchema),
     async (request, response, next) => {
       try {
-        const pagination = response.locals.validatedQuery;
+        const input = response.locals.validatedQuery;
+        const page = await service.list(request.authenticatedUser!, input);
         response.json({
-          data: paginatedEnvelope(
-            await service.list(request.authenticatedUser!, pagination),
-            pagination
-          )
+          data: {
+            ...paginatedEnvelope(page, { limit: input.limit, offset: input.offset }),
+            statusCounts: page.statusCounts
+          }
         });
       } catch (error) {
         next(error);

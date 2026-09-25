@@ -130,7 +130,7 @@ export function FurnitureUomField({
       initialFocusRef={codeRef} returnFocusRef={addRef}
       onClose={() => setAdding(false)}
       footer={({ requestClose }) => <div className="furniture-uom-panel__actions">
-        <Button variant="quiet" disabled={create.isPending} onClick={requestClose}>Cancel</Button>
+        <Button variant="destructive-outline" disabled={create.isPending} onClick={requestClose}>Cancel</Button>
         <Button type="submit" form={formId} disabled={disabled} busy={create.isPending} busyLabel="Saving UOM…">Save UOM</Button>
       </div>}
     >

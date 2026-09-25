@@ -160,7 +160,9 @@ EstimateDesignWorkspace {
       failureCode: null,
       failureMessage: null,
       canRetry: false,
-      canDelete: false
+      canDelete: false,
+      purpose: "ordinary",
+      requestReplacement: null
     }],
     pages: [{
       id: `page-${estimateId}`,
@@ -596,6 +598,36 @@ describe("DesignerDesignPlanTasksPage", () => {
       "/api/v1/designer/design-plan-tasks",
       "/api/v1/estimates/estimate-1/design-uploads"
     ]);
+  });
+
+  it("makes request-scoped replacement primary when the Client has an open plan request", async () => {
+    server.use(
+      http.get("/api/v1/designer/design-plan-tasks", () => HttpResponse.json({ data: [{ ...assignedTask, status: "changes_requested" }] })),
+      http.get("/api/v1/estimates/estimate-1/design-uploads", () => HttpResponse.json({ data: emptyWorkspace() })),
+      http.get("/api/v1/estimate-plan-change-requests", () => HttpResponse.json({ data: [{
+        id: "request-1",
+        estimateId: "estimate-1",
+        uploadId: "upload-1",
+        sourcePageId: "page-1",
+        clientId: "client-1",
+        version: 2,
+        summary: "Revise the false ceiling",
+        status: "open",
+        unassigned: false,
+        targetCount: 1,
+        targets: [{ drawingId: "drawing-1", status: "open" }],
+        createdAt: "2026-09-21T08:00:00.000Z"
+      }] })),
+      http.get("/api/v1/estimate-plan-pages/page-1/current-image", () => new HttpResponse(null, { status: 404 }))
+    );
+
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Plan change requests" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add a new design page" })).toBeVisible();
+    expect(screen.queryByLabelText("Design plan file")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("New design page file")).not.toBeInTheDocument();
+    expect(screen.getByText(/Use the plan change request above to replace the marked page/)).toBeVisible();
   });
 
   it("shows extracted images as a visible Designer gallery", async () => {

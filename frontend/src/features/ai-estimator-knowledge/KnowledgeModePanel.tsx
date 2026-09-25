@@ -64,6 +64,7 @@ import type {
   KnowledgeSectionEnvelope,
   KnowledgeSectionKey
 } from "./knowledgeTypes";
+import "./knowledge-mode-reference.css";
 
 const MODE_SECTION_KEYS = [
   "advanced",

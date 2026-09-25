@@ -207,6 +207,7 @@ describe("authorization policy", () => {
           permission !== "estimation.design_upload.delete" &&
           permission !== "projects.design_workflow.act" &&
           permission !== "projects.design_workflow.payments.read" &&
+          permission !== "identity.self.profile_photo.manage" &&
           !(role === "estimator_sales" && permission === "projects.initiate") &&
           !ESTIMATE_CLIENT_RESPONSE_PERMISSIONS.includes(permission as never) &&
           !PROJECT_WORKFLOW_PERMISSIONS.includes(permission as never) &&
@@ -231,9 +232,19 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(135);
-    expect(new Set(PERMISSION_CODES).size).toBe(135);
+    expect(PERMISSION_CODES).toHaveLength(138);
+    expect(new Set(PERMISSION_CODES).size).toBe(138);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
+  });
+
+  it("grants self-scoped profile photo management to every role that can read itself", () => {
+    expect(PERMISSION_CODES).toContain("identity.self.profile_photo.manage");
+    for (const role of ROLE_CODES) {
+      expect(hasPermission(role, "identity.self.profile_photo.manage"), role).toBe(
+        hasPermission(role, "identity.self.read")
+      );
+      expect(hasPermission(role, "identity.self.profile_photo.manage"), role).toBe(true);
+    }
   });
 
   it("gives every role scoped chat operations and restricts participant management", () => {
@@ -337,6 +348,7 @@ describe("authorization policy", () => {
       expect(ROLE_PERMISSIONS[role]).toEqual([
         "chat.read", "chat.send", "chat.issue", "chat.read_state",
         "identity.self.read",
+        "identity.self.profile_photo.manage",
         // Workers share the Designer KPI over their own record.
         "organization.user_tasks.read",
         "organization.user_kpi.read",
@@ -450,8 +462,14 @@ describe("authorization policy", () => {
     expect(PROMPT_1_AUDIT_ACTIONS).toHaveLength(9);
   });
 
-  it("registers the sanitized procurement expense audit action", () => {
-    expect(PROCUREMENT_AUDIT_ACTIONS).toEqual(["procurement_expense_recorded", "project_procurement_item_created", "project_vendor_suggestion_created", "project_vendor_suggestion_updated", "project_procurement_item_updated"]);
+  it("registers the sanitized procurement and vendor audit actions", () => {
+    expect(PROCUREMENT_AUDIT_ACTIONS).toEqual([
+      "procurement_vendor_allocation_baseline_recorded",
+      "procurement_vendor_photo_updated", "procurement_vendor_photo_removed",
+      "procurement_expense_recorded", "project_procurement_item_created",
+      "project_vendor_suggestion_created", "project_vendor_suggestion_updated",
+      "project_procurement_item_updated"
+    ]);
     expect(AUDIT_ACTIONS).toContain("procurement_expense_recorded");
   });
 
@@ -459,6 +477,8 @@ describe("authorization policy", () => {
     expect(AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS).toEqual([
       "ai_estimator_knowledge_basket_created",
       "ai_estimator_knowledge_sub_basket_created",
+      "ai_estimator_knowledge_sub_basket_updated",
+      "ai_estimator_knowledge_sub_basket_permanently_deleted",
       "ai_estimator_knowledge_basket_updated",
       "ai_estimator_knowledge_basket_archived",
       "ai_estimator_knowledge_basket_permanently_deleted",

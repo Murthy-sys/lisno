@@ -139,8 +139,10 @@ describe("UserInvitationsPanel", () => {
       await screen.findByRole("heading", { name: "User invitations" })
     ).toBeVisible();
     expect(
-      screen.getByRole("combobox", { name: "Filter invitations by status" })
-    ).toHaveValue("");
+      within(
+        screen.getByRole("tablist", { name: "Filter invitations by status" })
+      ).getByRole("tab", { name: "All actionable" })
+    ).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByRole("row", { name: /Asha Rao/ })).toBeVisible();
     expect(
       await screen.findByRole("row", { name: /Delivery Failed Invite/ })
@@ -232,9 +234,9 @@ describe("UserInvitationsPanel", () => {
         .map((option) => option.textContent)
     ).toEqual(["All roles", "Site Manager", "Finance Manager", "Designer"]);
     expect(
-      within(screen.getByRole("combobox", { name: "Filter invitations by status" }))
-        .getAllByRole("option")
-        .map((option) => option.textContent)
+      within(screen.getByRole("tablist", { name: "Filter invitations by status" }))
+        .getAllByRole("tab")
+        .map((tab) => tab.textContent)
     ).toEqual([
       "All actionable",
       "Pending",
@@ -278,15 +280,12 @@ describe("UserInvitationsPanel", () => {
       expect(within(screen.getByRole("row", { name: new RegExp(name) })).queryByRole("button")).not.toBeInTheDocument();
     }
 
-    const statusFilter = screen.getByRole("combobox", {
-      name: "Filter invitations by status"
-    });
-    for (const [status, name] of [
-      ["revoked", "Revoked Invite"],
-      ["superseded", "Superseded Invite"],
-      ["accepted", "Accepted Invite"]
+    for (const [status, name, tab] of [
+      ["revoked", "Revoked Invite", "Revoked"],
+      ["superseded", "Superseded Invite", "Superseded"],
+      ["accepted", "Accepted Invite", "Accepted"]
     ] as const) {
-      await user.selectOptions(statusFilter, status);
+      await user.click(screen.getByRole("tab", { name: tab }));
       await waitFor(() =>
         expect(paths).toContain(
           `/api/v1/admin/user-invitations?status=${status}&limit=20&offset=0`
@@ -294,6 +293,154 @@ describe("UserInvitationsPanel", () => {
       );
       expect(await screen.findByRole("row", { name: new RegExp(name) })).toBeVisible();
     }
+  });
+
+  /*
+   * AC8. The first tab is "All actionable", not "All": an unfiltered request
+   * returns only the actionable statuses the server considers open, so "All"
+   * would overstate what the tab shows.
+   */
+  const STATUS_TABS = [
+    ["All actionable", undefined],
+    ["Pending", "pending"],
+    ["Delivery Failed", "delivery_failed"],
+    ["Expired", "expired"],
+    ["Revoked", "revoked"],
+    ["Superseded", "superseded"],
+    ["Accepted", "accepted"]
+  ] as const;
+
+  function installStatusTabServer(paths: string[]) {
+    const items = STATUS_TABS.flatMap(([label, status]) =>
+      status === undefined
+        ? []
+        : [
+            invitation(`invitation-${status}`, {
+              name: `${label} Invite`,
+              email: `${status}@example.com`,
+              status,
+              availableActions: status === "pending" ? ["resend", "revoke"] : []
+            })
+          ]
+    );
+    server.use(
+      http.get("/api/v1/admin/user-invitations", ({ request }) => {
+        const url = new URL(request.url);
+        paths.push(`${url.pathname}${url.search}`);
+        const status = url.searchParams.get("status");
+        return HttpResponse.json({
+          data: invitationPage(
+            status
+              ? items.filter((item) => item.status === status)
+              : items.filter((item) =>
+                  ["pending", "delivery_failed", "expired"].includes(item.status)
+                )
+          )
+        });
+      })
+    );
+  }
+
+  function expectRoamingTabState(selectedLabel: string) {
+    for (const [label] of STATUS_TABS) {
+      const tab = screen.getByRole("tab", { name: label });
+      const selected = label === selectedLabel;
+      expect(tab).toHaveAttribute("aria-selected", String(selected));
+      expect(tab).toHaveAttribute("tabindex", selected ? "0" : "-1");
+    }
+  }
+
+  it("keeps every presentation status reachable as a tab and filters on exactly that status", async () => {
+    const paths: string[] = [];
+    installStatusTabServer(paths);
+    const user = userEvent.setup();
+    renderWithQuery(
+      <UserInvitationsPanel actorRole="super_admin" permissions={allPermissions} />
+    );
+    await screen.findByRole("heading", { name: "User invitations" });
+
+    const tablist = screen.getByRole("tablist", {
+      name: "Filter invitations by status"
+    });
+    expect(
+      within(tablist)
+        .getAllByRole("tab")
+        .map((tab) => tab.textContent)
+    ).toEqual(STATUS_TABS.map(([label]) => label));
+    expectRoamingTabState("All actionable");
+    await waitFor(() =>
+      expect(paths).toEqual(["/api/v1/admin/user-invitations?limit=20&offset=0"])
+    );
+
+    for (const [label, status] of STATUS_TABS.slice(1)) {
+      await user.click(screen.getByRole("tab", { name: label }));
+      await waitFor(() =>
+        expect(paths).toContain(
+          `/api/v1/admin/user-invitations?status=${status}&limit=20&offset=0`
+        )
+      );
+      expectRoamingTabState(label);
+      expect(
+        await screen.findByRole("row", { name: new RegExp(`${label} Invite`) })
+      ).toBeVisible();
+    }
+
+    // Returning to the first tab drops the status parameter entirely.
+    await user.click(screen.getByRole("tab", { name: "All actionable" }));
+    await waitFor(() =>
+      expect(paths.at(-1)).toBe("/api/v1/admin/user-invitations?limit=20&offset=0")
+    );
+    expectRoamingTabState("All actionable");
+    expect(
+      await screen.findByRole("row", { name: /Pending Invite/ })
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("row", { name: /Accepted Invite/ })
+    ).not.toBeInTheDocument();
+  });
+
+  it("moves status tab selection and focus with the arrow, Home and End keys", async () => {
+    const paths: string[] = [];
+    installStatusTabServer(paths);
+    const user = userEvent.setup();
+    renderWithQuery(
+      <UserInvitationsPanel actorRole="super_admin" permissions={allPermissions} />
+    );
+    await screen.findByRole("heading", { name: "User invitations" });
+
+    const tabFor = (label: string) => screen.getByRole("tab", { name: label });
+    tabFor("All actionable").focus();
+
+    await user.keyboard("{ArrowRight}");
+    expect(tabFor("Pending")).toHaveFocus();
+    expectRoamingTabState("Pending");
+    await waitFor(() =>
+      expect(paths).toContain(
+        "/api/v1/admin/user-invitations?status=pending&limit=20&offset=0"
+      )
+    );
+
+    await user.keyboard("{ArrowLeft}");
+    expect(tabFor("All actionable")).toHaveFocus();
+    expectRoamingTabState("All actionable");
+
+    // Left from the first tab wraps to the last.
+    await user.keyboard("{ArrowLeft}");
+    expect(tabFor("Accepted")).toHaveFocus();
+    expectRoamingTabState("Accepted");
+
+    // Right from the last tab wraps back to the first.
+    await user.keyboard("{ArrowRight}");
+    expect(tabFor("All actionable")).toHaveFocus();
+    expectRoamingTabState("All actionable");
+
+    await user.keyboard("{End}");
+    expect(tabFor("Accepted")).toHaveFocus();
+    expectRoamingTabState("Accepted");
+
+    await user.keyboard("{Home}");
+    expect(tabFor("All actionable")).toHaveFocus();
+    expectRoamingTabState("All actionable");
   });
 
   it("applies each exact permission as a second gate over server actions", async () => {

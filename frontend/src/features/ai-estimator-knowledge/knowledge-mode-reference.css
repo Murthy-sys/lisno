@@ -1,0 +1,455 @@
+/* Mode presentation is isolated from the other Configuration tabs. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel {
+  container: knowledge-mode-reference / inline-size;
+  gap: 12px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .ui-surface.knowledge-mode-block {
+  gap: 12px;
+  padding: 12px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-block__toolbar {
+  gap: 8px;
+  padding-block-end: 10px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-section-toolbar__meta {
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration {
+  gap: 14px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__intro {
+  display: grid;
+  grid-template-columns: minmax(270px, 28%) minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
+  min-inline-size: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel :is(.knowledge-mode-configuration__mode-selector legend, .knowledge-mode-configuration__shared-title, .knowledge-mode-configuration__execution-source legend) {
+  margin: 0 0 6px;
+  padding: 0;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__mode-options {
+  gap: 8px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__mode-choice {
+  position: relative;
+  flex: 0 1 auto;
+  justify-content: flex-start;
+  gap: 10px;
+  min-inline-size: 120px;
+  min-block-size: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--role-deck, var(--color-surface));
+  color: var(--color-text);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__mode-choice--pmc,
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section--pmc {
+  --knowledge-mode-accent: var(--button-primary-bg, #405334);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__mode-choice[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--knowledge-mode-accent) 55%, var(--color-border));
+  background: color-mix(in srgb, var(--knowledge-mode-accent) 6%, var(--color-surface));
+  color: var(--color-text);
+}
+
+/* The native input retains selection and focus; one glyph carries the visual state. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__mode-choice .ui-checkbox {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  min-inline-size: 1px;
+  min-block-size: 1px;
+  margin: 0;
+  opacity: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__choice-glyph {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 0 0 24px;
+  inline-size: 24px;
+  block-size: 24px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--knowledge-mode-accent) 9%, var(--color-surface));
+  color: var(--knowledge-mode-accent);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__choice-glyph svg {
+  inline-size: 17px;
+  block-size: 17px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__mode-choice[data-selected="true"] .knowledge-mode-configuration__choice-glyph {
+  background: var(--knowledge-mode-accent);
+  color: var(--color-surface);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__mode-choice[data-selected="true"] .knowledge-mode-configuration__choice-glyph svg {
+  visibility: hidden;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__mode-choice[data-selected="true"] .knowledge-mode-configuration__choice-glyph::after {
+  position: absolute;
+  content: "";
+  inline-size: 5px;
+  block-size: 9px;
+  border-inline-end: 2px solid currentColor;
+  border-block-end: 2px solid currentColor;
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__shared {
+  gap: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-description__display {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px;
+  min-inline-size: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-description__value {
+  display: block;
+  min-inline-size: 0;
+  min-block-size: 44px;
+  padding: 11px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  background: var(--role-deck, var(--color-surface));
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-description__value:focus-visible {
+  outline: 2px solid var(--button-primary-bg, var(--color-primary));
+  outline-offset: 2px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-description__display .ui-icon-button {
+  display: grid;
+  place-items: center;
+  inline-size: 44px;
+  block-size: 44px;
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--role-deck, var(--color-surface));
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-description__display .ui-icon-button svg {
+  inline-size: 18px;
+  block-size: 18px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__sections {
+  gap: 12px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section {
+  border-color: color-mix(in srgb, var(--knowledge-mode-accent) 16%, var(--color-surface));
+  border-radius: 8px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section-header {
+  border-block-end-color: color-mix(in srgb, var(--knowledge-mode-accent) 14%, var(--color-surface));
+  border-inline-start-width: 2px;
+  border-start-start-radius: 7px;
+  border-start-end-radius: 7px;
+  background: color-mix(in srgb, var(--knowledge-mode-accent) 4%, var(--color-surface));
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section-header[data-expanded="false"] {
+  border-end-start-radius: 7px;
+  border-end-end-radius: 7px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration .knowledge-mode-configuration__section-header .knowledge-mode-configuration__section-toggle {
+  grid-template-columns: 44px minmax(0, 1fr) auto auto;
+  gap: 12px;
+  min-block-size: 72px;
+  padding: 12px 14px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section-icon {
+  inline-size: 44px;
+  block-size: 44px;
+  border-radius: 8px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section-icon svg {
+  inline-size: 26px;
+  block-size: 26px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section-labels {
+  gap: 2px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section-title {
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__mode-context {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel :is(.knowledge-mode-configuration__section-tag, .knowledge-mode-configuration__section-disclosure) {
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section-disclosure {
+  color: var(--color-info);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section--pmc > .knowledge-mode-configuration__section-header .knowledge-mode-configuration__section-tag {
+  color: var(--color-text);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section-body {
+  gap: 12px;
+  padding: 14px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section--source > .knowledge-mode-configuration__section-header .knowledge-mode-configuration__section-toggle {
+  grid-template-columns: 36px minmax(0, 1fr) auto auto;
+  min-block-size: 64px;
+  padding: 10px 12px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section--source > .knowledge-mode-configuration__section-header .knowledge-mode-configuration__section-icon {
+  inline-size: 36px;
+  block-size: 36px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section--source > .knowledge-mode-configuration__section-header .knowledge-mode-configuration__section-title {
+  font-size: 16px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__execution-source {
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__execution-source legend {
+  margin-block-end: 2px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__source-hint {
+  margin: 0 0 4px;
+  font-size: 12px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__execution-source-options {
+  gap: 8px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__source-choice {
+  --knowledge-mode-accent: var(--button-primary-bg, #405334);
+  min-inline-size: 126px;
+  min-block-size: 44px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__source-choice .ui-checkbox {
+  accent-color: var(--button-primary-bg, #405334);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__list {
+  display: block;
+  padding: 8px 12px;
+  border-color: var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-subtle);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-inline-size: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__content {
+  display: grid;
+  gap: 4px;
+  min-inline-size: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel :is(.knowledge-pmc-scope__title, .knowledge-pmc-scope__empty) {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__title {
+  font-weight: 650;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__items {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__items label {
+  min-block-size: 32px;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__add {
+  margin: 0;
+  padding: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__add :is(.ui-button, .ui-control) {
+  min-block-size: 36px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__add .ui-button:not([data-busy="true"]) .ui-button__busy {
+  display: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__add .ui-button__icon svg {
+  inline-size: 16px;
+  block-size: 16px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__body[data-adding="true"] {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+@container knowledge-mode-reference (max-width: 52rem) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__intro {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container knowledge-mode-reference (max-width: 36rem) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .ui-surface.knowledge-mode-block {
+    padding: 10px;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration .knowledge-mode-configuration__section-header .knowledge-mode-configuration__section-toggle {
+    grid-template-columns: 32px minmax(0, 1fr) 24px;
+    gap: 6px 8px;
+    min-block-size: 64px;
+    padding: 10px;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section-icon {
+    inline-size: 32px;
+    block-size: 32px;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section-icon svg {
+    inline-size: 22px;
+    block-size: 22px;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section-labels {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section-tag {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+    padding: 4px 8px;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section-disclosure {
+    grid-column: 3;
+    grid-row: 1;
+    padding: 0;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section-toggle-label {
+    display: none;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__section-body {
+    padding: 10px;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__add .ui-button,
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__items label {
+    min-block-size: 44px;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__delete {
+    flex-basis: 44px;
+    inline-size: 44px;
+    block-size: 44px;
+    min-inline-size: 44px;
+    min-block-size: 44px;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__add .ui-control {
+    min-block-size: 44px;
+    font-size: 16px;
+  }
+}

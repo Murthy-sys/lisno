@@ -147,7 +147,7 @@ export const KnowledgeQualityChecklistEditor = forwardRef<KnowledgeQualityCheckl
                 <div className="knowledge-quality-row-menu__items">
                   <RowAction label={`Move Quality parameters entry ${index + 1} up`} disabled={disabled || filter !== "all" || index === 0} icon={<ArrowUp />} onClick={() => move(key, -1)}>Move up</RowAction>
                   <RowAction label={`Move Quality parameters entry ${index + 1} down`} disabled={disabled || filter !== "all" || index === parameters.length - 1} icon={<ArrowDown />} onClick={() => move(key, 1)}>Move down</RowAction>
-                  <RowAction label={`Remove Quality parameters entry ${index + 1}`} disabled={disabled} icon={<Trash2 />} onClick={() => remove(key)}>Remove parameter</RowAction>
+                  <RowAction label={`Remove Quality parameters entry ${index + 1}`} disabled={disabled} icon={<Trash2 />} onClick={() => remove(key)} negative>Remove parameter</RowAction>
                 </div>
               </details> : null}
             </div></td>
@@ -172,8 +172,8 @@ export const KnowledgeQualityChecklistEditor = forwardRef<KnowledgeQualityCheckl
   </div>;
 });
 
-function RowAction({ label, disabled, icon, onClick, children }: { readonly label: string; readonly disabled: boolean; readonly icon: ReactNode; readonly onClick: () => void; readonly children: ReactNode }) {
-  return <Button size="compact" variant="quiet" aria-label={label} disabled={disabled} leadingIcon={icon} onClick={(event) => { const menu = event.currentTarget.closest("details"); if (menu) menu.open = false; onClick(); }}>{children}</Button>;
+function RowAction({ label, disabled, icon, onClick, children, negative = false }: { readonly label: string; readonly disabled: boolean; readonly icon: ReactNode; readonly onClick: () => void; readonly children: ReactNode; readonly negative?: boolean }) {
+  return <Button size="compact" variant={negative ? "destructive-outline" : "quiet"} aria-label={label} disabled={disabled} leadingIcon={icon} onClick={(event) => { const menu = event.currentTarget.closest("details"); if (menu) menu.open = false; onClick(); }}>{children}</Button>;
 }
 
 function QualityControlsSummary({ parameter, qualityOptions }: { readonly parameter: KnowledgeJsonObject; readonly qualityOptions?: QualityControlOptionCatalog }) {

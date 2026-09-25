@@ -1,9 +1,10 @@
-import { router } from "expo-router";
 import { useState } from "react";
 import { StyleSheet, Text } from "react-native";
 
 import { ApiError } from "../../core/http/apiClient";
+import { useScreenBack } from "../../navigation/useScreenBack";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
+import { BackButton } from "../../ui/BackButton";
 import { Button, Field } from "../../ui/primitives";
 import { colors, fonts, radii, spacing } from "../../ui/tokens";
 import { AuthFrame } from "./AuthFrame";
@@ -15,8 +16,10 @@ export function ForgotPasswordScreen() {
   const [error, setError] = useState<string | null>(null);
   const [accepted, setAccepted] = useState(false);
   const [busy, setBusy] = useState(false);
+  const back = useScreenBack({ blocked: busy });
 
   const submit = async () => {
+    if (busy) return;
     const parsed = recoverySchema.safeParse({ email });
     if (!parsed.success) {
       setError(firstIssue(parsed, "email") ?? "Enter a valid email address.");
@@ -46,11 +49,11 @@ export function ForgotPasswordScreen() {
       eyebrow="ACCOUNT RECOVERY"
       title={accepted ? "Request received" : "Reset your password"}
       subtitle={accepted ? "If an eligible account exists for that email, reset instructions will be sent." : "Enter your account email to receive a secure reset link."}
+      back={back.visible ? <BackButton onPress={back.onBack} disabled={back.disabled} accessibilityLabel="Back to sign in" accessibilityHint="Returns to the sign-in screen." /> : null}
     >
       {accepted ? (
         <>
           <Text accessibilityLiveRegion="polite" style={styles.notice}>Check your inbox and spam folder. Wait a few minutes before trying again.</Text>
-          <Button label="Back to sign in" onPress={() => router.replace("/sign-in")} />
           <Button label="Try another email" variant="quiet" onPress={() => { setAccepted(false); setError(null); }} />
         </>
       ) : (
@@ -66,7 +69,6 @@ export function ForgotPasswordScreen() {
             onSubmitEditing={() => void submit()}
           />
           <Button label="Send reset instructions" loading={busy} onPress={() => void submit()} />
-          <Button label="Back to sign in" variant="quiet" onPress={() => router.back()} />
         </>
       )}
     </AuthFrame>

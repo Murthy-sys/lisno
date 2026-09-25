@@ -16,6 +16,7 @@ export default function FeatureRoute() {
   return (
     <AdaptiveAppScaffold
       activeFeature={destination.id}
+      backPlacement={destination.id === "projects" ? "content" : "scaffold"}
       {...(destination.id === "messages" ? { navigationRailBreakpoint: 840 } : {})}
     >
       <FeatureWorkspace destination={destination} session={context.session.session} />

@@ -47,9 +47,11 @@ export const AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES: Readonly<Record<string, Open
   [`PUT ${admin}/baskets/:basketId/quality`]: jsonRequest("KnowledgeBasketQualityUpdateRequest"),
   [`DELETE ${admin}/baskets/:basketId`]: jsonRequest("KnowledgePermanentDeleteBasketRequest"),
   [`POST ${admin}/baskets/:basketId/sub-baskets`]: jsonRequest("KnowledgeSubBasketCreateRequest"),
+  [`PATCH ${admin}/baskets/:basketId/sub-baskets/:subBasketId`]: jsonRequest("KnowledgeSubBasketUpdateRequest"),
+  [`DELETE ${admin}/baskets/:basketId/sub-baskets/:subBasketId`]: jsonRequest("KnowledgePermanentDeleteSubBasketRequest"),
   [`POST ${admin}/baskets/:basketId/main-lines`]: jsonRequest("KnowledgeMainLineCreateRequest"),
   [`PATCH ${admin}/main-lines/:mainLineId`]: jsonRequest("KnowledgeMainLineUpdateRequest"),
-  [`DELETE ${admin}/main-lines/:mainLineId`]: jsonRequest("KnowledgeArchiveRequest"),
+  [`DELETE ${admin}/main-lines/:mainLineId`]: jsonRequest("KnowledgeMainLineDeleteRequest"),
   [`POST ${admin}/main-lines/:mainLineId/revisions`]: jsonRequest("KnowledgeRevisionCreateRequest"),
   [`PUT ${admin}/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey`]: jsonRequest("KnowledgeSectionUpdateRequest"),
   [`POST ${admin}/main-lines/:mainLineId/revisions/:revisionId/activate`]: jsonRequest("KnowledgeActivationRequest"),
@@ -85,6 +87,9 @@ export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, st
   [`POST ${admin}/quality-control-options`]: "KnowledgeQualityControlOption",
   [`GET ${admin}/baskets/:basketId/sub-baskets`]: "KnowledgeSubBasketPage",
   [`POST ${admin}/baskets/:basketId/sub-baskets`]: "KnowledgeSubBasket",
+  [`PATCH ${admin}/baskets/:basketId/sub-baskets/:subBasketId`]: "KnowledgeSubBasket",
+  [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/deletion-impact`]: "KnowledgeSubBasketDeletionImpact",
+  [`DELETE ${admin}/baskets/:basketId/sub-baskets/:subBasketId`]: "KnowledgePermanentDeleteSubBasketResult",
   [`GET ${admin}/baskets`]: "KnowledgeBasketPage",
   [`POST ${admin}/baskets`]: "KnowledgeBasket",
   [`PATCH ${admin}/baskets/:basketId`]: "KnowledgeBasket",
@@ -132,6 +137,9 @@ export const AI_ESTIMATOR_KNOWLEDGE_OPERATION_SUMMARIES: Readonly<Record<string,
   [`POST ${admin}/quality-control-options`]: "Create an append-only reusable Quality Control value",
   [`GET ${admin}/baskets/:basketId/sub-baskets`]: "List a Main Basket’s Sub Baskets",
   [`POST ${admin}/baskets/:basketId/sub-baskets`]: "Create a Sub Basket",
+  [`PATCH ${admin}/baskets/:basketId/sub-baskets/:subBasketId`]: "Rename a Sub Basket with contextual lifecycle validation",
+  [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/deletion-impact`]: "Preview permanent Sub Basket deletion",
+  [`DELETE ${admin}/baskets/:basketId/sub-baskets/:subBasketId`]: "Permanently delete a Sub Basket and its contents",
   [`GET ${admin}/baskets`]: "List knowledge Baskets",
   [`POST ${admin}/baskets`]: "Create a knowledge Basket",
   [`PATCH ${admin}/baskets/:basketId`]: "Update a knowledge Basket",
@@ -220,7 +228,11 @@ export const AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS: Readonly<
   ],
   ...Object.fromEntries(masterFamilies.map((family) => [
     `GET ${admin}/${family}`,
-    [searchParameter, masterStatusParameter, includeArchivedParameter]
+    [searchParameter, masterStatusParameter, includeArchivedParameter, ...(family === "vendors" ? [{
+      name: "includeDirectoryOverview", in: "query", required: false,
+      schema: { type: "boolean", default: false },
+      description: "When true, include global non-archived vendor counts independently of all list filters and pagination. Omitted or false preserves the standard page response."
+    }] : [])]
   ]))
 };
 
@@ -437,6 +449,39 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     })
   }),
   KnowledgeSubBasketCreateRequest: strictObject(["name"], { name: masterProperties.name }),
+  KnowledgeSubBasketUpdateRequest: strictObject(["expectedVersion", "name"], {
+    expectedVersion: version,
+    name: masterProperties.name,
+    managementContext: { type: "string", enum: ["configuration"], description: "Configuration permits rename without changing child lifecycle. Omit to retain draft-only group validation." }
+  }),
+  KnowledgeSubBasketDeletionImpact: strictObject(["basketId", "subBasketId", "subBasketName", "version", "mainLineCount", "referenceCount", "vendorReferenceCount", "impactToken"], {
+    basketId: id, subBasketId: id, subBasketName: masterProperties.name, version,
+    mainLineCount: { type: "integer", minimum: 0 },
+    referenceCount: { type: "integer", minimum: 0 },
+    vendorReferenceCount: { type: "integer", minimum: 0, description: "Retained vendor profiles that prevent permanent deletion." },
+    impactToken: { type: "string", pattern: "^[a-f0-9]{64}$", description: "Identity/version fingerprint of the confirmed impact; not an authorization credential." }
+  }),
+  KnowledgePermanentDeleteSubBasketRequest: strictObject(["expectedVersion", "confirmationName", "reason", "impactToken"], {
+    expectedVersion: version,
+    confirmationName: { type: "string", minLength: 1, maxLength: 240 },
+    reason: { type: "string", minLength: 1, maxLength: 1_000 },
+    impactToken: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    draftOnly: { type: "boolean", enum: [true], description: "Inline recommendation removal requires every direct child to remain Draft. Omit for existing Configuration deletion behavior." }
+  }),
+  KnowledgePermanentDeleteSubBasketResult: strictObject(["basketId", "subBasketId", "deleted", "deletedAt", "deletedMainLineIds", "deletedReferenceCount"], {
+    basketId: id, subBasketId: id, deleted: { type: "boolean", enum: [true] },
+    deletedAt: { type: "string", format: "date-time" },
+    deletedMainLineIds: { type: "array", items: id },
+    deletedReferenceCount: { type: "integer", minimum: 0 }
+  }),
+  KnowledgeDraftSubBasketGuard: strictObject(["subBasketId", "expectedVersion"], {
+    subBasketId: id,
+    expectedVersion: version
+  }),
+  KnowledgeDraftItemGuard: strictObject(["basketId", "subBasketId"], {
+    basketId: id,
+    subBasketId: { type: "string", nullable: true, enum: [null], description: "Confirms that this Draft item is directly under its Main Basket." }
+  }),
   KnowledgeMainLineCreateRequest: { ...strictObject(["name"], {
     itemType: { type: "string", enum: ["main_line", "temporary"], description: "Temporary items expose only Overview, Mode and Quality Parameters." },
     subBasketId: id,
@@ -445,12 +490,21 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     description,
     displayOrder: createDisplayOrder
   }), not: { required: ["subBasketId", "subBasketName"] } },
-  KnowledgeMainLineUpdateRequest: strictObject(["expectedVersion"], {
+  KnowledgeMainLineUpdateRequest: { ...strictObject(["expectedVersion"], {
     expectedVersion: version,
     name: masterProperties.name,
     description,
-    displayOrder: editableDisplayOrder
-  }),
+    displayOrder: editableDisplayOrder,
+    draftSubBasketGuard: ref("KnowledgeDraftSubBasketGuard"),
+    draftItemGuard: ref("KnowledgeDraftItemGuard")
+  }), not: { required: ["draftSubBasketGuard", "draftItemGuard"] },
+  anyOf: [{ required: ["name"] }, { required: ["description"] }, { required: ["displayOrder"] }] },
+  KnowledgeMainLineDeleteRequest: { ...strictObject(["expectedVersion", "reason"], {
+    expectedVersion: version,
+    reason: { type: "string", minLength: 1, maxLength: 1_000 },
+    draftSubBasketGuard: ref("KnowledgeDraftSubBasketGuard"),
+    draftItemGuard: ref("KnowledgeDraftItemGuard")
+  }), not: { required: ["draftSubBasketGuard", "draftItemGuard"] } },
   KnowledgeRevisionCreateRequest: strictObject(["expectedVersion"], {
     expectedVersion: version,
     reason: { type: "string", minLength: 1, maxLength: 1_000 }
@@ -1257,6 +1311,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       "mainLineCount",
       "subBasketCount",
       "historicalReferenceCount",
+      "vendorReferenceCount",
       "bootstrapOwned"
     ],
     {
@@ -1266,6 +1321,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       mainLineCount: { type: "integer", minimum: 0 },
       subBasketCount: { type: "integer", minimum: 0 },
       historicalReferenceCount: { type: "integer", minimum: 0 },
+      vendorReferenceCount: { type: "integer", minimum: 0, description: "Retained vendor profiles that prevent permanent deletion." },
       bootstrapOwned: { type: "boolean" }
     }
   ),

@@ -132,12 +132,13 @@ function ProjectProcurementItemsTable({ projectId, projectName, source, estimate
           {page.items.length ? <div className="project-procurement-items__table-region" role="region" aria-label={`Procurement items table${parentLabel ? ` for ${parentLabel}` : unassigned ? " needing assignment" : ""}`} tabIndex={0} aria-busy={query.isFetching || undefined}>
             <table className="project-procurement-items__table">
               <caption className="sr-only">Procurement items and prices per unit of measure</caption>
-              <thead><tr><th scope="col">Item name</th><th scope="col">Brand</th><th scope="col">Vendor</th><th scope="col">UOM</th><th scope="col">Price (INR)</th>{canManage ? <th scope="col">Actions</th> : null}</tr></thead>
+              <thead><tr><th scope="col">Item name</th><th scope="col">Brand</th><th scope="col">Vendor</th><th scope="col">UOM</th><th scope="col">Allocated work (INR)</th><th scope="col">Price (INR)</th>{canManage ? <th scope="col">Actions</th> : null}</tr></thead>
               <tbody>{page.items.map((item) => <tr key={item.id}>
                 <th scope="row" className="project-procurement-items__name"><span className="project-procurement-items__chip">{item.itemName}</span>{unassigned && item.estimateSource ? <small>From a previous estimate item</small> : null}</th>
                 <td data-label="Brand"><span className="project-procurement-items__chip project-procurement-items__chip--brand">{item.brand}</span></td>
                 <td data-label="Vendor">{item.vendor ? <><span className="project-procurement-items__chip project-procurement-items__chip--vendor">{item.vendor.name}</span>{item.vendor.status !== "active" ? <small>Unavailable for new items</small> : null}</> : <span className="project-procurement-items__chip project-procurement-items__chip--neutral">Not selected</span>}</td>
                 <td data-label="UOM"><span className="project-procurement-items__chip project-procurement-items__chip--uom" title={item.uom.name}>{item.uom.code}</span>{item.uom.status !== "active" ? <small>Unavailable for new items</small> : null}</td>
+                <td data-label="Allocated work (INR)">{item.allocatedWorkPaise == null ? "Not recorded" : formatPaise(item.allocatedWorkPaise)}</td>
                 <td data-label="Price (INR)" className="project-procurement-items__price"><span className="project-procurement-items__chip project-procurement-items__chip--price">{formatPaise(item.pricePaise)}</span></td>
                 {canManage ? <td className="project-procurement-items__actions">{unassigned && item.estimateSource ? <span className="project-procurement-items__muted">Review assignment</span> : <IconButton variant="quiet" icon={<Pencil aria-hidden="true" />} label={`Edit ${item.itemName}, ${item.brand}`} title={`Edit ${item.itemName}`} onClick={(event) => {
                   returnFocusRef.current = event.currentTarget;

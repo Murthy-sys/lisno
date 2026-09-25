@@ -196,7 +196,7 @@ describe("automatic knowledge-base display order forms", () => {
     });
     renderWithQuery(<KnowledgeBaseIndexPage />, true);
 
-    await user.click(await screen.findByRole("button", { name: "Edit basket" }));
+    await user.click(await screen.findByRole("button", { name: `Edit basket ${basket.name}` }));
     const dialog = screen.getByRole("dialog", { name: "Edit main basket" });
     const name = within(dialog).getByRole("textbox", { name: "Basket name" });
     const order = within(dialog).getByRole("spinbutton", { name: "Display order" });

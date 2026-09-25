@@ -26,6 +26,153 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents scoped project search, stable sorting and status counts before status selection", () => {
+    const schemas = componentSchemas();
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const operation = paths["/admin/projects"]!.get!;
+    expect(operation.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "status", in: "query", schema: { type: "string", enum: ["planning", "active", "on_hold", "completed"] } }),
+      expect.objectContaining({ name: "search", in: "query", schema: { type: "string", maxLength: 120, default: "" } }),
+      expect.objectContaining({ name: "sort", in: "query", schema: { type: "string", enum: ["newest", "name_asc", "name_desc"], default: "newest" } }),
+      expect.objectContaining({ name: "limit" }),
+      expect.objectContaining({ name: "offset" })
+    ]));
+    expect(operation.responses["2XX"].content["application/json"].schema.properties.data.$ref).toBe("#/components/schemas/AdminProjectPage");
+    expect(schemas.AdminProjectPage!.required).toEqual(["items", "pagination", "statusCounts"]);
+    expect(schemas.AdminProjectPage!.properties.statusCounts.$ref).toBe("#/components/schemas/AdminProjectStatusCounts");
+    expect(schemas.AdminProjectStatusCounts!.required).toEqual(["all", "planning", "active", "on_hold", "completed"]);
+    expect(schemas.AdminProjectStatusCounts!.description).toContain("before the selected status filter");
+  });
+  it("documents nullable private organization and banking fields with legacy-compatible input", () => {
+    const schemas = componentSchemas();
+    const input = schemas.KnowledgeVendorProfileInput!;
+    expect(input.properties.organizationType).toMatchObject({ type: "string", nullable: true, enum: ["individual", "company", "firm", "associated_person", "huf", "trust", "govt", null] });
+    expect(input.required).not.toContain("organizationType");
+    expect(input.required).not.toContain("bankAccount");
+    expect(input.properties.bankAccount).toMatchObject({ type: "object", nullable: true, additionalProperties: false, required: ["accountHolderName", "bankName", "accountNumber", "ifscCode"] });
+    expect(input.properties.bankAccount.properties.accountNumber).toMatchObject({ type: "string", minLength: 1, maxLength: 34, pattern: "^[0-9]{1,34}$" });
+    expect(input.properties.bankAccount.properties.ifscCode).toMatchObject({ type: "string", pattern: "^[A-Z]{4}0[A-Z0-9]{6}$" });
+    for (const name of ["KnowledgeVendorProfile", "KnowledgeVendorStoredProfile"]) {
+      expect(schemas[name]!.required).toEqual(expect.arrayContaining(["organizationType", "bankAccount"]));
+      expect(schemas[name]!.properties.bankAccount.required).toContain("branchName");
+    }
+    expect(schemas.KnowledgeVendorCreateRequest!.description).toContain("requires a non-null organizationType");
+    expect(schemas.KnowledgeVendorDetail!.properties.procurementProfile.properties).toHaveProperty("bankAccount");
+    for (const name of ["KnowledgeMaster", "KnowledgeVendor", "KnowledgeVendorSummary"]) {
+      for (const field of ["organizationType", "bankAccount", "accountHolderName", "bankName", "accountNumber", "ifscCode", "branchName"]) expect(schemas[name]!.properties).not.toHaveProperty(field);
+    }
+  });
+  it("documents optional global vendor overview and safe execution summary without changing other masters", () => {
+    const schemas = componentSchemas();
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    expect(schemas.KnowledgeVendorSummary!.properties.executionType).toMatchObject({ type: "array", nullable: true, minItems: 1, maxItems: 2, uniqueItems: true, items: { type: "string", enum: ["labor", "material_labour"] } });
+    expect(schemas.KnowledgeVendorSummary!.required).toContain("executionType");
+    expect(schemas.KnowledgeVendorDirectoryOverview!.properties).toEqual({ totalVendors: { type: "integer", minimum: 0 }, activeVendors: { type: "integer", minimum: 0 }, underReviewVendors: { type: "integer", minimum: 0 } });
+    expect(schemas.KnowledgeVendorPage!.properties.directoryOverview).toEqual({ $ref: "#/components/schemas/KnowledgeVendorDirectoryOverview" });
+    expect(schemas.KnowledgeVendorPage!.required).toEqual(["items", "pagination"]);
+    expect(schemas.KnowledgeMasterPage!.properties).not.toHaveProperty("directoryOverview");
+    expect(paths["/admin/ai-estimator-knowledge/vendors"]!.get!.parameters).toContainEqual(expect.objectContaining({ name: "includeDirectoryOverview", in: "query", required: false, schema: { type: "boolean", default: false } }));
+    for (const kind of ["uoms", "taxes", "priorities", "surfaces", "modes"]) expect(paths[`/admin/ai-estimator-knowledge/${kind}`]!.get!.parameters).not.toContainEqual(expect.objectContaining({ name: "includeDirectoryOverview" }));
+  });
+  it("separates legacy-compatible Execution input from canonical array detail output", () => {
+    const schemas = componentSchemas();
+    const canonicalSelections = {
+      type: "array", nullable: true, minItems: 1, maxItems: 2, uniqueItems: true,
+      items: { type: "string", enum: ["labor", "material_labour"] }
+    };
+    expect(schemas.KnowledgeVendorProfile!.properties.executionType).toMatchObject(canonicalSelections);
+    expect(schemas.KnowledgeVendorStoredProfile!.properties.executionType).toMatchObject(canonicalSelections);
+    expect(schemas.KnowledgeVendorDetail!.properties.procurementProfile.properties.executionType).toMatchObject(canonicalSelections);
+    expect(schemas.KnowledgeVendorProfileInput!.properties.executionType.oneOf).toEqual([
+      expect.objectContaining(canonicalSelections),
+      expect.objectContaining({ type: "string", enum: ["labor", "material_labour"] })
+    ]);
+    expect(schemas.KnowledgeVendorProfile!.properties.executionType).not.toHaveProperty("oneOf");
+    for (const name of ["KnowledgeVendorCreateRequest", "KnowledgeVendorUpdateRequest"]) {
+      expect(schemas[name]!.properties.procurementProfile).toEqual({ $ref: "#/components/schemas/KnowledgeVendorProfileInput" });
+    }
+  });
+  it("keeps vendor mutation responses compatible with the shared master DTO", () => {
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const schemas = componentSchemas();
+    expect(schemas.KnowledgeVendorCreateRequest!.required).toEqual(["name"]);
+    expect(schemas.KnowledgeVendorCreateRequest).not.toHaveProperty("anyOf");
+    for (const [path, method] of [["/admin/ai-estimator-knowledge/vendors", "post"], ["/admin/ai-estimator-knowledge/vendors/{id}", "patch"]]) {
+      expect(paths[path!]![method!]!.responses).toHaveProperty("2XX.content.application/json.schema.properties.data.$ref", "#/components/schemas/KnowledgeMaster");
+    }
+    expect(schemas.KnowledgeVendor!.required).toContain("procurementSummary");
+    expect(schemas.KnowledgeMaster!.required).not.toContain("procurementSummary");
+    expect(schemas.KnowledgeVendorDetail!.required).toEqual(expect.arrayContaining(["procurementProfile", "procurementSummary", "geoTaggedPicture", "msmeCertificate"]));
+  });
+  it("documents conditional vendor registration and private certificate upload/download contracts", () => {
+    const schemas = componentSchemas();
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const profile = schemas.KnowledgeVendorProfileInput!;
+    expect(profile.properties.gstNumber).toMatchObject({ type: "string", nullable: true });
+    expect(profile.required).not.toContain("reference");
+    expect(profile.required).not.toContain("supplier");
+    for (const name of ["KnowledgeVendorCreateRequest", "KnowledgeVendorUpdateRequest"]) {
+      expect(schemas[name]!.properties).toHaveProperty("msmeCertificateUploadId");
+      expect(schemas[name]!.properties).toHaveProperty("idempotencyKey");
+    }
+    for (const [path, permission, required] of [
+      ["/admin/ai-estimator-knowledge/vendors/msme-certificate-uploads", "create", ["certificate", "idempotencyKey"]],
+      ["/admin/ai-estimator-knowledge/vendors/{id}/msme-certificate-uploads", "update", ["certificate", "idempotencyKey", "expectedVersion"]]
+    ] as const) {
+      const operation = paths[path]!.post!;
+      expect(operation["x-lisno-permission"]).toBe(`ai_estimator_knowledge.configuration.${permission}`);
+      const schemaRef = operation.requestBody.content["multipart/form-data"].schema.$ref as string;
+      const upload = schemas[schemaRef.split("/").at(-1)!]!;
+      expect(upload.required).toEqual(expect.arrayContaining([...required]));
+      expect(upload.properties.certificate).toMatchObject({ type: "string", format: "binary" });
+      expect(upload.additionalProperties).toBe(false);
+      expect(operation.responses).toHaveProperty("413");
+      expect(operation.responses).toHaveProperty("415");
+    }
+    const download = paths["/admin/ai-estimator-knowledge/vendors/{id}/msme-certificate"]!.get!;
+    expect(download["x-lisno-permission"]).toBe("ai_estimator_knowledge.configuration.read");
+    expect(Object.keys(download.responses["200"].content).sort()).toEqual(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
+    expect(download.responses["200"].description).toMatch(/no-store/);
+    expect(paths["/admin/ai-estimator-knowledge/vendors/msme-certificate-upload-policy"]!.get!["x-lisno-permission"]).toBe("ai_estimator_knowledge.configuration.read");
+    for (const name of ["KnowledgeMaster", "KnowledgeVendor", "KnowledgeVendorSummary"]) {
+      for (const key of ["gstNumber", "procurementProfile", "msmeCertificate", "msmeCertificateUploadId", "storageReference", "sha256"]) expect(schemas[name]!.properties).not.toHaveProperty(key);
+    }
+  });
+  it("documents request-scoped plan replacement uploads with their exact multipart and response contract", () => {
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const operation = paths["/estimate-plan-change-requests/{requestId}/replacement-upload"]!.post!;
+    expect(operation).toMatchObject({
+      summary: "Upload revised pages for an open Client plan-change request",
+      "x-lisno-permission": "estimation.drawing.replace",
+      "x-lisno-operation-class": "personal",
+      "x-lisno-super-admin-behavior": "deny_personal"
+    });
+    expect(operation.requestBody).toHaveProperty(
+      "content.multipart/form-data.schema.$ref",
+      "#/components/schemas/PlanRequestReplacementUploadRequest"
+    );
+    expect(operation.responses).toHaveProperty(
+      "2XX.content.application/json.schema.properties.data.$ref",
+      "#/components/schemas/EstimateDesignUpload"
+    );
+    expect(componentSchemas().PlanRequestReplacementUploadRequest).toMatchObject({
+      additionalProperties: false,
+      required: ["file", "version", "idempotencyKey"],
+      properties: {
+        file: { type: "string", format: "binary" },
+        version: { type: "integer", minimum: 1 },
+        idempotencyKey: { type: "string", minLength: 8, maxLength: 128 }
+      }
+    });
+    expect(componentSchemas().EstimateDesignUpload!.required).toEqual(
+      expect.arrayContaining(["purpose", "requestReplacement"])
+    );
+    expect(componentSchemas().EstimateDesignUpload).toHaveProperty(
+      "properties.requestReplacement.properties.matches.items.required",
+      ["drawingId", "requestedRevisionId", "detectedTitle", "resultRevisionId", "matchReason", "pageNumber"]
+    );
+  });
+
   it("documents scoped vendor suggestions, request replay and honest KPI placeholders", () => {
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
     const route = paths["/procurement/projects/{projectId}/vendor-suggestions"]!;
@@ -358,7 +505,7 @@ describe("OpenAPI and Swagger UI", () => {
     expect((projects?.parameters as Array<{ name: string; schema: Record<string, unknown> }>))
       .toEqual(expect.arrayContaining([
         expect.objectContaining({ name: "limit", schema: expect.objectContaining({ maximum: 50 }) }),
-        expect.objectContaining({ name: "periodDays", schema: expect.objectContaining({ enum: [7, 30, 90] }) })
+        expect.objectContaining({ name: "periodDays", schema: expect.objectContaining({ enum: [7, 30, 90, 365] }) })
       ]));
     expect(componentSchemas()).toHaveProperty("DashboardRatio");
     expect(componentSchemas()).toHaveProperty("DashboardDataQuality");
@@ -371,6 +518,57 @@ describe("OpenAPI and Swagger UI", () => {
     expect(schemas.SuperAdminDashboardOverview?.properties?.projects).toEqual({
       $ref: "#/components/schemas/DashboardProjectsMetrics"
     });
+    expect(schemas.SuperAdminDashboardOverview?.properties?.clients).toEqual({
+      $ref: "#/components/schemas/DashboardClientMetrics"
+    });
+    expect(schemas.SuperAdminDashboardOverview?.properties?.comparison).toEqual({
+      $ref: "#/components/schemas/DashboardComparison"
+    });
+    const clientMetrics = schemas.DashboardClientMetrics as {
+      required?: string[];
+      properties?: Record<string, { enum?: string[]; nullable?: boolean }>;
+    };
+    expect(clientMetrics.required).toEqual(expect.arrayContaining([
+      "accountsStatus",
+      "relationshipsStatus",
+      "registeredAccounts",
+      "clientsWithProjects",
+      "invalidProjectClientLinks"
+    ]));
+    expect(clientMetrics.properties?.accountsStatus?.enum).toEqual(["available", "unavailable"]);
+    expect(clientMetrics.properties?.registeredAccounts?.nullable).toBe(true);
+    expect(clientMetrics.properties?.relationshipsUnavailableReason?.nullable).toBe(true);
+    const comparison = schemas.DashboardComparison as {
+      required?: string[];
+      properties?: Record<string, {
+        maxItems?: number;
+        properties?: Record<string, unknown>;
+        required?: string[];
+      }>;
+    };
+    expect(comparison.required).toEqual(["window", "metrics", "currentBuckets", "previousBuckets"]);
+    expect(comparison.properties?.metrics?.required).toEqual([
+      "projects_created",
+      "clients_created",
+      "projects_completed",
+      "execution_tasks_completed",
+      "estimates_approved",
+      "design_plans_approved",
+      "recorded_expenses_paise"
+    ]);
+    expect(comparison.properties?.currentBuckets?.maxItems).toBe(90);
+    expect(comparison.properties?.previousBuckets?.maxItems).toBe(90);
+    const comparisonMetric = schemas.DashboardComparisonMetric as {
+      properties?: Record<string, { enum?: string[]; nullable?: boolean }>;
+    };
+    expect(comparisonMetric.properties?.changeKind?.enum).toEqual([
+      "percentage",
+      "new",
+      "no_change",
+      "unavailable"
+    ]);
+    expect(comparisonMetric.properties?.changeBps?.nullable).toBe(true);
+    expect(comparisonMetric.properties?.previousUnavailableReason?.nullable).toBe(true);
     expect(schemas.SuperAdminDashboardProjectPage?.properties?.items).toEqual({
       type: "array",
       items: { $ref: "#/components/schemas/DashboardProjectRow" }
@@ -439,7 +637,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 236 routes without versioning paths twice", () => {
+  it("contains all 258 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -448,7 +646,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 13);
-    expect(operationCount).toBe(236);
+    expect(operationCount).toBe(258);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -458,7 +656,7 @@ describe("OpenAPI and Swagger UI", () => {
     const knowledgeOperations = HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability }) => availability === "ai_estimator_knowledge"
     );
-    expect(knowledgeOperations).toHaveLength(50);
+    expect(knowledgeOperations).toHaveLength(63);
 
     for (const registered of knowledgeOperations) {
       const { method, path } = splitHumanOperationKey(registered.key);
@@ -471,7 +669,19 @@ describe("OpenAPI and Swagger UI", () => {
       expect(documented?.responses?.["422"], registered.key).toEqual({
         $ref: "#/components/responses/UnprocessableKnowledge"
       });
-      if (method !== "GET") {
+      if (registered.key === "PUT /admin/ai-estimator-knowledge/vendors/:id/photo") {
+        expect(documented?.requestBody).toMatchObject({
+          required: true,
+          "x-lisno-schema-completeness": "exact",
+          content: { "multipart/form-data": { schema: { $ref: "#/components/schemas/KnowledgeVendorPhotoUpload" } } }
+        });
+      } else if (registered.key.endsWith("/msme-certificate-uploads")) {
+        expect(documented?.requestBody, registered.key).toMatchObject({
+          required: true,
+          "x-lisno-schema-completeness": "exact",
+          content: { "multipart/form-data": { schema: { $ref: expect.stringMatching(/^#\/components\/schemas\/KnowledgeVendorCertificate/u) } } }
+        });
+      } else if (method !== "GET") {
         expect(documented?.requestBody, registered.key).toMatchObject({
           required: true,
           "x-lisno-schema-completeness": "exact",
@@ -567,6 +777,68 @@ describe("OpenAPI and Swagger UI", () => {
     });
     expect(componentSchemas().KnowledgeTemporaryMainLineReference)
       .toHaveProperty("properties.rules.items.properties.targetKind.enum", ["main_line", "sub_basket"]);
+    expect(
+      openApiDocument.paths[
+        "/admin/ai-estimator-knowledge/baskets/{basketId}/sub-baskets/{subBasketId}"
+      ]?.patch
+    ).toMatchObject({
+      summary: "Rename a Sub Basket with contextual lifecycle validation",
+      "x-lisno-permission": "ai_estimator_knowledge.configuration.update",
+      requestBody: {
+        content: {
+          "application/json": {
+            schema: { $ref: "#/components/schemas/KnowledgeSubBasketUpdateRequest" }
+          }
+        }
+      },
+      responses: {
+        "2XX": {
+          content: {
+            "application/json": {
+              schema: { properties: { data: { $ref: "#/components/schemas/KnowledgeSubBasket" } } }
+            }
+          }
+        }
+      }
+    });
+    expect(componentSchemas().KnowledgeSubBasketUpdateRequest).toMatchObject({
+      additionalProperties: false,
+      required: ["expectedVersion", "name"],
+      properties: { managementContext: { enum: ["configuration"] } }
+    });
+    expect(componentSchemas().KnowledgePermanentDeleteSubBasketRequest).toMatchObject({
+      additionalProperties: false,
+      required: ["expectedVersion", "confirmationName", "reason", "impactToken"],
+      properties: { draftOnly: { type: "boolean", enum: [true] } }
+    });
+    expect(componentSchemas().KnowledgeSubBasketDeletionImpact).toMatchObject({
+      required: ["basketId", "subBasketId", "subBasketName", "version", "mainLineCount", "referenceCount", "vendorReferenceCount", "impactToken"]
+    });
+    expect(openApiDocument.paths["/admin/ai-estimator-knowledge/baskets/{basketId}/sub-baskets/{subBasketId}/deletion-impact"]?.get).toMatchObject({
+      "x-lisno-permission": "ai_estimator_knowledge.configuration.lifecycle"
+    });
+    expect(componentSchemas().KnowledgeDraftSubBasketGuard).toMatchObject({
+      additionalProperties: false,
+      required: ["subBasketId", "expectedVersion"]
+    });
+    expect(componentSchemas().KnowledgeMainLineUpdateRequest)
+      .toHaveProperty("properties.draftSubBasketGuard.$ref", "#/components/schemas/KnowledgeDraftSubBasketGuard");
+    expect(componentSchemas().KnowledgeMainLineDeleteRequest)
+      .toHaveProperty("properties.draftSubBasketGuard.$ref", "#/components/schemas/KnowledgeDraftSubBasketGuard");
+    expect(componentSchemas().KnowledgeDraftItemGuard).toMatchObject({
+      additionalProperties: false,
+      required: ["basketId", "subBasketId"],
+      properties: { subBasketId: { nullable: true, enum: [null] } }
+    });
+    for (const name of ["KnowledgeMainLineUpdateRequest", "KnowledgeMainLineDeleteRequest"]) {
+      expect(componentSchemas()[name]).toMatchObject({
+        properties: { draftItemGuard: { $ref: "#/components/schemas/KnowledgeDraftItemGuard" } },
+        not: { required: ["draftSubBasketGuard", "draftItemGuard"] }
+      });
+    }
+    expect(componentSchemas().KnowledgeMainLineUpdateRequest).toHaveProperty("anyOf", [
+      { required: ["name"] }, { required: ["description"] }, { required: ["displayOrder"] }
+    ]);
 
     const previewRequest = componentSchemas().KnowledgePreviewRequest as {
       additionalProperties?: boolean;
@@ -1331,7 +1603,7 @@ describe("OpenAPI and Swagger UI", () => {
       required?: string[];
       properties?: Record<string, unknown>;
     };
-    /* The impact reports what a deletion carries away; nothing can block one. */
+    /* Vendor references block deletion; historical estimate references are reported. */
     expect(impact).toMatchObject({
       additionalProperties: false,
       required: [
@@ -1341,12 +1613,14 @@ describe("OpenAPI and Swagger UI", () => {
         "mainLineCount",
         "subBasketCount",
         "historicalReferenceCount",
+        "vendorReferenceCount",
         "bootstrapOwned"
       ],
       properties: {
         mainLineCount: { type: "integer", minimum: 0 },
         subBasketCount: { type: "integer", minimum: 0 },
-        historicalReferenceCount: { type: "integer", minimum: 0 }
+        historicalReferenceCount: { type: "integer", minimum: 0 },
+        vendorReferenceCount: { type: "integer", minimum: 0 }
       }
     });
     expect(componentSchemas().KnowledgeBasketDeletionBlocker).toBeUndefined();

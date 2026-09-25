@@ -147,7 +147,7 @@ export function KnowledgeMasterEditorDialog({
       dirty={dirty}
       footer={({ requestClose }) => (
         <div className="knowledge-dialog-actions">
-          <Button type="button" variant="quiet" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
+          <Button type="button" variant="destructive-outline" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
           <Button type="submit" form={formId} busy={mutation.isPending} disabled={!formValid}>{existing ? "Save changes" : `Add ${itemLabel}`}</Button>
         </div>
       )}>

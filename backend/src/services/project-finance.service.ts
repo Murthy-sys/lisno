@@ -300,6 +300,111 @@ export async function readProjectFinanceDashboardProjects(
   });
 }
 
+export interface ProjectFinanceExpenseActivityBucket {
+  date: string;
+  amountPaise: number;
+}
+
+/**
+ * Read-only incurred-date activity for dashboards. Every entry is accepted
+ * only after the same canonical approved Estimate and bucket checks used by
+ * Finance reads, including the unambiguous legacy approval fallback.
+ */
+export async function readProjectFinanceExpenseActivity(
+  startAt: Date,
+  endAt: Date
+): Promise<ProjectFinanceExpenseActivityBucket[]> {
+  if (!isValidDate(startAt) || !isValidDate(endAt) || startAt >= endAt) {
+    throw new TypeError("Finance expense activity requires a valid half-open date range.");
+  }
+  return financeSnapshotRead(async (session) => {
+    const entries = await FinanceLedgerEntryModel.aggregate<{
+      _id: { projectId: string; bucketId: string; date: string };
+      amountPaise: number;
+      invalidAmount: number;
+    }>([
+      {
+        $match: {
+          status: "posted",
+          incurredAt: { $gte: startAt, $lt: endAt }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            projectId: "$projectId",
+            bucketId: "$bucketId",
+            date: { $dateToString: { format: "%Y-%m-%d", date: "$incurredAt", timezone: "UTC" } }
+          },
+          amountPaise: { $sum: "$amountPaise" },
+          invalidAmount: {
+            $max: {
+              $cond: [
+                {
+                  $and: [
+                    { $in: [{ $type: "$amountPaise" }, ["int", "long", "double", "decimal"]] },
+                    { $gt: ["$amountPaise", 0] },
+                    { $eq: ["$amountPaise", { $trunc: "$amountPaise" }] },
+                    { $lte: ["$amountPaise", Number.MAX_SAFE_INTEGER] }
+                  ]
+                },
+                0,
+                1
+              ]
+            }
+          }
+        }
+      },
+      { $sort: { "_id.date": 1, "_id.projectId": 1, "_id.bucketId": 1 } }
+    ]).session(session).exec();
+    if (entries.length === 0) return [];
+
+    const projectIds = [...new Set(entries.map((entry) => String(entry._id.projectId)))];
+    const bucketIds = [...new Set(entries.map((entry) => String(entry._id.bucketId)))];
+    /* MongoDB transactions do not support parallel operations on one session. */
+    const approvedEstimates = await approvedFinanceEstimates(projectIds, session);
+    const materializedBuckets = await ProjectFinanceBucketModel.find({
+      _id: { $in: bucketIds }
+    }).session(session).lean();
+    const projects = await ProjectModel.find({ _id: { $in: projectIds } })
+      .select({ _id: 1 })
+      .session(session)
+      .lean();
+    const approvedByProject = new Map(
+      [...groupEstimatesByProject(approvedEstimates).entries()].map(([projectId, estimates]) => [
+        projectId,
+        canonicalApprovedEstimate(estimates)
+      ])
+    );
+    const bucketsById = new Map(materializedBuckets.map((bucket) => [String(bucket._id), bucket]));
+    const storedProjectIds = new Set(projects.map((project) => String(project._id)));
+    const totalsByDay = new Map<string, number>();
+
+    for (const entry of entries) {
+      const projectId = String(entry._id.projectId);
+      const bucket = bucketsById.get(String(entry._id.bucketId));
+      const approvedSource = approvedByProject.get(projectId);
+      if (!storedProjectIds.has(projectId) || !bucket || !approvedSource) financeStateCorrupt();
+      if (String(bucket.projectId) !== projectId) financeStateCorrupt();
+      financeBucketForRead(approvedSource, bucket);
+      const amountPaise = Number(entry.amountPaise);
+      if (entry.invalidAmount !== 0) financeStateCorrupt();
+      assertFinanceAmount(amountPaise, "Finance entry amount");
+      if (amountPaise <= 0) financeStateCorrupt();
+      const date = String(entry._id.date);
+      if (!/^\d{4}-\d{2}-\d{2}$/u.test(date)) financeStateCorrupt();
+      totalsByDay.set(
+        date,
+        safeAddFinanceAmounts(totalsByDay.get(date) ?? 0, amountPaise, "Recorded expenses")
+      );
+    }
+
+    return [...totalsByDay.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([date, amountPaise]) => ({ date, amountPaise }));
+  });
+}
+
 export interface EnsurePendingFinanceBucketInput {
   projectId: string;
   estimateId: string;

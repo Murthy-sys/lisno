@@ -25,6 +25,12 @@ export const estimateDesignKeys = {
     ["client", "estimate-plan-review", estimateId] as const
 };
 
+export const estimatePlanChangeRequestKeys = {
+  all: ["estimate-plan-change-requests"] as const,
+  queue: (estimateId?: string) => ["estimate-plan-change-requests", estimateId ?? "assigned"] as const,
+  detail: (requestId: string) => ["estimate-plan-change-request", requestId] as const
+};
+
 export const getEstimateDesignWorkspace = (estimateId: string) =>
   apiClient.get<EstimateDesignWorkspace>(
     `/estimates/${encodeURIComponent(estimateId)}/design-uploads`,
@@ -93,6 +99,27 @@ export function replaceEstimateDrawing(drawingId: string, version: number, file:
   return apiClient.postMultipart<EstimateDesignReplacementResult>(
     `/estimate-design-drawings/${encodeURIComponent(drawingId)}/replacement`,
     body
+  );
+}
+
+export function uploadEstimatePlanRequestReplacement(
+  requestId: string,
+  input: {
+    version: number;
+    idempotencyKey: string;
+    file: File;
+    onProgress?: (percent: number) => void;
+  }
+) {
+  const body = new FormData();
+  body.append("version", String(input.version));
+  body.append("idempotencyKey", input.idempotencyKey);
+  body.append("file", input.file);
+  return apiClient.postMultipartWithProgress<EstimateDesignUpload>(
+    `/estimate-plan-change-requests/${encodeURIComponent(requestId)}/replacement-upload`,
+    body,
+    input.onProgress ?? (() => {}),
+    { showGlobalLoader: false }
   );
 }
 

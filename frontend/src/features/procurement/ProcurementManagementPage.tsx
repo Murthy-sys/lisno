@@ -15,8 +15,8 @@ export function ProcurementManagementPage() {
   const superAdmin = auth.user?.role === "super_admin";
   if (!canRead || !["admin", "super_admin"].includes(auth.user?.role ?? "")) return <PageState state="error" message="You do not have permission to view this procurement workspace." />;
   return <section className="vendor-procurement" aria-labelledby="vendor-procurement-title">
-    <PageHeader id="vendor-procurement-title" eyebrow="Procurement" title={superAdmin ? "Vendor directory" : "Project vendor suggestions"}
-      description={superAdmin ? "Configure vendors shared across projects and review their performance availability." : "Suggest vendors for your Design-approved projects. Procurement makes the final selection."} />
+    {!superAdmin ? <PageHeader id="vendor-procurement-title" eyebrow="Procurement" title="Project vendor suggestions"
+      description="Suggest vendors for your Design-approved projects. Procurement makes the final selection." /> : null}
     {superAdmin ? <ProcurementVendorDirectory /> : <SalesProcurementProjects />}
   </section>;
 }

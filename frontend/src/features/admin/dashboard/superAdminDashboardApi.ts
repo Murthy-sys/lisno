@@ -5,6 +5,14 @@ import type { ProjectStatus } from "../../../api/types";
 export const DASHBOARD_PERIOD_DAYS = [7, 30, 90] as const;
 export type DashboardPeriodDays = (typeof DASHBOARD_PERIOD_DAYS)[number];
 
+export const DASHBOARD_COMPARISON_METRIC_KEYS = [
+  "projects_created", "clients_created", "projects_completed",
+  "execution_tasks_completed", "estimates_approved", "design_plans_approved",
+  "recorded_expenses_paise"
+] as const;
+export type DashboardComparisonMetricKey =
+  (typeof DASHBOARD_COMPARISON_METRIC_KEYS)[number];
+
 export const DASHBOARD_TABS = [
   "overview", "projects", "estimation", "design", "procurement",
   "finance", "execution", "workforce", "risk"
@@ -72,6 +80,42 @@ export type DashboardWorkforceSort = (typeof DASHBOARD_WORKFORCE_SORTS)[number];
 
 export interface DashboardRatio { numerator: number; denominator: number; rateBps: number | null; }
 export interface DashboardPeriod { days: DashboardPeriodDays; startAt: string; endAt: string; }
+export interface DashboardComparisonWindow {
+  timezone: "UTC";
+  current: DashboardPeriod;
+  previous: DashboardPeriod;
+  partialFinalDay: boolean;
+}
+export interface DashboardComparisonMetric {
+  unit: "count" | "paise";
+  timeBasis: "event_window";
+  current: number | null;
+  previous: number | null;
+  delta: number | null;
+  changeBps: number | null;
+  changeKind: "percentage" | "new" | "no_change" | "unavailable";
+  currentStatus: "available" | "unavailable";
+  previousStatus: "available" | "unavailable";
+  currentUnavailableReason: string | null;
+  previousUnavailableReason: string | null;
+}
+export interface DashboardComparisonBucket {
+  dayIndex: number;
+  date: string;
+  projectsCreated: number | null;
+  clientsCreated: number | null;
+  projectsCompleted: number | null;
+  executionTasksCompleted: number | null;
+  estimatesApproved: number | null;
+  designPlansApproved: number | null;
+  recordedExpensesPaise: number | null;
+}
+export interface DashboardComparison {
+  window: DashboardComparisonWindow;
+  metrics: Record<DashboardComparisonMetricKey, DashboardComparisonMetric>;
+  currentBuckets: DashboardComparisonBucket[];
+  previousBuckets: DashboardComparisonBucket[];
+}
 export interface DashboardRiskSource {
   entityType: "project" | "task" | "estimate" | "design_plan" | "lead" | "delivery";
   entityId: string;
@@ -106,9 +150,23 @@ export interface DashboardModuleCoverage {
   unavailableProjects: number;
 }
 export interface DashboardProjectsMetrics {
-  total: number; createdInPeriod: number; planning: number; active: number;
+  total: number; createdInPeriod: number; completedInPeriod?: number; planning: number; active: number;
   onHold: number; completed: number; liveOverdue: number; completedLate: number;
   completionRate: DashboardRatio; atRisk: number;
+}
+export interface DashboardClientMetrics {
+  accountsStatus: "available" | "unavailable";
+  relationshipsStatus: "available" | "unavailable";
+  accountsUnavailableReason: string | null;
+  relationshipsUnavailableReason: string | null;
+  registeredAccounts: number | null;
+  activeAccounts: number | null;
+  inactiveAccounts: number | null;
+  accountsCreatedInPeriod: number | null;
+  clientsWithProjects: number | null;
+  clientsWithActiveProjects: number | null;
+  unlinkedProjects: number | null;
+  invalidProjectClientLinks: number | null;
 }
 export interface DashboardEstimationMetrics extends DashboardModuleCoverage {
   noEstimate: number; draftInternal: number; readyToSend: number; awaitingClient: number;
@@ -177,11 +235,12 @@ export interface DashboardTrendBucket {
 }
 export interface SuperAdminDashboardOverview {
   observedAt: string; period: DashboardPeriod; projects: DashboardProjectsMetrics;
+  clients?: DashboardClientMetrics;
   estimation: DashboardEstimationMetrics; design: DashboardDesignMetrics;
   procurement: DashboardProcurementMetrics; finance: DashboardFinanceMetrics;
   execution: DashboardExecutionMetrics; workforce: DashboardWorkforceMetrics;
   governance: DashboardGovernanceMetrics; risk: DashboardRiskMetrics;
-  trends: DashboardTrendBucket[]; dataQuality: DashboardDataQuality;
+  trends: DashboardTrendBucket[]; comparison?: DashboardComparison; dataQuality: DashboardDataQuality;
 }
 
 export interface DashboardProjectFilters {

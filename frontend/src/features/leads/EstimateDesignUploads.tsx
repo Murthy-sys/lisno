@@ -55,6 +55,7 @@ interface EstimateDesignUploadsProps {
   readOnly?: boolean;
   title?: string;
   designPlanVersion?: number;
+  planChangeRequestState?: "loading" | "open" | "none" | "error";
   onUploaded?: () => void;
   onSubmitted?: () => void;
 }
@@ -126,6 +127,7 @@ export function EstimateDesignUploads({
   readOnly = false,
   title,
   designPlanVersion,
+  planChangeRequestState,
   onUploaded,
   onSubmitted
 }: EstimateDesignUploadsProps) {
@@ -134,6 +136,7 @@ export function EstimateDesignUploads({
   const fileInputId = useId();
   const extractedImagesTitleId = useId();
   const [file, setFile] = useState<File>();
+  const [newPageUploadOpen, setNewPageUploadOpen] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number>();
   const [selection, setSelection] = useState<DrawingSelection>();
   const [mode, setMode] = useState<"preview" | "correct" | "assign" | "history" | "replace">();
@@ -159,6 +162,7 @@ export function EstimateDesignUploads({
     mutationFn: (nextFile: File) => uploadEstimateDesign(estimateId, nextFile, setUploadProgress),
     onSuccess: () => {
       setFile(undefined);
+      setNewPageUploadOpen(false);
       void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) });
       onUploaded?.();
     },
@@ -334,8 +338,11 @@ export function EstimateDesignUploads({
     />;
   };
   const designerExperience = variant === "designer";
-  const uploadButtonLabel = designerExperience ? "Upload design" : "Upload design plan";
-  const uploadProgressLabel = designerExperience ? "Uploading design" : "Uploading design plan";
+  const hasOpenPlanRequest = designerExperience && planChangeRequestState === "open";
+  const requestStatePending = designerExperience && planChangeRequestState === "loading";
+  const requestStateFailed = designerExperience && planChangeRequestState === "error";
+  const uploadButtonLabel = hasOpenPlanRequest ? "Upload new design page" : designerExperience ? "Upload design" : "Upload design plan";
+  const uploadProgressLabel = hasOpenPlanRequest ? "Uploading new design page" : designerExperience ? "Uploading design" : "Uploading design plan";
   const currentUploadToDelete = workspace.data?.uploads.find((item) => item.id === uploadToDelete?.id);
   const closeDeleteDialog = () => {
     if (!deleteUpload.isPending) setUploadToDelete(undefined);
@@ -358,12 +365,28 @@ export function EstimateDesignUploads({
           <p>
             {readOnly
               ? "The submitted design and extracted images remain available for review."
+              : hasOpenPlanRequest
+                ? "Use the plan change request above to replace the marked page. Add a new page here only when it is separate from the Client request."
               : designerExperience
                 ? "Upload a PDF or plan image. Lisno will extract each drawing for your review."
                 : "Extracted drawings remain private until they are submitted to the client."}
           </p>
         </div>
-        {!readOnly ? (
+        {!readOnly && hasOpenPlanRequest && !newPageUploadOpen ? (
+          <div className="estimate-design-uploads__new-page-gate">
+            <span>Client-requested revisions belong in the request panel.</span>
+            <Button variant="secondary" onClick={() => setNewPageUploadOpen(true)}>
+              Add a new design page
+            </Button>
+          </div>
+        ) : null}
+        {!readOnly && requestStatePending ? (
+          <p className="estimate-design-uploads__request-check" role="status">Checking for open Client requests…</p>
+        ) : null}
+        {!readOnly && requestStateFailed ? (
+          <p className="estimate-design-uploads__request-check estimate-design-uploads__request-check--error" role="alert">Open Client requests could not be checked. Retry from the plan request panel before uploading.</p>
+        ) : null}
+        {!readOnly && !requestStatePending && !requestStateFailed && (!hasOpenPlanRequest || newPageUploadOpen) ? (
           <form
             onSubmit={(event) => {
               event.preventDefault();
@@ -376,7 +399,7 @@ export function EstimateDesignUploads({
             <input
               className="estimate-design-uploads__file-input"
               id={fileInputId}
-              aria-label="Design plan file"
+              aria-label={hasOpenPlanRequest ? "New design page file" : "Design plan file"}
               type="file"
               accept="application/pdf,image/png,image/jpeg,image/webp,image/tiff,image/heic,image/heif,.heif"
               onChange={(event) => setFile(event.target.files?.[0])}
@@ -385,7 +408,7 @@ export function EstimateDesignUploads({
               className="button secondary-button estimate-design-uploads__file-picker"
               htmlFor={fileInputId}
             >
-              {designerExperience ? "Select design file" : "Choose file"}
+              {hasOpenPlanRequest ? "Select new-page file" : designerExperience ? "Select design file" : "Choose file"}
             </label>
             {file ? (
               <p className="estimate-design-uploads__file-summary">
@@ -402,6 +425,19 @@ export function EstimateDesignUploads({
             >
               {uploadButtonLabel}
             </Button>
+            {hasOpenPlanRequest ? (
+              <Button
+                variant="quiet"
+                disabled={upload.isPending}
+                onClick={() => {
+                  setFile(undefined);
+                  setNewPageUploadOpen(false);
+                  upload.reset();
+                }}
+              >
+                Cancel new page
+              </Button>
+            ) : null}
             {uploadProgress !== undefined ? (
               <div className="estimate-design-uploads__progress">
                 <ProgressBar value={uploadProgress} label={uploadProgressLabel} />
@@ -591,7 +627,7 @@ export function EstimateDesignUploads({
               </p>
             ) : null}
             <div className="estimate-design-uploads__delete-actions">
-              <Button variant="secondary" disabled={deleteUpload.isPending} onClick={closeDeleteDialog}>
+              <Button variant="destructive-outline" disabled={deleteUpload.isPending} onClick={closeDeleteDialog}>
                 Cancel
               </Button>
               <Button
@@ -657,7 +693,7 @@ function CorrectionDialog({ selection, defaultVerified, page, busy, error, onSub
   return <ContextPanel
     title={`${defaultVerified ? "Verify" : "Correct"} ${selection.drawing.displayTitle}`}
     eyebrow="Drawing correction" onClose={onClose} busy={busy} dirty={dirty}
-    footer={({ requestClose }) => <><Button variant="secondary" disabled={busy} onClick={requestClose}>Cancel</Button><Button type="submit" form={formId} disabled={busy}>{busy ? "Saving…" : defaultVerified ? "Verify drawing" : "Save drawing"}</Button></>}
+    footer={({ requestClose }) => <><Button variant="destructive-outline" disabled={busy} onClick={requestClose}>Cancel</Button><Button type="submit" form={formId} disabled={busy}>{busy ? "Saving…" : defaultVerified ? "Verify drawing" : "Save drawing"}</Button></>}
   >
     <form id={formId} className="estimate-drawing-correction" onSubmit={(event) => {
       event.preventDefault();
@@ -681,7 +717,7 @@ function EstimateItemAssignmentDialog({ selection, rooms, items, busy, error, on
   const roomItems = items.filter((item) => item.roomId === roomId);
   const selected = roomItems.find((item) => item.catalogueId === catalogueId);
   return <ContextPanel title={`Assign ${selection.drawing.displayTitle}`} eyebrow="Exact estimate item" onClose={onClose} busy={busy} dirty={dirty}
-    footer={({ requestClose }) => <><Button variant="secondary" disabled={busy} onClick={requestClose}>Cancel</Button><Button type="submit" form={formId} disabled={!selected || busy}>{busy ? "Assigning…" : "Assign item"}</Button></>}
+    footer={({ requestClose }) => <><Button variant="destructive-outline" disabled={busy} onClick={requestClose}>Cancel</Button><Button type="submit" form={formId} disabled={!selected || busy}>{busy ? "Assigning…" : "Assign item"}</Button></>}
   >
     <form id={formId} className="estimate-drawing-assignment" onSubmit={(event) => { event.preventDefault(); if (roomId && selected) onSubmit({ roomId, catalogueId }); }}>
       <label>Room<Select disabled={busy} value={roomId} onChange={(event) => { setRoomId(event.target.value); setCatalogueId(""); }}><option value="">Choose room</option>{rooms.map((room) => <option value={room.id} key={room.id}>{room.label}</option>)}</Select></label>
@@ -700,7 +736,7 @@ function HistoryDialog({ revisions, onClose }: { revisions: EstimateDesignRevisi
 function ReplacementDialog({ file, busy, error, onChange, onSubmit, onClose }: { file?: File; busy: boolean; error: string; onChange: (file: File | undefined) => void; onSubmit: () => void; onClose: () => void }) {
   const formId = useId();
   return <ContextPanel title="Upload replacement" eyebrow="Client-requested change" onClose={onClose} busy={busy} dirty={Boolean(file)}
-    footer={({ requestClose }) => <><Button variant="secondary" disabled={busy} onClick={requestClose}>Cancel</Button><Button type="submit" form={formId} disabled={!file || busy}>{busy ? "Uploading…" : "Upload replacement"}</Button></>}
+    footer={({ requestClose }) => <><Button variant="destructive-outline" disabled={busy} onClick={requestClose}>Cancel</Button><Button type="submit" form={formId} disabled={!file || busy}>{busy ? "Uploading…" : "Upload replacement"}</Button></>}
   >
     <form id={formId} className="estimate-drawing-replacement" onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
       <label>Replacement drawing file<FileInput aria-label="Replacement drawing file" disabled={busy} accept="application/pdf,image/png,image/jpeg,image/webp,image/tiff,image/heic,image/heif,.heif" onChange={(event) => onChange(event.target.files?.[0])} /></label>
@@ -837,7 +873,7 @@ function ManualDrawingDialog({
         />
         {error ? <p role="alert">{error}</p> : null}
         <div className="estimate-drawing-correction__actions">
-          <button type="button" className="secondary-button" onClick={onClose}>
+          <button type="button" className="secondary-button ui-button ui-button--destructive-outline" onClick={onClose}>
             Cancel
           </button>
           <button

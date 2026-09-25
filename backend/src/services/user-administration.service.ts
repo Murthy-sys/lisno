@@ -6,6 +6,7 @@ import {
   type AppRepository,
   type PaginationInput,
   type UserDirectoryFilters,
+  type UserDirectorySummary,
   type UserRecord,
   type UserResponsibilityCounts
 } from "../repositories/types.js";
@@ -39,6 +40,7 @@ export interface ManagedUserMutationResult {
 export interface UserDirectoryPage {
   items: UserDirectoryItem[];
   total: number;
+  summary: UserDirectorySummary;
   filterRoles: readonly Role[];
   manageableRoles: readonly Exclude<Role, "super_admin">[];
 }
@@ -89,9 +91,13 @@ export function createUserAdministrationService(
         { ...filters, visibleRoles },
         pagination
       );
+      // The summary describes the whole visible-role-scoped directory and is
+      // deliberately independent of the caller's search / role / active filters.
+      const summary = await repository.summarizeUsers(visibleRoles);
       return {
         items: page.items.map(toUserDirectoryItem),
         total: page.total,
+        summary,
         filterRoles: [...FILTER_ROLES],
         manageableRoles: [...MANAGEABLE_ROLES]
       };

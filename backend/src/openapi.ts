@@ -1,3 +1,4 @@
+import { PROCUREMENT_VENDOR_SCHEMAS, PROCUREMENT_VENDOR_REQUESTS, PROCUREMENT_VENDOR_RESPONSES, PROCUREMENT_VENDOR_QUERIES } from "./openapi/procurement-vendor.js";
 import { VENDOR_SUGGESTION_SCHEMAS, VENDOR_SUGGESTION_REQUESTS, VENDOR_SUGGESTION_RESPONSES } from "./openapi/project-vendor-suggestions.js";
 import { PROJECT_PROCUREMENT_SCHEMAS, PROJECT_PROCUREMENT_REQUESTS, PROJECT_PROCUREMENT_RESPONSES, PROJECT_PROCUREMENT_ITEM_QUERY_PARAMETERS } from "./openapi/project-procurement.js";
 import { DESIGN_WORKFLOW_ACTIONS } from "./domain/design-workflow-state.js";
@@ -22,6 +23,7 @@ import {
 } from "./domain/project-finance.js";
 import { ROLE_CODES, WORKER_ROLES } from "./domain/roles.js";
 import {
+  DASHBOARD_COMPARISON_METRIC_KEYS,
   DASHBOARD_KPI_AVAILABILITY,
   DASHBOARD_PROJECT_MODULES,
   DASHBOARD_PROJECT_MODULE_STATUSES,
@@ -139,6 +141,7 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
     "EstimateDecisionRequest"
   ),
   "PUT /leads/:leadId/estimate": jsonRequest("EstimateInput"),
+  "PUT /auth/me/profile-photo": multipartRequest("ProfilePhotoUploadRequest"),
   "POST /estimates/:estimateId/design-uploads": multipartRequest(
     "FileUploadRequest"
   ),
@@ -147,6 +150,9 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   ),
   "POST /estimate-design-drawings/:drawingId/replacement": multipartRequest(
     "DrawingReplacementRequest"
+  ),
+  "POST /estimate-plan-change-requests/:requestId/replacement-upload": multipartRequest(
+    "PlanRequestReplacementUploadRequest"
   ),
   "POST /admin/estimate-client-response-tasks/:roundId/decision":
     multipartRequest("EstimateProxyDecisionRequest"),
@@ -179,10 +185,12 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   "POST /internal/extraction-jobs/:jobId/fail": jsonRequest(
     "ExtractionFailureRequest"
   ),
-  ...AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES
+  ...AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES,
+  ...PROCUREMENT_VENDOR_REQUESTS
 };
 
 const operationsWithoutBodies = new Set<string>([
+  "DELETE /auth/me/profile-photo",
   "PUT /notifications/:notificationId/read",
   "POST /leads/:leadId/estimate/submit",
   "POST /estimates/:estimateId/send-client",
@@ -204,12 +212,17 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "POST /auth/password-reset/inspect": "PasswordResetAvailable",
   "POST /auth/password-reset/complete": "PasswordResetCompleted",
   "GET /auth/me": "PublicUser",
+  "PUT /auth/me/profile-photo": "ProfilePhotoUserResult",
+  "DELETE /auth/me/profile-photo": "ProfilePhotoUserResult",
   "DELETE /estimate-design-uploads/:uploadId": "EstimateDesignUploadDeleted",
   "POST /estimates/:estimateId/design-uploads": "EstimateDesignUpload",
+  "POST /estimate-plan-change-requests/:requestId/replacement-upload": "EstimateDesignUpload",
   "POST /estimate-design-uploads/:uploadId/retry": "EstimateDesignUpload",
   "GET /estimates/:estimateId/design-uploads": "EstimateDesignWorkspace",
   "GET /auth/authorization": "AuthorizationSnapshot",
   "GET /admin/sales-managers": "SalesManagerOptionPage",
+  "GET /admin/users": "UserDirectoryPage",
+  "GET /admin/projects": "AdminProjectPage",
   "GET /admin/designers": "DesignerOptionList",
   "POST /admin/projects/:projectId/design-assignment": "DesignPlanTask",
   "GET /designer/design-plan-tasks": "DesignPlanTaskList",
@@ -241,7 +254,8 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "GET /admin/dashboard/overview": "SuperAdminDashboardOverview",
   "GET /admin/dashboard/projects": "SuperAdminDashboardProjectPage",
   "GET /admin/dashboard/workforce": "SuperAdminDashboardWorkforcePage",
-  ...AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS
+  ...AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS,
+  ...PROCUREMENT_VENDOR_RESPONSES
 };
 
 const pdfOperations = new Set<string>([
@@ -273,10 +287,15 @@ const attachmentOperations = new Set<string>([
 ]);
 
 const multipartOperations = new Set<string>([
+  "POST /admin/ai-estimator-knowledge/vendors/msme-certificate-uploads",
+  "POST /admin/ai-estimator-knowledge/vendors/:id/msme-certificate-uploads",
+  "PUT /admin/ai-estimator-knowledge/vendors/:id/photo",
+  "PUT /auth/me/profile-photo",
   "POST /projects/:projectId/chat/attachments",
   "POST /estimates/:estimateId/design-uploads",
   "POST /tasks/:taskId/design-versions",
   "POST /estimate-design-drawings/:drawingId/replacement",
+  "POST /estimate-plan-change-requests/:requestId/replacement-upload",
   "POST /admin/estimate-client-response-tasks/:roundId/decision",
   "POST /admin/design-plan-response-tasks/:roundId/decision",
   "POST /procurement/projects/:projectId/expenses"
@@ -300,6 +319,9 @@ const operationSummaries: Readonly<Record<string, string>> = {
   "POST /auth/password-reset/inspect": "Inspect a password-reset link",
   "POST /auth/password-reset/complete": "Choose a new password",
   "GET /auth/me": "Read the current user",
+  "PUT /auth/me/profile-photo": "Upload or replace the current user's profile photo",
+  "DELETE /auth/me/profile-photo": "Remove the current user's profile photo",
+  "GET /users/:userId/profile-photo": "Read a visible user's profile photo",
   "GET /auth/authorization": "Read the current authorization snapshot",
   "POST /auth/user-invitations/inspect": "Inspect a staff invitation",
   "POST /auth/user-invitations/accept": "Accept a staff invitation",
@@ -353,6 +375,8 @@ const operationSummaries: Readonly<Record<string, string>> = {
     "Download a Finance ledger supporting document",
   "POST /estimates/:estimateId/design-uploads":
     "Upload a design plan for extraction",
+  "POST /estimate-plan-change-requests/:requestId/replacement-upload":
+    "Upload revised pages for an open Client plan-change request",
   "GET /estimates/:estimateId/design-uploads":
     "Read design uploads and extracted drawings",
   "DELETE /estimate-design-uploads/:uploadId": "Delete an uploaded design before Client approval (assigned Designer uploader only)",
@@ -472,6 +496,24 @@ const queryParametersByOperation: Readonly<
   Record<string, readonly OpenApiParameter[]>
 > = {
   ...CHAT_QUERY_PARAMETERS,
+  "GET /admin/projects": [
+    {
+      name: "status", in: "query", required: false,
+      schema: { type: "string", enum: ["planning", "active", "on_hold", "completed"] },
+      description: "Optional project status. Applied before pagination; statusCounts remain independent of this selection."
+    },
+    {
+      name: "search", in: "query", required: false,
+      schema: { type: "string", maxLength: 120, default: "" },
+      description: "Trimmed, literal case-insensitive search across project name, client name and city/location, within the actor's authorized project scope."
+    },
+    {
+      name: "sort", in: "query", required: false,
+      schema: { type: "string", enum: ["newest", "name_asc", "name_desc"], default: "newest" },
+      description: "Newest sorts by creation time then ID descending. Name sorts use case-insensitive English collation (accents significant, non-numeric), with exact binary ID ascending for ties."
+    }
+  ],
+  "GET /users/:userId/profile-photo": [{ name: "v", in: "query", required: false, schema: { type: "string", pattern: "^[1-9][0-9]{0,15}$" }, description: "Optional profilePhotoVersion used only to vary the client cache key." }],
   "GET /procurement/suggestion-projects": [{ name: "q", in: "query", required: false, schema: { type: "string", maxLength: 100 } }],
   "GET /procurement/projects/:projectId/vendor-suggestions": [{ name: "q", in: "query", required: false, schema: { type: "string", maxLength: 100 } }],
   "GET /procurement/vendors": [{ name: "q", in: "query", required: false, schema: { type: "string", maxLength: 100 }, description: "Literal normalized search across active Configuration vendor codes and names." }],
@@ -665,7 +707,13 @@ const queryParametersByOperation: Readonly<
   ],
   "GET /kpis/users/:userId/tasks": kpiPeriodParameters(),
   "GET /kpis/users/:userId": kpiPeriodParameters(),
-  ...AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS
+  ...AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS,
+  ...PROCUREMENT_VENDOR_QUERIES,
+  "GET /admin/ai-estimator-knowledge/vendors": [
+    ...(AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS["GET /admin/ai-estimator-knowledge/vendors"] ?? []),
+    { name: "vendorType", in: "query", required: false, schema: { type: "string", enum: ["execution", "supplier"] } },
+    ...["mainBasketId", "subBasketId"].map((name) => ({ name, in: "query", required: false, schema: { type: "string" } }))
+  ]
 };
 
 function kpiPeriodParameters(): readonly OpenApiParameter[] {
@@ -1041,6 +1089,26 @@ function responsesFor(key: HumanJwtOperationKeyShape): Readonly<Record<string, O
       "503": { $ref: "#/components/responses/ServiceUnavailable" }
     };
   }
+  if (key === "GET /users/:userId/profile-photo") {
+    return {
+      ...binaryResponses("image/jpeg", "Processed 512 x 512 JPEG without metadata. Served only to the user or an actor who can already read users; otherwise 404 without disclosing existence. Cache-Control private, max-age=86400, with a version-derived ETag."),
+      "304": { description: "The If-None-Match ETag matches the current photo version." }
+    };
+  }
+  if (key === "GET /admin/ai-estimator-knowledge/vendors/:id/msme-certificate") {
+    return {
+      ...binaryResponses(["application/pdf", "image/jpeg", "image/png", "image/webp"], "Current MSME certificate attachment, authenticated Super Admin only. Private, no-store and nosniff; an optional v must match the attached certificate identity. Stale or unavailable certificates return 404."),
+      "422": { $ref: "#/components/responses/UnprocessableKnowledge" },
+      "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    };
+  }
+  if (key === "GET /admin/ai-estimator-knowledge/vendors/:id/photo") {
+    return {
+      ...binaryResponses(["image/jpeg", "image/png", "image/webp"], "Original vendor photograph, authenticated Super Admin only. Private, no-store; embedded geotags are preserved."),
+      "422": { $ref: "#/components/responses/UnprocessableKnowledge" },
+      "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    };
+  }
   if (pdfOperations.has(key)) {
     return binaryResponses("application/pdf", "PDF attachment.");
   }
@@ -1299,6 +1367,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
   const dateTime = { type: "string", format: "date-time" } as const;
   return {
     ...AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS,
+    ...PROCUREMENT_VENDOR_SCHEMAS,
     ...CHAT_COMPONENT_SCHEMAS,
     ...PROJECT_PROCUREMENT_SCHEMAS,
     ...VENDOR_SUGGESTION_SCHEMAS,
@@ -1367,15 +1436,85 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         endAt: dateTime
       }
     },
+    DashboardComparisonWindow: {
+      type: "object", additionalProperties: false,
+      required: ["timezone", "current", "previous", "partialFinalDay"],
+      properties: {
+        timezone: { type: "string", enum: ["UTC"] },
+        current: { $ref: "#/components/schemas/DashboardPeriod" },
+        previous: { $ref: "#/components/schemas/DashboardPeriod" },
+        partialFinalDay: { type: "boolean" }
+      }
+    },
+    DashboardComparisonMetric: {
+      type: "object", additionalProperties: false,
+      required: ["unit", "timeBasis", "current", "previous", "delta", "changeBps", "changeKind", "currentStatus", "previousStatus", "currentUnavailableReason", "previousUnavailableReason"],
+      properties: {
+        unit: { type: "string", enum: ["count", "paise"] },
+        timeBasis: { type: "string", enum: ["event_window"] },
+        current: { type: "integer", minimum: 0, nullable: true },
+        previous: { type: "integer", minimum: 0, nullable: true },
+        delta: { type: "integer", nullable: true },
+        changeBps: { type: "integer", nullable: true },
+        changeKind: { type: "string", enum: ["percentage", "new", "no_change", "unavailable"] },
+        currentStatus: { type: "string", enum: ["available", "unavailable"] },
+        previousStatus: { type: "string", enum: ["available", "unavailable"] },
+        currentUnavailableReason: { type: "string", nullable: true },
+        previousUnavailableReason: { type: "string", nullable: true }
+      }
+    },
+    DashboardComparisonBucket: {
+      type: "object", additionalProperties: false,
+      required: ["dayIndex", "date", "projectsCreated", "clientsCreated", "projectsCompleted", "executionTasksCompleted", "estimatesApproved", "designPlansApproved", "recordedExpensesPaise"],
+      properties: {
+        dayIndex: { type: "integer", minimum: 0, maximum: 89 },
+        date: { type: "string", format: "date" },
+        projectsCreated: { type: "integer", minimum: 0, nullable: true },
+        clientsCreated: { type: "integer", minimum: 0, nullable: true },
+        projectsCompleted: { type: "integer", minimum: 0, nullable: true },
+        executionTasksCompleted: { type: "integer", minimum: 0, nullable: true },
+        estimatesApproved: { type: "integer", minimum: 0, nullable: true },
+        designPlansApproved: { type: "integer", minimum: 0, nullable: true },
+        recordedExpensesPaise: { type: "integer", minimum: 0, nullable: true }
+      }
+    },
+    DashboardComparison: {
+      type: "object", additionalProperties: false,
+      required: ["window", "metrics", "currentBuckets", "previousBuckets"],
+      properties: {
+        window: { $ref: "#/components/schemas/DashboardComparisonWindow" },
+        metrics: {
+          type: "object", additionalProperties: false,
+          required: [...DASHBOARD_COMPARISON_METRIC_KEYS],
+          properties: Object.fromEntries(DASHBOARD_COMPARISON_METRIC_KEYS.map((key) => [key, { $ref: "#/components/schemas/DashboardComparisonMetric" }]))
+        },
+        currentBuckets: { type: "array", maxItems: 90, items: { $ref: "#/components/schemas/DashboardComparisonBucket" } },
+        previousBuckets: { type: "array", maxItems: 90, items: { $ref: "#/components/schemas/DashboardComparisonBucket" } }
+      }
+    },
     DashboardProjectsMetrics: {
       type: "object", additionalProperties: false,
-      required: ["total", "createdInPeriod", "planning", "active", "onHold", "completed", "liveOverdue", "completedLate", "completionRate", "atRisk"],
+      required: ["total", "createdInPeriod", "completedInPeriod", "planning", "active", "onHold", "completed", "liveOverdue", "completedLate", "completionRate", "atRisk"],
       properties: {
-        total: { type: "integer", minimum: 0 }, createdInPeriod: { type: "integer", minimum: 0 },
+        total: { type: "integer", minimum: 0 }, createdInPeriod: { type: "integer", minimum: 0 }, completedInPeriod: { type: "integer", minimum: 0 },
         planning: { type: "integer", minimum: 0 }, active: { type: "integer", minimum: 0 },
         onHold: { type: "integer", minimum: 0 }, completed: { type: "integer", minimum: 0 },
         liveOverdue: { type: "integer", minimum: 0 }, completedLate: { type: "integer", minimum: 0 },
         completionRate: { $ref: "#/components/schemas/DashboardRatio" }, atRisk: { type: "integer", minimum: 0 }
+      }
+    },
+    DashboardClientMetrics: {
+      type: "object", additionalProperties: false,
+      required: ["accountsStatus", "relationshipsStatus", "accountsUnavailableReason", "relationshipsUnavailableReason", "registeredAccounts", "activeAccounts", "inactiveAccounts", "accountsCreatedInPeriod", "clientsWithProjects", "clientsWithActiveProjects", "unlinkedProjects", "invalidProjectClientLinks"],
+      properties: {
+        accountsStatus: { type: "string", enum: ["available", "unavailable"] },
+        relationshipsStatus: { type: "string", enum: ["available", "unavailable"] },
+        accountsUnavailableReason: { type: "string", nullable: true },
+        relationshipsUnavailableReason: { type: "string", nullable: true },
+        ...Object.fromEntries([
+          "registeredAccounts", "activeAccounts", "inactiveAccounts", "accountsCreatedInPeriod",
+          "clientsWithProjects", "clientsWithActiveProjects", "unlinkedProjects", "invalidProjectClientLinks"
+        ].map((key) => [key, { type: "integer", minimum: 0, nullable: true }]))
       }
     },
     DashboardEstimationMetrics: {
@@ -1475,11 +1614,12 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     SuperAdminDashboardOverview: {
       type: "object",
       additionalProperties: false,
-      required: ["observedAt", "period", "projects", "estimation", "design", "procurement", "finance", "execution", "workforce", "governance", "risk", "trends", "dataQuality"],
+      required: ["observedAt", "period", "projects", "clients", "estimation", "design", "procurement", "finance", "execution", "workforce", "governance", "risk", "trends", "comparison", "dataQuality"],
       properties: {
         observedAt: dateTime,
         period: { $ref: "#/components/schemas/DashboardPeriod" },
         projects: { $ref: "#/components/schemas/DashboardProjectsMetrics" },
+        clients: { $ref: "#/components/schemas/DashboardClientMetrics" },
         estimation: { $ref: "#/components/schemas/DashboardEstimationMetrics" },
         design: { $ref: "#/components/schemas/DashboardDesignMetrics" },
         procurement: { $ref: "#/components/schemas/DashboardProcurementMetrics" },
@@ -1489,6 +1629,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         governance: { $ref: "#/components/schemas/DashboardGovernanceMetrics" },
         risk: { $ref: "#/components/schemas/DashboardRiskMetrics" },
         trends: { type: "array", maxItems: 90, items: { $ref: "#/components/schemas/DashboardTrendBucket" } },
+        comparison: { $ref: "#/components/schemas/DashboardComparison" },
         dataQuality: { $ref: "#/components/schemas/DashboardDataQuality" }
       }
     },
@@ -1538,7 +1679,30 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         name: { type: "string", minLength: 1 },
         email: { type: "string", format: "email" },
         role: { $ref: "#/components/schemas/Role" },
-        avatar: { type: "string" }
+        avatar: { type: "string" },
+        profilePhotoVersion: {
+          type: "integer",
+          minimum: 1,
+          description: "Present only while a profile photo exists; omitted otherwise. Storage keys and URLs are never exposed."
+        }
+      }
+    },
+    ProfilePhotoUserResult: {
+      type: "object",
+      additionalProperties: false,
+      required: ["user"],
+      properties: { user: { $ref: "#/components/schemas/PublicUser" } }
+    },
+    ProfilePhotoUploadRequest: {
+      type: "object",
+      additionalProperties: false,
+      required: ["photo"],
+      properties: {
+        photo: {
+          type: "string",
+          format: "binary",
+          description: "Exactly one JPEG, PNG, or WebP image of at most 5 MB and 4096 x 4096 pixels, verified by file signature. It is re-encoded as a 512 x 512 JPEG without metadata. Errors: 400 PROFILE_PHOTO_INVALID, 413 PROFILE_PHOTO_TOO_LARGE, 409 PROFILE_PHOTO_CONFLICT."
+        }
       }
     },
     AuthPayload: {
@@ -1673,6 +1837,32 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         }
       }
     },
+    AdminProjectStatusCounts: {
+      type: "object",
+      additionalProperties: false,
+      required: ["all", "planning", "active", "on_hold", "completed"],
+      description: "Totals over all authorized search matches before the selected status filter or pagination. No inaccessible projects are included.",
+      properties: {
+        all: { type: "integer", minimum: 0 },
+        planning: { type: "integer", minimum: 0 },
+        active: { type: "integer", minimum: 0 },
+        on_hold: { type: "integer", minimum: 0 },
+        completed: { type: "integer", minimum: 0 }
+      }
+    },
+    AdminProjectPage: {
+      type: "object",
+      additionalProperties: false,
+      required: ["items", "pagination", "statusCounts"],
+      properties: {
+        items: {
+          type: "array",
+          items: { type: "object", additionalProperties: true, description: "Existing Admin project summary, including its authoritative estimate and approved baseline when available." }
+        },
+        pagination: { $ref: "#/components/schemas/Pagination", description: "Total includes both search and selected status filters." },
+        statusCounts: { $ref: "#/components/schemas/AdminProjectStatusCounts" }
+      }
+    },
     AdminProjectInitiationRequest: {
       type: "object",
       additionalProperties: false,
@@ -1713,6 +1903,56 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
           }
         },
         pagination: { $ref: "#/components/schemas/Pagination" }
+      }
+    },
+    UserDirectorySummary: {
+      type: "object",
+      additionalProperties: false,
+      required: ["total", "active", "inactive", "roleCount"],
+      description:
+        "Aggregate counts for the whole role-visible directory. Independent of the search, role and active query filters; total always equals active plus inactive.",
+      properties: {
+        total: { type: "integer", minimum: 0 },
+        active: { type: "integer", minimum: 0 },
+        inactive: { type: "integer", minimum: 0 },
+        roleCount: {
+          type: "integer",
+          minimum: 0,
+          description: "Number of distinct roles actually present among visible users, not the number of roles defined in the system."
+        }
+      }
+    },
+    UserDirectoryItem: {
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "name", "email", "role", "active", "version", "createdAt", "updatedAt"],
+      properties: {
+        id,
+        name: { type: "string" },
+        email: { type: "string", format: "email" },
+        role: { $ref: "#/components/schemas/Role" },
+        active: { type: "boolean" },
+        version: { type: "integer", minimum: 1 },
+        avatar: { type: "string" },
+        title: { type: "string" },
+        createdAt: dateTime,
+        updatedAt: dateTime
+      }
+    },
+    UserDirectoryPage: {
+      type: "object",
+      additionalProperties: false,
+      required: ["items", "pagination", "summary", "filterRoles", "manageableRoles"],
+      properties: {
+        items: { type: "array", items: { $ref: "#/components/schemas/UserDirectoryItem" } },
+        pagination: { $ref: "#/components/schemas/Pagination" },
+        summary: { $ref: "#/components/schemas/UserDirectorySummary" },
+        filterRoles: { type: "array", items: { $ref: "#/components/schemas/Role" } },
+        manageableRoles: {
+          type: "array",
+          items: { $ref: "#/components/schemas/Role" },
+          description: "Roles that may be assigned through this endpoint; never includes super_admin."
+        }
       }
     },
     DesignerAssignmentRequest: {
@@ -1774,6 +2014,16 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       properties: {
         file: { type: "string", format: "binary" },
         version: { type: "integer", minimum: 1 }
+      }
+    },
+    PlanRequestReplacementUploadRequest: {
+      type: "object",
+      additionalProperties: false,
+      required: ["file", "version", "idempotencyKey"],
+      properties: {
+        file: { type: "string", format: "binary" },
+        version: { type: "integer", minimum: 1 },
+        idempotencyKey: { type: "string", minLength: 8, maxLength: 128 }
       }
     },
     EstimateProxyDecisionRequest: proofDecisionSchema("version"),
@@ -1931,12 +2181,43 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     },
     EstimateDesignUpload: {
       type: "object",
-      required: ["id", "estimateId", "leadId", "originalFilename", "mimeType", "sizeBytes", "uploaderId", "uploadedAt", "extractionStatus", "failureCode", "failureMessage", "canRetry", "canDelete"],
+      required: ["id", "estimateId", "leadId", "originalFilename", "mimeType", "sizeBytes", "uploaderId", "uploadedAt", "extractionStatus", "purpose", "requestReplacement", "failureCode", "failureMessage", "canRetry", "canDelete"],
       properties: {
         id, estimateId: id, leadId: id, uploaderId: id,
         originalFilename: { type: "string" }, mimeType: { type: "string" },
         sizeBytes: { type: "integer", minimum: 0 }, uploadedAt: dateTime,
         extractionStatus: { type: "string" },
+        purpose: { type: "string", enum: ["ordinary", "drawing_replacement", "plan_request_replacement"] },
+        requestReplacement: {
+          type: "object",
+          nullable: true,
+          additionalProperties: false,
+          required: ["requestId", "requestVersion", "sourcePageId", "targetCount", "matches", "ignoredPageNumbers", "ignoredPageCount"],
+          properties: {
+            requestId: id,
+            requestVersion: { type: "integer", minimum: 1 },
+            sourcePageId: id,
+            targetCount: { type: "integer", minimum: 1 },
+            matches: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["drawingId", "requestedRevisionId", "detectedTitle", "resultRevisionId", "matchReason", "pageNumber"],
+                properties: {
+                  drawingId: id,
+                  requestedRevisionId: id,
+                  detectedTitle: { type: "string" },
+                  resultRevisionId: { ...id, nullable: true },
+                  matchReason: { type: "string", enum: ["normalized_title", "mapping_tuple"], nullable: true },
+                  pageNumber: { type: "integer", minimum: 1, nullable: true }
+                }
+              }
+            },
+            ignoredPageNumbers: { type: "array", items: { type: "integer", minimum: 1 } },
+            ignoredPageCount: { type: "integer", minimum: 0 }
+          }
+        },
         failureCode: { type: "string", nullable: true }, failureMessage: { type: "string", nullable: true },
         canRetry: { type: "boolean" },
         canDelete: { type: "boolean", description: "True only for the assigned Designer uploader before this source or the final Design plan is approved." },

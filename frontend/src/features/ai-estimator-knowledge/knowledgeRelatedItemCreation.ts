@@ -12,7 +12,7 @@ interface RelatedItemCreationBase {
 
 export type RelatedItemCreationInput = RelatedItemCreationBase & (
   | { readonly subBasketId: string; readonly subBasketName?: never }
-  | { readonly subBasketId?: never; readonly subBasketName: string }
+  | { readonly subBasketId?: never; readonly subBasketName?: string }
 );
 
 export type RelatedItemReconciliation =
@@ -32,7 +32,7 @@ export function requiresRelatedItemReconciliation(error: unknown): boolean {
 export async function reconcileRelatedItemCreation(input: RelatedItemCreationInput): Promise<RelatedItemReconciliation> {
   const [mainLines, subBaskets] = await Promise.all([
     collectAllKnowledgeMasterPages((page) => listKnowledgeMainLines(input.basketId, { ...page, includeArchived: true }), "Related items"),
-    input.subBasketId === undefined
+    input.subBasketId === undefined && Boolean(input.subBasketName?.trim())
       ? collectAllKnowledgeMasterPages((page) => listKnowledgeSubBaskets(input.basketId, page), "Sub Basket")
       : Promise.resolve(null)
   ]);

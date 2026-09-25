@@ -52,11 +52,26 @@ export interface ChatMembershipSource {
 export interface ChatParticipant extends ChatPerson {
   sources: ChatMembershipSource[];
   selection: { id: string; version: number } | null;
+  removalVersion?: number;
+  canRemove?: boolean;
+  removalBlockedReason?: string | null;
 }
 export interface ChatMention {
   userId: string;
   start: number;
   end: number;
+}
+export interface ChatActionType {
+  id: string;
+  name: string;
+  priority: "important" | "critical";
+  builtIn: boolean;
+}
+export interface ChatActionMetadata {
+  typeId: string;
+  typeName: string;
+  originalDueDate: string;
+  dueDate: string;
 }
 export interface ChatIssueHistory {
   id: string;
@@ -67,6 +82,7 @@ export interface ChatIssueHistory {
   priority: ChatPriority;
   status: ChatIssueStatus;
   responsibleUserId: string | null;
+  actionMetadata?: ChatActionMetadata | null;
 }
 export interface ChatMessage {
   id: string;
@@ -84,6 +100,7 @@ export interface ChatMessage {
   raisedBy: ChatPerson | null;
   responsible: (ChatPerson & { available: boolean }) | null;
   version: number;
+  action?: ChatActionMetadata | null;
   issueHistory: ChatIssueHistory[];
   capabilities: {
     canRaise: boolean;
@@ -91,6 +108,7 @@ export interface ChatMessage {
     canReopen: boolean;
     canAssign: boolean;
     canAssignSelf: boolean;
+    canReschedule?: boolean;
   };
 }
 export interface ChatCounts {
@@ -100,23 +118,46 @@ export interface ChatCounts {
   unreadMentions: number;
 }
 export interface ChatSummary {
-  project: { id: string; name: string; status: string };
+  project: { id: string; name: string; status: string; nameVersion?: number };
   counts: ChatCounts;
   participantCount: number;
   cursor: string;
   lastReadSequence: number;
   latestMessageSequence: number;
-  capabilities: { canSend: boolean; canManageParticipants: boolean; canManageIssues: boolean };
+  capabilities: { canSend: boolean; canManageParticipants: boolean; canManageIssues: boolean; canRenameProject?: boolean };
   setupWarnings: string[];
+}
+export type ChatConversationFilter = "all" | "unread" | "critical" | "important";
+export interface ChatLastMessageAttachment {
+  id: string;
+  kind: ChatAttachmentKind;
+  filename: string;
+  hasPreview: boolean;
+}
+export interface ChatLastMessage {
+  id: string;
+  author: ChatPerson;
+  excerpt: string;
+  createdAt: string;
+  attachments: ChatLastMessageAttachment[];
+  attachmentCount: number;
 }
 export interface ChatConversation extends ChatSummary {
   lastMessageAt: string | null;
+  lastMessage: ChatLastMessage | null;
+}
+export interface ChatConversationTotals {
+  unread: number;
+  critical: number;
+  important: number;
 }
 export interface ChatConversationPage {
   items: ChatConversation[];
   pagination: { limit: number; offset: number; total: number; hasMore: boolean };
+  totals: ChatConversationTotals;
 }
 export interface ChatParticipantPage {
+  removed?: Array<ChatPerson & { removalVersion: number; canRestore: boolean }>;
   items: ChatParticipant[];
   setupWarnings: string[];
 }
@@ -139,6 +180,7 @@ export interface ChatMessageQuery {
   filter?: ChatFilter;
 }
 export interface ChatSendInput {
+  action?: { typeId: string; dueDate: string };
   body: string;
   attachmentIds?: string[];
   mentions: ChatMention[];
@@ -147,7 +189,7 @@ export interface ChatSendInput {
   responsibleUserId?: string | null;
   clientMessageId: string;
 }
-export type ChatIssueAction = "raise" | "escalate" | "resolve" | "reopen" | "lower" | "clear" | "assign";
+export type ChatIssueAction = "raise" | "escalate" | "resolve" | "reopen" | "lower" | "clear" | "assign" | "reschedule";
 export interface ChatIssueInput {
   action: ChatIssueAction;
   expectedVersion: number;
@@ -155,6 +197,7 @@ export interface ChatIssueInput {
   priority?: "important" | "critical";
   responsibleUserId?: string | null;
   note?: string;
+  dueDate?: string;
 }
 export interface ChatParticipantInput {
   userId: string;
@@ -225,6 +268,11 @@ export interface ProjectChatTypingService {
   deliver(actor: ChatActor, projectId: string, enqueue: (snapshot: ChatTypingSnapshot) => void): Promise<void>;
 }
 export interface ProjectChatService {
+  actionTypes(actor: ChatActor, projectId: string): Promise<{ items: ChatActionType[]; canCreate: boolean }>;
+  createActionType(actor: ChatActor, projectId: string, input: { name: string; idempotencyKey: string }): Promise<ChatActionType>;
+  removeParticipant(actor: ChatActor, projectId: string, userId: string, input: ChatParticipantRevokeInput): Promise<ChatParticipantPage>;
+  restoreParticipant(actor: ChatActor, projectId: string, userId: string, input: ChatParticipantRevokeInput): Promise<ChatParticipantPage>;
+  renameProject(actor: ChatActor, projectId: string, input: { name: string; expectedVersion: number; idempotencyKey: string }): Promise<ChatSummary>;
   list(actor: ChatActor, input: { limit: number; offset: number }): Promise<ChatConversationPage>;
   summary(actor: ChatActor, projectId: string): Promise<ChatSummary>;
   participants(actor: ChatActor, projectId: string): Promise<ChatParticipantPage>;

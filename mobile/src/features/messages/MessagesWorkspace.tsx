@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { StyleSheet, useWindowDimensions, View } from "react-native";
 
 import type { AuthenticatedSession } from "../../contracts/session";
+import { useScreenBack } from "../../navigation/useScreenBack";
 import { colors } from "../../ui/tokens";
 import { ChatThread } from "./ChatThread";
 import { ConversationList } from "./ConversationList";
@@ -24,6 +25,7 @@ export function MessagesWorkspace({
   compact = false,
   viewportWidth
 }: MessagesWorkspaceProps) {
+  const { returnToParent } = useScreenBack();
   const window = useWindowDimensions();
   const layout = useMemo(
     () => messagesLayout(viewportWidth ?? window.width),
@@ -66,14 +68,14 @@ export function MessagesWorkspace({
   const closeThread = useCallback(() => {
     if (layout.mode === "split") {
       if (selectedProjectId) {
-        router.replace("/feature/messages");
+        returnToParent("/feature/messages");
         return;
       }
       setActiveProjectId(null);
       return;
     }
-    router.replace("/feature/messages");
-  }, [layout.mode]);
+    returnToParent("/feature/messages");
+  }, [layout.mode, returnToParent, selectedProjectId]);
 
   if (layout.mode === "phone" && activeProjectId) {
     return (

@@ -1,9 +1,10 @@
-import { Plus } from "lucide-react";
+import { Box, Plus } from "lucide-react";
 import { useMemo } from "react";
 
 import { Button } from "../../components/ui/Button";
 import { Field, Select } from "../../components/ui/Field";
 import { Surface } from "../../components/ui/Surface";
+import { KnowledgeCardHeading } from "./KnowledgeCardHeading";
 import { KnowledgeModeSurfacePanel } from "./KnowledgeModeSurfacePanel";
 import type { KnowledgeOverviewEditableField } from "./knowledgeSectionPayload";
 import type {
@@ -12,6 +13,7 @@ import type {
   KnowledgeMaster,
   KnowledgeMasterType
 } from "./knowledgeTypes";
+import "./knowledge-overview-table.css";
 
 export interface KnowledgeOverviewSectionState {
   readonly status: "loading" | "ready" | "error";
@@ -39,6 +41,7 @@ export interface KnowledgeOverviewPanelProps {
   readonly onOverviewDirty: (field: KnowledgeOverviewEditableField) => void;
   readonly onQuickAddUom: (select: (master: KnowledgeMaster) => void) => void;
   readonly onQuickAddSurface?: (select: (master: KnowledgeMaster) => void) => void;
+  readonly onEditSurface?: (surface: KnowledgeMaster) => void;
   readonly saving?: boolean;
   readonly surfacesDirty?: boolean;
 }
@@ -53,6 +56,7 @@ export function KnowledgeOverviewPanel({
   onOverviewDirty,
   onQuickAddUom,
   onQuickAddSurface,
+  onEditSurface,
   saving = false,
   surfacesDirty = false
 }: KnowledgeOverviewPanelProps) {
@@ -77,15 +81,15 @@ export function KnowledgeOverviewPanel({
   }
 
   return (
-    <div className="knowledge-overview" aria-label="Main Line Overview">
+    <div className="knowledge-overview knowledge-overview--surface-table" aria-label="Main Line Overview">
       <Surface as="section" className="knowledge-overview__section knowledge-overview__section--configured knowledge-overview__configuration-card" aria-labelledby="knowledge-overview-configured-title">
-        <div className="knowledge-section-heading">
-          <div>
-            <h2 id="knowledge-overview-configured-title">UOM</h2>
-            <p>Choose the unit used to measure this Main Line.</p>
-          </div>
-          {!editable ? <span className="knowledge-readonly-label">Read-only revision</span> : null}
-        </div>
+        <KnowledgeCardHeading
+          icon={<Box />}
+          titleId="knowledge-overview-configured-title"
+          title="UOM"
+          description="Choose the unit used to measure this Main Line."
+          trailing={!editable ? <span className="knowledge-readonly-label">Read-only revision</span> : null}
+        />
         <div className="knowledge-overview__configured-grid">
           <div className="knowledge-master-control knowledge-overview__configured-field knowledge-overview__configured-field--uom">
             <Field id="knowledge-overview-uom" label="Unit of measure (UOM)">
@@ -108,11 +112,11 @@ export function KnowledgeOverviewPanel({
                       className="knowledge-overview__quick-add"
                       variant="secondary"
                       leadingIcon={<Plus />}
+                      aria-label="Add Unit"
+                      title="Add Unit"
                       disabled={saving || referenceUnavailable(uomReferenceState)}
                       onClick={() => onQuickAddUom((master) => changeOverviewValue(master.id))}
-                    >
-                      Add Unit
-                    </Button>
+                    />
                   ) : null}
                 </div>
               )}
@@ -130,6 +134,7 @@ export function KnowledgeOverviewPanel({
 
       <Surface as="section" className="knowledge-overview__summary-panel knowledge-overview__configuration-card" aria-label="Surfaces">
         <KnowledgeModeSurfacePanel
+          presentation="overview"
           selectedIds={surfaceIds}
           surfaces={masters.surfaces ?? []}
           catalogState={surfaceCatalogState}
@@ -143,6 +148,7 @@ export function KnowledgeOverviewPanel({
             onOverviewPayloadChange({ ...overviewPayload, surfaceIds: [...new Set(nextIds)] });
           }}
           onQuickAdd={(select) => onQuickAddSurface?.(select)}
+          onEditSurface={onEditSurface}
         />
       </Surface>
     </div>

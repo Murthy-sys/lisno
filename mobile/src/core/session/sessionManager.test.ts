@@ -2,6 +2,7 @@ import { AUTHORIZATION_POLICY_VERSION } from "../../contracts/authorization";
 import { CleanupRegistry } from "../config/cleanupRegistry";
 import type { EnvironmentSnapshot } from "../config/environmentManager";
 import { JsonApiClient } from "../http/apiClient";
+import { InvalidAuthorizationSnapshotError } from "./authorization";
 import { SessionManager } from "./sessionManager";
 import { SessionTokenState } from "./tokenState";
 import {
@@ -144,6 +145,29 @@ describe("SessionManager", () => {
     expect(harness.tokenState.getRequestToken()).toBeNull();
   });
 
+  it("clears a newly issued login token when authorization policy validation fails", async () => {
+    const fetchImplementation = authenticatedRoutes({
+      authorization: {
+        ...authorization,
+        policyVersion: "2026-09-18.vendor-procurement.v1"
+      }
+    });
+    const harness = createHarness(fetchImplementation);
+
+    await expect(
+      harness.manager.login({ email: user.email, password: "password" })
+    ).rejects.toBeInstanceOf(InvalidAuthorizationSnapshotError);
+
+    expect(fetchImplementation).toHaveBeenCalledTimes(3);
+    expect(harness.storage.values.has(TOKEN_KEY)).toBe(false);
+    expect(harness.tokenState.getRequestToken()).toBeNull();
+    expect(harness.manager.getSnapshot()).toMatchObject({
+      status: "unauthenticated",
+      failure: "invalid_session",
+      session: null
+    });
+  });
+
   it("preserves the secure token but exposes no protected session on transient restore failure", async () => {
     const harness = createHarness(
       jest.fn(async () => {
@@ -210,5 +234,40 @@ describe("SessionManager", () => {
       session: { user }
     });
     expect(harness.storage.values.get(TOKEN_KEY)).toBe("new-token");
+  });
+
+  it("replaces the signed-in user only for the same id and role and notifies subscribers", async () => {
+    const harness = createHarness(authenticatedRoutes({ token: "new-token" }));
+    expect(harness.manager.replaceUser({ ...user, profilePhotoVersion: 1 })).toBe(false);
+    await harness.manager.login({ email: user.email, password: "password" });
+    const before = harness.manager.getSnapshot();
+    const listener = jest.fn();
+    harness.manager.subscribe(listener);
+
+    expect(harness.manager.replaceUser({ ...user, id: "user-2", profilePhotoVersion: 1 })).toBe(false);
+    expect(harness.manager.replaceUser({ ...user, role: "admin", profilePhotoVersion: 1 })).toBe(false);
+    expect(harness.manager.replaceUser({ ...user, profilePhotoVersion: 0 })).toBe(false);
+    expect(harness.manager.replaceUser({ ...user, storageKey: "private" })).toBe(false);
+    expect(listener).not.toHaveBeenCalled();
+    expect(harness.manager.getSnapshot()).toBe(before);
+
+    expect(harness.manager.replaceUser({ ...user, profilePhotoVersion: 3 })).toBe(true);
+    const after = harness.manager.getSnapshot();
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(after);
+    expect(after).toMatchObject({
+      status: "authenticated",
+      generation: before.generation,
+      failure: null,
+      session: { user: { ...user, profilePhotoVersion: 3 }, authorization }
+    });
+    expect(Object.isFrozen(after)).toBe(true);
+    expect(Object.isFrozen(after.session)).toBe(true);
+    expect(Object.isFrozen(after.session?.user)).toBe(true);
+    expect(after.session?.authorization).toBe(before.session?.authorization);
+    expect(harness.tokenState.getRequestToken()).toMatchObject({ token: "new-token", accepted: true });
+
+    expect(harness.manager.replaceUser(user)).toBe(true);
+    expect(harness.manager.getSnapshot().session?.user).not.toHaveProperty("profilePhotoVersion");
   });
 });

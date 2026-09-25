@@ -6,6 +6,7 @@ export interface PublicUser {
   readonly email: string;
   readonly role: Role;
   readonly avatar?: string;
+  readonly profilePhotoVersion?: number;
 }
 
 export interface AuthPayload {

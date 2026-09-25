@@ -6,8 +6,13 @@ from pathlib import Path
 import pytest
 
 from lisno_ocr.contracts import (
+    CanonicalMatch,
     ClaimedJob,
+    Crop,
+    EstimateDrawingProposal,
     EstimateTaxonomy,
+    ExtractedPage,
+    ExtractedSection,
     InvalidSourceError,
     OcrError,
     PdfRenderError,
@@ -278,6 +283,80 @@ def test_api_claim_parses_tagged_estimate_taxonomy_and_tags_completion():
         "resultId": requests[0][2]["resultId"],
         "pages": [],
     }
+
+
+def test_estimate_completion_serializes_2d_and_3d_titles_and_taxonomy_proposals():
+    requests = []
+
+    class EstimateApi(WorkerApi):
+        def _request_json(self, method, path, body=None, **_kwargs):
+            if path.endswith("/claim"):
+                return 200, {
+                    "data": {
+                        "kind": "estimate_design",
+                        "id": "estimate-job-1",
+                        "claimToken": "claim-1",
+                        "sourceUrl": "/source",
+                        "sourceFilename": "plan.pdf",
+                        "sourceMimeType": "application/pdf",
+                        "leaseDurationMs": 300000,
+                        "taxonomy": {"rooms": [], "scopes": []},
+                    }
+                }
+            requests.append((method, path, body))
+            return 200, {"data": {"status": "estimator_review"}}
+
+    room_match = CanonicalMatch("room-living", 1.0, ("living room",), False)
+    no_scope_match = CanonicalMatch(None, 0.0, (), False)
+    titles_and_scopes = (
+        (
+            "LIVING ROOM FLOOR PLAN",
+            CanonicalMatch("FL", 1.0, ("floor plan",), False),
+        ),
+        ("LIVING ROOM 3D PERSPECTIVE", no_scope_match),
+    )
+    pages = [
+        ExtractedPage(
+            page_number=page_number,
+            width=900,
+            height=700,
+            image_base64="cG5n",
+            sections=(
+                ExtractedSection(
+                    label=title,
+                    confidence=1.0,
+                    crop=Crop(0, 0, 900, 700),
+                    image_base64="cG5n",
+                    proposal=EstimateDrawingProposal(
+                        detected_title=title,
+                        room=room_match,
+                        scope=scope_match,
+                    ),
+                ),
+            ),
+        )
+        for page_number, (title, scope_match) in enumerate(
+            titles_and_scopes,
+            start=1,
+        )
+    ]
+
+    api = EstimateApi(settings())
+    claimed = api.claim()
+    assert claimed is not None
+    api.complete(claimed.id, pages)
+
+    result = requests[0][2]
+    assert result["kind"] == "estimate_design"
+    assert [
+        page["sections"][0]["label"] for page in result["pages"]
+    ] == [title for title, _scope in titles_and_scopes]
+    assert [
+        page["sections"][0]["proposal"]["detectedTitle"]
+        for page in result["pages"]
+    ] == [title for title, _scope in titles_and_scopes]
+    assert result["pages"][0]["sections"][0]["proposal"]["scope"]["id"] == "FL"
+    assert result["pages"][1]["sections"][0]["proposal"]["scope"]["id"] is None
 
 
 def test_run_worker_constructs_estimate_extractor_with_claimed_taxonomy(

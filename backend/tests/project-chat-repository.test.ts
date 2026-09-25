@@ -105,7 +105,10 @@ describe("project chat memory atomicity", () => {
         expect(global.pagination).toEqual({limit:3,offset:0,total:22,hasMore:true});
         expect(global.items.map((row)=>row.project.id)).toEqual(["portfolio-05","portfolio-19","a"]);
         expect(loaded).toEqual(global.items.map((row)=>row.project.id));
-        expect(counted).toEqual(loaded);
+        // Counts cover every authorized conversation exactly once so totals and filters are exact.
+        expect(counted).toHaveLength(22);
+        expect(new Set(counted).size).toBe(22);
+        expect(global.totals).toEqual({unread:0,critical:1,important:1});
         expect(global.items[0]!.counts).toMatchObject({openCritical:1,openImportant:0});
         expect(global.items[1]!.counts).toMatchObject({openCritical:0,openImportant:1});
         counted.length = 0;
@@ -113,8 +116,9 @@ describe("project chat memory atomicity", () => {
         const personal = await service.list(f.actor("client-a"), {limit:3,offset:0});
         expect(personal.pagination.total).toBe(11);
         expect(personal.items.map((row)=>row.project.id)).toEqual(["a","portfolio-00","portfolio-02"]);
-        expect(counted).toEqual(personal.items.map((row)=>row.project.id));
-        expect(counted).toHaveLength(3);
+        expect(counted).toHaveLength(11);
+        expect(new Set(counted).size).toBe(11);
+        expect(personal.totals).toEqual({unread:0,critical:0,important:0});
         expect(loaded.length).toBeGreaterThan(3);
     });
 

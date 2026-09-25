@@ -3,7 +3,6 @@ import {
   AccessibilityInfo,
   ActivityIndicator,
   AppState,
-  BackHandler,
   findNodeHandle,
   KeyboardAvoidingView,
   Modal,
@@ -17,6 +16,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import type { AuthenticatedSession } from "../../contracts/session";
+import { useBackInterceptor, useScreenBack } from "../../navigation/useScreenBack";
 import { BrandLoader } from "../../ui/brand";
 import { StateView } from "../../ui/primitives";
 import { colors, fonts, radii, spacing } from "../../ui/tokens";
@@ -48,6 +48,7 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
   const compact = compactOverride ?? width < 600;
   const thread = useChatThread(projectId, session);
   const navigationGuard = useScaffoldNavigationGuard();
+  const screenBack = useScreenBack();
   const [replyTarget, setReplyTarget] = useState<OwnedReplyTarget | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -130,6 +131,8 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
       setHeaderMenuOpen(false);
       return true;
     }
+    // The native action sheet owns its dismiss flow and pending-mutation guard.
+    if (selectedMessage) return true;
     if (composer.current?.dismissTransientState()) return true;
     if (reply) {
       clearReply();
@@ -140,13 +143,9 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
       return true;
     }
     return false;
-  }, [clearReply, headerMenuOpen, onBack, reply, sending]);
+  }, [clearReply, headerMenuOpen, onBack, reply, selectedMessage, sending]);
 
-  useEffect(() => {
-    if (!reply && !onBack && !canSend && !groupInfoOpen && !headerMenuOpen && !selectedMessageId) return;
-    const subscription = BackHandler.addEventListener("hardwareBackPress", handleBack);
-    return () => subscription.remove();
-  }, [canSend, groupInfoOpen, handleBack, headerMenuOpen, onBack, reply, selectedMessageId]);
+  useBackInterceptor(handleBack);
 
   const openGroupInfo = useCallback(() => {
     setHeaderMenuOpen(false);
@@ -183,7 +182,7 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
   if (thread.denied) {
     return (
       <SafeAreaView edges={compact ? ["top", "bottom"] : []} style={styles.safeArea}>
-        <ThreadHeader compact={compact} initials="" name="Conversation" participantCount={null} openCritical={0} onBack={onBack ? handleBack : undefined} onOpenMenu={() => void thread.refresh()} refreshing={false} />
+        <ThreadHeader compact={compact} initials="" name="Conversation" participantCount={null} openCritical={0} onBack={onBack ? screenBack.onBack : undefined} backDisabled={sending} onOpenMenu={() => void thread.refresh()} refreshing={false} />
         <StateView tone="denied" title="This conversation is unavailable" message="It may be outside your project scope or no longer available." />
       </SafeAreaView>
     );
@@ -192,6 +191,7 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
   if (thread.loading && !thread.summary) {
     return (
       <SafeAreaView edges={compact ? ["top", "bottom"] : []} style={styles.safeArea}>
+        <ThreadHeader compact={compact} initials="" name="Conversation" participantCount={null} openCritical={0} onBack={onBack ? screenBack.onBack : undefined} backDisabled={sending} onOpenMenu={() => void thread.refresh()} refreshing />
         <View style={styles.loading}><BrandLoader label="Loading conversation" tone="dark" /></View>
       </SafeAreaView>
     );
@@ -200,7 +200,7 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
   if (thread.error && !thread.summary) {
     return (
       <SafeAreaView edges={compact ? ["top", "bottom"] : []} style={styles.safeArea}>
-        <ThreadHeader compact={compact} initials="" name="Conversation" participantCount={null} openCritical={0} onBack={onBack ? handleBack : undefined} onOpenMenu={() => void thread.refresh()} refreshing={false} />
+        <ThreadHeader compact={compact} initials="" name="Conversation" participantCount={null} openCritical={0} onBack={onBack ? screenBack.onBack : undefined} backDisabled={sending} onOpenMenu={() => void thread.refresh()} refreshing={false} />
         <StateView tone="error" title="Conversation could not be loaded" message={thread.error} actionLabel="Retry" onAction={() => void thread.refresh()} />
       </SafeAreaView>
     );
@@ -222,7 +222,8 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
           name={projectName}
           participantCount={summary?.participantCount ?? null}
           openCritical={summary?.counts.openCritical ?? 0}
-          onBack={onBack ? handleBack : undefined}
+          onBack={onBack ? screenBack.onBack : undefined}
+          backDisabled={sending}
           onOpenGroupInfo={openGroupInfo}
           onOpenMenu={() => setHeaderMenuOpen(true)}
           refreshing={thread.refreshing}
@@ -349,7 +350,7 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
   );
 }
 
-function ThreadHeader({ compact, identityRef, initials, name, participantCount, openCritical, onBack, onOpenGroupInfo, onOpenMenu, refreshing }: {
+function ThreadHeader({ compact, identityRef, initials, name, participantCount, openCritical, onBack, backDisabled, onOpenGroupInfo, onOpenMenu, refreshing }: {
   readonly compact: boolean;
   readonly identityRef?: RefObject<View | null> | undefined;
   readonly initials: string;
@@ -357,6 +358,7 @@ function ThreadHeader({ compact, identityRef, initials, name, participantCount, 
   readonly participantCount: number | null;
   readonly openCritical: number;
   readonly onBack?: (() => void) | undefined;
+  readonly backDisabled: boolean;
   readonly onOpenGroupInfo?: (() => void) | undefined;
   readonly onOpenMenu: () => void;
   readonly refreshing: boolean;
@@ -373,7 +375,7 @@ function ThreadHeader({ compact, identityRef, initials, name, participantCount, 
   );
   return (
     <View style={[styles.header, compact ? styles.compactHeader : null]}>
-      {onBack ? <Pressable accessibilityLabel="Back to conversations" accessibilityRole="button" hitSlop={4} onPress={onBack} style={({ pressed }) => [styles.headerButton, pressed ? styles.pressed : null]}><ChatIcon name="back" size={25} /></Pressable> : null}
+      {onBack ? <Pressable accessibilityLabel="Back to conversations" accessibilityRole="button" accessibilityState={{ disabled: backDisabled }} disabled={backDisabled} hitSlop={4} onPress={onBack} style={({ pressed }) => [styles.headerButton, backDisabled ? styles.disabledBack : null, pressed ? styles.pressed : null]}><ChatIcon name="back" size={25} /></Pressable> : null}
       {onOpenGroupInfo ? (
         <Pressable
           ref={identityRef}
@@ -401,6 +403,7 @@ const styles = StyleSheet.create({
   header: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.md, paddingVertical: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: chatColors.border, backgroundColor: chatColors.header, zIndex: 2 },
   compactHeader: { minHeight: 64, paddingHorizontal: spacing.xs },
   headerButton: { width: 48, height: 48, alignItems: "center", justifyContent: "center", borderRadius: radii.pill },
+  disabledBack: { opacity: 0.45 },
   headerIdentity: { minHeight: 48, flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: radii.control },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: chatColors.avatar },
   avatarText: { color: chatColors.avatarInk, fontFamily: fonts.semibold, fontSize: 15, letterSpacing: 0.2 },

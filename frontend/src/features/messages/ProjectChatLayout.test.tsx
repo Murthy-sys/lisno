@@ -127,7 +127,7 @@ describe("project messaging layout", () => {
     await waitFor(() => expect(fixture.streams.filter(candidate => !candidate.signal.aborted)).toHaveLength(1));
   });
 
-  it("keeps application navigation and logout in an accessible focus-restoring drawer", async () => {
+  it("keeps navigation focus restoration and shared topbar logout available", async () => {
     app();
     const trigger = screen.getByRole("button", { name: "Open navigation" });
     await userEvent.click(trigger);
@@ -136,8 +136,8 @@ describe("project messaging layout", () => {
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument());
     expect(trigger).toHaveFocus();
-    await userEvent.click(trigger);
-    await userEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Layout Tester" }));
+    const tools = screen.getByRole("banner", { name: "Workspace tools" });
+    await userEvent.click(within(tools).getByRole("button", { name: "Layout Tester" }));
     await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
     expect(fixture.logout).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument());

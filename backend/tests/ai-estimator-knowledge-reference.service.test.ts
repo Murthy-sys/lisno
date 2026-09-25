@@ -334,6 +334,7 @@ describe("AI estimator knowledge reference service", () => {
       basketId: basket.id,
       basketName: "Accidental Basket",
       version: 1,
+      vendorReferenceCount: 0,
       mainLineCount: 0,
       subBasketCount: 0,
       historicalReferenceCount: 0,
@@ -1648,6 +1649,19 @@ describe("AI estimator knowledge reference service", () => {
       expectApiError(error, 400, "INVALID_MASTER_TYPE");
       return true;
     });
+  });
+
+  it("rejects directory overview options for other masters and invalid service inputs", async () => {
+    const { service } = harness();
+    for (const includeDirectoryOverview of [true, false]) {
+      await expect(service.listMasters(actor, "uoms", { includeDirectoryOverview }, { limit: 5, offset: 0 })).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" });
+    }
+    await expect(service.listMasters(actor, "vendors", { includeDirectoryOverview: "true" as never }, { limit: 5, offset: 0 })).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" });
+    const denied = harness({ actorGuard: {
+      requireReadActor: vi.fn(async () => { throw new ApiError(403, "FORBIDDEN", "Forbidden"); }),
+      requireMutationActor: vi.fn(async () => actor)
+    } }).service;
+    await expect(denied.listMasters(actor, "vendors", { includeDirectoryOverview: true }, { limit: 1, offset: 0 })).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
   });
 
   it("reloads and authorizes the mutation actor before validating a malformed body", async () => {

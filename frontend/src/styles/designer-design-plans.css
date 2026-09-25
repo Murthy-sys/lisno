@@ -247,18 +247,25 @@
 .estimate-design-uploads__delete-actions .ui-button {
   min-block-size: var(--control-height);
   padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--color-border);
+  border-width: 1px;
+  border-style: solid;
   border-radius: var(--radius-control);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-weight: 600;
   box-shadow: none;
 }
 
-.estimate-design-uploads__delete-actions .ui-button--destructive {
-  border-color: #b42318;
-  background: #b42318;
-  color: #fff;
+/* Both delete-dialog actions are negative: red ink + red outline from the shared tokens. */
+.estimate-design-uploads__delete-actions .ui-button--destructive,
+.estimate-design-uploads__delete-actions .ui-button--destructive-outline {
+  border-color: var(--button-negative-border);
+  background: var(--button-secondary-bg);
+  color: var(--button-negative-ink);
+}
+
+.estimate-design-uploads__delete-actions .ui-button--destructive:not(:disabled):hover,
+.estimate-design-uploads__delete-actions .ui-button--destructive-outline:not(:disabled):hover {
+  border-color: var(--button-negative-ink-strong);
+  background: var(--button-negative-hover);
+  color: var(--button-negative-ink-strong);
 }
 
 .estimate-design-uploads__delete:focus-visible,

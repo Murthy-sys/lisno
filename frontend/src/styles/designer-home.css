@@ -12,7 +12,7 @@
 
 .ui-app-shell[data-role="designer"] {
   --role-canvas: #ffffff;
-  --role-rail: linear-gradient(190deg, #16234a 0%, #101a38 55%, #0a1226 100%);
+  --role-rail: linear-gradient(180deg, #2f3a2a 0%, #283223 55%, #222b1e 100%);
   --role-glass: #ffffff;
   --role-glass-strong: #ffffff;
   --role-glass-edge: #e5decf;
@@ -92,10 +92,10 @@ body:has(.ui-app-shell[data-role="designer"]) {
 
   .ui-app-shell[data-role="designer"] .ui-mobile-header {
     align-items: center;
-    background: var(--color-surface);
-    border-block-end: 1px solid var(--color-border);
-    box-shadow: var(--shadow-soft);
-    color: var(--color-brand-midnight);
+    background: var(--role-rail);
+    border-block-end: 1px solid rgb(255 255 255 / 8%);
+    box-shadow: 0 10px 30px -18px rgb(12 16 10 / 70%);
+    color: var(--role-rail-ink);
     display: flex;
     inset-block-start: 0;
     inset-inline: 0;
@@ -182,11 +182,12 @@ body:has(.ui-app-shell[data-role="designer"]) {
   align-self: center;
 }
 
-/* Header actions use the same readable navy surface as other primary controls. */
-.ui-app-shell[data-role="designer"] .ui-page-header__actions .ui-button {
-  border: 1px solid transparent !important;
-  background: var(--color-primary) !important;
-  color: #ffffff !important;
+/* Header actions use the primary button tokens; negative actions keep their
+   red outline. */
+.ui-app-shell[data-role="designer"] .ui-page-header__actions .ui-button:not(.ui-button--destructive):not(.ui-button--destructive-outline) {
+  border: 1px solid var(--button-primary-bg) !important;
+  background: var(--button-primary-bg) !important;
+  color: var(--button-primary-ink) !important;
 }
 
 /* Keep role buttons aligned with shared control geometry. Dialogs (Dialog.tsx) portal to
@@ -208,32 +209,16 @@ body:has(.ui-app-shell[data-role="designer"]) .ui-button:not(.modal-backdrop):no
   padding-inline: var(--space-3);
 }
 
-/* Small, regular-weight button label everywhere in this role, not just one
-   dialog — the shared button styles default to bold. */
+/* Button label size in this role; weight and colours come from the shared
+   --button-* tokens. */
 .ui-app-shell[data-role="designer"] .ui-button:not(.modal-backdrop):not(.ui-drawer-backdrop),
 body:has(.ui-app-shell[data-role="designer"]) .ui-button:not(.modal-backdrop):not(.ui-drawer-backdrop) {
   font-size: 0.875rem;
-  font-weight: 400;
-}
-
-/* Explicit white text: inside a portalled dialog (outside .ui-app-shell),
-   role-themes.css's [data-role] ink-color rule can't reach this button, so
-   it was falling back to a color that blended into the new navy fill. */
-.ui-app-shell[data-role="designer"] .ui-button--primary:not(.modal-backdrop):not(.ui-drawer-backdrop),
-body:has(.ui-app-shell[data-role="designer"]) .ui-button--primary:not(.modal-backdrop):not(.ui-drawer-backdrop) {
-  background: #1e183b;
-  color: #ffffff;
 }
 
 .ui-app-shell[data-role="designer"] :is(.ui-button--primary, .button--primary):not(:focus-visible),
 body:has(.ui-app-shell[data-role="designer"]) .ui-button--primary:not(:focus-visible) {
   box-shadow: none;
-}
-
-.ui-app-shell[data-role="designer"] .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop),
-body:has(.ui-app-shell[data-role="designer"]) .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop) {
-  border: 1px solid var(--color-border-strong);
-  background: #ffffff;
 }
 
 /* ------------------------------------------------------- access request */
@@ -726,17 +711,15 @@ body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
   border-start-end-radius: var(--radius-surface);
 }
 
-/* Previous/Next page both filled navy, matching the primary CTA elsewhere
-   in this role, instead of the shared quiet/secondary outline styles.
-   !important because Previous page is variant="quiet" — its own
-   .ui-button--quiet rule (earlier in this file) has higher specificity than
-   a plain two-class selector and would otherwise keep its white background
-   while this rule's color: #fff still won, producing invisible white-on-
-   white text. */
+/* Previous/Next page both filled with the primary button tokens, matching
+   the primary CTA elsewhere in this role, instead of the shared
+   quiet/secondary outline styles. !important because Previous page is
+   variant="quiet" and its variant rule would otherwise keep a transparent
+   background under this rule's cream ink. */
 .ui-app-shell[data-role="designer"] .access-administration__pagination .ui-button {
-  border: 1px solid transparent !important;
-  background: #1e183b !important;
-  color: #ffffff !important;
+  border: 1px solid var(--button-primary-bg) !important;
+  background: var(--button-primary-bg) !important;
+  color: var(--button-primary-ink) !important;
 }
 
 /* Smaller pagination/row-action buttons, and no drop shadow — several
@@ -751,10 +734,12 @@ body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
   box-shadow: none;
 }
 
-.ui-app-shell[data-role="designer"] .access-requests__table .ui-button {
-  border: 1px solid transparent !important;
-  background: #1e183b !important;
-  color: #ffffff !important;
+/* Row actions use the primary button tokens; negative actions (for example
+   Cancel request) keep their red outline. */
+.ui-app-shell[data-role="designer"] .access-requests__table .ui-button:not(.ui-button--destructive):not(.ui-button--destructive-outline) {
+  border: 1px solid var(--button-primary-bg) !important;
+  background: var(--button-primary-bg) !important;
+  color: var(--button-primary-ink) !important;
 }
 
 /* Force the busy-state spinner+label to center itself explicitly, instead
@@ -800,8 +785,7 @@ body:has(.ui-app-shell[data-role="designer"]) .ui-button__busy {
 @media (max-width: 480px) { .designer-project-review { grid-template-columns: minmax(0, 1fr); } }
 
 @media (max-width: 1024px) {
-  .ui-app-shell[data-role="designer"] .ui-mobile-header__trigger { color: var(--color-primary); }
-  .ui-app-shell[data-role="designer"] .ui-mobile-header .brand__logo { filter: none; }
+  .ui-app-shell[data-role="designer"] .ui-mobile-header__trigger { color: var(--role-rail-ink); }
 }
 @media (max-width: 760px) {
   .ui-app-shell[data-role="designer"] .designer-metrics { display: grid; grid-template-columns: minmax(0, 1fr); }

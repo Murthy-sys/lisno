@@ -27,7 +27,7 @@
 }
 
 .estimate-delivery .ui-button:focus-visible {
-  outline: 3px solid var(--focus-ring-color);
+  outline: 3px solid var(--button-primary-bg);
   outline-offset: 2px;
 }
 

@@ -29,6 +29,12 @@ export type CameraSelectionResult =
 
 export type ImageSelectionSource = "photo" | "camera";
 
+/** Optional presentation for image selection; omitted keeps original-quality, unedited images. */
+export interface ImageSelectionOptions {
+  /** Offers the system square crop editor and re-encodes at quality 0.9 (for avatars). */
+  readonly squareCrop?: boolean | undefined;
+}
+
 export interface ImageSelectionScope {
   readonly environmentId: string;
   readonly userId: string;
@@ -117,11 +123,13 @@ export interface AssetSelectionService {
   pickDocument(policy: AssetPolicy): Promise<SelectionResult>;
   pickImage(
     policy: AssetPolicy,
-    scope: ImageSelectionScope
+    scope: ImageSelectionScope,
+    options?: ImageSelectionOptions
   ): Promise<SelectionResult>;
   capturePhoto(
     policy: AssetPolicy,
-    scope: ImageSelectionScope
+    scope: ImageSelectionScope,
+    options?: ImageSelectionOptions
   ): Promise<CameraSelectionResult>;
   recoverPendingImageSelection(
     policy: AssetPolicy,
@@ -487,6 +495,16 @@ function parseMarker(value: string | null): PendingImageSelectionMarker | null {
   }
 }
 
+function editingOptions(options: ImageSelectionOptions | undefined): {
+  readonly allowsEditing: boolean;
+  readonly quality: number;
+  readonly aspect?: [number, number];
+} {
+  return options?.squareCrop
+    ? { allowsEditing: true, aspect: [1, 1], quality: 0.9 }
+    : { allowsEditing: false, quality: 1 };
+}
+
 function isImagePickerError(
   result: ImagePicker.ImagePickerResult | ImagePicker.ImagePickerErrorResult
 ): result is ImagePicker.ImagePickerErrorResult {
@@ -641,16 +659,18 @@ export function createAssetSelectionService(
       }
     },
 
-    async pickImage(policy, scope) {
+    async pickImage(policy, scope, options) {
       const marker = await storeMarker("photo", scope);
       let result: ImagePicker.ImagePickerResult;
       try {
+        const { allowsEditing, quality, ...crop } = editingOptions(options);
         result = await imagePicker.launchImageLibraryAsync({
           mediaTypes: ["images"],
-          allowsEditing: false,
+          allowsEditing,
+          ...crop,
           allowsMultipleSelection: false,
           selectionLimit: 1,
-          quality: 1,
+          quality,
           exif: false,
           base64: false
         });
@@ -667,7 +687,7 @@ export function createAssetSelectionService(
       return normalizeImageResult(result, policy, "image");
     },
 
-    async capturePhoto(policy, scope) {
+    async capturePhoto(policy, scope, options) {
       await removeMarker();
       let permission: ImagePicker.CameraPermissionResponse;
       try {
@@ -684,13 +704,15 @@ export function createAssetSelectionService(
       const marker = await storeMarker("camera", scope);
       let result: ImagePicker.ImagePickerResult;
       try {
+        const { allowsEditing, quality, ...crop } = editingOptions(options);
         result = await imagePicker.launchCameraAsync({
           mediaTypes: ["images"],
-          allowsEditing: false,
+          allowsEditing,
+          ...crop,
           allowsMultipleSelection: false,
           selectionLimit: 1,
           cameraType: ImagePicker.CameraType.back,
-          quality: 1,
+          quality,
           exif: false,
           base64: false
         });
@@ -797,16 +819,18 @@ export function pickDocument(policy: AssetPolicy): Promise<SelectionResult> {
 
 export function pickImage(
   policy: AssetPolicy,
-  scope: ImageSelectionScope
+  scope: ImageSelectionScope,
+  options?: ImageSelectionOptions
 ): Promise<SelectionResult> {
-  return assetSelection.pickImage(policy, scope);
+  return assetSelection.pickImage(policy, scope, options);
 }
 
 export function capturePhoto(
   policy: AssetPolicy,
-  scope: ImageSelectionScope
+  scope: ImageSelectionScope,
+  options?: ImageSelectionOptions
 ): Promise<CameraSelectionResult> {
-  return assetSelection.capturePhoto(policy, scope);
+  return assetSelection.capturePhoto(policy, scope, options);
 }
 
 export function recoverPendingImageSelection(

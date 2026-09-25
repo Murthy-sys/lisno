@@ -1,33 +1,63 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 
 import { colors, fonts, radii, spacing } from "../../ui/tokens";
 import {
   conversationAccessibilitySummary,
   conversationActivityInput,
+  lastMessagePreviewText,
   projectInitials,
   type PresentedConversation
 } from "./chatModel";
-import { chatColors } from "./chatTheme";
+import { ChatIcon } from "./ChatIcon";
+import { ConversationThumbnails, previewableImages } from "./ConversationThumbnails";
 
-function statusLabel(status: string): string {
-  return status.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toLocaleUpperCase());
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+
+function isPreviousDay(date: Date, now: Date): boolean {
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  return date.getFullYear() === yesterday.getFullYear() &&
+    date.getMonth() === yesterday.getMonth() &&
+    date.getDate() === yesterday.getDate();
 }
 
+/** "10:24 AM" today, "Yesterday", "Sep 16" this year, otherwise "Sep 16, 2025". */
 export function formatConversationActivity(value: string | null, now = new Date()): string | null {
   const activity = conversationActivityInput(value, now);
   if (!activity) return null;
+  const { date } = activity;
   if (activity.kind === "time") {
-    return activity.date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    const hours = date.getHours();
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    return `${hours % 12 || 12}:${minutes} ${hours < 12 ? "AM" : "PM"}`;
   }
-  return activity.date.toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    ...(activity.date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" })
-  });
+  if (isPreviousDay(date, now)) return "Yesterday";
+  const day = `${MONTHS[date.getMonth()]} ${date.getDate()}`;
+  return date.getFullYear() === now.getFullYear() ? day : `${day}, ${date.getFullYear()}`;
+}
+
+export function unreadBadgeText(unread: number): string {
+  return unread > 99 ? "99+" : String(unread);
+}
+
+/** Deterministic pastel avatar tones keyed by the stable project ID, never the name. */
+const AVATAR_TONES = Object.freeze([
+  { fill: colors.primarySoft, ink: colors.primary },
+  { fill: colors.warningSoft, ink: colors.warning },
+  { fill: colors.lavenderSoft, ink: colors.lavender },
+  { fill: colors.dangerSoft, ink: colors.danger },
+  { fill: colors.infoSoft, ink: colors.info },
+  { fill: colors.successSoft, ink: colors.success }
+]);
+
+export function conversationAvatarTone(projectId: string): (typeof AVATAR_TONES)[number] {
+  let hash = 0;
+  for (const character of projectId) hash = (hash * 31 + character.codePointAt(0)!) >>> 0;
+  return AVATAR_TONES[hash % AVATAR_TONES.length]!;
 }
 
 export interface ConversationRowProps {
   readonly conversation: PresentedConversation;
+  readonly currentUserId?: string | null;
   readonly selected?: boolean;
   readonly compact?: boolean;
   readonly disabled?: boolean;
@@ -37,16 +67,29 @@ export interface ConversationRowProps {
 
 export function ConversationRow({
   conversation,
+  currentUserId = null,
   selected = false,
   compact = false,
   disabled = false,
   now,
   onPress
 }: ConversationRowProps) {
-  const unread = conversation.counts.unread > 0;
-  const activity = formatConversationActivity(conversation.lastMessageAt, now);
-  const label = conversationAccessibilitySummary(conversation, activity);
-  const participants = `${conversation.participantCount} ${conversation.participantCount === 1 ? "participant" : "participants"}`;
+  const { fontScale } = useWindowDimensions();
+  const stackTime = fontScale >= 1.5;
+  const { counts, lastMessage } = conversation;
+  const unread = counts.unread > 0;
+  const activity = formatConversationActivity(lastMessage?.createdAt ?? conversation.lastMessageAt, now);
+  const label = conversationAccessibilitySummary(conversation, activity, currentUserId);
+  const tone = conversationAvatarTone(conversation.project.id);
+  const priority = counts.openCritical > 0 ? "critical" : counts.openImportant > 0 ? "important" : null;
+  const preview = lastMessage === null
+    ? "No messages yet"
+    : lastMessage
+      ? lastMessagePreviewText(lastMessage, currentUserId)
+      : null;
+  const images = lastMessage ? previewableImages(lastMessage.attachments) : [];
+  const firstFile = lastMessage && !images.length ? lastMessage.attachments[0] ?? null : null;
+  const extraFiles = lastMessage && firstFile ? Math.max(lastMessage.attachmentCount - 1, 0) : 0;
 
   return (
     <Pressable
@@ -60,16 +103,18 @@ export function ConversationRow({
         styles.row,
         compact ? styles.rowCompact : null,
         selected ? styles.rowSelected : null,
-        pressed ? styles.rowPressed : null
+        pressed ? styles.rowPressed : null,
+        disabled && !selected ? styles.rowDisabled : null
       ]}
       testID={`conversation-${conversation.project.id}`}
     >
       <View
         accessibilityElementsHidden
         importantForAccessibility="no-hide-descendants"
-        style={[styles.avatar, selected ? styles.avatarSelected : null]}
+        style={[styles.avatar, { backgroundColor: tone.fill }]}
+        testID={`conversation-avatar-${conversation.project.id}`}
       >
-        <Text style={[styles.avatarText, selected ? styles.avatarTextSelected : null]}>
+        <Text maxFontSizeMultiplier={1.3} style={[styles.avatarText, { color: tone.ink }]}>
           {projectInitials(conversation.project.name)}
         </Text>
       </View>
@@ -79,33 +124,50 @@ export function ConversationRow({
         importantForAccessibility="no-hide-descendants"
         style={styles.copy}
       >
-        <View style={styles.primaryLine}>
-          <Text numberOfLines={2} style={[styles.projectName, unread ? styles.projectNameUnread : null]}>
+        <View style={[styles.primaryLine, stackTime ? styles.primaryLineStacked : null]} testID="conversation-primary-line">
+          <Text numberOfLines={1} style={styles.projectName}>
             {conversation.project.name}
           </Text>
-          {activity ? (
-            <Text style={[styles.activity, unread ? styles.activityUnread : null]}>{activity}</Text>
+          {activity || priority ? (
+            <View style={styles.meta}>
+              {priority ? (
+                <View
+                  style={[styles.priorityDot, priority === "critical" ? styles.priorityCritical : styles.priorityImportant]}
+                  testID={`conversation-priority-${priority}`}
+                />
+              ) : null}
+              {activity ? (
+                <Text style={[styles.activity, unread ? styles.activityUnread : null]}>{activity}</Text>
+              ) : null}
+            </View>
           ) : null}
         </View>
-        <View style={styles.secondaryLine}>
-          <Text numberOfLines={1} style={styles.secondaryText}>
-            {participants} · {statusLabel(conversation.project.status)}
-          </Text>
-          <View style={styles.signals}>
-            {conversation.counts.unreadMentions > 0 ? (
-              <Text style={styles.mentionSignal}>@{conversation.counts.unreadMentions}</Text>
-            ) : null}
+
+        {preview !== null || unread ? (
+          <View style={styles.secondaryLine}>
+            <Text numberOfLines={1} style={[styles.preview, unread ? styles.previewUnread : null]}>
+              {preview ?? ""}
+            </Text>
             {unread ? (
-              <View style={[styles.signal, styles.unreadSignal]}>
-                <Text style={[styles.signalText, styles.unreadSignalText]}>{conversation.counts.unread}</Text>
+              <View style={styles.badge} testID={`conversation-unread-${conversation.project.id}`}>
+                <Text style={styles.badgeText}>{unreadBadgeText(counts.unread)}</Text>
               </View>
             ) : null}
           </View>
-        </View>
-        {conversation.counts.openCritical > 0 ? (
-          <View style={styles.criticalLine}>
-            <View style={styles.criticalDot} />
-            <Text style={styles.criticalText}>Critical {conversation.counts.openCritical}</Text>
+        ) : null}
+
+        {lastMessage && images.length ? (
+          <ConversationThumbnails
+            attachmentCount={lastMessage.attachmentCount}
+            attachments={lastMessage.attachments}
+            projectId={conversation.project.id}
+          />
+        ) : null}
+        {firstFile ? (
+          <View style={styles.fileLine}>
+            <ChatIcon color={colors.inkMuted} name="paperclip" size={15} />
+            <Text numberOfLines={1} style={styles.fileName}>{firstFile.filename}</Text>
+            {extraFiles > 0 ? <Text style={styles.fileMore}>+{extraFiles}</Text> : null}
           </View>
         ) : null}
       </View>
@@ -115,45 +177,61 @@ export function ConversationRow({
 
 const styles = StyleSheet.create({
   row: {
-    minHeight: 86,
+    minHeight: 80,
     flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 15,
-    paddingVertical: 11,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
+    alignItems: "stretch",
+    gap: spacing.sm,
+    paddingLeft: spacing.md,
     backgroundColor: colors.surface
   },
-  rowCompact: { minHeight: 84 },
-  rowSelected: { backgroundColor: "#E9EDEF" },
-  rowPressed: { backgroundColor: "#F5F6F6" },
+  rowCompact: { minHeight: 78 },
+  rowSelected: { backgroundColor: colors.primarySoft },
+  rowPressed: { backgroundColor: colors.surfaceMuted },
+  rowDisabled: { opacity: 0.6 },
   avatar: {
-    width: 46,
-    height: 46,
+    width: 52,
+    height: 52,
+    alignSelf: "flex-start",
+    marginTop: spacing.sm,
     borderRadius: radii.pill,
     alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#E5ECE9"
+    justifyContent: "center"
   },
-  avatarSelected: { backgroundColor: "#DCE5E4" },
-  avatarText: { color: "#4D6860", fontFamily: fonts.medium, fontSize: 16, letterSpacing: 0.2 },
-  avatarTextSelected: { color: "#476560" },
-  copy: { flex: 1, minWidth: 0, gap: 4 },
-  primaryLine: { flexDirection: "row", alignItems: "baseline", gap: spacing.sm },
-  projectName: { flex: 1, color: chatColors.ink, fontFamily: fonts.medium, fontSize: 15, lineHeight: 21 },
-  projectNameUnread: { fontFamily: fonts.semibold },
-  activity: { color: "#667781", fontFamily: fonts.regular, fontSize: 11 },
-  activityUnread: { color: "#086652", fontFamily: fonts.semibold },
-  secondaryLine: { minHeight: 20, flexDirection: "row", alignItems: "center", gap: 6 },
-  secondaryText: { flex: 1, color: "#52636D", fontFamily: fonts.regular, fontSize: 12, lineHeight: 17 },
-  signals: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: spacing.xxs },
-  signal: { minWidth: 20, minHeight: 20, borderRadius: radii.pill, alignItems: "center", justifyContent: "center", paddingHorizontal: 5, paddingVertical: 1 },
-  signalText: { fontFamily: fonts.semibold, fontSize: 11, lineHeight: 18 },
-  mentionSignal: { color: "#00855F", fontFamily: fonts.semibold, fontSize: 14 },
-  unreadSignal: { backgroundColor: "#00855F" },
-  unreadSignalText: { color: colors.surface },
-  criticalLine: { flexDirection: "row", alignItems: "center", gap: 5 },
-  criticalDot: { width: 5, height: 5, borderRadius: radii.pill, backgroundColor: "#A82936" },
-  criticalText: { color: "#A82936", fontFamily: fonts.semibold, fontSize: 11, lineHeight: 16 }
+  avatarText: { fontFamily: fonts.semibold, fontSize: 17, letterSpacing: 0.2 },
+  copy: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: "center",
+    gap: 3,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.sm,
+    paddingRight: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border
+  },
+  primaryLine: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  primaryLineStacked: { flexDirection: "column", alignItems: "flex-start", gap: 0 },
+  projectName: { flexShrink: 1, flexGrow: 1, color: colors.ink, fontFamily: fonts.semibold, fontSize: 15, lineHeight: 22 },
+  meta: { flexDirection: "row", alignItems: "center", gap: 5 },
+  priorityDot: { width: 7, height: 7, borderRadius: radii.pill },
+  priorityCritical: { backgroundColor: colors.danger },
+  priorityImportant: { backgroundColor: colors.warning },
+  activity: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 11, lineHeight: 16 },
+  activityUnread: { color: colors.primary, fontFamily: fonts.semibold },
+  secondaryLine: { minHeight: 20, flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  preview: { flex: 1, minWidth: 0, color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 13, lineHeight: 19 },
+  previewUnread: { color: colors.ink },
+  badge: {
+    minWidth: 20,
+    minHeight: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 5,
+    borderRadius: radii.pill,
+    backgroundColor: colors.danger
+  },
+  badgeText: { color: colors.surface, fontFamily: fonts.semibold, fontSize: 11, lineHeight: 16 },
+  fileLine: { minHeight: 20, flexDirection: "row", alignItems: "center", gap: 5 },
+  fileName: { flexShrink: 1, color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 12, lineHeight: 18 },
+  fileMore: { color: colors.inkMuted, fontFamily: fonts.medium, fontSize: 12, lineHeight: 18 }
 });

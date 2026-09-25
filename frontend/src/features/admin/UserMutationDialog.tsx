@@ -217,7 +217,7 @@ export function UserMutationDialog({
       footer={({ requestClose }) => (
         <div className="admin-user-dialog__actions">
           <Button
-            variant="quiet"
+            variant="destructive-outline"
             disabled={mutation.isPending}
             onClick={requestClose}
           >

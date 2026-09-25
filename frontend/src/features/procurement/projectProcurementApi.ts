@@ -24,6 +24,7 @@ export interface ProjectProcurementItemInput {
   uomId: string;
   vendorId: string | null;
   pricePaise: number;
+  allocatedWorkPaise?: number | null;
 }
 
 export interface ProcurementParentSource {

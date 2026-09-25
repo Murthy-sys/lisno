@@ -13,7 +13,7 @@ const mutationFiles = [
   "src/features/admin/InvitationActionDialog.tsx",
   "src/features/access/AccessRequestDecisionDialog.tsx",
   "src/features/finance/ProjectFinancePanel.tsx",
-  "src/features/procurement/ProcurementProjectPage.tsx",
+  "src/features/procurement/ProjectProcurementItemEditor.tsx",
   "src/features/workflow/OperationalTaskQueue.tsx",
   "src/components/tasks/TaskUpdateDialog.tsx",
   "src/features/manager/DeadlineRevisionDialog.tsx"

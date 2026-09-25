@@ -30,7 +30,8 @@ const rawUserSchema = z
     name: z.string().min(1),
     email: z.string().min(1),
     role: z.string(),
-    avatar: z.string().optional()
+    avatar: z.string().optional(),
+    profilePhotoVersion: z.number().int().positive().optional()
   })
   .strict();
 
@@ -68,9 +69,13 @@ export function parsePublicUser(input: unknown): PublicUser | null {
     email: parsed.data.email,
     role: parsed.data.role
   };
-  return Object.freeze(
-    parsed.data.avatar === undefined ? base : { ...base, avatar: parsed.data.avatar }
-  );
+  return Object.freeze({
+    ...base,
+    ...(parsed.data.avatar === undefined ? {} : { avatar: parsed.data.avatar }),
+    ...(parsed.data.profilePhotoVersion === undefined
+      ? {}
+      : { profilePhotoVersion: parsed.data.profilePhotoVersion })
+  });
 }
 
 export function parseAuthPayload(input: unknown): AuthPayload | null {

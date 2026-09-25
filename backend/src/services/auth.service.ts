@@ -58,6 +58,8 @@ export interface PublicUser {
   email: string;
   role: Role;
   avatar?: string;
+  /** Present only while a profile photo exists; omitted (never null) otherwise. */
+  profilePhotoVersion?: number;
 }
 
 export interface AuthPayload {
@@ -363,12 +365,13 @@ function isIssuedDevelopmentDemoAuthorization(
   }
 }
 
-function toPublicUser(user: UserRecord): PublicUser {
+export function toPublicUser(user: UserRecord): PublicUser {
   return {
     id: user.id,
     name: user.name,
     email: user.email,
     role: user.role,
-    ...(user.avatar ? { avatar: user.avatar } : {})
+    ...(user.avatar ? { avatar: user.avatar } : {}),
+    ...(user.profilePhoto ? { profilePhotoVersion: user.profilePhoto.version } : {})
   };
 }

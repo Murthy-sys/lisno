@@ -11,7 +11,8 @@ import {
   DASHBOARD_WORKFORCE_ASSIGNMENT_STATES,
   DASHBOARD_WORKFORCE_CAPACITY_STATES,
   DASHBOARD_WORKFORCE_SORTS,
-  SUPER_ADMIN_DASHBOARD_PERIOD_DAYS
+  SUPER_ADMIN_DASHBOARD_PERIOD_DAYS,
+  type SuperAdminDashboardPeriodDays
 } from "../contracts/super-admin-dashboard.js";
 import { WORKER_ROLES } from "../domain/roles.js";
 import { authenticate } from "../middleware/auth.js";
@@ -20,11 +21,12 @@ import { validateQuery } from "../middleware/validate.js";
 import type { AuthService } from "../services/auth.service.js";
 import type { SuperAdminDashboardService } from "../services/super-admin-dashboard.service.js";
 
-const periodDays = z.coerce.number().pipe(z.union([
-  z.literal(SUPER_ADMIN_DASHBOARD_PERIOD_DAYS[0]),
-  z.literal(SUPER_ADMIN_DASHBOARD_PERIOD_DAYS[1]),
-  z.literal(SUPER_ADMIN_DASHBOARD_PERIOD_DAYS[2])
-])).default(30);
+const periodDayLiterals = SUPER_ADMIN_DASHBOARD_PERIOD_DAYS.map((days) => z.literal(days)) as unknown as [
+  z.ZodLiteral<SuperAdminDashboardPeriodDays>,
+  z.ZodLiteral<SuperAdminDashboardPeriodDays>,
+  ...z.ZodLiteral<SuperAdminDashboardPeriodDays>[]
+];
+const periodDays = z.coerce.number().pipe(z.union(periodDayLiterals)).default(30);
 const pagination = {
   limit: z.coerce.number().int().min(1).max(50).default(20),
   offset: z.coerce.number().int().min(0).default(0)

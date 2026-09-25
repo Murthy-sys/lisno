@@ -28,7 +28,7 @@ describe("recipient-only notification endpoints", () => {
     expect(response.status).toBe(200); expect(response.headers["cache-control"]).toBe("no-store");
     expect(response.body.data).toMatchObject({items: [{type: "chat.mention", projectId: "a", readAt: null}], unreadCount: 1, pagination: {limit: 1, offset: 0, total: 1, hasMore: false}});
     expect(Object.keys(response.body.data.items[0]).sort()).toEqual(["id", "type", "projectId", "projectName", "messageId", "actor", "excerpt", "createdAt", "readAt"].sort());
-    for (const query of ["recipientId=super", "limit=51", "offset=-1"]) expect((await request(f.app).get(`/api/v1/notifications?${query}`).auth(f.token("electric-a"), {type: "bearer"})).status).toBe(400);
+    for (const query of ["recipientId=super", "limit=51", "offset=-1", "filter=unread", "search=Project"]) expect((await request(f.app).get(`/api/v1/notifications?${query}`).auth(f.token("electric-a"), {type: "bearer"})).status).toBe(400);
     await f.stream.close();
   });
   it("cannot read another recipient's notification even as Super Admin", async () => {

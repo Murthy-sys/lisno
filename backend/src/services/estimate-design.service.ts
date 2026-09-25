@@ -1,11 +1,17 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 import mongoose from "mongoose";
 import sharp, { type Metadata } from "sharp";
 import {
+  deriveEstimateDesignUploadPurpose,
   isEstimateDesignEditable,
+  matchPlanRequestReplacementPages,
+  normalizeEstimateDesignTitle,
+  PlanRequestReplacementMatchError,
   type AnnotationDocumentV1,
-  type EstimateDesignExtractionStatus
+  type EstimateDesignExtractionStatus,
+  type EstimateDesignUploadPurpose,
+  type PlanRequestReplacementTargetSnapshot
 } from "../domain/estimate-design.js";
 import {
   assertEstimateDesignMapping,
@@ -37,6 +43,7 @@ import type { CropRect } from "../repositories/types.js";
 import { createMongoRepository } from "../repositories/mongo.js";
 import {
   advancePlanPageForDrawingRevision,
+  advancePlanPageForDrawingRevisions,
   approvePlanTargetsForDrawingRevision,
   ensureEstimatePlanReviewCollections
 } from "./estimate-plan-review.service.js";
@@ -84,6 +91,23 @@ export interface EstimateDesignUploadDto {
   uploaderId: string;
   uploadedAt: string;
   extractionStatus: EstimateDesignExtractionStatus;
+  purpose: EstimateDesignUploadPurpose;
+  requestReplacement: null | {
+    requestId: string;
+    requestVersion: number;
+    sourcePageId: string;
+    targetCount: number;
+    matches: Array<{
+      drawingId: string;
+      requestedRevisionId: string;
+      detectedTitle: string;
+      resultRevisionId: string | null;
+      matchReason: "normalized_title" | "mapping_tuple" | null;
+      pageNumber: number | null;
+    }>;
+    ignoredPageNumbers: number[];
+    ignoredPageCount: number;
+  };
   failureCode: string | null;
   failureMessage: string | null;
   canRetry: boolean;
@@ -154,7 +178,7 @@ export interface EstimateWorkerResult {
   }>;
 }
 
-type EstimateResultMode = "ordinary" | "replacement";
+type EstimateResultMode = "ordinary" | "replacement" | "plan_request_replacement";
 
 type EditEstimateDrawingBase = {
   version: number;
@@ -208,6 +232,12 @@ export interface ReplaceDrawingInput {
   file: ValidatedUpload;
 }
 
+export interface UploadPlanRequestReplacementInput {
+  version: number;
+  idempotencyKey: string;
+  file: ValidatedUpload;
+}
+
 export interface EstimateDesignApprovalReadiness {
   ready: boolean;
   total: number;
@@ -218,6 +248,11 @@ export interface EstimateDesignApprovalReadiness {
 
 export interface EstimateDesignService {
   upload(user: AuthenticatedUser, estimateId: string, file: ValidatedUpload): Promise<EstimateDesignUploadDto>;
+  uploadPlanRequestReplacement(
+    user: AuthenticatedUser,
+    requestId: string,
+    input: UploadPlanRequestReplacementInput
+  ): Promise<EstimateDesignUploadDto>;
   listEstimator(user: AuthenticatedUser, estimateId: string): Promise<EstimateDesignWorkspaceDto>;
   sourceImage(user: AuthenticatedUser, pageId: string): Promise<NodeJS.ReadableStream>;
   revisionImage(user: AuthenticatedUser, revisionId: string): Promise<NodeJS.ReadableStream>;
@@ -363,11 +398,86 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         uploaderId: user.id,
         uploadedAt: uploadedAt.toISOString(),
         extractionStatus: "queued",
+        purpose: "ordinary",
+        requestReplacement: null,
         failureCode: null,
         failureMessage: null,
         canRetry: false,
         canDelete: user.role === "designer"
       };
+    },
+
+    async uploadPlanRequestReplacement(user, requestId, requestInput) {
+      if (requestInput.file.sizeBytes > input.maxUploadBytes) {
+        throw new ApiError(413, "FILE_TOO_LARGE", "The uploaded file exceeds the configured size limit.");
+      }
+      const idempotencyKey = requestInput.idempotencyKey.trim();
+      if (idempotencyKey.length < 8 || idempotencyKey.length > 128) {
+        throw new ApiError(400, "VALIDATION_ERROR", "Request validation failed.", {
+          idempotencyKey: "Use an idempotency key between 8 and 128 characters."
+        });
+      }
+      const request = await EstimatePlanChangeRequestModel.findById(requestId).lean();
+      if (!request) throw new ApiError(404, "PLAN_REQUEST_NOT_FOUND", "The plan change request was not found.");
+      const estimate = await EstimateModel.findOne({
+        _id: request.estimateId,
+        ...estimateActorOwnershipFilter(user)
+      }).lean();
+      if (!estimate) throw estimateNotFound();
+      if (!estimateCanReplaceDrawingForActor(estimate, user)) drawingLocked();
+      const replay = await EstimateDesignUploadModel.findOne({
+        purpose: "plan_request_replacement",
+        "planRequestReplacement.requestId": requestId,
+        "planRequestReplacement.idempotencyKey": idempotencyKey
+      }).lean();
+      if (replay) {
+        if (String(replay.uploaderId) !== user.id) {
+          throw new ApiError(409, "PLAN_REPLACEMENT_IDEMPOTENCY_CONFLICT", "This idempotency key is already in use.");
+        }
+        return uploadDto(replay, await canRetryUpload(replay), user.role === "designer");
+      }
+
+      let stored: { reference: string };
+      try {
+        stored = await input.storage.save({
+          data: requestInput.file.data,
+          extension: requestInput.file.extension
+        });
+      } catch {
+        throw new ApiError(503, "FILE_STORAGE_ERROR", "The replacement file could not be stored. Please try again.");
+      }
+      const uploadId = randomUUID();
+      const uploadedAt = now();
+      let persisted: Awaited<ReturnType<typeof persistPlanRequestReplacementUploadAndJob>>;
+      try {
+        persisted = await persistPlanRequestReplacementUploadAndJob({
+          uploadId,
+          requestId,
+          requestVersion: requestInput.version,
+          idempotencyKey,
+          estimate,
+          user,
+          file: requestInput.file,
+          storedFileReference: stored.reference,
+          uploadedAt,
+          audit: input.audit
+        });
+      } catch (error) {
+        await cleanupUploadedReferenceOrThrow(input.storage, stored.reference);
+        const concurrentReplay = await EstimateDesignUploadModel.findOne({
+          purpose: "plan_request_replacement",
+          "planRequestReplacement.requestId": requestId,
+          "planRequestReplacement.idempotencyKey": idempotencyKey
+        }).lean();
+        if (concurrentReplay && String(concurrentReplay.uploaderId) === user.id) {
+          return uploadDto(concurrentReplay, await canRetryUpload(concurrentReplay), user.role === "designer");
+        }
+        throw error;
+      }
+      if (!persisted.created) {
+        await cleanupUploadedReferenceOrThrow(input.storage, stored.reference);
+      }
+      return uploadDto(persisted.upload, false, user.role === "designer");
     },
 
     async listEstimator(user, estimateId) {
@@ -1063,16 +1173,31 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
     async completeWorkerJob(jobId, claimToken, processedAt, result) {
       const job = await EstimateDesignExtractionJobModel.findById(jobId).lean();
       if (!job) throw estimateNotFound();
-      requireEstimateClaim(job, claimToken, processedAt);
       const upload = await EstimateDesignUploadModel.findById(job.uploadId).lean();
+      if (
+        upload &&
+        !upload.deletedAt &&
+        deriveEstimateDesignUploadPurpose(upload) === "plan_request_replacement" &&
+        job.status === "estimator_review" &&
+        String(job.workerResultId) === result.resultId &&
+        workerResultClaimMatches(job.workerResultClaimDigest, claimToken)
+      ) {
+        return workerJobDto(job);
+      }
+      requireEstimateClaim(job, claimToken, processedAt);
+      if (!upload || upload.deletedAt) throw estimateNotFound();
+      const purpose = deriveEstimateDesignUploadPurpose(upload);
       const estimate = upload
         ? await EstimateModel.findById(upload.estimateId).lean()
         : null;
-      if (!upload || upload.deletedAt || !estimate) throw estimateNotFound();
+      if (!estimate) throw estimateNotFound();
       const taxonomy = taxonomyForEstimate(estimate);
       const mappingContext = mappingContextForEstimate(estimate);
-      const resultMode: EstimateResultMode =
-        upload.replacementDrawingId ? "replacement" : "ordinary";
+      const resultMode: EstimateResultMode = purpose === "plan_request_replacement"
+        ? "plan_request_replacement"
+        : purpose === "drawing_replacement"
+          ? "replacement"
+          : "ordinary";
       const normalized = await normalizeEstimateResult(
         result,
         input.maxUploadBytes,
@@ -1090,6 +1215,62 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           result.resultId,
           normalized.pages[0]!
         );
+      }
+      if (purpose === "plan_request_replacement") {
+        const snapshot = upload.planRequestReplacement as Record<string, any> | null;
+        if (!snapshot || !Array.isArray(snapshot.targets) || snapshot.targets.length === 0) {
+          extractionStateConflict();
+        }
+        try {
+          const resolved = matchPlanRequestReplacementPages(
+            snapshot.targets.map((target: Record<string, any>) => ({
+              drawingId: String(target.drawingId),
+              requestedRevisionId: String(target.requestedRevisionId),
+              detectedTitle: String(target.detectedTitle),
+              normalizedTitle: String(target.normalizedTitle),
+              mapping: {
+                roomId: target.mapping?.roomId == null ? null : String(target.mapping.roomId),
+                scopeSectionId: target.mapping?.scopeSectionId == null ? null : String(target.mapping.scopeSectionId),
+                catalogueId: target.mapping?.catalogueId == null ? null : String(target.mapping.catalogueId)
+              }
+            })),
+            normalized.pages.map((page) => {
+              const section = page.sections[0]!;
+              const mapped = autoMapDrawingTitle(section.proposal.detectedTitle, mappingContext).mapping;
+              return {
+                pageNumber: page.pageNumber,
+                detectedTitle: section.proposal.detectedTitle,
+                normalizedTitle: normalizeEstimateDesignTitle(section.proposal.detectedTitle),
+                mapping: {
+                  roomId: mapped.roomId,
+                  scopeSectionId: mapped.scopeSectionId,
+                  catalogueId: mapped.catalogueId
+                }
+              };
+            })
+          );
+          return completePlanRequestReplacement(
+            job,
+            upload,
+            claimToken,
+            processedAt,
+            result.resultId,
+            normalized.pages,
+            resolved
+          );
+        } catch (error) {
+          if (error instanceof PlanRequestReplacementMatchError) {
+            return failPlanRequestReplacementMatch(
+              job,
+              upload,
+              claimToken,
+              processedAt,
+              error.code,
+              error.message
+            );
+          }
+          throw error;
+        }
       }
       const references: string[] = [];
       try {
@@ -1293,6 +1474,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             failedAt,
             session
           );
+          if (deriveEstimateDesignUploadPurpose(currentUpload) === "plan_request_replacement") {
+            await releasePlanRequestReplacementReservations(currentUpload, session);
+          }
           return;
         }
         await guardDesignLifecycle(currentEstimate, session);
@@ -1344,6 +1528,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             { session }
           );
           requireMatchedTransition(released, extractionStateConflict);
+        }
+        if (deriveEstimateDesignUploadPurpose(currentUpload) === "plan_request_replacement") {
+          await releasePlanRequestReplacementReservations(currentUpload, session);
         }
         await appendEstimateDesignAudit(input.audit, session, {
           actorId: "system-estimate-ocr-worker",
@@ -1944,7 +2131,55 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           extractionStateConflict();
         }
         await guardDesignLifecycle(estimate, session);
-        if (currentUpload.replacesRevisionId) {
+        if (deriveEstimateDesignUploadPurpose(currentUpload) === "plan_request_replacement") {
+          const snapshot = currentUpload.planRequestReplacement as Record<string, any> | null;
+          const request = snapshot
+            ? await EstimatePlanChangeRequestModel.findOne({
+                _id: snapshot.requestId,
+                estimateId: currentUpload.estimateId,
+                sourcePageId: snapshot.sourcePageId,
+                status: "open",
+                version: snapshot.requestVersion
+              }).session(session).lean()
+            : null;
+          if (!request || !Array.isArray(snapshot?.targets) || snapshot.targets.length === 0) {
+            stalePlanRequestReplacement();
+          }
+          for (const target of snapshot.targets) {
+            const currentTarget = request.targets.find((candidate: Record<string, any>) =>
+              String(candidate.drawingId) === String(target.drawingId) &&
+              String(candidate.requestedRevisionId) === String(target.requestedRevisionId) &&
+              candidate.status === "open"
+            );
+            const drawing = currentTarget
+              ? await EstimateDesignDrawingModel.findOne({
+                  _id: target.drawingId,
+                  estimateId: currentUpload.estimateId,
+                  active: true
+                }).session(session).lean()
+              : null;
+            const latest = drawing
+              ? await EstimateDesignRevisionModel.findOne({ drawingId: drawing._id })
+                  .sort({ revisionNumber: -1 }).session(session).lean()
+              : null;
+            if (
+              !drawing ||
+              !latest ||
+              String(latest._id) !== String(target.requestedRevisionId) ||
+              latest.reviewStatus !== "changes_requested" ||
+              latest.replacementUploadId != null
+            ) {
+              stalePlanRequestReplacement();
+            }
+            const reserved = await EstimateDesignRevisionModel.updateOne({
+              _id: latest._id,
+              drawingId: drawing._id,
+              reviewStatus: "changes_requested",
+              replacementUploadId: null
+            }, { $set: { replacementUploadId: currentUpload._id } }, { session });
+            requireMatchedTransition(reserved, stalePlanRequestReplacement);
+          }
+        } else if (currentUpload.replacesRevisionId) {
           const drawing = await EstimateDesignDrawingModel.findById(currentUpload.replacementDrawingId).session(session).lean();
           if (!drawing || !drawing.active || drawing.deletedAt) drawingLocked();
           const reserved = await EstimateDesignRevisionModel.updateOne(
@@ -1962,7 +2197,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         }
         const resetJob = await EstimateDesignExtractionJobModel.updateOne(
           { _id: job._id, uploadId, status: "processing_failed" },
-          { $set: { status: "queued", queuedAt, startedAt: null, completedAt: null, leaseExpiresAt: null, claimId: null, failureCode: null, failureMessage: null, workerResultId: null } },
+          { $set: { status: "queued", queuedAt, startedAt: null, completedAt: null, leaseExpiresAt: null, claimId: null, failureCode: null, failureMessage: null, workerResultId: null, workerResultClaimDigest: null } },
           { session }
         );
         requireTransition(resetJob, extractionStateConflict);
@@ -1985,7 +2220,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             extractionStatus: "queued",
             uploadId,
             jobId: String(job._id),
-            replacement: Boolean(currentUpload.replacesRevisionId)
+            replacement: deriveEstimateDesignUploadPurpose(currentUpload) !== "ordinary"
           }
         });
         saved = { ...currentUpload, extractionStatus: "queued", failureCode: null, failureMessage: null };
@@ -2332,6 +2567,36 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       uploadId: upload._id
     }).lean();
     if (!job || String(job.status) !== "processing_failed") return false;
+    if (deriveEstimateDesignUploadPurpose(upload) === "plan_request_replacement") {
+      const snapshot = upload.planRequestReplacement as Record<string, any> | null;
+      if (!snapshot || !Array.isArray(snapshot.targets) || snapshot.targets.length === 0) return false;
+      const request = await EstimatePlanChangeRequestModel.findOne({
+        _id: snapshot.requestId,
+        estimateId: upload.estimateId,
+        sourcePageId: snapshot.sourcePageId,
+        status: "open",
+        version: snapshot.requestVersion
+      }).lean();
+      if (!request) return false;
+      for (const target of snapshot.targets) {
+        const currentTarget = request.targets.find((candidate: Record<string, any>) =>
+          String(candidate.drawingId) === String(target.drawingId) &&
+          String(candidate.requestedRevisionId) === String(target.requestedRevisionId) &&
+          candidate.status === "open"
+        );
+        const latest = currentTarget
+          ? await EstimateDesignRevisionModel.findOne({ drawingId: target.drawingId })
+              .sort({ revisionNumber: -1 }).lean()
+          : null;
+        if (
+          !latest ||
+          String(latest._id) !== String(target.requestedRevisionId) ||
+          latest.reviewStatus !== "changes_requested" ||
+          latest.replacementUploadId != null
+        ) return false;
+      }
+      return true;
+    }
     if (!upload.replacesRevisionId) return true;
     if (!upload.replacementDrawingId || !upload.replacementVersion) return false;
     const drawing = await EstimateDesignDrawingModel.findById(
@@ -2673,11 +2938,395 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         uploaderId: user.id,
         uploadedAt,
         extractionStatus: "queued",
+        purpose: "drawing_replacement",
+        replacementDrawingId: drawing._id,
+        replacesRevisionId: revision._id,
         failureCode: null,
         failureMessage: null,
         canRetry: false
       }, false, user.role === "designer")
     };
+  }
+
+  async function failPlanRequestReplacementMatch(
+    job: Record<string, any>,
+    upload: Record<string, any>,
+    claimToken: string,
+    processedAt: string,
+    code: string,
+    message: string
+  ) {
+    let failedJob: Record<string, any> | null = null;
+    await withMongoTransaction(async (session) => {
+      const currentJob = await EstimateDesignExtractionJobModel.findById(job._id).session(session).lean();
+      if (!currentJob) throw estimateNotFound();
+      requireEstimateClaim(currentJob, claimToken, processedAt);
+      const currentUpload = await EstimateDesignUploadModel.findById(upload._id).session(session).lean();
+      if (
+        !currentUpload ||
+        currentUpload.deletedAt ||
+        deriveEstimateDesignUploadPurpose(currentUpload) !== "plan_request_replacement" ||
+        currentUpload.extractionStatus !== "processing"
+      ) {
+        extractionStateConflict();
+      }
+      const snapshot = currentUpload.planRequestReplacement as Record<string, any>;
+      const targetRevisionIds = (Array.isArray(snapshot?.targets) ? snapshot.targets : [])
+        .map((target: Record<string, any>) => String(target.requestedRevisionId));
+      const completed = await EstimateDesignExtractionJobModel.updateOne({
+        _id: currentJob._id,
+        uploadId: currentUpload._id,
+        status: "processing",
+        claimId: claimToken,
+        leaseExpiresAt: { $gt: new Date(processedAt) }
+      }, {
+        $set: {
+          status: "processing_failed",
+          completedAt: new Date(processedAt),
+          leaseExpiresAt: null,
+          claimId: null,
+          failureCode: code,
+          failureMessage: message,
+          workerResultId: null,
+          workerResultClaimDigest: null
+        }
+      }, { session });
+      requireTransition(completed, staleClaim);
+      const uploadUpdated = await EstimateDesignUploadModel.updateOne({
+        _id: currentUpload._id,
+        extractionStatus: "processing"
+      }, {
+        $set: {
+          extractionStatus: "processing_failed",
+          failureCode: code,
+          failureMessage: message
+        }
+      }, { session });
+      requireTransition(uploadUpdated, extractionStateConflict);
+      if (targetRevisionIds.length) {
+        await EstimateDesignRevisionModel.updateMany({
+          _id: { $in: targetRevisionIds },
+          replacementUploadId: currentUpload._id,
+          reviewStatus: "changes_requested"
+        }, { $set: { replacementUploadId: null } }, { session });
+      }
+      await appendEstimateDesignAudit(input.audit, session, {
+        actorId: "system-estimate-ocr-worker",
+        action: "estimate_design_extraction_failed",
+        entityType: "estimate_plan_change_request",
+        entityId: String(snapshot.requestId),
+        occurredAt: new Date(processedAt).toISOString(),
+        newValues: {
+          estimateId: String(currentUpload.estimateId),
+          uploadId: String(currentUpload._id),
+          sourcePageId: String(snapshot.sourcePageId),
+          failureCode: code,
+          targetCount: targetRevisionIds.length
+        }
+      });
+      failedJob = {
+        ...currentJob,
+        status: "processing_failed",
+        completedAt: new Date(processedAt),
+        leaseExpiresAt: null,
+        claimId: null,
+        failureCode: code,
+        failureMessage: message,
+        workerResultId: null,
+        workerResultClaimDigest: null
+      };
+    });
+    if (!failedJob) throw new Error("Plan request replacement failure transaction did not complete.");
+    return workerJobDto(failedJob);
+  }
+
+  async function completePlanRequestReplacement(
+    job: Record<string, any>,
+    upload: Record<string, any>,
+    claimToken: string,
+    processedAt: string,
+    resultId: string,
+    pages: Awaited<ReturnType<typeof normalizeEstimateResult>>["pages"],
+    resolved: ReturnType<typeof matchPlanRequestReplacementPages>
+  ) {
+    const references: string[] = [];
+    const prepared: Array<{
+      match: typeof resolved.matches[number];
+      page: typeof pages[number];
+      storedReference: string;
+      pageId: string;
+      revisionId: string;
+    }> = [];
+    try {
+      for (const match of resolved.matches) {
+        const page = pages.find((candidate) => candidate.pageNumber === match.candidate.pageNumber);
+        if (!page) invalidWorkerResult("A matched replacement page was not found.");
+        const stored = await saveGeneratedImage(input.storage, page.image);
+        references.push(stored.reference);
+        prepared.push({
+          match,
+          page,
+          storedReference: stored.reference,
+          pageId: randomUUID(),
+          revisionId: randomUUID()
+        });
+      }
+      let completedJob: Record<string, any> | null = null;
+      let cancelled = false;
+      await ensureEstimatePlanReviewCollections();
+      await withMongoTransaction(async (session) => {
+        const currentJob = await EstimateDesignExtractionJobModel.findById(job._id).session(session).lean();
+        if (!currentJob) throw estimateNotFound();
+        requireEstimateClaim(currentJob, claimToken, processedAt);
+        const currentUpload = await EstimateDesignUploadModel.findById(upload._id).session(session).lean();
+        if (
+          !currentUpload ||
+          currentUpload.deletedAt ||
+          currentUpload.extractionStatus !== "processing" ||
+          deriveEstimateDesignUploadPurpose(currentUpload) !== "plan_request_replacement"
+        ) {
+          extractionStateConflict();
+        }
+        const snapshot = currentUpload.planRequestReplacement as Record<string, any>;
+        if (
+          !snapshot ||
+          String(snapshot.requestId) !== String(upload.planRequestReplacement?.requestId) ||
+          Number(snapshot.requestVersion) !== Number(upload.planRequestReplacement?.requestVersion) ||
+          String(snapshot.sourcePageId) !== String(upload.planRequestReplacement?.sourcePageId)
+        ) {
+          extractionStateConflict();
+        }
+        const currentEstimate = await EstimateModel.findById(currentUpload.estimateId).session(session).lean();
+        if (!currentEstimate) throw estimateNotFound();
+        if (estimateDesignIsFrozen(currentEstimate)) {
+          completedJob = await terminallyCancelFrozenWorkerJob(
+            currentJob,
+            currentUpload,
+            claimToken,
+            processedAt,
+            session
+          );
+          await releasePlanRequestReplacementReservations(currentUpload, session);
+          cancelled = true;
+          return;
+        }
+        await guardDesignLifecycle(currentEstimate, session);
+        const request = await EstimatePlanChangeRequestModel.findOne({
+          _id: snapshot.requestId,
+          estimateId: currentUpload.estimateId,
+          sourcePageId: snapshot.sourcePageId,
+          status: "open",
+          version: snapshot.requestVersion
+        }).session(session);
+        if (!request) stalePlanRequestReplacement();
+        const snapshots = snapshot.targets as Array<Record<string, any>>;
+        const openTargets = request.targets.filter((target: Record<string, any>) => target.status === "open");
+        if (openTargets.length !== snapshots.length) stalePlanRequestReplacement();
+
+        const drawingById = new Map<string, Record<string, any>>();
+        const requestedRevisionById = new Map<string, Record<string, any>>();
+        for (const target of snapshots) {
+          const currentTarget = request.targets.find((value: Record<string, any>) =>
+            String(value.drawingId) === String(target.drawingId) &&
+            String(value.requestedRevisionId) === String(target.requestedRevisionId) &&
+            value.status === "open"
+          );
+          const drawing = currentTarget
+            ? await EstimateDesignDrawingModel.findOne({
+                _id: target.drawingId,
+                estimateId: currentUpload.estimateId,
+                active: true
+              }).session(session).lean()
+            : null;
+          const latest = drawing
+            ? await EstimateDesignRevisionModel.findOne({ drawingId: drawing._id })
+                .sort({ revisionNumber: -1 }).session(session).lean()
+            : null;
+          if (
+            !currentTarget ||
+            !drawing ||
+            !latest ||
+            String(latest._id) !== String(target.requestedRevisionId) ||
+            latest.reviewStatus !== "changes_requested" ||
+            String(latest.replacementUploadId) !== String(currentUpload._id)
+          ) {
+            stalePlanRequestReplacement();
+          }
+          drawingById.set(String(drawing._id), drawing);
+          requestedRevisionById.set(String(latest._id), latest);
+        }
+
+        const pageDocuments = prepared.map(({ match, page, storedReference, pageId }) => ({
+          _id: pageId,
+          uploadId: currentUpload._id,
+          pageNumber: match.candidate.pageNumber,
+          normalizedFileReference: storedReference,
+          width: page.width,
+          height: page.height
+        }));
+        const revisionDocuments = prepared.map(({ match, page, storedReference, pageId, revisionId }) => {
+          const drawing = drawingById.get(match.target.drawingId)!;
+          const requestedRevision = requestedRevisionById.get(match.target.requestedRevisionId)!;
+          return {
+            _id: revisionId,
+            drawingId: drawing._id,
+            revisionNumber: Number(requestedRevision.revisionNumber) + 1,
+            sourcePageId: pageId,
+            crop: { x: 0, y: 0, width: page.width, height: page.height },
+            croppedFileReference: storedReference,
+            ...mappingSnapshot(drawing),
+            label: page.sections[0]!.label,
+            reviewStatus: "draft",
+            submittedAt: null,
+            reviewerId: null,
+            reviewedAt: null,
+            changeSummary: null,
+            annotationLayerId: null,
+            annotations: null,
+            replacesRevisionId: requestedRevision._id
+          };
+        });
+        await EstimateDesignSourcePageModel.create(pageDocuments, { session, ordered: true });
+        await EstimateDesignRevisionModel.create(revisionDocuments, { session, ordered: true });
+        await advancePlanPageForDrawingRevisions({
+          estimateId: String(currentUpload.estimateId),
+          sourcePageId: String(snapshot.sourcePageId),
+          replacements: prepared.map(({ match, revisionId }) => ({
+            drawingId: match.target.drawingId,
+            requestedRevisionId: match.target.requestedRevisionId,
+            resultRevisionId: revisionId,
+            crop: { ...requestedRevisionById.get(match.target.requestedRevisionId)!.crop }
+          })),
+          createdBy: "system-estimate-ocr-worker",
+          session
+        });
+        const originalUploadIds = new Set<string>();
+        for (const preparedMatch of prepared) {
+          const drawing = drawingById.get(preparedMatch.match.target.drawingId)!;
+          originalUploadIds.add(String(drawing.uploadId));
+          const drawingUpdated = await EstimateDesignDrawingModel.updateOne({
+            _id: drawing._id,
+            active: true,
+            verified: Boolean(drawing.verified)
+          }, { $set: { verified: false } }, { session });
+          requireMatchedTransition(drawingUpdated, stalePlanRequestReplacement);
+          const target = request.targets.find((value: Record<string, any>) =>
+            String(value.drawingId) === preparedMatch.match.target.drawingId && value.status === "open"
+          );
+          if (!target) stalePlanRequestReplacement();
+          target.status = "replacement_submitted";
+          target.resolvedByRevisionId = preparedMatch.revisionId;
+        }
+        request.version += 1;
+        await request.save({ session });
+        for (const uploadId of originalUploadIds) {
+          await transitionUploadForReplacement(uploadId, String(currentUpload.estimateId), session);
+        }
+        await releasePlanRequestReplacementReservations(currentUpload, session);
+        const matchResults = prepared.map(({ match, revisionId }) => ({
+          drawingId: match.target.drawingId,
+          requestedRevisionId: match.target.requestedRevisionId,
+          resultRevisionId: revisionId,
+          matchReason: match.reason,
+          pageNumber: match.candidate.pageNumber
+        }));
+        const completed = await EstimateDesignExtractionJobModel.updateOne({
+          _id: currentJob._id,
+          uploadId: currentUpload._id,
+          status: "processing",
+          claimId: claimToken,
+          leaseExpiresAt: { $gt: new Date(processedAt) }
+        }, {
+          $set: {
+            status: "estimator_review",
+            completedAt: new Date(processedAt),
+            leaseExpiresAt: null,
+            claimId: null,
+            failureCode: null,
+            failureMessage: null,
+            workerResultId: resultId,
+            workerResultClaimDigest: workerResultClaimDigest(claimToken)
+          }
+        }, { session });
+        requireTransition(completed, staleClaim);
+        const uploadUpdated = await EstimateDesignUploadModel.updateOne({
+          _id: currentUpload._id,
+          extractionStatus: "processing"
+        }, {
+          $set: {
+            extractionStatus: "estimator_review",
+            failureCode: null,
+            failureMessage: null,
+            planRequestReplacementResult: {
+              matches: matchResults,
+              ignoredPageNumbers: resolved.ignoredPageNumbers
+            }
+          }
+        }, { session, runValidators: true });
+        requireTransition(uploadUpdated, extractionStateConflict);
+        await appendEstimateDesignAudit(input.audit, session, {
+          actorId: "system-estimate-ocr-worker",
+          action: "estimate_design_replacement_created",
+          entityType: "estimate_plan_change_request",
+          entityId: String(snapshot.requestId),
+          occurredAt: new Date(processedAt).toISOString(),
+          newValues: {
+            estimateId: String(currentUpload.estimateId),
+            uploadId: String(currentUpload._id),
+            workerResultId: resultId,
+            sourcePageId: String(snapshot.sourcePageId),
+            targetCount: matchResults.length,
+            ignoredPageCount: resolved.ignoredPageNumbers.length,
+            matches: matchResults.map((match) => ({
+              drawingId: match.drawingId,
+              resultRevisionId: match.resultRevisionId,
+              matchReason: match.matchReason,
+              pageNumber: match.pageNumber
+            }))
+          }
+        });
+        completedJob = {
+          ...currentJob,
+          status: "estimator_review",
+          completedAt: new Date(processedAt),
+          leaseExpiresAt: null,
+          claimId: null,
+          workerResultId: resultId,
+          workerResultClaimDigest: workerResultClaimDigest(claimToken)
+        };
+      });
+      if (!completedJob) throw new Error("Plan request replacement transaction did not complete.");
+      if (cancelled) await cleanupReferences(input.storage, references);
+      return workerJobDto(completedJob);
+    } catch (error) {
+      await cleanupReferences(input.storage, references);
+      if (error instanceof ApiError && error.code === "PLAN_REPLACEMENT_REQUEST_STALE") {
+        return failPlanRequestReplacementMatch(
+          job,
+          upload,
+          claimToken,
+          processedAt,
+          error.code,
+          error.message
+        );
+      }
+      throw error;
+    }
+  }
+
+  async function releasePlanRequestReplacementReservations(
+    upload: Record<string, any>,
+    session: mongoose.ClientSession
+  ) {
+    const targets = Array.isArray(upload.planRequestReplacement?.targets)
+      ? upload.planRequestReplacement.targets
+      : [];
+    if (targets.length === 0) return;
+    await EstimateDesignRevisionModel.updateMany({
+      _id: { $in: targets.map((target: Record<string, any>) => target.requestedRevisionId) },
+      replacementUploadId: upload._id,
+      reviewStatus: "changes_requested"
+    }, { $set: { replacementUploadId: null } }, { session });
   }
 
   async function completeQueuedReplacement(
@@ -2909,6 +3558,7 @@ async function persistUploadAndJob(input: {
           uploaderId: input.user.id,
           uploadedAt: input.uploadedAt,
           extractionStatus: "queued",
+          purpose: input.replacement ? "drawing_replacement" : "ordinary",
           replacementDrawingId: input.replacement?.drawingId ?? null,
           replacesRevisionId: input.replacement?.revisionId ?? null,
           replacementVersion: input.replacement?.version ?? null,
@@ -3035,6 +3685,7 @@ async function persistReplacementUploadAndJob(input: {
         uploaderId: input.user.id,
         uploadedAt: input.uploadedAt,
         extractionStatus: "queued",
+        purpose: "drawing_replacement",
         replacementDrawingId: drawing._id,
         replacesRevisionId: latest._id,
         replacementVersion: latest.revisionNumber,
@@ -3073,6 +3724,179 @@ async function persistReplacementUploadAndJob(input: {
         }
       });
     });
+  } finally {
+    await session.endSession().catch(() => undefined);
+  }
+}
+
+async function persistPlanRequestReplacementUploadAndJob(input: {
+  uploadId: string;
+  requestId: string;
+  requestVersion: number;
+  idempotencyKey: string;
+  estimate: Record<string, any> & { _id: string; leadId: string };
+  user: AuthenticatedUser;
+  file: ValidatedUpload;
+  storedFileReference: string;
+  uploadedAt: Date;
+  audit: AuditService;
+}) {
+  const session = await mongoose.startSession();
+  try {
+    let saved: Record<string, any> | null = null;
+    let createdUpload = false;
+    await session.withTransaction(async () => {
+      // `withTransaction` may rerun this callback after a transient abort. Do
+      // not carry a prior attempt's outcome into the committed attempt.
+      saved = null;
+      createdUpload = false;
+      const replay = await EstimateDesignUploadModel.findOne({
+        purpose: "plan_request_replacement",
+        "planRequestReplacement.requestId": input.requestId,
+        "planRequestReplacement.idempotencyKey": input.idempotencyKey
+      }).session(session).lean();
+      if (replay) {
+        if (String(replay.uploaderId) !== input.user.id) {
+          throw new ApiError(409, "PLAN_REPLACEMENT_IDEMPOTENCY_CONFLICT", "This idempotency key is already in use.");
+        }
+        saved = replay;
+        return;
+      }
+      const request = await EstimatePlanChangeRequestModel.findById(input.requestId)
+        .session(session)
+        .lean();
+      if (!request) throw new ApiError(404, "PLAN_REQUEST_NOT_FOUND", "The plan change request was not found.");
+      const estimate = await EstimateModel.findOne({
+        _id: request.estimateId,
+        ...estimateActorOwnershipFilter(input.user)
+      }).session(session).lean();
+      if (!estimate || String(estimate._id) !== String(input.estimate._id)) throw estimateNotFound();
+      if (!estimateCanReplaceDrawingForActor(estimate, input.user)) drawingLocked();
+      if (
+        String(request.status) !== "open" ||
+        Number(request.version) !== input.requestVersion ||
+        request.unassigned
+      ) {
+        throw new ApiError(409, "PLAN_REPLACEMENT_REQUEST_STALE", "The plan change request changed. Refresh and try again.");
+      }
+      const openTargets = request.targets.filter((target: Record<string, any>) => target.status === "open");
+      if (openTargets.length === 0) {
+        throw new ApiError(409, "PLAN_REPLACEMENT_REQUEST_STALE", "This plan change request has no open drawing targets.");
+      }
+      await assertEstimateDesignWorkflowAllowed(estimate, { phase: "upload" }, session);
+      await guardDesignLifecycle(estimate, session);
+
+      const snapshots: PlanRequestReplacementTargetSnapshot[] = [];
+      for (const target of [...openTargets].sort((left, right) => String(left.drawingId).localeCompare(String(right.drawingId)))) {
+        const drawing = await EstimateDesignDrawingModel.findOne({
+          _id: target.drawingId,
+          estimateId: estimate._id,
+          active: true
+        }).session(session).lean();
+        const latest = drawing
+          ? await EstimateDesignRevisionModel.findOne({ drawingId: drawing._id })
+              .sort({ revisionNumber: -1 }).session(session).lean()
+          : null;
+        if (
+          !drawing ||
+          !latest ||
+          String(latest._id) !== String(target.requestedRevisionId) ||
+          String(latest.reviewStatus) !== "changes_requested" ||
+          latest.replacementUploadId != null
+        ) {
+          throw new ApiError(409, "PLAN_REPLACEMENT_TARGET_STALE", "A requested drawing changed or already has a replacement in progress.");
+        }
+        // The current revision label contains the Designer's latest title
+        // correction. Original OCR is only a compatibility fallback.
+        const detectedTitle = String(
+          latest.label || drawing.displayTitle || drawing.detectedTitle
+        ).replace(/\s+/gu, " ").trim();
+        snapshots.push({
+          drawingId: String(drawing._id),
+          requestedRevisionId: String(latest._id),
+          detectedTitle,
+          normalizedTitle: normalizeEstimateDesignTitle(detectedTitle),
+          mapping: {
+            roomId: drawing.roomId == null ? null : String(drawing.roomId),
+            scopeSectionId: drawing.scopeSectionId == null ? null : String(drawing.scopeSectionId),
+            catalogueId: drawing.catalogueId == null ? null : String(drawing.catalogueId)
+          }
+        });
+      }
+      for (const snapshot of snapshots) {
+        const reserved = await EstimateDesignRevisionModel.updateOne({
+          _id: snapshot.requestedRevisionId,
+          drawingId: snapshot.drawingId,
+          reviewStatus: "changes_requested",
+          replacementUploadId: null
+        }, { $set: { replacementUploadId: input.uploadId } }, { session });
+        requireMatchedTransition(reserved, staleReplacement);
+      }
+      const [created] = await EstimateDesignUploadModel.create([{
+        _id: input.uploadId,
+        estimateId: estimate._id,
+        leadId: estimate.leadId,
+        originalFilename: input.file.originalFilename,
+        storedFileReference: input.storedFileReference,
+        mimeType: input.file.mimeType,
+        sizeBytes: input.file.sizeBytes,
+        uploaderId: input.user.id,
+        uploadedAt: input.uploadedAt,
+        extractionStatus: "queued",
+        purpose: "plan_request_replacement",
+        replacementDrawingId: null,
+        replacesRevisionId: null,
+        replacementVersion: null,
+        planRequestReplacement: {
+          requestId: input.requestId,
+          requestVersion: input.requestVersion,
+          sourcePageId: String(request.sourcePageId),
+          idempotencyKey: input.idempotencyKey,
+          targets: snapshots
+        },
+        planRequestReplacementResult: null,
+        failureCode: null,
+        failureMessage: null
+      }], { session });
+      await EstimateDesignExtractionJobModel.create([{
+        _id: randomUUID(),
+        uploadId: input.uploadId,
+        status: "queued",
+        attemptCount: 0,
+        queuedAt: input.uploadedAt,
+        nextAttemptAt: input.uploadedAt,
+        claimGeneration: 0,
+        startedAt: null,
+        completedAt: null,
+        leaseExpiresAt: null,
+        claimId: null,
+        failureCode: null,
+        failureMessage: null,
+        workerResultId: null
+      }], { session });
+      await appendEstimateDesignAudit(input.audit, session, {
+        actorId: input.user.id,
+        action: "estimate_design_replacement_queued",
+        entityType: "estimate_plan_change_request",
+        entityId: input.requestId,
+        occurredAt: input.uploadedAt.toISOString(),
+        newValues: {
+          estimateId: String(estimate._id),
+          sourcePageId: String(request.sourcePageId),
+          uploadId: input.uploadId,
+          requestVersion: input.requestVersion,
+          targetCount: snapshots.length,
+          targets: snapshots.map((target) => ({
+            drawingId: target.drawingId,
+            requestedRevisionId: target.requestedRevisionId
+          }))
+        }
+      });
+      saved = created!.toObject();
+      createdUpload = true;
+    });
+    if (!saved) throw new Error("Plan request replacement transaction did not complete.");
+    return { upload: saved, created: createdUpload };
   } finally {
     await session.endSession().catch(() => undefined);
   }
@@ -3118,6 +3942,43 @@ function uploadDto(
   canRetry = false,
   canDelete = false
 ): EstimateDesignUploadDto {
+  const purpose = deriveEstimateDesignUploadPurpose(upload);
+  const snapshot = purpose === "plan_request_replacement" && upload.planRequestReplacement && typeof upload.planRequestReplacement === "object"
+    ? upload.planRequestReplacement as Record<string, any>
+    : null;
+  const result = upload.planRequestReplacementResult && typeof upload.planRequestReplacementResult === "object"
+    ? upload.planRequestReplacementResult as Record<string, any>
+    : null;
+  const resultByDrawing = new Map<string, Record<string, any>>(
+    (Array.isArray(result?.matches) ? result.matches : []).map((match: Record<string, any>) => [String(match.drawingId), match])
+  );
+  const requestReplacement = snapshot
+    ? {
+        requestId: String(snapshot.requestId),
+        requestVersion: Number(snapshot.requestVersion),
+        sourcePageId: String(snapshot.sourcePageId),
+        targetCount: Array.isArray(snapshot.targets) ? snapshot.targets.length : 0,
+        matches: (Array.isArray(snapshot.targets) ? snapshot.targets : []).map((target: Record<string, any>) => {
+          const matched = resultByDrawing.get(String(target.drawingId));
+          return {
+            drawingId: String(target.drawingId),
+            requestedRevisionId: String(target.requestedRevisionId),
+            detectedTitle: String(target.detectedTitle),
+            resultRevisionId: matched ? String(matched.resultRevisionId) : null,
+            matchReason: matched
+              ? matched.matchReason as "normalized_title" | "mapping_tuple"
+              : null,
+            pageNumber: matched ? Number(matched.pageNumber) : null
+          };
+        }),
+        ignoredPageNumbers: Array.isArray(result?.ignoredPageNumbers)
+          ? result.ignoredPageNumbers.map(Number)
+          : [],
+        ignoredPageCount: Array.isArray(result?.ignoredPageNumbers)
+          ? result.ignoredPageNumbers.length
+          : 0
+      }
+    : null;
   return {
     id: String(upload._id),
     estimateId: String(upload.estimateId),
@@ -3128,6 +3989,8 @@ function uploadDto(
     uploaderId: String(upload.uploaderId),
     uploadedAt: new Date(String(upload.uploadedAt)).toISOString(),
     extractionStatus: upload.extractionStatus as EstimateDesignExtractionStatus,
+    purpose,
+    requestReplacement,
     failureCode: upload.failureCode === null ? null : String(upload.failureCode),
     failureMessage: upload.failureMessage === null ? null : String(upload.failureMessage),
     canRetry,
@@ -3380,6 +4243,18 @@ function requireEstimateClaim(job: Record<string, any>, claimToken: string, now:
   }
 }
 
+function workerResultClaimDigest(claimToken: string) {
+  return createHash("sha256").update(claimToken, "utf8").digest("hex");
+}
+
+function workerResultClaimMatches(storedDigest: unknown, claimToken: string) {
+  if (typeof storedDigest !== "string" || !/^[a-f0-9]{64}$/u.test(storedDigest)) return false;
+  return timingSafeEqual(
+    Buffer.from(storedDigest, "hex"),
+    Buffer.from(workerResultClaimDigest(claimToken), "hex")
+  );
+}
+
 function requireAnnotationDimensions(
   revision: Record<string, any>,
   annotations: AnnotationDocumentV1
@@ -3461,6 +4336,14 @@ function staleReplacement(): never {
     409,
     "STALE_ESTIMATE_DRAWING",
     "The drawing changed before this replacement."
+  );
+}
+
+function stalePlanRequestReplacement(): never {
+  throw new ApiError(
+    409,
+    "PLAN_REPLACEMENT_REQUEST_STALE",
+    "The plan change request or one of its requested drawings changed while the replacement was processing."
   );
 }
 
@@ -3612,7 +4495,8 @@ async function terminallyCancelFrozenWorkerJob(
         claimId: null,
         failureCode: frozenEstimateJobFailure.code,
         failureMessage: frozenEstimateJobFailure.message,
-        workerResultId: null
+        workerResultId: null,
+        workerResultClaimDigest: null
       }
     },
     { new: true, runValidators: true, session }
@@ -3711,7 +4595,7 @@ async function normalizeEstimateResult(
     }>;
   }> = [];
   for (const [index, page] of result.pages.entries()) {
-    if (mode === "ordinary") {
+    if (mode === "ordinary" || mode === "plan_request_replacement") {
       if (page.pageNumber !== index + 1) {
         invalidWorkerResult(
           "Estimate page numbers must be contiguous starting at 1."
@@ -3741,7 +4625,7 @@ async function normalizeEstimateResult(
       }
       const cropImage = decodeBase64(section.imageBase64, maxImageBytes);
       await validatePng(cropImage, section.crop.width, section.crop.height);
-      if (mode === "ordinary") {
+      if (mode === "ordinary" || mode === "plan_request_replacement") {
         const fullPageCrop = {
           x: 0,
           y: 0,
@@ -3883,6 +4767,18 @@ async function withMongoTransaction(operation: (session: mongoose.ClientSession)
 
 async function cleanupReferences(storage: Storage, references: string[]) {
   await Promise.allSettled(references.map((reference) => storage.delete(reference)));
+}
+
+async function cleanupUploadedReferenceOrThrow(storage: Storage, reference: string) {
+  try {
+    await storage.delete(reference);
+  } catch {
+    throw new ApiError(
+      500,
+      "FILE_CLEANUP_ERROR",
+      "File metadata could not be saved and the stored file could not be cleaned up."
+    );
+  }
 }
 
 async function saveGeneratedImage(storage: Storage, data: Buffer) {

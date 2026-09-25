@@ -27,13 +27,34 @@ describe("authorized mobile navigation", () => {
     expect(snapshot(role).permissions).toContain(landing?.permission);
   });
 
-  it("uses at most four persistent destinations", () => {
+  it("uses at most five persistent destinations", () => {
     for (const role of ROLE_CODES) {
       const tabs = rootTabsForAuthorization(role, snapshot(role));
-      expect(tabs.length).toBeGreaterThanOrEqual(2);
-      expect(tabs.length).toBeLessThanOrEqual(4);
-      expect(tabs.at(-1)?.id).toBe("more");
+      expect(tabs.length).toBeGreaterThanOrEqual(3);
+      expect(tabs.length).toBeLessThanOrEqual(5);
+      expect(tabs.at(-2)).toEqual({ id: "profile", label: "Profile", destination: null });
+      expect(tabs.at(-1)).toEqual({ id: "more", label: "More", destination: null });
     }
+  });
+
+  it("orders root tabs as landing, domain, messages, profile, then more", () => {
+    expect(rootTabsForAuthorization("designer", snapshot("designer")).map((tab) => tab.id)).toEqual([
+      "landing",
+      "domain",
+      "messages",
+      "profile",
+      "more"
+    ]);
+    const designerWithoutChat: AuthorizationSnapshot = {
+      ...snapshot("designer"),
+      permissions: snapshot("designer").permissions.filter((permission) => permission !== "chat.read")
+    };
+    expect(rootTabsForAuthorization("designer", designerWithoutChat).map((tab) => tab.id)).toEqual([
+      "landing",
+      "domain",
+      "profile",
+      "more"
+    ]);
   });
 
   it("fails closed for mismatched roles and policy versions", () => {
@@ -55,6 +76,7 @@ describe("authorized mobile navigation", () => {
     };
     expect(rootTabsForAuthorization("client", withoutChat).map((tab) => tab.id)).toEqual([
       "landing",
+      "profile",
       "more"
     ]);
   });

@@ -16,6 +16,10 @@ import {
 import { estimateBuilderSections } from "../leads/estimateBuilderCatalogue";
 import { EstimatePlanChangeRequests } from "../leads/EstimatePlanChangeRequests";
 import {
+  estimatePlanChangeRequestKeys,
+  getEstimatePlanChangeRequests
+} from "../leads/estimateDesignApi";
+import {
   getDesignerPlanTasks,
   getDesignWorkflow,
   type DesignWorkflowStage,
@@ -85,6 +89,11 @@ export function DesignerDesignPlanTasksPage() {
     queryKey: projectWorkflowKeys.designWorkflow(task?.projectId ?? ""),
     queryFn: () => getDesignWorkflow(task!.projectId),
     enabled: Boolean(task?.projectId)
+  });
+  const openPlanRequests = useQuery({
+    queryKey: estimatePlanChangeRequestKeys.queue(task?.estimateId),
+    queryFn: () => getEstimatePlanChangeRequests({ estimateId: task!.estimateId, status: "open" }),
+    enabled: task?.status === "changes_requested"
   });
 
   if (tasks.isPending) {
@@ -223,6 +232,15 @@ export function DesignerDesignPlanTasksPage() {
               variant="designer"
               title={canEditDesign ? "Upload design" : task.status === "approved" ? "Approved design" : "Design review"}
               designPlanVersion={task.designPlanVersion}
+              planChangeRequestState={task.status !== "changes_requested"
+                ? "none"
+                : openPlanRequests.isPending
+                  ? "loading"
+                  : openPlanRequests.isError
+                    ? "error"
+                    : openPlanRequests.data.length
+                      ? "open"
+                      : "none"}
               readOnly={!canEditDesign}
               onUploaded={() => void tasks.refetch()}
               onSubmitted={() => void tasks.refetch()}

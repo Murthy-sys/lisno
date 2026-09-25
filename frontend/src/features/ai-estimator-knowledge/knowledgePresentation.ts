@@ -1,6 +1,7 @@
 import type {
   KnowledgeItemStatus,
   KnowledgeMasterType,
+  KnowledgeRevisionStatus,
   KnowledgeSectionKey
 } from "./knowledgeTypes";
 import type { KnowledgeWorkspaceSectionKey } from "./knowledgeWorkspaceSections";
@@ -38,6 +39,12 @@ export const KNOWLEDGE_ITEM_STATUS_LABELS = {
   inactive: "Inactive",
   archived: "Archived"
 } as const satisfies Readonly<Record<KnowledgeItemStatus, string>>;
+
+export const KNOWLEDGE_REVISION_STATUS_LABELS = {
+  draft: "Draft",
+  active: "Active",
+  superseded: "Superseded"
+} as const satisfies Readonly<Record<KnowledgeRevisionStatus, string>>;
 
 const KNOWLEDGE_INR_WHOLE = new Intl.NumberFormat("en-IN", {
   style: "currency",

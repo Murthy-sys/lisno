@@ -170,7 +170,7 @@ export function TaskUpdateDialog({
       busy={mutation.isPending}
       footer={({ requestClose }) => (
         <div className="task-panel__actions">
-          <Button variant="secondary" onClick={requestClose} disabled={mutation.isPending || conflictVersion !== null}>
+          <Button variant="destructive-outline" onClick={requestClose} disabled={mutation.isPending || conflictVersion !== null}>
             Cancel
           </Button>
           <Button type="submit" form={`task-update-form-${task.id}`} busy={mutation.isPending} busyLabel="Saving…" disabled={conflictVersion !== null || needsReview}>

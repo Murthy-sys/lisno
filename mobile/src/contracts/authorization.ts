@@ -102,6 +102,7 @@ export const REQUESTABLE_MODULES_BY_ROLE = {
 
 export const PERMISSION_CODES = [
   "identity.self.read",
+  "identity.self.profile_photo.manage",
   "projects.list",
   "projects.client_summary.read",
   "projects.create",
@@ -229,18 +230,21 @@ export const PERMISSION_CODES = [
   "chat.issue",
   "chat.read_state",
   "chat.participants.manage",
+  "chat.action_types.manage",
+  "chat.project_name.manage",
   "procurement.items.read",
   "procurement.items.manage",
   "procurement.vendors.read",
   "procurement.vendors.create",
   "procurement.vendor_suggestions.read",
-  "procurement.vendor_suggestions.manage"
+  "procurement.vendor_suggestions.manage",
+  "ai_estimator_knowledge.quality_control_options.create"
 ] as const;
 
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-09-18.vendor-procurement.v1" as const;
+  "2026-09-20.quality-control-options.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

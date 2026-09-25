@@ -1,11 +1,12 @@
 import { apiClient, ApiError } from "../../api/client";
-import type { ChatAttachmentPolicy, ChatStagedAttachment, ChatConversationPage, ChatIssueInput, ChatMessage, ChatMessagePage, ChatMessageQuery, ChatParticipantInput, ChatParticipantOptions, ChatParticipantPage, ChatParticipantRevokeInput, ChatReadInput, ChatReadResult, ChatSendInput, ChatSummary, ChatTypingInput, ChatTypingResult } from "./projectChatTypes";
+import type { ChatActionType, ChatActionTypes, ChatAttachmentPolicy, ChatStagedAttachment, ChatConversationPage, ChatIssueInput, ChatMessage, ChatMessagePage, ChatMessageQuery, ChatParticipantInput, ChatParticipantOptions, ChatParticipantPage, ChatParticipantRevokeInput, ChatReadInput, ChatReadResult, ChatSendInput, ChatSummary, ChatTypingInput, ChatTypingResult } from "./projectChatTypes";
 
 export const chatPath = (projectId: string) => `/projects/${encodeURIComponent(projectId)}/chat`;
 export const chatKeys = {
   root: (scope: string) => ["project-chat", scope] as const,
   project: (scope: string, projectId: string) => ["project-chat", scope, "project", projectId] as const,
   summary: (scope: string, projectId: string) => [...chatKeys.project(scope, projectId), "summary"] as const,
+  actionTypes: (scope: string, projectId: string) => [...chatKeys.project(scope, projectId), "action-types"] as const,
   participants: (scope: string, projectId: string) => [...chatKeys.project(scope, projectId), "participants"] as const,
   messages: (scope: string, projectId: string, filter: string, around?: string) => [...chatKeys.project(scope, projectId), "messages", filter, around ?? "latest"] as const,
   list: (scope: string) => [...chatKeys.root(scope), "conversations"] as const
@@ -25,6 +26,11 @@ export function chatErrorMessage(error: unknown) {
   return error instanceof ApiError ? error.message : "Unable to connect. Please try again.";
 }
 export const projectChatApi = {
+  actionTypes: (id: string, signal?: AbortSignal) => apiClient.get<ChatActionTypes>(`${chatPath(id)}/action-types`, { ...quiet, signal }),
+  createActionType: (id: string, input: { name: string; idempotencyKey: string }, signal?: AbortSignal) => apiClient.post<ChatActionType>(`${chatPath(id)}/action-types`, input, { ...quiet, signal }),
+  renameProject: (id: string, input: { name: string; expectedVersion: number; idempotencyKey: string }, signal?: AbortSignal) => apiClient.patch<ChatSummary>(`${chatPath(id)}/project-name`, input, { ...quiet, signal }),
+  removeParticipant: (id: string, userId: string, input: ChatParticipantRevokeInput, signal?: AbortSignal) => apiClient.post<ChatParticipantPage>(`${chatPath(id)}/participants/${encodeURIComponent(userId)}/remove`, input, { ...quiet, signal }),
+  restoreParticipant: (id: string, userId: string, input: ChatParticipantRevokeInput, signal?: AbortSignal) => apiClient.post<ChatParticipantPage>(`${chatPath(id)}/participants/${encodeURIComponent(userId)}/restore`, input, { ...quiet, signal }),
   typing: (id: string, input: ChatTypingInput, signal?: AbortSignal) => apiClient.put<ChatTypingResult>(`${chatPath(id)}/typing`, input, { ...quiet, signal }),
   attachmentPolicy: (id: string, signal?: AbortSignal) => apiClient.get<ChatAttachmentPolicy>(`${chatPath(id)}/attachment-policy`, { ...quiet, signal }),
   uploadAttachment: (id: string, uploadId: string, file: File, onProgress: (percent: number) => void, signal: AbortSignal) => {

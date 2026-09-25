@@ -44,6 +44,7 @@ import {
   type AppRepository,
   type AccessRequestRecord,
   type AccessRequestTransition,
+  type AdminProjectStatusCounts,
   type AuditEventRecord,
   type AuditFilters,
   type DesignExtractionJobRecord,
@@ -92,6 +93,7 @@ const byDateThenId = <T extends { id: string }>(
 const newestProjectFirst = (left: ProjectRecord, right: ProjectRecord) =>
   new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime() ||
   right.id.localeCompare(left.id);
+const adminProjectNameCollator = new Intl.Collator("en", { sensitivity: "accent", numeric: false });
 
 interface MemorySnapshot {
   state: SeedData;
@@ -130,6 +132,8 @@ const mutationMethods = new Set<keyof AppRepository>([
   "createUser",
   "updateUser",
   "updateUserCredentials",
+  "setUserProfilePhoto",
+  "clearUserProfilePhoto",
   "linkUnclaimedProjectsToClient",
   "createFloor",
   "createDesignStage",
@@ -1092,6 +1096,19 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return state.users.filter((user) => user.role === role && user.active).length;
     },
 
+    async summarizeUsers(visibleRoles) {
+      const scope = new Set(visibleRoles);
+      const users = state.users.filter((user) => scope.has(user.role));
+      const active = users.filter((user) => user.active).length;
+      const presentRoles = new Set(users.map((user) => user.role));
+      return {
+        total: users.length,
+        active,
+        inactive: users.length - active,
+        roleCount: presentRoles.size
+      };
+    },
+
     async countUserResponsibilities(userId) {
       return {
         ownedActiveLeads: state.leads.filter(
@@ -1179,6 +1196,52 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         version: current.version + 1,
         sessionVersion: (current.sessionVersion ?? 1) + 1
       };
+      state.users[index] = updated;
+      return clone(updated);
+    },
+
+    async findUserProfilePhotoState(userId) {
+      const user = state.users.find((candidate) => candidate.id === userId);
+      if (!user) return null;
+      return {
+        revision: user.profilePhotoRevision ?? 0,
+        photo: user.profilePhoto ? clone(user.profilePhoto) : null
+      };
+    },
+
+    async setUserProfilePhoto(userId, expectedRevision, change) {
+      const index = state.users.findIndex((user) => user.id === userId);
+      if (index < 0) {
+        throw new RepositoryNotFoundError(`User ${userId} was not found.`);
+      }
+      const current = state.users[index]!;
+      if ((current.profilePhotoRevision ?? 0) !== expectedRevision) {
+        throw new RepositoryConflictError(`User ${userId} profile photo changed concurrently.`);
+      }
+      const updated: UserRecord = {
+        ...current,
+        profilePhoto: {
+          storageKey: change.storageKey,
+          version: expectedRevision + 1,
+          updatedAt: change.updatedAt
+        },
+        profilePhotoRevision: expectedRevision + 1
+      };
+      state.users[index] = updated;
+      return clone(updated);
+    },
+
+    async clearUserProfilePhoto(userId, expectedRevision) {
+      const index = state.users.findIndex((user) => user.id === userId);
+      if (index < 0) {
+        throw new RepositoryNotFoundError(`User ${userId} was not found.`);
+      }
+      const current = state.users[index]!;
+      if ((current.profilePhotoRevision ?? 0) !== expectedRevision) {
+        throw new RepositoryConflictError(`User ${userId} profile photo changed concurrently.`);
+      }
+      const { profilePhoto: _removed, ...rest } = current;
+      const updated: UserRecord = { ...rest, profilePhotoRevision: expectedRevision + 1 };
       state.users[index] = updated;
       return clone(updated);
     },
@@ -1284,12 +1347,30 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return paginate(projects, pagination);
     },
 
-    async pageAdminProjects(actor, pagination) {
+    async pageAdminProjects(actor, input) {
+      const search = input.search?.trim();
+      const searchPattern = search
+        ? new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")
+        : null;
       const visible = (await implementation.listProjectsForUserInModule(actor, "projects"))
-        .sort(newestProjectFirst);
-      const selected = visible.slice(
-        pagination.offset,
-        pagination.offset + pagination.limit
+        .filter((project) => !searchPattern ||
+          [project.name, project.clientName, project.location].some((value) => searchPattern.test(value)));
+      const statusCounts: AdminProjectStatusCounts = {
+        all: visible.length, planning: 0, active: 0, on_hold: 0, completed: 0
+      };
+      for (const project of visible) statusCounts[project.status] += 1;
+      const filtered = visible.filter((project) => !input.status || project.status === input.status);
+      filtered.sort((left, right) => {
+        if (input.sort === "name_asc" || input.sort === "name_desc") {
+          return (input.sort === "name_asc" ? 1 : -1) * adminProjectNameCollator.compare(left.name, right.name) ||
+            Buffer.compare(Buffer.from(left.id), Buffer.from(right.id));
+        }
+        return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime() ||
+          Buffer.compare(Buffer.from(right.id), Buffer.from(left.id));
+      });
+      const selected = filtered.slice(
+        input.offset,
+        input.offset + input.limit
       );
       return {
         items: selected.map((project) =>
@@ -1301,7 +1382,8 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
             actor
           )
         ),
-        total: visible.length
+        total: filtered.length,
+        statusCounts
       };
     },
 
@@ -1339,6 +1421,15 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
           title: user.title ?? null
         }));
       return paginate(options, pagination);
+    },
+
+    async renameProjectName(id, name, expectedVersion, updatedAt) {
+      const project = state.projects.find(row => row.id === id);
+      if (!project || (project.nameVersion ?? 1) !== expectedVersion) return null;
+      project.name = name;
+      project.nameVersion = expectedVersion + 1;
+      project.updatedAt = updatedAt;
+      return clone(project);
     },
 
     async findProjectById(id) {

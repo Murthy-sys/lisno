@@ -22,9 +22,13 @@ const itemFields = z.object({
   brand: label,
   uomId: z.string().trim().min(1).max(200),
   vendorId: z.string().trim().min(1).max(200).nullable().default(null),
-  pricePaise: z.number().int().positive().max(MAX_FINANCE_AMOUNT_PAISE)
+  pricePaise: z.number().int().positive().max(MAX_FINANCE_AMOUNT_PAISE),
+  allocatedWorkPaise: z.number().int().positive().max(MAX_FINANCE_AMOUNT_PAISE).nullable().optional()
 }).strict();
-export const projectProcurementItemSchema = itemFields.extend(sourceFields);
+export const projectProcurementItemSchema = itemFields.extend(sourceFields).superRefine((value, context) => {
+  if (value.vendorId && value.allocatedWorkPaise == null) context.addIssue({ code: z.ZodIssueCode.custom, path: ["allocatedWorkPaise"], message: "Enter the allocated work amount for this vendor." });
+  allocationMatchesVendor(value, context);
+});
 export const procurementVendorSchema = z.object({
   name: label.refine((value) => normalizeKnowledgeIdentity(value).length <= AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT,
     "The normalized vendor name is too long.")
@@ -34,7 +38,15 @@ export const projectProcurementUpdateSchema = itemFields.extend({
   estimateVersion: sourceFields.estimateVersion.optional(),
   sourceLineItemKey: sourceFields.sourceLineItemKey.optional(),
   expectedVersion: z.number().int().positive().max(Number.MAX_SAFE_INTEGER - 1)
-}).superRefine(completeSourceTriple);
+}).superRefine((value, context) => {
+  completeSourceTriple(value, context);
+  allocationMatchesVendor(value, context);
+});
+function allocationMatchesVendor(value: { vendorId: string | null; allocatedWorkPaise?: number | null }, context: z.RefinementCtx) {
+  if ((!value.vendorId && value.allocatedWorkPaise != null) || (value.vendorId && value.allocatedWorkPaise === null)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["allocatedWorkPaise"], message: value.vendorId ? "A recorded vendor allocation cannot be cleared. Enter a positive amount or remove the vendor." : "Select a vendor before entering an allocated work amount." });
+  }
+}
 export const projectProcurementQuerySchema = z.object({
   q: z.string().transform(normalizeProcurementText).pipe(z.string().max(100)).default(""),
   limit: z.coerce.number().int().min(1).max(100).default(20),
@@ -87,6 +99,7 @@ export interface ProjectProcurementItemDto {
   uom: ProcurementReferenceSnapshot;
   vendor: ProcurementReferenceSnapshot | null;
   pricePaise: number;
+  allocatedWorkPaise: number | null;
   version: number;
   createdAt: string;
   updatedAt: string;

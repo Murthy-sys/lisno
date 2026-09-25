@@ -1,5 +1,5 @@
 import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
-import { AccessibilityInfo, AppState, BackHandler, type EmitterSubscription, type HardwareBackPressEvent } from "react-native";
+import { AccessibilityInfo, AppState, BackHandler } from "react-native";
 
 import type { AuthenticatedSession } from "../../contracts/session";
 import { ChatThread } from "./ChatThread";
@@ -10,6 +10,10 @@ const mockDismissTransientState = jest.fn(() => false);
 const mockGroupDismissTransientState = jest.fn(() => false);
 const mockGroupInfoProps = jest.fn();
 const mockComposerReply = jest.fn();
+const mockSetNavigationBlocked = jest.fn();
+const mockNavigationGuard = { setBlocked: mockSetNavigationBlocked };
+let mockBackInterceptor: (() => boolean) | undefined;
+const mockSharedBack = jest.fn(() => mockBackInterceptor?.() ?? false);
 
 jest.mock("react-native-safe-area-context", () => {
   const React = jest.requireActual("react") as typeof import("react");
@@ -17,7 +21,19 @@ jest.mock("react-native-safe-area-context", () => {
   return { SafeAreaView: ({ children }: { readonly children: import("react").ReactNode }) => React.createElement(View, null, children) };
 });
 jest.mock("./useChatThread", () => ({ useChatThread: jest.fn() }));
-jest.mock("../../navigation/AdaptiveAppScaffold", () => ({ useScaffoldNavigationGuard: () => null }));
+jest.mock("../../navigation/AdaptiveAppScaffold", () => ({ useScaffoldNavigationGuard: () => mockNavigationGuard }));
+jest.mock("../../navigation/useScreenBack", () => {
+  const React = jest.requireActual("react") as typeof import("react");
+  return {
+    useScreenBack: () => ({ onBack: mockSharedBack }),
+    useBackInterceptor: (handler: () => boolean) => {
+      React.useEffect(() => {
+        mockBackInterceptor = handler;
+        return () => { if (mockBackInterceptor === handler) mockBackInterceptor = undefined; };
+      }, [handler]);
+    }
+  };
+});
 jest.mock("./ChatTimeline", () => {
   const React = jest.requireActual("react") as typeof import("react");
   const { Pressable, Text } = jest.requireActual("react-native") as typeof import("react-native");
@@ -65,11 +81,13 @@ jest.mock("./ChatComposer", () => {
       {
         compact,
         reply,
-        onOverlayChange
+        onOverlayChange,
+        onSendingChange
       }: {
         readonly compact?: boolean;
         readonly reply: PresentedMessage | null;
         readonly onOverlayChange?: (open: boolean) => void;
+        readonly onSendingChange?: (sending: boolean) => void;
       },
       ref: import("react").ForwardedRef<{ hasTransientState(): boolean; dismissTransientState(): boolean }>
     ) {
@@ -83,6 +101,8 @@ jest.mock("./ChatComposer", () => {
         null,
         React.createElement(Text, null, reply ? `Composer replying to ${reply.author}` : "Composer ready"),
         React.createElement(Text, null, compact ? "Composer compact" : "Composer expanded"),
+        React.createElement(Pressable, { accessibilityRole: "button", onPress: () => onSendingChange?.(true) }, React.createElement(Text, null, "Start pending send")),
+        React.createElement(Pressable, { accessibilityRole: "button", onPress: () => onSendingChange?.(false) }, React.createElement(Text, null, "Finish pending send")),
         React.createElement(
           Pressable,
           {
@@ -224,6 +244,85 @@ describe("ChatThread", () => {
     mockGroupDismissTransientState.mockReturnValue(false);
     mockGroupInfoProps.mockClear();
     mockComposerReply.mockClear();
+    mockSetNavigationBlocked.mockClear();
+    mockSharedBack.mockClear();
+    mockBackInterceptor = undefined;
+  });
+
+  it.each([
+    ["loading", { loading: true, summary: null }],
+    ["denied", { denied: true, summary: null }],
+    ["error", { error: "Offline", summary: null }]
+  ] as const)("keeps one shared-dispatch phone Back control in the %s state", async (_state, overrides) => {
+    useChatThreadMock.mockReturnValue(threadState(false, overrides));
+    const onBack = jest.fn();
+    const nativeListener = jest.spyOn(BackHandler, "addEventListener");
+    const view = await render(<ChatThread projectId="project-a" session={session} compact onBack={onBack} />);
+
+    const buttons = view.getAllByRole("button", { name: "Back to conversations" });
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]).toHaveStyle({ width: 48, height: 48 });
+    await fireEvent.press(buttons[0]!);
+    expect(mockSharedBack).toHaveBeenCalledTimes(1);
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(nativeListener).not.toHaveBeenCalledWith("hardwareBackPress", expect.any(Function));
+    nativeListener.mockRestore();
+    await view.unmount();
+    expect(mockBackInterceptor).toBeUndefined();
+  });
+
+  it("keeps both shared Back paths locked during a send and releases them when sending completes", async () => {
+    useChatThreadMock.mockReturnValue(threadState(false));
+    const onBack = jest.fn();
+    const onSendingChange = jest.fn();
+    const view = await render(<ChatThread projectId="project-a" session={session} compact onBack={onBack} onSendingChange={onSendingChange} />);
+
+    await fireEvent.press(view.getByRole("button", { name: "Start pending send" }));
+    expect(view.getByRole("button", { name: "Back to conversations" })).toBeDisabled();
+    expect(mockSetNavigationBlocked).toHaveBeenLastCalledWith(true);
+    expect(onSendingChange).toHaveBeenLastCalledWith(true);
+    await fireEvent.press(view.getByRole("button", { name: "Back to conversations" }));
+    await act(async () => { expect(mockSharedBack()).toBe(true); });
+    expect(onBack).not.toHaveBeenCalled();
+    expect(mockDismissTransientState).not.toHaveBeenCalled();
+
+    await fireEvent.press(view.getByRole("button", { name: "Finish pending send" }));
+    expect(mockSetNavigationBlocked).toHaveBeenLastCalledWith(false);
+    expect(view.getByRole("button", { name: "Back to conversations" })).toBeEnabled();
+    await fireEvent.press(view.getByRole("button", { name: "Back to conversations" }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves message action dismissal to its guarded modal before handling reply or route Back", async () => {
+    useChatThreadMock.mockReturnValue(threadState(false));
+    const onBack = jest.fn();
+    const view = await render(<ChatThread projectId="project-a" session={session} compact onBack={onBack} />);
+
+    await fireEvent.press(view.getByRole("button", { name: "Open first message" }));
+    await act(async () => { expect(mockSharedBack()).toBe(true); });
+    expect(view.getByRole("button", { name: "Reply from sheet" })).toBeTruthy();
+    expect(mockDismissTransientState).not.toHaveBeenCalled();
+    expect(onBack).not.toHaveBeenCalled();
+
+    await fireEvent.press(view.getByRole("button", { name: "Reply from sheet" }));
+    await fireEvent.press(view.getByRole("button", { name: "Back to conversations" }));
+    expect(view.getByText("Composer ready")).toBeTruthy();
+    expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it("lets split-view shared route Back proceed only after local options and reply are dismissed", async () => {
+    useChatThreadMock.mockReturnValue(threadState(false));
+    const view = await render(<ChatThread projectId="project-a" session={session} compact={false} />);
+
+    expect(view.queryByRole("button", { name: "Back to conversations" })).toBeNull();
+    await fireEvent.press(view.getByRole("button", { name: "Reply directly to first message" }));
+    await fireEvent.press(view.getByRole("button", { name: "Open conversation options" }));
+    await act(async () => { expect(mockSharedBack()).toBe(true); });
+    expect(view.queryByText("Conversation options")).toBeNull();
+    expect(view.getByText("Composer replying to Aditi")).toBeTruthy();
+    await act(async () => { expect(mockSharedBack()).toBe(true); });
+    expect(view.getByText("Composer ready")).toBeTruthy();
+    await act(async () => { expect(mockSharedBack()).toBe(false); });
   });
 
   it("starts an exact direct reply without opening the message action sheet", async () => {
@@ -345,11 +444,6 @@ describe("ChatThread", () => {
       revokeAccess: jest.fn(async () => undefined),
       setReadActive
     });
-    const handlers: Array<(event: HardwareBackPressEvent) => boolean | null | undefined> = [];
-    jest.spyOn(BackHandler, "addEventListener").mockImplementation((_event, handler) => {
-      handlers.push(handler);
-      return { remove: jest.fn() } as unknown as EmitterSubscription;
-    });
     const onBack = jest.fn();
     const restoreFocus = jest.spyOn(AccessibilityInfo, "setAccessibilityFocus").mockImplementation(() => undefined);
     const view = await render(<ChatThread projectId="project-a" session={session} compact onBack={onBack} />);
@@ -366,7 +460,7 @@ describe("ChatThread", () => {
     await fireEvent.press(view.getByRole("button", { name: "Mock participant refresh" }));
     expect(refreshParticipantContext).toHaveBeenCalledWith(0);
     await act(async () => {
-      expect(handlers.at(-1)?.({ type: "hardwareBackPress", timeStamp: 0 })).toBe(true);
+      expect(mockSharedBack()).toBe(true);
     });
     await waitFor(() => expect(view.queryByLabelText("Mock group info")).toBeNull());
     await waitFor(() => expect(setReadActive).toHaveBeenLastCalledWith(true));
@@ -383,7 +477,7 @@ describe("ChatThread", () => {
     await waitFor(() => expect(restoreFocus).toHaveBeenCalledWith(73));
 
     await act(async () => {
-      expect(handlers.at(-1)?.({ type: "hardwareBackPress", timeStamp: 0 })).toBe(true);
+      expect(mockSharedBack()).toBe(true);
     });
     await waitFor(() => expect(view.getByText("Composer ready")).toBeTruthy());
     expect(onBack).not.toHaveBeenCalled();
@@ -401,7 +495,7 @@ describe("ChatThread", () => {
     await waitFor(() => expect(setReadActive).toHaveBeenLastCalledWith(true));
 
     await act(async () => {
-      expect(handlers.at(-1)?.({ type: "hardwareBackPress", timeStamp: 0 })).toBe(true);
+      expect(mockSharedBack()).toBe(true);
     });
     expect(onBack).toHaveBeenCalledTimes(1);
     await view.unmount();
@@ -429,23 +523,18 @@ describe("ChatThread", () => {
       setNearBottom: jest.fn(), clearNewMessages: jest.fn(), acknowledgeVisible: jest.fn(), retryRead: jest.fn(),
       revokeAccess: jest.fn(async () => undefined), setReadActive: jest.fn()
     });
-    const handlers: Array<(event: HardwareBackPressEvent) => boolean | null | undefined> = [];
-    jest.spyOn(BackHandler, "addEventListener").mockImplementation((_event, handler) => {
-      handlers.push(handler);
-      return { remove: jest.fn() } as unknown as EmitterSubscription;
-    });
     const onBack = jest.fn();
     mockDismissTransientState.mockReturnValueOnce(true).mockReturnValue(false);
     const view = await render(<ChatThread projectId="project-a" session={session} compact onBack={onBack} />);
 
     await act(async () => {
-      expect(handlers.at(-1)?.({ type: "hardwareBackPress", timeStamp: 0 })).toBe(true);
+      expect(mockSharedBack()).toBe(true);
     });
     expect(mockDismissTransientState).toHaveBeenCalledTimes(1);
     expect(onBack).not.toHaveBeenCalled();
 
     await act(async () => {
-      expect(handlers.at(-1)?.({ type: "hardwareBackPress", timeStamp: 0 })).toBe(true);
+      expect(mockSharedBack()).toBe(true);
     });
     expect(onBack).toHaveBeenCalledTimes(1);
     await view.unmount();
@@ -454,11 +543,6 @@ describe("ChatThread", () => {
   it("enables participant management only from capability plus permission and gives Group info first Back priority", async () => {
     const revokeAccess = jest.fn(async () => undefined);
     useChatThreadMock.mockReturnValue(threadState(true, { revokeAccess }));
-    const handlers: Array<(event: HardwareBackPressEvent) => boolean | null | undefined> = [];
-    jest.spyOn(BackHandler, "addEventListener").mockImplementation((_event, handler) => {
-      handlers.push(handler);
-      return { remove: jest.fn() } as unknown as EmitterSubscription;
-    });
     const managerSession = {
       ...session,
       authorization: {
@@ -475,7 +559,7 @@ describe("ChatThread", () => {
 
     mockGroupDismissTransientState.mockReturnValueOnce(true);
     await act(async () => {
-      expect(handlers.at(-1)?.({ type: "hardwareBackPress", timeStamp: 0 })).toBe(true);
+      expect(mockSharedBack()).toBe(true);
     });
     expect(view.getByLabelText("Mock group info")).toBeTruthy();
     expect(mockDismissTransientState).not.toHaveBeenCalled();

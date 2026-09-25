@@ -16,7 +16,7 @@ import { privateQueryKey } from "../../core/query/queryClient";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { BrandLoader } from "../../ui/brand";
 import { Button, Field, StateView } from "../../ui/primitives";
-import { colors, fonts, radii, spacing } from "../../ui/tokens";
+import { colors, fonts, radii, spacing, typography } from "../../ui/tokens";
 import {
   knowledgeActivateCommand,
   knowledgeCreateCommand,
@@ -502,7 +502,7 @@ const styles = StyleSheet.create({
   content: { flexGrow: 1, width: "100%", maxWidth: 980, alignSelf: "center", padding: spacing.lg, paddingBottom: spacing.huge, gap: spacing.lg },
   heading: { gap: spacing.xs },
   eyebrow: { color: colors.violet, fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1.4 },
-  pageTitle: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 28, lineHeight: 36 },
+  pageTitle: { color: colors.ink, ...typography.pageTitle },
   copy: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 12, lineHeight: 19 },
   meta: { color: colors.info, fontFamily: fonts.medium, fontSize: 11 },
   searchRow: { flexDirection: "row", alignItems: "flex-end", gap: spacing.sm },

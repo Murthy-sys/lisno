@@ -1,13 +1,11 @@
-import { Menu } from "lucide-react";
 import { useRef, useState } from "react";
 
 import type { AuthorizationSnapshot } from "../../api/authorization-contract";
 import type { PublicUser } from "../../api/types";
-import { BrandLogo } from "../ui/BrandLogo";
 import { Drawer } from "../ui/Drawer";
 import { IconButton } from "../ui/IconButton";
+import { OverlayPortal } from "../ui/overlay";
 import { Sidebar } from "./Sidebar";
-import { NotificationBell } from "../../features/notifications/NotificationBell";
 
 export function MobileHeader({
   user,
@@ -23,43 +21,37 @@ export function MobileHeader({
 
   return (
     <>
-      <header className="ui-mobile-header">
-        <div className="ui-mobile-header__brand">
-          <BrandLogo light />
-        </div>
-        <div className="ui-mobile-header__actions">
-        <NotificationBell />
-        <IconButton
-          ref={triggerRef}
-          className="ui-mobile-header__trigger"
-          label="Open navigation"
-          icon={<Menu aria-hidden="true" />}
-          variant="quiet"
-          aria-expanded={open}
-          aria-controls="mobile-navigation"
-          onClick={() => setOpen(true)}
-        />
-        </div>
-      </header>
-
-      <Drawer
-        id="mobile-navigation"
-        open={open}
-        title="Navigation"
-        onClose={() => setOpen(false)}
-        returnFocusRef={triggerRef}
-      >
-        <Sidebar
-          user={user}
-          authorization={authorization}
-          onLogout={() => {
-            setOpen(false);
-            onLogout();
-          }}
-          onNavigate={() => setOpen(false)}
-          navigationLabel="Mobile navigation"
-        />
-      </Drawer>
+      <IconButton
+        ref={triggerRef}
+        className="workspace-topbar__navigation"
+        label="Open navigation"
+        icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>}
+        variant="quiet"
+        aria-expanded={open}
+        aria-controls="mobile-navigation"
+        onClick={() => setOpen(true)}
+      />
+      <OverlayPortal>
+        <Drawer
+          id="mobile-navigation"
+          open={open}
+          title="Navigation"
+          onClose={() => setOpen(false)}
+          returnFocusRef={triggerRef}
+          className="workspace-navigation-drawer"
+        >
+          <Sidebar
+            user={user}
+            authorization={authorization}
+            onLogout={() => {
+              setOpen(false);
+              onLogout();
+            }}
+            onNavigate={() => setOpen(false)}
+            navigationLabel="Mobile navigation"
+          />
+        </Drawer>
+      </OverlayPortal>
     </>
   );
 }

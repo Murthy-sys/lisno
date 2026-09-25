@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  KNOWLEDGE_REVISION_STATUS_LABELS,
   KNOWLEDGE_SECTION_LABELS,
   KNOWLEDGE_WORKSPACE_SECTION_LABELS,
   formatKnowledgeDateTime,
@@ -36,6 +37,14 @@ describe("knowledge presentation", () => {
       "pricing"
     ]);
     expect(KNOWLEDGE_SECTION_LABELS.pricing).toBe("Budgeting");
+  });
+
+  it("labels every revision status in title case", () => {
+    expect(KNOWLEDGE_REVISION_STATUS_LABELS).toEqual({
+      draft: "Draft",
+      active: "Active",
+      superseded: "Superseded"
+    });
   });
 
   it("formats paise and basis points only at the presentation boundary", () => {

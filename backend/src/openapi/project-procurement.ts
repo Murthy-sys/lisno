@@ -4,11 +4,12 @@ const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const id = { type: "string", minLength: 1, maxLength: 200 };
 const label = { type: "string", minLength: 1, maxLength: 200, description: "Unicode NFKC normalized, trimmed and whitespace collapsed." };
 const pricePaise = { type: "integer", minimum: 1, maximum: MAX_FINANCE_AMOUNT_PAISE, description: "Positive INR unit price in integer paise." };
+const allocatedWorkPaise = { type: "integer", minimum: 1, maximum: MAX_FINANCE_AMOUNT_PAISE, nullable: true, description: "Total committed vendor work including applicable tax, in integer paise. Required positive on new vendor assignments; omission on updates preserves the current allocation. Null only without a vendor; historical responses may be null when not recorded." };
 const version = { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER };
 const object = (properties: Record<string, unknown>, required = Object.keys(properties)) => ({ type: "object", additionalProperties: false, required, properties });
 const option = { id, code: { type: "string" }, name: { type: "string" } };
 const reference = object({ ...option, status: { type: "string", enum: ["active", "inactive", "archived", "unavailable"] } });
-const input = { itemName: label, brand: label, uomId: id, vendorId: { ...id, nullable: true, default: null }, pricePaise };
+const input = { itemName: label, brand: label, uomId: id, vendorId: { ...id, nullable: true, default: null }, pricePaise, allocatedWorkPaise };
 const inputRequired = ["itemName", "brand", "uomId", "pricePaise"];
 const sourceInput = { estimateId: { ...id, maxLength: 500 }, estimateVersion: version, sourceLineItemKey: { ...id, maxLength: 500 } };
 const source = object({ ...sourceInput, estimateReviewRoundId: { ...id, maxLength: 500, nullable: true }, sourceSectionId: { ...id, maxLength: 500 } });
@@ -20,7 +21,7 @@ export const PROJECT_PROCUREMENT_SCHEMAS = {
   ProjectProcurementUomOptions: { type: "array", items: ref("ProjectProcurementUomOption") },
   ProjectProcurementItem: object({ id, projectId: id, estimateSource: { ...source, nullable: true }, itemName: label, brand: label,
     uom: reference, vendor: { ...reference, nullable: true },
-    pricePaise, version, createdAt: { type: "string", format: "date-time" }, updatedAt: { type: "string", format: "date-time" }
+    pricePaise, allocatedWorkPaise, version, createdAt: { type: "string", format: "date-time" }, updatedAt: { type: "string", format: "date-time" }
   }),
   ProjectProcurementPage: page("ProjectProcurementItem"),
   ProjectProcurementCreate: object({ ...input, ...sourceInput }, [...inputRequired, ...Object.keys(sourceInput)]),

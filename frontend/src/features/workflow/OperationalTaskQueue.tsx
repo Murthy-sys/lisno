@@ -349,7 +349,7 @@ function ProgressUpdateDialog({
       onClose={onClose}
       busy={busy}
       footer={({ requestClose }) => <div className="workflow-progress-form__actions">
-        <Button variant="secondary" disabled={busy} onClick={requestClose}>Cancel</Button>
+        <Button variant="destructive-outline" disabled={busy} onClick={requestClose}>Cancel</Button>
         <Button type="submit" form={`workflow-progress-form-${task.id}`} busy={busy} busyLabel="Saving…">Save progress</Button>
       </div>}
     >

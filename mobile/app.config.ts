@@ -2,7 +2,7 @@ import type { ExpoConfig, ConfigContext } from "expo/config";
 
 import { isDisallowedRemoteHost } from "./src/core/config/remoteHost.js";
 
-const BRAND_MIDNIGHT = "#1E183B";
+const BRAND_SHELL = "#2f3a2a";
 const DEVELOPMENT_ANDROID_PACKAGE = "com.lisno.mobile.dev";
 
 export const selectedApiEnvironment = (
@@ -88,10 +88,11 @@ export const createAppConfig = (
     icon: "./assets/brand/icon.png",
     scheme: production ? "lisno" : "lisno-dev",
     userInterfaceStyle: "light",
+    backgroundColor: BRAND_SHELL,
     android: {
       package: androidPackage,
       adaptiveIcon: {
-        backgroundColor: BRAND_MIDNIGHT,
+        backgroundColor: BRAND_SHELL,
         foregroundImage: "./assets/brand/icon-foreground.png",
         monochromeImage: "./assets/brand/icon-monochrome.png"
       },
@@ -121,7 +122,7 @@ export const createAppConfig = (
       [
         "expo-splash-screen",
         {
-          backgroundColor: BRAND_MIDNIGHT,
+          backgroundColor: BRAND_SHELL,
           image: "./assets/brand/splash-icon.png",
           imageWidth: 112,
           resizeMode: "contain"

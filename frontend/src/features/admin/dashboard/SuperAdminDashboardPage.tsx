@@ -5,7 +5,7 @@ import { useSearchParams } from "react-router-dom";
 
 import type { WorkerRole } from "../../../api/authorization-contract";
 import type { ProjectStatus } from "../../../api/types";
-import { Button } from "../../../components/ui/Button";
+import { IconButton } from "../../../components/ui/IconButton";
 import { InlineMessage } from "../../../components/ui/InlineMessage";
 import { MetricCard } from "../../../components/ui/MetricCard";
 import { PageHeader } from "../../../components/ui/PageHeader";
@@ -290,6 +290,7 @@ export function SuperAdminDashboardPage() {
   const [params, setParams] = useSearchParams();
   const tab = normalizeDashboardTab(params.get("tab"));
   const periodDays = normalizeDashboardPeriod(params.get("periodDays"));
+  const showComparison = params.get("comparison") !== "off";
   const projectFilters = projectFiltersFromUrl(params, tab);
   const workforceFilters = workforceFiltersFromUrl(params);
   const panelHeading = useRef<HTMLHeadingElement>(null);
@@ -297,17 +298,17 @@ export function SuperAdminDashboardPage() {
   const [announcement, setAnnouncement] = useState("");
   const overview = useQuery({
     queryKey: dashboardKeys.overview(periodDays), queryFn: () => getSuperAdminDashboardOverview(periodDays),
-    staleTime: 30_000, refetchOnWindowFocus: true
+    staleTime: 30_000, refetchOnWindowFocus: true, placeholderData: keepPreviousData
   });
   const projects = useQuery({
     queryKey: dashboardKeys.projects(periodDays, projectFilters), queryFn: () => getSuperAdminDashboardProjects(periodDays, projectFilters),
     enabled: PROJECT_TABS.includes(tab as never), staleTime: 30_000,
-    refetchOnWindowFocus: true, placeholderData: keepPreviousData
+    refetchOnWindowFocus: true
   });
   const workforce = useQuery({
     queryKey: dashboardKeys.workforce(periodDays, workforceFilters), queryFn: () => getSuperAdminDashboardWorkforce(periodDays, workforceFilters),
     enabled: tab === "workforce", staleTime: 30_000,
-    refetchOnWindowFocus: true, placeholderData: keepPreviousData
+    refetchOnWindowFocus: true
   });
 
   const setQuery = (updates: Record<string, string | number | undefined>, replace = false) => {
@@ -351,15 +352,14 @@ export function SuperAdminDashboardPage() {
 
   return (
     <section className="super-admin-dashboard" aria-labelledby="super-admin-dashboard-title">
-      <PageHeader id="super-admin-dashboard-title" eyebrow="Super Admin command center" title="Organization dashboard" description="Organization-wide metrics and explainable risk. Overview totals are not changed by drill-down filters." metadata={<div className="dashboard-freshness"><span>Updated {formatDashboardTimestamp(data.observedAt)}</span>{refreshing ? <span role="status">Refreshing dashboard…</span> : null}</div>} actions={<><label className="dashboard-period"><span>Period</span><select aria-label="Dashboard period" value={periodDays} onChange={(event) => setQuery({ periodDays: event.target.value, offset: undefined })}><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label><Button variant="secondary" disabled={manualRefresh} aria-label="Refresh dashboard" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />{manualRefresh ? "Refreshing…" : "Refresh"}</Button></>} />
+      <PageHeader id="super-admin-dashboard-title" eyebrow="Super Admin" title="Organization overview" description="Projects, Client accounts, approved finance, and operational attention." metadata={<div className="dashboard-freshness"><span>Updated {formatDashboardTimestamp(data.observedAt)}</span>{refreshing ? <span role="status">Refreshing dashboard…</span> : null}</div>} actions={<><label className="dashboard-period"><span>Reporting period</span><select aria-label="Reporting period" value={periodDays} onChange={(event) => setQuery({ periodDays: event.target.value, offset: undefined })}><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label><label className="dashboard-comparison-toggle"><input type="checkbox" checked={showComparison} onChange={(event) => setQuery({ comparison: event.target.checked ? undefined : "off" })} /><span>Compare with previous period</span></label><IconButton variant="secondary" label="Refresh dashboard" tooltip="Refresh" icon={<RefreshCw aria-hidden="true" />} busy={manualRefresh} onClick={() => void refresh()} /></>} />
       <p className="sr-only" aria-live="polite">{announcement}</p>
       {data.dataQuality.status === "partial" ? <InlineMessage tone="warning"><strong>Some dashboard metrics are unavailable.</strong> {data.dataQuality.issues.map((issue) => issue.message).join(" ")}</InlineMessage> : null}
       {overview.isError && overview.data ? <InlineMessage tone="error">The latest refresh failed. Showing the last successfully observed dashboard.</InlineMessage> : null}
-      {tab === "overview" || tab === "finance" ? <DesignPaymentConfirmations /> : null}
       <DashboardNavigation activeTab={tab} onSelect={selectTab} />
       <section id={`dashboard-panel-${tab}`} role="tabpanel" aria-labelledby={`dashboard-tab-${tab}`} aria-busy={refreshing || undefined} className="dashboard-panel">
         <h2 ref={panelHeading} tabIndex={-1}>{humanize(tab)}</h2>
-        {tab === "overview" ? <>{data.projects.total === 0 ? <Surface as="section" variant="subtle"><p>No projects yet. Organization risk remains not tracked until eligible signals exist.</p></Surface> : null}<DashboardOverview data={data} /></> : <TabSummary tab={tab} data={data} />}
+        {tab === "overview" ? <>{data.projects.total === 0 && !isDashboardMetricUnavailable(data.dataQuality, "projects.total") ? <Surface as="section" variant="subtle"><p>No projects yet. Organization risk remains not tracked until eligible signals exist.</p></Surface> : null}<DashboardOverview data={data} showComparison={showComparison} /><DesignPaymentConfirmations /></> : <><TabSummary tab={tab} data={data} />{tab === "finance" ? <DesignPaymentConfirmations /> : null}</>}
         {PROJECT_TABS.includes(tab as never) ? projects.isPending ? <SectionState state="loading" message={`Loading ${tab} project details…`} /> : projects.isError && !projects.data ? <SectionState state="error" message={`${humanize(tab)} project details could not be loaded.`} action={{ label: "Try again", onAction: () => void projects.refetch() }} /> : projects.data ? <>{projects.isError ? <InlineMessage tone="error">The latest project refresh failed. Showing the previous page.</InlineMessage> : null}{projects.data.dataQuality.status === "partial" ? <InlineMessage tone="warning">Some project rows are unavailable because their identity or lineage could not be verified.</InlineMessage> : null}<DashboardProjectDrilldown tab={tab as (typeof PROJECT_TABS)[number]} filters={projectFilters} page={projects.data} refreshing={projects.isFetching} onFiltersChange={replaceFilters} onPageChange={(offset) => setQuery({ offset })} /></> : null : null}
         {tab === "workforce" ? workforce.isPending ? <SectionState state="loading" message="Loading workforce details…" /> : workforce.isError && !workforce.data ? <SectionState state="error" message="Workforce details could not be loaded." action={{ label: "Try again", onAction: () => void workforce.refetch() }} /> : workforce.data ? <>{workforce.isError ? <InlineMessage tone="error">The latest workforce refresh failed. Showing the previous page.</InlineMessage> : null}{workforce.data.dataQuality.status === "partial" ? <InlineMessage tone="warning">Some workforce rows are unavailable because their identity could not be verified.</InlineMessage> : null}<DashboardWorkforceDrilldown filters={workforceFilters} page={workforce.data} refreshing={workforce.isFetching} onFiltersChange={replaceFilters} onPageChange={(offset) => setQuery({ offset })} /></> : null : null}
       </section>

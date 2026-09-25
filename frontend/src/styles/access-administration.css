@@ -11,6 +11,36 @@
   gap: var(--space-4);
 }
 
+/*
+ * Metric row. Four tiles wide, halving at 1180px and stacking at 760px — the
+ * two breakpoints this file already uses. The tiles are the existing
+ * .metric-card primitive; the only thing overridden here is its lift, so the
+ * row reads flat and bordered like every other surface on this page.
+ */
+.access-administration__metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+  min-inline-size: 0;
+}
+
+.access-administration__metrics > * {
+  min-inline-size: 0;
+}
+
+.access-administration__metrics .metric-card {
+  box-shadow: none;
+  padding: var(--space-4);
+}
+
+.access-administration__metrics .metric-card__top p {
+  color: var(--color-text-muted);
+  font: var(--type-metadata);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .access-administration__directory {
   display: grid;
   gap: var(--space-4);
@@ -99,6 +129,27 @@
   font: var(--type-metadata);
 }
 
+/*
+ * Density pass: the header row carries the uppercase metadata treatment used
+ * by .design-review-card__meta dt, sits on the subtle surface and closes with
+ * the strong 1px rule, so the column labels read as chrome rather than data.
+ * Dates are tabular and never wrap.
+ */
+.access-administration__table thead th {
+  background: var(--color-surface-subtle);
+  border-block-end: 1px solid var(--color-border-strong);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.access-administration__table td time {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .access-administration__table tbody tr:last-child td {
   border-block-end: 0;
 }
@@ -115,6 +166,66 @@
 .admin-user-dialog__identity span {
   color: var(--color-text-muted);
   overflow-wrap: anywhere;
+}
+
+/*
+ * The identity stack now optionally leads with an initials chip. The avatar
+ * takes column 1 and every other child is pinned to column 2, so the existing
+ * avatar-less uses (access requests, invitations) render exactly as before:
+ * column 1 collapses to zero width and the column gap is carried by the
+ * avatar's own margin rather than the grid.
+ */
+.access-administration__identity {
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0;
+  row-gap: var(--space-1);
+}
+
+.access-administration__identity > * {
+  grid-column: 2;
+  min-inline-size: 0;
+}
+
+.access-administration__identity > .access-administration__avatar {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  align-self: center;
+  margin-inline-end: var(--space-3);
+}
+
+.access-administration__avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  block-size: var(--space-7);
+  inline-size: var(--space-7);
+  border: 1px solid color-mix(in srgb, var(--color-brand-violet) 24%, var(--color-border));
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--color-brand-violet) 7%, var(--color-surface));
+  color: var(--color-brand-violet);
+  font: var(--type-metadata);
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  user-select: none;
+}
+
+/*
+ * Role chip: bordered and square-cornered so it cannot be mistaken for the
+ * pill-shaped, tinted StatusBadge sitting one column over.
+ */
+.access-administration__role-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: var(--type-metadata);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .access-administration__pagination,
@@ -189,6 +300,13 @@
 .access-administration__pagination p {
   color: var(--color-text-muted);
   margin: 0;
+}
+
+.access-administration__page-indicator {
+  color: var(--color-text-muted);
+  font: var(--type-metadata);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .admin-projects {
@@ -505,6 +623,66 @@
   grid-template-columns: repeat(2, minmax(12rem, 1fr));
 }
 
+/*
+ * Status tabs. The strip scrolls rather than wrapping, and selection is
+ * carried by weight plus an underline as well as colour, so it survives a
+ * monochrome or high-contrast rendering. min-block-size rides --control-height,
+ * which base.css already lifts to 44px on coarse pointers.
+ */
+.user-invitations__tabs {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-1);
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  border-block-end: 1px solid var(--color-border);
+  scrollbar-width: thin;
+}
+
+.user-invitations__tab {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: var(--control-height);
+  margin-block-end: -1px;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-block-end: 2px solid transparent;
+  border-radius: var(--radius-control) var(--radius-control) 0 0;
+  background: none;
+  color: var(--color-text-muted);
+  font: var(--type-metadata);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard);
+}
+
+.user-invitations__tab:hover {
+  background-color: var(--color-surface-subtle);
+  color: var(--color-text);
+}
+
+.user-invitations__tab[aria-selected="true"] {
+  border-block-end-color: var(--color-brand-violet);
+  color: var(--color-text);
+  font-weight: 800;
+}
+
+.user-invitations__tab:focus-visible {
+  border-radius: var(--radius-control);
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
 .user-invitations__table {
   min-inline-size: 78rem;
 }
@@ -541,6 +719,10 @@
 }
 
 @media (max-width: 1180px) {
+  .access-administration__metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .admin-project-card__link {
     grid-template-columns: minmax(12rem, .75fr) minmax(0, 1.5fr);
     gap: var(--space-3);
@@ -560,6 +742,10 @@
   .access-administration__filters,
   .user-invitations__filters {
     grid-template-columns: 1fr;
+  }
+
+  .access-administration__metrics {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .user-invitations__header,
@@ -638,6 +824,10 @@
 @media (prefers-reduced-motion: reduce) {
   .admin-project-card,
   .admin-project-card__view svg {
+    transition: none;
+  }
+
+  .user-invitations__tab {
     transition: none;
   }
 

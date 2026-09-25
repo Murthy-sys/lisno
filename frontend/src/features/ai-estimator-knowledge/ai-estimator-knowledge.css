@@ -679,7 +679,7 @@
 .knowledge-breadcrumb,
 .knowledge-section-heading p,
 .knowledge-summary-progress span,
-.knowledge-history li > span {
+.knowledge-history__meta {
   margin: 0;
   color: var(--role-ink-muted, var(--color-text-muted));
   font-size: var(--text-sm);
@@ -1196,20 +1196,59 @@
   list-style: none;
 }
 
-.knowledge-history li {
+/* Each revision is a tinted card: a decorative status glyph leads, the
+   revision and its worded status pill share the first line, and when it was
+   updated and how complete it is read on the two lines beneath. */
+.knowledge-history__entry {
   display: grid;
-  gap: var(--space-2);
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+  min-inline-size: 0;
   padding: var(--space-4);
   border: 1px solid var(--role-line, var(--color-border));
   border-radius: var(--radius-field);
   background: var(--role-deck-tint, var(--color-surface-subtle));
 }
 
-.knowledge-history li > div {
+.knowledge-history__entry-icon {
+  display: inline-flex;
+  padding-block-start: 1px;
+  color: var(--role-ink-muted, var(--color-text-muted));
+}
+
+.knowledge-history__entry-icon svg {
+  inline-size: 18px;
+  block-size: 18px;
+}
+
+.knowledge-history__entry--draft .knowledge-history__entry-icon {
+  color: var(--button-primary-bg);
+}
+
+.knowledge-history__entry--active .knowledge-history__entry-icon {
+  color: var(--color-success);
+}
+
+.knowledge-history__entry-body {
+  display: grid;
+  gap: var(--space-1);
+  min-inline-size: 0;
+}
+
+.knowledge-history__entry-heading {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  min-inline-size: 0;
+  margin-block-end: var(--space-1);
+  color: var(--role-ink, var(--color-text));
+}
+
+/* The pill stays on the trailing edge, even when it wraps under the name. */
+.knowledge-history__status {
+  margin-inline-start: auto;
 }
 
 .knowledge-preview-panel {
@@ -1406,8 +1445,7 @@
 
   .knowledge-item-card__heading,
   .knowledge-section-heading,
-  .knowledge-summary-progress,
-  .knowledge-history li > div {
+  .knowledge-summary-progress {
     align-items: stretch;
     flex-direction: column;
   }
@@ -1787,6 +1825,10 @@
 
 .knowledge-basket-manager,
 .knowledge-basket-manager__results,
+.ui-dialog:has(.knowledge-basket-delete) .ui-dialog__header .eyebrow {
+  color: var(--color-text-muted);
+}
+
 .knowledge-basket-delete,
 .knowledge-basket-delete__impact {
   min-width: 0;
@@ -1796,6 +1838,29 @@
   display: grid;
   gap: var(--space-4);
   outline: none;
+}
+
+.knowledge-basket-manager__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-block-end: var(--space-4);
+}
+
+.knowledge-basket-manager__toolbar h3,
+.knowledge-basket-manager__summary h4 {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-basket-manager__toolbar .ui-button,
+.knowledge-basket-manager__actions .ui-button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .knowledge-basket-manager__results:focus-visible {
@@ -2433,15 +2498,15 @@
    action: the secondaries take a lighter edge and a smaller icon, and only the
    primary keeps the full-weight teak fill. */
 .knowledge-page > .ui-page-header .ui-page-header__actions .ui-button--secondary {
-  border-color: var(--role-line-strong, var(--color-border-strong));
-  background: var(--role-deck, var(--color-surface));
-  color: var(--role-ink, var(--color-text));
+  border-color: var(--button-secondary-border);
+  background: var(--button-secondary-bg);
+  color: var(--button-secondary-ink);
 }
 
 .knowledge-page > .ui-page-header .ui-page-header__actions .ui-button--secondary:not(:disabled):hover {
-  border-color: var(--role-accent, var(--color-border-strong));
-  background: color-mix(in srgb, var(--role-accent, var(--color-brand-violet)) 7%, var(--role-deck, var(--color-surface)));
-  color: var(--role-accent, var(--color-text));
+  border-color: var(--button-primary-bg);
+  background: var(--button-secondary-hover);
+  color: var(--button-secondary-ink);
 }
 
 .knowledge-page > .ui-page-header .ui-page-header__actions .ui-button__icon > svg {
@@ -2596,24 +2661,20 @@
 
 /* ----------------------------------------------------------- basket decks */
 
-/* Repeated row-level commands stay quiet until they are pointed at. A column
-   of permanently red "Archive" outlines makes a healthy list look alarming;
-   the destructive colour arrives on hover and focus, where the intent is.
-   Confirmation dialogs keep the loud treatment untouched. */
+/* Row-level negative commands (Delete, Archive, Remove) always show red ink and
+   a red outline so the intent is visible before pointing at them. */
 .knowledge-basket-panel__meta .ui-button--destructive-outline,
 .knowledge-table .ui-button--destructive-outline {
-  border-color: var(--role-line-strong, var(--color-border-strong));
-  background: transparent;
-  color: var(--role-ink-muted, var(--color-text-muted));
+  border-color: var(--button-negative-border);
+  background: var(--button-secondary-bg);
+  color: var(--button-negative-ink);
 }
 
 .knowledge-basket-panel__meta .ui-button--destructive-outline:not(:disabled):hover,
-.knowledge-basket-panel__meta .ui-button--destructive-outline:focus-visible,
-.knowledge-table .ui-button--destructive-outline:not(:disabled):hover,
-.knowledge-table .ui-button--destructive-outline:focus-visible {
-  border-color: var(--color-danger);
-  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
-  color: var(--color-danger-strong);
+.knowledge-table .ui-button--destructive-outline:not(:disabled):hover {
+  border-color: var(--button-negative-ink-strong);
+  background: var(--button-negative-hover);
+  color: var(--button-negative-ink-strong);
 }
 
 /* The basket's own "Add estimation item" keeps the role theme's own glass
@@ -2756,19 +2817,17 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions {
   border-radius: var(--radius-field);
 }
 
-/* "Cancel" as a bare quiet button is unreadable as a control on the tinted
-   band. It keeps the lighter weight - dismissing should never compete with
-   confirming - but gains an edge to sit on. */
+/* Quiet dialog actions ("Done", "Close") follow the quiet button tokens; Cancel
+   now uses the negative destructive-outline variant. */
 body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--quiet {
-  border-color: var(--role-line-strong, var(--color-border-strong));
-  background: var(--role-deck, var(--color-surface));
-  color: var(--role-ink, var(--color-text));
+  border-color: transparent;
+  background: transparent;
+  color: var(--button-quiet-ink);
 }
 
 body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--quiet:not(:disabled):hover {
-  border-color: var(--role-accent, var(--color-border-strong));
-  background: color-mix(in srgb, var(--role-accent, var(--color-brand-violet)) 8%, var(--role-deck, var(--color-surface)));
-  color: var(--role-accent, var(--color-text));
+  background: var(--button-quiet-hover);
+  color: var(--button-quiet-ink);
 }
 
 /* ------------------------------------------- segmented search row, stacked */
@@ -2825,52 +2884,96 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   margin-inline-start: var(--space-1);
 }
 
+/* One bar carries completeness and, on the tabs that save through the page,
+   the save status and Save. Completeness takes the free width; the commands
+   keep their natural width and drop to a second row - status first, Save on
+   the trailing edge - whenever one row cannot hold both. The bar stays in
+   normal flow: the opaque sticky topbar would cover it once the page scrolls. */
 .knowledge-workspace-status {
-  display: grid;
-  grid-template-columns: minmax(14rem, 0.72fr) minmax(0, 2fr);
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-3) var(--space-4);
+  gap: var(--space-3) var(--space-6);
+  /* One row is always as tall as it is with Save (44px, padding and border),
+     so the tabs below hold still when Quality drops the page-level commands. */
+  min-block-size: calc(44px + 2 * var(--space-3) + 2px);
   min-inline-size: 0;
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-3) var(--space-5);
   box-shadow: none;
 }
 
-.knowledge-workspace-status .knowledge-summary-progress {
-  min-inline-size: 0;
-  gap: var(--space-2);
-}
-
-.knowledge-workspace-status .knowledge-summary-progress > div:first-child {
+.knowledge-workspace-status__completeness {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.knowledge-workspace-status .knowledge-summary-progress > div:first-child strong {
-  flex: 0 0 auto;
-  font-size: var(--text-lg);
-  font-variant-numeric: tabular-nums;
-}
-
-.knowledge-workspace-status .knowledge-summary-list {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0;
+  flex: 999 1 26rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
   min-inline-size: 0;
-  margin: 0;
 }
 
-.knowledge-workspace-status .knowledge-summary-list > div {
-  min-inline-size: 0;
-  padding-inline: var(--space-5);
-  border-inline-start: 1px solid var(--role-line, var(--color-border));
+.knowledge-workspace-status__label {
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: var(--text-md);
+  line-height: 1.4;
 }
 
-.knowledge-workspace-status .knowledge-summary-list dd {
+.knowledge-workspace-status__percentage {
   color: var(--role-ink, var(--color-text));
+  font-size: var(--text-lg);
   font-weight: 700;
-  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+}
+
+/* The meter fills what the row leaves and takes a line of its own below 8rem. */
+.knowledge-workspace-status__completeness .ui-progress {
+  flex: 1 1 8rem;
+  min-inline-size: 0;
+}
+
+.knowledge-workspace-status__commands {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  min-inline-size: 0;
+}
+
+.knowledge-workspace-status__state,
+.knowledge-workspace-status__last-saved {
+  min-inline-size: 0;
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: var(--text-md);
+  line-height: 1.4;
+}
+
+.knowledge-workspace-status__save {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+}
+
+/* The role theme loads after this file and repaints every knowledge Surface,
+   meter and button at three classes and an attribute. These item-scoped rules
+   outrank it to keep the bar an opaque deck like the cards below it, give the
+   meter the primary-action olive in this bar only, and hold Save at 44px. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-status {
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-card);
+  background: var(--role-deck, var(--color-surface));
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status .ui-progress {
+  block-size: 8px;
+  background: var(--role-line, var(--color-border));
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status .ui-progress__value {
+  background: var(--button-primary-bg);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status__save.ui-button {
+  min-block-size: 44px;
 }
 
 .knowledge-workspace-layout {
@@ -3004,7 +3107,8 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 .knowledge-overview__context-basket,
 .knowledge-section-command-bar__context,
 .knowledge-section-command-bar__status,
-.knowledge-workspace-status dd,
+.knowledge-workspace-status__state,
+.knowledge-workspace-status__last-saved,
 .knowledge-workspace-history-rail li,
 .knowledge-conflict-review__heading,
 .knowledge-conflict-review__values dd {
@@ -3056,15 +3160,18 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   text-transform: uppercase;
 }
 
+/* Add Unit spans the card directly under the select at every width. */
 .knowledge-page--item-workspace .knowledge-overview__uom-control-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   min-inline-size: 0;
 }
 
-.knowledge-page--item-workspace .knowledge-overview__uom-control-row .ui-control {
+/* Scoped past the shared knowledge control rule, which would otherwise hold
+   the select at 36px beside the 44px Add Unit and Surfaces picker. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview__uom-control-row .ui-control {
   inline-size: 100%;
   max-inline-size: 100%;
   min-inline-size: 0;
@@ -3072,11 +3179,11 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 }
 
 .knowledge-page--item-workspace .knowledge-overview__quick-add {
-  justify-self: end;
-  inline-size: max-content;
+  justify-self: stretch;
+  inline-size: 100%;
   max-inline-size: 100%;
   margin: 0;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 /* Visible Main Line editors use the same compact rhythm as Overview without
@@ -3233,12 +3340,23 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   overflow-wrap: anywhere;
 }
 
+/* The picker grows beside Add Surface while both fit. On a narrower card the
+   action wraps under the picker and, alone on its row, spans the card. */
 .knowledge-page--item-workspace .knowledge-mode-surfaces__controls {
-  display: grid;
-  grid-template-columns: minmax(0, 32rem) auto;
-  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
   min-inline-size: 0;
   gap: var(--space-3);
+}
+
+.knowledge-page--item-workspace .knowledge-mode-surfaces__controls > * {
+  flex: 999 1 16rem;
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-surfaces__controls > .ui-button {
+  flex: 1 0 auto;
 }
 
 .knowledge-page--item-workspace .knowledge-mode-surfaces__state {
@@ -4148,26 +4266,26 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 .knowledge-page.knowledge-page--item-workspace .knowledge-mode-configuration .knowledge-mode-configuration__section .knowledge-mode-calculation__actions .ui-button {
   min-block-size: 44px;
   padding: 9px 14px;
-  border: 1px solid color-mix(in srgb, var(--knowledge-mode-accent) 55%, var(--color-surface));
+  border: 1px solid var(--button-secondary-border);
   border-radius: 8px;
-  background: var(--color-surface);
-  color: var(--knowledge-mode-accent);
+  background: var(--button-secondary-bg);
+  color: var(--button-secondary-ink);
   font-size: 13px;
-  font-weight: 600;
   line-height: 1.4;
   box-shadow: none;
 }
 
 .knowledge-mode-configuration .knowledge-mode-configuration__section .knowledge-mode-calculation__actions .ui-button:hover:not(:disabled),
 .knowledge-page.knowledge-page--item-workspace .knowledge-mode-configuration .knowledge-mode-configuration__section .knowledge-mode-calculation__actions .ui-button:hover:not(:disabled) {
-  border-color: var(--knowledge-mode-accent);
-  background: color-mix(in srgb, var(--knowledge-mode-accent) 5%, var(--color-surface));
-  color: var(--knowledge-mode-accent);
+  border-color: var(--button-primary-bg);
+  background: var(--button-secondary-hover);
+  color: var(--button-secondary-ink);
 }
 
-.knowledge-mode-configuration .knowledge-mode-configuration__section .knowledge-mode-calculation__actions .ui-button:focus-visible {
-  outline: 2px solid var(--knowledge-mode-accent);
-  outline-offset: 3px;
+.knowledge-mode-configuration .knowledge-mode-configuration__section .knowledge-mode-calculation__actions .ui-button:focus-visible,
+.knowledge-page.knowledge-page--item-workspace .knowledge-mode-configuration .knowledge-mode-configuration__section .knowledge-mode-calculation__actions .ui-button:focus-visible {
+  box-shadow: var(--button-focus-ring);
+  outline: none;
 }
 
 .knowledge-mode-configuration .knowledge-mode-configuration__section .knowledge-mode-calculation__actions .ui-button:disabled {
@@ -4652,9 +4770,18 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   gap: var(--space-2);
 }
 
-.knowledge-workspace-history-rail li {
+.knowledge-workspace-history-rail .knowledge-history__entry {
   padding: var(--space-3);
+  border-radius: var(--radius-control);
   background: var(--role-deck-tint, var(--color-surface-subtle));
+}
+
+/* The pill keeps the admin count-pill geometry but reads as a filled chip,
+   so the worded status carries more weight than its outline. */
+.ui-app-shell[data-role] .knowledge-page .knowledge-history .knowledge-history__status.ui-status {
+  border-color: transparent;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .knowledge-workspace-rail {
@@ -4717,7 +4844,7 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 .knowledge-pending-changes .knowledge-pending-changes__disclosure,
 .ui-app-shell[data-role] .knowledge-page--item-workspace .knowledge-pending-changes .knowledge-pending-changes__disclosure.ui-button,
 .ui-app-shell[data-role] .knowledge-page--item-workspace .knowledge-pending-changes .knowledge-pending-changes__disclosure.ui-button:not(:disabled):hover {
-  color: var(--role-ink, var(--color-text));
+  color: var(--button-quiet-ink);
 }
 
 .knowledge-conflict-review {
@@ -4819,19 +4946,12 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
     margin-inline-start: 0;
   }
 
+  /* Two rows on tablets and phones: completeness, then status and Save. */
   .knowledge-workspace-status {
+    display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-4);
-  }
-
-  .knowledge-workspace-status .knowledge-summary-list {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .knowledge-workspace-status .knowledge-summary-list > div {
-    padding: var(--space-3) 0 0;
-    border-inline-start: 0;
-    border-block-start: 1px solid var(--role-line, var(--color-border));
+    gap: var(--space-3);
+    min-block-size: 0;
   }
 
   .knowledge-section-tabs-shell {
@@ -4864,7 +4984,7 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   }
 
   .knowledge-page--item-workspace .knowledge-overview__uom-control-row {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
     min-inline-size: 0;
   }
 
@@ -4997,6 +5117,10 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
     padding: var(--space-4);
   }
 
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status__save.ui-button {
+    inline-size: 100%;
+  }
+
   .knowledge-page--item-workspace .knowledge-section-command-bar {
     padding-inline: var(--space-4);
   }
@@ -5046,8 +5170,9 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
     margin-inline-start: 0;
   }
 
-  .knowledge-page--item-workspace .knowledge-mode-surfaces__controls {
-    grid-template-columns: minmax(0, 1fr);
+  /* Phones always stack the picker over a full-width Add Surface. */
+  .knowledge-page--item-workspace .knowledge-mode-surfaces__controls > * {
+    flex-basis: 100%;
   }
 
   .knowledge-page--item-workspace .knowledge-mode-surfaces__controls > .ui-button,
@@ -5120,6 +5245,7 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 @media (pointer: coarse) {
   .knowledge-page--item-workspace .knowledge-section-tab,
   .knowledge-page--item-workspace .knowledge-section-command-bar__save,
+  .knowledge-page--item-workspace .knowledge-workspace-status__save,
   .knowledge-page--item-workspace .knowledge-overview__quick-add,
   .knowledge-page--item-workspace .knowledge-surface-multiselect__trigger,
   .knowledge-page--item-workspace .knowledge-surface-multiselect__option,
@@ -5247,43 +5373,35 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   gap: var(--space-4);
 }
 
-.knowledge-page--item-workspace .knowledge-overview .knowledge-overview__uom-control-row,
-.knowledge-page--item-workspace .knowledge-overview .knowledge-mode-surfaces__controls {
-  grid-template-columns: minmax(0, 1fr) 9.5rem;
-  align-items: end;
-  gap: var(--space-3);
-}
-
-.knowledge-page--item-workspace .knowledge-overview .knowledge-overview__uom-control-row:not(:has(> .ui-button)),
-.knowledge-page--item-workspace .knowledge-overview .knowledge-mode-surfaces__controls:not(:has(> .ui-button)) {
-  grid-template-columns: minmax(0, 1fr);
-}
-
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview :is(.knowledge-overview__quick-add, .knowledge-mode-surfaces__controls > .ui-button) {
-  inline-size: 100%;
   min-inline-size: 0;
   min-block-size: 44px;
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--role-line-strong, var(--color-border-strong));
+  border: 1px solid var(--button-secondary-border);
   border-radius: var(--radius-field);
-  background: var(--role-deck, var(--color-surface));
-  color: var(--role-ink, var(--color-text));
+  background: var(--button-secondary-bg);
+  color: var(--button-secondary-ink);
   box-shadow: none;
   font-size: var(--text-sm);
-  font-weight: 600;
   white-space: normal;
 }
 
+/* Add Unit spans the UOM card under its select; Add Surface keeps its own
+   width beside the picker until it wraps (see the Surfaces control row). */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview .knowledge-overview__quick-add {
+  inline-size: 100%;
+}
+
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview :is(.knowledge-overview__quick-add, .knowledge-mode-surfaces__controls > .ui-button):not(:disabled):hover {
-  border-color: var(--role-ink-muted, var(--color-text-muted));
-  background: var(--role-deck-tint, var(--color-surface-subtle));
-  color: var(--role-ink, var(--color-text));
+  border-color: var(--button-primary-bg);
+  background: var(--button-secondary-hover);
+  color: var(--button-secondary-ink);
   transform: none;
 }
 
-.knowledge-page--item-workspace .knowledge-overview :is(.knowledge-overview__quick-add, .knowledge-mode-surfaces__controls > .ui-button):focus-visible {
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: 3px;
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview :is(.knowledge-overview__quick-add, .knowledge-mode-surfaces__controls > .ui-button):focus-visible {
+  box-shadow: var(--button-focus-ring);
+  outline: none;
 }
 
 .knowledge-page--item-workspace .knowledge-overview .knowledge-mode-surfaces__selected {
@@ -5316,10 +5434,5 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 @media (max-width: 480px) {
   .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview .ui-surface.knowledge-overview__configuration-card {
     padding: var(--space-4);
-  }
-
-  .knowledge-page--item-workspace .knowledge-overview .knowledge-overview__uom-control-row,
-  .knowledge-page--item-workspace .knowledge-overview .knowledge-mode-surfaces__controls {
-    grid-template-columns: minmax(0, 1fr);
   }
 }

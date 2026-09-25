@@ -38,7 +38,7 @@ body:has(.project-messaging-app) { background: #f0f2f5; }
 .project-messaging-row-content { flex: 1; display: grid; gap: 5px; min-width: 0; }
 .project-messaging-row-top, .project-messaging-row-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .project-messaging-row-top strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 500; line-height: 1.4; }
-.project-messaging-row-top time { flex: 0 0 auto; color: #667781; font-size: 11px; }
+.project-messaging-row-top time { flex: 0 0 auto; color: #52616b; font-size: 11px; }
 .project-messaging-row-top .project-messaging-time--unread { color: #086652; font-weight: 600; }
 .project-messaging-row-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #52636d; font-size: 12px; line-height: 1.4; }
 .project-messaging-row-counts { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }

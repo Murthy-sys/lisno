@@ -1,4 +1,6 @@
-import { chatQueryKeys } from "./chatQueryKeys";
+import { partialMatchKey } from "@tanstack/react-query";
+
+import { chatQueryKeys, normalizeConversationSearch } from "./chatQueryKeys";
 
 const remote = { environmentId: "remote", userId: "user-a" };
 const local = { environmentId: "local", userId: "user-a" };
@@ -51,6 +53,24 @@ describe("mobile chat query keys", () => {
     expect(chatQueryKeys.project(remote, "project-a")).toEqual(
       chatQueryKeys.participantOptions(remote, "project-a", "Asha").slice(0, -2)
     );
+  });
+
+  it("keys each filtered and searched conversation list under the invalidation prefix", () => {
+    const unread = chatQueryKeys.conversations(remote, { filter: "unread", search: "  Villa  " });
+    expect(unread).toEqual(["remote", "user-a", "chat", "conversations", "unread", "Villa"]);
+    expect(chatQueryKeys.conversations(remote, { filter: "all", search: "" })).toEqual([
+      "remote", "user-a", "chat", "conversations", "all", ""
+    ]);
+    expect(unread).not.toEqual(chatQueryKeys.conversations(remote, { filter: "critical", search: "Villa" }));
+    expect(unread).not.toEqual(chatQueryKeys.conversations(remote, { filter: "unread", search: "Court" }));
+    expect(partialMatchKey(unread, chatQueryKeys.conversations(remote))).toBe(true);
+    expect(partialMatchKey(unread, chatQueryKeys.all(remote))).toBe(true);
+    expect(partialMatchKey(unread, chatQueryKeys.conversations(local))).toBe(false);
+  });
+
+  it("bounds conversation search to the server limit", () => {
+    expect(normalizeConversationSearch(`  ${"a".repeat(120)}  `)).toHaveLength(100);
+    expect(normalizeConversationSearch("   ")).toBe("");
   });
 
   it("rejects unauthenticated private keys", () => {

@@ -42,7 +42,22 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (path === "/admin/dashboard/workforce") return { ...superAdminDashboardWorkforcePageFixture, ...page(superAdminDashboardWorkforcePageFixture.items) };
   if (path === "/admin/projects") return page([admin.project, { ...admin.approvedPendingProject, name: "North Residence — upper floor and garden apartment renovation" }]);
   if (/^\/admin\/projects\/[^/]+$/.test(path)) return path.endsWith("project-murthy") ? admin.approvedPendingProject : { ...admin.project, id: decodeURIComponent(path.split("/").at(-1)!) };
-  if (path === "/admin/users") return { ...page(users.directoryRows), filterRoles: ROLE_CODES, manageableRoles: OPERATIONAL_ROLES };
+  if (path === "/admin/users") {
+    // `list` (not `page`) so the summary stays independent of search and
+    // pagination, matching the backend's visible-role-scoped aggregation.
+    const visible = list(users.directoryRows);
+    return {
+      ...page(users.directoryRows),
+      filterRoles: ROLE_CODES,
+      manageableRoles: OPERATIONAL_ROLES,
+      summary: {
+        total: visible.length,
+        active: visible.filter((row) => row.active).length,
+        inactive: visible.filter((row) => !row.active).length,
+        roleCount: new Set(visible.map((row) => row.role)).size
+      }
+    };
+  }
   if (path === "/admin/user-invitations") return { ...page<UserInvitationItem>([{ id: "invitation-1", email: "new-designer@lisno.example", name: "Synthetic invited designer", role: "designer", mobile: "+91 90000 00000", status: "pending", currentLinkAvailable: true, availableActions: ["resend", "revoke"], invitedBy: { id: "super_admin-1", name: "Synthetic reviewer", email: "reviewer@lisno.example", role: "super_admin" }, deliveryStatus: "sent", deliveryAttemptedAt: "2026-09-12T10:00:00.000Z", sentAt: "2026-09-12T10:00:00.000Z", issuedAt: "2026-09-12T10:00:00.000Z", expiresAt: "2026-09-20T00:00:00.000Z", version: 1, createdAt: "2026-09-12T10:00:00.000Z", updatedAt: "2026-09-12T10:00:00.000Z" }]), invitableRoles: OPERATIONAL_ROLES };
   if (path === "/admin/estimators" || path === "/admin/sales-managers") return page([{ id: "estimator-1", name: "Ravi Estimator", email: "ravi@lisno.example", active: true }]);
   if (path === "/admin/designers") return list(team.map((t) => ({ ...t.user, activeProjectCount: t.activeProjectCount })));

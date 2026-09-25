@@ -1,6 +1,7 @@
 import { apiClient } from "../../api/client";
 import type {
   AdminProjectPage,
+  AdminProjectListInput,
   AdminProjectSummary,
   EstimatorOption,
   InitiateAdminProjectInput,
@@ -12,8 +13,8 @@ import type {
 
 export const adminProjectKeys = {
   all: ["admin-projects"] as const,
-  page: (pagination: PaginationInput) =>
-    ["admin-projects", "page", pagination] as const,
+  page: (input: AdminProjectListInput) =>
+    ["admin-projects", "page", input] as const,
   detail: (projectId: string) =>
     ["admin-projects", "detail", projectId] as const,
   estimators: (search: string, pagination: PaginationInput) =>
@@ -22,11 +23,14 @@ export const adminProjectKeys = {
     ["admin-projects", "sales-managers", search, pagination] as const
 };
 
-export function adminProjectsPath(pagination: PaginationInput): string {
+export function adminProjectsPath(input: AdminProjectListInput): string {
   const query = new URLSearchParams({
-    limit: String(pagination.limit),
-    offset: String(pagination.offset)
+    limit: String(input.limit),
+    offset: String(input.offset)
   });
+  if (input.status) query.set("status", input.status);
+  if (input.search?.trim()) query.set("search", input.search.trim());
+  if (input.sort) query.set("sort", input.sort);
   return `/admin/projects?${query.toString()}`;
 }
 
@@ -41,8 +45,8 @@ export function estimatorOptionsPath(
   return `/admin/estimators?${query.toString()}`;
 }
 
-export const getAdminProjects = (pagination: PaginationInput) =>
-  apiClient.get<AdminProjectPage>(adminProjectsPath(pagination));
+export const getAdminProjects = (input: AdminProjectListInput) =>
+  apiClient.get<AdminProjectPage>(adminProjectsPath(input));
 
 export const getAdminProject = (projectId: string) =>
   apiClient.get<AdminProjectSummary>(

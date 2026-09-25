@@ -3832,7 +3832,7 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
       }
     );
     await duplicateCommitGate.entered;
-    await base.item.updateSection(
+    const pendingRemoval = base.item.updateSection(
       SUPER_ADMIN,
       duplicateFirstSource.mainLineId,
       duplicateFirstSource.revisionId,
@@ -3843,14 +3843,17 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
         payload: { exclusions: [] }
       }
     );
+    // Retained/removed references now share the target-parent lock. Release
+    // the committed-copy barrier before awaiting removal, then delete its target.
+    await nextEventLoopTurn();
+    duplicateCommitGate.release();
+    await pendingRemoval;
     const losingDeletion = createRaceReferenceService(persistentAudit())
       .permanentlyDeleteBasket(SUPER_ADMIN, duplicateFirstTarget.id, {
         expectedVersion: duplicateFirstTarget.version,
         confirmationName: duplicateFirstTarget.name,
         reason: "Exercise duplicate-first stale source order"
       });
-    await nextEventLoopTurn();
-    duplicateCommitGate.release();
 
     const [winningDuplicateResult, losingDeletionResult] = await Promise.allSettled([
       winningDuplicate,
