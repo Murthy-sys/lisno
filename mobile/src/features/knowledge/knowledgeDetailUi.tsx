@@ -14,8 +14,8 @@ export function DetailIcon({ name, size = 18 }: { readonly name: "back" | "edit"
   return <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"><Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={colors.primary} strokeWidth={name === "more" ? 3 : 1.7} strokeLinecap="round" strokeLinejoin="round"><Path d={paths[name]} /></Svg></View>;
 }
 
-export function IconButton({ label, icon, onPress, disabled = false }: { readonly label: string; readonly icon: ComponentProps<typeof DetailIcon>["name"]; readonly onPress: () => void; readonly disabled?: boolean }) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled }} disabled={disabled} onPress={onPress} style={[local.iconButton, disabled && { opacity: .45 }]}><DetailIcon name={icon} /></Pressable>;
+export function IconButton({ label, icon, onPress, disabled = false, variant = "outlined" }: { readonly label: string; readonly icon: ComponentProps<typeof DetailIcon>["name"]; readonly onPress: () => void; readonly disabled?: boolean; readonly variant?: "outlined" | "quiet" }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled }} disabled={disabled} onPress={onPress} style={[local.iconButton, variant === "quiet" && { borderWidth: 0 }, disabled && { opacity: .45 }]}><DetailIcon name={icon} /></Pressable>;
 }
 
 export function KnowledgeDisclosure({ title, summary, children, initiallyOpen = false }: { readonly title: string; readonly summary?: string; readonly children: ReactNode; readonly initiallyOpen?: boolean }) {

@@ -71,7 +71,7 @@ it("tracks real scroll positions, navigation edges and resizing instead of hardc
   for (let index = 0; index < 3; index++) await fireEvent.press(view.getByRole("button", { name: "Next items in POP / Gypsum" }));
   expect(view.getByLabelText("POP / Gypsum, carousel position 4 of 4")).toBeTruthy();
   expect(view.getByRole("button", { name: "Next items in POP / Gypsum" })).toBeDisabled();
-  await fireEvent.scroll(track, { nativeEvent: { contentOffset: { x: 106, y: 0 }, contentSize: { width: 458, height: 138 }, layoutMeasurement: { width: 200, height: 138 } } });
+  await fireEvent.scroll(track, { nativeEvent: { contentOffset: { x: 144, y: 0 }, contentSize: { width: 592, height: 138 }, layoutMeasurement: { width: 200, height: 138 } } });
   expect(view.getByLabelText("POP / Gypsum, carousel position 2 of 4")).toBeTruthy();
   await fireEvent(track, "layout", { nativeEvent: { layout: { width: 600, height: 138, x: 0, y: 0 } } });
   expect(view.getByLabelText("POP / Gypsum, carousel position 1 of 1")).toBeTruthy();

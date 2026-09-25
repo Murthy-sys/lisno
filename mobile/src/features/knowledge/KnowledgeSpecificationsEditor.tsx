@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
+import { colors, fonts } from "../../ui/tokens";
 import { Button, Field, IconButton } from "./knowledgeDetailUi";
 import { knowledgeRowId } from "../../../../shared/knowledge/knowledgeId";
 import type { KnowledgeJsonObject } from "../../../../shared/knowledge/knowledgeTypes";
 import { KNOWLEDGE_MAX_BRANDS, KNOWLEDGE_MAX_SPECIFICATIONS, parseKnowledgeSpecifications, referencedSpecificationIds, validateKnowledgeBrands } from "../../../../shared/knowledge/knowledgeSpecificationConfiguration";
-import { KnowledgeCard, KnowledgeModal, KnowledgeSelect, KnowledgeText, knowledgeStyles } from "./knowledgeDetailUi";
+import { KnowledgeCard, KnowledgeModal, KnowledgeSelect, KnowledgeText } from "./knowledgeDetailUi";
 import { isKnowledgeObject, knowledgeText, patchKnowledgeRow } from "./knowledgeModeNativeModel";
 
 interface Props {
@@ -41,30 +42,35 @@ export function KnowledgeSpecificationsEditor({ payload, onChange, readOnly, pro
     else setBrandEditor(id);
   }
 
-  return <KnowledgeCard title="Specifications" actions={!readOnly ? <IconButton label="Add Specification" icon="add" disabled={specifications.length >= KNOWLEDGE_MAX_SPECIFICATIONS} onPress={() => add("specifications")} /> : null}>
+  return <KnowledgeCard title="Specifications" actions={!readOnly ? <IconButton label="Add Specification" icon="add" variant="quiet" disabled={specifications.length >= KNOWLEDGE_MAX_SPECIFICATIONS} onPress={() => add("specifications")} /> : null}>
     <KnowledgeText>Configure items, Brands and descriptions for this Main Line.</KnowledgeText>
     {issues.length ? <KnowledgeText error>{issues.map(entry => entry.message).filter((text, index, all) => all.indexOf(text) === index).join("\n")}</KnowledgeText> : null}
     {!specifications.length ? <KnowledgeText>No Specifications configured.</KnowledgeText> : null}
-    {specifications.map((row, index) => isKnowledgeObject(row) ? <View key={`${knowledgeText(row.id)}:${index}`} style={knowledgeStyles.card}>
-      <KnowledgeText>{index + 1}. {knowledgeText(row.name) || "Item not named"}</KnowledgeText>
-      <KnowledgeText>Brand: {brandRows.find(entry => entry.id === row.brandId)?.name as string || (row.brandId ? "Unavailable Brand" : "Not configured")}</KnowledgeText>
-      {knowledgeText(row.description) ? <KnowledgeText>{knowledgeText(row.description)}</KnowledgeText> : null}
-      <View style={knowledgeStyles.row}>
-        <IconButton label={`${readOnly ? "View" : "Edit"} Specification ${index + 1}`} icon={readOnly ? "right" : "edit"} onPress={() => setEditing(knowledgeText(row.id))} />
-        {!readOnly ? <IconButton label={`Remove Specification ${index + 1}`} icon="close" disabled={blocked.has(knowledgeText(row.id))} onPress={() => setConfirmRemoval({ kind: "specifications", id: knowledgeText(row.id), name: knowledgeText(row.name) || "this Specification" })} /> : null}
+    {specifications.map((row, index) => isKnowledgeObject(row) ? <View key={`${knowledgeText(row.id)}:${index}`} style={styles.item}>
+      <View style={styles.itemHeading}>
+        <View style={styles.itemSummary}>
+          <Text style={styles.itemName}>{index + 1}. {knowledgeText(row.name) || "Item not named"}</Text>
+          <KnowledgeText>Brand: {brandRows.find(entry => entry.id === row.brandId)?.name as string || (row.brandId ? "Unavailable Brand" : "Not configured")}</KnowledgeText>
+        </View>
+        <View style={styles.actions}>
+          <IconButton label={`${readOnly ? "View" : "Edit"} Specification ${index + 1}`} icon={readOnly ? "right" : "edit"} variant="quiet" onPress={() => setEditing(knowledgeText(row.id))} />
+          {!readOnly ? <IconButton label={`Remove Specification ${index + 1}`} icon="close" variant="quiet" disabled={blocked.has(knowledgeText(row.id))} onPress={() => setConfirmRemoval({ kind: "specifications", id: knowledgeText(row.id), name: knowledgeText(row.name) || "this Specification" })} /> : null}
+        </View>
       </View>
+      {knowledgeText(row.description) ? <KnowledgeText>{knowledgeText(row.description)}</KnowledgeText> : null}
       {blocked.has(knowledgeText(row.id)) ? <KnowledgeText>This Specification is used by saved configuration or price history and cannot be removed.</KnowledgeText> : null}
       {["type", "options", "value"].some(key => Object.hasOwn(row, key)) ? <KnowledgeText>Legacy typed fields are retained with this Specification.</KnowledgeText> : null}
     </View> : <KnowledgeText key={index} error>Saved Specification {index + 1} cannot be edited safely. Its data is retained.</KnowledgeText>)}
-    <KnowledgeCard title="Brands" actions={!readOnly ? <IconButton label="Add Brand" icon="add" disabled={brands.length >= KNOWLEDGE_MAX_BRANDS} onPress={() => add("brands")} /> : null}>
+    <View style={styles.brands}>
+      <View style={styles.itemHeading}><Text accessibilityRole="header" style={[styles.sectionTitle, styles.itemSummary]}>Brands</Text>{!readOnly ? <IconButton label="Add Brand" icon="add" variant="quiet" disabled={brands.length >= KNOWLEDGE_MAX_BRANDS} onPress={() => add("brands")} /> : null}</View>
       {!brands.length ? <KnowledgeText>No Brands configured.</KnowledgeText> : null}
-      {brandRows.map((row, index) => <View key={`${knowledgeText(row.id)}:${index}`} style={knowledgeStyles.stack}>
-        <KnowledgeText>{knowledgeText(row.name) || "Brand not named"}</KnowledgeText>
-        <View style={knowledgeStyles.row}><IconButton label={`${readOnly ? "View" : "Edit"} Brand ${index + 1}`} icon={readOnly ? "right" : "edit"} onPress={() => setBrandEditor(knowledgeText(row.id))} />
-          {!readOnly ? <IconButton label={`Remove Brand ${index + 1}`} icon="close" disabled={specifications.some(spec => isKnowledgeObject(spec) && spec.brandId === row.id)} onPress={() => setConfirmRemoval({ kind: "brands", id: knowledgeText(row.id), name: knowledgeText(row.name) || "this Brand" })} /> : null}
+      {brandRows.map((row, index) => <View key={`${knowledgeText(row.id)}:${index}`} style={styles.brandRow}>
+        <Text style={[styles.itemName, styles.itemSummary]}>{knowledgeText(row.name) || "Brand not named"}</Text>
+        <View style={styles.actions}><IconButton label={`${readOnly ? "View" : "Edit"} Brand ${index + 1}`} icon={readOnly ? "right" : "edit"} variant="quiet" onPress={() => setBrandEditor(knowledgeText(row.id))} />
+          {!readOnly ? <IconButton label={`Remove Brand ${index + 1}`} icon="close" variant="quiet" disabled={specifications.some(spec => isKnowledgeObject(spec) && spec.brandId === row.id)} onPress={() => setConfirmRemoval({ kind: "brands", id: knowledgeText(row.id), name: knowledgeText(row.name) || "this Brand" })} /> : null}
         </View>
       </View>)}
-    </KnowledgeCard>
+    </View>
     {isKnowledgeObject(selected) ? <KnowledgeModal title={`${readOnly ? "View" : "Edit"} Specification`} onClose={() => setEditing(null)}>
       <Field label="Item name" value={knowledgeText(selected.name)} editable={!readOnly} maxLength={240} error={issue(`specifications.${specIndex}.name`)} onChangeText={name => patch("specifications", editing!, { name })} />
       <KnowledgeSelect label="Brand" value={knowledgeText(selected.brandId)} options={brandRows.map(row => ({ value: knowledgeText(row.id), label: knowledgeText(row.name) || "Brand not named" }))} disabled={readOnly} onChange={brandId => {
@@ -93,3 +99,14 @@ export function KnowledgeSpecificationsEditor({ payload, onChange, readOnly, pro
     </KnowledgeModal> : null}
   </KnowledgeCard>;
 }
+
+const styles = StyleSheet.create({
+  item: { borderTopWidth: 1, borderTopColor: colors.border, paddingVertical: 10, gap: 6 },
+  itemHeading: { flexDirection: "row", alignItems: "center", gap: 6 },
+  itemSummary: { flex: 1, minWidth: 0, gap: 3 },
+  itemName: { color: colors.ink, fontFamily: fonts.medium, fontSize: 12, lineHeight: 18 },
+  actions: { flexDirection: "row", alignItems: "center" },
+  brands: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 6, gap: 4 },
+  sectionTitle: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 13, lineHeight: 19 },
+  brandRow: { flexDirection: "row", alignItems: "center", gap: 6, minHeight: 44 }
+});

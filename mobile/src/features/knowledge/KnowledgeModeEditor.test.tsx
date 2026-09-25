@@ -39,6 +39,7 @@ describe("native Mode editing", () => {
     await fireEvent.press(screen.getByRole("button", { name: "Add Sub-Vendor Inclusion" }));
     await fireEvent.changeText(screen.getByLabelText("Sub-Vendor Inclusion name"), "Installation");
     await fireEvent.press(screen.getByRole("button", { name: "Add Inclusion" }));
+    expect(screen.getByText("Installation")).toBeOnTheScreen();
     await fireEvent.press(screen.getByRole("checkbox", { name: "Sub-Vendor Inclusion: Installation" }));
     const payload = onPayload.mock.lastCall?.[0];
     expect(payload).toMatchObject({ retained: "keep", modeDescription: "Custom work, inclusions Installation and exclusions none.", modeConfigurations: [{ modeKind: "pmc", inclusions: [{ name: "Installation", selected: true }] }] });
@@ -46,6 +47,29 @@ describe("native Mode editing", () => {
     await fireEvent.press(screen.getByRole("checkbox", { name: "In-house Inclusion: Supplier" }));
     expect(onPayload.mock.lastCall?.[0].modeConfigurations).toEqual(expect.arrayContaining([expect.objectContaining({ modeKind: "execution", executionSource: "in_house", inclusions: expect.arrayContaining([expect.objectContaining({ name: "Supplier", selected: true })]) })]));
     expect(onPayload.mock.lastCall?.[0].modeDescription).toContain("In-house Inclusions: Supplier.");
+  });
+
+  it("exposes disclosure state and preserves the draft when sections collapse", async () => {
+    await render(<Harness initial={{ retained: "keep" }} />);
+    await fireEvent.changeText(screen.getByLabelText("PMC Base Rate (₹)"), "12.");
+    onPayload.mockClear();
+    expect(screen.getByRole("button", { name: "Collapse PMC", expanded: true })).toBeOnTheScreen();
+    await fireEvent.press(screen.getByRole("button", { name: "Collapse PMC" }));
+    expect(screen.getByRole("button", { name: "Expand PMC", expanded: false })).toBeOnTheScreen();
+    expect(screen.queryByLabelText("PMC Base Rate (₹)")).toBeNull();
+    await fireEvent.press(screen.getByRole("button", { name: "Expand PMC" }));
+    expect(screen.getByLabelText("PMC Base Rate (₹)")).toHaveDisplayValue("12.");
+
+    await fireEvent.press(screen.getByRole("checkbox", { name: "Execution" }));
+    expect(screen.getByRole("button", { name: "Collapse Execution", expanded: true })).toBeOnTheScreen();
+    await fireEvent.press(screen.getByRole("button", { name: "Collapse Sub-Vendor", expanded: true }));
+    expect(screen.getByRole("button", { name: "Expand Sub-Vendor", expanded: false })).toBeOnTheScreen();
+    expect(screen.queryByLabelText("Sub-Vendor Base Rate (₹)")).toBeNull();
+    await fireEvent.press(screen.getByRole("button", { name: "Expand Sub-Vendor" }));
+    expect(screen.getByLabelText("Sub-Vendor Base Rate (₹)")).toBeOnTheScreen();
+    expect(onPayload).not.toHaveBeenCalled();
+    expect(onPricing).not.toHaveBeenCalled();
+    expect(onValidity).toHaveBeenLastCalledWith(false);
   });
 
   it("edits Specifications without dropping typed compatibility, and protects referenced removal", async () => {

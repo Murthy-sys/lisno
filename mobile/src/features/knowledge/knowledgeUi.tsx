@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import Svg, { Path } from "react-native-svg";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button, Field } from "../../ui/primitives";
 import { colors, fonts, spacing } from "../../ui/tokens";
@@ -56,10 +57,11 @@ export function KnowledgeText({ children, error = false }: { readonly children: 
   return <Text accessibilityLiveRegion={error ? "assertive" : "none"} style={error ? knowledgeStyles.error : knowledgeStyles.text}>{children}</Text>;
 }
 
-export function KnowledgeChoice({ label, selected, onPress, disabled = false, multiple = false }: { readonly label: string; readonly selected: boolean; readonly onPress: () => void; readonly disabled?: boolean; readonly multiple?: boolean }) {
+export function KnowledgeChoice({ label, accessibilityLabel = label, selected, onPress, disabled = false, multiple = false, variant = "button" }: { readonly label: string; readonly accessibilityLabel?: string; readonly selected: boolean; readonly onPress: () => void; readonly disabled?: boolean; readonly multiple?: boolean; readonly variant?: "button" | "row" }) {
   const knowledgeStyles = useKnowledgeStyles();
-  return <Pressable accessibilityRole={multiple ? "checkbox" : "radio"} accessibilityLabel={label} accessibilityState={{ checked: selected, disabled }} disabled={disabled} onPress={onPress} style={[knowledgeStyles.choice, selected && knowledgeStyles.selected, disabled && knowledgeStyles.disabled]}>
-    <Text aria-hidden style={knowledgeStyles.subtitle}>{selected ? (multiple ? "☑" : "●") : (multiple ? "□" : "○")}</Text><Text style={[knowledgeStyles.subtitle, { flexShrink: 1 }]}>{label}</Text>
+  const compact = useContext(DetailDensity);
+  return <Pressable accessibilityRole={multiple ? "checkbox" : "radio"} accessibilityLabel={accessibilityLabel} accessibilityState={{ checked: selected, disabled }} disabled={disabled} onPress={onPress} style={[knowledgeStyles.choice, selected && knowledgeStyles.selected, variant === "row" && { justifyContent: "flex-start", borderWidth: 0, backgroundColor: "transparent", paddingHorizontal: 12, paddingVertical: 10 }, disabled && knowledgeStyles.disabled]}>
+    {compact ? <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ width: 18, height: 18, borderWidth: 1.5, borderColor: selected ? colors.primary : colors.borderStrong, borderRadius: multiple ? 3 : 9, backgroundColor: selected ? colors.primary : "transparent", alignItems: "center", justifyContent: "center" }}>{selected ? multiple ? <Svg width={12} height={12} viewBox="0 0 16 16"><Path d="m3 8 3 3 7-7" fill="none" stroke={colors.primaryInk} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" /></Svg> : <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primaryInk }} /> : null}</View> : <Text aria-hidden style={knowledgeStyles.subtitle}>{selected ? (multiple ? "☑" : "●") : (multiple ? "□" : "○")}</Text>}<Text style={[knowledgeStyles.subtitle, { flexShrink: 1 }]}>{label}</Text>
   </Pressable>;
 }
 
