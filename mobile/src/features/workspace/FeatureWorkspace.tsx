@@ -19,7 +19,8 @@ import { AccessRequestActions } from "../access/AccessRequestActions";
 import { CreateAccessRequest } from "../access/CreateAccessRequest";
 import { LeadCreateForm } from "../leads/LeadCreateForm";
 import { ProxyDecisionAction } from "../reviews/ProxyDecisionAction";
-import { ClientEstimateAction } from "../estimates/ClientEstimateAction";
+import { clientEstimateListKey, getClientEstimates } from "../estimates/clientReviewApi";
+import type { ClientEstimate } from "../estimates/clientReviewModel";
 import { AdminInvitationPanel, ManagedUserActiveAction, type ManagedUserSummary } from "../admin";
 import { KnowledgeCatalogWorkspace } from "../knowledge";
 import { ProjectsWorkspace } from "../projects/ProjectsWorkspace";
@@ -46,7 +47,72 @@ export function FeatureWorkspace({ destination, session }: { readonly destinatio
   if (destination.id === "projects") {
     return <ProjectsWorkspace session={session} />;
   }
+  if (destination.id === "estimates") {
+    return <ClientEstimatesWorkspace session={session} />;
+  }
   return <GenericFeatureWorkspace destination={destination} session={session} />;
+}
+
+const estimateMoney = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
+
+function clientEstimateStatus(estimate: ClientEstimate): string {
+  if (estimate.status === "sent_to_client") return "Awaiting your decision";
+  if (estimate.status === "client_changes_requested") return "Changes requested";
+  return "Estimate approved";
+}
+
+function ClientEstimatesWorkspace({ session }: { readonly session: AuthenticatedSession }) {
+  const context = useConfiguredRuntime();
+  const allowed = session.user.role === "client" && canPerformOperation(session, "GET /client/estimates");
+  const query = useQuery({
+    queryKey: clientEstimateListKey(requestScope(context, session)),
+    queryFn: ({ signal }) => getClientEstimates(context.runtime, signal),
+    enabled: allowed && context.environment.status === "ready"
+  });
+
+  if (!allowed) return <StateView tone="denied" title="Estimates unavailable" message="Your current account cannot open Client estimates." />;
+  if (query.isPending) return <View style={styles.center}><BrandLoader label="Loading estimates" tone="dark" /></View>;
+  if (query.error instanceof ApiError && [401, 403, 404].includes(query.error.status)) {
+    return <StateView tone="denied" title="Estimates unavailable" message="Your current session cannot access this destination." actionLabel="Retry" onAction={() => void query.refetch()} />;
+  }
+  if (query.isError && !query.data) {
+    const denied = query.error instanceof ApiError && [401, 403, 404].includes(query.error.status);
+    return <StateView tone={denied ? "denied" : "error"} title={denied ? "Estimates unavailable" : "Estimates could not be loaded"}
+      message={denied ? "Your current session cannot access this destination." : "Check your connection and try again."}
+      actionLabel="Retry" onAction={() => void query.refetch()} />;
+  }
+
+  return (
+    <ScrollView contentContainerStyle={styles.content}
+      refreshControl={<RefreshControl refreshing={query.isRefetching} onRefresh={() => void query.refetch()} tintColor={colors.primary} />}>
+      <View style={styles.headingBlock}>
+        <Text style={styles.eyebrow}>CLIENT REVIEW</Text>
+        <Text accessibilityRole="header" style={styles.title}>Estimates & design review</Text>
+        <Text style={styles.description}>Open a published estimate to review its scope, decision, and shared designs.</Text>
+        {query.isRefetching ? <Text accessibilityLiveRegion="polite" style={styles.updating}>Updating…</Text> : null}
+      </View>
+      {query.isRefetchError ? <StateView tone="error" title="Could not refresh estimates" message="The displayed list may be out of date. Refresh when the connection returns." actionLabel="Refresh" onAction={() => void query.refetch()} /> : null}
+      {query.data?.length === 0 ? <StateView title="No published estimates" message="Estimates shared with this Client account will appear here." /> : null}
+      <View style={styles.list}>
+        {query.data?.map((estimate) => {
+          const title = estimate.lead?.projectName?.trim() || `Estimate ${estimate.id}`;
+          const location = estimate.lead?.location?.trim();
+          return <Pressable key={estimate.id} testID={`client-estimate-${estimate.id}`} accessibilityRole="button"
+            accessibilityLabel={`${title}, ${clientEstimateStatus(estimate)}, ${estimateMoney.format(estimate.total)}`}
+            accessibilityHint="Opens estimate details and design review"
+            onPress={() => router.push({ pathname: "/estimate/[estimateId]", params: { estimateId: estimate.id } })}
+            style={({ pressed }) => [styles.record, styles.estimateRecord, pressed ? styles.recordPressed : null]}>
+            <View style={styles.recordCopy}>
+              <Text style={styles.recordTitle}>{title}</Text>
+              {location ? <Text style={styles.recordSubtitle}>{location}</Text> : null}
+              <Text style={styles.estimateStatus}>{clientEstimateStatus(estimate)}</Text>
+            </View>
+            <Text style={styles.estimateTotal}>{estimateMoney.format(estimate.total)}</Text>
+          </Pressable>;
+        })}
+      </View>
+    </ScrollView>
+  );
 }
 
 function GenericFeatureWorkspace({ destination, session }: { readonly destination: FeatureDestination; readonly session: AuthenticatedSession }) {
@@ -135,7 +201,6 @@ function GenericFeatureWorkspace({ destination, session }: { readonly destinatio
                 {destination.id === "access-review" ? <AccessRequestActions record={record} mode="review" /> : null}
                 {destination.id === "client-responses" && session.authorization.permissions.includes("estimation.client_response_tasks.decide") ? <ProxyDecisionAction record={record} queue="estimate" /> : null}
                 {destination.id === "design-approvals" && session.authorization.permissions.includes("design.plan_response_tasks.decide") ? <ProxyDecisionAction record={record} queue="design" /> : null}
-                {destination.id === "estimates" && canPerformOperation(session, "POST /client/estimates/:estimateId/decision") ? <ClientEstimateAction record={record} /> : null}
                 {destination.id === "users" && typeof record.id === "string" && typeof record.name === "string" && typeof record.email === "string" && typeof record.active === "boolean" && typeof record.version === "number" ? <ManagedUserActiveAction user={record as unknown as ManagedUserSummary} canUpdate={session.authorization.permissions.includes("identity.users.update")} /> : null}
               </View>
             );
@@ -165,5 +230,8 @@ const styles = StyleSheet.create({
   recordCopy: { flex: 1, gap: 4 },
   recordTitle: { color: colors.ink, ...typography.cardTitle },
   recordSubtitle: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 12 },
-  chevron: { color: colors.violet, fontFamily: fonts.regular, fontSize: 30 }
+  chevron: { color: colors.violet, fontFamily: fonts.regular, fontSize: 30 },
+  estimateRecord: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: spacing.sm },
+  estimateStatus: { color: colors.primary, fontFamily: fonts.medium, fontSize: 12, lineHeight: 18 },
+  estimateTotal: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 16, lineHeight: 24, fontVariant: ["tabular-nums"] }
 });

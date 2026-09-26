@@ -11,10 +11,10 @@ import { Button, Field } from "../../ui/primitives";
 import { colors, fonts, radii, spacing } from "../../ui/tokens";
 import { isRecord, recordTitle } from "../workspace/recordPresentation";
 import { FloorCreateAction, StageCreateAction, TaskCreateAction } from "./HierarchyCreateActions";
-import { DesignUploadAction, DesignVersionWorkspace } from "../design/DesignVersionWorkspace";
-import { WorkflowWorkspace } from "../workflows/WorkflowWorkspace";
-import { ProjectDetailLayout } from "./ProjectDetailOverview";
+import { DesignUploadAction } from "../design/DesignVersionWorkspace";
+import { ProjectDetailPage } from "./ProjectDetailPage";
 import { presentProjectDetail } from "./projectDetailModel";
+import { projectDetailTheme } from "./projectDetailTheme";
 
 type TaskStatus = "not_started" | "in_progress" | "in_review" | "blocked" | "completed";
 const TASK_STATUSES: readonly TaskStatus[] = ["not_started", "in_progress", "in_review", "blocked", "completed"];
@@ -35,54 +35,47 @@ function TaskEditor({ task, session }: { readonly task: Record<string, unknown>;
   return <View style={styles.actions}>{canUpdate ? <View style={styles.action}><Button label="Update task" variant="secondary" onPress={() => setMode("update")} /></View> : null}{canDeadline ? <View style={styles.action}><Button label="Revise deadline" variant="quiet" onPress={() => setMode("deadline")} /></View> : null}</View>;
 }
 
-export function ProjectStructure({ data, session, onRefresh }: { readonly data: unknown; readonly session: AuthenticatedSession; readonly onRefresh: () => void }) {
+export function ProjectStructure({ data, session, onRefresh, initialTab }: { readonly data: unknown; readonly session: AuthenticatedSession; readonly onRefresh: () => void; readonly initialTab?: string | undefined }) {
   const project = projectRecord(data);
   const detail = presentProjectDetail(data, session.user.role);
   if (!project || !detail) return null;
   const floors = records(project.floors);
-  return (
-    <ProjectDetailLayout detail={detail}>
-      <View style={styles.operations}>
-        <View testID="project-structure-panel" style={styles.panel}>
-          <View style={styles.heading}>
-            <Text accessibilityRole="header" style={styles.sectionTitle}>Floors, stages and tasks</Text>
-            <Text style={styles.copy}>Progress, ownership and deadlines come from the project hierarchy.</Text>
-          </View>
-          {typeof project.id === "string" ? <FloorCreateAction projectId={project.id} session={session} /> : null}
-          {floors.length === 0 ? <Text style={styles.copy}>No project structure is available for this account.</Text> : floors.map((floor, floorIndex) => (
-            <View key={typeof floor.id === "string" ? floor.id : `floor-${floorIndex}`} style={styles.floor}>
-              <Text style={styles.floorTitle}>{recordTitle(floor, floorIndex)}</Text>
-              {typeof floor.id === "string" ? <StageCreateAction floorId={floor.id} session={session} /> : null}
-              {records(floor.stages).map((stage, stageIndex) => (
-                <View key={typeof stage.id === "string" ? stage.id : `stage-${stageIndex}`} style={styles.stage}>
-                  <Text style={styles.stageTitle}>{recordTitle(stage, stageIndex)}</Text>
-                  {typeof stage.id === "string" ? <TaskCreateAction stageId={stage.id} session={session} /> : null}
-                  {records(stage.tasks).map((task, taskIndex) => (
-                    <View key={typeof task.id === "string" ? task.id : `task-${taskIndex}`} style={styles.task}>
-                      <Text style={styles.taskTitle}>{recordTitle(task, taskIndex)}</Text>
-                      <Text style={styles.copy}>{typeof task.status === "string" ? task.status.replaceAll("_", " ") : "Status unavailable"} · {typeof task.progress === "number" ? `${task.progress}%` : "Progress unavailable"}</Text>
-                      <TaskEditor task={task} session={session} />
-                      {typeof task.id === "string" ? <DesignUploadAction taskId={task.id} session={session} /> : null}
-                    </View>
-                  ))}
+  const tasksPanel = (
+    <View testID="project-structure-panel" style={styles.panel}>
+      <View style={styles.heading}>
+        <Text accessibilityRole="header" style={styles.sectionTitle}>Floors, stages and tasks</Text>
+        <Text style={styles.copy}>Progress, ownership and deadlines come from the project hierarchy.</Text>
+      </View>
+      {typeof project.id === "string" ? <FloorCreateAction projectId={project.id} session={session} /> : null}
+      {floors.length === 0 ? <Text style={styles.copy}>No project structure is available for this account.</Text> : floors.map((floor, floorIndex) => (
+        <View key={typeof floor.id === "string" ? floor.id : `floor-${floorIndex}`} style={styles.floor}>
+          <Text style={styles.floorTitle}>{recordTitle(floor, floorIndex)}</Text>
+          {typeof floor.id === "string" ? <StageCreateAction floorId={floor.id} session={session} /> : null}
+          {records(floor.stages).map((stage, stageIndex) => (
+            <View key={typeof stage.id === "string" ? stage.id : `stage-${stageIndex}`} style={styles.stage}>
+              <Text style={styles.stageTitle}>{recordTitle(stage, stageIndex)}</Text>
+              {typeof stage.id === "string" ? <TaskCreateAction stageId={stage.id} session={session} /> : null}
+              {records(stage.tasks).map((task, taskIndex) => (
+                <View key={typeof task.id === "string" ? task.id : `task-${taskIndex}`} style={styles.task}>
+                  <Text style={styles.taskTitle}>{recordTitle(task, taskIndex)}</Text>
+                  <Text style={styles.copy}>{typeof task.status === "string" ? task.status.replaceAll("_", " ") : "Status unavailable"} · {typeof task.progress === "number" ? `${task.progress}%` : "Progress unavailable"}</Text>
+                  <TaskEditor task={task} session={session} />
+                  {typeof task.id === "string" ? <DesignUploadAction taskId={task.id} session={session} /> : null}
                 </View>
               ))}
             </View>
           ))}
         </View>
-        {typeof project.id === "string" ? <DesignVersionWorkspace projectId={project.id} session={session} /> : null}
-        {typeof project.id === "string" ? <WorkflowWorkspace projectId={project.id} session={session} /> : null}
-        <Button label="Refresh project" variant="secondary" onPress={onRefresh} />
-      </View>
-    </ProjectDetailLayout>
+      ))}
+    </View>
   );
+  return <ProjectDetailPage detail={detail} session={session} onRefresh={onRefresh} tasksPanel={tasksPanel} initialTab={initialTab} />;
 }
 
-/** Operational containers follow the project detail page: paper surface, thin border, small radius, olive headings. */
-const PANEL_RADIUS = 4;
+/** Operational containers follow the project detail page: paper surface, thin border, card radius, olive headings. */
+const PANEL_RADIUS = projectDetailTheme.cardRadius;
 
 const styles = StyleSheet.create({
-  operations: { gap: spacing.lg, minWidth: 0 },
   panel: { gap: spacing.sm, padding: spacing.md, minWidth: 0, borderRadius: PANEL_RADIUS, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   heading: { gap: spacing.xxs },
   sectionTitle: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 17, lineHeight: 24 },
@@ -92,7 +85,7 @@ const styles = StyleSheet.create({
   floorTitle: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 15, lineHeight: 22 },
   stage: { gap: spacing.xs, paddingLeft: spacing.sm, borderLeftWidth: 2, borderLeftColor: colors.primary },
   stageTitle: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 14, lineHeight: 20 },
-  task: { padding: spacing.sm, gap: spacing.xs, borderRadius: PANEL_RADIUS, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.canvas },
+  task: { padding: spacing.sm, gap: spacing.xs, borderRadius: projectDetailTheme.innerRadius, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.canvas },
   taskTitle: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 14, lineHeight: 20 },
   editor: { gap: spacing.sm, paddingTop: spacing.sm },
   options: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },

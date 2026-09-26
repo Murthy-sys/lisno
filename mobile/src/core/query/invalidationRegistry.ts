@@ -75,6 +75,7 @@ const EVENT_FAMILIES = Object.freeze({
   ],
   "plan-review-changed": [
     "plan-review",
+    "design",
     "estimates",
     "estimate-responses",
     "workflow",
