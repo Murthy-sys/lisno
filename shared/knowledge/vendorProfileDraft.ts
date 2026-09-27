@@ -22,10 +22,14 @@ export type VendorDraft = Record<VendorTextField | VendorBankField, string> & {
   executionType: NonNullable<ProcurementVendorProfile["executionType"]>;
   gstRegistered: "" | "yes" | "no"; msmeRegistered: "" | "yes" | "no";
   currentAddressVerifiedPhysically: "" | "yes" | "no";
-  turnoverSelfDeclared: string; turnoverVerified: string; mainBasketId: string; subBasketId: string;
+  turnoverSelfDeclared: string; turnoverVerified: string; mainBasketIds: string[]; subBasketIds: string[];
 };
 type ExecutionType = NonNullable<ProcurementVendorProfile["executionType"]>[number];
 const executionTypeOrder: ExecutionType[] = ["labor", "material_labour"];
+export const VENDOR_BASKET_SELECTION_LIMITS = { main: 100, sub: 500 } as const;
+function sortedBasketIds(values: readonly string[] | undefined, legacyId?: string): string[] {
+  return (values ? [...values] : legacyId ? [legacyId] : []).sort();
+}
 export function normalizeExecutionTypes(value: ProcurementVendorProfile["executionType"] | ExecutionType | undefined): ExecutionType[] {
   const selections = Array.isArray(value) ? [...value] : value ? [value] : [];
   return selections.sort((left, right) => executionTypeOrder.indexOf(left) - executionTypeOrder.indexOf(right));
@@ -47,7 +51,8 @@ export function vendorDraft(detail?: ProcurementVendorDetail): VendorDraft {
     vendorType: p?.vendorType ?? "", executionType: normalizeExecutionTypes(p?.executionType),
     gstRegistered: answer(p?.gstRegistered), msmeRegistered: answer(p?.msmeRegistered), currentAddressVerifiedPhysically: answer(p?.currentAddressVerifiedPhysically),
     turnoverSelfDeclared: paiseInput(p?.turnoverSelfDeclaredPaise), turnoverVerified: paiseInput(p?.turnoverVerifiedPaise),
-    mainBasketId: p?.mainBasketId ?? "", subBasketId: p?.subBasketId ?? "",
+    mainBasketIds: sortedBasketIds(p?.mainBasketIds, p?.mainBasketId),
+    subBasketIds: sortedBasketIds(p?.subBasketIds, p?.subBasketId),
     ...Object.fromEntries(Object.keys(VENDOR_TEXT_FIELDS).map((key) => [key, p?.[key as VendorTextField] ?? ""])) as Record<VendorTextField, string>
   };
 }
@@ -79,8 +84,10 @@ export function validateVendorDraft(d: VendorDraft, { requireOrganizationType = 
   if (d.pan && !/^[A-Z]{5}\d{4}[A-Z]$/.test(d.pan.trim().toUpperCase())) errors.pan = "Enter a PAN with five letters, four digits and one letter.";
   if (nonnegativePaise(d.turnoverSelfDeclared) === null) errors.turnoverSelfDeclaredPaise = "Enter a nonnegative amount with up to two decimal places.";
   if (d.turnoverVerified.trim() && nonnegativePaise(d.turnoverVerified) === null) errors.turnoverVerifiedPaise = "Enter a nonnegative amount or leave blank for NA.";
-  if (!d.mainBasketId) errors.mainBasketId = "Choose a Main Basket.";
-  if (!d.subBasketId) errors.subBasketId = "Choose a Sub Basket.";
+  if (!d.mainBasketIds.length) errors.mainBasketIds = "Choose at least one Main Basket.";
+  else if (d.mainBasketIds.length > VENDOR_BASKET_SELECTION_LIMITS.main || new Set(d.mainBasketIds).size !== d.mainBasketIds.length) errors.mainBasketIds = "Review the Main Basket selections.";
+  if (!d.subBasketIds.length) errors.subBasketIds = "Choose at least one Sub Basket.";
+  else if (d.subBasketIds.length > VENDOR_BASKET_SELECTION_LIMITS.sub || new Set(d.subBasketIds).size !== d.subBasketIds.length) errors.subBasketIds = "Review the Sub Basket selections.";
   return errors;
 }
 export function profileFromDraft(d: VendorDraft): ProcurementVendorProfileInput {
@@ -96,6 +103,6 @@ export function profileFromDraft(d: VendorDraft): ProcurementVendorProfileInput 
     supplier: d.vendorType === "supplier" ? true : null,
     gstRegistered: d.gstRegistered === "yes", gstNumber: d.gstRegistered === "yes" ? d.gstNumber.trim().toUpperCase() : null, msmeRegistered: d.msmeRegistered === "yes", currentAddressVerifiedPhysically: d.currentAddressVerifiedPhysically === "yes",
     turnoverSelfDeclaredPaise: nonnegativePaise(d.turnoverSelfDeclared)!, turnoverVerifiedPaise: d.turnoverVerified.trim() ? nonnegativePaise(d.turnoverVerified) : null,
-    mainBasketId: d.mainBasketId, subBasketId: d.subBasketId
+    mainBasketIds: sortedBasketIds(d.mainBasketIds), subBasketIds: sortedBasketIds(d.subBasketIds)
   };
 }

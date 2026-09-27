@@ -40,7 +40,7 @@ export function useKnowledgeSavedSummary(input: KnowledgeSavedSummaryInput): rea
     queries: SAVED_SUMMARY_SECTION_KEYS.map((key) => ({
       queryKey: knowledgeQueryKeys.section(item.mainLineId, revisionId ?? "", key),
       queryFn: () => getKnowledgeSection<KnowledgeJsonObject>(item.mainLineId, revisionId!, key),
-      enabled: Boolean(revisionId) && (key !== "recommendations" || item.itemType !== "temporary"),
+      enabled: Boolean(revisionId),
       staleTime: 30_000
     }))
   });
@@ -66,7 +66,7 @@ export function useKnowledgeSavedSummary(input: KnowledgeSavedSummaryInput): rea
   const sections: Partial<Record<SavedSummarySectionKey, KnowledgeJsonObject>> = {};
   const notices: Record<SavedSummaryGroupKey, SavedSummaryNotice[]> = { overview: [], mode: [], recommendations: [], quality: [] };
   for (const [index, key] of SAVED_SUMMARY_SECTION_KEYS.entries()) {
-    if (!revisionId || (key === "recommendations" && item.itemType === "temporary")) continue;
+    if (!revisionId) continue;
     const query = sectionQueries[index]!;
     const group = key === "advanced" ? "mode" : key;
     const data = allowedData(query);
@@ -133,8 +133,7 @@ export function useKnowledgeSavedSummary(input: KnowledgeSavedSummaryInput): rea
   const labels = { overview: "Overview", mode: "Mode", recommendations: "Recommendation & Exclusions", quality: "Quality Parameters" };
   return (Object.keys(labels) as SavedSummaryGroupKey[]).map((key) => ({
     ...projected[key], key, label: labels[key], notices: notices[key],
-    emptyMessage: key === "recommendations" && item.itemType === "temporary" ? "Not applicable"
-      : key !== "quality" && !revisionId ? "No revision available"
+    emptyMessage: key !== "quality" && !revisionId ? "No revision available"
         : !notices[key].length && !projected[key].details.length && !projected[key].preview.length ? "Not configured" : undefined
   }));
 }

@@ -9,10 +9,10 @@ export const completeVendorProfile: ProcurementVendorProfile = {
   nameOfRepresentative: "Sample Representative", position: "Owner", gstRegistered: false, gstNumber: null, msmeRegistered: false,
   turnoverSelfDeclaredPaise: 10000000, turnoverVerifiedPaise: null, reference: "Synthetic reference", workProfile: "Synthetic cabinetry profile",
   email: "sample@example.test", phoneNumber: "+91 90000 00000", address: "Synthetic office address", aadhar: "123456789012", pan: "ABCDE1234F",
-  currentAddress: "Synthetic current address", currentAddressVerifiedPhysically: false, mainBasketId: vendorBasket.id, subBasketId: vendorSubBasket.id
+  currentAddress: "Synthetic current address", currentAddressVerifiedPhysically: false, mainBasketIds: [vendorBasket.id], subBasketIds: [vendorSubBasket.id], mainBasketId: vendorBasket.id, subBasketId: vendorSubBasket.id
 };
 export const completeVendor: ProcurementVendorDetail = {
   id: "vendor-one", masterType: "vendors", code: "TIMBER", name: "Timber House", description: "Timber supply", displayOrder: 1, status: "active", ...vendorMetadata,
   procurementProfile: { ...completeVendorProfile, physicalAddressVerifiedAt: null, physicalAddressVerifiedById: null },
-  procurementSummary: { vendorType: "execution", profileComplete: true, currentAddressVerifiedPhysically: false, mainBasket: { id: vendorBasket.id, name: vendorBasket.name, status: "active" }, subBasket: { id: vendorSubBasket.id, name: vendorSubBasket.name } }, geoTaggedPicture: null, msmeCertificate: null
+  procurementSummary: { vendorType: "execution", profileComplete: true, currentAddressVerifiedPhysically: false, mainBaskets: [{ id: vendorBasket.id, name: vendorBasket.name, status: "active" }], subBaskets: [{ id: vendorSubBasket.id, basketId: vendorBasket.id, name: vendorSubBasket.name }], mainBasket: { id: vendorBasket.id, name: vendorBasket.name, status: "active" }, subBasket: { id: vendorSubBasket.id, name: vendorSubBasket.name } }, geoTaggedPicture: null, msmeCertificate: null
 };

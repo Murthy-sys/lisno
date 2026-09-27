@@ -114,8 +114,10 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (/^\/client\/estimate-plan-pages\/page-estimate-1\/(thumbnail|current-image)$/.test(path)) return drawing.syntheticDrawingResponse();
   if (path === "/design-versions/qa-approved-document/download" || path === "/client/estimates/estimate-1/pdf" || /^\/projects\/[^/]+\/design-workflow\/history\/qa-internal-document\/proof$/.test(path)) return drawing.syntheticDocumentResponse();
   const prefix = "/admin/ai-estimator-knowledge";
-  if (path === `${prefix}/items`) return { ...page([knowledge.item]), facets: {} };
-  if (path === `${prefix}/main-lines/line-1`) return knowledge.item;
+  const temporaryKnowledge = new URLSearchParams(scenario.route.split("?")[1]).get("qaTemporary") === "ready";
+  const knowledgeItem = temporaryKnowledge ? { ...knowledge.item, itemType: "temporary" as const, completionRequired: true } : knowledge.item;
+  if (path === `${prefix}/items`) return { ...page([knowledgeItem]), facets: {} };
+  if (path === `${prefix}/main-lines/line-1`) return knowledgeItem;
   if (path === `${prefix}/baskets`) return page([{ id: "basket-1", name: "Carpentry", description: "Furniture and interior timber work", displayOrder: 1, status: "active", version: 1, itemCount: 1, createdAt: knowledge.item.createdAt, updatedAt: knowledge.item.updatedAt }]);
   if (path === `${prefix}/main-lines`) return page([{ id: "line-1", name: "Wall panelling", basketId: "basket-1", status: "active", version: 1, displayOrder: 1 }]);
   if (path === `${prefix}/uoms`) return page([knowledge.squareFoot, knowledge.squareMetre]);
@@ -123,12 +125,16 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (path === `${prefix}/surfaces`) return page([knowledge.wallSurface]);
   if (path === `${prefix}/modes`) return page([{ ...knowledge.squareFoot, id: "mode-in-house", masterType: "modes", code: "IN_HOUSE", name: "In-house", modeKind: "in_house" }]);
   if (path === `${prefix}/taxes`) return page([{ ...knowledge.squareFoot, id: "gst-18", masterType: "taxes", code: "GST_18", name: "GST 18%", rateBps: 1800 }]);
-  if (path === `${prefix}/baskets/basket-1/main-lines`) return page([{ ...knowledge.item, name: knowledge.item.mainLineName }]);
+  if (path === `${prefix}/baskets/basket-1/main-lines`) return page([{ ...knowledgeItem, name: knowledgeItem.mainLineName }]);
   if (path === `${prefix}/vendors`) return page([{ ...knowledge.squareFoot, id: "vendor-1", masterType: "vendors", code: "TIMBER", name: "Timber House" }]);
   if (path === `${prefix}/main-lines/line-1/history`) return page([]);
   if (path === `${prefix}/quality-control-options`) return { items: [] };
   if (/^\/admin\/ai-estimator-knowledge\/main-lines\/line-1\/revisions\/revision-1\/sections\//.test(path)) {
     const sectionKey = path.split("/").at(-1) as KnowledgeSectionKey;
+    if (temporaryKnowledge && sectionKey === "recommendations") return knowledge.section("recommendations", {
+      recommendations: [{ id: "synthetic-recommendation", name: "Moisture barrier", priorityId: "priority-high", reason: "Protect the timber during installation", dependency: false, active: true }],
+      exclusions: [{ id: "synthetic-exclusion", name: "Existing floor finish", reason: "Retain the installed finish", active: true }]
+    });
     const inHouseState = new URLSearchParams(scenario.route.split("?")[1]).get("qaInHouse");
     if (inHouseState === "ready") {
       if (sectionKey === "advanced") return knowledge.inHouseSection();

@@ -1574,3 +1574,112 @@
 {"_e":"metro:bundling:progress","_t":1790451458192,"id":"p","progress":0,"total":1,"current":0}
 {"_e":"metro:bundling:done","_t":1790451458304,"id":"p","total":1,"ms":112.27}
 {"_e":"metro:server_log","_t":1790451596891,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"root:init","_t":1790491258567,"format":"v0-jsonl","version":"57.0.26"}
+{"_e":"devserver:start","_t":1790491258577,"mode":"development","web":true,"baseUrl":"","asyncRoutes":false,"routerRoot":"../../../src/app","serverComponents":false,"serverActions":false,"serverRendering":false,"apiRoutes":false,"exporting":false}
+{"_e":"metro:config","_t":1790491258822,"serverRoot":"../../..","projectRoot":"../../..","exporting":false,"flags":{"autolinkingModuleResolution":false,"serverActions":false,"serverComponents":false,"reactCompiler":true,"optimizeGraph":false,"treeshaking":false,"logbox":false}}
+{"_e":"expo:dev-tools-plugin:load","_t":1790491258942,"plugins":[]}
+{"_e":"metro:instantiate","_t":1790491259609,"atlas":false,"workers":7,"host":"::","port":8081}
+{"_e":"metro:bundling:started","_t":1790491262880,"id":"1","platform":"android","environment":null,"entry":"node_modules/expo-router/entry.js"}
+{"_e":"metro:bundling:progress","_t":1790491262881,"id":"1","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:progress","_t":1790491262883,"id":"1","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:progress","_t":1790491263166,"id":"1","progress":0.010000000000000002,"total":1,"current":1}
+{"_e":"metro:bundling:progress","_t":1790491263267,"id":"1","progress":0.28994082840236685,"total":13,"current":7}
+{"_e":"metro:bundling:progress","_t":1790491263428,"id":"1","progress":0.37869822485207105,"total":13,"current":8}
+{"_e":"metro:bundling:progress","_t":1790491263535,"id":"1","progress":0.37869822485207105,"total":64,"current":24}
+{"_e":"metro:bundling:progress","_t":1790491263637,"id":"1","progress":0.37869822485207105,"total":233,"current":48}
+{"_e":"metro:bundling:progress","_t":1790491263738,"id":"1","progress":0.37869822485207105,"total":287,"current":77}
+{"_e":"metro:bundling:progress","_t":1790491263838,"id":"1","progress":0.37869822485207105,"total":303,"current":86}
+{"_e":"metro:bundling:progress","_t":1790491263943,"id":"1","progress":0.37869822485207105,"total":350,"current":111}
+{"_e":"metro:bundling:progress","_t":1790491264043,"id":"1","progress":0.37869822485207105,"total":390,"current":147}
+{"_e":"metro:bundling:progress","_t":1790491264144,"id":"1","progress":0.37869822485207105,"total":462,"current":215}
+{"_e":"metro:bundling:progress","_t":1790491264244,"id":"1","progress":0.37869822485207105,"total":564,"current":285}
+{"_e":"metro:bundling:progress","_t":1790491264344,"id":"1","progress":0.37869822485207105,"total":604,"current":308}
+{"_e":"metro:bundling:progress","_t":1790491264444,"id":"1","progress":0.37869822485207105,"total":689,"current":329}
+{"_e":"metro:bundling:progress","_t":1790491264546,"id":"1","progress":0.37869822485207105,"total":715,"current":360}
+{"_e":"metro:bundling:progress","_t":1790491264646,"id":"1","progress":0.37869822485207105,"total":793,"current":410}
+{"_e":"metro:bundling:progress","_t":1790491264746,"id":"1","progress":0.37869822485207105,"total":904,"current":482}
+{"_e":"metro:bundling:progress","_t":1790491264846,"id":"1","progress":0.37869822485207105,"total":974,"current":539}
+{"_e":"metro:bundling:progress","_t":1790491264946,"id":"1","progress":0.37869822485207105,"total":1083,"current":602}
+{"_e":"metro:bundling:progress","_t":1790491265047,"id":"1","progress":0.37869822485207105,"total":1142,"current":630}
+{"_e":"metro:bundling:progress","_t":1790491265148,"id":"1","progress":0.37869822485207105,"total":1181,"current":664}
+{"_e":"metro:bundling:progress","_t":1790491265250,"id":"1","progress":0.37869822485207105,"total":1189,"current":677}
+{"_e":"metro:bundling:progress","_t":1790491265353,"id":"1","progress":0.37869822485207105,"total":1206,"current":694}
+{"_e":"metro:bundling:progress","_t":1790491265454,"id":"1","progress":0.37869822485207105,"total":1219,"current":744}
+{"_e":"metro:bundling:progress","_t":1790491265556,"id":"1","progress":0.38145851863421615,"total":1237,"current":764}
+{"_e":"metro:bundling:progress","_t":1790491265656,"id":"1","progress":0.39819752173778183,"total":1244,"current":785}
+{"_e":"metro:bundling:progress","_t":1790491265756,"id":"1","progress":0.4234830691959553,"total":1257,"current":818}
+{"_e":"metro:bundling:progress","_t":1790491265856,"id":"1","progress":0.45869357052965326,"total":1289,"current":873}
+{"_e":"metro:bundling:progress","_t":1790491265956,"id":"1","progress":0.49236480955248596,"total":1304,"current":915}
+{"_e":"metro:bundling:progress","_t":1790491266058,"id":"1","progress":0.5252924837976601,"total":1308,"current":948}
+{"_e":"metro:bundling:progress","_t":1790491266160,"id":"1","progress":0.5519981494600182,"total":1315,"current":977}
+{"_e":"metro:bundling:progress","_t":1790491266260,"id":"1","progress":0.5872036359045575,"total":1335,"current":1023}
+{"_e":"metro:bundling:progress","_t":1790491266360,"id":"1","progress":0.5872036359045575,"total":1426,"current":1067}
+{"_e":"metro:bundling:progress","_t":1790491266461,"id":"1","progress":0.5872036359045575,"total":1472,"current":1105}
+{"_e":"metro:bundling:progress","_t":1790491266562,"id":"1","progress":0.5872036359045575,"total":1499,"current":1138}
+{"_e":"metro:bundling:progress","_t":1790491266662,"id":"1","progress":0.5964622901468025,"total":1524,"current":1177}
+{"_e":"metro:bundling:progress","_t":1790491266762,"id":"1","progress":0.6096828673297054,"total":1533,"current":1197}
+{"_e":"metro:bundling:progress","_t":1790491266863,"id":"1","progress":0.6208458871443928,"total":1542,"current":1215}
+{"_e":"metro:bundling:progress","_t":1790491266972,"id":"1","progress":0.6208458871443928,"total":1553,"current":1221}
+{"_e":"metro:bundling:progress","_t":1790491267075,"id":"1","progress":0.6208458871443928,"total":1570,"current":1230}
+{"_e":"metro:bundling:progress","_t":1790491267177,"id":"1","progress":0.6274493003961883,"total":1573,"current":1246}
+{"_e":"metro:bundling:progress","_t":1790491267277,"id":"1","progress":0.6484700512613318,"total":1592,"current":1282}
+{"_e":"metro:bundling:progress","_t":1790491267377,"id":"1","progress":0.6577672288172419,"total":1614,"current":1309}
+{"_e":"metro:bundling:progress","_t":1790491267479,"id":"1","progress":0.6577672288172419,"total":1744,"current":1366}
+{"_e":"metro:bundling:progress","_t":1790491267579,"id":"1","progress":0.6577672288172419,"total":1799,"current":1421}
+{"_e":"metro:bundling:progress","_t":1790491267680,"id":"1","progress":0.6577672288172419,"total":1840,"current":1466}
+{"_e":"metro:bundling:progress","_t":1790491267782,"id":"1","progress":0.6577672288172419,"total":1846,"current":1482}
+{"_e":"metro:bundling:progress","_t":1790491267882,"id":"1","progress":0.6577672288172419,"total":1857,"current":1496}
+{"_e":"metro:bundling:progress","_t":1790491267982,"id":"1","progress":0.6774759251234275,"total":1871,"current":1540}
+{"_e":"metro:bundling:progress","_t":1790491268083,"id":"1","progress":0.6801635705079206,"total":1877,"current":1548}
+{"_e":"metro:bundling:progress","_t":1790491268185,"id":"1","progress":0.6825342317661633,"total":1881,"current":1554}
+{"_e":"metro:bundling:progress","_t":1790491268290,"id":"1","progress":0.6857772868309775,"total":1885,"current":1561}
+{"_e":"metro:bundling:progress","_t":1790491268390,"id":"1","progress":0.7050667674477199,"total":1890,"current":1587}
+{"_e":"metro:bundling:progress","_t":1790491268491,"id":"1","progress":0.7164540014679448,"total":1908,"current":1615}
+{"_e":"metro:bundling:progress","_t":1790491268591,"id":"1","progress":0.7164540014679448,"total":1927,"current":1624}
+{"_e":"metro:bundling:progress","_t":1790491268691,"id":"1","progress":0.7164540014679448,"total":2001,"current":1649}
+{"_e":"metro:bundling:progress","_t":1790491268791,"id":"1","progress":0.7247198215934647,"total":2031,"current":1729}
+{"_e":"metro:bundling:progress","_t":1790491268892,"id":"1","progress":0.7424680454084633,"total":2053,"current":1769}
+{"_e":"metro:bundling:progress","_t":1790491268993,"id":"1","progress":0.764989846207767,"total":2066,"current":1807}
+{"_e":"metro:bundling:progress","_t":1790491269094,"id":"1","progress":0.7911634349030471,"total":2090,"current":1859}
+{"_e":"metro:bundling:progress","_t":1790491269193,"id":"1","progress":0.8072698565868166,"total":2108,"current":1894}
+{"_e":"metro:bundling:progress","_t":1790491269294,"id":"1","progress":0.8196898241246129,"total":2124,"current":1923}
+{"_e":"metro:bundling:progress","_t":1790491269394,"id":"1","progress":0.8290806180037186,"total":2135,"current":1944}
+{"_e":"metro:bundling:progress","_t":1790491269496,"id":"1","progress":0.8767688928430581,"total":2137,"current":2001}
+{"_e":"metro:bundling:progress","_t":1790491269597,"id":"1","progress":0.8902622544093577,"total":2143,"current":2022}
+{"_e":"metro:bundling:progress","_t":1790491269697,"id":"1","progress":0.9013642030215756,"total":2174,"current":2064}
+{"_e":"metro:bundling:progress","_t":1790491269797,"id":"1","progress":0.9086615599606644,"total":2224,"current":2120}
+{"_e":"metro:bundling:progress","_t":1790491269897,"id":"1","progress":0.9086615599606644,"total":2306,"current":2170}
+{"_e":"metro:bundling:progress","_t":1790491269997,"id":"1","progress":0.9086615599606644,"total":2335,"current":2220}
+{"_e":"metro:bundling:progress","_t":1790491270097,"id":"1","progress":0.9390669809471218,"total":2359,"current":2286}
+{"_e":"metro:bundling:progress","_t":1790491270198,"id":"1","progress":0.9390669809471218,"total":2474,"current":2347}
+{"_e":"metro:bundling:progress","_t":1790491270298,"id":"1","progress":0.9390669809471218,"total":2666,"current":2417}
+{"_e":"metro:bundling:progress","_t":1790491270398,"id":"1","progress":0.9390669809471218,"total":2767,"current":2481}
+{"_e":"metro:bundling:progress","_t":1790491270503,"id":"1","progress":0.9390669809471218,"total":2816,"current":2514}
+{"_e":"metro:bundling:progress","_t":1790491270603,"id":"1","progress":0.9390669809471218,"total":2850,"current":2553}
+{"_e":"metro:bundling:progress","_t":1790491270703,"id":"1","progress":0.9390669809471218,"total":2890,"current":2597}
+{"_e":"metro:bundling:progress","_t":1790491270803,"id":"1","progress":0.9390669809471218,"total":2934,"current":2636}
+{"_e":"metro:bundling:progress","_t":1790491270903,"id":"1","progress":0.9390669809471218,"total":2957,"current":2680}
+{"_e":"metro:bundling:progress","_t":1790491271003,"id":"1","progress":0.9390669809471218,"total":2974,"current":2719}
+{"_e":"metro:bundling:progress","_t":1790491271103,"id":"1","progress":0.9390669809471218,"total":2991,"current":2769}
+{"_e":"metro:bundling:progress","_t":1790491271203,"id":"1","progress":0.9390669809471218,"total":2999,"current":2808}
+{"_e":"metro:bundling:progress","_t":1790491271303,"id":"1","progress":0.9390669809471218,"total":3006,"current":2852}
+{"_e":"metro:bundling:progress","_t":1790491271403,"id":"1","progress":0.9390669809471218,"total":3016,"current":2912}
+{"_e":"metro:bundling:progress","_t":1790491271505,"id":"1","progress":0.9575281738559879,"total":3028,"current":2963}
+{"_e":"metro:bundling:progress","_t":1790491271605,"id":"1","progress":0.9960422202412009,"total":3029,"current":3023}
+{"_e":"metro:bundling:progress","_t":1790491271706,"id":"1","progress":0.999,"total":3029,"current":3028}
+{"_e":"metro:bundling:progress","_t":1790491272691,"id":"1","progress":0.999,"total":3029,"current":3029}
+{"_e":"metro:bundling:progress","_t":1790491272792,"id":"1","progress":0.999,"total":3031,"current":3031}
+{"_e":"metro:bundling:done","_t":1790491272990,"id":"1","total":3031,"ms":10109.511959}
+{"_e":"metro:server_log","_t":1790492027157,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790493133163,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790493734832,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790502751194,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790504745201,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790505745391,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790507148204,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790509145331,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790509878196,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790510787205,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790511870210,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790513084215,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}
+{"_e":"metro:server_log","_t":1790513538210,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","com.lisno.mobile.dev","sdk_gphone16k_arm64 - 17 - API 37","60"]}

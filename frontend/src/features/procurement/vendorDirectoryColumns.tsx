@@ -56,7 +56,16 @@ export const vendorDirectoryColumns: readonly VendorDirectoryColumn[] = [
   } },
   { id: "basket", header: "Basket", width: { weight: 25, min: 130, max: 220 }, placement: "field", render: (vendor) => {
     const summary = vendor.procurementSummary;
-    return <div className="vendor-directory__basket"><span className="sr-only">Main Basket: </span>{basketName(summary?.mainBasket)}{summary?.mainBasket && summary.mainBasket.status !== "active" ? <small>Unavailable for new selections</small> : null}<small className="vendor-directory__sub-basket"><span aria-hidden="true">↳ </span><span className="sr-only">Sub Basket: </span>{basketName(summary?.subBasket)}</small></div>;
+    const mains = summary?.mainBaskets?.length ? summary.mainBaskets : summary?.mainBasket ? [summary.mainBasket] : [];
+    const subs = summary?.subBaskets?.length ? summary.subBaskets : summary?.subBasket ? [{ ...summary.subBasket, basketId: summary.mainBasket?.id ?? null }] : [];
+    const ungrouped = subs.filter((sub) => !mains.some((main) => main.id === sub.basketId));
+    return <div className="vendor-directory__basket">
+      {mains.length > 1 || subs.length > 1 ? <small className="vendor-directory__basket-count">{mains.length} Main Baskets · {subs.length} Sub Baskets</small> : null}
+      {mains.length ? mains.map((main) => <div key={main.id} className="vendor-directory__basket-group"><span className="sr-only">Main Basket: </span>{basketName(main)}{main.status !== "active" ? <small>Unavailable for new selections</small> : null}
+        {subs.filter((sub) => sub.basketId === main.id).length ? subs.filter((sub) => sub.basketId === main.id).map((sub) => <small key={sub.id} className="vendor-directory__sub-basket"><span aria-hidden="true">↳ </span><span className="sr-only">Sub Basket: </span>{basketName(sub)}</small>) : <small className="vendor-directory__sub-basket"><span aria-hidden="true">↳ </span><span className="sr-only">Sub Basket: </span>Not recorded</small>}
+      </div>) : <div><span className="sr-only">Main Basket: </span>Not recorded{!ungrouped.length ? <small className="vendor-directory__sub-basket"><span aria-hidden="true">↳ </span><span className="sr-only">Sub Basket: </span>Not recorded</small> : null}</div>}
+      {ungrouped.length ? <div className="vendor-directory__basket-group"><small>Unavailable Main Basket</small>{ungrouped.map((sub) => <small key={sub.id} className="vendor-directory__sub-basket"><span aria-hidden="true">↳ </span><span className="sr-only">Sub Basket: </span>{basketName(sub)}</small>)}</div> : null}
+    </div>;
   } },
   { id: "status", header: "Status", width: { fixed: 124 }, placement: "field", render: (vendor) => <div><span className={`vendor-directory__status vendor-directory__status--${vendor.status}`}>{vendor.status === "active" ? "Active" : vendor.status === "inactive" ? "Inactive" : "Archived"}</span>{vendor.status !== "archived" && vendor.procurementSummary?.currentAddressVerifiedPhysically !== true ? <small className="vendor-directory__review">Under Review</small> : null}</div> },
   { id: "kpi", header: "Vendor KPI", width: { fixed: 112 }, placement: "field", render: () => <span className="vendor-directory__unavailable">Not available</span> },

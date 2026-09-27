@@ -1,14 +1,14 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { View } from "react-native";
-import type { KnowledgeMaster, ProcurementVendorCertificateUploadPolicy, ProcurementVendorCertificateUploadResult, ProcurementVendorDetail, ProcurementVendorPhotoMutationResult, ProcurementVendorProfileInput } from "../../../../shared/knowledge/knowledgeTypes";
-import { profileFromDraft, validateVendorDraft, vendorDraft, VENDOR_BANK_FIELDS, VENDOR_ORGANIZATION_OPTIONS, VENDOR_TEXT_FIELDS, type VendorDraft } from "../../../../shared/knowledge/vendorProfileDraft";
+import type { KnowledgeBasket, KnowledgeMaster, KnowledgeSubBasket, ProcurementVendorCertificateUploadPolicy, ProcurementVendorCertificateUploadResult, ProcurementVendorDetail, ProcurementVendorPhotoMutationResult, ProcurementVendorProfileInput } from "../../../../shared/knowledge/knowledgeTypes";
+import { profileFromDraft, validateVendorDraft, vendorDraft, VENDOR_BANK_FIELDS, VENDOR_BASKET_SELECTION_LIMITS, VENDOR_ORGANIZATION_OPTIONS, VENDOR_TEXT_FIELDS, type VendorDraft } from "../../../../shared/knowledge/vendorProfileDraft";
 import { ApiError } from "../../core/http/apiClient";
 import { pickDocument, releaseSelectedAsset, TransferHttpError, type SelectedAsset } from "../../platform/files";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { Button, Field, StateView } from "../../ui/primitives";
 import { createIdempotencyKey } from "../finance/money";
-import { KnowledgeBasketEditor } from "./KnowledgeCatalogManagement";
+import { KnowledgeVendorBasketChoices, KnowledgeVendorBasketCreator, type VendorBasketGroup } from "./KnowledgeVendorBasketControls";
 import { KnowledgeVendorBaseline } from "./KnowledgeVendorBaseline";
 import { allKnowledgePages, type KnowledgeMobileContext } from "./knowledgeRuntime";
 import { KnowledgeCard, KnowledgeChoice, KnowledgeModal, KnowledgeSelect, KnowledgeText, knowledgeStyles as s } from "./knowledgeUi";
@@ -35,6 +35,7 @@ export function KnowledgeVendorEditor({ context, existing, onClose, onSaved }: {
 
 function VendorForm({ context, initial, accessError, onClose, onSaved }: { readonly context: KnowledgeMobileContext; readonly initial?: ProcurementVendorDetail; readonly accessError: boolean; readonly onClose: () => void; readonly onSaved: (value: KnowledgeMaster) => void }) {
   const runtime = useConfiguredRuntime();
+  const queryClient = useQueryClient();
   const api = runtime.runtime.api.authenticated;
   const [base, setBase] = useState(initial);
   const [draft, setDraft] = useState(() => vendorDraft(initial));
@@ -50,6 +51,9 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
   const [partial, setPartial] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [basketEditor, setBasketEditor] = useState<"main" | "sub" | null>(null);
+  const [subCreationParentId, setSubCreationParentId] = useState("");
+  const [prunedChildren, setPrunedChildren] = useState(0);
+  const [catalogRefreshWarning, setCatalogRefreshWarning] = useState("");
   const [baselineOpen, setBaselineOpen] = useState(false);
   const mounted = useRef(true);
   const controller = useRef(new AbortController());
@@ -73,9 +77,30 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
   }, []);
   const readOnly = Boolean(base ? !context.canUpdate || base.status === "archived" : !context.canCreate);
   const policy = useQuery({ queryKey: context.key("vendor-certificate-policy"), queryFn: ({ signal }) => api.get<ProcurementVendorCertificateUploadPolicy>(`${VENDORS}/msme-certificate-upload-policy`, { signal }), enabled: context.ready && context.canRead && !readOnly, retry: false });
-  const baskets = useQuery({ queryKey: context.key("baskets", "vendor"), queryFn: () => allKnowledgePages(page => context.api.listKnowledgeBaskets(page)), enabled: context.ready && context.canRead });
-  const subBaskets = useQuery({ queryKey: context.key("sub-baskets", draft.mainBasketId), queryFn: () => allKnowledgePages(page => context.api.listKnowledgeSubBaskets(draft.mainBasketId, page)), enabled: context.ready && context.canRead && Boolean(draft.mainBasketId) });
-  const currentBasket = baskets.data?.find(value => value.id === draft.mainBasketId);
+  const baskets = useQuery({ queryKey: context.key("baskets", "vendor"), queryFn: () => allKnowledgePages(page => context.api.listKnowledgeBaskets({ ...page, includeArchived: true })), enabled: context.ready && context.canRead });
+  const catalogBaskets = new Map((baskets.data ?? []).map(value => [value.id, value]));
+  const selectedCatalogParentIds = draft.mainBasketIds.filter(id => catalogBaskets.get(id)?.status === "active").sort();
+  const subQueries = useQueries({ queries: selectedCatalogParentIds.map(parentId => ({ queryKey: context.key("vendor-sub-baskets", parentId), queryFn: () => allKnowledgePages(page => context.api.listKnowledgeSubBaskets(parentId, page)), enabled: context.ready && context.canRead })) });
+  const subCatalog = new Map<string, readonly KnowledgeSubBasket[]>(selectedCatalogParentIds.map((id, index) => [id, subQueries[index]?.data ?? []]));
+  const savedMainBaskets = base?.procurementSummary.mainBaskets ?? (base?.procurementSummary.mainBasket ? [base.procurementSummary.mainBasket] : []);
+  const savedSubBaskets = base?.procurementSummary.subBaskets ?? (base?.procurementSummary.subBasket ? [{ ...base.procurementSummary.subBasket, basketId: base.procurementProfile?.mainBasketId ?? null }] : []);
+  const original = vendorDraft(base);
+  const subParentById = new Map<string, string | null>(savedSubBaskets.map(value => [value.id, value.basketId]));
+  for (const rows of subCatalog.values()) for (const value of rows) subParentById.set(value.id, value.basketId);
+  const mainName = (id: string) => catalogBaskets.get(id)?.name ?? savedMainBaskets.find(value => value.id === id)?.name ?? `Unavailable Main Basket ${id}`;
+  const mainGroups: VendorBasketGroup[] = [{ id: "main", title: "Main Baskets", options: [...(baskets.data ?? []).map(value => ({ id: value.id, label: `${value.name}${value.status === "active" ? "" : ` (${value.status})`}`, disabled: value.status !== "active" && !draft.mainBasketIds.includes(value.id) })), ...draft.mainBasketIds.filter(id => !catalogBaskets.has(id)).map(id => ({ id, label: `${mainName(id)} (unavailable)` }))] }];
+  const subGroups: VendorBasketGroup[] = draft.mainBasketIds.map(parentId => {
+    const listed = subCatalog.get(parentId) ?? [];
+    const listedIds = new Set(listed.map(value => value.id));
+    const retained = savedSubBaskets.filter(value => value.basketId === parentId && draft.subBasketIds.includes(value.id) && !listedIds.has(value.id));
+    return { id: parentId, title: mainName(parentId), options: [...listed.map(value => ({ id: value.id, label: value.name, disabled: catalogBaskets.get(parentId)?.status !== "active" && !draft.subBasketIds.includes(value.id) })), ...retained.map(value => ({ id: value.id, label: `${value.name ?? `Unavailable Sub Basket ${value.id}`} (unavailable)` }))] };
+  });
+  const groupedSubIds = new Set(subGroups.flatMap(group => group.options.map(option => option.id)));
+  const unresolvedSubs = draft.subBasketIds.filter(id => !groupedSubIds.has(id));
+  if (unresolvedSubs.length) subGroups.push({ id: "unavailable", title: "Unavailable saved Sub Baskets", options: unresolvedSubs.map(id => ({ id, label: `${savedSubBaskets.find(value => value.id === id)?.name ?? `Unavailable Sub Basket ${id}`} (unavailable)` })) });
+  const catalogsReady = baskets.isSuccess && subQueries.every(query => query.isSuccess);
+  const activeSelectedParents = draft.mainBasketIds.map(id => catalogBaskets.get(id)).filter((value): value is KnowledgeBasket => value?.status === "active");
+  const subCreationParent = activeSelectedParents.find(value => value.id === subCreationParentId) ?? (activeSelectedParents.length === 1 ? activeSelectedParents[0] : undefined);
   const dirty = JSON.stringify(draft) !== JSON.stringify(vendorDraft(base)) || Boolean(certificate || photo || removePhoto);
 
   async function loadDetail(id: string) {
@@ -146,6 +171,45 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
     if (key === "currentAddressVerifiedPhysically") setConfirmAddress(value === "yes");
     setErrors({}); command.current = null; save.reset();
   }
+  function toggleMainBasket(id: string) {
+    const removing = draft.mainBasketIds.includes(id);
+    if (!removing && draft.mainBasketIds.length >= VENDOR_BASKET_SELECTION_LIMITS.main) { setErrors({ mainBasketIds: `Choose no more than ${VENDOR_BASKET_SELECTION_LIMITS.main} Main Baskets.` }); return; }
+    const removedChildren = removing ? draft.subBasketIds.filter(childId => subParentById.get(childId) === id) : [];
+    setDraft(current => ({ ...current,
+      mainBasketIds: removing ? current.mainBasketIds.filter(value => value !== id) : [...current.mainBasketIds, id].sort(),
+      subBasketIds: removing ? current.subBasketIds.filter(value => !removedChildren.includes(value)) : current.subBasketIds
+    }));
+    if (removing && subCreationParentId === id) setSubCreationParentId("");
+    setPrunedChildren(removedChildren.length);
+    setErrors({}); command.current = null; save.reset();
+  }
+  function toggleSubBasket(id: string) {
+    if (!draft.subBasketIds.includes(id) && draft.subBasketIds.length >= VENDOR_BASKET_SELECTION_LIMITS.sub) { setErrors({ subBasketIds: `Choose no more than ${VENDOR_BASKET_SELECTION_LIMITS.sub} Sub Baskets.` }); return; }
+    change("subBasketIds", draft.subBasketIds.includes(id) ? draft.subBasketIds.filter(value => value !== id) : [...draft.subBasketIds, id].sort());
+    setPrunedChildren(0);
+  }
+  function createdBasket(created: KnowledgeBasket | KnowledgeSubBasket) {
+    if ("basketId" in created) {
+      if (!subCreationParent || created.basketId !== subCreationParent.id) { setErrors({ subBasketIds: "The new Sub Basket parent could not be confirmed. Refresh the catalog." }); return; }
+      queryClient.setQueryData<readonly KnowledgeSubBasket[]>(context.key("vendor-sub-baskets", created.basketId), previous => previous ? [...previous.filter(value => value.id !== created.id), created] : previous);
+      change("subBasketIds", [...draft.subBasketIds, created.id].sort());
+      void queryClient.invalidateQueries({ queryKey: context.key("vendor-sub-baskets", created.basketId) });
+    } else {
+      queryClient.setQueryData<readonly KnowledgeBasket[]>(context.key("baskets", "vendor"), previous => previous ? [...previous.filter(value => value.id !== created.id), created] : previous);
+      change("mainBasketIds", [...draft.mainBasketIds, created.id].sort());
+      setSubCreationParentId(created.id);
+      void baskets.refetch();
+    }
+    setPrunedChildren(0);
+    setBasketEditor(null);
+    refreshAfterBasketCreate();
+  }
+  function refreshAfterBasketCreate() {
+    setCatalogRefreshWarning("");
+    void Promise.resolve().then(() => context.refresh()).catch(() => {
+      if (mounted.current) setCatalogRefreshWarning("Basket created and selected. Other Configuration lists could not refresh.");
+    });
+  }
   async function chooseFile(kind: "certificate" | "photo") {
     if (blocked || !policy.data || fileOperation.current) return;
     fileOperation.current = true;
@@ -176,7 +240,17 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
     const next = validateVendorDraft(draft, { requireOrganizationType: !base });
     if (draft.msmeRegistered === "yes" && !certificate && !base?.msmeCertificate) next.msmeCertificate = "Upload an MSME Certificate.";
     if (certificate && (!policy.data || policy.isError)) next.msmeCertificate = "Load the certificate upload requirements before saving.";
-    if (!baskets.isSuccess || !subBaskets.isSuccess) next.mainBasketId = "Load the complete procurement classification before saving.";
+    if (!baskets.isSuccess) next.mainBasketIds = "Load the complete Main Basket catalog before saving.";
+    if (subQueries.some(query => !query.isSuccess)) next.subBasketIds = "Load the selected Main Baskets' complete Sub Basket catalogs before saving.";
+    for (const id of draft.mainBasketIds) {
+      const basket = catalogBaskets.get(id);
+      if (!original.mainBasketIds.includes(id) && (!basket || basket.status !== "active")) next.mainBasketIds = "Choose active Main Baskets only.";
+    }
+    for (const id of draft.subBasketIds) {
+      const parentId = subParentById.get(id);
+      if (parentId && !draft.mainBasketIds.includes(parentId)) next.subBasketIds = "Every Sub Basket must belong to a selected Main Basket.";
+      if (!original.subBasketIds.includes(id) && (!parentId || !subCatalog.get(parentId)?.some(value => value.id === id) || catalogBaskets.get(parentId)?.status !== "active")) next.subBasketIds = "Choose Sub Baskets from active selected Main Baskets only.";
+    }
     setErrors(next);
     if (Object.keys(next).length) return;
     submission.current = true; save.mutate();
@@ -214,11 +288,19 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
       {errors.currentAddressVerifiedPhysically ? <KnowledgeText error>{errors.currentAddressVerifiedPhysically}</KnowledgeText> : null}
     </KnowledgeCard>
     <KnowledgeCard title="Procurement classification">
-      <KnowledgeSelect label="Main Basket" value={draft.mainBasketId} disabled={blocked || !baskets.isSuccess} placeholder="Select main basket" options={(baskets.data ?? []).map(value => ({ value: value.id, label: value.name, disabled: value.status !== "active" && value.id !== base?.procurementProfile?.mainBasketId }))} onChange={value => { change("mainBasketId", value); change("subBasketId", ""); }} />
-      <KnowledgeSelect label="Sub Basket" value={draft.subBasketId} disabled={blocked || !subBaskets.isSuccess} placeholder="Select sub basket" options={(subBaskets.data ?? []).map(value => ({ value: value.id, label: value.name }))} onChange={value => change("subBasketId", value)} />
-      {errors.mainBasketId || errors.subBasketId ? <KnowledgeText error>{errors.mainBasketId ?? errors.subBasketId}</KnowledgeText> : null}
-      {(baskets.isError || subBaskets.isError) ? <Button label="Retry classification" onPress={() => { void baskets.refetch(); void subBaskets.refetch(); }} /> : null}
-      {context.canCreate && !readOnly ? <View style={s.row}><Button label="Add main basket" variant="secondary" disabled={blocked} onPress={() => setBasketEditor("main")} /><Button label="Add sub-basket" variant="secondary" disabled={blocked || currentBasket?.status !== "active"} onPress={() => setBasketEditor("sub")} /></View> : null}
+      {catalogRefreshWarning ? <><KnowledgeText error>{catalogRefreshWarning}</KnowledgeText><Button label="Retry catalog refresh" variant="secondary" onPress={refreshAfterBasketCreate} /></> : null}
+      {!catalogsReady ? <KnowledgeText error={baskets.isError || subQueries.some(query => query.isError)}>{baskets.isError || subQueries.some(query => query.isError) ? "Some classification choices could not be loaded. Saved selections are preserved." : "Loading classification choices…"}</KnowledgeText> : null}
+      <KnowledgeVendorBasketChoices label="Main Baskets" selectedIds={draft.mainBasketIds} groups={mainGroups} disabled={blocked || !baskets.isSuccess} readOnly={readOnly} onToggle={toggleMainBasket} />
+      {prunedChildren ? <KnowledgeText>{prunedChildren} selected Sub Basket{prunedChildren === 1 ? " was" : "s were"} removed with its Main Basket. Review before saving.</KnowledgeText> : null}
+      {errors.mainBasketIds ? <KnowledgeText error>{errors.mainBasketIds}</KnowledgeText> : null}
+      <KnowledgeVendorBasketChoices label="Sub Baskets" selectedIds={draft.subBasketIds} groups={subGroups} disabled={blocked || !catalogsReady} readOnly={readOnly} onToggle={toggleSubBasket} />
+      {errors.subBasketIds ? <KnowledgeText error>{errors.subBasketIds}</KnowledgeText> : null}
+      {(baskets.isError || subQueries.some(query => query.isError)) ? <Button label="Retry classification" onPress={() => { void baskets.refetch(); void Promise.all(subQueries.map(query => query.refetch())); }} /> : null}
+      {context.canCreate && !readOnly ? <View style={s.stack}>
+        <Button label="Add main basket" variant="secondary" disabled={blocked || !baskets.isSuccess} onPress={() => setBasketEditor("main")} />
+        {activeSelectedParents.length > 1 ? <KnowledgeSelect label="Main Basket for new Sub Basket" value={subCreationParent?.id ?? ""} disabled={blocked} placeholder="Choose a selected Main Basket" options={activeSelectedParents.map(value => ({ value: value.id, label: value.name }))} onChange={setSubCreationParentId} /> : activeSelectedParents.length === 1 ? <KnowledgeText>New Sub Basket parent: {activeSelectedParents[0]!.name}</KnowledgeText> : null}
+        <Button label="Add sub-basket" variant="secondary" disabled={blocked || !subCreationParent || !catalogsReady} onPress={() => setBasketEditor("sub")} />
+      </View> : null}
     </KnowledgeCard>
     <KnowledgeCard title="Vendor documentation">
       <KnowledgeText>Optional geo-tagged JPEG, PNG or WebP. Original metadata is preserved; a picture does not verify the address.</KnowledgeText>
@@ -231,6 +313,6 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
     {!readOnly ? <Button label={base ? "Save vendor changes" : "Save vendor"} disabled={blocked} loading={save.isPending} onPress={submit} /> : null}
     {base ? <Button label="Review missing historical allocations" variant="secondary" disabled={busy || dirty || recovery || partial || accessError} onPress={() => setBaselineOpen(true)} /> : null}
     {baselineOpen && base ? <KnowledgeVendorBaseline context={context} vendorId={base.id} canUpdate={context.canUpdate && base.status !== "archived"} onClose={() => setBaselineOpen(false)} /> : null}
-    {basketEditor ? <KnowledgeBasketEditor context={context} {...(basketEditor === "sub" && currentBasket ? { parent: currentBasket } : {})} onClose={() => setBasketEditor(null)} onSaved={() => { setBasketEditor(null); void baskets.refetch(); void subBaskets.refetch(); }} /> : null}
+    {basketEditor ? <KnowledgeVendorBasketCreator context={context} {...(basketEditor === "sub" && subCreationParent ? { parent: subCreationParent } : {})} onClose={() => setBasketEditor(null)} onSaved={createdBasket} /> : null}
   </KnowledgeModal>;
 }

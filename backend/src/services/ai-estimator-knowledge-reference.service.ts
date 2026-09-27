@@ -910,8 +910,18 @@ export function createAiEstimatorKnowledgeReferenceService(
       const query = listFilter(filters, ["codeNormalized", "nameNormalized"]);
       if (masterType === "vendors") {
         if (filters.vendorType) query["procurementProfile.vendorType"] = filters.vendorType;
-        if (filters.mainBasketId) query["procurementProfile.mainBasketId"] = filters.mainBasketId;
-        if (filters.subBasketId) query["procurementProfile.subBasketId"] = filters.subBasketId;
+        const classificationFilters: Record<string, unknown>[] = [];
+        if (filters.mainBasketId) classificationFilters.push({ $or: [
+          { "procurementProfile.mainBasketIds": filters.mainBasketId }, { "procurementProfile.mainBasketId": filters.mainBasketId }
+        ] });
+        if (filters.subBasketId) classificationFilters.push({ $or: [
+          { "procurementProfile.subBasketIds": filters.subBasketId }, { "procurementProfile.subBasketId": filters.subBasketId }
+        ] });
+        if (classificationFilters.length) query.$and = classificationFilters;
+        if (filters.mainBasketId && filters.subBasketId) {
+          const child = await AiEstimatorKnowledgeSubBasketModel.findById(filters.subBasketId).select({ basketId: 1 }).lean().exec();
+          if (!child || String(child.basketId) !== filters.mainBasketId) query._id = { $in: [] };
+        }
       }
       const [rows, total, directoryOverview] = await Promise.all([
         model.find(query).sort({ displayOrder: 1, nameNormalized: 1, _id: 1 }).skip(pagination.offset).limit(pagination.limit).lean().exec(),
@@ -1116,7 +1126,7 @@ export function createAiEstimatorKnowledgeReferenceService(
           oldValues: masterAuditState(current, masterType),
           newValues: { ...masterAuditState(updated!, masterType), ...(masterType === "vendors" && input.procurementProfile ? { changedProfileFields: Object.keys(input.procurementProfile).filter(key => {
             const nextValue = (set.procurementProfile as unknown as Row)[key];
-            if (key === "executionType" || key === "bankAccount" || key === "organizationType") {
+            if (key === "executionType" || key === "bankAccount" || key === "organizationType" || key === "mainBasketIds" || key === "subBasketIds") {
               const previousValue = storedProcurementVendorProfile(current.procurementProfile)?.[key] ?? null;
               return JSON.stringify(previousValue) !== JSON.stringify(nextValue);
             }
@@ -1244,7 +1254,9 @@ async function subBasketDeletionSnapshot(parent: Row, group: Row, session: Clien
     return rows.length ? [{ sectionId: section._id, version: section.version,
       mainLineId: section.mainLineId, revisionId: section.revisionId, rows }] : [];
   });
-  const vendorReferenceCount = await AiEstimatorKnowledgeVendorModel.countDocuments({ "procurementProfile.subBasketId": subBasketId }).session(session).exec();
+  const vendorReferenceCount = await AiEstimatorKnowledgeVendorModel.countDocuments({ $or: [
+    { "procurementProfile.subBasketIds": subBasketId }, { "procurementProfile.subBasketId": subBasketId }
+  ] }).session(session).exec();
   const impactToken = createHash("sha256").update(JSON.stringify(canonicalImpactValue({
     basketId, basketVersion: parent.version, subBasketId, subBasketName: group.name,
     version: group.version, children, references, vendorReferenceCount
@@ -1271,7 +1283,9 @@ async function basketDeletionImpact(
   basketId: string,
   session?: ClientSession
 ): Promise<AiEstimatorKnowledgeBasketDeletionImpact> {
-  const vendorQuery = AiEstimatorKnowledgeVendorModel.countDocuments({ "procurementProfile.mainBasketId": basketId });
+  const vendorQuery = AiEstimatorKnowledgeVendorModel.countDocuments({ $or: [
+    { "procurementProfile.mainBasketIds": basketId }, { "procurementProfile.mainBasketId": basketId }
+  ] });
   const subBasketCountQuery = AiEstimatorKnowledgeSubBasketModel.countDocuments({ basketId });
   const mainLineCountQuery = AiEstimatorKnowledgeMainLineModel.countDocuments({ basketId });
   const sectionQuery = AiEstimatorKnowledgeSectionModel.find({
@@ -1946,7 +1960,7 @@ function masterAuditState(
 ): Record<string, unknown> {
   if (masterType === "vendors") {
     const profile = storedProcurementVendorProfile(row.procurementProfile);
-    return { ...auditState(row), profileComplete: procurementVendorProfileComplete(profile, row.msmeCertificate), msmeCertificateId: procurementVendorCertificateDescriptor(String(row._id), row.msmeCertificate)?.id ?? null, currentAddressVerifiedPhysically: profile?.currentAddressVerifiedPhysically ?? null, physicalAddressVerifiedAt: profile?.physicalAddressVerifiedAt ?? null, physicalAddressVerifiedById: profile?.physicalAddressVerifiedById ?? null, mainBasketId: profile?.mainBasketId ?? null, subBasketId: profile?.subBasketId ?? null };
+    return { ...auditState(row), profileComplete: procurementVendorProfileComplete(profile, row.msmeCertificate), msmeCertificateId: procurementVendorCertificateDescriptor(String(row._id), row.msmeCertificate)?.id ?? null, currentAddressVerifiedPhysically: profile?.currentAddressVerifiedPhysically ?? null, physicalAddressVerifiedAt: profile?.physicalAddressVerifiedAt ?? null, physicalAddressVerifiedById: profile?.physicalAddressVerifiedById ?? null, mainBasketIds: profile?.mainBasketIds ?? null, subBasketIds: profile?.subBasketIds ?? null, mainBasketId: profile?.mainBasketId ?? null, subBasketId: profile?.subBasketId ?? null };
   }
   if (masterType !== "surfaces") return auditState(row);
   return {

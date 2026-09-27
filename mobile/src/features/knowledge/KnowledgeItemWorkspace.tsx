@@ -10,7 +10,7 @@ import { StateView } from "../../ui/primitives";
 import { colors, fonts } from "../../ui/tokens";
 import { KNOWLEDGE_MASTER_TYPES, type KnowledgeItemDetail, type KnowledgeJsonObject, type KnowledgeMaster, type KnowledgeMasterType, type KnowledgeSectionEnvelope } from "../../../../shared/knowledge/knowledgeTypes";
 import { KNOWLEDGE_WORKSPACE_SECTION_LABELS, formatKnowledgeDateTime } from "../../../../shared/knowledge/knowledgePresentation";
-import type { KnowledgeWorkspaceSectionKey } from "../../../../shared/knowledge/knowledgeWorkspaceSections";
+import { KNOWLEDGE_WORKSPACE_SECTION_KEYS, type KnowledgeWorkspaceSectionKey } from "../../../../shared/knowledge/knowledgeWorkspaceSections";
 import { validateKnowledgeSection } from "../../../../shared/knowledge/knowledgeSectionValidation";
 import { modeCalculationsIssues } from "../../../../shared/knowledge/knowledgeModeCalculation";
 import { modeDescriptionIssues } from "../../../../shared/knowledge/knowledgeModeDescription";
@@ -197,11 +197,12 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readon
   if (!context.canRead) return <StateView title="Configuration unavailable" message="Your current access does not allow this Configuration workspace." tone="denied" />;
   if (!item && detailQuery.isPending) return <BrandLoader label="Loading Configuration" tone="dark" />;
   if (!item || (detailQuery.error instanceof ApiError && [401, 403, 404].includes(detailQuery.error.status))) return <StateView title="Configuration unavailable" message="This item could not be loaded." actionLabel="Retry" onAction={() => void detailQuery.refetch()} />;
-  const tabKeys: readonly KnowledgeWorkspaceSectionKey[] = item.itemType === "temporary" ? ["overview", "mode", "quality"] : ["overview", "mode", "recommendations", "quality"];
+  const tabKeys = KNOWLEDGE_WORKSPACE_SECTION_KEYS;
   const keys = active === "mode" ? ["advanced", "pricing"] as const : active === "quality" ? [] : [active];
   const loading = keys.some(key => sectionQueries[MOBILE_SECTION_KEYS.indexOf(key)]?.isPending);
   const failed = keys.some(key => sectionQueries[MOBILE_SECTION_KEYS.indexOf(key)]?.isError);
   const sectionPayload = (key: MobileSectionKey) => drafts[key]?.payload ?? saved[key]?.payload ?? {};
+  const recommendationsQuery = sectionQueries[MOBILE_SECTION_KEYS.indexOf("recommendations")];
   const editorProps = { item, context, masters, catalogsReady, readOnly: !editable || locked, onValidityChange: setEditorValid, onBusyChange: setEditorBusy };
   const summary = projectKnowledgeSavedSummary({ sections: Object.fromEntries(MOBILE_SECTION_KEYS.filter(key => saved[key]).map(key => [key, saved[key]!.payload])), ...(qualityQuery.data ? { quality: qualityQuery.data } : {}), masters, baskets: basketQuery.data ?? [], items: relatedQuery.data ?? [], subBaskets: subBasketsQuery.data ?? [] });
   const canSave = active === "quality" ? context.canUpdate && item.status !== "archived" : editable;
@@ -250,11 +251,19 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readon
     <KnowledgeDisclosure title="Quick summary" summary="Saved configuration details">
       {[["Main Basket", item.basketName], ["Sub-Basket", item.subBasketName ?? "Not assigned"], ["Main Line", item.mainLineName]].map(([label, value]) => <View key={label} style={styles.summaryRow}><Text style={[styles.text, { flex: 1 }]}>{label}</Text><Text style={[styles.subtitle, { flex: 1 }]}>{value}</Text></View>)}
       <KnowledgeText>Saved configuration</KnowledgeText>
-      {(["overview", "mode", "recommendations", "quality"] as const).filter(key => item.itemType !== "temporary" || key !== "recommendations").map(key => <View key={key} style={styles.stack}><Text style={styles.subtitle}>{KNOWLEDGE_WORKSPACE_SECTION_LABELS[key]}</Text>
-        {(expandedSummary === key ? summary[key].details : summary[key].preview).map(row => <View key={row.key} style={styles.summaryRow}><Text style={[styles.text, { flex: 1 }]}>{row.label}</Text><Text style={[styles.text, { flex: 1 }]}>{row.value}</Text></View>)}
-        {!summary[key].preview.length ? <KnowledgeText>{key === "quality" && qualityQuery.isPending ? "Loading saved checklist…" : "No saved details available."}</KnowledgeText> : null}
-        {summary[key].details.length > summary[key].preview.length ? <Button label={`${expandedSummary === key ? "Hide" : "Show"} ${KNOWLEDGE_WORKSPACE_SECTION_LABELS[key]} details`} variant="quiet" onPress={() => setExpandedSummary(expandedSummary === key ? null : key)} /> : null}
-      </View>)}
+      {KNOWLEDGE_WORKSPACE_SECTION_KEYS.map(key => {
+        const available = key !== "recommendations" || Boolean(revisionId && saved.recommendations);
+        const rows = available ? expandedSummary === key ? summary[key].details : summary[key].preview : [];
+        const emptyMessage = key === "recommendations"
+          ? !revisionId ? "No revision available." : recommendationsQuery?.isPending && !saved.recommendations ? "Loading saved recommendations…" : recommendationsQuery?.isError && !saved.recommendations ? "Saved recommendations could not be loaded." : "Not configured"
+          : key === "quality" && qualityQuery.isPending ? "Loading saved checklist…" : "No saved details available.";
+        return <View key={key} testID={`saved-summary-${key}`} style={styles.stack}><Text style={styles.subtitle}>{KNOWLEDGE_WORKSPACE_SECTION_LABELS[key]}</Text>
+          {rows.map(row => <View key={row.key} style={styles.summaryRow}><Text style={[styles.text, { flex: 1 }]}>{row.label}</Text><Text style={[styles.text, { flex: 1 }]}>{row.value}</Text></View>)}
+          {!rows.length ? <KnowledgeText error={key === "recommendations" && Boolean(recommendationsQuery?.isError)}>{emptyMessage}</KnowledgeText> : null}
+          {key === "recommendations" && recommendationsQuery?.isError && revisionId ? <View style={styles.stack}>{saved.recommendations ? <KnowledgeText error>The latest saved recommendations could not be loaded. Last saved details are shown.</KnowledgeText> : null}<Button label="Retry saved recommendations" variant="quiet" onPress={() => void recommendationsQuery.refetch()} /></View> : null}
+          {available && summary[key].details.length > summary[key].preview.length ? <Button label={`${expandedSummary === key ? "Hide" : "Show"} ${KNOWLEDGE_WORKSPACE_SECTION_LABELS[key]} details`} variant="quiet" onPress={() => setExpandedSummary(expandedSummary === key ? null : key)} /> : null}
+        </View>;
+      })}
     </KnowledgeDisclosure>
     <KnowledgeDisclosure title="Revision history" summary={revision ? `Revision ${revision.revisionNumber} · ${revision.status}` : "Saved versions"}>
       {revisions.length > 1 ? <KnowledgeSelect label="Revision" value={revisionId} disabled={locked} allowEmpty={false} options={revisions.map(value => ({ value: value.id, label: `Revision ${value.revisionNumber} · ${value.status}` }))} onChange={value => requestNavigation(() => setSelectedRevision(value))} /> : null}

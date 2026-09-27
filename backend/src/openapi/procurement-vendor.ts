@@ -22,6 +22,8 @@ const executionTypes = {
 };
 const legacyExecutionType = { type: "string", enum: ["labor", "material_labour"], description: "Legacy scalar input is normalized to a singleton array." };
 const nullExecutionType = { type: "array", nullable: true, enum: [null] };
+const mainBasketIds = { type: "array", minItems: 1, maxItems: 100, uniqueItems: true, items: { ...id, maxLength: 128 }, description: "Selected Main Basket IDs in stable sorted order." };
+const subBasketIds = { type: "array", minItems: 1, maxItems: 500, uniqueItems: true, items: { ...id, maxLength: 128 }, description: "Selected Sub Basket IDs in stable sorted order; each belongs to a selected Main Basket." };
 const classifications = (execution: Shape) => [
   { properties: { vendorType: { enum: ["execution"] }, executionType: execution, supplier: { type: "boolean", nullable: true, enum: [null] } } },
   { properties: { vendorType: { enum: ["supplier"] }, executionType: nullExecutionType, supplier: { type: "boolean", nullable: false } } }
@@ -47,7 +49,10 @@ const profile: Shape = {
   phoneNumber: { type: "string", minLength: 3, maxLength: 64 }, address: long,
   aadhar: { type: "string", pattern: "^[0-9]{12}$" },
   pan: { type: "string", pattern: "^[A-Z]{5}[0-9]{4}[A-Z]$" },
-  currentAddress: long, currentAddressVerifiedPhysically: { type: "boolean" }, mainBasketId: { ...id, maxLength: 128 }, subBasketId: { ...id, maxLength: 128 }
+  currentAddress: long, currentAddressVerifiedPhysically: { type: "boolean" },
+  mainBasketIds, subBasketIds,
+  mainBasketId: { ...id, maxLength: 128, description: "Deprecated primary Main Basket for older clients." },
+  subBasketId: { ...id, maxLength: 128, description: "Deprecated primary Sub Basket for older clients." }
 };
 const master = knowledge.KnowledgeMaster as { properties: Shape; required: string[] };
 const createMaster = knowledge.KnowledgeMasterCreateRequest as { properties: Shape };
@@ -65,8 +70,9 @@ export const PROCUREMENT_VENDOR_SCHEMAS: Readonly<Record<string, Shape>> = {
     oneOf: classifications({ ...executionTypes, nullable: false })
   },
   KnowledgeVendorProfileInput: {
-    ...object({ ...profile, bankAccount: bankAccountInput, executionType: { oneOf: [{ ...executionTypes, nullable: true }, legacyExecutionType] } }, Object.keys(profile).filter(key => !["reference", "gstNumber", "supplier", "organizationType", "bankAccount"].includes(key))),
-    description: "Execution accepts one or both distinct selections, or a legacy scalar normalized to one selection. Supplier requires null executionType and derives supplier true. Omitted Reference, Organization Type and Bank Account retain existing data on update. GST Yes requires GST Number; MSME Yes requires existing or staged certificate. A supplied Bank Account requires all four core fields; Branch Name is optional and normalizes to null.",
+    ...object({ ...profile, bankAccount: bankAccountInput, executionType: { oneOf: [{ ...executionTypes, nullable: true }, legacyExecutionType] } }, Object.keys(profile).filter(key => !["reference", "gstNumber", "supplier", "organizationType", "bankAccount", "mainBasketIds", "subBasketIds", "mainBasketId", "subBasketId"].includes(key))),
+    description: "New clients send both basket ID arrays. Legacy clients may send a scalar pair; an unchanged pair preserves stored multiple selections and a changed pair replaces them. Conflicting scalar and array selections fail. Execution accepts one or both distinct selections, or a legacy scalar normalized to one selection. Supplier requires null executionType and derives supplier true. Omitted Reference, Organization Type and Bank Account retain existing data on update. GST Yes requires GST Number; MSME Yes requires existing or staged certificate. A supplied Bank Account requires all four core fields; Branch Name is optional and normalizes to null.",
+    allOf: [{ anyOf: [{ required: ["mainBasketIds", "subBasketIds"] }, { required: ["mainBasketId", "subBasketId"] }] }],
     oneOf: [classifications({ oneOf: [executionTypes, legacyExecutionType] })[0], { properties: { vendorType: { enum: ["supplier"] }, executionType: nullExecutionType } }]
   },
   KnowledgeVendorStoredProfile: object(storedProfile),
@@ -74,6 +80,8 @@ export const PROCUREMENT_VENDOR_SCHEMAS: Readonly<Record<string, Shape>> = {
     vendorType: { type: "string", nullable: true, enum: ["execution", "supplier", null] },
     executionType: { ...executionTypes, nullable: true },
     profileComplete: { type: "boolean" }, currentAddressVerifiedPhysically: { type: "boolean", nullable: true },
+    mainBaskets: { type: "array", items: object({ id, name: { type: "string", nullable: true }, status: { type: "string", enum: ["active", "inactive", "archived", "unavailable"] } }) },
+    subBaskets: { type: "array", items: object({ id, basketId: { ...id, nullable: true }, name: { type: "string", nullable: true } }) },
     mainBasket: { ...object({ id, name: { type: "string", nullable: true }, status: { type: "string", enum: ["active", "inactive", "archived", "unavailable"] } }), nullable: true },
     subBasket: { ...object({ id, name: { type: "string", nullable: true } }), nullable: true }
   }),

@@ -138,7 +138,7 @@ describe("vendor profile shared persistence", () => {
     expect(firstPage.items.find(row => row.id === legacy.id)?.procurementSummary).toMatchObject({ profileComplete: false, executionType: null });
     expect(firstPage.items.find(row => row.procurementSummary?.vendorType === "supplier")?.procurementSummary?.executionType).toBeNull();
     for (const item of firstPage.items) {
-      expect(Object.keys(item.procurementSummary!).sort()).toEqual(["vendorType", "executionType", "profileComplete", "currentAddressVerifiedPhysically", "mainBasket", "subBasket"].sort());
+      expect(Object.keys(item.procurementSummary!).sort()).toEqual(["vendorType", "executionType", "profileComplete", "currentAddressVerifiedPhysically", "mainBaskets", "subBaskets", "mainBasket", "subBasket"].sort());
       expect(item).not.toHaveProperty("procurementProfile");
       expect(item).not.toHaveProperty("geoTaggedPicture");
     }
@@ -174,7 +174,7 @@ describe("vendor profile shared persistence", () => {
     expect(page.directoryOverview).toEqual({ totalVendors: 3, activeVendors: 3, underReviewVendors: 2 });
     for (const [id, verification] of [[verified.id, true], [unverified.id, false], [missing.id, null]] as const) {
       const item = page.items.find(row => row.id === id)!;
-      expect(item.procurementSummary).toEqual({ vendorType: null, executionType: null, profileComplete: false, currentAddressVerifiedPhysically: verification, mainBasket: null, subBasket: null });
+      expect(item.procurementSummary).toEqual({ vendorType: null, executionType: null, profileComplete: false, currentAddressVerifiedPhysically: verification, mainBaskets: [], subBaskets: [], mainBasket: null, subBasket: null });
       expect(item).not.toHaveProperty("procurementProfile");
       expect((await reference.getVendorDetail(actor, id)).procurementProfile).toBeNull();
     }
@@ -218,16 +218,22 @@ describe("vendor profile shared persistence", () => {
     const original = (await reference.getVendorDetail(actor, created.id)).procurementProfile!;
     expect(original.executionType).toEqual(["labor"]);
     // Native collection write deliberately bypasses Mongoose's scalar-to-array cast.
-    await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: created.id }, { $set: { "procurementProfile.executionType": "labor" } });
+    await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: created.id }, {
+      $set: { "procurementProfile.executionType": "labor" },
+      $unset: { "procurementProfile.mainBasketIds": "", "procurementProfile.subBasketIds": "" }
+    });
     expect((await AiEstimatorKnowledgeVendorModel.findById(created.id).lean())?.procurementProfile.executionType).toBe("labor");
     expect((await reference.getVendorDetail(actor, created.id)).procurementProfile).toEqual(original);
     const page = await reference.listMasters(actor, "vendors", { vendorType: "execution" }, { limit: 20, offset: 0 });
     expect(page.items[0]).toMatchObject({ procurementSummary: { executionType: ["labor"], profileComplete: true, currentAddressVerifiedPhysically: true, mainBasket: { id: parent.id }, subBasket: { id: child.id } } });
+    expect((await reference.listMasters(actor, "vendors", { mainBasketId: parent.id, subBasketId: child.id }, { limit: 20, offset: 0 })).total).toBe(1);
+    expect((await reference.getSubBasketDeletionImpact(actor, parent.id, child.id)).vendorReferenceCount).toBe(1);
     await reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 1, status: "inactive", description: "Preserved profile" });
     expect((await AiEstimatorKnowledgeVendorModel.collection.findOne({ _id: created.id }))?.procurementProfile.executionType).toBe("labor");
     expect((await reference.getVendorDetail(actor, created.id)).procurementProfile).toEqual(original);
     await reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 2, procurementProfile: { ...profile, executionType: ["labor", "material_labour"], currentAddressVerifiedPhysically: true } });
     expect((await reference.getVendorDetail(actor, created.id)).procurementProfile).toEqual({ ...original, executionType: ["labor", "material_labour"] });
+    expect((await AiEstimatorKnowledgeVendorModel.collection.findOne({ _id: created.id }))?.procurementProfile.mainBasketIds).toEqual([parent.id]);
     await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: created.id }, { $set: { "procurementProfile.executionType": "material_labour" } });
     await reference.archiveMaster(actor, "vendors", created.id, { expectedVersion: 3, reason: "Retired synthetic vendor" });
     expect((await AiEstimatorKnowledgeVendorModel.collection.findOne({ _id: created.id }))?.procurementProfile.executionType).toBe("material_labour");
@@ -239,7 +245,7 @@ describe("vendor profile shared persistence", () => {
     expect(created.code).toMatch(/^PV-/u);
     expect(created).not.toHaveProperty("procurementProfile");
     const detail = await reference.getVendorDetail(actor, created.id);
-    expect(detail.procurementProfile).toEqual({ ...profile, physicalAddressVerifiedAt: null, physicalAddressVerifiedById: null });
+    expect(detail.procurementProfile).toEqual({ ...profile, mainBasketIds: [parent.id], subBasketIds: [child.id], physicalAddressVerifiedAt: null, physicalAddressVerifiedById: null });
     expect(detail.procurementSummary).toMatchObject({ profileComplete: true, vendorType: "execution", mainBasket: { id: parent.id, name: parent.name, status: "active" }, subBasket: { id: child.id, name: child.name } });
     const page = await reference.listMasters(actor, "vendors", { vendorType: "execution", mainBasketId: parent.id, subBasketId: child.id }, { limit: 20, offset: 0 });
     expect(page.total).toBe(1);
@@ -306,6 +312,106 @@ describe("vendor profile shared persistence", () => {
     expect((await reference.getVendorDetail(actor, created.id)).procurementSummary.mainBasket?.status).toBe("inactive");
     await expect(reference.createMaster(actor, "vendors", { name: "Inactive selection", procurementProfile: profile })).rejects.toMatchObject({ code: "VENDOR_BASKET_UNAVAILABLE" });
   });
+  it("retains a missing saved parent on unrelated profile edits without admitting it as a new choice", async () => {
+    const { profile, parent } = await fixture();
+    const created = await reference.createMaster(actor, "vendors", { name: "Unavailable saved parent", procurementProfile: profile });
+    await AiEstimatorKnowledgeBasketModel.collection.deleteOne({ _id: parent.id });
+    await reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 1, procurementProfile: { ...profile, position: "Director" } });
+    expect(await reference.getVendorDetail(actor, created.id)).toMatchObject({ procurementProfile: { mainBasketIds: [parent.id], position: "Director" }, procurementSummary: { mainBaskets: [{ id: parent.id, name: null, status: "unavailable" }] } });
+    await expect(reference.createMaster(actor, "vendors", { name: "Invalid new missing parent", procurementProfile: profile })).rejects.toMatchObject({ code: "VENDOR_BASKET_UNAVAILABLE" });
+  });
+  it("retains a missing saved primary child with an explicitly consistent primary pair", async () => {
+    const { profile, parent, child } = await fixture();
+    const created = await reference.createMaster(actor, "vendors", { name: "Unavailable primary child", procurementProfile: profile });
+    await AiEstimatorKnowledgeSubBasketModel.collection.deleteOne({ _id: child.id });
+    await reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 1, procurementProfile: {
+      ...profile, mainBasketIds: [parent.id], subBasketIds: [child.id], position: "Director"
+    } });
+    expect(await reference.getVendorDetail(actor, created.id)).toMatchObject({
+      procurementProfile: { mainBasketIds: [parent.id], subBasketIds: [child.id], mainBasketId: parent.id, subBasketId: child.id },
+      procurementSummary: { subBaskets: [{ id: child.id, basketId: parent.id, name: null }] }
+    });
+  });
+  it("stores multiple parents and children, lists every safe label, and filters by actual membership", async () => {
+    const { profile, parent, child } = await fixture();
+    const secondParent = await reference.createBasket(actor, { name: "Synthetic plumbing" });
+    const secondChild = await reference.createSubBasket(actor, secondParent.id, { name: "Synthetic lighting" });
+    const emptyParent = await reference.createBasket(actor, { name: "Synthetic painting" });
+    const { mainBasketId: _mainBasketId, subBasketId: _subBasketId, ...fields } = profile;
+    const selection = { ...fields, mainBasketIds: [secondParent.id, emptyParent.id, parent.id], subBasketIds: [secondChild.id, child.id] };
+    const save = { name: "Multi classified vendor", procurementProfile: selection, idempotencyKey: "multi-basket-create" };
+    const created = await reference.createMaster(actor, "vendors", save);
+    expect(await reference.createMaster(actor, "vendors", { ...save, procurementProfile: {
+      ...selection, mainBasketIds: [...selection.mainBasketIds].reverse(), subBasketIds: [...selection.subBasketIds].reverse()
+    } })).toEqual(created);
+    await expect(reference.createMaster(actor, "vendors", { ...save, procurementProfile: {
+      ...selection, subBasketIds: [child.id]
+    } })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    const detail = await reference.getVendorDetail(actor, created.id);
+    expect(detail.procurementProfile).toMatchObject({ mainBasketIds: [...selection.mainBasketIds].sort(), subBasketIds: [...selection.subBasketIds].sort() });
+    expect(selection.mainBasketIds).toEqual([secondParent.id, emptyParent.id, parent.id]);
+    expect(detail.procurementSummary.mainBaskets.map(row => row.id)).toEqual([...selection.mainBasketIds].sort());
+    expect(detail.procurementSummary.subBaskets).toEqual(expect.arrayContaining([
+      { id: child.id, basketId: parent.id, name: child.name },
+      { id: secondChild.id, basketId: secondParent.id, name: secondChild.name }
+    ]));
+    expect(detail.procurementSummary.mainBasket?.id).toBe(detail.procurementProfile?.mainBasketId);
+    expect(detail.procurementSummary.subBasket?.id).toBe(detail.procurementProfile?.subBasketId);
+    await expect(reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 1, procurementProfile: {
+      ...selection, mainBasketId: parent.id, subBasketId: secondChild.id
+    } })).rejects.toMatchObject({ code: "SUB_BASKET_PARENT_MISMATCH" });
+    for (const filter of [{ mainBasketId: parent.id }, { mainBasketId: secondParent.id }, { mainBasketId: emptyParent.id },
+      { subBasketId: child.id }, { subBasketId: secondChild.id }, { mainBasketId: parent.id, subBasketId: child.id }]) {
+      expect((await reference.listMasters(actor, "vendors", filter, { limit: 10, offset: 0 })).total).toBe(1);
+    }
+    const mismatch = await reference.listMasters(actor, "vendors", { mainBasketId: parent.id, subBasketId: secondChild.id, includeDirectoryOverview: true }, { limit: 10, offset: 0 });
+    expect(mismatch).toMatchObject({ items: [], total: 0, directoryOverview: { totalVendors: 1 } });
+    const page = await reference.listMasters(actor, "vendors", {}, { limit: 10, offset: 0 });
+    expect(page.items[0]).not.toHaveProperty("procurementProfile");
+    for (const secret of [profile.aadhar, profile.pan, profile.email, profile.phoneNumber]) expect(JSON.stringify(page)).not.toContain(secret);
+    await reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 1, procurementProfile: {
+      ...selection, mainBasketIds: [...selection.mainBasketIds].reverse(), subBasketIds: [...selection.subBasketIds].reverse()
+    } });
+    const auditRow = await AuditEventModel.findOne({ entityId: created.id, action: "ai_estimator_knowledge_master_updated", "newValues.version": 2 }).lean();
+    expect(auditRow?.newValues.changedProfileFields).toEqual([]);
+    await reference.archiveMaster(actor, "vendors", created.id, { expectedVersion: 2, reason: "Synthetic archived membership" });
+    for (const basketId of [parent.id, secondParent.id, emptyParent.id]) expect((await reference.getBasketDeletionImpact(actor, basketId)).vendorReferenceCount).toBe(1);
+    for (const [basketId, subBasketId] of [[parent.id, child.id], [secondParent.id, secondChild.id]]) {
+      expect((await reference.getSubBasketDeletionImpact(actor, basketId, subBasketId)).vendorReferenceCount).toBe(1);
+    }
+  });
+  it("preserves old-client edits and unavailable selections while rejecting new inactive or orphaned choices", async () => {
+    const { profile, parent, child } = await fixture();
+    const secondParent = await reference.createBasket(actor, { name: "Second classified parent" });
+    const secondChild = await reference.createSubBasket(actor, secondParent.id, { name: "Second classified child" });
+    const { mainBasketId: _mainBasketId, subBasketId: _subBasketId, ...fields } = profile;
+    const selection = { ...fields, mainBasketIds: [parent.id, secondParent.id], subBasketIds: [child.id, secondChild.id] };
+    const created = await reference.createMaster(actor, "vendors", { name: "Old client preservation", procurementProfile: selection });
+    const original = (await reference.getVendorDetail(actor, created.id)).procurementProfile!;
+    const oldClient = { ...profile, mainBasketId: original.mainBasketId, subBasketId: original.subBasketId, position: "Director" };
+    await reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 1, procurementProfile: oldClient });
+    expect((await reference.getVendorDetail(actor, created.id)).procurementProfile).toMatchObject({ mainBasketIds: original.mainBasketIds, subBasketIds: original.subBasketIds, position: "Director" });
+    const staleId = [child.id, secondChild.id].find(id => id !== original.subBasketId)!;
+    await AiEstimatorKnowledgeSubBasketModel.collection.deleteOne({ _id: staleId });
+    await reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 2, procurementProfile: { ...selection, position: "Manager" } });
+    const retained = await reference.getVendorDetail(actor, created.id);
+    expect(retained.procurementProfile?.subBasketIds).toContain(staleId);
+    expect(retained.procurementSummary.subBaskets.find(row => row.id === staleId)).toMatchObject({ basketId: null, name: null });
+    await expect(reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 3, procurementProfile: {
+      ...selection, mainBasketIds: [original.mainBasketId], position: "Invalid removal"
+    } })).rejects.toMatchObject({ code: "SUB_BASKET_PARENT_MISMATCH" });
+    const inactive = await reference.createBasket(actor, { name: "Inactive new parent" });
+    await reference.updateBasket(actor, inactive.id, { expectedVersion: 1, status: "inactive" });
+    await expect(reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 3, procurementProfile: {
+      ...selection, mainBasketIds: [...selection.mainBasketIds, inactive.id]
+    } })).rejects.toMatchObject({ code: "VENDOR_BASKET_UNAVAILABLE" });
+    await expect(reference.createMaster(actor, "vendors", { name: "Orphaned new child", procurementProfile: {
+      ...fields, mainBasketIds: [parent.id], subBasketIds: [secondChild.id]
+    } })).rejects.toMatchObject({ code: "SUB_BASKET_PARENT_MISMATCH" });
+    const replacement = await reference.createSubBasket(actor, parent.id, { name: "Replacement child" });
+    await reference.updateMaster(actor, "vendors", created.id, { expectedVersion: 3, procurementProfile: { ...oldClient, mainBasketId: parent.id, subBasketId: replacement.id } });
+    expect((await reference.getVendorDetail(actor, created.id)).procurementProfile).toMatchObject({ mainBasketIds: [parent.id], subBasketIds: [replacement.id] });
+  });
   it("retained inactive and archived vendors block parent and child deletion", async () => {
     const { profile, parent, child } = await fixture();
     const created = await reference.createMaster(actor, "vendors", { name: "Archived reference", procurementProfile: profile });
@@ -337,6 +443,24 @@ describe("vendor profile shared persistence", () => {
     expect(outcomes.filter(outcome => outcome.status === "fulfilled")).toHaveLength(1);
     const vendor = await AiEstimatorKnowledgeVendorModel.findOne({ name: "Racing child vendor" }).lean();
     expect(Boolean(await AiEstimatorKnowledgeSubBasketModel.exists({ _id: child.id }))).toBe(Boolean(vendor));
+  });
+  it("serializes multi-parent assignment with deletion of a secondary selected child", async () => {
+    const { profile, parent, child } = await fixture();
+    const secondParent = await reference.createBasket(actor, { name: "Racing second parent" });
+    const secondChild = await reference.createSubBasket(actor, secondParent.id, { name: "Racing second child" });
+    const { mainBasketId: _mainBasketId, subBasketId: _subBasketId, ...fields } = profile;
+    const impact = await reference.getSubBasketDeletionImpact(actor, secondParent.id, secondChild.id);
+    const outcomes = await Promise.allSettled([
+      reference.createMaster(actor, "vendors", { name: "Racing multi vendor", procurementProfile: {
+        ...fields, mainBasketIds: [secondParent.id, parent.id], subBasketIds: [secondChild.id, child.id]
+      } }),
+      reference.permanentlyDeleteSubBasket(actor, secondParent.id, secondChild.id, {
+        expectedVersion: 1, confirmationName: secondChild.name, reason: "Synthetic race", impactToken: impact.impactToken
+      })
+    ]);
+    expect(outcomes.filter(outcome => outcome.status === "fulfilled")).toHaveLength(1);
+    const vendor = await AiEstimatorKnowledgeVendorModel.findOne({ name: "Racing multi vendor" }).lean();
+    expect(Boolean(await AiEstimatorKnowledgeSubBasketModel.exists({ _id: secondChild.id }))).toBe(Boolean(vendor));
   });
   it("rolls back profile and dependency writes if audit persistence fails", async () => {
     const { profile, parent } = await fixture();

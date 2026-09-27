@@ -92,6 +92,21 @@ describe("OpenAPI and Swagger UI", () => {
       expect(schemas[name]!.properties.procurementProfile).toEqual({ $ref: "#/components/schemas/KnowledgeVendorProfileInput" });
     }
   });
+  it("documents bounded vendor basket arrays, legacy scalar input, and safe full summaries", () => {
+    const schemas = componentSchemas();
+    const input = schemas.KnowledgeVendorProfileInput!;
+    for (const name of ["KnowledgeVendorProfile", "KnowledgeVendorStoredProfile"]) {
+      expect(schemas[name]!.required).toEqual(expect.arrayContaining(["mainBasketIds", "subBasketIds", "mainBasketId", "subBasketId"]));
+      expect(schemas[name]!.properties.mainBasketIds).toMatchObject({ type: "array", minItems: 1, maxItems: 100, uniqueItems: true });
+      expect(schemas[name]!.properties.subBasketIds).toMatchObject({ type: "array", minItems: 1, maxItems: 500, uniqueItems: true });
+    }
+    for (const field of ["mainBasketIds", "subBasketIds", "mainBasketId", "subBasketId"]) expect(input.required).not.toContain(field);
+    expect(input.allOf).toEqual([{ anyOf: [{ required: ["mainBasketIds", "subBasketIds"] }, { required: ["mainBasketId", "subBasketId"] }] }]);
+    const summary = schemas.KnowledgeVendorSummary!;
+    expect(summary.required).toEqual(expect.arrayContaining(["mainBaskets", "subBaskets", "mainBasket", "subBasket"]));
+    expect(summary.properties.subBaskets.items.properties.basketId).toMatchObject({ type: "string", nullable: true });
+    expect(schemas.KnowledgeVendor!.properties).not.toHaveProperty("procurementProfile");
+  });
   it("keeps vendor mutation responses compatible with the shared master DTO", () => {
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
     const schemas = componentSchemas();

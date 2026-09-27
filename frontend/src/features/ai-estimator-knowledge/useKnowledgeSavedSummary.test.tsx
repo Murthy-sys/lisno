@@ -182,15 +182,56 @@ describe("saved summary queries", () => {
     expect(JSON.stringify(result.current[3])).toContain("Other Basket checklist");
   });
 
-  it("skips revision-owned requests without a revision, and Recommendations for temporary items", async () => {
+  it("skips revision-owned requests without a revision, then loads temporary recommendations", async () => {
     const { result, rerender } = setup({ ...input, revisionId: undefined });
     await waitFor(() => expect(JSON.stringify(result.current[3])).toContain("Saved basket alignment"));
     expect(api.getKnowledgeSection).not.toHaveBeenCalled();
     expect(result.current[0].emptyMessage).toBe("No revision available");
+    expect(result.current[2].emptyMessage).toBe("No revision available");
     rerender({ ...input, item: { ...item, itemType: "temporary" } });
-    await waitFor(() => expect(api.getKnowledgeSection).toHaveBeenCalledTimes(2));
-    expect(api.getKnowledgeSection).not.toHaveBeenCalledWith(item.mainLineId, "revision-1", "recommendations");
-    expect(result.current[2].emptyMessage).toBe("Not applicable");
+    await waitFor(() => expect(result.current[2].notices).toEqual([]));
+    expect(api.getKnowledgeSection).toHaveBeenCalledTimes(3);
+    expect(api.getKnowledgeSection).toHaveBeenCalledWith(item.mainLineId, "revision-1", "recommendations");
+    expect(result.current[2].emptyMessage).toBe("Not configured");
+  });
+
+  it("shows confirmed legacy temporary rules, retry errors, and an empty saved replacement", async () => {
+    const initial = { ...section("recommendations", { exclusions: [{ id: "saved-rule", name: "Saved access clearance", active: true }] }),
+      applicability: "not_applicable" as const };
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (lineId, revisionId, key) => ({
+      ...(key === "recommendations" ? initial : section(key)), mainLineId: lineId, revisionId
+    }));
+    const temporaryInput = { ...input, item: { ...item, itemType: "temporary" as const } };
+    const { result, client } = setup(temporaryInput);
+    await waitFor(() => expect(JSON.stringify(result.current[2])).toContain("Saved access clearance"));
+    expect(result.current[2].emptyMessage).toBeUndefined();
+    vi.mocked(api.getKnowledgeSection).mockRejectedValueOnce(new Error("Offline"));
+    await act(async () => { await client.refetchQueries({ queryKey: knowledgeQueryKeys.section(item.mainLineId, "revision-1", "recommendations"), exact: true }); });
+    expect(JSON.stringify(result.current[2])).toContain("Saved access clearance");
+    await waitFor(() => expect(result.current[2].notices[0]?.message).toContain("last saved data"));
+    await act(async () => {
+      commitKnowledgeSectionMutation(client, { ...section("recommendations", { exclusions: [] }, 3), aggregateVersion: 5 });
+    });
+    await waitFor(() => expect(result.current[2].emptyMessage).toBe("Not configured"));
+    expect(JSON.stringify(result.current[2])).not.toContain("Saved access clearance");
+  });
+
+  it("does not reuse another temporary revision's recommendation summary", async () => {
+    const next = deferred<KnowledgeSectionEnvelope<KnowledgeJsonObject>>();
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (lineId, revisionId, key) => {
+      if (key !== "recommendations") return { ...section(key), mainLineId: lineId, revisionId };
+      if (revisionId === "revision-2") return next.promise;
+      return { ...section(key, { exclusions: [{ id: "first", name: "First revision exclusion", active: true }] }), mainLineId: lineId, revisionId };
+    });
+    const temporaryInput = { ...input, item: { ...item, itemType: "temporary" as const } };
+    const { result, rerender } = setup(temporaryInput);
+    await waitFor(() => expect(JSON.stringify(result.current[2])).toContain("First revision exclusion"));
+    rerender({ ...temporaryInput, revisionId: "revision-2" });
+    expect(JSON.stringify(result.current[2])).not.toContain("First revision exclusion");
+    expect(result.current[2].notices[0]?.message).toContain("Loading Recommendation & Exclusions");
+    await act(async () => next.resolve({ ...section("recommendations", { exclusions: [{ id: "second", name: "Second revision exclusion", active: true }] }), revisionId: "revision-2" }));
+    await waitFor(() => expect(JSON.stringify(result.current[2])).toContain("Second revision exclusion"));
+    expect(JSON.stringify(result.current[2])).not.toContain("First revision exclusion");
   });
 
   it("resolves missing saved target context by ID without requesting unrelated catalogs", async () => {

@@ -876,22 +876,130 @@ describe("temporary item workspace", () => {
     await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith("line-1", "revision-1", "recommendations", expect.objectContaining({ expectedVersion: 2, expectedAggregateVersion: 4, payload: { budgetAlterations: [{ ...budgetRule, targetKind: "main_line", reason: "Recessed lights need the false ceiling." }], exclusions: notes } })));
   });
 
-  it("exposes only Overview, Mode and Quality without changing regular Main Line navigation", async () => {
+  it("shows all four temporary sections with keyboard navigation and saved summary", async () => {
     vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({ ...item, itemType: "temporary" });
     const user = userEvent.setup();
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
     await screen.findByRole("heading", { name: "Wall panelling" });
     expect(screen.getByText("Temporary item · Must be completed")).toBeVisible();
-    expect(screen.queryByRole("tab", { name: "Recommendation & Exclusions" })).not.toBeInTheDocument();
-    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Overview", "Mode", "Recommendation & Exclusions", "Quality Parameter"
+    ]);
     await doneFocusedEditing(user);
     await user.click(screen.getByRole("tab", { name: "Mode" }));
     expect(await screen.findByRole("checkbox", { name: "PMC" })).toBeVisible();
     await doneFocusedEditing(user);
-    await user.click(screen.getByRole("tab", { name: "Quality Parameter" }));
+    await user.keyboard("{ArrowRight}");
+    const recommendations = screen.getByRole("tab", { name: "Recommendation & Exclusions" });
+    expect(recommendations).toHaveFocus();
+    expect(recommendations).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("tabpanel")).toHaveAccessibleName("Recommendation & Exclusions");
     await openSavedDetails(user);
+    const saved = screen.getByRole("region", { name: "Recommendation & Exclusions saved summary" });
+    await waitFor(() => expect(saved).toHaveTextContent("Not configured"));
+    expect(saved).not.toHaveTextContent("Not applicable");
+    await doneFocusedEditing(user);
+    await user.click(screen.getByRole("tab", { name: "Quality Parameter" }));
     expect(await screen.findByRole("button", { name: "Add Parameter" })).toBeVisible();
     await expectNoAutomatedAccessibilityViolations();
+  });
+
+  it("saves and reloads legacy temporary exclusions without reusing not_applicable", async () => {
+    const user = userEvent.setup();
+    const original = { exclusions: [{ id: "legacy-exclusion", name: "Existing clearance", reason: "Keep room for access", active: true }] };
+    let saved: KnowledgeSectionEnvelope<KnowledgeJsonObject> = { ...section("recommendations", original), applicability: "not_applicable" };
+    const temporary = { ...item, itemType: "temporary" as const };
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue(temporary);
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) =>
+      key === "recommendations" ? saved : section(key));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_id, _revision, key, input) => {
+      saved = { ...section(key, input.payload, 3), applicability: "configured" };
+      return { ...saved, aggregateVersion: 5 };
+    });
+    const route = "/admin/configuration/estimation/items/line-1";
+    const pattern = "/admin/configuration/estimation/items/:itemId";
+    const view = renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    await openSavedDetails(user);
+    const summary = screen.getByRole("region", { name: "Recommendation & Exclusions saved summary" });
+    await waitFor(() => expect(summary).toHaveTextContent("Existing clearance"));
+    await user.click(within(summary).getByRole("button", { name: "Show Recommendation & Exclusions details" }));
+    const reason = await screen.findByRole("textbox", { name: "Reason" });
+    await user.clear(reason);
+    await user.type(reason, "Keep a wider access path");
+    expect(summary).not.toHaveTextContent("Keep a wider access path");
+    await user.click(screen.getByRole("button", { name: "Save Recommendation & Exclusions" }));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledOnce());
+    const request = vi.mocked(knowledgeApi.updateKnowledgeSection).mock.lastCall?.[3];
+    expect(request).toEqual({ expectedVersion: 2, expectedAggregateVersion: 4, payload: {
+      exclusions: [{ ...original.exclusions[0], reason: "Keep a wider access path" }]
+    } });
+    await waitFor(() => expect(summary).toHaveTextContent("Keep a wider access path"));
+    view.unmount();
+    renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    expect(await screen.findByRole("textbox", { name: "Reason" })).toHaveValue("Keep a wider access path");
+    await openSavedDetails(user);
+    expect(screen.getByRole("region", { name: "Recommendation & Exclusions saved summary" })).toHaveTextContent("Existing clearance");
+  });
+
+  it("saves an empty temporary recommendations section without preserving legacy applicability", async () => {
+    const user = userEvent.setup();
+    const original = { exclusions: [{ id: "legacy-exclusion", name: "Obsolete exclusion", active: true }] };
+    let saved: KnowledgeSectionEnvelope<KnowledgeJsonObject> = { ...section("recommendations", original), applicability: "not_applicable" };
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({ ...item, itemType: "temporary" });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) =>
+      key === "recommendations" ? saved : section(key));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_id, _revision, key, input) => {
+      saved = { ...section(key, input.payload, 3), applicability: "not_configured" };
+      return { ...saved, aggregateVersion: 5 };
+    });
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    await openSavedDetails(user);
+    const summary = screen.getByRole("region", { name: "Recommendation & Exclusions saved summary" });
+    await waitFor(() => expect(summary).toHaveTextContent("Obsolete exclusion"));
+    await user.click(await screen.findByRole("button", { name: "Remove Exclusions entry 1" }));
+    expect(summary).toHaveTextContent("Obsolete exclusion");
+    await user.click(screen.getByRole("button", { name: "Save Recommendation & Exclusions" }));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith(
+      "line-1", "revision-1", "recommendations", { expectedVersion: 2, expectedAggregateVersion: 4, payload: { exclusions: [] } }
+    ));
+    await waitFor(() => expect(summary).toHaveTextContent("Not configured"));
+    expect(summary).not.toHaveTextContent("Obsolete exclusion");
+  });
+
+  it("shows the temporary recommendations tab without update permission but disables editing", async () => {
+    vi.mocked(authorization.hasFrontendPermission).mockImplementation((_auth, permission) =>
+      permission !== "ai_estimator_knowledge.configuration.update");
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({ ...item, itemType: "temporary" });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) =>
+      section(key, key === "recommendations" ? { exclusions: [{ id: "saved", name: "Visible exclusion", active: true }] } : {}));
+    const user = userEvent.setup();
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    expect(await screen.findByRole("textbox", { name: "Exclusion" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Save Recommendation & Exclusions" })).not.toBeInTheDocument();
+    await openSavedDetails(user);
+    expect(screen.getByRole("region", { name: "Recommendation & Exclusions saved summary" })).toHaveTextContent("Visible exclusion");
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+  });
+
+  it("keeps a temporary Active revision's recommendations visible and read-only", async () => {
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({ ...item, itemType: "temporary",
+      status: "active", draftRevision: null, draftRevisionId: null,
+      activeRevision: { ...revision, status: "active" }, activeRevisionId: revision.id,
+      allowedActions: [] });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) =>
+      key === "recommendations" ? { ...section(key, { exclusions: [{ id: "historical", name: "Historic exclusion", active: true }] }), applicability: "not_applicable" } : section(key));
+    const user = userEvent.setup();
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    expect(await screen.findByRole("textbox", { name: "Exclusion" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Save Recommendation & Exclusions" })).not.toBeInTheDocument();
+    await openSavedDetails(user);
+    expect(screen.getByRole("region", { name: "Recommendation & Exclusions saved summary" })).toHaveTextContent("Historic exclusion");
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
   });
 });
 

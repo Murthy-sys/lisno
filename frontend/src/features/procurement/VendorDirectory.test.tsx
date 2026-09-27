@@ -190,8 +190,8 @@ describe("reference vendor directory", () => {
   it("shows one Basket column with explicit main and sub levels and unavailable states", async () => {
     rows = [
       rows[0],
-      { ...rows[1], procurementSummary: { ...rows[1].procurementSummary!, mainBasket: { id: "basket-old", name: "Old Basket", status: "inactive" }, subBasket: null } },
-      { ...rows[2], procurementSummary: { ...rows[2].procurementSummary!, mainBasket: { id: "basket-gone", name: null, status: "unavailable" }, subBasket: { id: "sub-gone", name: null } } },
+      { ...rows[1], procurementSummary: { ...rows[1].procurementSummary!, mainBaskets: [{ id: "basket-old", name: "Old Basket", status: "inactive" }], subBaskets: [], mainBasket: { id: "basket-old", name: "Old Basket", status: "inactive" }, subBasket: null } },
+      { ...rows[2], procurementSummary: { ...rows[2].procurementSummary!, mainBaskets: [{ id: "basket-gone", name: null, status: "unavailable" }], subBaskets: [{ id: "sub-gone", basketId: "basket-gone", name: null }], mainBasket: { id: "basket-gone", name: null, status: "unavailable" }, subBasket: { id: "sub-gone", name: null } } },
       { ...rows[3], procurementSummary: undefined },
     ];
     start(); const table = await screen.findByRole("table");
@@ -202,6 +202,29 @@ describe("reference vendor directory", () => {
     expect(basket(/Vendor 2/)).toHaveTextContent(/Main Basket: Old Basket/); expect(within(basket(/Vendor 2/)).getByText("Unavailable for new selections")).toBeVisible(); expect(basket(/Vendor 2/)).toHaveTextContent(/Sub Basket: Not recorded/);
     expect(basket(/Vendor 3/)).toHaveTextContent(/Main Basket: Unavailable/); expect(basket(/Vendor 3/)).toHaveTextContent(/Sub Basket: Unavailable/);
     expect(basket(/Vendor 4/)).toHaveTextContent(/Main Basket: Not recorded/); expect(basket(/Vendor 4/)).toHaveTextContent(/Sub Basket: Not recorded/);
+  });
+
+  it("shows every saved classification and retains singular filters as membership criteria", async () => {
+    const stone = { ...vendorBasket, id: "basket-two", name: "Stone" };
+    const stoneSub = { ...vendorSubBasket, id: "sub-two", basketId: stone.id, name: "Installation" };
+    rows[0] = { ...rows[0], procurementSummary: { ...rows[0].procurementSummary!, mainBaskets: [...rows[0].procurementSummary!.mainBaskets, { id: stone.id, name: stone.name, status: "active" }], subBaskets: [...rows[0].procurementSummary!.subBaskets, { id: stoneSub.id, basketId: stone.id, name: stoneSub.name }] } };
+    server.use(
+      http.get("/api/v1/admin/ai-estimator-knowledge/baskets", () => data({ items: [vendorBasket, stone], pagination: { total: 2, limit: 100, offset: 0, hasMore: false } })),
+      http.get("/api/v1/admin/ai-estimator-knowledge/baskets/basket-two/sub-baskets", () => data({ items: [stoneSub], pagination: { total: 1, limit: 100, offset: 0, hasMore: false } }))
+    );
+    start(); const user = userEvent.setup(); const table = await screen.findByRole("table");
+    const row = within(table).getByRole("rowheader", { name: /Timber House/ }).closest("tr")!;
+    const basket = row.querySelector<HTMLElement>('[data-column="basket"]')!;
+    expect(basket).toHaveTextContent("2 Main Baskets · 2 Sub Baskets");
+    expect(basket).toHaveTextContent(/Main Basket: Carpentry/); expect(basket).toHaveTextContent(/Sub Basket: Cabinet work/);
+    expect(basket).toHaveTextContent(/Main Basket: Stone/); expect(basket).toHaveTextContent(/Sub Basket: Installation/);
+    await screen.findByRole("option", { name: "Stone" });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), stone.id);
+    await screen.findByRole("option", { name: stoneSub.name });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sub Basket" }), stoneSub.id);
+    await waitFor(() => expect(pageRequests().at(-1)?.get("subBasketId")).toBe(stoneSub.id));
+    expect(pageRequests().at(-1)?.get("mainBasketId")).toBe(stone.id);
+    expect(pageRequests().at(-1)?.get("subBasketId")).toBe(stoneSub.id);
   });
 
   it("renders additional registry columns in headers, cells and card labels without other changes", () => {
