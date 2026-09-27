@@ -8,7 +8,7 @@ import { VendorAllocationBaseline } from "./VendorAllocationBaseline";
 const row = { itemId: "item-old", projectId: "project-old", projectName: "Synthetic House", itemName: "Cabinets", brand: "Example", version: 7 };
 const data = (value: unknown) => HttpResponse.json({ data: value });
 beforeEach(() => { server.use(http.get("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-one/allocation-baseline", () => data({ items: [row], total: 1, offset: 0, limit: 20 }))); });
-function start(canUpdate = true) { return renderWithQuery(<VendorAllocationBaseline vendorId="vendor-one" canUpdate={canUpdate} disabled={false} onBusyChange={vi.fn()} onDirtyChange={vi.fn()} />); }
+function start(canCorrect = true) { return renderWithQuery(<VendorAllocationBaseline vendorId="vendor-one" canCorrect={canCorrect} disabled={false} onBusyChange={vi.fn()} onDirtyChange={vi.fn()} />); }
 describe("Historical vendor allocation correction", () => {
   it("requires a reason and retries an uncertain result with exactly the same item version and identity", async () => {
     const writes: unknown[] = [];

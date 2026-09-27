@@ -706,7 +706,9 @@ export function createAiEstimatorKnowledgeItemService(
           reviewRequired: false,
           remapPriceEntryIds: false
         });
-        const copiedSections = copyRevisionSections(sourceSections, priceReferences, uuid, false);
+        const copiedSections = copyRevisionSections(
+          sourceSections, priceReferences, uuid, false, line.itemType === "temporary"
+        );
         await coordinateCopiedBasketReferences(copiedSections, session);
         await coordinateCopiedSurfaceReferences(copiedSections, session, false);
         const completeness = completenessForRows(mainLineId, copiedSections);
@@ -801,8 +803,9 @@ export function createAiEstimatorKnowledgeItemService(
         const section = asRow(sectionDocument);
         if (!line || !revision || !section) notFound();
         if (line.itemType === "temporary" && !TEMPORARY_ITEM_SECTIONS.includes(sectionKey)) {
-          throw new ApiError(400, "VALIDATION_ERROR", "Temporary items support only Overview, Mode and Quality Parameters.");
+          throw new ApiError(400, "VALIDATION_ERROR", "Temporary items support only Overview, Mode, Recommendation & Exclusions and Quality Parameters.");
         }
+        const temporaryRecommendations = line.itemType === "temporary" && sectionKey === "recommendations";
         if (revision.status !== "draft" || line.draftRevisionId !== revisionId) immutableHistory();
         if (requiredInteger(section.version) !== input.expectedVersion) versionConflict();
         const expectedAggregateVersion = input.expectedAggregateVersion ?? requiredInteger(line.version);
@@ -824,7 +827,9 @@ export function createAiEstimatorKnowledgeItemService(
             })
           : sectionKey === "advanced"
             ? preserveModeConfigurationCompatibility(previousPayload, input.payload)
-          : structuredClone(input.payload);
+          : temporaryRecommendations
+            ? normalizeTemporaryRecommendationPayload(input.payload)
+            : structuredClone(input.payload);
         await coordinateNewBasketReferences(
           sectionKey,
           previousPayload,
@@ -855,10 +860,10 @@ export function createAiEstimatorKnowledgeItemService(
           persistedPayload,
           session
         );
-        /* Only "not applicable" is the author's call. Otherwise the saved
-           content decides, so the flag cannot drift from the payload. */
+        /* Temporary recommendations are now applicable, including when an old
+           client echoes their historical "not applicable" section flag. */
         const storedApplicability: KnowledgeSectionApplicability =
-          input.applicability === "not_applicable"
+          input.applicability === "not_applicable" && !temporaryRecommendations
             ? "not_applicable"
             : hasKnowledgeSectionContent(persistedPayload)
               ? "configured"
@@ -1130,7 +1135,8 @@ export function createAiEstimatorKnowledgeItemService(
           sourceSectionDocuments.map((row) => asRow(row)!),
           priceReferences,
           uuid,
-          true
+          true,
+          source.itemType === "temporary"
         );
         await coordinateCopiedBasketReferences(remappedPayloads, session);
         await coordinateCopiedPriorityReferences(remappedPayloads, session);
@@ -2388,7 +2394,7 @@ function activationCompletenessFindings(
   }];
 }
 
-const TEMPORARY_ITEM_SECTIONS: readonly KnowledgeSectionKey[] = ["overview", "advanced", "pricing", "quality"];
+const TEMPORARY_ITEM_SECTIONS: readonly KnowledgeSectionKey[] = ["overview", "advanced", "pricing", "recommendations", "quality"];
 
 function emptyCompleteness(mainLineId: string, itemType?: "main_line" | "temporary"): KnowledgeCompletenessSummary {
   return deriveKnowledgeCompleteness({
@@ -3626,7 +3632,8 @@ function copyRevisionSections(
   rows: Row[],
   priceReferences: ReadonlyMap<string, CopiedPriceReference>,
   uuid: () => string,
-  remapStepIds: boolean
+  remapStepIds: boolean,
+  normalizeTemporaryRecommendations: boolean
 ): Row[] {
   const execution = rows.find((row) => row.sectionKey === "execution");
   const executionPayload = payloadFor(execution);
@@ -3639,7 +3646,9 @@ function copyRevisionSections(
     }
   }
   return rows.map((row) => {
-    const payload = structuredClone(payloadFor(row));
+    const payload = normalizeTemporaryRecommendations && row.sectionKey === "recommendations"
+      ? normalizeTemporaryRecommendationPayload(payloadFor(row))
+      : structuredClone(payloadFor(row));
     if (remapStepIds && row.sectionKey === "execution" && Array.isArray(payload.steps)) {
       payload.steps = payload.steps.map((entry) => {
         const step = asRow(entry);
@@ -3667,10 +3676,20 @@ function copyRevisionSections(
     }
     return {
       sectionKey: requiredString(row.sectionKey),
-      applicability: requiredString(row.applicability),
+      applicability: normalizeTemporaryRecommendations && row.sectionKey === "recommendations"
+        ? hasKnowledgeSectionContent(payload) ? "configured" : "not_configured"
+        : requiredString(row.applicability),
       payload
     };
   });
+}
+
+function normalizeTemporaryRecommendationPayload(payload: Row): Row {
+  const normalized = structuredClone(payload);
+  for (const field of ["recommendations", "exclusions", "budgetAlterations"] as const) {
+    if (Array.isArray(normalized[field]) && normalized[field].length === 0) delete normalized[field];
+  }
+  return normalized;
 }
 
 function publicMainLine(value: unknown): Row {

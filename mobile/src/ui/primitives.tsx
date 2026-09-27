@@ -64,16 +64,18 @@ export function Field({
   error,
   keyboardType,
   compact = false,
+  labelMinHeight,
   ...props
 }: TextInputProps & {
   readonly label: string;
   readonly error?: string | undefined;
   readonly keyboardType?: KeyboardTypeOptions;
   readonly compact?: boolean;
+  readonly labelMinHeight?: number;
 }) {
   return (
     <View style={styles.fieldGroup}>
-      <Text style={[styles.fieldLabel, compact && styles.compactLabel]}>{label}</Text>
+      <Text style={[styles.fieldLabel, compact && styles.compactLabel, labelMinHeight !== undefined && { minHeight: labelMinHeight }]}>{label}</Text>
       <TextInput
         accessibilityLabel={label}
         accessibilityHint={error}

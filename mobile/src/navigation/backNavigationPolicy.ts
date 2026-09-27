@@ -26,8 +26,21 @@ export interface AppDestination {
   readonly featureId?: string;
 }
 
-const appNames = new Set(["index", "feature/[featureId]", "record/[featureId]/[recordId]", "more", "access-denied", "sign-in", "forgot-password", "reset-password", "accept-invitation", "welcome", "startup-recovery"]);
+const appNames = new Set(["index", "feature/[featureId]", "record/[featureId]/[recordId]", "estimate/[estimateId]", "more", "access-denied", "sign-in", "forgot-password", "reset-password", "accept-invitation", "welcome", "startup-recovery"]);
 const accountNames = new Set(["forgot-password", "reset-password", "accept-invitation"]);
+
+/** Accept one decoded or percent-encoded path scalar, never a separator or malformed escape. */
+export function parseEstimateRouteId(value: unknown): string | null {
+  if (typeof value !== "string" || value.length === 0 || value.length > 256) return null;
+  try {
+    const decoded = decodeURIComponent(value);
+    if (!decoded || decoded.length > 256 || decoded.trim() !== decoded || decoded === "." || decoded === ".." || decoded.includes("%") || /[\/\\\u0000-\u001f\u007f]/u.test(decoded)) return null;
+    encodeURIComponent(decoded);
+    return decoded;
+  } catch {
+    return null;
+  }
+}
 
 export function readAppStack(state: NavigationTree | undefined): AppStack | null {
   if (!state) return null;
@@ -43,6 +56,10 @@ export function appDestination(entry: NavigationEntry | undefined): AppDestinati
   if (!entry) return null;
   if (entry.name === "more") return { kind: "more", path: "/more" };
   const params = entry.params as Record<string, unknown> | undefined;
+  if (entry.name === "estimate/[estimateId]") {
+    const estimateId = parseEstimateRouteId(params?.estimateId);
+    return estimateId ? { kind: "record", featureId: "estimates", path: `/estimate/${encodeURIComponent(estimateId)}` } : null;
+  }
   const featureId = params?.featureId;
   if (typeof featureId !== "string" || !/^[a-z-]+$/u.test(featureId)) return null;
   if (entry.name === "feature/[featureId]") return { kind: "feature", featureId, path: `/feature/${featureId}` };

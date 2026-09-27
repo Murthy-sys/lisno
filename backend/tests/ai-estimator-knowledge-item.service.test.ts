@@ -104,7 +104,7 @@ describe("AI estimator knowledge item service", () => {
     expect((await service.getItem(ACTOR, temp.mainLineId)).linkedMainLines).toEqual([]);
   });
 
-  it("gives temporary items only Overview, Mode and Quality while preserving regular Main Lines", async () => {
+  it("gives temporary items Overview, Mode, Recommendation & Exclusions and Quality while preserving regular Main Lines", async () => {
     const { service } = createService();
     const temporary = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Temporary fixture", itemType: "temporary" });
     const regular = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Regular fixture" });
@@ -116,14 +116,14 @@ describe("AI estimator knowledge item service", () => {
         expect.objectContaining({ id: regular.mainLineId, completionRequired: false })
       ]));
     let version = temporary.version;
-    for (const sectionKey of ["overview", "advanced", "pricing", "quality"] as const) {
+    for (const sectionKey of ["overview", "advanced", "pricing", "recommendations", "quality"] as const) {
       const section = await service.getSection(ACTOR, temporary.mainLineId, temporary.draftRevisionId!, sectionKey);
       expect(section.applicability).toBe("not_configured");
       const payload = sectionKey === "advanced" ? { pmcMarginBps: 1_500, modeConfigurations: [{ id: "pmc", modeKind: "pmc", fields: [] }] } : {};
       const saved = await service.updateSection(ACTOR, temporary.mainLineId, temporary.draftRevisionId!, sectionKey, { expectedVersion: section.version, expectedAggregateVersion: version, payload });
       version = saved.aggregateVersion;
     }
-    for (const sectionKey of ["recommendations", "scope", "execution", "quantity-margin"] as const) {
+    for (const sectionKey of ["scope", "execution", "quantity-margin"] as const) {
       const section = await service.getSection(ACTOR, temporary.mainLineId, temporary.draftRevisionId!, sectionKey);
       expect(section.applicability).toBe("not_applicable");
       await expect(service.updateSection(ACTOR, temporary.mainLineId, temporary.draftRevisionId!, sectionKey, { expectedVersion: section.version, expectedAggregateVersion: version, payload: {} })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
@@ -135,7 +135,149 @@ describe("AI estimator knowledge item service", () => {
     const duplicate = await service.duplicate(ACTOR, temporary.mainLineId, { expectedVersion: version, name: "Temporary fixture copy" });
     expect(duplicate).toMatchObject({ itemType: "temporary", completionRequired: true });
     expect((await service.getSection(ACTOR, duplicate.mainLineId, duplicate.draftRevisionId!, "advanced")).payload).toMatchObject({ pmcMarginBps: 1_500 });
-    expect((await service.getSection(ACTOR, duplicate.mainLineId, duplicate.draftRevisionId!, "recommendations")).applicability).toBe("not_applicable");
+    expect((await service.getSection(ACTOR, duplicate.mainLineId, duplicate.draftRevisionId!, "recommendations")).applicability).toBe("not_configured");
+  });
+
+  it("saves legacy temporary recommendations from their payload and keeps empty rule lists not configured", async () => {
+    const { service } = createService();
+    const temporary = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Temporary recommendation source", itemType: "temporary"
+    });
+    const catalogTarget = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Catalog target for temporary source"
+    });
+    const revisionId = temporary.draftRevisionId!;
+    const original = await service.getSection(ACTOR, temporary.mainLineId, revisionId, "recommendations");
+    expect(original.applicability).toBe("not_configured");
+    await AiEstimatorKnowledgeSectionModel.updateOne(
+      { _id: original.id }, { $set: { applicability: "not_applicable" } }
+    ).exec();
+    const legacy = await service.getSection(ACTOR, temporary.mainLineId, revisionId, "recommendations");
+    expect(legacy.applicability).toBe("not_applicable");
+
+    const recommendation = {
+      id: "temporary-rule", name: "Retain the existing light fitting",
+      priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
+      reason: "Reuse the installed fixture.", dependency: false, active: true
+    };
+    const alteration = {
+      id: "temporary-alteration", trigger: "added", action: "add", requirement: "can",
+      targetType: "catalog", targetBasketId: catalogTarget.basketId, targetSubBasketId: null,
+      targetMainLineId: catalogTarget.mainLineId, reason: "Include the matching fitting.", active: true
+    };
+    const saved = await service.updateSection(ACTOR, temporary.mainLineId, revisionId, "recommendations", {
+      expectedVersion: legacy.version,
+      expectedAggregateVersion: temporary.version,
+      applicability: legacy.applicability,
+      payload: { recommendations: [recommendation], exclusions: [], budgetAlterations: [alteration] }
+    });
+    expect(saved).toMatchObject({ applicability: "configured", payload: {
+      recommendations: [recommendation], budgetAlterations: [alteration]
+    } });
+    expect(saved.payload).not.toHaveProperty("exclusions");
+    expect(await AiEstimatorKnowledgeMainLineModel.findById(catalogTarget.mainLineId).lean())
+      .toMatchObject({ dependencyEpoch: 1 });
+    expect((await service.getItem(ACTOR, temporary.mainLineId)).draftRevision?.completeness.sections)
+      .toContainEqual(expect.objectContaining({ sectionKey: "recommendations", state: "complete" }));
+
+    await expect(service.updateSection(ACTOR, temporary.mainLineId, revisionId, "recommendations", {
+      expectedVersion: legacy.version,
+      expectedAggregateVersion: saved.aggregateVersion,
+      payload: { recommendations: [recommendation] }
+    })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    await expect(service.updateSection(ACTOR, temporary.mainLineId, revisionId, "recommendations", {
+      expectedVersion: saved.version,
+      expectedAggregateVersion: saved.aggregateVersion,
+      payload: { budgetAlterations: [{ ...alteration, targetMainLineId: "missing-target" }] }
+    })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect((await service.getSection(ACTOR, temporary.mainLineId, revisionId, "recommendations")).payload)
+      .toEqual(saved.payload);
+
+    const cleared = await service.updateSection(ACTOR, temporary.mainLineId, revisionId, "recommendations", {
+      expectedVersion: saved.version,
+      expectedAggregateVersion: saved.aggregateVersion,
+      applicability: "not_applicable",
+      payload: { recommendations: [], exclusions: [], budgetAlterations: [] }
+    });
+    expect(cleared).toMatchObject({ applicability: "not_configured", payload: {} });
+    expect(cleared.payload).toEqual({});
+    expect((await service.getItem(ACTOR, temporary.mainLineId)).draftRevision?.completeness.sections)
+      .toContainEqual(expect.objectContaining({ sectionKey: "recommendations", state: "not_configured" }));
+  });
+
+  it.each([
+    {
+      label: "empty rules",
+      legacyPayload: { recommendations: [], exclusions: [], budgetAlterations: [] },
+      copiedPayload: {},
+      applicability: "not_configured",
+      completenessState: "not_configured"
+    },
+    {
+      label: "retained exclusion",
+      legacyPayload: {
+        recommendations: [],
+        exclusions: [{ id: "legacy-exclusion", name: "Existing fittings", reason: "Keep the installed fittings.", active: true }],
+        budgetAlterations: []
+      },
+      copiedPayload: {
+        exclusions: [{ id: "legacy-exclusion", name: "Existing fittings", reason: "Keep the installed fittings.", active: true }]
+      },
+      applicability: "configured",
+      completenessState: "complete"
+    }
+  ])("normalizes $label in new Draft and duplicate without changing temporary Active history", async ({
+    legacyPayload, copiedPayload, applicability, completenessState
+  }) => {
+    const { service } = createService();
+    const temporary = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: `Legacy temporary ${completenessState}`, itemType: "temporary"
+    });
+    const revisionId = temporary.draftRevisionId!;
+    const overview = await service.getSection(ACTOR, temporary.mainLineId, revisionId, "overview");
+    const savedOverview = await service.updateSection(ACTOR, temporary.mainLineId, revisionId, "overview", {
+      expectedVersion: overview.version,
+      expectedAggregateVersion: temporary.version,
+      payload: { description: "Temporary light fitting", uomId: "uom-sqft", priorityId: null, surfaceIds: [], modeIds: [] }
+    });
+    const sourceRecommendations = await service.getSection(ACTOR, temporary.mainLineId, revisionId, "recommendations");
+    await AiEstimatorKnowledgeSectionModel.updateOne(
+      { _id: sourceRecommendations.id },
+      { $set: { applicability: "not_applicable", payload: legacyPayload } }
+    ).exec();
+    const active = await service.activate(ACTOR, temporary.mainLineId, revisionId, {
+      expectedVersion: savedOverview.aggregateVersion
+    });
+    expect(active.activeRevision?.completeness.sections)
+      .toContainEqual(expect.objectContaining({ sectionKey: "recommendations", state: "not_applicable" }));
+
+    const duplicate = await service.duplicate(ACTOR, temporary.mainLineId, {
+      expectedVersion: active.version, name: `Duplicate ${completenessState}`
+    });
+    const duplicateSection = await service.getSection(ACTOR, duplicate.mainLineId, duplicate.draftRevisionId!, "recommendations");
+    expect(duplicateSection).toMatchObject({ applicability, payload: copiedPayload });
+    expect(duplicateSection.payload).toEqual(copiedPayload);
+    expect(duplicate.draftRevision?.completeness.sections)
+      .toContainEqual(expect.objectContaining({ sectionKey: "recommendations", state: completenessState }));
+
+    const withDraft = await service.createRevision(ACTOR, temporary.mainLineId, {
+      expectedVersion: active.version
+    });
+    const draftSection = await service.getSection(ACTOR, temporary.mainLineId, withDraft.draftRevisionId!, "recommendations");
+    expect(draftSection).toMatchObject({ applicability, payload: copiedPayload });
+    expect(draftSection.payload).toEqual(copiedPayload);
+    expect(withDraft.draftRevision?.completeness.sections)
+      .toContainEqual(expect.objectContaining({ sectionKey: "recommendations", state: completenessState }));
+
+    await expect(service.updateSection(ACTOR, temporary.mainLineId, revisionId, "recommendations", {
+      expectedVersion: sourceRecommendations.version,
+      expectedAggregateVersion: withDraft.version,
+      payload: {}
+    })).rejects.toMatchObject({ code: "KNOWLEDGE_REVISION_IMMUTABLE" });
+    expect(await service.getSection(ACTOR, temporary.mainLineId, revisionId, "recommendations"))
+      .toMatchObject({ applicability: "not_applicable", payload: legacyPayload });
+    expect((await service.getItem(ACTOR, temporary.mainLineId)).activeRevision?.completeness.sections)
+      .toContainEqual(expect.objectContaining({ sectionKey: "recommendations", state: "not_applicable" }));
   });
 
   it("saves Budget Alterations independently and rejects stale, mismatched and self references atomically", async () => {

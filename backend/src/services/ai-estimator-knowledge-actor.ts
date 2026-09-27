@@ -17,6 +17,11 @@ export interface AiEstimatorKnowledgeAuthorizedActor {
   readonly role: "super_admin";
 }
 
+export interface AiEstimatorKnowledgeVendorAuthorizedActor {
+  readonly id: string;
+  readonly role: "super_admin" | "procurement";
+}
+
 export interface AiEstimatorKnowledgeActorStore {
   coordinateAuthorizationMutation(session: ClientSession): Promise<void>;
   findActor(
@@ -35,6 +40,17 @@ export interface AiEstimatorKnowledgeActorGuard {
     actor: PublicUser,
     session: ClientSession
   ): Promise<AiEstimatorKnowledgeAuthorizedActor>;
+}
+
+export interface AiEstimatorKnowledgeVendorActorGuard {
+  requireReadActor(
+    actor: PublicUser,
+    session?: ClientSession
+  ): Promise<AiEstimatorKnowledgeVendorAuthorizedActor>;
+  requireMutationActor(
+    actor: PublicUser,
+    session: ClientSession
+  ): Promise<AiEstimatorKnowledgeVendorAuthorizedActor>;
 }
 
 const mongoActorStore: AiEstimatorKnowledgeActorStore = {
@@ -84,6 +100,44 @@ export function createAiEstimatorKnowledgeActorGuard(
   };
 }
 
+/** Authorizes only the shared vendor directory and its inline classifications. */
+export function createAiEstimatorKnowledgeVendorActorGuard(
+  store: AiEstimatorKnowledgeActorStore = mongoActorStore
+): AiEstimatorKnowledgeVendorActorGuard {
+  return {
+    async requireReadActor(actor, session) {
+      return requireActiveVendorActor(store, actor, session);
+    },
+
+    async requireMutationActor(actor, session) {
+      await store.coordinateAuthorizationMutation(session);
+      return requireActiveVendorActor(store, actor, session);
+    }
+  };
+}
+
+async function requireActiveVendorActor(
+  store: AiEstimatorKnowledgeActorStore,
+  actor: PublicUser,
+  session?: ClientSession
+): Promise<AiEstimatorKnowledgeVendorAuthorizedActor> {
+  const storedActor = await store.findActor(actor.id, session);
+  if (!storedActor || !storedActor.active || storedActor.role !== actor.role) {
+    throw new ApiError(401, "INVALID_TOKEN", "Authentication token is invalid.");
+  }
+  if (storedActor.role === "procurement") {
+    return { id: storedActor.id, role: storedActor.role };
+  }
+  if (storedActor.role !== "super_admin") {
+    throw new ApiError(403, "FORBIDDEN", "You are not authorized to perform this action.");
+  }
+  const activeSuperAdminCount = await store.countActiveSuperAdmins(session);
+  if (activeSuperAdminCount !== 1) {
+    throw new ApiError(409, "SOLE_SUPER_ADMIN_REQUIRED", "Exactly one active Super Admin is required.");
+  }
+  return { id: storedActor.id, role: storedActor.role };
+}
+
 async function requireActiveSoleSuperAdmin(
   store: AiEstimatorKnowledgeActorStore,
   actor: PublicUser,
@@ -122,3 +176,6 @@ async function requireActiveSoleSuperAdmin(
 
 export const aiEstimatorKnowledgeActorGuard =
   createAiEstimatorKnowledgeActorGuard();
+
+export const aiEstimatorKnowledgeVendorActorGuard =
+  createAiEstimatorKnowledgeVendorActorGuard();

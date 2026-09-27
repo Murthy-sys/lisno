@@ -565,12 +565,15 @@ export interface ProcurementVendorProfile {
   pan: string;
   currentAddress: string;
   currentAddressVerifiedPhysically: boolean;
+  mainBasketIds: string[];
+  subBasketIds: string[];
+  /** Primary pair retained for older clients during the multi-selection rollout. */
   mainBasketId: string;
   subBasketId: string;
 }
 
 /** Omitted compatibility fields are normalized or retained by the server. */
-export type ProcurementVendorProfileInput = Omit<ProcurementVendorProfile, "reference" | "gstNumber" | "supplier" | "organizationType" | "bankAccount"> & {
+export type ProcurementVendorProfileInput = Omit<ProcurementVendorProfile, "reference" | "gstNumber" | "supplier" | "organizationType" | "bankAccount" | "mainBasketId" | "subBasketId"> & {
   reference?: string | null;
   gstNumber?: string | null;
   supplier?: boolean | null;
@@ -610,6 +613,8 @@ export interface ProcurementVendorSummary {
   executionType?: ProcurementVendorProfile["executionType"];
   profileComplete: boolean;
   currentAddressVerifiedPhysically: boolean | null;
+  mainBaskets: { id: string; name: string | null; status: "active" | "inactive" | "archived" | "unavailable" }[];
+  subBaskets: { id: string; basketId: string | null; name: string | null }[];
   mainBasket: { id: string; name: string | null; status: "active" | "inactive" | "archived" | "unavailable" } | null;
   subBasket: { id: string; name: string | null } | null;
 }

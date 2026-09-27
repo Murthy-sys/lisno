@@ -28,9 +28,9 @@ interface KnowledgeBasketCarouselProps {
   readonly isLoading?: boolean;
 }
 
-const CARD_WIDTH = 100;
-const CARD_GAP = 6;
-const TRACK_INSET = 20;
+const CARD_WIDTH = 136;
+const CARD_GAP = 8;
+const TRACK_INSET = 12;
 // The catalog API has no item image field. This bundled room is decorative artwork.
 const DECORATIVE_ROOM = require("../../../assets/brand/project-detail-interior.jpg");
 
@@ -149,28 +149,28 @@ export function KnowledgeBasketCarousel({ basketId, name, items, expanded, onTog
 const s = StyleSheet.create({
   basket: { marginHorizontal: -8, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: 6, backgroundColor: colors.surface },
   header: { flexDirection: "row", alignItems: "center", minHeight: 44 },
-  heading: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 9, paddingLeft: 8, minHeight: 44 },
-  name: { flex: 1, minWidth: 0, fontFamily: fonts.semibold, fontSize: 13, lineHeight: 18, color: colors.ink },
-  count: { fontFamily: fonts.regular, fontSize: 10, lineHeight: 15, color: colors.inkMuted, paddingLeft: 3 },
+  heading: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 10, minHeight: 44 },
+  name: { flex: 1, minWidth: 0, fontFamily: fonts.semibold, fontSize: 14, lineHeight: 20, color: colors.ink },
+  count: { fontFamily: fonts.medium, fontSize: 10, lineHeight: 16, color: colors.inkMuted, paddingHorizontal: 6, paddingVertical: 2, backgroundColor: colors.surfaceMuted, borderRadius: 4 },
   basketMenu: { width: 44, minHeight: 44, alignItems: "center", justifyContent: "center" },
   carousel: { position: "relative" },
-  track: { paddingHorizontal: TRACK_INSET, gap: CARD_GAP, paddingBottom: 2 },
-  card: { width: CARD_WIDTH, minHeight: 134, backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: 5 },
-  cardContent: { padding: 7, flex: 1 },
-  thumbnail: { width: "100%", height: 45, borderRadius: 2, marginBottom: 6 },
-  itemTitle: { fontFamily: fonts.semibold, fontSize: 9.5, lineHeight: 12, minHeight: 24, paddingRight: 14, color: colors.ink },
-  itemMenu: { position: "absolute", top: 47, right: -3, width: 30, height: 44, alignItems: "center", justifyContent: "center" },
-  itemState: { fontFamily: fonts.regular, fontSize: 8, lineHeight: 12, color: colors.inkMuted, marginTop: 1 },
+  track: { paddingHorizontal: TRACK_INSET, gap: CARD_GAP, paddingBottom: 4 },
+  card: { width: CARD_WIDTH, minHeight: 170, backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: 5 },
+  cardContent: { padding: 8, flex: 1 },
+  thumbnail: { width: "100%", height: 66, borderRadius: 3, marginBottom: 7 },
+  itemTitle: { fontFamily: fonts.semibold, fontSize: 11.5, lineHeight: 16, minHeight: 32, paddingRight: 38, color: colors.ink },
+  itemMenu: { position: "absolute", top: 76, right: 0, width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  itemState: { fontFamily: fonts.regular, fontSize: 10, lineHeight: 15, color: colors.inkMuted, marginTop: 1 },
   temporary: { alignSelf: "flex-start", maxWidth: "100%", marginTop: 1, paddingHorizontal: 4, borderRadius: 2, backgroundColor: colors.surfaceMuted },
-  temporaryLabel: { fontFamily: fonts.medium, fontSize: 7.5, lineHeight: 12, color: colors.ink },
+  temporaryLabel: { fontFamily: fonts.medium, fontSize: 9, lineHeight: 15, color: colors.ink },
   progressRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 },
   progressTrack: { flex: 1, height: 3, backgroundColor: colors.border, borderRadius: 2, overflow: "hidden" },
   progressFill: { height: 3, backgroundColor: colors.primary },
-  percentage: { fontFamily: fonts.regular, fontSize: 7.5, lineHeight: 11, color: colors.inkMuted },
-  metadata: { fontFamily: fonts.regular, fontSize: 8, lineHeight: 12, marginTop: 2, color: colors.inkMuted },
-  arrow: { position: "absolute", top: 35, width: 34, height: 44, alignItems: "center", justifyContent: "center" },
-  previous: { left: -12 },
-  next: { right: -12 },
+  percentage: { fontFamily: fonts.regular, fontSize: 9, lineHeight: 14, color: colors.inkMuted },
+  metadata: { fontFamily: fonts.regular, fontSize: 9.5, lineHeight: 15, marginTop: 3, color: colors.inkMuted },
+  arrow: { position: "absolute", top: 46, width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  previous: { left: 0 },
+  next: { right: 0 },
   arrowCircle: { width: 23, height: 23, borderRadius: 12, backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
   disabled: { opacity: 0.42 },
   pagination: { minHeight: 22, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },

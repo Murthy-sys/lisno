@@ -73,6 +73,8 @@
 .vendor-directory__table strong { display: block; font-size: 14px; line-height: 1.4; font-weight: 600; }
 .vendor-directory__table small { display: block; color: var(--directory-muted); font-size: 12px; line-height: 1.4; font-weight: 400; margin-top: 2px; }
 .vendor-directory__basket { line-height: 1.4; }
+.vendor-directory__basket-group + .vendor-directory__basket-group { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--directory-border); }
+.vendor-directory__table .vendor-directory__basket-count { margin: 0 0 5px; color: var(--directory-muted); }
 .vendor-directory__table .vendor-directory__sub-basket { margin-top: 1px; }
 .vendor-directory__type { display: inline-block; font-size: 13px; line-height: 1.4; padding: 1px 7px; border: 1px solid #d9e7de; background: #eaf2ec; color: #2e6148; border-radius: 5px; font-weight: 500; }
 .vendor-directory__type--supplier { color: #3d6076; border-color: #dbe6e9; background: #edf2f4; }

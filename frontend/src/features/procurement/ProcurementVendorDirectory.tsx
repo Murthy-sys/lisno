@@ -26,10 +26,12 @@ export function ProcurementVendorDirectory() {
   const auth = useAuth();
   const client = useQueryClient();
   const id = useId();
-  const canRead = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.read");
-  const canCreate = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.create");
-  const canUpdate = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.update");
-  const canArchive = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.lifecycle");
+  const canRead = hasFrontendPermission(auth.authorization, "procurement.vendor_directory.read");
+  const canCreate = hasFrontendPermission(auth.authorization, "procurement.vendor_directory.create");
+  const canUpdate = hasFrontendPermission(auth.authorization, "procurement.vendor_directory.update");
+  const canArchive = hasFrontendPermission(auth.authorization, "procurement.vendor_directory.lifecycle");
+  const canCreateBasket = hasFrontendPermission(auth.authorization, "procurement.vendor_classification.create");
+  const canCorrectBaseline = hasFrontendPermission(auth.authorization, "procurement.vendor_allocation_baseline.correct");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState(emptyFilters);
   const [offset, setOffset] = useState(0);
@@ -71,7 +73,7 @@ export function ProcurementVendorDirectory() {
   function reset() { cancelSearch(); setSearch(""); setFilters(emptyFilters); setOffset(0); setSelected(new Set()); }
   function pageChanged(next: number) { setOffset(next); setSelected(new Set()); }
   function pageSizeChanged(next: VendorDirectoryPageSize) { setPageSize(next); setOffset(0); setSelected(new Set()); }
-  if (!canRead || denied(query.error) || denied(overview.error) || denied(baskets.error) || denied(subs.error)) return <PageState state="error" message="You do not have permission to configure vendors." />;
+  if (!canRead || denied(query.error) || denied(overview.error) || denied(baskets.error) || denied(subs.error) || denied(mutation.error)) return <PageState state="error" message="You do not have permission to manage vendors." />;
   return <div className="vendor-directory">
     <VendorDirectoryHeader />
     <VendorDirectoryOverview overview={overview.data?.directoryOverview} loading={overview.isPending} error={overview.isError} refreshing={overview.isFetching} retry={() => void overview.refetch()} />
@@ -92,7 +94,7 @@ export function ProcurementVendorDirectory() {
       {query.isFetching && !query.isPending ? <p className="vendor-directory__notice" role="status">Refreshing vendors…</p> : null}
       {!query.isError && query.data ? <VendorDirectoryPagination offset={offset} count={query.data.items.length} total={query.data.pagination.total} pageSize={pageSize} busy={query.isFetching} onPage={pageChanged} onPageSize={pageSizeChanged} /> : null}
     </section>
-    {editor && (editor === "new" ? canCreate : canRead) ? <ProcurementVendorEditor key={editor === "new" ? "new" : `${editor.vendor.id}-${editor.readOnly}`} canCreateBasket={canCreate && (editor === "new" || !editor.readOnly)} canUpdate={canUpdate && (editor === "new" || !editor.readOnly)} existing={editor === "new" ? undefined : editor.vendor} onClose={() => setEditor(null)} onSaved={(vendor) => setNotice(`${vendor.name} saved.`)} /> : null}
+    {editor && (editor === "new" ? canCreate : canRead) ? <ProcurementVendorEditor key={editor === "new" ? "new" : `${editor.vendor.id}-${editor.readOnly}`} canCreateBasket={canCreateBasket && (editor === "new" || !editor.readOnly)} canUpdate={canUpdate && (editor === "new" || !editor.readOnly)} canCorrectBaseline={canCorrectBaseline} existing={editor === "new" ? undefined : editor.vendor} onClose={() => setEditor(null)} onSaved={(vendor) => setNotice(`${vendor.name} saved.`)} /> : null}
     {archive && canArchive ? <Dialog title="Archive vendor?" eyebrow="Vendor directory" description={`${archive.name} will no longer be available for new selections. Existing project records remain available.`} onClose={() => setArchive(null)} busy={mutation.isPending} role="alertdialog">
       <Field id={`${id}-reason`} label="Reason" required>{(props) => <Textarea {...props} disabled={mutation.isPending} maxLength={1000} value={reason} onChange={(event) => setReason(event.target.value)} />}</Field>
       {mutation.isError ? <InlineMessage tone="error">{procurementError(mutation.error, "The vendor could not be archived. Refresh and try again.")}</InlineMessage> : null}

@@ -3,11 +3,17 @@ import type { Role } from "../../contracts/authorization";
 export type ProjectDetailKind = "admin" | "staff" | "client";
 export type ProjectDetailTone = "planning" | "active" | "on_hold" | "completed" | "approval" | "unknown";
 
+/** Icon keys for detail rows; the renderer maps each key to a decorative glyph. */
+export type ProjectDetailIcon =
+  | "person" | "home" | "pin" | "calendar" | "calendarCheck" | "rupee" | "mail" | "phone"
+  | "status" | "progress" | "clock" | "flag" | "arrow" | "version";
+
 export interface ProjectDetailRow {
   readonly key: string;
   readonly label: string;
   readonly value: string;
   readonly note: string | null;
+  readonly icon: ProjectDetailIcon;
 }
 
 export interface ProjectDetailGroup {
@@ -33,16 +39,41 @@ export interface ProjectDetailPerson {
   readonly initial: string;
 }
 
+/** `approved` marks the client-approved estimate pill; other pills are drawn from `tone`. */
+export interface ProjectDetailPill {
+  readonly label: string;
+  readonly tone: ProjectDetailTone;
+  readonly approved: boolean;
+}
+
+export interface ProjectDetailValue {
+  readonly kind: "estimate" | "progress";
+  readonly label: string;
+  readonly value: string;
+  readonly pill: ProjectDetailPill | null;
+}
+
+/** Admin estimate card. `id` is for actions (PDF export) only and is never displayed. */
+export interface ProjectDetailEstimate {
+  readonly id: string | null;
+  readonly statusLabel: string;
+  readonly rows: readonly ProjectDetailRow[];
+  readonly emptyText: string | null;
+}
+
 export interface ProjectDetailPresentation {
   readonly kind: ProjectDetailKind;
   readonly id: string | null;
   readonly name: string;
-  readonly description: string;
+  readonly subtitle: string;
   readonly status: { readonly label: string; readonly tone: ProjectDetailTone };
   readonly created: { readonly label: string; readonly iso: string | null };
-  readonly facts: readonly ProjectDetailRow[];
+  /** Exactly four summary facts, in display order. */
+  readonly overview: readonly ProjectDetailRow[];
+  readonly value: ProjectDetailValue;
   readonly sections: readonly ProjectDetailSection[];
-  readonly summary: readonly ProjectDetailRow[];
+  /** Admin payload only; null for staff and client. */
+  readonly estimate: ProjectDetailEstimate | null;
   readonly people: readonly ProjectDetailPerson[];
 }
 
@@ -58,10 +89,12 @@ const APPROVED_ESTIMATE_LABEL = "Client-approved value (incl. GST)";
 const CURRENT_ESTIMATE_LABEL = "Current estimate value (incl. GST)";
 const BUDGET_RANGE_LABEL = "Initial client budget range";
 
-const DESCRIPTIONS: Readonly<Record<ProjectDetailKind, string>> = {
-  admin: "Commercial handoff, estimate and delivery details for this project.",
-  staff: "Delivery schedule, progress and project structure.",
-  client: "Your project schedule and progress."
+const APPROVED_PILL: ProjectDetailPill = { label: "Approved", tone: "unknown", approved: true };
+
+const SUBTITLES: Readonly<Record<ProjectDetailKind, string>> = {
+  admin: "Client, property and budget details",
+  staff: "Client, schedule and progress details",
+  client: "Schedule and progress details"
 };
 
 /** Fixed English abbreviations keep dates identical across ICU versions ("Sep", never "Sept"). */
@@ -129,9 +162,14 @@ function formatDate(date: Date): string {
   return `${pad(date.getUTCDate())} ${MONTHS[date.getUTCMonth()] ?? ""} ${date.getUTCFullYear()}`;
 }
 
-function presentDate(value: unknown, fallback: string = NOT_CAPTURED): string {
+/** "05 Sep 2026" in UTC for a date-only or zoned ISO value; null otherwise. Shared with the Documents tab. */
+export function formatUtcDate(value: unknown): string | null {
   const date = parseDate(value);
-  return date ? formatDate(date) : fallback;
+  return date ? formatDate(date) : null;
+}
+
+function presentDate(value: unknown, fallback: string = NOT_CAPTURED): string {
+  return formatUtcDate(value) ?? fallback;
 }
 
 function presentDateTime(value: unknown): string {
@@ -155,8 +193,8 @@ function presentStatus(value: unknown, approvalPending: boolean): ProjectDetailP
   return label ? { label, tone: statusTone(value) } : { label: STATUS_UNAVAILABLE, tone: "unknown" };
 }
 
-function row(key: string, label: string, value: string, note: string | null = null): ProjectDetailRow {
-  return { key, label, value, note };
+function row(key: string, label: string, value: string, icon: ProjectDetailIcon): ProjectDetailRow {
+  return { key, label, value, note: null, icon };
 }
 
 function group(
@@ -198,7 +236,10 @@ function presentHeader(project: Record<string, unknown>): ProjectHeader {
   };
 }
 
-/** Admin summary (`GET /admin/projects/:id`): ports the web label rules without reading ID-only fields. */
+/**
+ * Admin summary (`GET /admin/projects/:id`): ports the web label rules without displaying ID-only fields.
+ * The estimate id is carried only as an action reference for the estimate card.
+ */
 function presentAdmin(project: Record<string, unknown>, header: ProjectHeader): ProjectDetailPresentation {
   const client = isRecord(project.client) ? project.client : {};
   const clientName = presentText(client.name);
@@ -225,6 +266,9 @@ function presentAdmin(project: Record<string, unknown>, header: ProjectHeader): 
     : estimate ? formatMoney(estimate.total) ?? NOT_CAPTURED : NO_ESTIMATE;
   const estimateStatus = estimate ? workflowText(estimate.status) : null;
   const estimateStatusLabel = estimate ? estimateStatus ?? NOT_CAPTURED : NO_ESTIMATE;
+  const estimatePill: ProjectDetailPill | null = approved
+    ? APPROVED_PILL
+    : estimateStatus ? { label: estimateStatus, tone: "unknown", approved: false } : null;
 
   const budgetMin = formatMoney(project.budgetMin);
   const budgetMax = formatMoney(project.budgetMax);
@@ -235,15 +279,15 @@ function presentAdmin(project: Record<string, unknown>, header: ProjectHeader): 
   return {
     kind: "admin",
     ...header,
-    description: DESCRIPTIONS.admin,
+    subtitle: SUBTITLES.admin,
     status,
-    facts: [
-      row("client", "Client", clientName ?? NOT_CAPTURED),
-      row("location", "Location", location),
-      row("propertyType", "Property type", propertyType),
-      row("created", "Created", header.created.label),
-      row("estimate", estimateLabel, estimateValue, estimate && !approved ? estimateStatus : null)
+    overview: [
+      row("client", "Client", clientName ?? NOT_CAPTURED, "person"),
+      row("propertyType", "Property type", propertyType, "home"),
+      row("location", "Location", location, "pin"),
+      row("created", "Created", header.created.label, "calendar")
     ],
+    value: { kind: "estimate", label: estimateLabel, value: estimateValue, pill: estimatePill },
     sections: [
       {
         key: "information",
@@ -251,14 +295,14 @@ function presentAdmin(project: Record<string, unknown>, header: ProjectHeader): 
         subtitle: "Client, property and budget details",
         groups: [
           group("project", "Project", [
-            row("location", "Location", location),
-            row("propertyType", "Property type", propertyType),
-            row("budgetRange", BUDGET_RANGE_LABEL, budgetRange)
+            row("location", "Location", location, "pin"),
+            row("propertyType", "Property type", propertyType, "home"),
+            row("budgetRange", BUDGET_RANGE_LABEL, budgetRange, "rupee")
           ]),
           group("client", "Client", [
-            row("clientName", "Name", clientName ?? NOT_CAPTURED),
-            row("clientEmail", "Email", presentText(client.email) ?? NOT_CAPTURED),
-            row("clientMobile", "Mobile", presentText(client.mobile) ?? NOT_CAPTURED)
+            row("clientName", "Client name", clientName ?? NOT_CAPTURED, "person"),
+            row("clientEmail", "Email", presentText(client.email) ?? NOT_CAPTURED, "mail"),
+            row("clientMobile", "Mobile", presentText(client.mobile) ?? NOT_CAPTURED, "phone")
           ])
         ]
       },
@@ -267,35 +311,36 @@ function presentAdmin(project: Record<string, unknown>, header: ProjectHeader): 
         title: "Assignment & progress",
         subtitle: "Sales assignment and lead progress",
         groups: [
+          group("status", "Status", [row("projectStatus", "Project status", status.label, "status")], { wide: true }),
           group("sales", "Sales", estimator
             ? [
-                row("salesAssignee", "Assigned to", presentText(estimator.name) ?? NOT_CAPTURED),
-                row("salesEmail", "Email", presentText(estimator.email) ?? NOT_CAPTURED)
+                row("salesAssignee", "Assigned to", presentText(estimator.name) ?? NOT_CAPTURED, "person"),
+                row("salesEmail", "Email", presentText(estimator.email) ?? NOT_CAPTURED, "mail")
               ]
-            : [row("salesAssignee", "Assigned to", UNASSIGNED_HANDOFF)]),
+            : [row("salesAssignee", "Assigned to", UNASSIGNED_HANDOFF, "person")]),
           group("lead", "Lead progress", lead
             ? [
-                row("leadStage", "Stage", workflowText(lead.stage) ?? NOT_CAPTURED),
-                row("leadNextAction", "Next action", assignmentPending ? ASSIGN_DESIGNER_NEXT_ACTION : presentText(lead.nextAction) ?? NOT_CAPTURED),
-                row("leadNextActionAt", "Next action date", presentDateTime(lead.nextActionAt))
+                row("leadStage", "Stage", workflowText(lead.stage) ?? NOT_CAPTURED, "flag"),
+                row("leadNextAction", "Next action", assignmentPending ? ASSIGN_DESIGNER_NEXT_ACTION : presentText(lead.nextAction) ?? NOT_CAPTURED, "arrow"),
+                row("leadNextActionAt", "Next action date", presentDateTime(lead.nextActionAt), "clock")
               ]
-            : [], { emptyText: lead ? null : UNASSIGNED_HANDOFF }),
-          group("estimate", "Estimate", estimate
-            ? [
-                row("estimateStatus", "Status", estimateStatusLabel),
-                row("estimateValue", estimateLabel, estimateValue),
-                ...(baselineVersion !== null ? [row("estimateBaseline", "Approved estimate baseline", `Version ${baselineVersion}`)] : [])
-              ]
-            : [], { emptyText: estimate ? null : NO_ESTIMATE, wide: true })
+            : [], { emptyText: lead ? null : UNASSIGNED_HANDOFF })
         ]
       }
     ],
-    summary: [
-      row("projectStatus", "Project status", status.label),
-      row("estimateStatus", "Estimate status", estimateStatusLabel),
-      row("estimateValue", estimateLabel, estimateValue),
-      row("budgetRange", BUDGET_RANGE_LABEL, budgetRange)
-    ],
+    estimate: {
+      id: estimate ? presentText(estimate.id) : null,
+      statusLabel: estimateStatusLabel,
+      rows: estimate
+        ? [
+            row("estimateStatus", "Status", estimateStatusLabel, "status"),
+            row("estimateValue", estimateLabel, estimateValue, "rupee"),
+            ...(baselineVersion !== null ? [row("estimateBaseline", "Approved estimate baseline", `Version ${baselineVersion}`, "version")] : []),
+            row("budgetRange", BUDGET_RANGE_LABEL, budgetRange, "rupee")
+          ]
+        : [],
+      emptyText: estimate ? null : NO_ESTIMATE
+    },
     people: namedPeople([
       estimator ? person("sales", "Sales", estimator.name, estimator.email) : null,
       designer ? person("designer", "Designer", designer.name, designer.email) : null,
@@ -309,19 +354,19 @@ function presentHierarchy(project: Record<string, unknown>, header: ProjectHeade
   const location = presentText(project.location) ?? NOT_CAPTURED;
   const status = presentStatus(project.status, false);
   const progress = presentProgress(project.progress);
+  const plannedStart = presentDate(project.plannedStartAt);
   const plannedEnd = presentDate(project.plannedEndAt);
-  const updated = presentDate(project.updatedAt);
   const clientName = kind === "staff" ? presentText(project.clientName) : null;
   const clientRows = kind === "staff"
     ? [
-        clientName ? row("clientName", "Name", clientName) : null,
+        clientName ? row("clientName", "Client name", clientName, "person") : null,
         ...([
-          ["clientEmail", "Email", project.clientEmail],
-          ["clientMobile", "Mobile", project.clientMobile],
-          ["clientAddress", "Address", project.clientAddress]
-        ] as const).map(([key, label, value]) => {
+          ["clientEmail", "Email", project.clientEmail, "mail"],
+          ["clientMobile", "Mobile", project.clientMobile, "phone"],
+          ["clientAddress", "Address", project.clientAddress, "home"]
+        ] as const).map(([key, label, value, icon]) => {
           const text = presentText(value);
-          return text ? row(key, label, text) : null;
+          return text ? row(key, label, text, icon) : null;
         })
       ].filter((entry): entry is ProjectDetailRow => entry !== null)
     : [];
@@ -329,15 +374,17 @@ function presentHierarchy(project: Record<string, unknown>, header: ProjectHeade
   return {
     kind,
     ...header,
-    description: DESCRIPTIONS[kind],
+    subtitle: SUBTITLES[kind],
     status,
-    facts: [
-      ...(clientName ? [row("client", "Client", clientName)] : []),
-      row("location", "Location", location),
-      row("created", "Created", header.created.label),
-      row("progress", "Progress", progress),
-      row("plannedEnd", "Planned completion", plannedEnd)
+    overview: [
+      kind === "staff"
+        ? row("client", "Client", clientName ?? NOT_CAPTURED, "person")
+        : row("plannedStart", "Planned start", plannedStart, "calendar"),
+      row("plannedEnd", "Planned completion", plannedEnd, "calendarCheck"),
+      row("location", "Location", location, "pin"),
+      row("created", "Created", header.created.label, "calendar")
     ],
+    value: { kind: "progress", label: "Overall progress", value: progress, pill: { label: status.label, tone: status.tone, approved: false } },
     sections: [
       {
         key: "information",
@@ -345,8 +392,8 @@ function presentHierarchy(project: Record<string, unknown>, header: ProjectHeade
         subtitle: kind === "staff" ? "Location, status and client contact" : "Location and status",
         groups: [
           group("project", "Project", [
-            row("location", "Location", location),
-            row("status", "Status", status.label)
+            row("location", "Location", location, "pin"),
+            row("status", "Status", status.label, "status")
           ]),
           ...(clientRows.length > 0 ? [group("client", "Client", clientRows)] : [])
         ]
@@ -357,22 +404,17 @@ function presentHierarchy(project: Record<string, unknown>, header: ProjectHeade
         subtitle: "Planned dates, actual dates and progress",
         groups: [
           group("schedule", "Schedule", [
-            row("progress", "Progress", progress),
-            row("plannedStart", "Planned start", presentDate(project.plannedStartAt)),
-            row("plannedEnd", "Planned completion", plannedEnd),
-            row("actualStart", "Actual start", presentDate(project.actualStartAt, NOT_RECORDED)),
-            row("actualEnd", "Actual completion", presentDate(project.actualEndAt, NOT_RECORDED)),
-            row("updated", "Last updated", updated)
+            row("progress", "Progress", progress, "progress"),
+            row("plannedStart", "Planned start", plannedStart, "calendar"),
+            row("plannedEnd", "Planned completion", plannedEnd, "calendarCheck"),
+            row("actualStart", "Actual start", presentDate(project.actualStartAt, NOT_RECORDED), "calendar"),
+            row("actualEnd", "Actual completion", presentDate(project.actualEndAt, NOT_RECORDED), "calendarCheck"),
+            row("updated", "Last updated", presentDate(project.updatedAt), "clock")
           ], { wide: true })
         ]
       }
     ],
-    summary: [
-      row("projectStatus", "Project status", status.label),
-      row("progress", "Progress", progress),
-      row("plannedEnd", "Planned completion", plannedEnd),
-      row("updated", "Last updated", updated)
-    ],
+    estimate: null,
     people: kind === "staff" ? namedPeople([person("client", "Client", project.clientName, project.clientEmail)]) : []
   };
 }

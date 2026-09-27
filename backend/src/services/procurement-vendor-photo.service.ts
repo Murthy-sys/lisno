@@ -9,7 +9,7 @@ import { AiEstimatorKnowledgeVendorModel } from "../models/AiEstimatorKnowledgeV
 import { ProcurementVendorPhotoCleanupModel, ProcurementVendorPhotoIntentModel } from "../models/ProcurementVendorPhotoIntent.js";
 import { hasManagedStorage, type ManagedFileStorage } from "../storage/managed-storage.js";
 import type { FileStorage } from "../storage/storage.js";
-import { aiEstimatorKnowledgeActorGuard, type AiEstimatorKnowledgeActorGuard } from "./ai-estimator-knowledge-actor.js";
+import { aiEstimatorKnowledgeVendorActorGuard, type AiEstimatorKnowledgeVendorActorGuard } from "./ai-estimator-knowledge-actor.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import { procurementVendorPhotoDescriptor } from "./procurement-vendor-profile.js";
@@ -28,7 +28,7 @@ export interface ProcurementVendorPhotoServiceDependencies {
   audit: Pick<AuditService, "appendInMongoTransaction">;
   storage: FileStorage;
   maxUploadBytes: number;
-  actorGuard?: AiEstimatorKnowledgeActorGuard;
+  actorGuard?: AiEstimatorKnowledgeVendorActorGuard;
   now?: Clock;
   startSession?: () => Promise<ClientSession>;
 }
@@ -51,7 +51,7 @@ export async function validateProcurementVendorPhoto(file: ValidatedUpload, maxB
 }
 
 export function createProcurementVendorPhotoService(dependencies: ProcurementVendorPhotoServiceDependencies): ProcurementVendorPhotoService {
-  const actorGuard = dependencies.actorGuard ?? aiEstimatorKnowledgeActorGuard;
+  const actorGuard = dependencies.actorGuard ?? aiEstimatorKnowledgeVendorActorGuard;
   const now = dependencies.now ?? systemClock;
   const startSession = dependencies.startSession ?? (() => mongoose.startSession());
   const storage = (): ManagedFileStorage => {

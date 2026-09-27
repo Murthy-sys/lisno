@@ -10,6 +10,7 @@ import {
   appDestination,
   BackEntryOwnership,
   destinationAllowed,
+  parseEstimateRouteId,
   readAppStack,
   resolveBackAction,
   type AppStack,
@@ -52,6 +53,10 @@ function feature(featureId: string, key = `feature-${featureId}`): NavigationEnt
 
 function record(featureId: string, recordId = "record-a", key = `record-${recordId}`): NavigationEntry {
   return { key, name: "record/[featureId]/[recordId]", params: { featureId, recordId } };
+}
+
+function estimate(estimateId = "estimate-a", key = `estimate-${estimateId}`): NavigationEntry {
+  return { key, name: "estimate/[estimateId]", params: { estimateId } };
 }
 
 function stack(routes: readonly NavigationEntry[], index = routes.length - 1): AppStack {
@@ -101,6 +106,10 @@ describe("mobile Back route state", () => {
       path: "/record/projects/project%20%232%3Fview%3Dprivate"
     });
     expect(appDestination({ key: "more", name: "more" })).toEqual({ kind: "more", path: "/more" });
+    expect(appDestination(estimate("estimate #2?view=private"))).toEqual({
+      kind: "record", featureId: "estimates", path: "/estimate/estimate%20%232%3Fview%3Dprivate"
+    });
+    expect(parseEstimateRouteId("estimate%20%232")).toBe("estimate #2");
   });
 
   it.each([
@@ -109,6 +118,14 @@ describe("mobile Back route state", () => {
     record("projects", "nested\\project"),
     record("projects", "bad\u0000id"),
     record("projects", ""),
+    estimate("nested/estimate"),
+    estimate("nested\\estimate"),
+    estimate("nested%2Festimate"),
+    estimate("nested%252Festimate"),
+    estimate("bad%ZZ"),
+    estimate(""),
+    estimate(".."),
+    { name: "estimate/[estimateId]", params: { estimateId: ["estimate-a"] } },
     { name: "feature/[featureId]", params: { featureId: ["projects"] } },
     { name: "external", params: { href: "https://example.invalid" } }
   ])("does not create a Back destination from malformed or unrecognized route %j", (entry) => {
@@ -148,6 +165,17 @@ describe("mobile Back home and fallback policy", () => {
   it("returns a cold-linked record to its authorized feature using replacement", () => {
     expect(resolveBackAction(stack([record("design-plans")]), session(), fence, new BackEntryOwnership())).toEqual({
       kind: "replace", path: "/feature/design-plans"
+    });
+  });
+
+  it("returns a Client estimate to its authorized Estimates list", () => {
+    expect(resolveBackAction(stack([estimate()]), session("client"), fence, new BackEntryOwnership(), "/feature/estimates")).toEqual({
+      kind: "replace", path: "/feature/estimates"
+    });
+    const routes = [feature("estimates"), estimate()];
+    expect(resolveBackAction(stack(routes), session("client"), fence, observedHistory(routes), "/feature/estimates")).toEqual({ kind: "pop", count: 1 });
+    expect(resolveBackAction(stack([estimate()]), session("client", ["projects.client_summary.read"]), fence, new BackEntryOwnership(), "/feature/estimates")).toEqual({
+      kind: "replace", path: "/feature/projects"
     });
   });
 

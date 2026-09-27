@@ -10,6 +10,7 @@ describe("Android app environment configuration", () => {
 
     expect(config.backgroundColor).toBe(colors.shell);
     expect(config.android?.adaptiveIcon?.backgroundColor).toBe(colors.shell);
+    expect(config.ios?.bundleIdentifier).toBe("com.lisno.mobile.dev");
     expect(config.plugins).toContainEqual([
       "expo-splash-screen",
       {
@@ -84,6 +85,7 @@ describe("Android app environment configuration", () => {
     });
 
     expect(config.android?.package).toBe("com.lisno.mobile");
+    expect(config.ios?.bundleIdentifier).toBe("com.lisno.mobile");
     expect(config.plugins).toContainEqual([
       "expo-build-properties",
       { android: { minSdkVersion: 24, usesCleartextTraffic: false } }

@@ -11,6 +11,11 @@ import { model, models, Schema } from "./mongoose.js";
 const requiredText = { type: String, required: true, minlength: 1, maxlength: AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT };
 const requiredLongText = { ...requiredText, maxlength: AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT };
 const money = { type: Number, min: 0, max: MAX_FINANCE_AMOUNT_PAISE, validate: Number.isSafeInteger };
+const basketIds = (maximum: number) => ({
+  type: [{ type: String, trim: true, minlength: 1, maxlength: 128 }], default: undefined,
+  set: (value: unknown) => Array.isArray(value) ? [...value].sort() : value,
+  validate: (value: unknown) => value === undefined || (Array.isArray(value) && value.length >= 1 && value.length <= maximum && new Set(value).size === value.length)
+});
 const bankAccountSchema = new Schema({
   accountHolderName: { ...requiredText, trim: true },
   bankName: { ...requiredText, trim: true },
@@ -38,6 +43,7 @@ const procurementProfileSchema = new Schema({
   address: requiredLongText, aadhar: { type: String, required: true, match: /^\d{12}$/u },
   pan: { type: String, required: true, match: /^[A-Z]{5}\d{4}[A-Z]$/u },
   currentAddress: requiredLongText, currentAddressVerifiedPhysically: { type: Boolean, required: true },
+  mainBasketIds: basketIds(100), subBasketIds: basketIds(500),
   mainBasketId: { ...requiredText, maxlength: 128 }, subBasketId: { ...requiredText, maxlength: 128 },
   physicalAddressVerifiedAt: { type: String, default: null }, physicalAddressVerifiedById: { type: String, default: null }
 }, { _id: false, strict: "throw" });
@@ -45,6 +51,9 @@ procurementProfileSchema.pre("validate", function validateClassification() {
   if (this.vendorType === "execution" && (!this.executionType?.length || this.supplier !== null)) this.invalidate("executionType", "Execution requires at least one execution type and no supplier answer.");
   if (this.vendorType === "supplier" && (typeof this.supplier !== "boolean" || this.executionType !== null)) this.invalidate("supplier", "Supplier requires an explicit answer and no execution type.");
   if (this.currentAddressVerifiedPhysically !== (typeof this.physicalAddressVerifiedAt === "string" && typeof this.physicalAddressVerifiedById === "string")) this.invalidate("currentAddressVerifiedPhysically", "Verification metadata is inconsistent.");
+  if (!!this.mainBasketIds !== !!this.subBasketIds) this.invalidate("mainBasketIds", "Both basket selections are required together.");
+  if (this.mainBasketIds && !this.mainBasketIds.includes(this.mainBasketId)) this.invalidate("mainBasketId", "The primary Main Basket must be selected.");
+  if (this.subBasketIds && !this.subBasketIds.includes(this.subBasketId)) this.invalidate("subBasketId", "The primary Sub Basket must be selected.");
 });
 const procurementPhotoSchema = new Schema({
   id: { type: String, required: true }, storageReference: { type: String, required: true },
@@ -106,6 +115,8 @@ vendorSchema.index({ nameNormalized: 1 }, { unique: true, partialFilterExpressio
 vendorSchema.index({ status: 1, displayOrder: 1, _id: 1 });
 vendorSchema.index({ "procurementProfile.mainBasketId": 1 });
 vendorSchema.index({ "procurementProfile.subBasketId": 1 });
+vendorSchema.index({ "procurementProfile.mainBasketIds": 1 });
+vendorSchema.index({ "procurementProfile.subBasketIds": 1 });
 
 export const AiEstimatorKnowledgeVendorModel =
   models.AiEstimatorKnowledgeVendor ?? model("AiEstimatorKnowledgeVendor", vendorSchema);

@@ -12,7 +12,7 @@ import { completeVendorBaseline, getVendorBaseline } from "./vendorProfileApi";
 import { procurementError, procurementRequestKey, rupeesToPaise } from "./procurementPresentation";
 import { MAX_PROCUREMENT_ITEM_PRICE_PAISE, projectProcurementKeys } from "./projectProcurementApi";
 
-export function VendorAllocationBaseline({ vendorId, canUpdate, disabled, onBusyChange, onDirtyChange }: { vendorId: string; canUpdate: boolean; disabled: boolean; onBusyChange: (busy: boolean) => void; onDirtyChange: (dirty: boolean) => void }) {
+export function VendorAllocationBaseline({ vendorId, canCorrect, disabled, onBusyChange, onDirtyChange }: { vendorId: string; canCorrect: boolean; disabled: boolean; onBusyChange: (busy: boolean) => void; onDirtyChange: (dirty: boolean) => void }) {
   const id = useId();
   const client = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -32,6 +32,7 @@ export function VendorAllocationBaseline({ vendorId, canUpdate, disabled, onBusy
   useEffect(() => { onDirtyChange(Boolean(selected)); return () => onDirtyChange(false); }, [selected, onDirtyChange]);
   const uncertain = mutation.isError && (!(mutation.error instanceof ApiError) || mutation.error.status >= 500 || mutation.error.status < 400 || mutation.error.status === 408);
   const conflict = mutation.error instanceof ApiError && mutation.error.status === 409;
+  const denied = [query.error, mutation.error].some((error) => error instanceof ApiError && (error.status === 401 || error.status === 403));
   function submit() {
     if (!selected || mutation.isPending || disabled || conflict) return;
     if (!uncertain) {
@@ -41,10 +42,11 @@ export function VendorAllocationBaseline({ vendorId, canUpdate, disabled, onBusy
     }
     setError(""); mutation.mutate();
   }
+  if (denied) return <PanelSection className="vendor-profile__section vendor-profile__section--baseline" icon={<History aria-hidden="true" />} title="Historical allocation correction"><InlineMessage tone="error">You do not have permission to review historical allocations.</InlineMessage></PanelSection>;
   return <PanelSection className="vendor-profile__section vendor-profile__section--baseline" icon={<History aria-hidden="true" />} title="Historical allocation correction">
     <p className="vendor-procurement__muted">Record missing amounts for existing vendor work only. New work must use the project procurement flow. Factual historical totals may exceed the unverified vendor limit and will block further increases.</p>
     {!open ? <Button variant="secondary" disabled={disabled} onClick={() => setOpen(true)}>Review missing historical allocations</Button> : <>
-      {query.isPending ? <p role="status">Loading historical allocations…</p> : query.isError ? <InlineMessage tone="error" action={<Button variant="secondary" onClick={() => void query.refetch()}>Retry historical allocations</Button>}>{procurementError(query.error, "Historical allocations could not be loaded.")}</InlineMessage> : !query.data.items.length ? <p>No eligible historical allocations are missing in this view.</p> : <ul className="vendor-profile__baseline-list">{query.data.items.map((row) => <li key={row.itemId}><div><strong>{row.projectName}: {row.itemName}</strong><small>{row.brand} · Item {row.itemId} · Project {row.projectId}</small><span>Not recorded</span></div>{canUpdate ? <Button variant="secondary" size="compact" disabled={disabled || mutation.isPending || Boolean(selected)} onClick={() => { setSelected(row); setAmount(""); setReason(""); mutation.reset(); command.current = null; setError(""); }}>Record historical amount</Button> : null}</li>)}</ul>}
+      {query.isPending ? <p role="status">Loading historical allocations…</p> : query.isError ? <InlineMessage tone="error" action={<Button variant="secondary" onClick={() => void query.refetch()}>Retry historical allocations</Button>}>{procurementError(query.error, "Historical allocations could not be loaded.")}</InlineMessage> : !query.data.items.length ? <p>No eligible historical allocations are missing in this view.</p> : <ul className="vendor-profile__baseline-list">{query.data.items.map((row) => <li key={row.itemId}><div><strong>{row.projectName}: {row.itemName}</strong><small>{row.brand} · Item {row.itemId} · Project {row.projectId}</small><span>Not recorded</span></div>{canCorrect ? <Button variant="secondary" size="compact" disabled={disabled || mutation.isPending || Boolean(selected)} onClick={() => { setSelected(row); setAmount(""); setReason(""); mutation.reset(); command.current = null; setError(""); }}>Record historical amount</Button> : null}</li>)}</ul>}
       {query.data && (query.data.total > 20 || offset > 0) ? <nav aria-label="Historical allocation pages" className="vendor-procurement__pagination"><Button variant="secondary" disabled={Boolean(selected) || query.isFetching || !offset} onClick={() => setOffset(Math.max(0, offset - 20))}>Previous</Button><span>{query.data.total} missing amounts</span><Button variant="secondary" disabled={Boolean(selected) || query.isFetching || offset + 20 >= query.data.total} onClick={() => setOffset(offset + 20)}>Next</Button></nav> : null}
       {selected ? <div role="group" aria-label={`Correct historical amount for ${selected.itemName}`} className="vendor-profile__correction">
         <p><strong>{selected.itemName}</strong> in {selected.projectName}</p>

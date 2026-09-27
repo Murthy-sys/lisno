@@ -603,7 +603,7 @@ describe("role landing staging contract", () => {
 
 describe("public invitation route", () => {
   it("mounts directly while staying outside the protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(35);
+    expect(ROUTE_REGISTRY).toHaveLength(37);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -693,8 +693,10 @@ describe("public password recovery routes", () => {
 describe("registered permission routes", () => {
   it.each([
     ["admin", "/admin/procurement", "Project vendor suggestions"],
-    ["super_admin", "/admin/procurement", "Vendor directory"],
-    ["procurement", "/procurement", "Procurement"]
+    ["super_admin", "/admin/procurement", "Procurement dashboard"],
+    ["super_admin", "/admin/procurement/vendors", "Vendor directory"],
+    ["procurement", "/procurement", "Procurement"],
+    ["procurement", "/procurement/vendors", "Vendor directory"]
   ] as const)("renders %s procurement independently of the chat layout", async (role, path, title) => {
     installAuthorizationSession(role, authorizationFor(role).permissions);
     renderApp([path]);
@@ -708,12 +710,12 @@ describe("registered permission routes", () => {
       (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
     );
 
-    expect(paths).toHaveLength(historicalProtectedPaths.length + 14);
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 16);
     expect(additions).toEqual([
       "/project-messages", "/projects/:projectId/messages",
       "/designer/design-plans",
       knowledgeConfigurationPaths[0],
-      "/admin/procurement", "/procurement",
+      "/admin/procurement", "/admin/procurement/vendors", "/procurement", "/procurement/vendors",
       ...knowledgeConfigurationPaths.slice(1),
       ...clientResponsePaths,
       "/admin/design-approvals",
@@ -725,7 +727,7 @@ describe("registered permission routes", () => {
         "/project-messages", "/projects/:projectId/messages",
         "/designer/design-plans",
         ...knowledgeConfigurationPaths,
-        "/admin/procurement", "/procurement",
+        "/admin/procurement", "/admin/procurement/vendors", "/procurement", "/procurement/vendors",
         ...clientResponsePaths,
         "/admin/design-approvals",
         ...procurementPaths,

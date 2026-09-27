@@ -89,6 +89,9 @@ export const createAppConfig = (
     scheme: production ? "lisno" : "lisno-dev",
     userInterfaceStyle: "light",
     backgroundColor: BRAND_SHELL,
+    ios: {
+      bundleIdentifier: androidPackage
+    },
     android: {
       package: androidPackage,
       adaptiveIcon: {

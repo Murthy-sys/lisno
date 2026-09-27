@@ -10,7 +10,7 @@ import { StateView } from "../../ui/primitives";
 import { colors, fonts } from "../../ui/tokens";
 import { KNOWLEDGE_MASTER_TYPES, type KnowledgeItemDetail, type KnowledgeJsonObject, type KnowledgeMaster, type KnowledgeMasterType, type KnowledgeSectionEnvelope } from "../../../../shared/knowledge/knowledgeTypes";
 import { KNOWLEDGE_WORKSPACE_SECTION_LABELS, formatKnowledgeDateTime } from "../../../../shared/knowledge/knowledgePresentation";
-import type { KnowledgeWorkspaceSectionKey } from "../../../../shared/knowledge/knowledgeWorkspaceSections";
+import { KNOWLEDGE_WORKSPACE_SECTION_KEYS, type KnowledgeWorkspaceSectionKey } from "../../../../shared/knowledge/knowledgeWorkspaceSections";
 import { validateKnowledgeSection } from "../../../../shared/knowledge/knowledgeSectionValidation";
 import { modeCalculationsIssues } from "../../../../shared/knowledge/knowledgeModeCalculation";
 import { modeDescriptionIssues } from "../../../../shared/knowledge/knowledgeModeDescription";
@@ -44,6 +44,9 @@ interface Conflict { readonly key: MobileSectionKey; readonly remote: KnowledgeS
 
 function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readonly context: KnowledgeMobileContext }) {
   const client = useQueryClient();
+  const scroll = useRef<ScrollView>(null);
+  const headerEnd = useRef(0);
+  const scrollOffset = useRef(0);
   const navigation = useScaffoldNavigationGuard();
   const [showActions, setShowActions] = useState(false);
   const [showChecks, setShowChecks] = useState(false);
@@ -194,23 +197,25 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readon
   if (!context.canRead) return <StateView title="Configuration unavailable" message="Your current access does not allow this Configuration workspace." tone="denied" />;
   if (!item && detailQuery.isPending) return <BrandLoader label="Loading Configuration" tone="dark" />;
   if (!item || (detailQuery.error instanceof ApiError && [401, 403, 404].includes(detailQuery.error.status))) return <StateView title="Configuration unavailable" message="This item could not be loaded." actionLabel="Retry" onAction={() => void detailQuery.refetch()} />;
-  const tabKeys: readonly KnowledgeWorkspaceSectionKey[] = item.itemType === "temporary" ? ["overview", "mode", "quality"] : ["overview", "mode", "recommendations", "quality"];
+  const tabKeys = KNOWLEDGE_WORKSPACE_SECTION_KEYS;
   const keys = active === "mode" ? ["advanced", "pricing"] as const : active === "quality" ? [] : [active];
   const loading = keys.some(key => sectionQueries[MOBILE_SECTION_KEYS.indexOf(key)]?.isPending);
   const failed = keys.some(key => sectionQueries[MOBILE_SECTION_KEYS.indexOf(key)]?.isError);
   const sectionPayload = (key: MobileSectionKey) => drafts[key]?.payload ?? saved[key]?.payload ?? {};
+  const recommendationsQuery = sectionQueries[MOBILE_SECTION_KEYS.indexOf("recommendations")];
   const editorProps = { item, context, masters, catalogsReady, readOnly: !editable || locked, onValidityChange: setEditorValid, onBusyChange: setEditorBusy };
   const summary = projectKnowledgeSavedSummary({ sections: Object.fromEntries(MOBILE_SECTION_KEYS.filter(key => saved[key]).map(key => [key, saved[key]!.payload])), ...(qualityQuery.data ? { quality: qualityQuery.data } : {}), masters, baskets: basketQuery.data ?? [], items: relatedQuery.data ?? [], subBaskets: subBasketsQuery.data ?? [] });
   const canSave = active === "quality" ? context.canUpdate && item.status !== "archived" : editable;
   const hasActions = context.canCreate && item.allowedActions.some(action => ["create_revision", "duplicate"].includes(action)) || context.canLifecycle && item.allowedActions.some(action => ["review_and_activate", "deactivate", "archive"].includes(action));
   const findings = [...item.blockers, ...item.warnings];
   return <View style={detail.root}>
-    <ScrollView style={detail.scroll} contentContainerStyle={styles.screen} keyboardShouldPersistTaps="handled">
+    <ScrollView ref={scroll} style={detail.scroll} contentContainerStyle={styles.screen} stickyHeaderIndices={[1]} onScroll={event => { scrollOffset.current = event.nativeEvent.contentOffset.y; }} scrollEventThrottle={32} keyboardShouldPersistTaps="handled">
+    <View style={detail.header} onLayout={event => { headerEnd.current = event.nativeEvent.layout.y + event.nativeEvent.layout.height + 10; }}>
     <View style={detail.topbar}>
       <Pressable accessibilityRole="button" accessibilityLabel="Back to Main Baskets" disabled={locked} accessibilityState={{ disabled: locked }} onPress={() => requestNavigation(onBack)} style={detail.back}><DetailIcon name="back" size={17} /><Text style={detail.backText}>Main Baskets</Text></Pressable>
       {hasActions ? <Pressable accessibilityRole="button" accessibilityLabel="Item actions" accessibilityState={{ expanded: showActions, disabled: locked }} disabled={locked} onPress={() => setShowActions(value => !value)} style={detail.back}><DetailIcon name="more" /><Text style={detail.backText}>Actions</Text></Pressable> : null}
     </View>
-    <View style={detail.heading}><Text accessibilityRole="header" style={detail.title}>{item.mainLineName}</Text>{context.canUpdate && item.status !== "archived" ? <IconButton label="Edit Main Line" icon="edit" disabled={locked} onPress={() => openCommand("rename")} /> : null}</View>
+    <View style={detail.heading}><Text accessibilityRole="header" style={detail.title}>{item.mainLineName}</Text>{context.canUpdate && item.status !== "archived" ? <IconButton label="Edit Main Line" icon="edit" variant="quiet" disabled={locked} onPress={() => openCommand("rename")} /> : null}</View>
     <View style={detail.metadata}><Text style={[styles.text, { flex: 1 }]}>{item.basketName}{item.subBasketName ? ` · ${item.subBasketName}` : ""}</Text><Text style={detail.status}>{item.status}</Text></View>
     {showActions ? <KnowledgeCard title="Item actions">
     <View style={styles.row}>
@@ -222,15 +227,18 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readon
     </View>
     </KnowledgeCard> : null}
     <View style={detail.completeness}>
-      <View style={detail.metadata}><Text style={styles.subtitle}>Configuration completeness</Text><Text style={detail.percent}>{item.completeness.percentage}%</Text></View>
-      <View accessible accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: item.completeness.percentage }} accessibilityLabel="Configuration completeness" style={detail.track}><View style={[detail.fill, { width: `${Math.max(0, Math.min(100, item.completeness.percentage))}%` }]} /></View>
-      {findings.length ? <Pressable accessibilityRole="button" accessibilityLabel="Configuration checks" accessibilityState={{ expanded: showChecks }} onPress={() => setShowChecks(value => !value)} style={detail.checksToggle}><Text style={styles.text}>{item.blockers.length ? `${item.blockers.length} required before activation` : `${item.warnings.length} configuration ${item.warnings.length === 1 ? "note" : "notes"}`}</Text><DetailIcon name={showChecks ? "down" : "right"} size={14} /></Pressable> : null}
-      {showChecks ? <View style={styles.stack}>{item.blockers.map((finding, index) => <KnowledgeText key={`blocker-${index}`} error>{friendlyFinding(finding.message)}</KnowledgeText>)}{item.warnings.map((finding, index) => <KnowledgeText key={`warning-${index}`}>{friendlyFinding(finding.message)}</KnowledgeText>)}<KnowledgeText>Knowledge-base changes do not modify current estimates or the existing Sales estimate builder.</KnowledgeText></View> : null}
+      <View style={detail.progressRow}>
+        <Text style={detail.percent}>{item.completeness.percentage}%<Text style={detail.completeLabel}> complete</Text></Text>
+        <View accessible accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: item.completeness.percentage }} accessibilityLabel="Configuration completeness" style={detail.track}><View style={[detail.fill, { width: `${Math.max(0, Math.min(100, item.completeness.percentage))}%` }]} /></View>
+        {findings.length ? <Pressable accessibilityRole="button" accessibilityLabel="Configuration checks" accessibilityHint={item.blockers.length ? `${item.blockers.length} required before activation` : `${item.warnings.length} configuration notes`} accessibilityState={{ expanded: showChecks }} onPress={() => setShowChecks(value => !value)} style={detail.checksToggle}><Text style={detail.checksLabel}>{item.blockers.length ? `${item.blockers.length} to finish` : "Details"}</Text><DetailIcon name={showChecks ? "down" : "right"} size={14} /></Pressable> : null}
+      </View>
+      {showChecks ? <View style={detail.findings}>{item.blockers.map((finding, index) => <KnowledgeText key={`blocker-${index}`} error>{friendlyFinding(finding.message)}</KnowledgeText>)}{item.warnings.map((finding, index) => <KnowledgeText key={`warning-${index}`}>{friendlyFinding(finding.message)}</KnowledgeText>)}<KnowledgeText>Knowledge-base changes do not modify current estimates or the existing Sales estimate builder.</KnowledgeText></View> : null}
     </View>
     {detailQuery.isError ? <KnowledgeCard><KnowledgeText error>The latest item could not be refreshed. Cached content and your edits are retained.</KnowledgeText><Button label="Retry item refresh" variant="secondary" onPress={() => void detailQuery.refetch()} /></KnowledgeCard> : null}
     {error ? <KnowledgeText error>{error}</KnowledgeText> : null}{notice ? <KnowledgeText>{notice}</KnowledgeText> : null}
     {historyQuery.isError ? <Button label="Retry revision history" variant="secondary" onPress={() => void historyQuery.refetch()} /> : null}
-    <View accessibilityRole="tablist" style={detail.tabs}>{tabKeys.map(key => <Pressable key={key} accessibilityRole="tab" accessibilityLabel={KNOWLEDGE_WORKSPACE_SECTION_LABELS[key]} accessibilityState={{ selected: active === key, disabled: locked }} disabled={locked} onPress={() => requestNavigation(() => { setActive(key); setEditorValid(true); })} style={[detail.tab, { flex: key === "recommendations" ? 1.8 : key === "quality" ? 1.35 : 1 }, active === key && detail.activeTab]}><Text style={[detail.tabText, active === key && detail.activeTabText]}>{MOBILE_TAB_LABELS[key]}</Text></Pressable>)}</View>
+    </View>
+    <View style={detail.tabDock}><View accessibilityRole="tablist" style={detail.tabs}>{tabKeys.map(key => <Pressable key={key} accessibilityRole="tab" accessibilityLabel={KNOWLEDGE_WORKSPACE_SECTION_LABELS[key]} accessibilityState={{ selected: active === key, disabled: locked }} disabled={locked} onPress={() => requestNavigation(() => { setActive(key); setEditorValid(true); scroll.current?.scrollTo({ y: Math.min(scrollOffset.current, headerEnd.current), animated: false }); })} style={[detail.tab, { flex: key === "recommendations" ? 1.8 : key === "quality" ? 1.35 : 1 }, active === key && detail.activeTab]}><Text style={[detail.tabText, active === key && detail.activeTabText]}>{MOBILE_TAB_LABELS[key]}</Text></Pressable>)}</View></View>
     {!editable && active !== "quality" ? <KnowledgeText>This revision is read-only. Create a Draft revision to edit Configuration.</KnowledgeText> : null}
     {!catalogsReady ? <View style={styles.stack}><KnowledgeText>Reusable values are {masterQueries.some(query => query.isError) ? "unavailable" : "loading"}. Saved selections are retained.</KnowledgeText>{masterQueries.some(query => query.isError) ? <Button label="Retry reusable values" variant="secondary" onPress={() => { masterQueries.forEach(query => void query.refetch()); }} /> : null}</View> : null}
     {active === "quality" ? <KnowledgeQualityEditor key={`${mainLineId}:${revisionId}`} ref={qualityRef} embedded item={item} context={context} revisionId={revisionId} onDirtyChange={setQualityDirty} onBusyChange={setQualityBusy} />
@@ -243,11 +251,19 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readon
     <KnowledgeDisclosure title="Quick summary" summary="Saved configuration details">
       {[["Main Basket", item.basketName], ["Sub-Basket", item.subBasketName ?? "Not assigned"], ["Main Line", item.mainLineName]].map(([label, value]) => <View key={label} style={styles.summaryRow}><Text style={[styles.text, { flex: 1 }]}>{label}</Text><Text style={[styles.subtitle, { flex: 1 }]}>{value}</Text></View>)}
       <KnowledgeText>Saved configuration</KnowledgeText>
-      {(["overview", "mode", "recommendations", "quality"] as const).filter(key => item.itemType !== "temporary" || key !== "recommendations").map(key => <View key={key} style={styles.stack}><Text style={styles.subtitle}>{KNOWLEDGE_WORKSPACE_SECTION_LABELS[key]}</Text>
-        {(expandedSummary === key ? summary[key].details : summary[key].preview).map(row => <View key={row.key} style={styles.summaryRow}><Text style={[styles.text, { flex: 1 }]}>{row.label}</Text><Text style={[styles.text, { flex: 1 }]}>{row.value}</Text></View>)}
-        {!summary[key].preview.length ? <KnowledgeText>{key === "quality" && qualityQuery.isPending ? "Loading saved checklist…" : "No saved details available."}</KnowledgeText> : null}
-        {summary[key].details.length > summary[key].preview.length ? <Button label={`${expandedSummary === key ? "Hide" : "Show"} ${KNOWLEDGE_WORKSPACE_SECTION_LABELS[key]} details`} variant="quiet" onPress={() => setExpandedSummary(expandedSummary === key ? null : key)} /> : null}
-      </View>)}
+      {KNOWLEDGE_WORKSPACE_SECTION_KEYS.map(key => {
+        const available = key !== "recommendations" || Boolean(revisionId && saved.recommendations);
+        const rows = available ? expandedSummary === key ? summary[key].details : summary[key].preview : [];
+        const emptyMessage = key === "recommendations"
+          ? !revisionId ? "No revision available." : recommendationsQuery?.isPending && !saved.recommendations ? "Loading saved recommendations…" : recommendationsQuery?.isError && !saved.recommendations ? "Saved recommendations could not be loaded." : "Not configured"
+          : key === "quality" && qualityQuery.isPending ? "Loading saved checklist…" : "No saved details available.";
+        return <View key={key} testID={`saved-summary-${key}`} style={styles.stack}><Text style={styles.subtitle}>{KNOWLEDGE_WORKSPACE_SECTION_LABELS[key]}</Text>
+          {rows.map(row => <View key={row.key} style={styles.summaryRow}><Text style={[styles.text, { flex: 1 }]}>{row.label}</Text><Text style={[styles.text, { flex: 1 }]}>{row.value}</Text></View>)}
+          {!rows.length ? <KnowledgeText error={key === "recommendations" && Boolean(recommendationsQuery?.isError)}>{emptyMessage}</KnowledgeText> : null}
+          {key === "recommendations" && recommendationsQuery?.isError && revisionId ? <View style={styles.stack}>{saved.recommendations ? <KnowledgeText error>The latest saved recommendations could not be loaded. Last saved details are shown.</KnowledgeText> : null}<Button label="Retry saved recommendations" variant="quiet" onPress={() => void recommendationsQuery.refetch()} /></View> : null}
+          {available && summary[key].details.length > summary[key].preview.length ? <Button label={`${expandedSummary === key ? "Hide" : "Show"} ${KNOWLEDGE_WORKSPACE_SECTION_LABELS[key]} details`} variant="quiet" onPress={() => setExpandedSummary(expandedSummary === key ? null : key)} /> : null}
+        </View>;
+      })}
     </KnowledgeDisclosure>
     <KnowledgeDisclosure title="Revision history" summary={revision ? `Revision ${revision.revisionNumber} · ${revision.status}` : "Saved versions"}>
       {revisions.length > 1 ? <KnowledgeSelect label="Revision" value={revisionId} disabled={locked} allowEmpty={false} options={revisions.map(value => ({ value: value.id, label: `Revision ${value.revisionNumber} · ${value.status}` }))} onChange={value => requestNavigation(() => setSelectedRevision(value))} /> : null}
@@ -289,22 +305,28 @@ function friendlyFinding(message: string) {
 const detail = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.canvas },
   scroll: { flex: 1 },
+  header: { gap: 4 },
   topbar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   back: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 2 },
   backText: { fontFamily: fonts.medium, fontSize: 12, color: colors.primary },
   heading: { flexDirection: "row", alignItems: "center", gap: 8 },
-  title: { flex: 1, fontFamily: fonts.semibold, fontSize: 21, lineHeight: 28, color: colors.ink },
+  title: { flex: 1, fontFamily: fonts.semibold, fontSize: 20, lineHeight: 27, color: colors.ink },
   metadata: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   status: { fontFamily: fonts.medium, fontSize: 10, lineHeight: 17, textTransform: "capitalize", color: colors.primary, backgroundColor: colors.primarySoft, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 },
-  completeness: { padding: 10, gap: 6, backgroundColor: colors.surfaceMuted, borderRadius: 5 },
-  percent: { fontFamily: fonts.semibold, fontSize: 12, color: colors.primary },
-  track: { height: 4, backgroundColor: colors.border, borderRadius: 2, overflow: "hidden" },
+  completeness: { gap: 4 },
+  progressRow: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 10 },
+  completeLabel: { fontFamily: fonts.regular, fontSize: 11, color: colors.inkMuted },
+  checksLabel: { fontFamily: fonts.medium, fontSize: 11, color: colors.primary },
+  findings: { gap: 8, backgroundColor: colors.surfaceMuted, padding: 10, borderRadius: 4 },
+  percent: { fontFamily: fonts.semibold, fontSize: 14, color: colors.primary },
+  track: { flex: 1, minWidth: 24, height: 4, backgroundColor: colors.border, borderRadius: 2, overflow: "hidden" },
   fill: { height: 4, backgroundColor: colors.primary },
-  checksToggle: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginVertical: -6 },
-  tabs: { flexDirection: "row", alignItems: "stretch" },
+  checksToggle: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 4, paddingLeft: 2 },
+  tabDock: { backgroundColor: colors.canvas, marginHorizontal: -12, paddingHorizontal: 12 },
+  tabs: { flexDirection: "row", alignItems: "stretch", paddingBottom: 4 },
   tab: { minHeight: 48, justifyContent: "center", alignItems: "center", paddingVertical: 7, borderBottomWidth: 2, borderColor: "transparent" },
   activeTab: { borderColor: colors.primary },
-  tabText: { fontFamily: fonts.medium, fontSize: 10, lineHeight: 15, color: colors.inkMuted, textAlign: "center" },
+  tabText: { fontFamily: fonts.medium, fontSize: 11, lineHeight: 16, color: colors.inkMuted, textAlign: "center" },
   activeTabText: { color: colors.ink, fontFamily: fonts.semibold },
   footer: { flexDirection: "row", alignItems: "center", padding: 10, gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surface },
   footerText: { fontFamily: fonts.medium, fontSize: 11, color: colors.ink },

@@ -38,11 +38,11 @@ describe("vendor photo validation and HTTP", () => {
     const wide = await sharp({ create: { width: 16_385, height: 1, channels: 3, background: "#fff" } }).png().toBuffer();
     await expect(validateProcurementVendorPhoto(file(wide), 100_000)).rejects.toMatchObject({ code: "VENDOR_PHOTO_INVALID" });
   });
-  it("authorizes before multipart parsing for unauthenticated, Procurement, and revoked users", async () => {
+  it("authorizes before multipart parsing for unauthenticated, other-role, and revoked users", async () => {
     const { app, service } = harness();
     expect((await request(app).put(path).attach("photo", Buffer.alloc(2048), "invalid.png")).status).toBe(401);
-    const procurement = harness({ ...actor, role: "procurement" });
-    expect((await request(procurement.app).put(path).set("Authorization", "Bearer token").attach("photo", Buffer.alloc(2048), "invalid.png")).status).toBe(403);
+    const admin = harness({ ...actor, role: "admin" });
+    expect((await request(admin.app).put(path).set("Authorization", "Bearer token").attach("photo", Buffer.alloc(2048), "invalid.png")).status).toBe(403);
     service.authorize.mockRejectedValueOnce(new ApiError(401, "INVALID_TOKEN", "Invalid token."));
     expect((await request(app).put(path).set("Authorization", "Bearer token").attach("photo", Buffer.alloc(2048), "invalid.png")).status).toBe(401);
     expect(service.replace).not.toHaveBeenCalled();
@@ -59,5 +59,14 @@ describe("vendor photo validation and HTTP", () => {
     expect(fetched.status).toBe(200);
     expect(fetched.headers["cache-control"]).toBe("private, no-store");
     expect(fetched.headers["x-content-type-options"]).toBe("nosniff");
+  });
+  it("allows Procurement to manage and read private vendor photographs", async () => {
+    const procurement = { ...actor, role: "procurement" as const };
+    const { app, service } = harness(procurement);
+    const body = await png();
+    await request(app).put(path).set("Authorization", "Bearer token").field("expectedVersion", "1").field("idempotencyKey", "procurement-photo-1").attach("photo", body, "synthetic.png").expect(200);
+    await request(app).get(path).set("Authorization", "Bearer token").expect(200);
+    await request(app).delete(path).set("Authorization", "Bearer token").send({ expectedVersion: 2 }).expect(200);
+    expect(service.replace).toHaveBeenCalledWith(procurement, "v1", expect.any(Object), expect.any(Object));
   });
 });

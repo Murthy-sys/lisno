@@ -3,19 +3,20 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { PermissionCode } from "../../api/authorization-contract";
+import type { PermissionCode, Role } from "../../api/authorization-contract";
 import { authorizationFor } from "../../test/authFixtures";
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
 import { knowledgeQueryKeys } from "../ai-estimator-knowledge/knowledgeQueryKeys";
 import type { KnowledgeMaster } from "../ai-estimator-knowledge/knowledgeTypes";
-import { ProcurementManagementPage } from "./ProcurementManagementPage";
+import { ProcurementVendorDirectory } from "./ProcurementVendorDirectory";
 import { completeVendor, vendorBasket, vendorSubBasket } from "./vendorProfile.fixtures";
 import { vendorDirectoryColumns, type VendorDirectoryColumn } from "./vendorDirectoryColumns";
 import { vendorColumnWidth, VendorDirectoryTable } from "./VendorDirectoryTable";
 
 let permissions: readonly PermissionCode[] | undefined;
-vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "sa", name: "Super Admin", role: "super_admin" }, authorization: authorizationFor("super_admin", permissions) }) }));
+let role: Role;
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: role === "procurement" ? "procurement-one" : "sa", name: role === "procurement" ? "Procurement One" : "Super Admin", role }, authorization: authorizationFor(role, permissions) }) }));
 const endpoint = "/api/v1/admin/ai-estimator-knowledge/vendors";
 const data = (value: unknown) => HttpResponse.json({ data: value });
 const error = (status = 503) => HttpResponse.json({ error: { code: status === 403 ? "FORBIDDEN" : "TEMPORARY", message: status === 403 ? "Access changed" : "Try again" } }, { status });
@@ -26,12 +27,12 @@ let overviewFailed: boolean;
 let listFailed: boolean;
 function start() {
   let client!: QueryClient;
-  function Capture() { client = useQueryClient(); return <ProcurementManagementPage />; }
+  function Capture() { client = useQueryClient(); return <ProcurementVendorDirectory />; }
   return { ...renderWithQuery(<Capture />), client };
 }
 const pageRequests = () => requests.filter((params) => !params.has("includeDirectoryOverview"));
 beforeEach(() => {
-  permissions = undefined; requests = []; overviewMissing = false; overviewFailed = false; listFailed = false;
+  role = "super_admin"; permissions = undefined; requests = []; overviewMissing = false; overviewFailed = false; listFailed = false;
   const { procurementProfile: _profile, geoTaggedPicture: _photo, msmeCertificate: _certificate, ...publicVendor } = completeVendor;
   rows = Array.from({ length: 12 }, (_, index) => ({
     ...publicVendor, id: index ? `vendor-${index + 1}` : completeVendor.id, name: index ? `Vendor ${index + 1}` : completeVendor.name,
@@ -56,6 +57,66 @@ beforeEach(() => {
 });
 
 describe("reference vendor directory", () => {
+  it.each(["super_admin", "procurement"] as const)("shows the same vendor management screen for %s", async (actor) => {
+    role = actor;
+    start(); const user = userEvent.setup();
+    expect(await screen.findByRole("table")).toBeVisible();
+    expect(screen.getByRole("region", { name: "Vendor overview" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Add vendor" }));
+    expect(await screen.findByRole("dialog", { name: "Add vendor" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add Main Basket" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Edit Timber House" }));
+    expect(await screen.findByRole("textbox", { name: "Entity Name" })).toHaveValue("Timber House");
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Review missing historical allocations" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Archive Timber House" }));
+    expect(screen.getByRole("alertdialog", { name: "Archive vendor?" })).toBeVisible();
+  });
+
+  it("requires scoped directory read even when configuration permissions exist", () => {
+    role = "procurement";
+    permissions = ["ai_estimator_knowledge.configuration.read", "ai_estimator_knowledge.configuration.create", "ai_estimator_knowledge.configuration.update", "ai_estimator_knowledge.configuration.lifecycle"];
+    const fetch = vi.spyOn(globalThis, "fetch");
+    start();
+    expect(screen.getByText("You do not have permission to manage vendors.")).toBeVisible();
+    expect(fetch).not.toHaveBeenCalled();
+    fetch.mockRestore();
+  });
+
+  it("hides writes independently while preserving authorized read-only vendor detail", async () => {
+    role = "procurement"; permissions = ["procurement.vendor_directory.read"];
+    start(); const user = userEvent.setup(); await screen.findByRole("table");
+    expect(screen.queryByRole("button", { name: "Add vendor" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Archive Timber House" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "View Timber House" }));
+    expect(await screen.findByRole("textbox", { name: "Entity Name" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add Main Basket" })).not.toBeInTheDocument();
+  });
+
+  it("keeps classification creation independent of vendor create and edit", async () => {
+    role = "procurement";
+    permissions = ["procurement.vendor_directory.read", "procurement.vendor_directory.create"];
+    start(); const user = userEvent.setup(); await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: "Add vendor" }));
+    expect(await screen.findByRole("button", { name: "Save vendor" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Add Main Basket" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Geo Tagged Picture of the Vendor")).toBeDisabled();
+  });
+
+  it("hides cached private vendor fields when a detail refresh loses permission", async () => {
+    role = "procurement";
+    const view = start(); const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Edit Timber House" }));
+    expect(await screen.findByRole("textbox", { name: "Entity Name" })).toHaveValue("Timber House");
+    server.use(http.get(`${endpoint}/vendor-one`, () => error(403)));
+    await act(async () => { await view.client.invalidateQueries({ queryKey: knowledgeQueryKeys.vendorDetail("vendor-one") }); });
+    expect(await screen.findByText("You do not have permission to view this vendor.")).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "Entity Name" })).not.toBeInTheDocument();
+  });
+
   it("uses independent global counts, canonical execution labels and unavailable KPI on ten-row pages", async () => {
     start(); const user = userEvent.setup();
     const table = await screen.findByRole("table");
@@ -190,8 +251,8 @@ describe("reference vendor directory", () => {
   it("shows one Basket column with explicit main and sub levels and unavailable states", async () => {
     rows = [
       rows[0],
-      { ...rows[1], procurementSummary: { ...rows[1].procurementSummary!, mainBasket: { id: "basket-old", name: "Old Basket", status: "inactive" }, subBasket: null } },
-      { ...rows[2], procurementSummary: { ...rows[2].procurementSummary!, mainBasket: { id: "basket-gone", name: null, status: "unavailable" }, subBasket: { id: "sub-gone", name: null } } },
+      { ...rows[1], procurementSummary: { ...rows[1].procurementSummary!, mainBaskets: [{ id: "basket-old", name: "Old Basket", status: "inactive" }], subBaskets: [], mainBasket: { id: "basket-old", name: "Old Basket", status: "inactive" }, subBasket: null } },
+      { ...rows[2], procurementSummary: { ...rows[2].procurementSummary!, mainBaskets: [{ id: "basket-gone", name: null, status: "unavailable" }], subBaskets: [{ id: "sub-gone", basketId: "basket-gone", name: null }], mainBasket: { id: "basket-gone", name: null, status: "unavailable" }, subBasket: { id: "sub-gone", name: null } } },
       { ...rows[3], procurementSummary: undefined },
     ];
     start(); const table = await screen.findByRole("table");
@@ -202,6 +263,29 @@ describe("reference vendor directory", () => {
     expect(basket(/Vendor 2/)).toHaveTextContent(/Main Basket: Old Basket/); expect(within(basket(/Vendor 2/)).getByText("Unavailable for new selections")).toBeVisible(); expect(basket(/Vendor 2/)).toHaveTextContent(/Sub Basket: Not recorded/);
     expect(basket(/Vendor 3/)).toHaveTextContent(/Main Basket: Unavailable/); expect(basket(/Vendor 3/)).toHaveTextContent(/Sub Basket: Unavailable/);
     expect(basket(/Vendor 4/)).toHaveTextContent(/Main Basket: Not recorded/); expect(basket(/Vendor 4/)).toHaveTextContent(/Sub Basket: Not recorded/);
+  });
+
+  it("shows every saved classification and retains singular filters as membership criteria", async () => {
+    const stone = { ...vendorBasket, id: "basket-two", name: "Stone" };
+    const stoneSub = { ...vendorSubBasket, id: "sub-two", basketId: stone.id, name: "Installation" };
+    rows[0] = { ...rows[0], procurementSummary: { ...rows[0].procurementSummary!, mainBaskets: [...rows[0].procurementSummary!.mainBaskets, { id: stone.id, name: stone.name, status: "active" }], subBaskets: [...rows[0].procurementSummary!.subBaskets, { id: stoneSub.id, basketId: stone.id, name: stoneSub.name }] } };
+    server.use(
+      http.get("/api/v1/admin/ai-estimator-knowledge/baskets", () => data({ items: [vendorBasket, stone], pagination: { total: 2, limit: 100, offset: 0, hasMore: false } })),
+      http.get("/api/v1/admin/ai-estimator-knowledge/baskets/basket-two/sub-baskets", () => data({ items: [stoneSub], pagination: { total: 1, limit: 100, offset: 0, hasMore: false } }))
+    );
+    start(); const user = userEvent.setup(); const table = await screen.findByRole("table");
+    const row = within(table).getByRole("rowheader", { name: /Timber House/ }).closest("tr")!;
+    const basket = row.querySelector<HTMLElement>('[data-column="basket"]')!;
+    expect(basket).toHaveTextContent("2 Main Baskets · 2 Sub Baskets");
+    expect(basket).toHaveTextContent(/Main Basket: Carpentry/); expect(basket).toHaveTextContent(/Sub Basket: Cabinet work/);
+    expect(basket).toHaveTextContent(/Main Basket: Stone/); expect(basket).toHaveTextContent(/Sub Basket: Installation/);
+    await screen.findByRole("option", { name: "Stone" });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), stone.id);
+    await screen.findByRole("option", { name: stoneSub.name });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sub Basket" }), stoneSub.id);
+    await waitFor(() => expect(pageRequests().at(-1)?.get("subBasketId")).toBe(stoneSub.id));
+    expect(pageRequests().at(-1)?.get("mainBasketId")).toBe(stone.id);
+    expect(pageRequests().at(-1)?.get("subBasketId")).toBe(stoneSub.id);
   });
 
   it("renders additional registry columns in headers, cells and card labels without other changes", () => {
@@ -263,7 +347,7 @@ describe("reference vendor directory", () => {
     await user.click(await screen.findByRole("button", { name: "Edit Timber House" })); await screen.findByRole("textbox", { name: "Entity Name" });
     server.use(http.get(endpoint, () => error(403)));
     await act(async () => { await view.client.invalidateQueries({ queryKey: knowledgeQueryKeys.masterLists("vendors") }); });
-    expect(await screen.findByText("You do not have permission to configure vendors.")).toBeVisible();
+    expect(await screen.findByText("You do not have permission to manage vendors.")).toBeVisible();
     expect(screen.queryByRole("table")).not.toBeInTheDocument(); expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

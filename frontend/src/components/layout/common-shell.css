@@ -99,6 +99,64 @@
   box-shadow: none;
 }
 :is(.ui-common-shell, .workspace-navigation-drawer, .project-messaging-navigation) .ui-sidebar__inner.ui-common-navigation .ui-sidebar__link--active:focus-visible { outline-color: #fffdf6; outline-offset: -4px; }
+.ui-common-navigation .ui-sidebar__group { margin-block: 3px 8px; }
+:is(.ui-common-shell, .workspace-navigation-drawer) .ui-common-navigation .ui-sidebar__group-trigger {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 49px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--workspace-ink);
+  font: 500 13px/1.5 var(--font-interface, sans-serif);
+  text-align: left;
+  cursor: pointer;
+}
+:is(.ui-common-shell, .workspace-navigation-drawer) .ui-common-navigation .ui-sidebar__group-trigger--active {
+  background: var(--workspace-active);
+  color: #fffdf6;
+}
+.ui-common-navigation .ui-sidebar__group-trigger > svg:first-child { flex: none; width: 19px; height: 19px; }
+.ui-common-navigation .ui-sidebar__group-trigger > span { flex: 1; }
+.ui-common-navigation .ui-sidebar__group-chevron { flex: none; }
+.ui-common-navigation .ui-sidebar__group-trigger[aria-expanded="true"] .ui-sidebar__group-chevron { transform: rotate(180deg); }
+.ui-common-navigation .ui-sidebar__group-children { display: grid; gap: 2px; padding: 5px 0 5px 22px; }
+.ui-common-navigation .ui-sidebar__group-children[hidden] { display: none; }
+:is(.ui-common-shell, .workspace-navigation-drawer) .ui-common-navigation .ui-sidebar__group-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 43px;
+  padding: 9px 10px 9px 15px;
+  border-radius: 6px;
+  background: transparent;
+  color: #66706a;
+  font: 500 13px/1.5 var(--font-interface, sans-serif);
+  text-decoration: none;
+}
+.ui-common-navigation .ui-sidebar__group-link > svg { flex: none; width: 19px; height: 19px; }
+:is(.ui-common-shell, .workspace-navigation-drawer) .ui-common-navigation .ui-sidebar__group-link--active {
+  background: #dfe7d7;
+  color: #096c50;
+}
+.ui-common-navigation .ui-sidebar__group-link--active::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: -16px;
+  width: 4px;
+  border-radius: 2px;
+  background: #087957;
+}
+:is(.ui-common-shell, .workspace-navigation-drawer) .ui-common-navigation :is(.ui-sidebar__group-trigger, .ui-sidebar__group-link):focus-visible {
+  outline: 2px solid #087957;
+  outline-offset: 2px;
+}
+:is(.ui-common-shell, .workspace-navigation-drawer) .ui-common-navigation .ui-sidebar__group-trigger--active:focus-visible { outline-color: #fffdf6; outline-offset: -4px; }
 .ui-common-navigation .ui-sidebar__scene { position: relative; flex: 0 1 230px; min-height: 100px; overflow: hidden; margin-inline: -12px; }
 .ui-common-navigation .ui-sidebar__scene img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 25% center; opacity: .55; mask-image: linear-gradient(to bottom, transparent, #000 75%); }
 .ui-common-navigation .ui-sidebar__scene p { position: relative; z-index: 1; margin: 20px; color: #46543b; font: 400 26px/1.25 Georgia, serif; }
@@ -176,6 +234,18 @@
 .project-messaging-app.ui-common-shell > .project-messaging-main { flex: 1; min-height: 0; height: auto; }
 .project-messaging-app.ui-common-shell .project-messaging-list-pane { padding-top: 0; }
 
+.procurement-dashboard { width: min(100%, 1160px); margin-inline: auto; padding: 0 24px 48px; }
+.procurement-dashboard__overview { margin-block: 24px; padding: 24px 28px; border: 1px solid #d9dfd1; border-radius: 8px; background: #f8f9f4; }
+.procurement-dashboard__overview-heading { margin: 0 0 20px; color: #46543b; font: 600 13px/1.5 var(--font-interface, sans-serif); letter-spacing: .06em; text-transform: uppercase; }
+.procurement-dashboard__metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; }
+.procurement-dashboard__metric { min-width: 0; padding-inline: 20px; border-inline-start: 1px solid #d9dfd1; }
+.procurement-dashboard__metric:first-child { padding-inline-start: 0; border-inline-start: 0; }
+.procurement-dashboard__metric dt { color: #69746a; font-size: 13px; }
+.procurement-dashboard__metric dd { margin: 8px 0 0; color: #293628; font-size: clamp(27px, 3vw, 38px); font-weight: 600; font-variant-numeric: tabular-nums; }
+.procurement-dashboard__next { margin: 20px 0 0; color: #626e63; font-size: 13px; }
+.procurement-dashboard__next a { color: #096c50; font-weight: 600; text-underline-offset: 3px; }
+.procurement-dashboard__refresh { margin-top: 12px; color: #626e63; font-size: 12px; }
+
 @media (max-height: 760px) {
   .ui-common-navigation .ui-sidebar__scene { display: none; }
 }
@@ -197,4 +267,9 @@
   .workspace-account__identity, .workspace-account__chevron { display: none; }
   .workspace-account__avatar { width: 38px; height: 38px; font-size: 14px; }
   .workspace-topbar__mobile-brand .brand__logo { width: 94px; height: auto; }
+  .procurement-dashboard { padding-inline: 14px; }
+  .procurement-dashboard__overview { padding: 19px; }
+  .procurement-dashboard__metrics { grid-template-columns: 1fr; gap: 14px; }
+  .procurement-dashboard__metric, .procurement-dashboard__metric:first-child { padding: 0 0 14px; border: 0; border-block-end: 1px solid #d9dfd1; }
+  .procurement-dashboard__metric:last-child { padding-bottom: 0; border-block-end: 0; }
 }

@@ -8,7 +8,7 @@ import { AiEstimatorKnowledgeVendorModel } from "../models/AiEstimatorKnowledgeV
 import { ProcurementVendorCertificateCleanupModel, ProcurementVendorCertificateUploadModel } from "../models/ProcurementVendorCertificateUpload.js";
 import { hasManagedStorage, type ManagedFileStorage } from "../storage/managed-storage.js";
 import type { FileStorage } from "../storage/storage.js";
-import { aiEstimatorKnowledgeActorGuard, type AiEstimatorKnowledgeActorGuard } from "./ai-estimator-knowledge-actor.js";
+import { aiEstimatorKnowledgeVendorActorGuard, type AiEstimatorKnowledgeVendorActorGuard } from "./ai-estimator-knowledge-actor.js";
 import type { PublicUser } from "./auth.service.js";
 import { validateProcurementVendorPhoto } from "./procurement-vendor-photo.service.js";
 import { systemClock, type Clock } from "./workflow.js";
@@ -26,7 +26,7 @@ export interface ProcurementVendorCertificateService {
   cleanup(): Promise<{ deleted: number; failed: number }>;
 }
 export interface ProcurementVendorCertificateServiceDependencies {
-  storage: FileStorage; maxUploadBytes: number; actorGuard?: AiEstimatorKnowledgeActorGuard;
+  storage: FileStorage; maxUploadBytes: number; actorGuard?: AiEstimatorKnowledgeVendorActorGuard;
   now?: Clock; startSession?: () => Promise<ClientSession>;
 }
 function invalidUpload(): never { throw new ApiError(400, "VENDOR_CERTIFICATE_INVALID", "Upload a valid MSME certificate before saving.", { msmeCertificate: "Upload a valid MSME certificate before saving." }); }
@@ -81,7 +81,7 @@ export async function validateProcurementVendorCertificate(file: ValidatedUpload
 }
 
 export function createProcurementVendorCertificateService(dependencies: ProcurementVendorCertificateServiceDependencies): ProcurementVendorCertificateService {
-  const actorGuard = dependencies.actorGuard ?? aiEstimatorKnowledgeActorGuard;
+  const actorGuard = dependencies.actorGuard ?? aiEstimatorKnowledgeVendorActorGuard;
   const now = dependencies.now ?? systemClock;
   const startSession = dependencies.startSession ?? (() => mongoose.startSession());
   const storage = (): ManagedFileStorage => {

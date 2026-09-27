@@ -30,6 +30,14 @@ export interface NavigationItem {
   readonly icon: LucideIcon;
 }
 
+export interface NavigationGroupChild extends NavigationItem {
+  readonly sidebarIcon: "procurement-dashboard" | "procurement-vendors";
+}
+
+export const NAVIGATION_GROUPS = {
+  procurement: { label: "Procurement", icon: ShoppingCart }
+} as const;
+
 export interface RegisteredFrontendRoute {
   readonly path: string;
   readonly permission: PermissionCode | null;
@@ -39,6 +47,12 @@ export interface RegisteredFrontendRoute {
     readonly item: NavigationItem;
     readonly labels?: Readonly<Partial<Record<Role, string>>>;
   } | null;
+  readonly groupNavigation?: {
+    readonly group: keyof typeof NAVIGATION_GROUPS;
+    readonly roles: readonly Role[];
+    readonly permission?: PermissionCode;
+    readonly item: NavigationGroupChild;
+  };
 }
 
 export const ROUTE_REGISTRY = [
@@ -63,8 +77,10 @@ export const ROUTE_REGISTRY = [
   { path: "/admin/projects/:projectId", permission: "projects.read", presentationRoles: ["admin", "super_admin"], navigation: null },
   { path: "/admin/users", permission: "identity.users.read", presentationRoles: ["super_admin"], navigation: { roles: ["super_admin"], item: { label: "Users", to: "/admin/users", end: true, icon: UsersRound } } },
   { path: "/admin/configuration/estimation", permission: "ai_estimator_knowledge.configuration.read", presentationRoles: ["super_admin"], navigation: { roles: ["super_admin"], item: { label: "Configuration", to: "/admin/configuration/estimation", end: false, icon: Settings2 } } },
-  { path: "/admin/procurement", permission: "procurement.vendor_suggestions.read", presentationRoles: ["admin", "super_admin"], navigation: { roles: ["admin", "super_admin"], item: { label: "Procurement", to: "/admin/procurement", end: true, icon: ShoppingCart } } },
-  { path: "/procurement", permission: "procurement.workspace.read", presentationRoles: ["procurement"], navigation: { roles: ["procurement"], item: { label: "Procurement", to: "/procurement", end: false, icon: ShoppingCart } } },
+  { path: "/admin/procurement", permission: "procurement.vendor_suggestions.read", presentationRoles: ["admin", "super_admin"], navigation: { roles: ["admin"], item: { label: "Procurement", to: "/admin/procurement", end: true, icon: ShoppingCart } }, groupNavigation: { group: "procurement", roles: ["super_admin"], permission: "procurement.vendor_directory.read", item: { label: "Dashboard", to: "/admin/procurement", end: true, icon: LayoutDashboard, sidebarIcon: "procurement-dashboard" } } },
+  { path: "/admin/procurement/vendors", permission: "procurement.vendor_directory.read", presentationRoles: ["super_admin"], navigation: null, groupNavigation: { group: "procurement", roles: ["super_admin"], item: { label: "Vendors", to: "/admin/procurement/vendors", end: true, icon: UsersRound, sidebarIcon: "procurement-vendors" } } },
+  { path: "/procurement", permission: "procurement.workspace.read", presentationRoles: ["procurement"], navigation: null, groupNavigation: { group: "procurement", roles: ["procurement"], item: { label: "Dashboard", to: "/procurement", end: true, icon: LayoutDashboard, sidebarIcon: "procurement-dashboard" } } },
+  { path: "/procurement/vendors", permission: "procurement.vendor_directory.read", presentationRoles: ["procurement"], navigation: null, groupNavigation: { group: "procurement", roles: ["procurement"], item: { label: "Vendors", to: "/procurement/vendors", end: true, icon: UsersRound, sidebarIcon: "procurement-vendors" } } },
   { path: "/admin/configuration/estimation/items/:itemId", permission: "ai_estimator_knowledge.configuration.read", presentationRoles: ["super_admin"], navigation: null },
   { path: "/admin/configuration/estimation/reusable-values", permission: "ai_estimator_knowledge.configuration.read", presentationRoles: ["super_admin"], navigation: null },
   { path: "/admin/client-responses", permission: "estimation.client_response_tasks.read", presentationRoles: ["admin", "super_admin"], navigation: { roles: ["admin", "super_admin"], item: { label: "Client responses", to: "/admin/client-responses", end: true, icon: MailCheck } } },

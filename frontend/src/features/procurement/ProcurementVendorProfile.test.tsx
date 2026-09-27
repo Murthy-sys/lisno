@@ -20,14 +20,24 @@ const savedCertificate = { id: "certificate-one", originalFilename: "synthetic-m
 const stagedCertificate = { uploadId: "upload-one", originalFilename: "synthetic-msme.pdf", mimeType: "application/pdf", byteSize: 4, expiresAt: "2099-01-01T00:00:00Z" };
 let stored: ProcurementVendorDetail;
 let writes: Record<string, unknown>[];
-function start(existing = true, canCreateBasket = true, canUpdate = true) {
+function start(existing = true, canCreateBasket = true, canUpdate = true, canCorrectBaseline = canUpdate) {
   const closed = vi.fn(); const saved = vi.fn(); let client!: QueryClient;
-  function Capture() { client = useQueryClient(); return <ProcurementVendorEditor existing={existing ? safe(stored) : undefined} canCreateBasket={canCreateBasket} canUpdate={canUpdate} onClose={closed} onSaved={saved} />; }
+  function Capture() { client = useQueryClient(); return <ProcurementVendorEditor existing={existing ? safe(stored) : undefined} canCreateBasket={canCreateBasket} canUpdate={canUpdate} canCorrectBaseline={canCorrectBaseline} onClose={closed} onSaved={saved} />; }
   const view = renderWithQuery(<Capture />);
   return { ...view, closed, saved, get client() { return client; } };
 }
 async function answer(user: ReturnType<typeof userEvent.setup>, label: string, option: string) {
   await user.click(within(screen.getByRole("group", { name: new RegExp(`^${label}`) })).getByRole("radio", { name: option }));
+}
+async function mainChoice(name: string) {
+  const trigger = await screen.findByRole("button", { name: /^Main Baskets,/ });
+  if (trigger.getAttribute("aria-expanded") !== "true") fireEvent.click(trigger);
+  return screen.findByRole("checkbox", { name });
+}
+async function subChoice(name: string) {
+  const trigger = await screen.findByRole("button", { name: /^Sub Baskets,/ });
+  if (trigger.getAttribute("aria-expanded") !== "true") fireEvent.click(trigger);
+  return screen.findByRole("checkbox", { name });
 }
 async function fillNew(user: ReturnType<typeof userEvent.setup>) {
   fireEvent.change(screen.getByRole("textbox", { name: "Entity Name" }), { target: { value: "New Synthetic Vendor" } });
@@ -36,9 +46,8 @@ async function fillNew(user: ReturnType<typeof userEvent.setup>) {
   await answer(user, "Vendor Type", "Execution"); await user.click(screen.getByRole("checkbox", { name: "Labor" }));
   await answer(user, "GST Registered", "No"); await answer(user, "MSME Registered", "No"); await answer(user, "Current Address Verified Physically", "No");
   fireEvent.change(screen.getByRole("textbox", { name: "Turnover (Self Declared) (INR)" }), { target: { value: "100000" } });
-  await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), vendorBasket.id);
-  await screen.findByRole("option", { name: vendorSubBasket.name });
-  await user.selectOptions(screen.getByRole("combobox", { name: "Sub Basket" }), vendorSubBasket.id);
+  await user.click(await mainChoice(vendorBasket.name));
+  await user.click(await subChoice(`${vendorSubBasket.name} in ${vendorBasket.name}`));
 }
 function fillBank() {
   for (const [key, label] of Object.entries(VENDOR_BANK_FIELDS)) fireEvent.change(screen.getByRole("textbox", { name: label }), { target: { value: sampleVendorBankAccount[key as VendorBankField] ?? "" } });
@@ -69,7 +78,7 @@ beforeEach(() => {
 });
 describe("Procurement vendor profile", () => {
   it("shows the supplied organization options in order, requires a new selection, and allows empty bank details", async () => {
-    const view = start(false); const user = userEvent.setup(); await screen.findByRole("option", { name: vendorBasket.name });
+    const view = start(false); const user = userEvent.setup(); await mainChoice(vendorBasket.name);
     const organization = screen.getByRole("combobox", { name: "Vendor Organization Type" });
     expect(organization).toHaveValue(""); expect(organization).toBeRequired();
     expect(within(organization).getAllByRole("option").map((option) => option.textContent)).toEqual(["Select organization type", "Individual", "Company", "Firm", "Associated Person", "HUF", "Trust", "GOVT"]);
@@ -85,7 +94,7 @@ describe("Procurement vendor profile", () => {
   });
 
   it.each(["execution", "supplier"])("creates, reloads, edits and clears normalized banking for %s vendors", async (vendorType) => {
-    const view = start(false); const user = userEvent.setup(); await screen.findByRole("option", { name: vendorBasket.name }); await fillNew(user);
+    const view = start(false); const user = userEvent.setup(); await mainChoice(vendorBasket.name); await fillNew(user);
     if (vendorType === "supplier") await answer(user, "Vendor Type", "Supplier");
     fillBank();
     const account = screen.getByRole("textbox", { name: "Account Number" }); expect(account).toHaveAttribute("type", "text"); expect(account).toHaveAttribute("inputmode", "numeric"); expect(account).toHaveAttribute("maxlength", "34");
@@ -246,7 +255,7 @@ describe("Procurement vendor profile", () => {
     expect(writes[0]).toMatchObject({ procurementProfile: { executionType: [legacy] } });
   });
   it("validates required fields, focuses the first invalid radio and preserves dirty drafts", async () => {
-    start(false); const user = userEvent.setup(); await screen.findByRole("option", { name: vendorBasket.name });
+    start(false); const user = userEvent.setup(); await mainChoice(vendorBasket.name);
     await user.click(screen.getByRole("button", { name: "Save vendor" }));
     expect(screen.getByText("Review the required fields and highlighted errors before saving.")).toBeVisible();
     await waitFor(() => expect(screen.getByRole("radio", { name: "Execution" })).toHaveFocus());
@@ -265,20 +274,139 @@ describe("Procurement vendor profile", () => {
     await user.click(screen.getByRole("button", { name: "Save changes" })); await waitFor(() => expect(view.saved).toHaveBeenCalled());
     expect(writes[0]).toMatchObject({ confirmPhysicalAddressVerification: true, procurementProfile: { turnoverVerifiedPaise: 0, turnoverSelfDeclaredPaise: 10000000, currentAddressVerifiedPhysically: true } });
   });
-  it("uses all basket pages and clears the child when the parent changes during a request", async () => {
+  it("uses all basket pages and prunes only the removed parent's children while another parent loads", async () => {
     let release!: () => void; const pending = new Promise<void>((resolve) => { release = resolve; });
     const requests: number[] = [];
     server.use(http.get("/api/v1/admin/ai-estimator-knowledge/baskets", ({ request }) => {
       const offset = Number(new URL(request.url).searchParams.get("offset")); requests.push(offset);
       return offset === 0 ? page([vendorBasket], 0, true) : page([{ ...vendorBasket, id: "basket-two", name: "Stone" }], 1);
     }), http.get("/api/v1/admin/ai-estimator-knowledge/baskets/basket-two/sub-baskets", async () => { await pending; return page([{ ...vendorSubBasket, id: "stone-sub", basketId: "basket-two", name: "Stone installation" }]); }));
-    start(); const user = userEvent.setup(); await screen.findByRole("option", { name: "Stone" }); expect(requests).toContain(1);
-    await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), "basket-two");
-    expect(screen.getByRole("combobox", { name: "Sub Basket" })).toHaveValue(""); expect(screen.getByRole("combobox", { name: "Sub Basket" })).toBeDisabled();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), vendorBasket.id);
+    start(); const user = userEvent.setup(); await mainChoice("Stone"); expect(requests).toContain(1);
+    await user.click(screen.getByRole("checkbox", { name: "Stone" }));
+    expect(screen.getByRole("checkbox", { name: "Stone" })).toBeChecked();
+    expect(await subChoice(`${vendorSubBasket.name} in ${vendorBasket.name}`)).toBeChecked();
+    await user.click(await mainChoice(vendorBasket.name));
+    fireEvent.click(screen.getByRole("button", { name: /^Sub Baskets,/ }));
+    expect(screen.queryByRole("checkbox", { name: `${vendorSubBasket.name} in ${vendorBasket.name}` })).not.toBeInTheDocument();
+    expect(await mainChoice("Stone")).toBeChecked();
     await act(async () => release());
-    expect(screen.queryByRole("option", { name: "Stone installation" })).not.toBeInTheDocument();
+    expect(await subChoice("Stone installation in Stone")).toBeEnabled();
     expect(screen.getByRole("textbox", { name: "Entity Name" })).toHaveValue("Timber House");
+  });
+  it("saves multiple parents and children, reloads them, and keeps a parent with no chosen child", async () => {
+    const stone = { ...vendorBasket, id: "basket-two", name: "Stone" };
+    const secondCarpentry = { ...vendorSubBasket, id: "sub-two", name: "Joinery" };
+    const stoneSub = { ...vendorSubBasket, id: "sub-three", basketId: stone.id, name: "Installation" };
+    server.use(
+      http.get("/api/v1/admin/ai-estimator-knowledge/baskets", () => page([vendorBasket, stone])),
+      http.get("/api/v1/admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets", ({ params }) => page(params.basketId === stone.id ? [stoneSub] : [vendorSubBasket, secondCarpentry]))
+    );
+    const view = start(false); const user = userEvent.setup(); await fillNew(user);
+    await user.click(await mainChoice(stone.name));
+    await user.click(await subChoice(`${secondCarpentry.name} in ${vendorBasket.name}`));
+    await user.click(await subChoice(`${stoneSub.name} in ${stone.name}`));
+    await user.click(screen.getByRole("button", { name: "Save vendor" }));
+    await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    expect(writes[0]).toMatchObject({ procurementProfile: { mainBasketIds: [vendorBasket.id, stone.id], subBasketIds: [vendorSubBasket.id, stoneSub.id, secondCarpentry.id] } });
+    expect((writes[0].procurementProfile as Record<string, unknown>).mainBasketId).toBeUndefined();
+    view.unmount(); const edit = start();
+    expect(await mainChoice(stone.name)).toBeChecked();
+    expect(await subChoice(`${stoneSub.name} in ${stone.name}`)).toBeChecked();
+    await user.click(await subChoice(`${stoneSub.name} in ${stone.name}`));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(edit.saved).toHaveBeenCalledOnce());
+    expect(writes[1]).toMatchObject({ procurementProfile: { mainBasketIds: [vendorBasket.id, stone.id], subBasketIds: [vendorSubBasket.id, secondCarpentry.id] } });
+    edit.unmount(); start();
+    expect(await mainChoice(stone.name)).toBeChecked();
+    expect(await subChoice(`${stoneSub.name} in ${stone.name}`)).not.toBeChecked();
+  });
+  it("restores a clean draft when a Sub Basket is toggled off and back on", async () => {
+    const view = start(); const user = userEvent.setup();
+    const sub = await subChoice(`${vendorSubBasket.name} in ${vendorBasket.name}`);
+    await waitFor(() => expect(sub).toBeEnabled());
+    await user.click(sub); await user.click(sub);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(view.closed).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+  it("keeps dropdown choices collapsed, supports keyboard and outside dismissal, and opens in read-only details", async () => {
+    const view = start(); const user = userEvent.setup();
+    const main = await screen.findByRole("button", { name: /^Main Baskets,/ });
+    const sub = screen.getByRole("button", { name: /^Sub Baskets,/ });
+    expect(main).toHaveTextContent(vendorBasket.name);
+    expect(sub).toHaveTextContent(vendorSubBasket.name);
+    expect(main).toHaveAttribute("aria-haspopup", "dialog");
+    expect(main).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("dialog", { name: "Main Basket choices" })).not.toBeInTheDocument();
+    main.focus(); await user.keyboard("{ArrowDown}");
+    expect(main).toHaveAttribute("aria-expanded", "true");
+    expect(await mainChoice(vendorBasket.name)).toBeChecked();
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: vendorBasket.name })).toHaveFocus());
+    await user.keyboard("{Escape}");
+    expect(main).toHaveAttribute("aria-expanded", "false"); expect(main).toHaveFocus();
+    await user.click(sub); expect(sub).toHaveAttribute("aria-expanded", "true");
+    expect(await subChoice(`${vendorSubBasket.name} in ${vendorBasket.name}`)).toBeChecked();
+    await user.click(screen.getByRole("textbox", { name: "Position" }));
+    expect(sub).toHaveAttribute("aria-expanded", "false");
+    view.unmount(); start(true, false, false);
+    const readOnlyMain = await screen.findByRole("button", { name: /^Main Baskets,/ });
+    expect(readOnlyMain).toBeEnabled(); await user.click(readOnlyMain);
+    expect(screen.getByRole("checkbox", { name: vendorBasket.name })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: vendorBasket.name })).toBeDisabled();
+    const accessibility = await axe.run(screen.getByRole("dialog", { name: "Vendor details" }), { rules: { "color-contrast": { enabled: false } } });
+    expect(accessibility.violations).toEqual([]);
+  });
+  it("focuses a choice after Enter or Space opens a basket dropdown and focuses the panel when choices are disabled", async () => {
+    const view = start(); const user = userEvent.setup();
+    const main = await screen.findByRole("button", { name: /^Main Baskets,/ });
+    main.focus(); await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: vendorBasket.name })).toHaveFocus());
+    await user.keyboard("{Escape}"); expect(main).toHaveFocus();
+    const sub = screen.getByRole("button", { name: /^Sub Baskets,/ });
+    sub.focus(); await user.keyboard(" ");
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: `${vendorSubBasket.name} in ${vendorBasket.name}` })).toHaveFocus());
+    await user.keyboard("{Escape}"); expect(sub).toHaveFocus();
+    await user.click(main); expect(main).toHaveFocus();
+    view.unmount(); start(true, false, false);
+    const readOnlyMain = await screen.findByRole("button", { name: /^Main Baskets,/ });
+    readOnlyMain.focus(); await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "Main Basket choices" })).toHaveFocus());
+    await user.keyboard("{Escape}"); expect(readOnlyMain).toHaveFocus();
+  });
+  it("retains unavailable saved selections on unrelated edits and prunes only children of a removed parent", async () => {
+    stored.procurementProfile!.mainBasketIds = [vendorBasket.id, "basket-old"];
+    stored.procurementProfile!.subBasketIds = [vendorSubBasket.id, "sub-old", "sub-unknown"];
+    stored.procurementSummary.mainBaskets = [...stored.procurementSummary.mainBaskets, { id: "basket-old", name: "Old trade", status: "inactive" }];
+    stored.procurementSummary.subBaskets = [...stored.procurementSummary.subBaskets, { id: "sub-old", basketId: "basket-old", name: "Old service" }, { id: "sub-unknown", basketId: null, name: null }];
+    const view = start(); const user = userEvent.setup();
+    expect(await mainChoice("Old trade")).toBeChecked();
+    expect(await subChoice("Old service in Old trade")).toBeChecked();
+    expect(screen.getByRole("group", { name: "Unavailable parent" })).toHaveTextContent("Unavailable Sub Basket (sub-unknown)");
+    fireEvent.change(screen.getByRole("textbox", { name: "Position" }), { target: { value: "Updated role" } });
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    expect(writes[0]).toMatchObject({ procurementProfile: { mainBasketIds: ["basket-old", vendorBasket.id], subBasketIds: ["sub-old", vendorSubBasket.id, "sub-unknown"] } });
+    view.unmount(); start();
+    await user.click(await mainChoice("Old trade"));
+    fireEvent.click(screen.getByRole("button", { name: /^Sub Baskets,/ }));
+    expect(screen.queryByRole("checkbox", { name: "Old service in Old trade" })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: `${vendorSubBasket.name} in ${vendorBasket.name}` })).toBeChecked();
+    expect(screen.getByRole("group", { name: "Unavailable parent" })).toHaveTextContent("sub-unknown");
+    expect(screen.getByText(/1 selected Sub Basket was also removed/)).toBeVisible();
+  });
+  it("preserves edits while a basket catalog fails and permits save after retry", async () => {
+    let failed = true;
+    server.use(http.get("/api/v1/admin/ai-estimator-knowledge/baskets", () => failed ? response({ error: { code: "TEMPORARY", message: "Catalog unavailable" } }, 503) : page([vendorBasket])));
+    const view = start(); const user = userEvent.setup();
+    await screen.findByRole("button", { name: "Retry baskets" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Position" }), { target: { value: "Catalog retry draft" } });
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    failed = false; await user.click(screen.getByRole("button", { name: "Retry baskets" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled());
+    expect(screen.getByRole("textbox", { name: "Position" })).toHaveValue("Catalog retry draft");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    expect(writes[0]).toMatchObject({ procurementProfile: { mainBasketIds: [vendorBasket.id], subBasketIds: [vendorSubBasket.id] } });
   });
   it("reuses inline basket creation and immediately selects the shared identities", async () => {
     server.use(http.post("/api/v1/admin/ai-estimator-knowledge/baskets", async () => response({ ...vendorBasket, id: "basket-new", name: "Metal work" })),
@@ -287,11 +415,14 @@ describe("Procurement vendor profile", () => {
     await user.click(screen.getByRole("button", { name: "Add Main Basket" }));
     await user.type(screen.getByRole("textbox", { name: "New Main Basket name" }), "Metal work");
     await user.click(within(screen.getByRole("group", { name: "Add Main Basket" })).getByRole("button", { name: "Save main basket" }));
-    await waitFor(() => expect(screen.getByRole("combobox", { name: "Main Basket" })).toHaveValue("basket-new"));
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Main Baskets,/ })).toHaveAccessibleName(/Metal work/));
+    expect(await mainChoice("Metal work")).toBeChecked();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Create under Main Basket" }), "basket-new");
     await user.click(screen.getByRole("button", { name: "Add Sub Basket" }));
     await user.type(screen.getByRole("textbox", { name: /New Sub.Basket name/ }), "Rails");
     await user.click(within(screen.getByRole("group", { name: /Add Sub.Basket/ })).getByRole("button", { name: "Save Sub-Basket" }));
-    await waitFor(() => expect(screen.getByRole("combobox", { name: "Sub Basket" })).toHaveValue("sub-new"));
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Sub Baskets,/ })).toHaveAccessibleName(/Rails/));
+    expect(await subChoice("Rails in Metal work")).toBeChecked();
     expect(screen.getByRole("textbox", { name: "Entity Name" })).toHaveValue("Timber House");
   });
   it("retries failed picture attachment without recreating the vendor or changing retry identity", async () => {
@@ -303,7 +434,7 @@ describe("Procurement vendor profile", () => {
       return { vendorId: stored.id, version: stored.version, geoTaggedPicture: stored.geoTaggedPicture } as never;
     });
     server.use(http.get("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-created/photo", () => new HttpResponse(new Uint8Array([1, 2, 3]), { headers: { "Content-Type": "image/png" } })));
-    const view = start(false); const user = userEvent.setup(); await screen.findByRole("option", { name: vendorBasket.name }); await fillNew(user);
+    const view = start(false); const user = userEvent.setup(); await mainChoice(vendorBasket.name); await fillNew(user);
     await user.upload(screen.getByLabelText("Geo Tagged Picture of the Vendor"), new File(["fake"], "synthetic.png", { type: "image/png" }));
     await user.click(screen.getByRole("button", { name: "Save vendor" }));
     await screen.findByText(/Vendor saved, but the picture has not been confirmed/);
@@ -343,7 +474,7 @@ describe("Procurement vendor profile", () => {
     };
     server.use(existing ? http.patch("/api/v1/admin/ai-estimator-knowledge/vendors/:id", handler) : http.post("/api/v1/admin/ai-estimator-knowledge/vendors", handler));
     const view = start(existing); view.client.setQueryData(knowledgeQueryKeys.masterCatalog("vendors"), { items: [safe(stored)] });
-    const user = userEvent.setup(); await screen.findByRole("option", { name: vendorBasket.name });
+    const user = userEvent.setup(); await mainChoice(vendorBasket.name);
     if (!existing) await fillNew(user);
     fillBank();
     await user.click(screen.getByRole("button", { name: existing ? "Save changes" : "Save vendor" }));
@@ -375,6 +506,7 @@ describe("Procurement vendor profile", () => {
     for (const name of ["Email", "Phone Number", "Address"]) expect(within(information).getByRole("textbox", { name })).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Contact Information" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Directory description|^Reference/)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
     expect(writes[0]).not.toHaveProperty("description"); expect(writes[0].procurementProfile).not.toHaveProperty("reference");
@@ -410,7 +542,7 @@ describe("Procurement vendor profile", () => {
   it("stages required evidence before creating a vendor with both GST and MSME Yes", async () => {
     const uploads: FormData[] = [];
     vi.spyOn(apiClient, "postMultipart").mockImplementation(async (_url, body) => { uploads.push(body); expect(writes).toHaveLength(0); return stagedCertificate as never; });
-    const view = start(false); const user = userEvent.setup(); await screen.findByRole("option", { name: vendorBasket.name }); await fillNew(user);
+    const view = start(false); const user = userEvent.setup(); await mainChoice(vendorBasket.name); await fillNew(user);
     await answer(user, "GST Registered", "Yes"); fireEvent.change(screen.getByRole("textbox", { name: "GST Number" }), { target: { value: "27ABCDE1234F1Z5" } });
     await answer(user, "MSME Registered", "Yes"); await screen.findByText(/Maximum 1 MB/);
     await user.click(screen.getByRole("button", { name: "Save vendor" }));
@@ -439,7 +571,7 @@ describe("Procurement vendor profile", () => {
       stored = { ...stored, id: "vendor-created", name: input.name as string, procurementProfile: { ...stored.procurementProfile!, ...input.procurementProfile as ProcurementVendorProfile }, msmeCertificate: savedCertificate };
       return writes.length === 1 ? HttpResponse.json({ error: { code: "TEMPORARY", message: "Response lost" } }, { status: 503 }) : response(safe(stored));
     }));
-    const view = start(false); const user = userEvent.setup(); await screen.findByRole("option", { name: vendorBasket.name }); await fillNew(user); await answer(user, "MSME Registered", "Yes"); await screen.findByText(/Maximum 1 MB/);
+    const view = start(false); const user = userEvent.setup(); await mainChoice(vendorBasket.name); await fillNew(user); await answer(user, "MSME Registered", "Yes"); await screen.findByText(/Maximum 1 MB/);
     await user.upload(screen.getByLabelText(/^MSME Certificate/), new File(["%PDF"], "synthetic-msme.pdf", { type: "application/pdf" }));
     await user.click(screen.getByRole("button", { name: "Save vendor" })); await user.click(await screen.findByRole("button", { name: "Retry vendor save" }));
     await waitFor(() => expect(view.saved).toHaveBeenCalledOnce()); expect(upload).toHaveBeenCalledOnce(); expect(writes[1]).toEqual(writes[0]);
@@ -511,7 +643,7 @@ describe("Procurement vendor profile", () => {
       if (photo.mock.calls.length === 1) throw new ApiError(503, "TEMPORARY", "Picture service unavailable");
       return { vendorId: stored.id, version: stored.version + 1, geoTaggedPicture: null } as never;
     });
-    const view = start(false); const user = userEvent.setup(); await screen.findByRole("option", { name: vendorBasket.name }); await fillNew(user); await answer(user, "MSME Registered", "Yes"); await screen.findByText(/Maximum 1 MB/);
+    const view = start(false); const user = userEvent.setup(); await mainChoice(vendorBasket.name); await fillNew(user); await answer(user, "MSME Registered", "Yes"); await screen.findByText(/Maximum 1 MB/);
     await user.upload(screen.getByLabelText(/^MSME Certificate/), new File(["%PDF"], "synthetic-msme.pdf", { type: "application/pdf" }));
     await user.upload(screen.getByLabelText("Geo Tagged Picture of the Vendor"), new File(["fake"], "synthetic.png", { type: "image/png" }));
     const accessibility = await axe.run(screen.getByRole("dialog", { name: "Add vendor" }), { rules: { "color-contrast": { enabled: false } } }); expect(accessibility.violations).toEqual([]);
@@ -531,7 +663,7 @@ describe("Procurement vendor profile", () => {
 
   it("allows create-only users to save the profile and required certificate while keeping optional photo controls disabled", async () => {
     const upload = vi.spyOn(apiClient, "postMultipart").mockResolvedValue(stagedCertificate as never);
-    const view = start(false, false, false); const user = userEvent.setup(); await screen.findByRole("option", { name: vendorBasket.name });
+    const view = start(false, false, false); const user = userEvent.setup(); await mainChoice(vendorBasket.name);
     expect(screen.getByRole("textbox", { name: "Entity Name" })).toBeEnabled(); expect(screen.getByRole("button", { name: "Save vendor" })).toBeEnabled();
     expect(screen.getByLabelText("Geo Tagged Picture of the Vendor")).toBeDisabled();
     await fillNew(user); await answer(user, "GST Registered", "Yes"); const gst = screen.getByRole("textbox", { name: "GST Number" }); expect(gst).toBeEnabled();

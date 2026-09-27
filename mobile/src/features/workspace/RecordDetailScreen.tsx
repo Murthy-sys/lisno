@@ -17,6 +17,7 @@ import { LeadActions } from "../leads/LeadActions";
 import { MessagesWorkspace } from "../messages/MessagesWorkspace";
 import { ProcurementProject } from "../procurement/ProcurementProject";
 import { ProjectStructure } from "../projects/ProjectStructure";
+import { projectDetailTheme } from "../projects/projectDetailTheme";
 import { EvaluationWorkspace } from "../management/EvaluationWorkspace";
 
 function displayedRecord(value: unknown): Record<string, unknown> | null {
@@ -27,14 +28,14 @@ function displayedRecord(value: unknown): Record<string, unknown> | null {
   return value;
 }
 
-export function RecordDetailScreen({ destination, recordId, session }: { readonly destination: FeatureDestination; readonly recordId: string; readonly session: AuthenticatedSession }) {
+export function RecordDetailScreen({ destination, recordId, session, initialProjectTab }: { readonly destination: FeatureDestination; readonly recordId: string; readonly session: AuthenticatedSession; readonly initialProjectTab?: string | undefined }) {
   if (destination.id === "messages") {
     return <MessagesWorkspace selectedProjectId={recordId} session={session} />;
   }
-  return <GenericRecordDetailScreen destination={destination} recordId={recordId} session={session} />;
+  return <GenericRecordDetailScreen destination={destination} recordId={recordId} session={session} initialProjectTab={initialProjectTab} />;
 }
 
-function GenericRecordDetailScreen({ destination, recordId, session }: { readonly destination: FeatureDestination; readonly recordId: string; readonly session: AuthenticatedSession }) {
+function GenericRecordDetailScreen({ destination, recordId, session, initialProjectTab }: { readonly destination: FeatureDestination; readonly recordId: string; readonly session: AuthenticatedSession; readonly initialProjectTab?: string | undefined }) {
   const context = useConfiguredRuntime();
   const definition = FEATURE_DEFINITIONS[destination.id];
   const endpoint = definition.detail?.(session.user.role, recordId) ?? null;
@@ -58,7 +59,7 @@ function GenericRecordDetailScreen({ destination, recordId, session }: { readonl
     return (
       <ScrollView contentContainerStyle={[styles.content, styles.projectContent]}>
         {query.isRefetching ? <Text accessibilityLiveRegion="polite" style={styles.updating}>Updating…</Text> : null}
-        <ProjectStructure data={query.data} session={session} onRefresh={() => void query.refetch()} />
+        <ProjectStructure data={query.data} session={session} onRefresh={() => void query.refetch()} initialTab={initialProjectTab} />
       </ScrollView>
     );
   }
@@ -93,7 +94,7 @@ function GenericRecordDetailScreen({ destination, recordId, session }: { readonl
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   content: { flexGrow: 1, width: "100%", maxWidth: 860, alignSelf: "center", padding: spacing.lg, paddingBottom: spacing.huge, gap: spacing.xl },
-  projectContent: { maxWidth: 1200, gap: spacing.sm },
+  projectContent: { maxWidth: projectDetailTheme.pageMaxWidth, gap: spacing.sm },
   heading: { gap: spacing.xs },
   eyebrow: { color: colors.violet, fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1.4 },
   title: { color: colors.ink, ...typography.pageTitle },

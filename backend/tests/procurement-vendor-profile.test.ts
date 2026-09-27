@@ -103,10 +103,35 @@ describe("procurement vendor profile validation", () => {
   it("normalizes legacy stored profiles while retaining verification and basket metadata", () => {
     const stored = { ...legacyVendorProfileFixture(), currentAddressVerifiedPhysically: true,
       physicalAddressVerifiedAt: "2026-09-01T00:00:00.000Z", physicalAddressVerifiedById: "synthetic-verifier" };
-    expect(storedProcurementVendorProfile(stored)).toEqual({ ...stored, executionType: ["labor"] });
-    expect(storedProcurementVendorProfile({ ...stored, executionType: ["material_labour", "labor"] })).toEqual({ ...stored, executionType: ["labor", "material_labour"] });
+    expect(storedProcurementVendorProfile(stored)).toEqual({ ...stored, executionType: ["labor"], mainBasketIds: ["basket-1"], subBasketIds: ["sub-1"] });
+    expect(storedProcurementVendorProfile({ ...stored, executionType: ["material_labour", "labor"] })).toEqual({ ...stored, executionType: ["labor", "material_labour"], mainBasketIds: ["basket-1"], subBasketIds: ["sub-1"] });
     expect(storedProcurementVendorProfile({ ...stored, executionType: ["labor", "labor"] })).toBeNull();
     expect(storedProcurementVendorProfile(undefined)).toBeNull();
+  });
+  it("normalizes bounded basket arrays and fingerprints equal sets in either order", () => {
+    const input = { ...vendorProfileFixture(), mainBasketIds: ["basket-2", "basket-1"], subBasketIds: ["sub-2", "sub-1"] };
+    const parsed = validateProcurementVendorProfile(input);
+    expect(parsed.mainBasketIds).toEqual(["basket-1", "basket-2"]);
+    expect(parsed.subBasketIds).toEqual(["sub-1", "sub-2"]);
+    expect(input.mainBasketIds).toEqual(["basket-2", "basket-1"]);
+    const first = vendorSaveCommand("actor", "vendor", { expectedVersion: 1, idempotencyKey: "basket-array-save", procurementProfile: input });
+    const second = vendorSaveCommand("actor", "vendor", { expectedVersion: 1, idempotencyKey: "basket-array-save", procurementProfile: { ...input,
+      mainBasketIds: ["basket-1", "basket-2"], subBasketIds: ["sub-1", "sub-2"] } });
+    expect(second).toEqual(first);
+  });
+  it("rejects missing, duplicate, oversized, and contradictory basket selections", () => {
+    const { mainBasketId: _mainBasketId, subBasketId: _subBasketId, ...arrayOnly } = vendorProfileFixture();
+    const base = { ...arrayOnly, mainBasketIds: ["basket-1"], subBasketIds: ["sub-1"] };
+    expect(procurementVendorProfileSchema.safeParse(base).success).toBe(true);
+    for (const change of [
+      { mainBasketIds: [] }, { subBasketIds: [] }, { mainBasketIds: ["basket-1", "basket-1"] },
+      { subBasketIds: ["sub-1", "sub-1"] }, { mainBasketIds: Array.from({ length: 101 }, (_, index) => `basket-${index}`) },
+      { subBasketIds: Array.from({ length: 501 }, (_, index) => `sub-${index}`) },
+      { mainBasketIds: [" "] }, { subBasketIds: [" "] },
+      { mainBasketId: "other", subBasketId: "sub-1" }, { mainBasketId: "basket-1", subBasketId: "other" }
+    ]) expect(procurementVendorProfileSchema.safeParse({ ...base, ...change }).success, JSON.stringify(change)).toBe(false);
+    expect(procurementVendorProfileSchema.safeParse(arrayOnly).success).toBe(false);
+    expect(procurementVendorProfileSchema.safeParse({ ...arrayOnly, mainBasketIds: ["basket-1"] }).success).toBe(false);
   });
   it("rejects contradictory and missing conditional answers", () => {
     for (const classification of [

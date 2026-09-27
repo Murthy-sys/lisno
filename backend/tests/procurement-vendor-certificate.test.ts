@@ -63,13 +63,13 @@ describe("private MSME certificate validation and HTTP", () => {
     const { app, service } = harness();
     for (const route of [`${base}/msme-certificate-uploads`, `${base}/v1/msme-certificate-uploads`]) {
       expect((await request(app).post(route).attach("certificate", Buffer.alloc(4096), "invalid.pdf")).status).toBe(401);
-      const denied = harness({ ...actor, role: "procurement" });
+      const denied = harness({ ...actor, role: "admin" });
       expect((await request(denied.app).post(route).set("Authorization", "Bearer synthetic").attach("certificate", Buffer.alloc(4096), "invalid.pdf")).status).toBe(403);
       expect(denied.service.stage).not.toHaveBeenCalled();
     }
     for (const route of [`${base}/msme-certificate-upload-policy`, `${base}/v1/msme-certificate`]) {
       expect((await request(app).get(route)).status).toBe(401);
-      const denied = harness({ ...actor, role: "procurement" });
+      const denied = harness({ ...actor, role: "admin" });
       expect((await request(denied.app).get(route).set("Authorization", "Bearer synthetic")).status).toBe(403);
     }
     service.authorize.mockRejectedValueOnce(new ApiError(401, "INVALID_TOKEN", "Invalid token."));
@@ -108,5 +108,15 @@ describe("private MSME certificate validation and HTTP", () => {
     service.open.mockRejectedValueOnce(new ApiError(404, "NOT_FOUND", "The requested MSME certificate was not found."));
     expect((await request(app).get(`${base}/v1/msme-certificate?v=old-certificate`).set("Authorization", "Bearer synthetic")).status).toBe(404);
     expect((await request(app).get(`${base}/v1/msme-certificate?v=a&storageReference=private`).set("Authorization", "Bearer synthetic")).status).toBe(400);
+  });
+  it("allows Procurement to stage new and existing vendor certificates and read the private file", async () => {
+    const procurement = { ...actor, role: "procurement" as const };
+    const { app, service } = harness(procurement);
+    const certificate = await pdf();
+    await request(app).get(`${base}/msme-certificate-upload-policy`).set("Authorization", "Bearer synthetic").expect(200);
+    await request(app).post(`${base}/msme-certificate-uploads`).set("Authorization", "Bearer synthetic").field("idempotencyKey", "procurement-create-1").attach("certificate", certificate.data, "synthetic.pdf").expect(201);
+    await request(app).post(`${base}/v1/msme-certificate-uploads`).set("Authorization", "Bearer synthetic").field("expectedVersion", "1").field("idempotencyKey", "procurement-update-1").attach("certificate", certificate.data, "synthetic.pdf").expect(201);
+    await request(app).get(`${base}/v1/msme-certificate`).set("Authorization", "Bearer synthetic").expect(200);
+    expect(service.stage).toHaveBeenCalledWith(procurement, expect.any(Object), expect.any(Object));
   });
 });

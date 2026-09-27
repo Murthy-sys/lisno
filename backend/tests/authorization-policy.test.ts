@@ -21,6 +21,7 @@ import { ROLE_CODES, WORKER_ROLES, type Role } from "../src/domain/roles.js";
 import { HUMAN_JWT_OPERATION_LIST } from "../src/domain/route-operations.js";
 import {
   createAiEstimatorKnowledgeActorGuard,
+  createAiEstimatorKnowledgeVendorActorGuard,
   type AiEstimatorKnowledgeActorStore
 } from "../src/services/ai-estimator-knowledge-actor.js";
 import type { PublicUser } from "../src/services/auth.service.js";
@@ -97,6 +98,15 @@ const PROCUREMENT_PERMISSIONS = [
   "procurement.workspace.read",
   "procurement.expense.create",
   "procurement.document.read"
+] as const;
+
+const VENDOR_DIRECTORY_PERMISSIONS = [
+  "procurement.vendor_directory.read",
+  "procurement.vendor_directory.create",
+  "procurement.vendor_directory.update",
+  "procurement.vendor_directory.lifecycle",
+  "procurement.vendor_classification.create",
+  "procurement.vendor_allocation_baseline.correct"
 ] as const;
 
 const AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS = [
@@ -203,6 +213,7 @@ describe("authorization policy", () => {
         (permission) =>
           !permission.startsWith("chat.") &&
           !permission.startsWith("procurement.items.") && !permission.startsWith("procurement.vendors.") && !permission.startsWith("procurement.vendor_suggestions.") &&
+          !VENDOR_DIRECTORY_PERMISSIONS.includes(permission as never) &&
           permission !== "projects.design_workflow.read" &&
           permission !== "estimation.design_upload.delete" &&
           permission !== "projects.design_workflow.act" &&
@@ -232,8 +243,8 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(138);
-    expect(new Set(PERMISSION_CODES).size).toBe(138);
+    expect(PERMISSION_CODES).toHaveLength(144);
+    expect(new Set(PERMISSION_CODES).size).toBe(144);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
@@ -258,7 +269,7 @@ describe("authorization policy", () => {
 
   it("restricts reusable Quality Control option creation to Super Admin", () => {
     const permission = "ai_estimator_knowledge.quality_control_options.create" as const;
-    expect(PERMISSION_CODES.at(-1)).toBe(permission);
+    expect(PERMISSION_CODES).toContain(permission);
     for (const role of ROLE_CODES) {
       expect(hasPermission(role, permission), role).toBe(role === "super_admin");
     }
@@ -417,6 +428,18 @@ describe("authorization policy", () => {
       }
     }
   });
+
+  it("grants all six scoped vendor-directory capabilities only to Procurement and Super Admin", () => {
+    expect(PERMISSION_CODES.slice(-VENDOR_DIRECTORY_PERMISSIONS.length)).toEqual(VENDOR_DIRECTORY_PERMISSIONS);
+    for (const role of ROLE_CODES) {
+      for (const permission of VENDOR_DIRECTORY_PERMISSIONS) {
+        expect(hasPermission(role, permission), `${role} ${permission}`).toBe(role === "procurement" || role === "super_admin");
+      }
+    }
+    for (const permission of AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS) {
+      expect(hasPermission("procurement", permission)).toBe(false);
+    }
+  });
   it("limits project vendor suggestions to assigned manager writes and three-role reads", () => {
     for (const role of ROLE_CODES) {
       expect(hasPermission(role, "procurement.vendor_suggestions.read")).toBe(["admin", "super_admin", "procurement"].includes(role));
@@ -503,6 +526,52 @@ describe("authorization policy", () => {
     expect(AUDIT_ACTIONS.slice(-AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS.length)).toEqual(
       AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS
     );
+  });
+});
+
+describe("vendor-scoped actor guard", () => {
+  const session = {} as ClientSession;
+  const procurement: PublicUser = { id: "procurement-1", name: "Procurement", email: "procurement@example.test", role: "procurement" };
+  const stored = { id: procurement.id, role: "procurement" as const, active: true };
+
+  it("checks the stored active Procurement role and coordinates mutations in the supplied session", async () => {
+    const calls: string[] = [];
+    const store: AiEstimatorKnowledgeActorStore = {
+      coordinateAuthorizationMutation: vi.fn(async received => { expect(received).toBe(session); calls.push("coordinate"); }),
+      findActor: vi.fn(async (_id, received) => { expect(received).toBe(session); calls.push("actor"); return stored; }),
+      countActiveSuperAdmins: vi.fn(async () => { throw new Error("Procurement must not use the sole-Super-Admin count"); })
+    };
+    const guard = createAiEstimatorKnowledgeVendorActorGuard(store);
+    await expect(guard.requireReadActor(procurement, session)).resolves.toEqual({ id: procurement.id, role: "procurement" });
+    expect(calls).toEqual(["actor"]);
+    calls.length = 0;
+    await expect(guard.requireMutationActor(procurement, session)).resolves.toEqual({ id: procurement.id, role: "procurement" });
+    expect(calls).toEqual(["coordinate", "actor"]);
+  });
+
+  it.each([
+    ["inactive", { ...stored, active: false }, 401],
+    ["stale role", { ...stored, role: "admin" as const }, 401],
+    ["missing", null, 401]
+  ])("denies %s Procurement actors", async (_label, value, status) => {
+    const guard = createAiEstimatorKnowledgeVendorActorGuard({
+      coordinateAuthorizationMutation: vi.fn(async () => undefined),
+      findActor: vi.fn(async () => value),
+      countActiveSuperAdmins: vi.fn(async () => 1)
+    });
+    await expect(guard.requireMutationActor(procurement, session)).rejects.toMatchObject({ status });
+  });
+
+  it("rejects other roles while retaining the sole active Super Admin check", async () => {
+    const countActiveSuperAdmins = vi.fn(async () => 2);
+    const guard = createAiEstimatorKnowledgeVendorActorGuard({
+      coordinateAuthorizationMutation: vi.fn(async () => undefined),
+      findActor: vi.fn(async id => ({ id, role: id === "admin" ? "admin" : "super_admin", active: true })),
+      countActiveSuperAdmins
+    });
+    await expect(guard.requireReadActor({ ...procurement, id: "admin", role: "admin" })).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
+    await expect(guard.requireReadActor({ ...procurement, id: "super", role: "super_admin" })).rejects.toMatchObject({ status: 409, code: "SOLE_SUPER_ADMIN_REQUIRED" });
+    expect(countActiveSuperAdmins).toHaveBeenCalledTimes(1);
   });
 });
 

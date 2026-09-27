@@ -52,3 +52,24 @@ describe("vendor organization and bank draft", () => {
     expect(validateVendorDraft({ ...bankDraft(), [field]: "a".repeat(240) })).toEqual({});
   });
 });
+
+describe("vendor basket draft", () => {
+  it("hydrates scalar-only details and sends sorted arrays without compatibility scalars", () => {
+    const legacy = { ...completeVendor, procurementProfile: { ...completeVendor.procurementProfile!, mainBasketIds: undefined, subBasketIds: undefined } } as unknown as typeof completeVendor;
+    expect(vendorDraft(legacy)).toMatchObject({ mainBasketIds: ["basket-one"], subBasketIds: ["sub-one"] });
+    const profile = profileFromDraft({ ...vendorDraft(completeVendor), mainBasketIds: ["basket-z", "basket-a"], subBasketIds: ["sub-z", "sub-a"] });
+    expect(profile).toMatchObject({ mainBasketIds: ["basket-a", "basket-z"], subBasketIds: ["sub-a", "sub-z"] });
+    expect(profile).not.toHaveProperty("mainBasketId");
+    expect(profile).not.toHaveProperty("subBasketId");
+  });
+
+  it("requires each selection, rejects duplicate IDs and enforces the shared bounds", () => {
+    const draft = vendorDraft(completeVendor);
+    expect(validateVendorDraft({ ...draft, mainBasketIds: [] })).toHaveProperty("mainBasketIds");
+    expect(validateVendorDraft({ ...draft, subBasketIds: [] })).toHaveProperty("subBasketIds");
+    expect(validateVendorDraft({ ...draft, mainBasketIds: ["basket-one", "basket-one"] })).toHaveProperty("mainBasketIds");
+    expect(validateVendorDraft({ ...draft, subBasketIds: ["sub-one", "sub-one"] })).toHaveProperty("subBasketIds");
+    expect(validateVendorDraft({ ...draft, mainBasketIds: Array.from({ length: 101 }, (_, index) => `basket-${index}`) })).toHaveProperty("mainBasketIds");
+    expect(validateVendorDraft({ ...draft, subBasketIds: Array.from({ length: 501 }, (_, index) => `sub-${index}`) })).toHaveProperty("subBasketIds");
+  });
+});

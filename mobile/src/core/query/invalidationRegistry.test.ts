@@ -38,6 +38,12 @@ describe("cross-feature invalidation registry", () => {
     );
   });
 
+  it("refreshes project design documents after a plan review decision", () => {
+    expect(invalidationFamilies("plan-review-changed")).toEqual(
+      expect.arrayContaining(["plan-review", "design", "estimates", "workflow", "projects"])
+    );
+  });
+
   it("classifies access-sensitive feature data for removal", () => {
     expect(invalidationFamilies("access-changed")).toEqual(
       expect.arrayContaining([

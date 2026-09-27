@@ -197,9 +197,6 @@ export function KnowledgeItemWorkspacePage() {
   });
   const item = itemQuery.data;
 
-  useEffect(() => {
-    if (item?.itemType === "temporary" && activeSection === "recommendations") setActiveSection("overview");
-  }, [item?.itemType, activeSection]);
   const revision = item?.draftRevision ?? item?.activeRevision ?? null;
   const pendingSession = useMemo<PendingEditorSession>(() => ({
     sourceKey: JSON.stringify([mainLineId, revision?.id ?? "", item?.basketId ?? "", activeSection])
@@ -386,10 +383,12 @@ export function KnowledgeItemWorkspacePage() {
       return updateKnowledgeSection(mainLineId, revision.id, backendSection, {
         expectedVersion: expectedSectionVersion ?? sectionQuery.data.version,
         expectedAggregateVersion: item.version,
-        applicability: backendSection === "overview" && overviewDirtyFields.has("surfaceIds")
-          && Array.isArray(rebasedPayload.surfaceIds) && rebasedPayload.surfaceIds.length > 0
-          ? "configured"
-          : sectionQuery.data.applicability,
+        ...(backendSection === "recommendations" && item.itemType === "temporary" ? {} : {
+          applicability: backendSection === "overview" && overviewDirtyFields.has("surfaceIds")
+            && Array.isArray(rebasedPayload.surfaceIds) && rebasedPayload.surfaceIds.length > 0
+            ? "configured" as const
+            : sectionQuery.data.applicability
+        }),
         payload: knowledgeSectionPayloadForUpdate(backendSection, rebasedPayload)
       });
     },
@@ -605,7 +604,7 @@ export function KnowledgeItemWorkspacePage() {
 
       <div className="knowledge-workspace-layout">
         <div className="knowledge-workspace-main">
-          <KnowledgeSectionNavigation sections={item.itemType === "temporary" ? ["overview", "mode", "quality"] : undefined} activeSection={activeSection} onSectionChange={selectWorkspaceSection} panelBusy={activeSection === "mode" ? modeBusy : sectionQuery.isFetching}>
+          <KnowledgeSectionNavigation activeSection={activeSection} onSectionChange={selectWorkspaceSection} panelBusy={activeSection === "mode" ? modeBusy : sectionQuery.isFetching}>
             {activeSection === "quality" ? (
               <KnowledgeBasketQualityPanel key={pendingSession.sourceKey} ref={qualityPanelRef} item={item} revisionId={revision?.id} canUpdate={canUpdate} canCreateQualityOptions={canCreateQualityOptions} onDirtyChange={setQualityDirty} onSavingChange={setQualitySaving} />
             ) : !revision ? (

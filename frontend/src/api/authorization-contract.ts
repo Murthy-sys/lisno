@@ -238,13 +238,19 @@ export const PERMISSION_CODES = [
   "procurement.vendors.create",
   "procurement.vendor_suggestions.read",
   "procurement.vendor_suggestions.manage",
-  "ai_estimator_knowledge.quality_control_options.create"
+  "ai_estimator_knowledge.quality_control_options.create",
+  "procurement.vendor_directory.read",
+  "procurement.vendor_directory.create",
+  "procurement.vendor_directory.update",
+  "procurement.vendor_directory.lifecycle",
+  "procurement.vendor_classification.create",
+  "procurement.vendor_allocation_baseline.correct"
 ] as const;
 
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-09-20.quality-control-options.v1" as const;
+  "2026-09-27.procurement-vendor-directory.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

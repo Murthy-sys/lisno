@@ -75,7 +75,14 @@ describe("restricted allocation baseline routes", () => {
     await request(app).get(`${path}?limit=101`).set("Authorization", "Bearer super_admin").expect(400);
     await request(app).post(`${path}/item`).set("Authorization", "Bearer super_admin").send({ ...baseline, reason: "" }).expect(400);
   });
-  it.each(ROLE_CODES.filter((role) => role !== "super_admin"))("denies %s both historical operations", async (role) => {
+  it("allows Procurement to read and correct a historical baseline", async () => {
+    const { app, service, actor, result } = setup();
+    await request(app).get(path).set("Authorization", "Bearer procurement").expect(200);
+    await request(app).post(`${path}/item`).set("Authorization", "Bearer procurement").send(baseline).expect(200, { data: result });
+    expect(service.list).toHaveBeenCalledWith({ ...actor, role: "procurement" }, "vendor", { limit: 20, offset: 0 });
+    expect(service.complete).toHaveBeenCalledWith({ ...actor, role: "procurement" }, "vendor", "item", baseline);
+  });
+  it.each(ROLE_CODES.filter((role) => role !== "super_admin" && role !== "procurement"))("denies %s both historical operations", async (role) => {
     const { app, service } = setup();
     await request(app).get(path).set("Authorization", `Bearer ${role}`).expect(403);
     await request(app).post(`${path}/item`).set("Authorization", `Bearer ${role}`).send(baseline).expect(403);

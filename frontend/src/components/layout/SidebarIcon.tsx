@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 const drawings = {
   home: <><path d="m3.5 10 8.5-7 8.5 7v10H15v-6H9v6H3.5Z" /><path d="M9 20h6" /></>,
   dashboard: <><rect x="3.5" y="3.5" width="7" height="7" rx="1" /><rect x="14" y="3.5" width="6.5" height="4.5" rx="1" /><rect x="14" y="11.5" width="6.5" height="9" rx="1" /><rect x="3.5" y="14" width="7" height="6.5" rx="1" /></>,
+  "procurement-dashboard": <><path d="M5 20v-5m7 5V9m7 11V4" /><path d="M3.5 20.5h17" /></>,
+  "procurement-vendors": <><circle cx="9" cy="8" r="3" /><path d="M3.5 20v-2a5.5 5.5 0 0 1 11 0v2M16 5a3 3 0 0 1 0 6m.5 3a5 5 0 0 1 4 5v1" /></>,
   projects: <><path d="M3 7V5.5A1.5 1.5 0 0 1 4.5 4H9l2 3h8.5A1.5 1.5 0 0 1 21 8.5v10a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5V7Z" /><path d="M3 9h18M8 13v3m4-3v5m4-5v2" /></>,
   people: <><circle cx="9" cy="7" r="3" /><path d="M3.5 20v-3A4.5 4.5 0 0 1 8 12.5h2a4.5 4.5 0 0 1 4.5 4.5v3M16 4.5a3 3 0 0 1 0 6M17 13a4.5 4.5 0 0 1 3.5 4.5V20" /></>,
   organization: <><path d="M4 21V4l10-2v19M14 8h6v13M2 21h20M8 6h2m-2 4h2m-2 4h2m7-2h1m-1 4h1M8 21v-3h2v3" /></>,
@@ -39,10 +41,10 @@ const destinationIcons: Readonly<Record<string, keyof typeof drawings>> = {
   "/home": "home"
 };
 
-export function SidebarIcon({ destination }: { destination: string }) {
+export function SidebarIcon({ destination, name }: { destination: string; name?: keyof typeof drawings }) {
   return (
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
-      {drawings[destinationIcons[destination] ?? "home"]}
+      {drawings[name ?? destinationIcons[destination] ?? "home"]}
     </svg>
   );
 }

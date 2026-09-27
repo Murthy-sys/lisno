@@ -60,6 +60,7 @@ import type { PageResult, PaginationInput } from "../repositories/types.js";
 import type { AuditService } from "./audit.service.js";
 import {
   aiEstimatorKnowledgeActorGuard,
+  aiEstimatorKnowledgeVendorActorGuard,
   type AiEstimatorKnowledgeActorGuard
 } from "./ai-estimator-knowledge-actor.js";
 import {
@@ -403,6 +404,7 @@ export function createAiEstimatorKnowledgeReferenceService(
   dependencies: AiEstimatorKnowledgeReferenceServiceDependencies
 ): AiEstimatorKnowledgeReferenceService {
   const actorGuard = dependencies.actorGuard ?? aiEstimatorKnowledgeActorGuard;
+  const vendorActorGuard = dependencies.actorGuard ?? aiEstimatorKnowledgeVendorActorGuard;
   const now = dependencies.now ?? systemClock;
   const createId = dependencies.createId ?? randomUUID;
   const startSession = dependencies.startSession ?? (() => mongoose.startSession());
@@ -412,7 +414,7 @@ export function createAiEstimatorKnowledgeReferenceService(
 
   return {
     async listSubBaskets(actor, basketId, filters, pagination) {
-      await actorGuard.requireReadActor(actor);
+      await vendorActorGuard.requireReadActor(actor);
       validateListFilters(filters);
       validatePagination(pagination);
       if (!await AiEstimatorKnowledgeBasketModel.exists({ _id: basketId, status: { $ne: "archived" } })) notFound();
@@ -426,7 +428,7 @@ export function createAiEstimatorKnowledgeReferenceService(
 
     async createSubBasket(actor, basketId, input) {
       return mapMongoConflict(() => withMongoTransaction(startSession, async (session) => {
-        const authorized = await actorGuard.requireMutationActor(actor, session);
+        const authorized = await vendorActorGuard.requireMutationActor(actor, session);
         validateName(input.name, "name");
         // Writing the parent serializes this create against parent deletion/status changes.
         const parent = await AiEstimatorKnowledgeBasketModel.findOneAndUpdate(
@@ -621,7 +623,7 @@ export function createAiEstimatorKnowledgeReferenceService(
     },
 
     async listBaskets(actor, filters, pagination) {
-      await actorGuard.requireReadActor(actor);
+      await vendorActorGuard.requireReadActor(actor);
       validateListFilters(filters);
       validatePagination(pagination);
       const query = listFilter(filters, ["nameNormalized"]);
@@ -639,7 +641,7 @@ export function createAiEstimatorKnowledgeReferenceService(
 
     async createBasket(actor, input) {
       return mapMongoConflict(() => withMongoTransaction(startSession, async (session) => {
-        const authorized = await actorGuard.requireMutationActor(actor, session);
+        const authorized = await vendorActorGuard.requireMutationActor(actor, session);
         validateBasketCreate(input);
         const timestamp = now();
         const normalized = normalizeKnowledgeIdentity(input.name);
@@ -892,7 +894,7 @@ export function createAiEstimatorKnowledgeReferenceService(
     },
 
     async getVendorDetail(actor, id) {
-      await actorGuard.requireReadActor(actor);
+      await vendorActorGuard.requireReadActor(actor);
       const row = await AiEstimatorKnowledgeVendorModel.findById(id).lean().exec() as Row | null;
       if (!row) notFound();
       const summaries = await procurementVendorSummaries([row]);
@@ -900,7 +902,7 @@ export function createAiEstimatorKnowledgeReferenceService(
     },
 
     async listMasters(actor, masterType, filters, pagination) {
-      await actorGuard.requireReadActor(actor);
+      await (masterType === "vendors" ? vendorActorGuard : actorGuard).requireReadActor(actor);
       validateListFilters(filters);
       const model = requireMasterModel(masterType);
       validatePagination(pagination);
@@ -910,8 +912,18 @@ export function createAiEstimatorKnowledgeReferenceService(
       const query = listFilter(filters, ["codeNormalized", "nameNormalized"]);
       if (masterType === "vendors") {
         if (filters.vendorType) query["procurementProfile.vendorType"] = filters.vendorType;
-        if (filters.mainBasketId) query["procurementProfile.mainBasketId"] = filters.mainBasketId;
-        if (filters.subBasketId) query["procurementProfile.subBasketId"] = filters.subBasketId;
+        const classificationFilters: Record<string, unknown>[] = [];
+        if (filters.mainBasketId) classificationFilters.push({ $or: [
+          { "procurementProfile.mainBasketIds": filters.mainBasketId }, { "procurementProfile.mainBasketId": filters.mainBasketId }
+        ] });
+        if (filters.subBasketId) classificationFilters.push({ $or: [
+          { "procurementProfile.subBasketIds": filters.subBasketId }, { "procurementProfile.subBasketId": filters.subBasketId }
+        ] });
+        if (classificationFilters.length) query.$and = classificationFilters;
+        if (filters.mainBasketId && filters.subBasketId) {
+          const child = await AiEstimatorKnowledgeSubBasketModel.findById(filters.subBasketId).select({ basketId: 1 }).lean().exec();
+          if (!child || String(child.basketId) !== filters.mainBasketId) query._id = { $in: [] };
+        }
       }
       const [rows, total, directoryOverview] = await Promise.all([
         model.find(query).sort({ displayOrder: 1, nameNormalized: 1, _id: 1 }).skip(pagination.offset).limit(pagination.limit).lean().exec(),
@@ -936,7 +948,7 @@ export function createAiEstimatorKnowledgeReferenceService(
 
     async createMaster(actor, masterType, input) {
       return mapMongoConflict(() => withMongoTransaction(startSession, async (session) => {
-        const authorized = await actorGuard.requireMutationActor(actor, session);
+        const authorized = await (masterType === "vendors" ? vendorActorGuard : actorGuard).requireMutationActor(actor, session);
         const model = requireMasterModel(masterType);
         validateMasterCreate(masterType, input);
         const command = masterType === "vendors" ? vendorSaveCommand(authorized.id, null, input) : null;
@@ -1023,7 +1035,7 @@ export function createAiEstimatorKnowledgeReferenceService(
 
     async updateMaster(actor, masterType, id, input) {
       return mapMongoConflict(() => withMongoTransaction(startSession, async (session) => {
-        const authorized = await actorGuard.requireMutationActor(actor, session);
+        const authorized = await (masterType === "vendors" ? vendorActorGuard : actorGuard).requireMutationActor(actor, session);
         const model = requireMasterModel(masterType);
         validateMasterUpdate(masterType, input);
         const command = masterType === "vendors" ? vendorSaveCommand(authorized.id, id, input) : null;
@@ -1116,7 +1128,7 @@ export function createAiEstimatorKnowledgeReferenceService(
           oldValues: masterAuditState(current, masterType),
           newValues: { ...masterAuditState(updated!, masterType), ...(masterType === "vendors" && input.procurementProfile ? { changedProfileFields: Object.keys(input.procurementProfile).filter(key => {
             const nextValue = (set.procurementProfile as unknown as Row)[key];
-            if (key === "executionType" || key === "bankAccount" || key === "organizationType") {
+            if (key === "executionType" || key === "bankAccount" || key === "organizationType" || key === "mainBasketIds" || key === "subBasketIds") {
               const previousValue = storedProcurementVendorProfile(current.procurementProfile)?.[key] ?? null;
               return JSON.stringify(previousValue) !== JSON.stringify(nextValue);
             }
@@ -1137,7 +1149,7 @@ export function createAiEstimatorKnowledgeReferenceService(
 
     async archiveMaster(actor, masterType, id, input) {
       return withMongoTransaction(startSession, async (session) => {
-        const authorized = await actorGuard.requireMutationActor(actor, session);
+        const authorized = await (masterType === "vendors" ? vendorActorGuard : actorGuard).requireMutationActor(actor, session);
         const model = requireMasterModel(masterType);
         validateArchiveInput(input);
         const current = await model.findById(id).session(session).lean().exec() as Row | null;
@@ -1244,7 +1256,9 @@ async function subBasketDeletionSnapshot(parent: Row, group: Row, session: Clien
     return rows.length ? [{ sectionId: section._id, version: section.version,
       mainLineId: section.mainLineId, revisionId: section.revisionId, rows }] : [];
   });
-  const vendorReferenceCount = await AiEstimatorKnowledgeVendorModel.countDocuments({ "procurementProfile.subBasketId": subBasketId }).session(session).exec();
+  const vendorReferenceCount = await AiEstimatorKnowledgeVendorModel.countDocuments({ $or: [
+    { "procurementProfile.subBasketIds": subBasketId }, { "procurementProfile.subBasketId": subBasketId }
+  ] }).session(session).exec();
   const impactToken = createHash("sha256").update(JSON.stringify(canonicalImpactValue({
     basketId, basketVersion: parent.version, subBasketId, subBasketName: group.name,
     version: group.version, children, references, vendorReferenceCount
@@ -1271,7 +1285,9 @@ async function basketDeletionImpact(
   basketId: string,
   session?: ClientSession
 ): Promise<AiEstimatorKnowledgeBasketDeletionImpact> {
-  const vendorQuery = AiEstimatorKnowledgeVendorModel.countDocuments({ "procurementProfile.mainBasketId": basketId });
+  const vendorQuery = AiEstimatorKnowledgeVendorModel.countDocuments({ $or: [
+    { "procurementProfile.mainBasketIds": basketId }, { "procurementProfile.mainBasketId": basketId }
+  ] });
   const subBasketCountQuery = AiEstimatorKnowledgeSubBasketModel.countDocuments({ basketId });
   const mainLineCountQuery = AiEstimatorKnowledgeMainLineModel.countDocuments({ basketId });
   const sectionQuery = AiEstimatorKnowledgeSectionModel.find({
@@ -1946,7 +1962,7 @@ function masterAuditState(
 ): Record<string, unknown> {
   if (masterType === "vendors") {
     const profile = storedProcurementVendorProfile(row.procurementProfile);
-    return { ...auditState(row), profileComplete: procurementVendorProfileComplete(profile, row.msmeCertificate), msmeCertificateId: procurementVendorCertificateDescriptor(String(row._id), row.msmeCertificate)?.id ?? null, currentAddressVerifiedPhysically: profile?.currentAddressVerifiedPhysically ?? null, physicalAddressVerifiedAt: profile?.physicalAddressVerifiedAt ?? null, physicalAddressVerifiedById: profile?.physicalAddressVerifiedById ?? null, mainBasketId: profile?.mainBasketId ?? null, subBasketId: profile?.subBasketId ?? null };
+    return { ...auditState(row), profileComplete: procurementVendorProfileComplete(profile, row.msmeCertificate), msmeCertificateId: procurementVendorCertificateDescriptor(String(row._id), row.msmeCertificate)?.id ?? null, currentAddressVerifiedPhysically: profile?.currentAddressVerifiedPhysically ?? null, physicalAddressVerifiedAt: profile?.physicalAddressVerifiedAt ?? null, physicalAddressVerifiedById: profile?.physicalAddressVerifiedById ?? null, mainBasketIds: profile?.mainBasketIds ?? null, subBasketIds: profile?.subBasketIds ?? null, mainBasketId: profile?.mainBasketId ?? null, subBasketId: profile?.subBasketId ?? null };
   }
   if (masterType !== "surfaces") return auditState(row);
   return {
