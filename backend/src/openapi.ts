@@ -901,7 +901,7 @@ export const openApiDocument: LisnoOpenApiDocument = Object.freeze({
     tag("Audit", "Authorized audit and project activity feeds."),
     tag(
       "AI Estimator Knowledge",
-      "Super Admin-managed Interior Estimation knowledge and read-only future-AI context. This does not alter the existing estimator."
+      "Super Admin-managed Interior Estimation knowledge and read-only future-AI context. Scoped Procurement vendor-directory and inline classification operations are also available. This does not alter the existing estimator."
     ),
     tag("OCR worker", "Internal extraction-worker protocol. These routes are mounted only when OCR worker authentication is configured.")
   ],
@@ -1097,14 +1097,14 @@ function responsesFor(key: HumanJwtOperationKeyShape): Readonly<Record<string, O
   }
   if (key === "GET /admin/ai-estimator-knowledge/vendors/:id/msme-certificate") {
     return {
-      ...binaryResponses(["application/pdf", "image/jpeg", "image/png", "image/webp"], "Current MSME certificate attachment, authenticated Super Admin only. Private, no-store and nosniff; an optional v must match the attached certificate identity. Stale or unavailable certificates return 404."),
+      ...binaryResponses(["application/pdf", "image/jpeg", "image/png", "image/webp"], "Current MSME certificate attachment for an authorized Super Admin or Procurement user. Private, no-store and nosniff; an optional v must match the attached certificate identity. Stale or unavailable certificates return 404."),
       "422": { $ref: "#/components/responses/UnprocessableKnowledge" },
       "503": { $ref: "#/components/responses/ServiceUnavailable" }
     };
   }
   if (key === "GET /admin/ai-estimator-knowledge/vendors/:id/photo") {
     return {
-      ...binaryResponses(["image/jpeg", "image/png", "image/webp"], "Original vendor photograph, authenticated Super Admin only. Private, no-store; embedded geotags are preserved."),
+      ...binaryResponses(["image/jpeg", "image/png", "image/webp"], "Original vendor photograph for an authorized Super Admin or Procurement user. Private, no-store; embedded geotags are preserved."),
       "422": { $ref: "#/components/responses/UnprocessableKnowledge" },
       "503": { $ref: "#/components/responses/ServiceUnavailable" }
     };

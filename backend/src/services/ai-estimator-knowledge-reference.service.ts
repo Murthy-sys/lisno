@@ -60,6 +60,7 @@ import type { PageResult, PaginationInput } from "../repositories/types.js";
 import type { AuditService } from "./audit.service.js";
 import {
   aiEstimatorKnowledgeActorGuard,
+  aiEstimatorKnowledgeVendorActorGuard,
   type AiEstimatorKnowledgeActorGuard
 } from "./ai-estimator-knowledge-actor.js";
 import {
@@ -403,6 +404,7 @@ export function createAiEstimatorKnowledgeReferenceService(
   dependencies: AiEstimatorKnowledgeReferenceServiceDependencies
 ): AiEstimatorKnowledgeReferenceService {
   const actorGuard = dependencies.actorGuard ?? aiEstimatorKnowledgeActorGuard;
+  const vendorActorGuard = dependencies.actorGuard ?? aiEstimatorKnowledgeVendorActorGuard;
   const now = dependencies.now ?? systemClock;
   const createId = dependencies.createId ?? randomUUID;
   const startSession = dependencies.startSession ?? (() => mongoose.startSession());
@@ -412,7 +414,7 @@ export function createAiEstimatorKnowledgeReferenceService(
 
   return {
     async listSubBaskets(actor, basketId, filters, pagination) {
-      await actorGuard.requireReadActor(actor);
+      await vendorActorGuard.requireReadActor(actor);
       validateListFilters(filters);
       validatePagination(pagination);
       if (!await AiEstimatorKnowledgeBasketModel.exists({ _id: basketId, status: { $ne: "archived" } })) notFound();
@@ -426,7 +428,7 @@ export function createAiEstimatorKnowledgeReferenceService(
 
     async createSubBasket(actor, basketId, input) {
       return mapMongoConflict(() => withMongoTransaction(startSession, async (session) => {
-        const authorized = await actorGuard.requireMutationActor(actor, session);
+        const authorized = await vendorActorGuard.requireMutationActor(actor, session);
         validateName(input.name, "name");
         // Writing the parent serializes this create against parent deletion/status changes.
         const parent = await AiEstimatorKnowledgeBasketModel.findOneAndUpdate(
@@ -621,7 +623,7 @@ export function createAiEstimatorKnowledgeReferenceService(
     },
 
     async listBaskets(actor, filters, pagination) {
-      await actorGuard.requireReadActor(actor);
+      await vendorActorGuard.requireReadActor(actor);
       validateListFilters(filters);
       validatePagination(pagination);
       const query = listFilter(filters, ["nameNormalized"]);
@@ -639,7 +641,7 @@ export function createAiEstimatorKnowledgeReferenceService(
 
     async createBasket(actor, input) {
       return mapMongoConflict(() => withMongoTransaction(startSession, async (session) => {
-        const authorized = await actorGuard.requireMutationActor(actor, session);
+        const authorized = await vendorActorGuard.requireMutationActor(actor, session);
         validateBasketCreate(input);
         const timestamp = now();
         const normalized = normalizeKnowledgeIdentity(input.name);
@@ -892,7 +894,7 @@ export function createAiEstimatorKnowledgeReferenceService(
     },
 
     async getVendorDetail(actor, id) {
-      await actorGuard.requireReadActor(actor);
+      await vendorActorGuard.requireReadActor(actor);
       const row = await AiEstimatorKnowledgeVendorModel.findById(id).lean().exec() as Row | null;
       if (!row) notFound();
       const summaries = await procurementVendorSummaries([row]);
@@ -900,7 +902,7 @@ export function createAiEstimatorKnowledgeReferenceService(
     },
 
     async listMasters(actor, masterType, filters, pagination) {
-      await actorGuard.requireReadActor(actor);
+      await (masterType === "vendors" ? vendorActorGuard : actorGuard).requireReadActor(actor);
       validateListFilters(filters);
       const model = requireMasterModel(masterType);
       validatePagination(pagination);
@@ -946,7 +948,7 @@ export function createAiEstimatorKnowledgeReferenceService(
 
     async createMaster(actor, masterType, input) {
       return mapMongoConflict(() => withMongoTransaction(startSession, async (session) => {
-        const authorized = await actorGuard.requireMutationActor(actor, session);
+        const authorized = await (masterType === "vendors" ? vendorActorGuard : actorGuard).requireMutationActor(actor, session);
         const model = requireMasterModel(masterType);
         validateMasterCreate(masterType, input);
         const command = masterType === "vendors" ? vendorSaveCommand(authorized.id, null, input) : null;
@@ -1033,7 +1035,7 @@ export function createAiEstimatorKnowledgeReferenceService(
 
     async updateMaster(actor, masterType, id, input) {
       return mapMongoConflict(() => withMongoTransaction(startSession, async (session) => {
-        const authorized = await actorGuard.requireMutationActor(actor, session);
+        const authorized = await (masterType === "vendors" ? vendorActorGuard : actorGuard).requireMutationActor(actor, session);
         const model = requireMasterModel(masterType);
         validateMasterUpdate(masterType, input);
         const command = masterType === "vendors" ? vendorSaveCommand(authorized.id, id, input) : null;
@@ -1147,7 +1149,7 @@ export function createAiEstimatorKnowledgeReferenceService(
 
     async archiveMaster(actor, masterType, id, input) {
       return withMongoTransaction(startSession, async (session) => {
-        const authorized = await actorGuard.requireMutationActor(actor, session);
+        const authorized = await (masterType === "vendors" ? vendorActorGuard : actorGuard).requireMutationActor(actor, session);
         const model = requireMasterModel(masterType);
         validateArchiveInput(input);
         const current = await model.findById(id).session(session).lean().exec() as Row | null;

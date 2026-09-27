@@ -135,7 +135,7 @@ describe("OpenAPI and Swagger UI", () => {
       ["/admin/ai-estimator-knowledge/vendors/{id}/msme-certificate-uploads", "update", ["certificate", "idempotencyKey", "expectedVersion"]]
     ] as const) {
       const operation = paths[path]!.post!;
-      expect(operation["x-lisno-permission"]).toBe(`ai_estimator_knowledge.configuration.${permission}`);
+      expect(operation["x-lisno-permission"]).toBe(`procurement.vendor_directory.${permission}`);
       const schemaRef = operation.requestBody.content["multipart/form-data"].schema.$ref as string;
       const upload = schemas[schemaRef.split("/").at(-1)!]!;
       expect(upload.required).toEqual(expect.arrayContaining([...required]));
@@ -145,10 +145,10 @@ describe("OpenAPI and Swagger UI", () => {
       expect(operation.responses).toHaveProperty("415");
     }
     const download = paths["/admin/ai-estimator-knowledge/vendors/{id}/msme-certificate"]!.get!;
-    expect(download["x-lisno-permission"]).toBe("ai_estimator_knowledge.configuration.read");
+    expect(download["x-lisno-permission"]).toBe("procurement.vendor_directory.read");
     expect(Object.keys(download.responses["200"].content).sort()).toEqual(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
     expect(download.responses["200"].description).toMatch(/no-store/);
-    expect(paths["/admin/ai-estimator-knowledge/vendors/msme-certificate-upload-policy"]!.get!["x-lisno-permission"]).toBe("ai_estimator_knowledge.configuration.read");
+    expect(paths["/admin/ai-estimator-knowledge/vendors/msme-certificate-upload-policy"]!.get!["x-lisno-permission"]).toBe("procurement.vendor_directory.read");
     for (const name of ["KnowledgeMaster", "KnowledgeVendor", "KnowledgeVendorSummary"]) {
       for (const key of ["gstNumber", "procurementProfile", "msmeCertificate", "msmeCertificateUploadId", "storageReference", "sha256"]) expect(schemas[name]!.properties).not.toHaveProperty(key);
     }

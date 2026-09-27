@@ -142,7 +142,7 @@ function appFor(testServices: AiEstimatorKnowledgeAdminRouterServices, actor?: P
 }
 
 describe("AI Estimator Knowledge HTTP routes", () => {
-  it("validates the full vendor profile and exposes detail only to Super Admin", async () => {
+  it("validates the full vendor profile and exposes detail only to Super Admin and Procurement", async () => {
     const testServices = services();
     const app = appFor(testServices);
     const profile = vendorProfileFixture();
@@ -157,9 +157,41 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     const detail = await request(app).get("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-1").set("Authorization", "Bearer super-admin-token");
     expect(detail.status).toBe(200);
     expect(testServices.reference.getVendorDetail).toHaveBeenCalledWith(superAdmin, "vendor-1");
-    for (const role of ROLE_CODES.filter(value => value !== "super_admin")) {
+    for (const role of ROLE_CODES.filter(value => value !== "super_admin" && value !== "procurement")) {
       const denied = await request(appFor(testServices, { ...superAdmin, role })).get("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-1").set("Authorization", "Bearer role-token");
       expect(denied.status, role).toBe(403);
+    }
+    const procurement = { ...superAdmin, role: "procurement" as const };
+    const sharedDetail = await request(appFor(testServices, procurement)).get("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-1").set("Authorization", "Bearer role-token");
+    expect(sharedDetail.status).toBe(200);
+    expect(sharedDetail.headers["cache-control"]).toBe("private, no-store");
+    expect(testServices.reference.getVendorDetail).toHaveBeenCalledWith(procurement, "vendor-1");
+  });
+
+  it("permits Procurement vendor management and inline classifications without opening Configuration", async () => {
+    const testServices = services();
+    const procurement = { ...superAdmin, role: "procurement" as const };
+    const app = appFor(testServices, procurement);
+    const prefix = "/api/v1/admin/ai-estimator-knowledge";
+    const headers = { Authorization: "Bearer procurement-token" };
+    await request(app).get(`${prefix}/vendors`).set(headers).expect(200);
+    await request(app).post(`${prefix}/vendors`).set(headers).send({ name: "Synthetic vendor" }).expect(201);
+    await request(app).patch(`${prefix}/vendors/vendor-1`).set(headers).send({ expectedVersion: 1, name: "Updated vendor" }).expect(200);
+    await request(app).delete(`${prefix}/vendors/vendor-1`).set(headers).send({ expectedVersion: 1, reason: "Archived synthetic vendor" }).expect(200);
+    await request(app).get(`${prefix}/baskets`).set(headers).expect(200);
+    await request(app).post(`${prefix}/baskets`).set(headers).send({ name: "Synthetic basket" }).expect(201);
+    await request(app).get(`${prefix}/baskets/basket-1/sub-baskets`).set(headers).expect(200);
+    await request(app).post(`${prefix}/baskets/basket-1/sub-baskets`).set(headers).send({ name: "Synthetic sub-basket" }).expect(201);
+    expect(testServices.reference.createMaster).toHaveBeenCalledWith(procurement, "vendors", { name: "Synthetic vendor" });
+    expect(testServices.reference.archiveMaster).toHaveBeenCalledWith(procurement, "vendors", "vendor-1", { expectedVersion: 1, reason: "Archived synthetic vendor" });
+    for (const operation of [
+      request(app).get(`${prefix}/items`),
+      request(app).get(`${prefix}/taxes`),
+      request(app).get(`${prefix}/quality-control-options`).query({ kind: "frequency" }),
+      request(app).patch(`${prefix}/baskets/basket-1`).send({ expectedVersion: 1, name: "No access" }),
+      request(app).delete(`${prefix}/baskets/basket-1`).send({ expectedVersion: 1, reason: "No access" })
+    ]) {
+      await operation.set(headers).expect(403);
     }
   });
   it("passes vendor classification filters while rejecting them on other masters", async () => {
@@ -196,12 +228,14 @@ describe("AI Estimator Knowledge HTTP routes", () => {
       }
     }
     expect((await request(app).get(path).query({ includeDirectoryOverview: "true" })).status).toBe(401);
-    for (const role of ROLE_CODES.filter(value => value !== "super_admin")) {
+    for (const role of ROLE_CODES.filter(value => value !== "super_admin" && value !== "procurement")) {
       const denied = await request(appFor(testServices, { ...superAdmin, id: `denied-${role}`, role })).get(path).query({ includeDirectoryOverview: "true" }).set("Authorization", "Bearer role-token");
       expect(denied.status, role).toBe(403);
       expect(denied.body).not.toHaveProperty("data");
     }
     expect(testServices.reference.listMasters).not.toHaveBeenCalled();
+    const procurement = await request(appFor(testServices, { ...superAdmin, role: "procurement" })).get(path).query({ includeDirectoryOverview: "true" }).set("Authorization", "Bearer role-token");
+    expect(procurement.status).toBe(200);
   });
   it("lists and creates normalized reusable Quality Control values", async () => {
     const testServices = services();

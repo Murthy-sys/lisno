@@ -6,7 +6,7 @@ import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeVendorModel } from "../models/AiEstimatorKnowledgeVendor.js";
 import { ProjectModel } from "../models/Project.js";
 import { ProjectProcurementItemModel } from "../models/ProjectProcurementItem.js";
-import { aiEstimatorKnowledgeActorGuard } from "./ai-estimator-knowledge-actor.js";
+import { aiEstimatorKnowledgeVendorActorGuard } from "./ai-estimator-knowledge-actor.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import { lockProcurementVendors } from "./procurement-vendor-allocation.service.js";
@@ -22,7 +22,7 @@ export function createProcurementVendorBaselineService(input: { audit: AuditServ
   return {
     async list(actor, vendorId, query) {
       return mongoose.connection.transaction(async (session) => {
-        await aiEstimatorKnowledgeActorGuard.requireReadActor(actor, session);
+        await aiEstimatorKnowledgeVendorActorGuard.requireReadActor(actor, session);
         if (!await AiEstimatorKnowledgeVendorModel.exists({ _id: vendorId }).session(session)) vendorNotFound();
         const parsed = procurementVendorBaselineQuerySchema.safeParse(query);
         if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Invalid allocation baseline pagination.");
@@ -40,7 +40,7 @@ export function createProcurementVendorBaselineService(input: { audit: AuditServ
     },
     async complete(actor, vendorId, itemId, value) {
       return mongoose.connection.transaction(async (session) => {
-        await aiEstimatorKnowledgeActorGuard.requireMutationActor(actor, session);
+        await aiEstimatorKnowledgeVendorActorGuard.requireMutationActor(actor, session);
         const parsed = procurementVendorBaselineSchema.safeParse(value);
         if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Request validation failed.", Object.fromEntries(parsed.error.issues.map((issue) => [issue.path.join("."), issue.message])));
         const fields = parsed.data;

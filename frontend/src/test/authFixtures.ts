@@ -40,7 +40,13 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "ai_estimator_knowledge.context.read",
     "admin.dashboard.read",
     "procurement.vendor_suggestions.read",
-    "procurement.vendors.read"
+    "procurement.vendors.read",
+    "procurement.vendor_directory.read",
+    "procurement.vendor_directory.create",
+    "procurement.vendor_directory.update",
+    "procurement.vendor_directory.lifecycle",
+    "procurement.vendor_classification.create",
+    "procurement.vendor_allocation_baseline.correct"
   ],
   admin: [
     ...BASE_SESSION_PERMISSIONS,
@@ -81,6 +87,12 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "procurement.vendor_suggestions.read",
     "procurement.expense.create",
     "procurement.document.read",
+    "procurement.vendor_directory.read",
+    "procurement.vendor_directory.create",
+    "procurement.vendor_directory.update",
+    "procurement.vendor_directory.lifecycle",
+    "procurement.vendor_classification.create",
+    "procurement.vendor_allocation_baseline.correct",
     "access_request.self.read"
   ],
   finance_head: [

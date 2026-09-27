@@ -52,8 +52,8 @@ describe("mobile contract provenance", () => {
     expect(PERMISSION_CODES).toEqual(canonicalPermissions);
     expect(quotedArray(frontendAuthorization, "ROLE_CODES")).toEqual(canonicalRoles);
     expect(quotedArray(frontendAuthorization, "PERMISSION_CODES")).toEqual(canonicalPermissions);
-    expect(PERMISSION_CODES).toHaveLength(138);
-    expect(canonicalPolicyVersion).toBe("2026-09-20.quality-control-options.v1");
+    expect(PERMISSION_CODES).toHaveLength(144);
+    expect(canonicalPolicyVersion).toBe("2026-09-27.procurement-vendor-directory.v1");
     expect(AUTHORIZATION_POLICY_VERSION).toBe(canonicalPolicyVersion);
     expect(frontendPolicyVersion).toBe(canonicalPolicyVersion);
   });

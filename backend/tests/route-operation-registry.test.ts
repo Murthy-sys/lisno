@@ -570,9 +570,9 @@ describe("human JWT operation registry", () => {
     expect(() => assertTaskSixRouteMounts(routers)).toThrow();
   });
 
-  it("has 245 unique keys and exactly 138 routed permissions", () => {
+  it("has 245 unique keys and exactly 144 routed permissions", () => {
     expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(245);
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(138);
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(144);
     expect(HUMAN_JWT_OPERATION_LIST.every(({ permission }) =>
       (PERMISSION_CODES as readonly string[]).includes(permission)
     )).toBe(true);

@@ -24,14 +24,14 @@ import { roleHomePath } from "../../app/routePaths";
 import { authorizationFor } from "../../test/authFixtures";
 import { AccountMenu } from "./AccountMenu";
 import { Sidebar } from "./Sidebar";
-import { navigationForAuthorization } from "./navigation";
+import { isNavigationGroup, navigationForAuthorization } from "./navigation";
 
 const roleNavigation = [
-  ["super_admin", [["Dashboard", "/admin/dashboard", LayoutDashboard], ["All Projects", "/admin/projects", FolderKanban], ["Users", "/admin/users", UsersRound], ["Configuration", "/admin/configuration/estimation", Settings2, false], ["Procurement", "/admin/procurement", ShoppingCart], ["Client responses", "/admin/client-responses", MailCheck], ["Design approvals", "/admin/design-approvals", Palette], ["Access requests", "/admin/access-requests", ClipboardCheck], ["Finance", "/finance", WalletCards]]],
+  ["super_admin", [["Dashboard", "/admin/dashboard", LayoutDashboard], ["All Projects", "/admin/projects", FolderKanban], ["Users", "/admin/users", UsersRound], ["Configuration", "/admin/configuration/estimation", Settings2, false], ["Client responses", "/admin/client-responses", MailCheck], ["Design approvals", "/admin/design-approvals", Palette], ["Access requests", "/admin/access-requests", ClipboardCheck], ["Finance", "/finance", WalletCards]]],
   ["admin", [["My Projects", "/admin/projects", FolderKanban], ["Procurement", "/admin/procurement", ShoppingCart], ["Client responses", "/admin/client-responses", MailCheck], ["Design approvals", "/admin/design-approvals", Palette], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
   ["estimator_sales", [["Leads & estimates", "/estimator-sales", BriefcaseBusiness]]],
   ["designer", [["Workspace", "/designer", LayoutDashboard], ["Design plans", "/designer/design-plans", Palette], ["My access requests", "/access-requests/mine", KeyRound]]],
-  ["procurement", [["Procurement", "/procurement", ShoppingCart, false], ["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
+  ["procurement", [["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
   ["finance_head", [["Finance", "/finance", WalletCards], ["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
   ["site_manager", [["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
   ["worker_electrician", [["Home", "/home", House]]],
@@ -65,7 +65,12 @@ describe("role navigation", () => {
     expect(Object.isFrozen(items)).toBe(true);
     for (const item of items) {
       expect(Object.isFrozen(item)).toBe(true);
-      expect(item.to).not.toContain(":");
+      if (isNavigationGroup(item)) {
+        expect(Object.isFrozen(item.children)).toBe(true);
+        for (const child of item.children) expect(child.to).not.toContain(":");
+      } else {
+        expect(item.to).not.toContain(":");
+      }
     }
   });
 
@@ -97,10 +102,10 @@ describe("role navigation", () => {
     (role, expected) => {
       const items = navigationForAuthorization(role, navigationAuthorization(role));
 
-      expect(items).toEqual(
+      expect(items.filter((item) => !isNavigationGroup(item))).toEqual(
         expected.map(([label, to, icon, end = true]) => ({ label, to, end, icon }))
       );
-      expect(items.every((item) => !item.to.includes(":"))).toBe(true);
+      expect(items.every((item) => isNavigationGroup(item) || !item.to.includes(":"))).toBe(true);
     }
   );
 
@@ -109,7 +114,13 @@ describe("role navigation", () => {
       const items = navigationForAuthorization(role, navigationAuthorization(role));
 
       expect(Object.isFrozen(items)).toBe(true);
-      for (const item of items) expect(Object.isFrozen(item)).toBe(true);
+      for (const item of items) {
+        expect(Object.isFrozen(item)).toBe(true);
+        if (isNavigationGroup(item)) {
+          expect(Object.isFrozen(item.children)).toBe(true);
+          for (const child of item.children) expect(Object.isFrozen(child)).toBe(true);
+        }
+      }
       expect(() => (items as Array<(typeof items)[number]>).push(items[0])).toThrow(
         TypeError
       );
@@ -126,6 +137,56 @@ describe("role navigation", () => {
         authorizationFor("designer", ["identity.self.read"])
       )
     ).toEqual([]);
+  });
+
+  it.each([
+    ["super_admin", "/admin/procurement", "/admin/procurement/vendors"],
+    ["procurement", "/procurement", "/procurement/vendors"]
+  ] as const)("derives Dashboard and Vendors under one %s Procurement group", (role, dashboard, vendors) => {
+    const groups = navigationForAuthorization(role, navigationAuthorization(role)).filter(isNavigationGroup);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({
+      id: "procurement",
+      label: "Procurement",
+      icon: ShoppingCart,
+      children: [
+        { label: "Dashboard", to: dashboard, sidebarIcon: "procurement-dashboard" },
+        { label: "Vendors", to: vendors, sidebarIcon: "procurement-vendors" }
+      ]
+    });
+    expect(navigationForAuthorization("admin", navigationAuthorization("admin")).filter(isNavigationGroup)).toEqual([]);
+  });
+
+  it("filters Procurement children by capability and hides an empty group", () => {
+    expect(navigationForAuthorization("procurement", authorizationFor("procurement", ["identity.self.read"])) .filter(isNavigationGroup)).toEqual([]);
+    expect(navigationForAuthorization("procurement", authorizationFor("procurement", ["procurement.vendor_directory.read"])) .filter(isNavigationGroup)[0]?.children.map((child) => child.label)).toEqual(["Vendors"]);
+    expect(navigationForAuthorization("super_admin", authorizationFor("super_admin", ["procurement.vendor_suggestions.read"])) .filter(isNavigationGroup)).toEqual([]);
+  });
+
+  it("keeps the Procurement group expanded on a project route and supports keyboard toggling", async () => {
+    const user = userEvent.setup();
+    const onNavigate = vi.fn();
+    render(<MemoryRouter initialEntries={["/procurement/projects/project-1"]}>
+      <Sidebar
+        user={{ id: "procurement-1", name: "Procurement User", email: "procurement@lisno.example", role: "procurement" }}
+        authorization={navigationAuthorization("procurement")}
+        onNavigate={onNavigate}
+      />
+    </MemoryRouter>);
+    const trigger = screen.getByRole("button", { name: "Procurement" });
+    const children = screen.getByRole("group", { name: "Procurement sections" });
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(trigger).toHaveAttribute("aria-controls", children.id);
+    expect(within(children).getByRole("link", { name: "Dashboard" })).toHaveAttribute("aria-current", "page");
+    expect(within(children).getByRole("link", { name: "Vendors" })).not.toHaveAttribute("aria-current");
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await user.keyboard(" ");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await user.click(within(children).getByRole("link", { name: "Vendors" }));
+    expect(onNavigate).toHaveBeenCalledOnce();
+    expect(within(children).getByRole("link", { name: "Vendors" })).toHaveAttribute("aria-current", "page");
   });
 
   it.each(roleNavigation)(

@@ -20,9 +20,9 @@ const savedCertificate = { id: "certificate-one", originalFilename: "synthetic-m
 const stagedCertificate = { uploadId: "upload-one", originalFilename: "synthetic-msme.pdf", mimeType: "application/pdf", byteSize: 4, expiresAt: "2099-01-01T00:00:00Z" };
 let stored: ProcurementVendorDetail;
 let writes: Record<string, unknown>[];
-function start(existing = true, canCreateBasket = true, canUpdate = true) {
+function start(existing = true, canCreateBasket = true, canUpdate = true, canCorrectBaseline = canUpdate) {
   const closed = vi.fn(); const saved = vi.fn(); let client!: QueryClient;
-  function Capture() { client = useQueryClient(); return <ProcurementVendorEditor existing={existing ? safe(stored) : undefined} canCreateBasket={canCreateBasket} canUpdate={canUpdate} onClose={closed} onSaved={saved} />; }
+  function Capture() { client = useQueryClient(); return <ProcurementVendorEditor existing={existing ? safe(stored) : undefined} canCreateBasket={canCreateBasket} canUpdate={canUpdate} canCorrectBaseline={canCorrectBaseline} onClose={closed} onSaved={saved} />; }
   const view = renderWithQuery(<Capture />);
   return { ...view, closed, saved, get client() { return client; } };
 }

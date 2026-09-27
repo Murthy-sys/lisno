@@ -58,6 +58,8 @@ import { FinanceProjectPage } from "../features/finance/FinanceProjectPage";
 import { ProcurementProjectPage } from "../features/procurement/ProcurementProjectPage";
 import { ProcurementWorkspace } from "../features/procurement/ProcurementWorkspace";
 import { ProcurementManagementPage } from "../features/procurement/ProcurementManagementPage";
+import { ProcurementDashboardPage } from "../features/procurement/ProcurementDashboardPage";
+import { ProcurementVendorDirectory } from "../features/procurement/ProcurementVendorDirectory";
 import { KnowledgeBaseIndexPage } from "../features/ai-estimator-knowledge/KnowledgeBaseIndexPage";
 import { KnowledgeItemWorkspacePage } from "../features/ai-estimator-knowledge/KnowledgeItemWorkspacePage";
 import { KnowledgeReusableValuesPage } from "../features/ai-estimator-knowledge/KnowledgeReusableValuesPage";
@@ -336,6 +338,19 @@ function registeredElement(path: RegisteredFrontendPath, children: ReactNode) {
   );
 }
 
+function AdminProcurementLanding() {
+  const auth = useAuth();
+  return auth.user?.role === "super_admin" ? (
+    <PermissionRoute permission="procurement.vendor_directory.read" presentationRoles={["super_admin"]}>
+      <ProcurementDashboardPage />
+    </PermissionRoute>
+  ) : <ProcurementManagementPage />;
+}
+
+function VendorDirectoryRoute() {
+  return <section className="vendor-procurement" aria-labelledby="vendor-procurement-title"><ProcurementVendorDirectory /></section>;
+}
+
 export function AppRoutes() {
   return (
     <>
@@ -358,8 +373,10 @@ export function AppRoutes() {
           path="/home"
           element={registeredElement("/home", <CurrentRoleLanding />)}
         />
-        <Route path="/admin/procurement" element={registeredElement("/admin/procurement", <ProcurementManagementPage />)} />
+        <Route path="/admin/procurement" element={registeredElement("/admin/procurement", <AdminProcurementLanding />)} />
+        <Route path="/admin/procurement/vendors" element={registeredElement("/admin/procurement/vendors", <VendorDirectoryRoute />)} />
         <Route path="/procurement" element={registeredElement("/procurement", <ProcurementWorkspace />)} />
+        <Route path="/procurement/vendors" element={registeredElement("/procurement/vendors", <VendorDirectoryRoute />)} />
         <Route element={<ProjectChatLayout />}>
           <Route path="/project-messages" element={registeredElement("/project-messages", <ProjectMessagesListPage />)} />
           <Route path="/projects/:projectId/messages" element={registeredElement("/projects/:projectId/messages", <ProjectMessagesPage />)} />

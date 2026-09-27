@@ -289,14 +289,20 @@ describe("restricted historical allocation completion", () => {
     expect((await baselineService.list(admin, saved.id, { limit: 20, offset: 0 })).total).toBe(0);
     await expect(baselineService.complete(admin, target.id, second, { ...correction, expectedVersion: 2 })).rejects.toMatchObject({ code: "PROCUREMENT_VENDOR_BASELINE_INELIGIBLE" });
   });
-  it("denies Procurement and disabled Super Admin without HTTP middleware and preserves the sole-identity index", async () => {
+  it("allows active Procurement, denies stale or disabled actors, and preserves the sole-identity index", async () => {
     const saved = await vendor();
     const itemId = await historical(saved.id);
-    await expect(baselineService.list(actor, saved.id, { limit: 20, offset: 0 })).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(baselineService.complete(actor, saved.id, itemId, correction)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect((await baselineService.list(actor, saved.id, { limit: 20, offset: 0 })).total).toBe(1);
+    await UserModel.updateOne({ _id: actor.id }, { $set: { active: false } });
+    await expect(baselineService.list(actor, saved.id, { limit: 20, offset: 0 })).rejects.toMatchObject({ code: "INVALID_TOKEN" });
+    await expect(baselineService.complete(actor, saved.id, itemId, correction)).rejects.toMatchObject({ code: "INVALID_TOKEN" });
+    await UserModel.updateOne({ _id: actor.id }, { $set: { active: true, role: "admin" } });
+    await expect(baselineService.list(actor, saved.id, { limit: 20, offset: 0 })).rejects.toMatchObject({ code: "INVALID_TOKEN" });
+    await UserModel.updateOne({ _id: actor.id }, { $set: { role: "procurement" } });
     await UserModel.updateOne({ _id: admin.id }, { $set: { active: false } });
     await expect(baselineService.complete(admin, saved.id, itemId, correction)).rejects.toMatchObject({ code: "INVALID_TOKEN" });
     await UserModel.updateOne({ _id: admin.id }, { $set: { active: true } });
+    expect((await baselineService.complete(actor, saved.id, itemId, correction)).allocatedWorkPaise).toBe(correction.allocatedWorkPaise);
     await expect(UserModel.create({ _id: "second-super", name: "Second", email: "second@example.test", emailNormalized: "second@example.test", passwordHash: "fixture-only", role: "super_admin", active: true })).rejects.toMatchObject({ code: 11000 });
   });
   it("rolls back baseline receipt, provenance, amount and audit on failure", async () => {

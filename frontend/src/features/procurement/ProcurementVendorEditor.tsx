@@ -22,17 +22,19 @@ import { useVendorMsmeCertificate } from "./useVendorMsmeCertificate";
 import { VendorAllocationBaseline } from "./VendorAllocationBaseline";
 
 const uncertainResponse = (error: unknown) => !(error instanceof ApiError) || error.status >= 500 || error.status < 400 || error.status === 408;
+const denied = (error: unknown) => error instanceof ApiError && (error.status === 401 || error.status === 403);
 
-export function ProcurementVendorEditor({ existing, canCreateBasket, canUpdate, onClose, onSaved }: {
-  existing?: KnowledgeMaster; canCreateBasket: boolean; canUpdate: boolean; onClose: () => void; onSaved: (vendor: KnowledgeMaster) => void;
+export function ProcurementVendorEditor({ existing, canCreateBasket, canUpdate, canCorrectBaseline, onClose, onSaved }: {
+  existing?: KnowledgeMaster; canCreateBasket: boolean; canUpdate: boolean; canCorrectBaseline: boolean; onClose: () => void; onSaved: (vendor: KnowledgeMaster) => void;
 }) {
   const query = useQuery({ queryKey: knowledgeQueryKeys.vendorDetail(existing?.id ?? "new"), queryFn: ({ signal }) => getVendorDetail(existing!.id, signal), enabled: Boolean(existing), gcTime: 0, refetchOnWindowFocus: false });
+  if (denied(query.error)) return <ContextPanel title="Vendor details" eyebrow="Procurement" onClose={onClose} width="wide"><PageState state="error" message="You do not have permission to view this vendor." /></ContextPanel>;
   if (existing && !query.data) return <ContextPanel title="Vendor details" eyebrow="Procurement" onClose={onClose} width="wide"><PageState state={query.isError ? "error" : "loading"} message={query.isError ? procurementError(query.error, "Vendor details could not be loaded.") : "Loading vendor details…"} action={query.isError ? { label: "Retry vendor details", onAction: () => void query.refetch() } : undefined} /></ContextPanel>;
-  return <VendorForm initial={query.data} canCreateBasket={canCreateBasket} canUpdate={canUpdate} onClose={onClose} onSaved={onSaved} accessError={query.isError} />;
+  return <VendorForm initial={query.data} canCreateBasket={canCreateBasket} canUpdate={canUpdate} canCorrectBaseline={canCorrectBaseline} onClose={onClose} onSaved={onSaved} accessError={query.isError} />;
 }
 
-function VendorForm({ initial, canCreateBasket, canUpdate, onClose, onSaved, accessError }: {
-  initial?: ProcurementVendorDetail; canCreateBasket: boolean; canUpdate: boolean; onClose: () => void; onSaved: (vendor: KnowledgeMaster) => void; accessError: boolean;
+function VendorForm({ initial, canCreateBasket, canUpdate, canCorrectBaseline, onClose, onSaved, accessError }: {
+  initial?: ProcurementVendorDetail; canCreateBasket: boolean; canUpdate: boolean; canCorrectBaseline: boolean; onClose: () => void; onSaved: (vendor: KnowledgeMaster) => void; accessError: boolean;
 }) {
   const id = useId();
   const client = useQueryClient();
@@ -155,6 +157,9 @@ function VendorForm({ initial, canCreateBasket, canUpdate, onClose, onSaved, acc
     submission.current = true; savedIdentity.current = null;
     save.mutate({ name: draft.name.trim(), procurementProfile: profileFromDraft(draft), ...(base ? { status: draft.status } : {}), confirmPhysicalAddressVerification: confirmAddress });
   }
+  if (denied(save.error) || denied(retry.error) || denied(reload.error) || denied(certificate.policy.error)) {
+    return <ContextPanel title="Vendor details" eyebrow="Procurement" width="wide" onClose={onClose}><PageState state="error" message="You do not have permission to manage this vendor." /></ContextPanel>;
+  }
   return <ContextPanel title={base ? "Vendor details" : "Add vendor"} eyebrow="Procurement" width="wide" className="vendor-profile" dirty={dirty || baselineDirty || nestedDraft} busy={busy} onClose={onClose}
     description={base ? `${base.name} · ${base.code}` : "Create a vendor in the shared directory."}
     footer={({ requestClose }) => <div className="vendor-procurement__actions"><Button variant="secondary" disabled={busy} onClick={requestClose}>{readOnly ? "Close" : "Cancel"}</Button>{!readOnly ? <Button type="submit" form={`${id}-form`} disabled={blocked || catalogBlocked || nestedDraft} busy={save.isPending}>{base ? "Save changes" : "Save vendor"}</Button> : null}</div>}>
@@ -187,6 +192,6 @@ function VendorForm({ initial, canCreateBasket, canUpdate, onClose, onSaved, acc
         </PanelSection>
       </fieldset>
     </form>
-    {base ? <VendorAllocationBaseline vendorId={base.id} canUpdate={canUpdate && base.status !== "archived"} disabled={busy || dirty || accessError || partial || recovery} onBusyChange={setBaselineBusy} onDirtyChange={setBaselineDirty} /> : null}
+    {base ? <VendorAllocationBaseline vendorId={base.id} canCorrect={canCorrectBaseline && base.status !== "archived"} disabled={busy || dirty || accessError || partial || recovery} onBusyChange={setBaselineBusy} onDirtyChange={setBaselineDirty} /> : null}
   </ContextPanel>;
 }

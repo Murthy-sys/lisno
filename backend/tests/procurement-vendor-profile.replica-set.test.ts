@@ -5,6 +5,7 @@ import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowle
 import { AiEstimatorKnowledgeSubBasketModel } from "../src/models/AiEstimatorKnowledgeSubBasket.js";
 import { AiEstimatorKnowledgeDisplayOrderSequenceModel } from "../src/models/AiEstimatorKnowledgeDisplayOrderSequence.js";
 import { ProcurementVendorSaveCommandModel } from "../src/models/ProcurementVendorSaveCommand.js";
+import { UserModel } from "../src/models/User.js";
 import { createAiEstimatorKnowledgeReferenceService } from "../src/services/ai-estimator-knowledge-reference.service.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
@@ -19,7 +20,7 @@ const audit = createAuditService(createMemoryRepository());
 const reference = createAiEstimatorKnowledgeReferenceService({ actorGuard, audit });
 beforeAll(async () => {
   replica = await startMongoReplicaSet("procurement-vendor-profile");
-  await Promise.all([AuditEventModel, AiEstimatorKnowledgeVendorModel, AiEstimatorKnowledgeBasketModel, AiEstimatorKnowledgeSubBasketModel, AiEstimatorKnowledgeDisplayOrderSequenceModel, ProcurementVendorSaveCommandModel].map(model => model.syncIndexes()));
+  await Promise.all([AuditEventModel, AiEstimatorKnowledgeVendorModel, AiEstimatorKnowledgeBasketModel, AiEstimatorKnowledgeSubBasketModel, AiEstimatorKnowledgeDisplayOrderSequenceModel, ProcurementVendorSaveCommandModel, UserModel].map(model => model.syncIndexes()));
 }, 120_000);
 beforeEach(async () => { await replica.clear(); });
 afterAll(async () => { await replica.stop(); });
@@ -31,6 +32,30 @@ async function fixture() {
 }
 
 describe("vendor profile shared persistence", () => {
+  it("lets a stored active Procurement actor manage the shared vendor while denying unrelated masters", async () => {
+    const procurement = { id: "vendor-test-procurement", role: "procurement" as const, name: "Synthetic Procurement", email: "procurement@example.invalid" };
+    for (const user of [actor, procurement]) {
+      await UserModel.create({ _id: user.id, name: user.name, email: user.email, emailNormalized: user.email, passwordHash: "fixture-only", role: user.role, active: true });
+    }
+    const scopedReference = createAiEstimatorKnowledgeReferenceService({ audit });
+    const basket = await scopedReference.createBasket(procurement, { name: "Procurement basket" });
+    const subBasket = await scopedReference.createSubBasket(procurement, basket.id, { name: "Procurement sub-basket" });
+    expect((await scopedReference.listBaskets(procurement, {}, { limit: 10, offset: 0 })).total).toBe(1);
+    expect((await scopedReference.listSubBaskets(procurement, basket.id, {}, { limit: 10, offset: 0 })).total).toBe(1);
+    const profile = { ...vendorProfileFixture(), mainBasketId: basket.id, subBasketId: subBasket.id };
+    const created = await scopedReference.createMaster(procurement, "vendors", { name: "Procurement vendor", procurementProfile: profile });
+    expect((await scopedReference.getVendorDetail(procurement, created.id)).procurementProfile).toMatchObject({ mainBasketId: basket.id, subBasketId: subBasket.id });
+    expect((await scopedReference.listMasters(actor, "vendors", {}, { limit: 10, offset: 0 })).total).toBe(1);
+    const updated = await scopedReference.updateMaster(procurement, "vendors", created.id, { expectedVersion: 1, description: "Shared update" });
+    expect(updated.version).toBe(2);
+    await expect(scopedReference.listMasters(procurement, "taxes", {}, { limit: 10, offset: 0 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(scopedReference.updateBasket(procurement, basket.id, { expectedVersion: 1, name: "Forbidden basket edit" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const archived = await scopedReference.archiveMaster(procurement, "vendors", created.id, { expectedVersion: 2, reason: "Synthetic archive" });
+    expect(archived.status).toBe("archived");
+    await UserModel.updateOne({ _id: procurement.id }, { $set: { active: false } });
+    await expect(scopedReference.getVendorDetail(procurement, created.id)).rejects.toMatchObject({ code: "INVALID_TOKEN" });
+    await expect(scopedReference.createBasket(procurement, { name: "Revoked basket" })).rejects.toMatchObject({ code: "INVALID_TOKEN" });
+  });
   it("requires organization on new profiles but permits legacy profile completion and old committed replays", async () => {
     const { profile } = await fixture();
     const { organizationType: _organizationType, bankAccount: _bankAccount, ...legacyProfile } = profile;
