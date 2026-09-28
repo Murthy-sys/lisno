@@ -14,7 +14,7 @@ export const VENDOR_SUGGESTION_SCHEMAS = {
   ProjectVendorSuggestion: object({ id, projectId: id, estimateId: id, estimateVersion: version, estimateReviewRoundId: { ...id, nullable: true }, designPlanVersion: version,
     vendor: object({ id, code: text, name: text, status: { type: "string", enum: ["active", "inactive", "archived", "unavailable"] } }),
     note, status, version, suggestedBy: person, updatedBy: person, createdAt: { type: "string", format: "date-time" }, updatedAt: { type: "string", format: "date-time" },
-    kpi: object({ status: { type: "string", enum: ["not_rated"] }, score: { type: "number", nullable: true, enum: [null] } })
+    kpi: object({ status: { type: "string", enum: ["not_available", "not_rated", "rated"] }, score: { type: "number", minimum: 0, maximum: 100, nullable: true, description: "Procurement's official score on a 0–100 scale, with up to two decimals; null for Admin or unrated vendors." } })
   }),
   VendorSuggestionPage: object({ project: ref("VendorSuggestionProject"), items: { type: "array", items: ref("ProjectVendorSuggestion") }, ...pagination,
     performance: object({ status: { type: "string", enum: ["not_available"] }, recommendations: { type: "array", maxItems: 0, items: { type: "object" } } })

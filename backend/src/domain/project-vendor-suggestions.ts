@@ -24,7 +24,7 @@ export interface ProjectVendorSuggestion {
   vendor: { id: string; code: string; name: string; status: ProcurementReferenceStatus };
   note: string; status: "suggested" | "withdrawn"; version: number;
   suggestedBy: { id: string; name: string }; updatedBy: { id: string; name: string };
-  createdAt: string; updatedAt: string; kpi: { status: "not_rated"; score: null };
+  createdAt: string; updatedAt: string; kpi: { status: "not_available" | "not_rated" | "rated"; score: number | null };
 }
 export interface VendorSuggestionProjectPage { items: VendorSuggestionProject[]; total: number; limit: number; offset: number }
 export interface VendorSuggestionPage {

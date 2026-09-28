@@ -31,8 +31,9 @@ function setup(options: { canRead?: boolean; canUpdate?: boolean; refreshFails?:
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity } } });
   clients.push(client);
   const onClose = jest.fn();
-  const element = (current = context) => <QueryClientProvider client={client}><KnowledgeVendorBaseline context={current} vendorId="vendor/one" canUpdate={options.canUpdate ?? true} onClose={onClose} /></QueryClientProvider>;
-  return { get, post, invalidate, refresh, context, client, onClose, element };
+  const onAccessLost = jest.fn();
+  const element = (current = context) => <QueryClientProvider client={client}><KnowledgeVendorBaseline context={current} vendorId="vendor/one" canUpdate={options.canUpdate ?? true} onClose={onClose} onAccessLost={onAccessLost} /></QueryClientProvider>;
+  return { get, post, invalidate, refresh, context, client, onClose, onAccessLost, element };
 }
 async function enterCorrection() {
   await fireEvent.press(await screen.findByRole("button", { name: "Record historical amount for Panel" }));
@@ -91,6 +92,24 @@ describe("native vendor historical allocations", () => {
     const readOnly = setup({ canUpdate: false }); await render(readOnly.element());
     await screen.findByText("Synthetic project: Panel");
     expect(screen.queryByRole("button", { name: "Record historical amount for Panel" })).toBeNull();
+  });
+
+  it("removes historical rows and correction controls after a forbidden mutation", async () => {
+    const test = setup(); test.post.mockRejectedValueOnce(new ApiError(403, "FORBIDDEN", "Access removed"));
+    await render(test.element()); await enterCorrection();
+    await fireEvent.press(screen.getByRole("button", { name: "Record historical amount" }));
+    await screen.findByText("Your current access does not allow historical allocations.");
+    expect(screen.queryByText("Synthetic project: Panel")).toBeNull();
+    expect(screen.queryByLabelText("Historical allocated work (INR)")).toBeNull();
+    expect(test.onAccessLost).toHaveBeenCalledTimes(1);
+  });
+
+  it("notifies the parent editor when loading historical rows is forbidden", async () => {
+    const test = setup(); test.get.mockRejectedValueOnce(new ApiError(401, "UNAUTHORIZED", "Session expired"));
+    await render(test.element());
+    await screen.findByText("Your current access does not allow historical allocations.");
+    await waitFor(() => expect(test.onAccessLost).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("Synthetic project: Panel")).toBeNull();
   });
 
   it("keeps a committed correction successful if cache refresh fails", async () => {

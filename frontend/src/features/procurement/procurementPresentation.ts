@@ -209,7 +209,7 @@ export function procurementError(error: unknown, fallback: string) {
 }
 
 export function procurementRequestKey() {
-  return globalThis.crypto?.randomUUID?.() ?? `procurement-${Date.now()}-${Math.random()}`;
+  return globalThis.crypto?.randomUUID?.() ?? `procurement-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 export function formatBytes(bytes: number) {

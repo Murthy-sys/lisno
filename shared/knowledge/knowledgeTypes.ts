@@ -1,3 +1,5 @@
+import type { VendorKpiDirectorySummary } from "./vendorKpi";
+
 export const KNOWLEDGE_SECTION_KEYS = [
   "overview",
   "pricing",
@@ -136,6 +138,7 @@ export interface KnowledgeMaster extends KnowledgeVersionedResource {
   readonly decimalScale?: number;
   readonly taxVersions?: readonly KnowledgeTaxVersion[];
   readonly procurementSummary?: ProcurementVendorSummary;
+  readonly vendorKpi?: VendorKpiDirectorySummary;
 }
 
 export interface KnowledgeSurface extends KnowledgeMaster {
@@ -623,6 +626,8 @@ export interface ProcurementVendorDirectoryOverview {
   totalVendors: number;
   activeVendors: number;
   underReviewVendors: number;
+  ratedVendors?: number;
+  averageKpiScoreBps?: number | null;
 }
 
 export interface ProcurementVendorPhotoDescriptor {

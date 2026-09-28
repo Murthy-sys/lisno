@@ -1,4 +1,5 @@
 import { PROCUREMENT_VENDOR_SCHEMAS, PROCUREMENT_VENDOR_REQUESTS, PROCUREMENT_VENDOR_RESPONSES, PROCUREMENT_VENDOR_QUERIES } from "./openapi/procurement-vendor.js";
+import { VENDOR_KPI_SCHEMAS, VENDOR_KPI_REQUESTS, VENDOR_KPI_RESPONSES } from "./openapi/vendor-kpi.js";
 import { VENDOR_SUGGESTION_SCHEMAS, VENDOR_SUGGESTION_REQUESTS, VENDOR_SUGGESTION_RESPONSES } from "./openapi/project-vendor-suggestions.js";
 import { PROJECT_PROCUREMENT_SCHEMAS, PROJECT_PROCUREMENT_REQUESTS, PROJECT_PROCUREMENT_RESPONSES, PROJECT_PROCUREMENT_ITEM_QUERY_PARAMETERS } from "./openapi/project-procurement.js";
 import { DESIGN_WORKFLOW_ACTIONS } from "./domain/design-workflow-state.js";
@@ -118,6 +119,7 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   ...CHAT_REQUEST_BODIES,
   ...PROJECT_PROCUREMENT_REQUESTS,
   ...VENDOR_SUGGESTION_REQUESTS,
+  ...VENDOR_KPI_REQUESTS,
   "POST /projects/:projectId/design-workflow/furniture-uoms": jsonRequest("FurnitureUomCreate"),
   "POST /projects/:projectId/design-workflow/actions": { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/DesignWorkflowActionRequest" } }, "multipart/form-data": { schema: { $ref: "#/components/schemas/DesignWorkflowActionRequest" } } } },
   "POST /auth/login": jsonRequest("LoginRequest"),
@@ -206,6 +208,7 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   ...CHAT_RESPONSE_SCHEMAS,
   ...PROJECT_PROCUREMENT_RESPONSES,
   ...VENDOR_SUGGESTION_RESPONSES,
+  ...VENDOR_KPI_RESPONSES,
   "POST /auth/login": "AuthPayload",
   "POST /auth/client-signup": "AuthPayload",
   "POST /auth/password-reset/request": "PasswordResetAccepted",
@@ -313,6 +316,11 @@ const storedAttachmentContentTypes = [
 
 const operationSummaries: Readonly<Record<string, string>> = {
   "GET /health": "Check API health",
+  "GET /procurement/vendor-kpis/:vendorId": "Read vendor profile and KPI assessments",
+  "PUT /procurement/vendor-kpis/:vendorId/procurement": "Save Procurement's official vendor assessment",
+  "POST /procurement/vendor-kpis/:vendorId/requests": "Email a one-time self-assessment request to the vendor",
+  "POST /vendor-kpi/inspect": "Inspect a vendor self-assessment link",
+  "POST /vendor-kpi/submit": "Submit a vendor self-assessment",
   "POST /auth/login": "Sign in and issue a JWT",
   "POST /auth/client-signup": "Create a Client account",
   "POST /auth/password-reset/request": "Request password-reset instructions",
@@ -869,6 +877,18 @@ addOperation(
   })
 );
 
+addOperation(paths, "/vendor-kpi/inspect", "POST", publicOperation("POST /vendor-kpi/inspect", {
+  tags: ["Vendor KPI"],
+  requestBody: requestBodiesByOperation["POST /vendor-kpi/inspect"],
+  responses: publicJsonResponses("VendorKpiPublicInspection", ["400", "404", "410", "429", "500"])
+}));
+
+addOperation(paths, "/vendor-kpi/submit", "POST", publicOperation("POST /vendor-kpi/submit", {
+  tags: ["Vendor KPI"],
+  requestBody: requestBodiesByOperation["POST /vendor-kpi/submit"],
+  responses: publicJsonResponses("VendorKpiSubmissionReceipt", ["400", "404", "409", "410", "429", "500"])
+}));
+
 addWorkerOperations(paths);
 
 export const openApiDocument: LisnoOpenApiDocument = Object.freeze({
@@ -885,6 +905,7 @@ export const openApiDocument: LisnoOpenApiDocument = Object.freeze({
     tag("Health", "API liveness."),
     tag("Authentication", "Sign-in, Client signup, and current-session identity."),
     tag("Invitations", "Staff invitation administration and public acceptance."),
+    tag("Vendor KPI", "Staff vendor assessments and one-time vendor self-assessment links."),
     tag("Administration", "User and access administration."),
     tag("Projects", "Project initiation, hierarchy, and project reads."),
     tag("Project workflow", "Design assignment, Designer upload work, approvals, and execution handoff."),
@@ -1299,6 +1320,7 @@ function protectedDescription(operation: HumanJwtOperation): string {
 function tagFor(operation: HumanJwtOperation): string {
   if (operation.availability === "project_chat") return "Project messages";
   const { path } = splitHumanOperationKey(operation.key);
+  if (path.startsWith("/procurement/vendor-kpis")) return "Vendor KPI";
   if (operation.availability === "ai_estimator_knowledge") return "AI Estimator Knowledge";
   if (operation.availability === "project_workflow") return "Project workflow";
   if (operation.availability === "project_finance") return "Project finance";
@@ -1368,6 +1390,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
   return {
     ...AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS,
     ...PROCUREMENT_VENDOR_SCHEMAS,
+    ...VENDOR_KPI_SCHEMAS,
     ...CHAT_COMPONENT_SCHEMAS,
     ...PROJECT_PROCUREMENT_SCHEMAS,
     ...VENDOR_SUGGESTION_SCHEMAS,

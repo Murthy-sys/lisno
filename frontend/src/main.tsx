@@ -5,6 +5,7 @@ import App from "./App";
 import {
   capturePasswordResetTokenBeforeRouterMount
 } from "./auth/passwordResetTokenVault";
+import { captureVendorKpiTokenBeforeRouterMount } from "./features/procurement/vendorKpiTokenVault";
 import "./styles/index.css";
 import "./styles/brand.css";
 import "./styles/role-themes.css";
@@ -17,6 +18,7 @@ import "./styles/admin-home.css";
 import "./styles/designer-home.css";
 
 capturePasswordResetTokenBeforeRouterMount();
+captureVendorKpiTokenBeforeRouterMount();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

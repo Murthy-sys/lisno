@@ -4,11 +4,12 @@ import { Checkbox } from "../../components/ui/Field";
 import type { KnowledgeMaster } from "../ai-estimator-knowledge/knowledgeTypes";
 import { normalizeExecutionTypes } from "./vendorProfileDraft";
 import { DirectoryIcon } from "./VendorDirectoryOverview";
+import { formatVendorKpiScore } from "./vendorKpiPresentation";
 
 export interface VendorDirectoryRowContext {
   selected: boolean; toggle: (checked: boolean) => void;
   canUpdate: boolean; canArchive: boolean;
-  onEdit: () => void; onView: () => void; onArchive: () => void;
+  onEdit: () => void; onView: () => void; onArchive: () => void; onOpen: () => void; canOpenKpi: boolean;
 }
 
 export interface VendorDirectoryColumn {
@@ -48,7 +49,7 @@ const basketName = (basket: { name: string | null } | null | undefined) => baske
 
 export const vendorDirectoryColumns: readonly VendorDirectoryColumn[] = [
   { id: "selection", header: "Select", width: { fixed: 48 }, sticky: "start", placement: "selection", render: (vendor, { selected, toggle }) => <label><Checkbox aria-label={`Select ${vendor.name}`} checked={selected} onChange={(event) => toggle(event.target.checked)} /></label> },
-  { id: "vendor", header: "Vendor Details", width: { fill: true, weight: 45, min: 220 }, sticky: "start", placement: "identity", render: (vendor) => <div className="vendor-directory__identity"><span className="vendor-directory__avatar" aria-hidden="true">{initials(vendor.name)}</span><div><strong>{vendor.name}</strong><small className="vendor-directory__code" title={vendor.code}>{vendor.code}</small></div></div> },
+  { id: "vendor", header: "Vendor Details", width: { fill: true, weight: 45, min: 220 }, sticky: "start", placement: "identity", render: (vendor, { onOpen, canOpenKpi }) => <div className="vendor-directory__identity"><span className="vendor-directory__avatar" aria-hidden="true">{initials(vendor.name)}</span><div><strong>{canOpenKpi ? <button type="button" className="vendor-directory__name-link" onClick={onOpen} aria-label={`Open KPI for ${vendor.name}`}>{vendor.name}</button> : vendor.name}</strong><small className="vendor-directory__code" title={vendor.code}>{vendor.code}</small></div></div> },
   { id: "type", header: "Type", width: { weight: 30, min: 150, max: 240 }, placement: "field", render: (vendor) => {
     const summary = vendor.procurementSummary;
     const types = normalizeExecutionTypes(summary?.executionType).map((type) => type === "labor" ? "Labor" : "Material + Labour");
@@ -68,7 +69,7 @@ export const vendorDirectoryColumns: readonly VendorDirectoryColumn[] = [
     </div>;
   } },
   { id: "status", header: "Status", width: { fixed: 124 }, placement: "field", render: (vendor) => <div><span className={`vendor-directory__status vendor-directory__status--${vendor.status}`}>{vendor.status === "active" ? "Active" : vendor.status === "inactive" ? "Inactive" : "Archived"}</span>{vendor.status !== "archived" && vendor.procurementSummary?.currentAddressVerifiedPhysically !== true ? <small className="vendor-directory__review">Under Review</small> : null}</div> },
-  { id: "kpi", header: "Vendor KPI", width: { fixed: 112 }, placement: "field", render: () => <span className="vendor-directory__unavailable">Not available</span> },
+  { id: "kpi", header: "Vendor KPI", width: { fixed: 112 }, placement: "field", render: (vendor) => <div>{vendor.vendorKpi ? <strong>{formatVendorKpiScore(vendor.vendorKpi.officialScoreBps)}</strong> : <span className="vendor-directory__unavailable">Not available</span>}{vendor.vendorKpi?.selfStatus === "submitted" ? <small>Self submitted</small> : null}</div> },
   { id: "actions", header: "Actions", width: { fixed: 156 }, sticky: "end", placement: "actions", render: (vendor, { canUpdate, canArchive, onEdit, onView, onArchive }) => {
     const editable = canUpdate && vendor.status !== "archived";
     return <div className="vendor-directory__row-actions"><Button variant="quiet" className="vendor-directory__action-edit" title={editable ? "Edit vendor" : "View vendor"} aria-label={`${editable ? "Edit" : "View"} ${vendor.name}`} onClick={() => editable ? onEdit() : onView()}><DirectoryIcon name={editable ? "edit" : "view"} /></Button>{canArchive && vendor.status !== "archived" ? <Button variant="quiet" className="vendor-directory__action-archive" title="Archive vendor" aria-label={`Archive ${vendor.name}`} onClick={() => onArchive()}><DirectoryIcon name="archive" /></Button> : null}<RowMenu vendor={vendor} onView={onView} /></div>;

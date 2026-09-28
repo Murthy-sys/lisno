@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { router } from "expo-router";
 import { useState } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import type { KnowledgeCreateMasterInput, KnowledgeTaxVersionInput } from "../../../../shared/knowledge/knowledgeApi";
 import type { KnowledgeMaster, KnowledgeMasterType } from "../../../../shared/knowledge/knowledgeTypes";
 import { ApiError } from "../../core/http/apiClient";
@@ -9,6 +10,7 @@ import { allKnowledgePages, type KnowledgeMobileContext } from "./knowledgeRunti
 import { KnowledgeCard, KnowledgeChoice, KnowledgeModal, KnowledgeSelect, KnowledgeText, knowledgeStyles as s } from "./knowledgeUi";
 import { KnowledgeVendorEditor } from "./KnowledgeVendorEditor";
 import { catalogError, closeCatalogDraft } from "./knowledgeCatalogForms";
+import { formatVendorKpiScore } from "../procurement/vendorKpiPresentation";
 
 const TYPES = [{ value: "uoms", label: "UOMs" }, { value: "vendors", label: "Vendors" }, { value: "taxes", label: "Taxes" }, { value: "priorities", label: "Priorities" }, { value: "surfaces", label: "Surfaces" }] as const;
 const SINGULAR = { uoms: "UOM", vendors: "Vendor", taxes: "Tax", priorities: "Priority", surfaces: "Surface", modes: "Mode" };
@@ -28,12 +30,14 @@ export function KnowledgeReusableValues({ context, onClose }: { readonly context
     {context.canCreate ? <Button label={`Add ${SINGULAR[type]}`} onPress={() => setEditor("new")} /> : null}
     {values.isPending ? <KnowledgeText>Loading reusable values…</KnowledgeText> : null}
     {values.isError ? <StateView title="Reusable values unavailable" message={catalogError(values.error)} actionLabel="Retry reusable values" onAction={() => void values.refetch()} /> : null}
-    {visible.map(value => <KnowledgeCard title={value.name} key={value.id}>
+    {visible.map(value => <KnowledgeCard key={value.id} {...(type === "vendors" ? {} : { title: value.name })}>
+      {type === "vendors" ? <Pressable accessibilityRole="link" accessibilityLabel={`Open ${value.name} KPI`} onPress={() => { onClose(); router.push({ pathname: "/vendor/[vendorId]", params: { vendorId: value.id, from: "configuration" } }); }}><Text style={s.title}>{value.name}</Text></Pressable> : null}
       <KnowledgeText>{value.code} · {value.status}</KnowledgeText>
+      {type === "vendors" ? <KnowledgeText>Vendor KPI: {formatVendorKpiScore(value.vendorKpi?.officialScoreBps)} · {value.vendorKpi?.selfStatus === "submitted" ? "Self submitted" : value.vendorKpi?.selfStatus === "not_submitted" ? "Self not submitted" : "Self status unavailable"}</KnowledgeText> : null}
       {value.description ? <KnowledgeText>{value.description}</KnowledgeText> : null}
       {type === "uoms" ? <KnowledgeText>Quantity decimal places: {value.decimalScale ?? 0}</KnowledgeText> : null}
       {value.taxVersions?.map(version => <KnowledgeText key={version.id}>Tax version {version.versionNumber}: {version.rateBps / 100}% · {version.treatment} · {version.status} · {version.applicability} · From {version.effectiveFrom}{version.effectiveTo ? ` to ${version.effectiveTo}` : ""}</KnowledgeText>)}
-      <View style={s.row}>{type === "vendors" ? <Button label={`View ${value.name}`} variant="secondary" onPress={() => setEditor(value)} /> : null}{context.canUpdate && value.status !== "archived" && type !== "vendors" ? <Button label={`Edit ${value.name}`} variant="secondary" onPress={() => setEditor(value)} /> : null}
+      <View style={s.row}>{type === "vendors" ? <Button label={`${context.canUpdate && value.status !== "archived" ? "Edit" : "View profile for"} ${value.name}`} variant="secondary" onPress={() => setEditor(value)} /> : null}{context.canUpdate && value.status !== "archived" && type !== "vendors" ? <Button label={`Edit ${value.name}`} variant="secondary" onPress={() => setEditor(value)} /> : null}
         {context.canLifecycle && value.status !== "archived" ? <Button label={`Archive ${value.name}`} variant="danger" onPress={() => setArchiveTarget(value)} /> : null}</View>
     </KnowledgeCard>)}
     {values.isSuccess && !visible.length ? <KnowledgeText>No reusable values match.</KnowledgeText> : null}

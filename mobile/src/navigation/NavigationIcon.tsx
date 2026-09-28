@@ -11,6 +11,7 @@ function iconForTab(tab: RootTab): NavigationIconName {
     case "projects": return "projects";
     case "design-plans": return "design";
     case "procurement": return "procurement";
+    case "procurement-vendors": return "procurement";
     case "finance": return "finance";
     default: return "home";
   }

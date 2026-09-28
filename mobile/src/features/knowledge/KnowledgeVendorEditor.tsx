@@ -10,7 +10,8 @@ import { Button, Field, StateView } from "../../ui/primitives";
 import { createIdempotencyKey } from "../finance/money";
 import { KnowledgeVendorBasketChoices, KnowledgeVendorBasketCreator, type VendorBasketGroup } from "./KnowledgeVendorBasketControls";
 import { KnowledgeVendorBaseline } from "./KnowledgeVendorBaseline";
-import { allKnowledgePages, type KnowledgeMobileContext } from "./knowledgeRuntime";
+import { allKnowledgePages } from "./knowledgeRuntime";
+import type { VendorMobileContext } from "./vendorRuntime";
 import { KnowledgeCard, KnowledgeChoice, KnowledgeModal, KnowledgeSelect, KnowledgeText, knowledgeStyles as s } from "./knowledgeUi";
 import { catalogError, closeCatalogDraft } from "./knowledgeCatalogForms";
 
@@ -18,9 +19,10 @@ const VENDORS = "/admin/ai-estimator-knowledge/vendors";
 const vendorPath = (id: string) => `${VENDORS}/${encodeURIComponent(id)}`;
 const YES_NO = [{ value: "yes", label: "Yes" }, { value: "no", label: "No" }];
 const uncertain = (error: unknown) => !(error instanceof ApiError || error instanceof TransferHttpError) || error.status >= 500 || error.status < 400 || error.status === 408;
+const denied = (error: unknown) => (error instanceof ApiError || error instanceof TransferHttpError) && (error.status === 401 || error.status === 403);
 interface VendorCommand { name: string; procurementProfile: ProcurementVendorProfileInput; status?: "active" | "inactive"; idempotencyKey: string; msmeCertificateUploadId?: string; confirmPhysicalAddressVerification: boolean }
 
-export function KnowledgeVendorEditor({ context, existing, onClose, onSaved }: { readonly context: KnowledgeMobileContext; readonly existing?: KnowledgeMaster; readonly onClose: () => void; readonly onSaved: (value: KnowledgeMaster) => void }) {
+export function KnowledgeVendorEditor({ context, existing, onClose, onSaved }: { readonly context: VendorMobileContext; readonly existing?: KnowledgeMaster; readonly onClose: () => void; readonly onSaved: (value: KnowledgeMaster) => void }) {
   const runtime = useConfiguredRuntime();
   const query = useQuery({ queryKey: context.key("vendor-detail", existing?.id ?? "new"), queryFn: async ({ signal }) => {
     const result = await runtime.runtime.api.authenticated.get<ProcurementVendorDetail>(vendorPath(existing!.id), { signal });
@@ -28,12 +30,13 @@ export function KnowledgeVendorEditor({ context, existing, onClose, onSaved }: {
     return result;
   }, enabled: Boolean(existing) && context.ready && context.canRead, gcTime: 0, refetchOnWindowFocus: false });
   if (!context.canRead) return <KnowledgeModal title="Vendor details" onClose={onClose}><StateView title="Vendor access required" message="Your current access does not allow you to read vendor details." tone="denied" /></KnowledgeModal>;
-  if (!context.ready) return <KnowledgeModal title="Vendor details" onClose={onClose}><KnowledgeText>Preparing configuration…</KnowledgeText></KnowledgeModal>;
+  if (!context.ready) return <KnowledgeModal title="Vendor details" onClose={onClose}><KnowledgeText>Preparing vendors…</KnowledgeText></KnowledgeModal>;
+  if (denied(query.error)) return <KnowledgeModal title="Vendor details" onClose={onClose}><StateView title="Vendor access required" message="Your current session cannot access vendor details." tone="denied" /></KnowledgeModal>;
   if (existing && !query.data) return <KnowledgeModal title="Vendor details" onClose={onClose}>{query.isError ? <StateView title="Vendor unavailable" message={catalogError(query.error)} actionLabel="Retry vendor details" onAction={() => void query.refetch()} /> : <KnowledgeText>Loading vendor details…</KnowledgeText>}</KnowledgeModal>;
   return <VendorForm key={`${context.scopeKey}:${existing?.id ?? "new"}`} context={context} {...(query.data ? { initial: query.data } : {})} accessError={query.isError} onClose={onClose} onSaved={onSaved} />;
 }
 
-function VendorForm({ context, initial, accessError, onClose, onSaved }: { readonly context: KnowledgeMobileContext; readonly initial?: ProcurementVendorDetail; readonly accessError: boolean; readonly onClose: () => void; readonly onSaved: (value: KnowledgeMaster) => void }) {
+function VendorForm({ context, initial, accessError, onClose, onSaved }: { readonly context: VendorMobileContext; readonly initial?: ProcurementVendorDetail; readonly accessError: boolean; readonly onClose: () => void; readonly onSaved: (value: KnowledgeMaster) => void }) {
   const runtime = useConfiguredRuntime();
   const queryClient = useQueryClient();
   const api = runtime.runtime.api.authenticated;
@@ -47,6 +50,7 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
   const [progress, setProgress] = useState<number | null>(null);
   const [fileBusy, setFileBusy] = useState(false);
   const [fileError, setFileError] = useState("");
+  const [accessRevoked, setAccessRevoked] = useState(false);
   const [recovery, setRecovery] = useState(false);
   const [partial, setPartial] = useState(false);
   const [conflict, setConflict] = useState(false);
@@ -159,6 +163,7 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
   }
   const save = useMutation({ mutationFn: saveVendor, retry: false, onError: error => {
     if (!mounted.current) return;
+    if (denied(error)) setAccessRevoked(true);
     if ((error instanceof ApiError || error instanceof TransferHttpError) && error.code === "VERSION_CONFLICT") setConflict(true);
     if (error instanceof ApiError && error.fields) setErrors(Object.fromEntries(Object.entries(error.fields).map(([key, value]) => [key.replace(/^procurementProfile\./, "").replace(/^msmeCertificateUploadId$/, "msmeCertificate"), value])));
   }, onSettled: () => { submission.current = false; if (mounted.current) setProgress(null); } });
@@ -207,7 +212,7 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
   function refreshAfterBasketCreate() {
     setCatalogRefreshWarning("");
     void Promise.resolve().then(() => context.refresh()).catch(() => {
-      if (mounted.current) setCatalogRefreshWarning("Basket created and selected. Other Configuration lists could not refresh.");
+        if (mounted.current) setCatalogRefreshWarning("Basket created and selected. Other vendor lists could not refresh.");
     });
   }
   async function chooseFile(kind: "certificate" | "photo") {
@@ -224,7 +229,7 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
       if (kind === "certificate") { setCertificate(result.asset); certificateCommand.current = null; }
       else { setPhoto(result.asset); setRemovePhoto(false); photoCommand.current = null; }
       command.current = null; save.reset();
-    } catch (error) { if (mounted.current) setFileError(catalogError(error)); }
+    } catch (error) { if (mounted.current) { if (denied(error)) setAccessRevoked(true); setFileError(catalogError(error)); } }
     finally { fileOperation.current = false; if (mounted.current) setFileBusy(false); }
   }
   async function viewFile(descriptor: { url: string; mimeType: string; byteSize: number }, name: string) {
@@ -232,7 +237,7 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
     fileOperation.current = true;
     setFileBusy(true); setFileError("");
     try { const artifact = await track(runtime.runtime.transfers.download({ path: descriptor.url, fileName: name, mimeType: descriptor.mimeType, maxBytes: descriptor.byteSize, signal: controller.current.signal }).result); if (mounted.current) await artifact.share({ cleanupAfterShare: true }); else await artifact.release(); }
-    catch (error) { if (mounted.current) setFileError(catalogError(error)); }
+    catch (error) { if (mounted.current) { if (denied(error)) setAccessRevoked(true); setFileError(catalogError(error)); } }
     finally { fileOperation.current = false; if (mounted.current) setFileBusy(false); }
   }
   function submit() {
@@ -256,6 +261,9 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
     submission.current = true; save.mutate();
   }
   const field = (key: keyof VendorDraft, label: string, keyboardType?: "email-address" | "phone-pad" | "decimal-pad" | "number-pad") => <Field key={key} label={label} value={String(draft[key])} onChangeText={value => change(key, value as never)} error={errors[key] ?? errors[`bankAccount.${key}`]} editable={!blocked} maxLength={key === "accountNumber" ? 34 : key === "gstNumber" ? 15 : 4000} {...(keyboardType ? { keyboardType } : {})} />;
+  if (accessRevoked || denied(reload.error) || denied(policy.error) || denied(baskets.error) || subQueries.some(query => denied(query.error))) {
+    return <KnowledgeModal title="Vendor details" onClose={onClose}><StateView title="Vendor access required" message="Your current session cannot access vendor details." tone="denied" /></KnowledgeModal>;
+  }
   return <KnowledgeModal title={base ? "Vendor details" : "Add vendor"} busy={busy} onClose={() => closeCatalogDraft(dirty || recovery || partial, onClose)}>
     {readOnly ? <KnowledgeText>This vendor is read-only.</KnowledgeText> : null}
     {accessError ? <KnowledgeText error>Vendor details could not be refreshed. Close and reopen this vendor before saving.</KnowledgeText> : null}
@@ -296,7 +304,7 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
       <KnowledgeVendorBasketChoices label="Sub Baskets" selectedIds={draft.subBasketIds} groups={subGroups} disabled={blocked || !catalogsReady} readOnly={readOnly} onToggle={toggleSubBasket} />
       {errors.subBasketIds ? <KnowledgeText error>{errors.subBasketIds}</KnowledgeText> : null}
       {(baskets.isError || subQueries.some(query => query.isError)) ? <Button label="Retry classification" onPress={() => { void baskets.refetch(); void Promise.all(subQueries.map(query => query.refetch())); }} /> : null}
-      {context.canCreate && !readOnly ? <View style={s.stack}>
+      {context.canCreateClassification && !readOnly ? <View style={s.stack}>
         <Button label="Add main basket" variant="secondary" disabled={blocked || !baskets.isSuccess} onPress={() => setBasketEditor("main")} />
         {activeSelectedParents.length > 1 ? <KnowledgeSelect label="Main Basket for new Sub Basket" value={subCreationParent?.id ?? ""} disabled={blocked} placeholder="Choose a selected Main Basket" options={activeSelectedParents.map(value => ({ value: value.id, label: value.name }))} onChange={setSubCreationParentId} /> : activeSelectedParents.length === 1 ? <KnowledgeText>New Sub Basket parent: {activeSelectedParents[0]!.name}</KnowledgeText> : null}
         <Button label="Add sub-basket" variant="secondary" disabled={blocked || !subCreationParent || !catalogsReady} onPress={() => setBasketEditor("sub")} />
@@ -312,7 +320,7 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
     {progress !== null ? <KnowledgeText>{Math.round(progress * 100)}% uploaded</KnowledgeText> : null}
     {!readOnly ? <Button label={base ? "Save vendor changes" : "Save vendor"} disabled={blocked} loading={save.isPending} onPress={submit} /> : null}
     {base ? <Button label="Review missing historical allocations" variant="secondary" disabled={busy || dirty || recovery || partial || accessError} onPress={() => setBaselineOpen(true)} /> : null}
-    {baselineOpen && base ? <KnowledgeVendorBaseline context={context} vendorId={base.id} canUpdate={context.canUpdate && base.status !== "archived"} onClose={() => setBaselineOpen(false)} /> : null}
-    {basketEditor ? <KnowledgeVendorBasketCreator context={context} {...(basketEditor === "sub" && subCreationParent ? { parent: subCreationParent } : {})} onClose={() => setBasketEditor(null)} onSaved={createdBasket} /> : null}
+    {baselineOpen && base ? <KnowledgeVendorBaseline context={context} vendorId={base.id} canUpdate={context.canCorrectBaseline && base.status !== "archived"} onClose={() => setBaselineOpen(false)} onAccessLost={() => setAccessRevoked(true)} /> : null}
+    {basketEditor ? <KnowledgeVendorBasketCreator context={context} {...(basketEditor === "sub" && subCreationParent ? { parent: subCreationParent } : {})} onClose={() => setBasketEditor(null)} onSaved={createdBasket} onAccessLost={() => setAccessRevoked(true)} /> : null}
   </KnowledgeModal>;
 }

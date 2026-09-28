@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { View } from "react-native";
 import type { ProcurementVendorBaselineInput, ProcurementVendorBaselinePage, ProcurementVendorBaselineResult, ProcurementVendorBaselineRow } from "../../../../shared/knowledge/knowledgeTypes";
 import { ApiError } from "../../core/http/apiClient";
@@ -7,15 +7,15 @@ import { useInvalidateEvent } from "../../core/query/useInvalidation";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { Button, Field, StateView } from "../../ui/primitives";
 import { createIdempotencyKey, parseInrToPaise } from "../finance/money";
-import type { KnowledgeMobileContext } from "./knowledgeRuntime";
+import type { VendorMobileContext } from "./vendorRuntime";
 import { KnowledgeCard, KnowledgeModal, KnowledgeText, knowledgeStyles as s } from "./knowledgeUi";
 import { catalogError, closeCatalogDraft } from "./knowledgeCatalogForms";
 
-interface Props { readonly context: KnowledgeMobileContext; readonly vendorId: string; readonly canUpdate: boolean; readonly onClose: () => void }
+interface Props { readonly context: VendorMobileContext; readonly vendorId: string; readonly canUpdate: boolean; readonly onClose: () => void; readonly onAccessLost?: () => void }
 export function KnowledgeVendorBaseline(props: Props) {
   return <VendorBaselineContent key={`${props.context.scopeKey}:${props.vendorId}`} {...props} />;
 }
-function VendorBaselineContent({ context, vendorId, canUpdate, onClose }: Props) {
+function VendorBaselineContent({ context, vendorId, canUpdate, onClose, onAccessLost }: Props) {
   const runtime = useConfiguredRuntime();
   const invalidate = useInvalidateEvent();
   const [offset, setOffset] = useState(0);
@@ -42,6 +42,8 @@ function VendorBaselineContent({ context, vendorId, canUpdate, onClose }: Props)
   } });
   const uncertain = mutation.isError && (!(mutation.error instanceof ApiError) || mutation.error.status >= 500 || mutation.error.status < 400 || mutation.error.status === 408);
   const conflict = mutation.error instanceof ApiError && mutation.error.status === 409;
+  const accessLost = [query.error, mutation.error].some(error => error instanceof ApiError && (error.status === 401 || error.status === 403));
+  useEffect(() => { if (accessLost) onAccessLost?.(); }, [accessLost, onAccessLost]);
   function cancel() { setSelected(null); command.current = null; mutation.reset(); setError(""); void query.refetch(); }
   function submit() {
     if (!selected || !context.ready || !context.canRead || !canUpdate || mutation.isPending || conflict) return;
@@ -52,7 +54,7 @@ function VendorBaselineContent({ context, vendorId, canUpdate, onClose }: Props)
     }
     setError(""); mutation.mutate();
   }
-  if (!context.canRead) return <KnowledgeModal title="Historical allocation correction" onClose={onClose}><KnowledgeText>Your current access does not allow historical allocations.</KnowledgeText></KnowledgeModal>;
+  if (!context.canRead || accessLost) return <KnowledgeModal title="Historical allocation correction" onClose={onClose}><KnowledgeText>Your current access does not allow historical allocations.</KnowledgeText></KnowledgeModal>;
   return <KnowledgeModal title="Historical allocation correction" busy={mutation.isPending || uncertain} onClose={() => closeCatalogDraft(Boolean(selected), onClose)}>
     <KnowledgeText>Record missing amounts for existing vendor work only. New work uses project procurement. Historical totals may exceed the unverified vendor limit and block further increases.</KnowledgeText>
     {query.isPending ? <KnowledgeText>Loading historical allocations…</KnowledgeText> : null}

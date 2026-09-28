@@ -45,6 +45,9 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "procurement.vendor_directory.create",
     "procurement.vendor_directory.update",
     "procurement.vendor_directory.lifecycle",
+    "procurement.vendor_kpi.read",
+    "procurement.vendor_kpi.rate",
+    "procurement.vendor_kpi.request",
     "procurement.vendor_classification.create",
     "procurement.vendor_allocation_baseline.correct"
   ],
@@ -91,6 +94,9 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "procurement.vendor_directory.create",
     "procurement.vendor_directory.update",
     "procurement.vendor_directory.lifecycle",
+    "procurement.vendor_kpi.read",
+    "procurement.vendor_kpi.rate",
+    "procurement.vendor_kpi.request",
     "procurement.vendor_classification.create",
     "procurement.vendor_allocation_baseline.correct",
     "access_request.self.read"

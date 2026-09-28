@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
@@ -23,6 +24,7 @@ const emptyFilters = { search: "", status: "" as KnowledgeMasterStatus | "", ven
 const denied = (error: unknown) => error instanceof ApiError && (error.status === 401 || error.status === 403);
 
 export function ProcurementVendorDirectory() {
+  const navigate = useNavigate();
   const auth = useAuth();
   const client = useQueryClient();
   const id = useId();
@@ -32,6 +34,7 @@ export function ProcurementVendorDirectory() {
   const canArchive = hasFrontendPermission(auth.authorization, "procurement.vendor_directory.lifecycle");
   const canCreateBasket = hasFrontendPermission(auth.authorization, "procurement.vendor_classification.create");
   const canCorrectBaseline = hasFrontendPermission(auth.authorization, "procurement.vendor_allocation_baseline.correct");
+  const canReadKpi = hasFrontendPermission(auth.authorization, "procurement.vendor_kpi.read");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState(emptyFilters);
   const [offset, setOffset] = useState(0);
@@ -90,7 +93,7 @@ export function ProcurementVendorDirectory() {
       {baskets.isError || (filters.mainBasketId && subs.isError) ? <InlineMessage tone="error" action={<Button variant="secondary" onClick={() => { void baskets.refetch(); if (filters.mainBasketId) void subs.refetch(); }}>Retry classification filters</Button>}>Classification filters could not be loaded.</InlineMessage> : null}
       {notice ? <p className="vendor-directory__notice" role="status">{notice}</p> : null}
       {selected.size ? <div className="vendor-directory__selected"><span role="status">{selected.size} {selected.size === 1 ? "vendor" : "vendors"} selected on this page</span><Button variant="quiet" onClick={() => setSelected(new Set())}>Clear selection</Button></div> : null}
-      {query.isPending ? <PageState state="loading" message="Loading vendors…" /> : query.isError ? <PageState state="error" message={procurementError(query.error, "Vendors could not be loaded.")} action={{ label: "Retry vendors", onAction: () => void query.refetch() }} /> : !query.data.items.length ? <PageState state="empty" message={Object.values(filters).some(Boolean) ? "No vendors match this view. Adjust the filters or reset your search." : "No vendors configured yet. Add a vendor to get started."} /> : <VendorDirectoryTable items={query.data.items} selected={selected} onSelection={setSelected} canUpdate={canUpdate} canArchive={canArchive} onEdit={(vendor) => setEditor({ vendor, readOnly: false })} onView={(vendor) => setEditor({ vendor, readOnly: true })} onArchive={(vendor) => { setArchive(vendor); setReason(""); mutation.reset(); }} />}
+      {query.isPending ? <PageState state="loading" message="Loading vendors…" /> : query.isError ? <PageState state="error" message={procurementError(query.error, "Vendors could not be loaded.")} action={{ label: "Retry vendors", onAction: () => void query.refetch() }} /> : !query.data.items.length ? <PageState state="empty" message={Object.values(filters).some(Boolean) ? "No vendors match this view. Adjust the filters or reset your search." : "No vendors configured yet. Add a vendor to get started."} /> : <VendorDirectoryTable items={query.data.items} selected={selected} onSelection={setSelected} canUpdate={canUpdate} canArchive={canArchive} canOpenKpi={canReadKpi} onOpen={(vendor) => navigate(`${auth.user?.role === "super_admin" ? "/admin/procurement/vendors" : "/procurement/vendors"}/${encodeURIComponent(vendor.id)}`)} onEdit={(vendor) => setEditor({ vendor, readOnly: false })} onView={(vendor) => setEditor({ vendor, readOnly: true })} onArchive={(vendor) => { setArchive(vendor); setReason(""); mutation.reset(); }} />}
       {query.isFetching && !query.isPending ? <p className="vendor-directory__notice" role="status">Refreshing vendors…</p> : null}
       {!query.isError && query.data ? <VendorDirectoryPagination offset={offset} count={query.data.items.length} total={query.data.pagination.total} pageSize={pageSize} busy={query.isFetching} onPage={pageChanged} onPageSize={pageSizeChanged} /> : null}
     </section>

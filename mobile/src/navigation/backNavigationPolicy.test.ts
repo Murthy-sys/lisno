@@ -59,6 +59,10 @@ function estimate(estimateId = "estimate-a", key = `estimate-${estimateId}`): Na
   return { key, name: "estimate/[estimateId]", params: { estimateId } };
 }
 
+function vendor(vendorId = "vendor-a", from = "procurement-vendors", key = `vendor-${vendorId}`): NavigationEntry {
+  return { key, name: "vendor/[vendorId]", params: { vendorId, from } };
+}
+
 function stack(routes: readonly NavigationEntry[], index = routes.length - 1): AppStack {
   return { key: "app-stack", routes, index };
 }
@@ -109,6 +113,9 @@ describe("mobile Back route state", () => {
     expect(appDestination(estimate("estimate #2?view=private"))).toEqual({
       kind: "record", featureId: "estimates", path: "/estimate/estimate%20%232%3Fview%3Dprivate"
     });
+    expect(appDestination(vendor("vendor #2", "configuration"))).toEqual({
+      kind: "record", featureId: "configuration", path: "/vendor/vendor%20%232?from=configuration"
+    });
     expect(parseEstimateRouteId("estimate%20%232")).toBe("estimate #2");
   });
 
@@ -125,6 +132,9 @@ describe("mobile Back route state", () => {
     estimate("bad%ZZ"),
     estimate(""),
     estimate(".."),
+    vendor("nested/vendor"),
+    vendor("vendor-a", "admin"),
+    vendor("vendor-a", ""),
     { name: "estimate/[estimateId]", params: { estimateId: ["estimate-a"] } },
     { name: "feature/[featureId]", params: { featureId: ["projects"] } },
     { name: "external", params: { href: "https://example.invalid" } }
@@ -134,6 +144,15 @@ describe("mobile Back route state", () => {
 });
 
 describe("mobile Back home and fallback policy", () => {
+  it("returns a direct vendor KPI detail to the role's vendor entry", () => {
+    expect(resolveBackAction(stack([vendor()]), session("procurement"), fence, new BackEntryOwnership())).toEqual({ kind: "replace", path: "/feature/procurement-vendors" });
+    expect(resolveBackAction(stack([vendor("vendor-a", "configuration")]), session("super_admin"), fence, new BackEntryOwnership())).toEqual({ kind: "replace", path: "/feature/configuration" });
+  });
+  it("returns a direct Procurement Vendors link to the authorized Dashboard", () => {
+    const current = stack([feature("procurement-vendors")]);
+    expect(resolveBackAction(current, session("procurement"), fence, new BackEntryOwnership())).toEqual({ kind: "replace", path: "/feature/procurement" });
+    expect(resolveBackAction(current, session("procurement", ["workflow.tasks.read", "procurement.vendor_directory.read"]), fence, new BackEntryOwnership())).toEqual({ kind: "replace", path: "/feature/work" });
+  });
   it.each(ROLE_CODES)("hides Back only on %s's exact authorized home feature", (role) => {
     const homeId = homeByRole[role];
     const routes = [feature("messages"), feature(homeId)];

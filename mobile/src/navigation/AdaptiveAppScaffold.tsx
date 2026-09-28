@@ -15,7 +15,7 @@ import { GlassSelection } from "./GlassSelection";
 import { NavigationIcon, RootTabIcon } from "./NavigationIcon";
 import { ProfileAvatar } from "./ProfileAvatar";
 import { ProfileMenu } from "./ProfileMenu";
-import { rootTabsForAuthorization, type FeatureId, type RootTab } from "./registry";
+import { resolveAuthorizedFeature, rootTabsForAuthorization, type FeatureId, type RootTab } from "./registry";
 import { scaffoldNavigationMode } from "./scaffoldLayout";
 import { useScreenBack } from "./useScreenBack";
 
@@ -40,15 +40,15 @@ export function ScaffoldContentBack() {
   return back?.visible ? <BackButton onPress={back.onBack} disabled={back.disabled} /> : null;
 }
 
-function NavigationButton({ tab, selected, compact, disabled, user, onOpenProfile }: { readonly tab: RootTab; readonly selected: boolean; readonly compact: boolean; readonly disabled: boolean; readonly user: PublicUser; readonly onOpenProfile: () => void }) {
+function NavigationButton({ tab, selected, compact, disabled, user, onOpenProfile, onPress, expanded }: { readonly tab: RootTab; readonly selected: boolean; readonly compact: boolean; readonly disabled: boolean; readonly user: PublicUser; readonly onOpenProfile: () => void; readonly onPress?: () => void; readonly expanded?: boolean }) {
   const displayLabel = compact && tab.id === "landing" ? "Home" : tab.label;
   return (
     <Pressable
       accessibilityRole="tab"
       accessibilityLabel={displayLabel}
-      accessibilityState={{ disabled, selected }}
+      accessibilityState={{ disabled, selected, ...(expanded === undefined ? {} : { expanded }) }}
       disabled={disabled}
-      onPress={() => tab.id === "profile" ? onOpenProfile() : router.replace(routeForTab(tab) as never)}
+      onPress={() => onPress ? onPress() : tab.id === "profile" ? onOpenProfile() : router.replace(routeForTab(tab) as never)}
       style={({ pressed }) => [styles.navButton, compact ? styles.navButtonCompact : styles.navButtonRail, selected && !compact ? styles.navButtonSelected : null, pressed ? styles.pressed : null, disabled ? styles.disabled : null]}
     >
       {compact ? (
@@ -95,6 +95,7 @@ export function AdaptiveAppScaffold({
   const { width } = useWindowDimensions();
   const [navigationBlocked, setNavigationBlocked] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [procurementExpanded, setProcurementExpanded] = useState(true);
   const back = useScreenBack({ blocked: navigationBlocked });
   const navigationGuard = useMemo(
     () => ({ setBlocked: setNavigationBlocked }),
@@ -111,7 +112,16 @@ export function AdaptiveAppScaffold({
     return null;
   }
   const tabs = rootTabsForAuthorization(authenticated.user.role, authenticated.authorization);
-  const isSelected = (tab: RootTab) => more ? tab.id === "more" : profile ? tab.id === "profile" : tab.destination?.id === activeFeature;
+  const procurementChildren = authenticated.user.role === "procurement"
+    ? (["procurement", "procurement-vendors"] as const).flatMap((id) => {
+        const destination = resolveAuthorizedFeature(id, authenticated.user.role, authenticated.authorization);
+        return destination ? [destination] : [];
+      })
+    : [];
+  const isProcurementRoute = activeFeature === "procurement" || activeFeature === "procurement-vendors";
+  const isSelected = (tab: RootTab) => more ? tab.id === "more" : profile ? tab.id === "profile" : tab.id === "domain" && authenticated.user.role === "procurement"
+    ? isProcurementRoute
+    : tab.destination?.id === activeFeature;
   const openProfileMenu = () => setProfileMenuOpen(true);
 
   return (
@@ -142,7 +152,28 @@ export function AdaptiveAppScaffold({
           <ChromeSurface edge="rail" style={styles.railSurface} testID="scaffold-rail-chrome">
             <SafeAreaView edges={["bottom"]} style={styles.rail} testID="scaffold-rail-inset">
               <View accessibilityRole="tablist" style={styles.railTabs}>
-                {tabs.map((tab) => <NavigationButton key={tab.id} tab={tab} compact={false} disabled={navigationBlocked} user={authenticated.user} onOpenProfile={openProfileMenu} selected={isSelected(tab)} />)}
+                {tabs.map((tab) => (
+                  <View key={tab.id}>
+                    <NavigationButton tab={tab} compact={false} disabled={navigationBlocked} user={authenticated.user} onOpenProfile={openProfileMenu} selected={isSelected(tab)}
+                      {...(tab.id === "domain" && authenticated.user.role === "procurement" ? {
+                        onPress: () => setProcurementExpanded((value) => !value),
+                        expanded: procurementExpanded
+                      } : {})} />
+                    {tab.id === "domain" && authenticated.user.role === "procurement" && procurementExpanded ? (
+                      <View style={styles.procurementChildren} testID="procurement-rail-children">
+                        {procurementChildren.map((destination) => {
+                          const selected = activeFeature === destination.id;
+                          return <Pressable key={destination.id} accessibilityRole="button" accessibilityLabel={destination.id === "procurement" ? "Procurement Dashboard" : "Procurement Vendors"}
+                            accessibilityState={{ selected, disabled: navigationBlocked }} disabled={navigationBlocked}
+                            onPress={() => router.push(destination.path as never)}
+                            style={({ pressed }) => [styles.procurementChild, selected ? styles.procurementChildSelected : null, pressed ? styles.pressed : null]}>
+                            <Text style={[styles.procurementChildLabel, selected ? styles.procurementChildLabelSelected : null]}>{destination.id === "procurement" ? "Dashboard" : "Vendors"}</Text>
+                          </Pressable>;
+                        })}
+                      </View>
+                    ) : null}
+                  </View>
+                ))}
               </View>
             </SafeAreaView>
           </ChromeSurface>
@@ -201,6 +232,11 @@ const styles = StyleSheet.create({
   navLabel: { color: chrome.muted, fontFamily: fonts.medium },
   navLabelRail: { flex: 1, fontSize: 13, textAlign: "left" },
   navLabelSelected: { color: colors.primaryInk, fontFamily: fonts.semibold },
+  procurementChildren: { marginTop: spacing.xxs, marginLeft: spacing.lg, gap: spacing.xxs },
+  procurementChild: { minHeight: 44, justifyContent: "center", paddingHorizontal: spacing.sm, borderRadius: radii.control },
+  procurementChildSelected: { backgroundColor: chrome.selected },
+  procurementChildLabel: { color: chrome.muted, fontFamily: fonts.medium, fontSize: 13 },
+  procurementChildLabelSelected: { color: chrome.ink, fontFamily: fonts.semibold },
   pressed: { opacity: 0.72 },
   disabled: { opacity: 0.48 }
 });

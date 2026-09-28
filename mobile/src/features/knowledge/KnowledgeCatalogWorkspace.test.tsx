@@ -36,7 +36,7 @@ const otherBasket = { ...basket, id: "basket-b", name: "Painting", version: 11 }
 const session = { user: { id: "user-a", role: "super_admin" }, authorization: { permissions: [] } } as unknown as AuthenticatedSession;
 function page(items: readonly unknown[], offset = 0, hasMore = false) { return { items, pagination: { total: hasMore ? items.length + 1 : items.length, limit: 100, offset, hasMore } }; }
 function context(overrides: Partial<KnowledgeMobileContext> = {}): KnowledgeMobileContext {
-  return { api: createKnowledgeApi({ get, post, patch, delete: del, put: jest.fn() }), key: (...parts) => ["test", "user-a", "knowledge", ...parts], scopeKey: "test:user-a:1:1", ready: true, canRead: true, canCreate: true, canUpdate: true, canLifecycle: true, canCreateQualityOptions: true, refresh, ...overrides };
+  return { api: createKnowledgeApi({ get, post, patch, delete: del, put: jest.fn() }), key: (...parts) => ["test", "user-a", "knowledge", ...parts], scopeKey: "test:user-a:1:1", ready: true, canRead: true, canCreate: true, canUpdate: true, canLifecycle: true, canCreateClassification: true, canCorrectBaseline: true, canCreateQualityOptions: true, refresh, ...overrides };
 }
 async function mount(element: ReactNode) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false, gcTime: 0 } } });

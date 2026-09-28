@@ -461,4 +461,26 @@ describe("AdaptiveAppScaffold navigation", () => {
     expect(view.getByTestId("scaffold-content-inset").props.edges).toEqual([]);
     expect(view.getByTestId("status-bar-dark")).toBeTruthy();
   });
+
+  it("keeps Procurement selected for a direct Vendors link and expands authorized tablet children", async () => {
+    configureRole("procurement", ["workflow.tasks.read", "procurement.workspace.read", "procurement.vendor_directory.read"]);
+    const view = await render(<AdaptiveAppScaffold activeFeature="procurement-vendors" navigationRailBreakpoint={1}><Text>Vendor content</Text></AdaptiveAppScaffold>);
+    const parent = view.getByRole("tab", { name: "Procurement" });
+    expect(parent.props.accessibilityState).toMatchObject({ selected: true, expanded: true });
+    expect(view.getByRole("button", { name: "Procurement Vendors" }).props.accessibilityState.selected).toBe(true);
+    expect(view.getByRole("button", { name: "Procurement Dashboard" }).props.accessibilityState.selected).toBe(false);
+    await fireEvent.press(view.getByRole("button", { name: "Procurement Dashboard" }));
+    expect(mockPush).toHaveBeenLastCalledWith("/feature/procurement");
+    await fireEvent.press(parent);
+    expect(view.getByRole("tab", { name: "Procurement" }).props.accessibilityState.expanded).toBe(false);
+    expect(view.queryByRole("button", { name: "Procurement Vendors" })).toBeNull();
+  });
+
+  it("shows just Vendors in the Procurement rail when Dashboard permission is missing", async () => {
+    configureRole("procurement", ["workflow.tasks.read", "procurement.vendor_directory.read"]);
+    const view = await render(<AdaptiveAppScaffold activeFeature="procurement-vendors" navigationRailBreakpoint={1}><Text>Vendor content</Text></AdaptiveAppScaffold>);
+    expect(view.getByRole("tab", { name: "Procurement" }).props.accessibilityState.selected).toBe(true);
+    expect(view.getByRole("button", { name: "Procurement Vendors" })).toBeTruthy();
+    expect(view.queryByRole("button", { name: "Procurement Dashboard" })).toBeNull();
+  });
 });

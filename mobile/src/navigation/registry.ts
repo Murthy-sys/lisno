@@ -17,6 +17,7 @@ export type FeatureId =
   | "team"
   | "organization"
   | "procurement"
+  | "procurement-vendors"
   | "finance"
   | "messages"
   | "users"
@@ -57,6 +58,7 @@ export const FEATURE_DESTINATIONS = Object.freeze([
   destination("team", "Team", "organization.team.read", ["design_manager"]),
   destination("organization", "Organization", "organization.tree.read", ["design_head"]),
   destination("procurement", "Procurement", "procurement.workspace.read", ["procurement"]),
+  destination("procurement-vendors", "Vendors", "procurement.vendor_directory.read", ["procurement"]),
   destination("procurement", "Procurement", "procurement.vendor_suggestions.read", [
     "admin",
     "super_admin"
@@ -202,14 +204,17 @@ export function rootTabsForAuthorization(
 
   const domainId = DOMAIN_BY_ROLE[role];
   const domain = domainId
-    ? permittedDestination(role, authorization, domainId)
+    ? permittedDestination(role, authorization, domainId) ??
+      (role === "procurement"
+        ? permittedDestination(role, authorization, "procurement-vendors")
+        : null)
     : null;
   const messages = permittedDestination(role, authorization, "messages");
 
   return Object.freeze([
     Object.freeze({ id: "landing", label: landing.label, destination: landing }),
     ...(domain
-      ? [Object.freeze({ id: "domain" as const, label: domain.label, destination: domain })]
+      ? [Object.freeze({ id: "domain" as const, label: role === "procurement" ? "Procurement" : domain.label, destination: domain })]
       : []),
     ...(messages
       ? [Object.freeze({ id: "messages" as const, label: "Messages", destination: messages })]

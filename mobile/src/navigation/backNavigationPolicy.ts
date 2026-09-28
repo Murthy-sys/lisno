@@ -26,7 +26,7 @@ export interface AppDestination {
   readonly featureId?: string;
 }
 
-const appNames = new Set(["index", "feature/[featureId]", "record/[featureId]/[recordId]", "estimate/[estimateId]", "more", "access-denied", "sign-in", "forgot-password", "reset-password", "accept-invitation", "welcome", "startup-recovery"]);
+const appNames = new Set(["index", "feature/[featureId]", "record/[featureId]/[recordId]", "estimate/[estimateId]", "vendor/[vendorId]", "more", "access-denied", "sign-in", "forgot-password", "reset-password", "accept-invitation", "welcome", "startup-recovery"]);
 const accountNames = new Set(["forgot-password", "reset-password", "accept-invitation"]);
 
 /** Accept one decoded or percent-encoded path scalar, never a separator or malformed escape. */
@@ -59,6 +59,12 @@ export function appDestination(entry: NavigationEntry | undefined): AppDestinati
   if (entry.name === "estimate/[estimateId]") {
     const estimateId = parseEstimateRouteId(params?.estimateId);
     return estimateId ? { kind: "record", featureId: "estimates", path: `/estimate/${encodeURIComponent(estimateId)}` } : null;
+  }
+  if (entry.name === "vendor/[vendorId]") {
+    const vendorId = parseEstimateRouteId(params?.vendorId);
+    const from = params?.from;
+    const featureId = from === "procurement-vendors" || from === "configuration" ? from : "";
+    return vendorId && featureId ? { kind: "record", featureId, path: `/vendor/${encodeURIComponent(vendorId)}?from=${featureId}` } : null;
   }
   const featureId = params?.featureId;
   if (typeof featureId !== "string" || !/^[a-z-]+$/u.test(featureId)) return null;
@@ -139,6 +145,9 @@ export function resolveBackAction(stack: AppStack | null, session: Authenticated
     break;
   }
 
-  const fallback = feature?.path ?? home?.path ?? "/access-denied";
+  const procurementDashboard = destination?.path === "/feature/procurement-vendors"
+    ? resolveAuthorizedFeature("procurement", session.user.role, session.authorization)?.path
+    : null;
+  const fallback = feature?.path ?? procurementDashboard ?? home?.path ?? "/access-denied";
   return fallback && fallback !== destination?.path ? { kind: "replace", path: fallback } : { kind: "none" };
 }

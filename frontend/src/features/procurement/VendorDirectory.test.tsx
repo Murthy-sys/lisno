@@ -1,6 +1,7 @@
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PermissionCode, Role } from "../../api/authorization-contract";
@@ -28,7 +29,8 @@ let listFailed: boolean;
 function start() {
   let client!: QueryClient;
   function Capture() { client = useQueryClient(); return <ProcurementVendorDirectory />; }
-  return { ...renderWithQuery(<Capture />), client };
+  function Location() { const location = useLocation(); return <output data-testid="vendor-directory-location">{location.pathname}</output>; }
+  return { ...renderWithQuery(<MemoryRouter initialEntries={[role === "super_admin" ? "/admin/procurement/vendors" : "/procurement/vendors"]}><Capture /><Location /></MemoryRouter>), client };
 }
 const pageRequests = () => requests.filter((params) => !params.has("includeDirectoryOverview"));
 beforeEach(() => {
