@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import vendorHeader from "../../assets/vendor-directory-header.webp";
 import { Button } from "../../components/ui/Button";
 import type { ProcurementVendorDirectoryOverview } from "../ai-estimator-knowledge/knowledgeTypes";
+import { formatVendorKpiScore } from "./vendorKpiPresentation";
 
 export function DirectoryIcon({ name }: { name: "people" | "active" | "clock" | "chart" | "plus" | "search" | "reset" | "edit" | "view" | "archive" | "more" | "previous" | "next" }) {
   const shapes: Record<typeof name, ReactNode> = {
@@ -41,7 +42,7 @@ export function VendorDirectoryOverview({ overview, loading, error, refreshing, 
       <article className="vendor-directory__metric"><span className="vendor-directory__metric-icon"><DirectoryIcon name="people" /></span><div><h2>Total Vendors</h2><div className={`vendor-directory__value${available ? "" : " vendor-directory__value--text"}`}>{value(overview?.totalVendors)}</div><p>Current suppliers &amp; contractors</p></div></article>
       <article className="vendor-directory__metric vendor-directory__metric--active"><span className="vendor-directory__metric-icon"><DirectoryIcon name="active" /></span><div><h2>Active Vendors</h2><div className={`vendor-directory__value${available ? "" : " vendor-directory__value--text"}`}>{value(overview?.activeVendors)}{available ? <small>{percentage(overview.activeVendors)}</small> : null}</div><p>Currently available</p></div></article>
       <article className="vendor-directory__metric vendor-directory__metric--review"><span className="vendor-directory__metric-icon"><DirectoryIcon name="clock" /></span><div><h2>Under Review</h2><div className={`vendor-directory__value${available ? "" : " vendor-directory__value--text"}`}>{value(overview?.underReviewVendors)}{available ? <small>{percentage(overview.underReviewVendors)}</small> : null}</div><p>Pending address verification</p></div></article>
-      <article className="vendor-directory__metric"><span className="vendor-directory__metric-icon"><DirectoryIcon name="chart" /></span><div><h2>Average KPI</h2><div className="vendor-directory__value vendor-directory__value--text">Not available</div><p>Performance is not rated yet</p></div></article>
+      <article className="vendor-directory__metric"><span className="vendor-directory__metric-icon"><DirectoryIcon name="chart" /></span><div><h2>Average KPI</h2><div className="vendor-directory__value vendor-directory__value--text">{loading ? "Loading…" : available && overview.averageKpiScoreBps !== undefined ? formatVendorKpiScore(overview.averageKpiScoreBps) : "Not available"}</div><p>{available && overview.ratedVendors !== undefined ? `${overview.ratedVendors} rated ${overview.ratedVendors === 1 ? "vendor" : "vendors"}` : "Procurement ratings"}</p></div></article>
     </div>
     {error || (!loading && !overview) ? <div className="vendor-directory__overview-error" role="status"><span>Vendor overview is unavailable.</span><Button variant="quiet" onClick={retry}>Retry overview</Button></div> : refreshing && !loading ? <span className="sr-only" role="status">Refreshing vendor overview…</span> : null}
   </section>;

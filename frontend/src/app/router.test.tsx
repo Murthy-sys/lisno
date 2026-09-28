@@ -603,7 +603,7 @@ describe("role landing staging contract", () => {
 
 describe("public invitation route", () => {
   it("mounts directly while staying outside the protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(37);
+    expect(ROUTE_REGISTRY).toHaveLength(39);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -710,12 +710,12 @@ describe("registered permission routes", () => {
       (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
     );
 
-    expect(paths).toHaveLength(historicalProtectedPaths.length + 16);
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 18);
     expect(additions).toEqual([
       "/project-messages", "/projects/:projectId/messages",
       "/designer/design-plans",
       knowledgeConfigurationPaths[0],
-      "/admin/procurement", "/admin/procurement/vendors", "/procurement", "/procurement/vendors",
+      "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/procurement", "/procurement/vendors", "/procurement/vendors/:vendorId",
       ...knowledgeConfigurationPaths.slice(1),
       ...clientResponsePaths,
       "/admin/design-approvals",
@@ -727,7 +727,7 @@ describe("registered permission routes", () => {
         "/project-messages", "/projects/:projectId/messages",
         "/designer/design-plans",
         ...knowledgeConfigurationPaths,
-        "/admin/procurement", "/admin/procurement/vendors", "/procurement", "/procurement/vendors",
+        "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/procurement", "/procurement/vendors", "/procurement/vendors/:vendorId",
         ...clientResponsePaths,
         "/admin/design-approvals",
         ...procurementPaths,

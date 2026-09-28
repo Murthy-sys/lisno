@@ -3,6 +3,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { useState } from "react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PermissionCode, Role } from "../../api/authorization-contract";
 import type { ProcurementVendorReference } from "../../api/types";
@@ -28,7 +29,7 @@ const suggestionPage = (items = suggestions, source = currentProject) => data({ 
 function start() {
   let client!: QueryClient;
   function Capture() { client = useQueryClient(); return <ProcurementManagementPage />; }
-  return { ...renderWithQuery(<Capture />), client };
+  return { ...renderWithQuery(<MemoryRouter><Capture /></MemoryRouter>), client };
 }
 async function openPanel() {
   const user = userEvent.setup();
@@ -68,7 +69,7 @@ describe("vendor procurement", () => {
     await act(async () => release());
     expect(await screen.findByText("Vendor suggestion saved.")).toBeVisible();
     expect(screen.getByText("Reliable delivery")).toBeVisible();
-    expect(screen.getByText(/KPI is not rated yet/)).toBeVisible();
+    expect(screen.getByText(/Procurement reviews vendor ratings/)).toBeVisible();
   });
   it("retains the same idempotency key after a transient failure", async () => {
     const bodies: Record<string, unknown>[] = [];

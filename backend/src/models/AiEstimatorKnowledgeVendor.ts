@@ -85,6 +85,7 @@ const vendorSchema = new Schema(
       max: Number.MAX_SAFE_INTEGER,
       validate: Number.isSafeInteger
     },
+    kpiRubricGeneration: { type: Number, default: 0, min: 0, validate: Number.isSafeInteger },
     createdById: { type: String, ref: "User", required: true, immutable: true },
     updatedById: { type: String, ref: "User", required: true },
     archivedAt: { type: Date, default: null },

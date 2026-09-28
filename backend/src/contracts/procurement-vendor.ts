@@ -94,6 +94,8 @@ export interface ProcurementVendorDirectoryOverview {
   totalVendors: number;
   activeVendors: number;
   underReviewVendors: number;
+  ratedVendors?: number;
+  averageKpiScoreBps?: number | null;
 }
 
 export interface ProcurementVendorPhotoDescriptor {

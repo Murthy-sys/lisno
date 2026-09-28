@@ -17,7 +17,11 @@ export function MoreScreen() {
   const tabs = rootTabsForAuthorization(authenticated.user.role, authenticated.authorization);
   const tabFeatures = new Set(tabs.flatMap((tab) => tab.destination ? [tab.destination.id] : []));
   const additional = destinationsForAuthorization(authenticated.user.role, authenticated.authorization)
-    .filter((destination) => !tabFeatures.has(destination.id));
+    .filter((destination) => !tabFeatures.has(destination.id) && !(
+      authenticated.user.role === "procurement" &&
+      destination.id === "procurement-vendors" &&
+      tabs.some((tab) => tab.id === "domain")
+    ));
 
   return (
     <AdaptiveAppScaffold more>

@@ -115,6 +115,11 @@ export const DESIGN_PLAN_WORKFLOW_AUDIT_ACTIONS = [
 ] as const;
 
 export const PROCUREMENT_AUDIT_ACTIONS = [
+  "vendor_kpi.procurement_saved",
+  "vendor_kpi.requested",
+  "vendor_kpi.delivery_sent",
+  "vendor_kpi.delivery_failed",
+  "vendor_kpi.self_submitted",
   "procurement_vendor_allocation_baseline_recorded",
   "procurement_vendor_photo_updated",
   "procurement_vendor_photo_removed",

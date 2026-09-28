@@ -94,9 +94,9 @@ describe("project vendor suggestions", () => {
     const rounds = await EstimateClientReviewRoundModel.find().sort({ _id: 1 }).lean();
     const tasks = await ProjectWorkflowTaskModel.find().sort({ _id: 1 }).lean();
     const created = await service.create(actor, "project-a", fields);
-    expect(created).toMatchObject({ created: true, suggestion: { projectId: "project-a", estimateId: fields.estimateId, estimateVersion: 1, estimateReviewRoundId: "round-project-a", designPlanVersion: 1, vendor: { id: "vendor-1", code: "V1", name: "Vendor 1", status: "active" }, suggestedBy: { id: actor.id, name: actor.name }, version: 1, kpi: { status: "not_rated", score: null } } });
+    expect(created).toMatchObject({ created: true, suggestion: { projectId: "project-a", estimateId: fields.estimateId, estimateVersion: 1, estimateReviewRoundId: "round-project-a", designPlanVersion: 1, vendor: { id: "vendor-1", code: "V1", name: "Vendor 1", status: "active" }, suggestedBy: { id: actor.id, name: actor.name }, version: 1, kpi: { status: "not_available", score: null } } });
     const page = await service.list(buyer, "project-a", query);
-    expect(page.items).toEqual([created.suggestion]);
+    expect(page.items).toEqual([{ ...created.suggestion, kpi: { status: "not_rated", score: null } }]);
     expect(page.performance).toEqual({ status: "not_available", recommendations: [] });
     expect(page.project).toEqual({ projectId: "project-a", projectName: "project-a", estimateId: fields.estimateId, estimateVersion: 1, designPlanVersion: 1 });
     expect(await EstimateModel.find().select({ procurementSourceEpoch: 0 }).sort({ _id: 1 }).lean()).toEqual(estimates);
@@ -137,7 +137,7 @@ describe("project vendor suggestions", () => {
     expect((await service.list(actor, "project-a", query)).items).toEqual([]);
     await expect(service.update(actor, "project-a", saved.id, { expectedVersion: 1, note: "", status: "withdrawn" })).rejects.toMatchObject({ code: "VENDOR_SUGGESTION_SOURCE_CONFLICT" });
     const current = await service.create(actor, "project-a", { ...fields, designPlanVersion: 2, idempotencyKey: "new-round-request" });
-    expect((await service.list(buyer, "project-a", query)).items).toEqual([current.suggestion]);
+    expect((await service.list(buyer, "project-a", query)).items).toEqual([{ ...current.suggestion, kpi: { status: "not_rated", score: null } }]);
     expect(await ProjectVendorSuggestionModel.countDocuments()).toBe(2);
   });
   it("withdraws/reinstates with CAS, retains history and lets a newly assigned manager edit", async () => {
@@ -247,6 +247,6 @@ describe("project vendor suggestions", () => {
     expect(new Set([...page1.items, ...page2.items].map((row) => row.id)).size).toBe(2);
     expect((await service.list(actor, "project-a", { ...query, q: ".*" })).total).toBe(1);
     expect((await service.list(actor, "project-b", query).catch(() => null))).toBeNull();
-    expect((await service.list(buyer, "project-a", { ...query, q: "Vendor 2" })).items).toEqual([next]);
+    expect((await service.list(buyer, "project-a", { ...query, q: "Vendor 2" })).items).toEqual([{ ...next, kpi: { status: "not_rated", score: null } }]);
   });
 });

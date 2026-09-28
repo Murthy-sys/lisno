@@ -85,15 +85,15 @@ describe("frontend authorization contract parity", () => {
     expect(FRONTEND_POLICY_VERSION).toBe(AUTHORIZATION_POLICY_VERSION);
   });
 
-  it("publishes the 144-code Procurement vendor policy on both sides", () => {
-    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-09-27.procurement-vendor-directory.v1");
-    expect(FRONTEND_POLICY_VERSION).toBe("2026-09-27.procurement-vendor-directory.v1");
-    expect(PERMISSION_CODES).toHaveLength(144);
-    expect(FRONTEND_PERMISSION_CODES).toHaveLength(144);
-    expect(new Set(PERMISSION_CODES).size).toBe(144);
-    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(144);
-    expect(PERMISSION_CODES.at(-1)).toBe("procurement.vendor_allocation_baseline.correct");
-    expect(FRONTEND_PERMISSION_CODES.at(-1)).toBe("procurement.vendor_allocation_baseline.correct");
+  it("publishes the 147-code Vendor KPI policy on both sides", () => {
+    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-09-28.vendor-kpi.v1");
+    expect(FRONTEND_POLICY_VERSION).toBe("2026-09-28.vendor-kpi.v1");
+    expect(PERMISSION_CODES).toHaveLength(147);
+    expect(FRONTEND_PERMISSION_CODES).toHaveLength(147);
+    expect(new Set(PERMISSION_CODES).size).toBe(147);
+    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(147);
+    expect(PERMISSION_CODES.at(-1)).toBe("procurement.vendor_kpi.request");
+    expect(FRONTEND_PERMISSION_CODES.at(-1)).toBe("procurement.vendor_kpi.request");
     for (const permission of STAFF_INVITATION_PERMISSIONS) {
       expect(PERMISSION_CODES).toContain(permission);
       expect(FRONTEND_PERMISSION_CODES).toContain(permission);

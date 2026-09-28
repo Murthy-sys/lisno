@@ -85,9 +85,10 @@ export function safeReturnPath(
         parsed.pathname.startsWith("/admin/configuration/estimation/"));
     const canReturnToProcurement =
       ((role === "admin" || role === "super_admin") && parsed.pathname === "/admin/procurement") ||
-      (role === "super_admin" && parsed.pathname === "/admin/procurement/vendors") ||
+      (role === "super_admin" && (parsed.pathname === "/admin/procurement/vendors" || /^\/admin\/procurement\/vendors\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(parsed.pathname))) ||
       (role === "procurement" && (parsed.pathname === "/procurement" ||
         parsed.pathname === "/procurement/vendors" ||
+        /^\/procurement\/vendors\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(parsed.pathname) ||
         /^\/procurement\/projects\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(parsed.pathname)));
     if (
       parsed.origin !== returnPathOrigin ||

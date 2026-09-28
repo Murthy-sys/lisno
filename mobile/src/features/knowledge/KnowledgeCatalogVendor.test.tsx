@@ -9,7 +9,11 @@ import { KnowledgeVendorEditor } from "./KnowledgeVendorEditor";
 import type { KnowledgeMobileContext } from "./knowledgeRuntime";
 
 jest.mock("../../runtime/RuntimeProvider", () => ({ useConfiguredRuntime: jest.fn() }));
-jest.mock("./KnowledgeVendorBaseline", () => ({ KnowledgeVendorBaseline: () => null }));
+jest.mock("./KnowledgeVendorBaseline", () => ({ KnowledgeVendorBaseline: ({ onAccessLost }: { onAccessLost: () => void }) => {
+  const NativePressable = require("react-native").Pressable;
+  const NativeText = require("react-native").Text;
+  return <NativePressable accessibilityRole="button" accessibilityLabel="Simulate baseline access loss" onPress={onAccessLost}><NativeText>Simulate baseline access loss</NativeText></NativePressable>;
+} }));
 jest.mock("../../platform/files", () => ({ pickDocument: jest.fn(), releaseSelectedAsset: jest.fn(async () => undefined), TransferHttpError: class extends Error {} }));
 const get = jest.fn(); const patch = jest.fn(); const post = jest.fn(); const upload = jest.fn(); const download = jest.fn();
 const now = "2026-09-25T00:00:00.000Z";
@@ -26,7 +30,7 @@ const multiVendor: ProcurementVendorDetail = {
   procurementProfile: { ...vendor.procurementProfile!, mainBasketIds: ["basket-a", "basket-b"], subBasketIds: ["sub-a", "sub-b"] }
 };
 const page = (items: readonly unknown[]) => ({ items, pagination: { total: items.length, limit: 100, offset: 0, hasMore: false } });
-function context(overrides: Partial<KnowledgeMobileContext> = {}): KnowledgeMobileContext { return { api: createKnowledgeApi({ get, post, patch, delete: jest.fn(), put: jest.fn() }), key: (...parts) => ["test", "admin", "knowledge", ...parts], scopeKey: "test:admin:1:1", ready: true, canRead: true, canCreate: true, canUpdate: true, canLifecycle: true, canCreateQualityOptions: true, refresh: jest.fn(async () => undefined), ...overrides }; }
+function context(overrides: Partial<KnowledgeMobileContext> = {}): KnowledgeMobileContext { return { api: createKnowledgeApi({ get, post, patch, delete: jest.fn(), put: jest.fn() }), key: (...parts) => ["test", "admin", "knowledge", ...parts], scopeKey: "test:admin:1:1", ready: true, canRead: true, canCreate: true, canUpdate: true, canLifecycle: true, canCreateClassification: true, canCorrectBaseline: true, canCreateQualityOptions: true, refresh: jest.fn(async () => undefined), ...overrides }; }
 async function mount(overrides: Partial<KnowledgeMobileContext> = {}) { const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { gcTime: 0 } } }); const onSaved = jest.fn(); const view = await render(<QueryClientProvider client={client}><KnowledgeVendorEditor context={context(overrides)} existing={vendor} onClose={jest.fn()} onSaved={onSaved} /></QueryClientProvider>); await view.findByLabelText("Entity Name"); await waitFor(() => expect(get).toHaveBeenCalledWith(expect.stringContaining("sub-baskets"))); return { view, onSaved }; }
 async function mountNew() { const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { gcTime: 0 } } }); const onSaved = jest.fn(); const view = await render(<QueryClientProvider client={client}><KnowledgeVendorEditor context={context()} onClose={jest.fn()} onSaved={onSaved} /></QueryClientProvider>); await view.findByLabelText("Entity Name"); return { view, onSaved }; }
 async function choose(view: Awaited<ReturnType<typeof render>>, label: string, value: string) { await fireEvent.press(view.getByRole("combobox", { name: label })); await fireEvent.press(view.getByRole("radio", { name: value })); }
@@ -275,10 +279,10 @@ describe("Native Configuration vendor", () => {
     await fireEvent.changeText(view.getByLabelText("Name"), "Metalwork");
     await fireEvent.press(view.getAllByRole("button", { name: "Add main basket" }).at(-1)!);
     await view.findByText("Main Baskets: 2 selected");
-    await view.findByText("Basket created and selected. Other Configuration lists could not refresh.");
+    await view.findByText("Basket created and selected. Other vendor lists could not refresh.");
     expect(post).toHaveBeenCalledTimes(1);
     await fireEvent.press(view.getByRole("button", { name: "Retry catalog refresh" }));
-    await waitFor(() => expect(view.queryByText("Basket created and selected. Other Configuration lists could not refresh.")).toBeNull());
+    await waitFor(() => expect(view.queryByText("Basket created and selected. Other vendor lists could not refresh.")).toBeNull());
     expect(refresh).toHaveBeenCalledTimes(2);
     expect(post).toHaveBeenCalledTimes(1);
   });
@@ -346,6 +350,42 @@ describe("Native Configuration vendor", () => {
     const readonly = await mount({ canUpdate: false });
     expect(readonly.view.queryByRole("button", { name: "Save vendor changes" })).toBeNull();
     expect(readonly.view.getByLabelText("Entity Name").props.editable).toBe(false);
+  });
+
+  it("requires classification permission for inline baskets independently of vendor create permission", async () => {
+    const restricted = await mount({ canCreateClassification: false, canCreate: true });
+    expect(restricted.view.queryByRole("button", { name: "Add main basket" })).toBeNull();
+    await restricted.view.unmount();
+    const allowed = await mount({ canCreateClassification: true, canCreate: false, canUpdate: true });
+    expect(allowed.view.getByRole("button", { name: "Add main basket" })).toBeTruthy();
+  });
+
+  it("removes private vendor detail and write controls after a forbidden save", async () => {
+    patch.mockRejectedValueOnce(new ApiError(403, "FORBIDDEN", "Access removed"));
+    const { view } = await mount();
+    await fireEvent.press(view.getByRole("button", { name: "Save vendor changes" }));
+    await view.findByText("Vendor access required");
+    expect(view.queryByLabelText("Entity Name")).toBeNull();
+    expect(view.queryByRole("button", { name: "Save vendor changes" })).toBeNull();
+  });
+
+  it("removes parent vendor detail after a forbidden inline basket creation", async () => {
+    post.mockRejectedValueOnce(new ApiError(403, "FORBIDDEN", "Access removed"));
+    const { view } = await mount();
+    await fireEvent.press(view.getByRole("button", { name: "Add main basket" }));
+    await fireEvent.changeText(view.getByLabelText("Name"), "Blocked basket");
+    await fireEvent.press(view.getAllByRole("button", { name: "Add main basket" }).at(-1)!);
+    await view.findByText("Vendor access required");
+    expect(view.queryByLabelText("Entity Name")).toBeNull();
+    expect(view.queryByText("Blocked basket")).toBeNull();
+  });
+
+  it("removes parent vendor detail when historical correction loses access", async () => {
+    const { view } = await mount();
+    await fireEvent.press(view.getByRole("button", { name: "Review missing historical allocations" }));
+    await fireEvent.press(view.getByRole("button", { name: "Simulate baseline access loss" }));
+    await view.findByText("Vendor access required");
+    expect(view.queryByLabelText("Entity Name")).toBeNull();
   });
 
   it("retries a picture failure without submitting the already-saved profile twice", async () => {

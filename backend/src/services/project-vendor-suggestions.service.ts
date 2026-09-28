@@ -7,6 +7,7 @@ import { vendorSuggestionCreateSchema, vendorSuggestionQuerySchema, vendorSugges
 } from "../domain/project-vendor-suggestions.js";
 import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeVendorModel } from "../models/AiEstimatorKnowledgeVendor.js";
+import { vendorKpiDirectorySummaries } from "./vendor-kpi.service.js";
 import { AuthorizationCoordinationModel } from "../models/AuthorizationCoordination.js";
 import { EstimateModel } from "../models/Estimate.js";
 import { ProjectAccessGrantModel } from "../models/ProjectAccessGrant.js";
@@ -74,7 +75,7 @@ export function createProjectVendorSuggestionService(input: { audit: AuditServic
         const filter = { ...sourceFilter(projectId, source), ...(q ? { $or: [{ vendorId: { $in: matchingVendors.map((row) => row._id) } }, { vendorNameSnapshot: { $regex: literal(q), $options: "i" } }, { note: { $regex: literal(q), $options: "i" } }] } : {}) };
         const total = await ProjectVendorSuggestionModel.countDocuments(filter).session(session);
         const rows = await ProjectVendorSuggestionModel.find(filter).sort({ createdAt: -1, _id: 1 }).skip(offset).limit(limit).session(session).lean();
-        return { project: summary(projectId, String(project.name), source), items: await dtos(rows, session), total, limit, offset, performance: { status: "not_available", recommendations: [] } };
+        return { project: summary(projectId, String(project.name), source), items: await dtos(rows, session, actor), total, limit, offset, performance: { status: "not_available", recommendations: [] } };
       });
     },
     async create(actor, projectId, value) {
@@ -91,7 +92,7 @@ export function createProjectVendorSuggestionService(input: { audit: AuditServic
             if (prior) {
               if (prior.requestHash !== hash || prior.projectId !== projectId) throw new ApiError(409, "VENDOR_SUGGESTION_IDEMPOTENCY_CONFLICT", "This request key was already used for a different suggestion.");
               requireStoredSource(source, prior);
-              return { suggestion: (await dtos([prior], session))[0]!, created: false };
+              return { suggestion: (await dtos([prior], session, actor))[0]!, created: false };
             }
             if (await ProjectVendorSuggestionModel.exists({ ...sourceFilter(projectId, source), vendorId: fields.vendorId }).session(session)) duplicate();
             const vendor = await activeVendor(fields.vendorId, session);
@@ -103,7 +104,7 @@ export function createProjectVendorSuggestionService(input: { audit: AuditServic
               updatedById: actor.id, updatedByName: currentActor.name, createdAt: timestamp, updatedAt: timestamp
             }], { session });
             if (!record) throw new Error("Vendor suggestion creation failed.");
-            const suggestion = (await dtos([record.toObject()], session))[0]!;
+            const suggestion = (await dtos([record.toObject()], session, actor))[0]!;
             await input.audit.appendInMongoTransaction({ actorId: actor.id, action: "project_vendor_suggestion_created", entityType: "project_vendor_suggestion", entityId: suggestion.id, occurredAt: timestamp.toISOString(), newValues: { ...suggestion } }, session);
             return { suggestion, created: true };
           });
@@ -125,7 +126,7 @@ export function createProjectVendorSuggestionService(input: { audit: AuditServic
           $set: { note: fields.note, status: fields.status, updatedById: actor.id, updatedByName: currentActor.name, updatedAt: timestamp }, $inc: { version: 1 }
         }, { session, returnDocument: "after", runValidators: true, timestamps: false }).lean();
         if (!updated) versionConflict();
-        const [oldValue, suggestion] = await dtos([current, updated], session);
+        const [oldValue, suggestion] = await dtos([current, updated], session, actor);
         await input.audit.appendInMongoTransaction({ actorId: actor.id, action: "project_vendor_suggestion_updated", entityType: "project_vendor_suggestion", entityId: id, occurredAt: timestamp.toISOString(), oldValues: { ...oldValue }, newValues: { ...suggestion } }, session);
         return suggestion!;
       });
@@ -150,8 +151,9 @@ async function activeVendor(id: string, session: ClientSession): Promise<Row> {
   if (!row) throw new ApiError(409, "VENDOR_SUGGESTION_VENDOR_UNAVAILABLE", "This vendor is no longer available. Choose an active vendor.");
   return row;
 }
-async function dtos(rows: Row[], session: ClientSession): Promise<ProjectVendorSuggestion[]> {
-  const vendors = await AiEstimatorKnowledgeVendorModel.find({ _id: { $in: rows.map((row) => row.vendorId) } }).select({ code: 1, name: 1, status: 1 }).session(session).lean();
+async function dtos(rows: Row[], session: ClientSession, actor: PublicUser): Promise<ProjectVendorSuggestion[]> {
+  const vendors = await AiEstimatorKnowledgeVendorModel.find({ _id: { $in: rows.map((row) => row.vendorId) } }).select({ code: 1, name: 1, status: 1, procurementProfile: 1, kpiRubricGeneration: 1 }).session(session).lean();
+  const kpis = actor.role === "procurement" || actor.role === "super_admin" ? await vendorKpiDirectorySummaries(vendors, session) : null;
   const people = await UserModel.find({ _id: { $in: rows.flatMap((row) => [row.createdById, row.updatedById]) } }).select({ name: 1 }).session(session).lean();
   const byVendor = new Map(vendors.map((row) => [String(row._id), row]));
   const byPerson = new Map(people.map((row) => [String(row._id), row]));
@@ -162,7 +164,10 @@ async function dtos(rows: Row[], session: ClientSession): Promise<ProjectVendorS
       note: row.note, status: row.status, version: row.version,
       suggestedBy: { id: row.createdById, name: byPerson.get(String(row.createdById))?.name ?? row.createdByName },
       updatedBy: { id: row.updatedById, name: byPerson.get(String(row.updatedById))?.name ?? row.updatedByName },
-      createdAt: new Date(row.createdAt).toISOString(), updatedAt: new Date(row.updatedAt).toISOString(), kpi: { status: "not_rated", score: null }
+      createdAt: new Date(row.createdAt).toISOString(), updatedAt: new Date(row.updatedAt).toISOString(),
+      kpi: !kpis ? { status: "not_available", score: null } : kpis.get(String(row.vendorId))?.status === "rated"
+        ? { status: "rated", score: kpis.get(String(row.vendorId))!.officialScoreBps! / 100 }
+        : { status: "not_rated", score: null }
     };
   });
 }

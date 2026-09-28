@@ -21,6 +21,8 @@ export function useKnowledgeContext(session: AuthenticatedSession) {
     canCreate: permissions.includes("ai_estimator_knowledge.configuration.create"),
     canUpdate: permissions.includes("ai_estimator_knowledge.configuration.update"),
     canLifecycle: permissions.includes("ai_estimator_knowledge.configuration.lifecycle"),
+    canCreateClassification: permissions.includes("procurement.vendor_classification.create"),
+    canCorrectBaseline: permissions.includes("procurement.vendor_allocation_baseline.correct"),
     canCreateQualityOptions: permissions.includes("ai_estimator_knowledge.quality_control_options.create"),
     refresh: () => refresh("knowledge-changed")
   };

@@ -23,7 +23,7 @@ export interface VendorSuggestion {
   updatedBy: { id: string; name: string };
   createdAt: string;
   updatedAt: string;
-  kpi: { status: "not_rated"; score: null };
+  kpi: { status: "not_available" | "not_rated" | "rated"; score: number | null };
 }
 export interface VendorSuggestionPage {
   project: VendorSuggestionProject;

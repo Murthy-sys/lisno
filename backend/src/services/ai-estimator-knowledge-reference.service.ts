@@ -55,6 +55,9 @@ import { AiEstimatorKnowledgeTaxRuleModel } from "../models/AiEstimatorKnowledge
 import { AiEstimatorKnowledgeTaxVersionModel } from "../models/AiEstimatorKnowledgeTaxVersion.js";
 import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
 import { AiEstimatorKnowledgeVendorModel } from "../models/AiEstimatorKnowledgeVendor.js";
+import { VendorKpiRequestModel } from "../models/VendorKpiRequest.js";
+import { vendorKpiDirectorySummaries } from "./vendor-kpi.service.js";
+import type { VendorKpiDirectorySummary } from "../contracts/vendor-kpi.js";
 import { AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_MANIFEST } from "../operations/ai-estimator-knowledge-bootstrap.manifest.js";
 import type { PageResult, PaginationInput } from "../repositories/types.js";
 import type { AuditService } from "./audit.service.js";
@@ -160,6 +163,7 @@ export interface AiEstimatorKnowledgePermanentDeleteSubBasketResult {
 
 export interface AiEstimatorKnowledgeMasterDto {
   readonly procurementSummary?: ProcurementVendorSummary;
+  readonly vendorKpi?: VendorKpiDirectorySummary;
   readonly id: string;
   readonly masterType: AiEstimatorKnowledgeMasterType;
   readonly code: string;
@@ -898,7 +902,8 @@ export function createAiEstimatorKnowledgeReferenceService(
       const row = await AiEstimatorKnowledgeVendorModel.findById(id).lean().exec() as Row | null;
       if (!row) notFound();
       const summaries = await procurementVendorSummaries([row]);
-      return { ...masterDto("vendors", row), procurementSummary: summaries.get(id)!, procurementProfile: storedProcurementVendorProfile(row.procurementProfile), geoTaggedPicture: procurementVendorPhotoDescriptor(id, row.geoTaggedPicture), msmeCertificate: procurementVendorCertificateDescriptor(id, row.msmeCertificate) };
+      const kpis = await vendorKpiDirectorySummaries([row]);
+      return { ...masterDto("vendors", row), procurementSummary: summaries.get(id)!, vendorKpi: kpis.get(id)!, procurementProfile: storedProcurementVendorProfile(row.procurementProfile), geoTaggedPicture: procurementVendorPhotoDescriptor(id, row.geoTaggedPicture), msmeCertificate: procurementVendorCertificateDescriptor(id, row.msmeCertificate) };
     },
 
     async listMasters(actor, masterType, filters, pagination) {
@@ -935,12 +940,13 @@ export function createAiEstimatorKnowledgeReferenceService(
         ? await taxVersionsByRuleIds(typedRows.map((row) => String(row._id)))
         : new Map<string, readonly KnowledgeTaxVersion[]>();
       const summaries = masterType === "vendors" ? await procurementVendorSummaries(typedRows) : new Map<string, ProcurementVendorSummary>();
+      const kpis = masterType === "vendors" ? await vendorKpiDirectorySummaries(typedRows) : new Map();
       return {
         items: typedRows.map((row) => ({ ...masterDto(
           masterType,
           row,
           taxVersions.get(String(row._id))
-        ), ...(masterType === "vendors" ? { procurementSummary: summaries.get(String(row._id))! } : {}) })),
+        ), ...(masterType === "vendors" ? { procurementSummary: summaries.get(String(row._id))!, vendorKpi: kpis.get(String(row._id))! } : {}) })),
         total,
         ...(directoryOverview ? { directoryOverview } : {})
       };
@@ -1075,6 +1081,11 @@ export function createAiEstimatorKnowledgeReferenceService(
           set.msmeCertificate = await consumeProcurementVendorCertificate({ actorId: authorized.id, vendorId: id, creating: false,
             expectedVersion: input.expectedVersion, registered: profile.msmeRegistered, uploadId: input.msmeCertificateUploadId,
             previous: current.msmeCertificate, now: timestamp, session });
+          const previousProfile = current.procurementProfile as Row | undefined;
+          const changedType = previousProfile?.vendorType !== profile.vendorType;
+          const changedEmail = String(previousProfile?.email ?? "").trim().toLowerCase() !== profile.email.trim().toLowerCase();
+          if (changedType) set.kpiRubricGeneration = Number(current.kpiRubricGeneration ?? 0) + 1;
+          if (changedType || changedEmail) await VendorKpiRequestModel.updateMany({ vendorId: id, status: { $in: ["pending", "sent"] } }, { $set: { status: "superseded" } }, { session });
         }
         let dependencyEpochFilter: Record<string, unknown> = {};
         if (masterType === "uoms" && input.decimalScale !== undefined) {
@@ -1200,6 +1211,7 @@ export function createAiEstimatorKnowledgeReferenceService(
           { returnDocument: "after", runValidators: true, session }
         ).lean().exec() as Row | null;
         if (!updated) versionConflict();
+        if (masterType === "vendors") await VendorKpiRequestModel.updateMany({ vendorId: id, status: { $in: ["pending", "sent"] } }, { $set: { status: "superseded" } }, { session });
         await dependencies.audit.appendInMongoTransaction({
           actorId: authorized.id,
           action: "ai_estimator_knowledge_master_archived",
@@ -1438,15 +1450,26 @@ async function procurementVendorDirectoryOverview(): Promise<ProcurementVendorDi
   // This aggregation deliberately has no list filters or pagination: the tiles describe the directory.
   const [overview] = await AiEstimatorKnowledgeVendorModel.aggregate<ProcurementVendorDirectoryOverview>([
     { $match: { status: { $ne: "archived" } } },
+    { $lookup: { from: "vendorKpiAssessments", let: { vendorId: "$_id", vendorType: "$procurementProfile.vendorType", generation: { $ifNull: ["$kpiRubricGeneration", 0] } },
+      pipeline: [
+        { $match: { source: "procurement", rubricVersion: 1, $expr: { $and: [
+          { $eq: ["$vendorId", "$$vendorId"] }, { $eq: ["$vendorType", "$$vendorType"] }, { $eq: ["$rubricGeneration", "$$generation"] }
+        ] } } },
+        { $sort: { revision: -1 } }, { $limit: 1 }, { $project: { averageScoreBps: 1 } }
+      ], as: "officialKpi" } },
+    { $set: { officialScoreBps: { $arrayElemAt: ["$officialKpi.averageScoreBps", 0] } } },
     { $group: {
       _id: null,
       totalVendors: { $sum: 1 },
       activeVendors: { $sum: { $cond: [{ $eq: ["$status", "active"] }, 1, 0] } },
-      underReviewVendors: { $sum: { $cond: [{ $eq: [{ $ifNull: ["$procurementProfile.currentAddressVerifiedPhysically", false] }, false] }, 1, 0] } }
+      underReviewVendors: { $sum: { $cond: [{ $eq: [{ $ifNull: ["$procurementProfile.currentAddressVerifiedPhysically", false] }, false] }, 1, 0] } },
+      ratedVendors: { $sum: { $cond: [{ $ne: [{ $ifNull: ["$officialScoreBps", null] }, null] }, 1, 0] } },
+      averageKpiScoreBps: { $avg: "$officialScoreBps" }
     } },
-    { $project: { _id: 0, totalVendors: 1, activeVendors: 1, underReviewVendors: 1 } }
+    { $project: { _id: 0, totalVendors: 1, activeVendors: 1, underReviewVendors: 1, ratedVendors: 1,
+      averageKpiScoreBps: { $cond: [{ $eq: ["$ratedVendors", 0] }, null, { $round: ["$averageKpiScoreBps", 0] }] } } }
   ]).exec();
-  return overview ?? { totalVendors: 0, activeVendors: 0, underReviewVendors: 0 };
+  return overview ?? { totalVendors: 0, activeVendors: 0, underReviewVendors: 0, ratedVendors: 0, averageKpiScoreBps: null };
 }
 
 function validateListFilters(filters: AiEstimatorKnowledgeListFilters): void {

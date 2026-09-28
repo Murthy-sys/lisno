@@ -17,9 +17,10 @@ export function vendorColumnWidth(column: VendorDirectoryColumn, minWidth: numbe
   return width.max === undefined ? `max(${width.min}px, ${grown})` : `clamp(${width.min}px, ${grown}, ${width.max}px)`;
 }
 
-export function VendorDirectoryTable({ items, selected, onSelection, canUpdate, canArchive, onEdit, onView, onArchive, columns = vendorDirectoryColumns }: {
+export function VendorDirectoryTable({ items, selected, onSelection, canUpdate, canArchive, canOpenKpi = false, onEdit, onView, onArchive, onOpen, columns = vendorDirectoryColumns }: {
   items: readonly KnowledgeMaster[]; selected: Set<string>; onSelection: (selection: Set<string>) => void; canUpdate: boolean; canArchive: boolean;
   onEdit: (vendor: KnowledgeMaster) => void; onView: (vendor: KnowledgeMaster) => void; onArchive: (vendor: KnowledgeMaster) => void;
+  canOpenKpi?: boolean; onOpen?: (vendor: KnowledgeMaster) => void;
   columns?: readonly VendorDirectoryColumn[];
 }) {
   const selectAll = useRef<HTMLInputElement>(null);
@@ -48,7 +49,7 @@ export function VendorDirectoryTable({ items, selected, onSelection, canUpdate, 
     <colgroup>{columns.map((column) => { const width = vendorColumnWidth(column, minWidth, totalWeight); return <col key={column.id} data-column={column.id} style={width === undefined ? undefined : { width }} />; })}</colgroup>
     <thead><tr>{columns.map((column) => column.placement === "selection" ? <th key={column.id} scope="col" className="vendor-directory__selection" {...cell(column, false)}><label><Checkbox ref={selectAll} aria-label="Select all vendors on this page" checked={items.length > 0 && selectedCount === items.length} onChange={(event) => onSelection(event.target.checked ? new Set(items.map((vendor) => vendor.id)) : new Set())} /></label></th> : <th key={column.id} scope="col" {...cell(column, false)}>{column.header}</th>)}</tr></thead>
     <tbody>{items.map((vendor) => {
-      const context: VendorDirectoryRowContext = { selected: selected.has(vendor.id), toggle: (checked) => { const next = new Set(selected); if (checked) next.add(vendor.id); else next.delete(vendor.id); onSelection(next); }, canUpdate, canArchive, onEdit: () => onEdit(vendor), onView: () => onView(vendor), onArchive: () => onArchive(vendor) };
+      const context: VendorDirectoryRowContext = { selected: selected.has(vendor.id), toggle: (checked) => { const next = new Set(selected); if (checked) next.add(vendor.id); else next.delete(vendor.id); onSelection(next); }, canUpdate, canArchive, canOpenKpi, onEdit: () => onEdit(vendor), onView: () => onView(vendor), onArchive: () => onArchive(vendor), onOpen: () => onOpen?.(vendor) };
       return <tr key={vendor.id} data-selected={context.selected || undefined}>{columns.map((column) => column.placement === "identity" ? <th key={column.id} scope="row" {...cell(column, true)}>{column.render(vendor, context)}</th> : <td key={column.id} className={column.placement === "selection" ? "vendor-directory__selection" : undefined} {...cell(column, true)}>{column.render(vendor, context)}</td>)}</tr>;
     })}</tbody>
   </table></div>;

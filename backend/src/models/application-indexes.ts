@@ -30,6 +30,8 @@ import { AiEstimatorKnowledgeTaxRuleModel } from "./AiEstimatorKnowledgeTaxRule.
 import { AiEstimatorKnowledgeTaxVersionModel } from "./AiEstimatorKnowledgeTaxVersion.js";
 import { AiEstimatorKnowledgeUomModel } from "./AiEstimatorKnowledgeUom.js";
 import { AiEstimatorKnowledgeVendorModel } from "./AiEstimatorKnowledgeVendor.js";
+import { VendorKpiAssessmentModel } from "./VendorKpiAssessment.js";
+import { VendorKpiRequestModel } from "./VendorKpiRequest.js";
 
 export async function initializeApplicationIndexes(): Promise<void> {
   await ProjectProcurementItemModel.init();
@@ -56,6 +58,8 @@ export async function initializeApplicationIndexes(): Promise<void> {
   await AiEstimatorKnowledgePriceVersionModel.init();
   await AiEstimatorKnowledgeUomModel.init();
   await AiEstimatorKnowledgeVendorModel.init();
+  await VendorKpiAssessmentModel.init();
+  await VendorKpiRequestModel.init();
   await ProcurementVendorCertificateUploadModel.init();
   await ProcurementVendorCertificateCleanupModel.init();
   await ProcurementVendorSaveCommandModel.init();

@@ -26,6 +26,8 @@ import { KnowledgeCatalogWorkspace } from "../knowledge";
 import { ProjectsWorkspace } from "../projects/ProjectsWorkspace";
 import { MessagesWorkspace } from "../messages/MessagesWorkspace";
 import { SuperAdminMobileDashboard } from "../dashboard/SuperAdminMobileDashboard";
+import { ProcurementDashboard } from "../procurement/ProcurementDashboard";
+import { ProcurementVendorsWorkspace } from "../procurement/ProcurementVendorsWorkspace";
 
 function requestScope(context: ReturnType<typeof useConfiguredRuntime>, session: AuthenticatedSession) {
   return {
@@ -49,6 +51,12 @@ export function FeatureWorkspace({ destination, session }: { readonly destinatio
   }
   if (destination.id === "estimates") {
     return <ClientEstimatesWorkspace session={session} />;
+  }
+  if (destination.id === "procurement" && session.user.role === "procurement") {
+    return <ProcurementDashboard session={session} />;
+  }
+  if (destination.id === "procurement-vendors") {
+    return <ProcurementVendorsWorkspace session={session} />;
   }
   return <GenericFeatureWorkspace destination={destination} session={session} />;
 }

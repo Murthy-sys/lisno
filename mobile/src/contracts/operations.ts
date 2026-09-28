@@ -261,6 +261,9 @@ const PROTECTED_OPERATION_PERMISSIONS = [
   {"operation":"PUT /projects/:projectId/chat/read","permission":"chat.read_state"},
   {"operation":"PUT /projects/:projectId/chat/typing","permission":"chat.send"},
   {"operation":"GET /projects/:projectId/chat/events","permission":"chat.read"},
+  {"operation":"GET /procurement/vendor-kpis/:vendorId","permission":"procurement.vendor_kpi.read"},
+  {"operation":"PUT /procurement/vendor-kpis/:vendorId/procurement","permission":"procurement.vendor_kpi.rate"},
+  {"operation":"POST /procurement/vendor-kpis/:vendorId/requests","permission":"procurement.vendor_kpi.request"},
 ] as const satisfies readonly ProtectedOperationPermission[];
 
 // This ordered mirror is intentionally separate from permission data so the
@@ -298,7 +301,7 @@ const SUPER_ADMIN_BEHAVIORS = [
   "global_read", "global_read", "deny_personal", "deny_personal", "self", "self", "self", "global_read",
   "global_read", "self", "self", "global_read", "global_read", "global_read", "global_read", "global_read",
   "admin_override", "admin_override", "admin_override", "admin_override", "global_read", "admin_override", "admin_override", "global_read",
-  "self", "admin_override", "self", "self", "global_read",
+  "self", "admin_override", "self", "self", "global_read", "global_read", "admin_override", "admin_override",
 ] as const satisfies readonly SuperAdminBehavior[];
 
 function behaviorAt(index: number): SuperAdminBehavior {
@@ -321,5 +324,7 @@ export const PUBLIC_API_OPERATIONS = [
   "POST /auth/password-reset/inspect",
   "POST /auth/password-reset/complete",
   "POST /auth/user-invitations/inspect",
-  "POST /auth/user-invitations/accept"
+  "POST /auth/user-invitations/accept",
+  "POST /vendor-kpi/inspect",
+  "POST /vendor-kpi/submit"
 ] as const;

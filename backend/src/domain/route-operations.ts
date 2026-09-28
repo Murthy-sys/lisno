@@ -291,6 +291,9 @@ export const HUMAN_JWT_OPERATION_LIST = [
   { key: "PUT /projects/:projectId/chat/read", permission: "chat.read_state", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
   { key: "PUT /projects/:projectId/chat/typing", permission: "chat.send", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
   { key: "GET /projects/:projectId/chat/events", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_chat" },
+  { key: "GET /procurement/vendor-kpis/:vendorId", permission: "procurement.vendor_kpi.read", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "read", superAdminBehavior: "global_read", availability: "ai_estimator_knowledge" },
+  { key: "PUT /procurement/vendor-kpis/:vendorId/procurement", permission: "procurement.vendor_kpi.rate", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "ai_estimator_knowledge" },
+  { key: "POST /procurement/vendor-kpis/:vendorId/requests", permission: "procurement.vendor_kpi.request", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "ai_estimator_knowledge" },
 ] as const satisfies readonly HumanJwtOperation[];
 
 export type HumanJwtOperationKey =

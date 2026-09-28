@@ -57,7 +57,7 @@ const profile: Shape = {
 const master = knowledge.KnowledgeMaster as { properties: Shape; required: string[] };
 const createMaster = knowledge.KnowledgeMasterCreateRequest as { properties: Shape };
 const updateMaster = knowledge.KnowledgeMasterUpdateRequest as { properties: Shape };
-const vendorFields = { ...master.properties, procurementSummary: ref("KnowledgeVendorSummary") };
+const vendorFields = { ...master.properties, procurementSummary: ref("KnowledgeVendorSummary"), vendorKpi: ref("VendorKpiDirectorySummary") };
 const storedProfile = { ...profile,
   physicalAddressVerifiedAt: { type: "string", format: "date-time", nullable: true },
   physicalAddressVerifiedById: { ...id, nullable: true }
@@ -101,8 +101,8 @@ export const PROCUREMENT_VENDOR_SCHEMAS: Readonly<Record<string, Shape>> = {
     msmeCertificate: { allOf: [ref("KnowledgeVendorCertificate")], nullable: true }
   }, [...master.required, "procurementSummary", "procurementProfile", "geoTaggedPicture", "msmeCertificate"]),
   KnowledgeVendorDirectoryOverview: {
-    ...object({ totalVendors: { type: "integer", minimum: 0 }, activeVendors: { type: "integer", minimum: 0 }, underReviewVendors: { type: "integer", minimum: 0 } }),
-    description: "Global non-archived vendor counts, independent of search, lifecycle, classification, baskets and pagination filters. Active uses lifecycle active. Under review means physical-address verification is false or absent and can overlap Active."
+    ...object({ totalVendors: { type: "integer", minimum: 0 }, activeVendors: { type: "integer", minimum: 0 }, underReviewVendors: { type: "integer", minimum: 0 }, ratedVendors: { type: "integer", minimum: 0 }, averageKpiScoreBps: { type: "integer", minimum: 0, maximum: 10_000, nullable: true } }, ["totalVendors", "activeVendors", "underReviewVendors"]),
+    description: "Global non-archived vendor counts, independent of search, lifecycle, classification, baskets and pagination filters. Active uses lifecycle active. Under review means physical-address verification is false or absent and can overlap Active. Rated vendors and their mean score use the current official Procurement assessment only."
   },
   KnowledgeVendorPage: object({ items: { type: "array", items: ref("KnowledgeVendor") }, pagination: (knowledge.KnowledgeMasterPage as { properties: Shape }).properties.pagination, directoryOverview: ref("KnowledgeVendorDirectoryOverview") }, ["items", "pagination"]),
   KnowledgeVendorCreateRequest: {

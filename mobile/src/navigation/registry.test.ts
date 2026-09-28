@@ -111,4 +111,18 @@ describe("authorized mobile navigation", () => {
     expect(resolveAuthorizedFeature("finance", "client", authorization)).toBeNull();
     expect(resolveAuthorizedFeature("projects", "client", authorization)?.id).toBe("projects");
   });
+
+  it("keeps vendor access Procurement-only and preserves one root tab with either authorized child", () => {
+    const full = snapshot("procurement");
+    expect(resolveAuthorizedFeature("procurement-vendors", "procurement", full)?.path).toBe("/feature/procurement-vendors");
+    expect(resolveAuthorizedFeature("procurement-vendors", "super_admin", snapshot("super_admin"))).toBeNull();
+    const onlyDashboard = { ...full, permissions: ["workflow.tasks.read", "procurement.workspace.read"] as const };
+    const onlyVendors = { ...full, permissions: ["workflow.tasks.read", "procurement.vendor_directory.read"] as const };
+    const neither = { ...full, permissions: ["workflow.tasks.read"] as const };
+    expect(rootTabsForAuthorization("procurement", onlyDashboard).find((tab) => tab.id === "domain")?.destination?.id).toBe("procurement");
+    expect(rootTabsForAuthorization("procurement", onlyVendors).find((tab) => tab.id === "domain")?.destination?.id).toBe("procurement-vendors");
+    expect(rootTabsForAuthorization("procurement", onlyVendors).find((tab) => tab.id === "domain")?.label).toBe("Procurement");
+    expect(rootTabsForAuthorization("procurement", neither).some((tab) => tab.id === "domain")).toBe(false);
+    expect(resolveAuthorizedFeature("procurement-vendors", "procurement", onlyDashboard)).toBeNull();
+  });
 });
