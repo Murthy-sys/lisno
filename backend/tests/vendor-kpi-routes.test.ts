@@ -12,7 +12,7 @@ const actor: PublicUser = { id: "synthetic-user", name: "Synthetic user", email:
 const detail = { vendor: { id: "vendor-a", code: "VA", name: "Synthetic vendor", status: "active" as const, vendorType: "execution" as const,
   workProfile: "Synthetic work", mainBasketNames: [], subBasketNames: [], emailAvailable: true },
   rubricVersion: 1, selfAssessment: null, procurementAssessment: null, officialScoreBps: null, request: null, requestEligibility: "ready" as const };
-const publicInspection = { vendor: { name: "Synthetic vendor", code: "VA", vendorType: "execution" as const, workProfile: "Synthetic work", mainBasketNames: [], subBasketNames: [] },
+const publicInspection = { vendor: { name: "Synthetic vendor", vendorType: "execution" as const, workProfile: "Synthetic work", representativeName: "Synthetic Representative", representativePosition: "Owner" },
   rubricVersion: 1, expiresAt: "2026-09-29T00:00:00.000Z" };
 const scores = [
   { key: "timeline", score: 90 }, { key: "quality", score: 95 }, { key: "budget", score: 85 }, { key: "site_discipline", score: 90 }

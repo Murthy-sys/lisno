@@ -67,6 +67,31 @@ describe("Procurement Vendors workspace", () => {
     expect(router.push).toHaveBeenCalledWith({ pathname: "/vendor/[vendorId]", params: { vendorId: "vendor-two", from: "procurement-vendors" } });
   });
 
+  it("shows one review-aware status and omits vendor codes while keeping ID-based navigation", async () => {
+    const { renderWorkspace } = setup();
+    const items = [
+      { ...vendor, id: "under-review", name: "Review Co", code: "PV-REVIEW", procurementSummary: { ...vendor.procurementSummary, currentAddressVerifiedPhysically: false } },
+      { ...vendor, id: "verified", name: "Verified Co", code: "PV-VERIFIED", procurementSummary: { ...vendor.procurementSummary, currentAddressVerifiedPhysically: true } },
+      { ...vendor, id: "inactive", name: "Inactive Co", code: "PV-INACTIVE", status: "inactive", procurementSummary: { ...vendor.procurementSummary, currentAddressVerifiedPhysically: false } },
+      { ...vendor, id: "archived", name: "Archived Co", code: "PV-ARCHIVED", status: "archived", procurementSummary: { ...vendor.procurementSummary, currentAddressVerifiedPhysically: false } }
+    ];
+    get.mockImplementation(async (path: string) => {
+      if (path.includes("includeDirectoryOverview")) return { ...page([]), directoryOverview: { totalVendors: 4, activeVendors: 1, underReviewVendors: 1 } };
+      if (path.includes("/baskets?")) return page([]);
+      if (path.includes("/vendors?")) return page(items);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const view = await renderWorkspace();
+    await view.findByText("Review Co");
+    expect(view.getByText("Under Review · supplier")).toBeTruthy();
+    expect(view.getByText("Active · supplier")).toBeTruthy();
+    expect(view.getByText("Inactive · supplier")).toBeTruthy();
+    expect(view.getByText("Archived · supplier")).toBeTruthy();
+    for (const item of items) expect(view.queryByText(new RegExp(item.code))).toBeNull();
+    await fireEvent.press(view.getByRole("link", { name: "Open Review Co KPI" }));
+    expect(router.push).toHaveBeenCalledWith({ pathname: "/vendor/[vendorId]", params: { vendorId: "under-review", from: "procurement-vendors" } });
+  });
+
   it("applies search and basket filters to the shared vendor endpoint", async () => {
     const { renderWorkspace } = setup();
     const view = await renderWorkspace();

@@ -130,8 +130,8 @@ describe("OpenAPI and Swagger UI", () => {
       expect(operation.requestBody).toHaveProperty("content.application/json.schema.$ref", `#/components/schemas/${requestSchema}`);
       expect(operation.responses).toHaveProperty("200.content.application/json.schema.properties.data.$ref", `#/components/schemas/${responseSchema}`);
     }
-    expect(Object.keys(schemas.VendorKpiPublicVendor!.properties).sort()).toEqual(["code", "mainBasketNames", "name", "subBasketNames", "vendorType", "workProfile"]);
-    for (const key of ["email", "phoneNumber", "bankAccount", "address", "gstNumber", "msmeCertificate", "token"]) {
+    expect(Object.keys(schemas.VendorKpiPublicVendor!.properties).sort()).toEqual(["name", "representativeName", "representativePosition", "vendorType", "workProfile"]);
+    for (const key of ["code", "mainBasketNames", "subBasketNames", "email", "phoneNumber", "bankAccount", "address", "gstNumber", "msmeCertificate", "token"]) {
       expect(schemas.VendorKpiPublicVendor!.properties).not.toHaveProperty(key);
       expect(schemas.VendorKpiPublicInspection!.properties).not.toHaveProperty(key);
     }

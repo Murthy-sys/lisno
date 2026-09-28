@@ -61,9 +61,10 @@ describe("vendor KPI persistence and one-time delivery", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]?.recipient.email).toBe("vendor@example.invalid");
     const publicView = await service.inspect(sent[0]!.rawToken);
-    expect(publicView.vendor).toMatchObject({ name: "Synthetic vendor", code: "VA", vendorType: "execution" });
+    expect(publicView.vendor).toEqual({ name: "Synthetic vendor", vendorType: "execution", workProfile: "Interior installation",
+      representativeName: "Synthetic Representative", representativePosition: "Owner" });
     const serialized = JSON.stringify(publicView);
-    for (const sensitive of ["aadhar", "pan", "bankAccount", "phoneNumber", "email", "staff", "procurementAssessment"]) expect(serialized).not.toContain(sensitive);
+    for (const sensitive of ["code", "mainBasket", "subBasket", "aadhar", "pan", "bankAccount", "phoneNumber", "email", "staff", "procurementAssessment"]) expect(serialized).not.toContain(sensitive);
     const input = { token: sent[0]!.rawToken, rubricVersion: 1, idempotencyKey: "submit-001", scores: executionScores };
     const receipt = await service.submit(input);
     expect(receipt.averageScoreBps).toBe(9000);
@@ -73,6 +74,15 @@ describe("vendor KPI persistence and one-time delivery", () => {
     expect(await VendorKpiAssessmentModel.countDocuments({ source: "vendor_self" })).toBe(1);
     expect((await service.read(superAdmin, "vendor-a")).selfAssessment?.averageScoreBps).toBe(9000);
     expect((await service.read(superAdmin, "vendor-a")).officialScoreBps).toBeNull();
+  });
+  it("uses empty text for missing legacy representative details without exposing private fields", async () => {
+    await service.request(buyer, "vendor-a", { idempotencyKey: "request-legacy-001", expectedRequestVersion: null });
+    await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: "vendor-a" },
+      { $unset: { "procurementProfile.nameOfRepresentative": "", "procurementProfile.position": "", "procurementProfile.workProfile": "" } });
+    expect((await service.inspect(sent[0]!.rawToken)).vendor).toEqual({ name: "Synthetic vendor", vendorType: "execution",
+      workProfile: "", representativeName: "", representativePosition: "" });
+    const receipt = await service.submit({ token: sent[0]!.rawToken, rubricVersion: 1, idempotencyKey: "submit-legacy-001", scores: executionScores });
+    expect(receipt.averageScoreBps).toBe(9000);
   });
   it("rejects expiry, changed email, and archive without exposing a summary", async () => {
     await service.request(buyer, "vendor-a", { idempotencyKey: "request-001", expectedRequestVersion: null });

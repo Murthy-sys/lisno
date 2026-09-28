@@ -69,10 +69,10 @@ export const VENDOR_KPI_SCHEMAS: Readonly<Record<string, Shape>> = {
     idempotencyKey, expectedRequestVersion: { type: "integer", minimum: 1, nullable: true }
   }),
   VendorKpiPublicVendor: object({
-    name: { type: "string" }, code: { type: "string" }, vendorType,
+    name: { type: "string" }, vendorType,
     workProfile: { type: "string" },
-    mainBasketNames: { type: "array", items: { type: "string" } },
-    subBasketNames: { type: "array", items: { type: "string" } }
+    representativeName: { type: "string" },
+    representativePosition: { type: "string" }
   }),
   VendorKpiPublicInspection: object({
     vendor: ref("VendorKpiPublicVendor"), rubricVersion: { type: "integer", minimum: 1 },

@@ -110,11 +110,10 @@ export interface VendorKpiRequestInput {
 
 export interface VendorKpiPublicVendor {
   readonly name: string;
-  readonly code: string;
   readonly vendorType: VendorKpiVendorType;
   readonly workProfile: string;
-  readonly mainBasketNames: readonly string[];
-  readonly subBasketNames: readonly string[];
+  readonly representativeName: string;
+  readonly representativePosition: string;
 }
 
 export interface VendorKpiPublicInspection {

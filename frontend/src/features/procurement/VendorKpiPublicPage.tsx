@@ -13,6 +13,7 @@ import "./vendorKpi.css";
 const CLAIMANT = Symbol("vendor-kpi-public-page");
 type Inspection = { state: "checking" } | { state: "unavailable" } | { state: "ready"; detail: VendorKpiPublicInspection };
 const unavailableError = (error: unknown) => error instanceof ApiError && [400, 401, 403, 404, 409, 410].includes(error.status);
+const recorded = (value: string) => value.trim() || "Not recorded";
 
 export function VendorKpiPublicPage() {
   const claimed = useRef(false);
@@ -68,7 +69,7 @@ export function VendorKpiPublicPage() {
   return <main className="vendor-kpi vendor-kpi--public" aria-labelledby="vendor-kpi-public-title">
     <header className="vendor-kpi__public-header"><p className="vendor-kpi__eyebrow">Lisno · Vendor performance</p><h1 id="vendor-kpi-public-title">Vendor self assessment</h1><p>Rate your work on each category. Your ratings are reviewed separately from Procurement’s assessment.</p></header>
     {receipt ? <section className="vendor-kpi__receipt" role="status"><h2>Assessment saved</h2><p>Your self rating is {formatVendorKpiScore(receipt.averageScoreBps)}. Procurement can now view your response.</p><p>Saved {new Date(receipt.submittedAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}.</p></section> : inspection.state === "checking" ? <PageState state="loading" message="Checking your assessment link…" /> : inspection.state === "unavailable" ? <PageState state="error" message="This assessment link is unavailable or has already been used. Contact your Procurement representative for a new request." /> : <>
-      <section className="vendor-kpi__public-identity" aria-label="Vendor details"><div><span>Vendor</span><strong>{inspection.detail.vendor.name}</strong><small>{inspection.detail.vendor.code} · {inspection.detail.vendor.vendorType === "execution" ? "Execution vendor" : "Supplier"}</small></div><dl><div><dt>Work profile</dt><dd>{inspection.detail.vendor.workProfile || "Not recorded"}</dd></div><div><dt>Main baskets</dt><dd>{inspection.detail.vendor.mainBasketNames.join(", ") || "Not recorded"}</dd></div><div><dt>Sub baskets</dt><dd>{inspection.detail.vendor.subBasketNames.join(", ") || "Not recorded"}</dd></div></dl></section>
+      <section className="vendor-kpi__public-identity" aria-label="Vendor details"><div><span>Vendor name</span><strong>{inspection.detail.vendor.name}</strong></div><dl><div><dt>Vendor type</dt><dd>{inspection.detail.vendor.vendorType === "execution" ? "Execution vendor" : "Supplier"}</dd></div><div><dt>Work profile</dt><dd>{recorded(inspection.detail.vendor.workProfile)}</dd></div><div><dt>Representative</dt><dd>{recorded(inspection.detail.vendor.representativeName)}</dd></div><div><dt>Position</dt><dd>{recorded(inspection.detail.vendor.representativePosition)}</dd></div></dl></section>
       <p className="vendor-kpi__meta">This link expires {new Date(inspection.detail.expiresAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })} and can be used once.</p>
       {error ? <InlineMessage tone="error">{error}</InlineMessage> : null}
       <VendorKpiScoreForm title="Your self rating" type={inspection.detail.vendor.vendorType} busy={busy} submitLabel="Save Vendor KPI" onSave={save} />

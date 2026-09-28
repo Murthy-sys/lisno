@@ -37,8 +37,8 @@ export interface VendorKpiSaveInput {
 }
 export interface VendorKpiRequestInput { readonly idempotencyKey: string; readonly expectedRequestVersion: number | null }
 export interface VendorKpiPublicInspection {
-  readonly vendor: { readonly name: string; readonly code: string; readonly vendorType: VendorKpiVendorType;
-    readonly workProfile: string; readonly mainBasketNames: readonly string[]; readonly subBasketNames: readonly string[] };
+  readonly vendor: { readonly name: string; readonly vendorType: VendorKpiVendorType;
+    readonly workProfile: string; readonly representativeName: string; readonly representativePosition: string };
   readonly rubricVersion: number; readonly expiresAt: string;
 }
 export interface VendorKpiPublicSubmitInput {

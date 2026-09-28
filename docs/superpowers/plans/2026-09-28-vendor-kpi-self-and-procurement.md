@@ -1,8 +1,37 @@
 # Vendor KPI self and Procurement assessment task plan
 
 Date: 2026-09-28  
-Status: Approved; implemented in Mode A  
+Status: Approved; correction implemented in Mode A
 Source: [approved design](../specs/2026-09-28-vendor-kpi-self-and-procurement-design.md)
+
+## Current task plan: vendor identity, review label, and public KPI details
+
+This section implements acceptance criteria **8 and 9** in the approved design. The original build plan below is retained as history; it is not a request to rebuild the existing KPI workflow. At the start of this correction, `git status --short` showed only the approved-spec edit. Capture the exact dirty paths again before writers begin, preserve any new unrelated edits, and keep the three correction slices bounded.
+
+### Contract and ownership
+
+The primary agent owns `shared/knowledge/vendorKpi.ts`, the exact public inspection DTO, integration, and final reconciliation. The proposed public `vendor` projection is `{ name, vendorType, workProfile, representativeName, representativePosition }`; representative fields may be empty for legacy records, with the web form displaying `Not recorded`. `code`, `mainBasketNames`, and `subBasketNames` leave the public projection. No request/submit body, score, permission, token, email, persistence, or staff detail contract changes.
+
+| Order | Owner and bounded files/area | Deliverable | Verification and dependency |
+| --- | --- | --- | --- |
+| 0 | Primary agent, read only | Record current dirty-path set and relevant diffs. Confirm the list-row status source, native vendor entries, public projection, and existing test fixtures. Freeze the public DTO fields and status precedence from the approved spec. | Approved correction spec. No behavior edits. |
+| 1 | Primary agent; `shared/knowledge/vendorKpi.ts` | Replace public-only code/basket fields with representative name and position. Keep internal staff DTO and stable vendor IDs intact. Publish the exact shape to writers. | Step 0; shared typecheck/consumer search. |
+| 2A | Backend writer; `backend/src/contracts/vendor-kpi.ts`, `backend/src/services/vendor-kpi.service.ts`, `backend/src/openapi/vendor-kpi.ts`, focused backend tests | Project only name, type, work profile, representative name, and position from the token-matched vendor. Remove code and basket lookup from this public path only. Document the exact projection and test missing legacy fields and exclusion of private/Lisno fields. Preserve token validity, authorization, audit, mail, and score behavior. | Step 1. `vendor-kpi.replica-set`, public route/OpenAPI tests, backend typecheck/build. |
+| 2B | Web writer; `frontend/src/features/procurement/vendorDirectoryColumns.tsx`, `VendorKpiPublicPage.tsx`, their styles/tests and only related presentation helpers | Remove the generated code under the name in Procurement and Super Admin vendor tables. Render exactly one status with `Archived > Inactive > Under Review > Active` display precedence. On the external form, show the approved five fields, with `Not recorded` for missing representative/position, and remove code/baskets. Preserve staff routing, search by code, status filters, and KPI actions. | Step 1; may use a frozen fixture while 2A proceeds. Rendered row and public-form tests, accessible labels, token flow, phone/tablet/desktop visual checks, frontend typecheck/build. |
+| 2C | Native writer; `mobile/src/features/procurement/ProcurementVendorsWorkspace.tsx`, `mobile/src/features/knowledge/KnowledgeReusableValues.tsx`, their focused tests and only a mobile-local shared status helper if useful | Remove generated code under vendor names in the Procurement and Super Admin Configuration vendor lists. Use the same one-status display precedence without altering underlying lifecycle or filters. Preserve the detail route, editor, and score/request actions. | Step 0; independent of public DTO after list rule is frozen. Native rendered tests for all four states, mobile typecheck, focused vendor regressions, Android export. |
+| 3 | Primary agent; integrated result | Reconcile backend/shared/web shape; inspect web/native list behavior and existing KPI flows; confirm IDs remain stable internally and no unauthorized public field leaks. Perform proportionate integrity review of the changed public projection and status logic. | 1 and 2A–2C complete; no concurrent writes during final verification. |
+| 4 | Verification runner in Mode A, or primary agent in Mode B; read only | Run risk-based final checks on the integrated tree, inspect responsive public form and vendor rows with synthetic data, then report exact passes, failures, and unrun checks. | Step 3; `git diff --check`, `git status --short`, and cleanup of generated artifacts. |
+
+Steps **2A, 2B, and 2C can run in parallel** after the primary agent freezes Step 1 and gives each writer a non-overlapping file boundary. Backend owns backend tests/OpenAPI; web owns frontend tests; native owns mobile tests. The primary agent resolves contract differences before dependent edits continue. Do not spawn implementation agents if Mode B is chosen.
+
+### Correction acceptance and release checks
+
+1. Web and both native vendor lists show names without code/ID beneath them. Search and navigation still use stable identifiers internally.
+2. An active unverified vendor shows only `Under Review`; a verified active vendor shows only `Active`; inactive and archived vendors retain their single label. The backend lifecycle, eligibility, filters, and overview counts do not change.
+3. The token-scoped public response has exactly `{name, vendorType, workProfile, representativeName, representativePosition}` and does not include generated code, baskets, contacts, government IDs, banking, files, or staff scores. The external form renders those five fields and handles absent legacy representative/position.
+4. Existing token inspect/submit, staff score/request, vendor editor, directory score, and mobile detail flows remain functional. Run focused backend public/replica/OpenAPI tests, frontend directory/public-form tests, mobile list tests, each affected typecheck/build, and rendered desktop/phone checks. Broaden only for a concrete regression risk and report any broader-suite failures honestly.
+
+If release is authorized separately, deploy the tolerant new web display before removing old public fields in the backend response, then update native list display independently. This rollout note does not authorize deployment. No migration, production email, commit, or push is part of this task.
 
 ## Baseline, boundaries, and frozen product contract
 

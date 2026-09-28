@@ -23,6 +23,7 @@ const emailSchema = z.string().trim().email().max(320);
 const transaction = <T>(operation: (session: ClientSession) => Promise<T>) => mongoose.connection.transaction(operation, { readConcern: { level: "snapshot" }, readPreference: "primary" });
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 const profile = (vendor: Row) => vendor.procurementProfile as Row | undefined;
+const publicText = (value: unknown): string => typeof value === "string" ? value : "";
 const typeOf = (vendor: Row): VendorKpiVendorType | null => ["execution", "supplier"].includes(profile(vendor)?.vendorType) ? profile(vendor)!.vendorType as VendorKpiVendorType : null;
 const generation = (vendor: Row) => Number(vendor.kpiRubricGeneration ?? 0);
 const emailOf = (vendor: Row) => emailSchema.safeParse(profile(vendor)?.email).success ? String(profile(vendor)!.email).trim().toLowerCase() : null;
@@ -235,11 +236,10 @@ export function createVendorKpiService({ audit, mailer, now = () => new Date() }
         const request = await tokenRequest(token, session);
         const vendor = await publicVendor(String(request.vendorId), session);
         if (!validRequest(request, vendor, now()) || (await latestRequest(String(vendor._id), session))?._id !== request._id || await currentAssessment(vendor, "vendor_self", session)) unavailable();
-        const basketNames = await selectedBasketNames(vendor, session);
-        return { vendor: { name: String(vendor.name), code: String(vendor.code), vendorType: typeOf(vendor)!,
-          workProfile: typeof profile(vendor)?.workProfile === "string" ? profile(vendor)!.workProfile : "",
-          mainBasketNames: basketNames.mainBasketNames,
-          subBasketNames: basketNames.subBasketNames },
+        return { vendor: { name: String(vendor.name), vendorType: typeOf(vendor)!,
+          workProfile: publicText(profile(vendor)?.workProfile),
+          representativeName: publicText(profile(vendor)?.nameOfRepresentative),
+          representativePosition: publicText(profile(vendor)?.position) },
           rubricVersion: VENDOR_KPI_RUBRIC_VERSION, expiresAt: iso(request.expiresAt) };
       });
     },

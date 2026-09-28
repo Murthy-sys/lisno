@@ -13,6 +13,7 @@ import { allKnowledgePages } from "../knowledge/knowledgeRuntime";
 import { KnowledgeCard, KnowledgeModal, KnowledgeSelect, KnowledgeText, knowledgeStyles as s } from "../knowledge/knowledgeUi";
 import { catalogError } from "../knowledge/knowledgeCatalogForms";
 import { useProcurementVendorContext, type VendorMobileContext } from "../knowledge/vendorRuntime";
+import { vendorDisplayStatus } from "../knowledge/vendorDisplayStatus";
 import { ProcurementSubnavigation } from "./ProcurementSubnavigation";
 import { formatVendorKpiScore } from "./vendorKpiPresentation";
 
@@ -99,7 +100,7 @@ function VendorDirectory({ session, context }: { readonly session: Authenticated
     {notice ? <KnowledgeText>{notice}</KnowledgeText> : null}
     {vendors.isPending ? <KnowledgeText>Loading vendors…</KnowledgeText> : vendors.isError ? <StateView title="Vendors could not be loaded" message={catalogError(vendors.error)} actionLabel="Retry vendors" onAction={() => void vendors.refetch()} tone="error" /> : !vendors.data.items.length ? <StateView title={filtering ? "No matching vendors" : "No vendors configured"} message={filtering ? "Adjust the filters or reset your search." : "Add a vendor to get started."} /> : <View style={styles.list}>{vendors.data.items.map(vendor => <KnowledgeCard key={vendor.id}>
       <Pressable accessibilityRole="link" accessibilityLabel={`Open ${vendor.name} KPI`} onPress={() => router.push({ pathname: "/vendor/[vendorId]", params: { vendorId: vendor.id, from: "procurement-vendors" } })}><Text style={s.title}>{vendor.name}</Text></Pressable>
-      <KnowledgeText>{vendor.code} · {vendor.status}{vendor.procurementSummary?.vendorType ? ` · ${vendor.procurementSummary.vendorType}` : ""}</KnowledgeText>
+      <KnowledgeText>{vendorDisplayStatus(vendor)}{vendor.procurementSummary?.vendorType ? ` · ${vendor.procurementSummary.vendorType}` : ""}</KnowledgeText>
       {vendor.procurementSummary?.mainBaskets?.length ? <KnowledgeText>Main Baskets: {vendor.procurementSummary.mainBaskets.map(value => value.name ?? "Unavailable").join(", ")}</KnowledgeText> : null}
       <KnowledgeText>Vendor KPI: {formatVendorKpiScore(vendor.vendorKpi?.officialScoreBps)} · {vendor.vendorKpi?.selfStatus === "submitted" ? "Self submitted" : vendor.vendorKpi?.selfStatus === "not_submitted" ? "Self not submitted" : "Self status unavailable"}</KnowledgeText>
       <View style={s.row}><Button label={`${context.canUpdate && vendor.status !== "archived" ? "Edit" : "View profile for"} ${vendor.name}`} variant="secondary" size="compact" onPress={() => setEditor(vendor)} />{context.canLifecycle && vendor.status !== "archived" ? <Button label={`Archive ${vendor.name}`} variant="danger" size="compact" onPress={() => { setArchive(vendor); setArchiveReason(""); archiveMutation.reset(); }} /> : null}</View>

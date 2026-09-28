@@ -216,15 +216,27 @@ describe("reference vendor directory", () => {
     expect(await within(overview).findByText("12")).toBeVisible();
   });
 
-  it("preserves lifecycle separately from review and distinguishes incomplete legacy profiles", async () => {
-    rows = [{ ...rows[0], procurementSummary: undefined }, { ...rows[1], status: "inactive" }, { ...rows[2], status: "archived" }];
+  it("shows only the highest-priority status and omits the vendor code beneath each name", async () => {
+    rows = [
+      { ...rows[0], procurementSummary: undefined },
+      { ...rows[1], status: "inactive" },
+      { ...rows[2], status: "archived" },
+      { ...rows[3], procurementSummary: { ...rows[3].procurementSummary!, currentAddressVerifiedPhysically: true } }
+    ];
     start(); const table = await screen.findByRole("table");
     const legacy = within(table).getByRole("rowheader", { name: /Timber House/ }).closest("tr")!;
-    expect(within(legacy).getByText("Incomplete")).toBeVisible(); expect(within(legacy).getByText("Active")).toBeVisible(); expect(within(legacy).getByText("Under Review")).toBeVisible();
+    expect(within(legacy).getByText("Incomplete")).toBeVisible();
+    expect(within(legacy).getByText("Under Review")).toBeVisible();
+    expect(within(legacy).queryByText("Active")).not.toBeInTheDocument();
+    expect(within(legacy).queryByText(completeVendor.code)).not.toBeInTheDocument();
     const inactive = within(table).getByRole("rowheader", { name: /Vendor 2/ }).closest("tr")!;
-    expect(within(inactive).getByText("Inactive")).toBeVisible(); expect(within(inactive).getByText("Under Review")).toBeVisible();
+    expect(within(inactive).getByText("Inactive")).toBeVisible();
+    expect(within(inactive).queryByText("Under Review")).not.toBeInTheDocument();
     const archived = within(table).getByRole("rowheader", { name: /Vendor 3/ }).closest("tr")!;
     expect(within(archived).getByText("Archived")).toBeVisible(); expect(within(archived).queryByText("Under Review")).not.toBeInTheDocument();
+    const active = within(table).getByRole("rowheader", { name: /Vendor 4/ }).closest("tr")!;
+    expect(within(active).getByText("Active")).toBeVisible();
+    expect(within(active).queryByText("Under Review")).not.toBeInTheDocument();
   });
 
   it("changes rows per page, returns to the first page, clears selection and survives Reset", async () => {

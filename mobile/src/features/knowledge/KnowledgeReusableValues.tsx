@@ -11,6 +11,7 @@ import { KnowledgeCard, KnowledgeChoice, KnowledgeModal, KnowledgeSelect, Knowle
 import { KnowledgeVendorEditor } from "./KnowledgeVendorEditor";
 import { catalogError, closeCatalogDraft } from "./knowledgeCatalogForms";
 import { formatVendorKpiScore } from "../procurement/vendorKpiPresentation";
+import { vendorDisplayStatus } from "./vendorDisplayStatus";
 
 const TYPES = [{ value: "uoms", label: "UOMs" }, { value: "vendors", label: "Vendors" }, { value: "taxes", label: "Taxes" }, { value: "priorities", label: "Priorities" }, { value: "surfaces", label: "Surfaces" }] as const;
 const SINGULAR = { uoms: "UOM", vendors: "Vendor", taxes: "Tax", priorities: "Priority", surfaces: "Surface", modes: "Mode" };
@@ -32,7 +33,7 @@ export function KnowledgeReusableValues({ context, onClose }: { readonly context
     {values.isError ? <StateView title="Reusable values unavailable" message={catalogError(values.error)} actionLabel="Retry reusable values" onAction={() => void values.refetch()} /> : null}
     {visible.map(value => <KnowledgeCard key={value.id} {...(type === "vendors" ? {} : { title: value.name })}>
       {type === "vendors" ? <Pressable accessibilityRole="link" accessibilityLabel={`Open ${value.name} KPI`} onPress={() => { onClose(); router.push({ pathname: "/vendor/[vendorId]", params: { vendorId: value.id, from: "configuration" } }); }}><Text style={s.title}>{value.name}</Text></Pressable> : null}
-      <KnowledgeText>{value.code} · {value.status}</KnowledgeText>
+      <KnowledgeText>{type === "vendors" ? vendorDisplayStatus(value) : `${value.code} · ${value.status}`}</KnowledgeText>
       {type === "vendors" ? <KnowledgeText>Vendor KPI: {formatVendorKpiScore(value.vendorKpi?.officialScoreBps)} · {value.vendorKpi?.selfStatus === "submitted" ? "Self submitted" : value.vendorKpi?.selfStatus === "not_submitted" ? "Self not submitted" : "Self status unavailable"}</KnowledgeText> : null}
       {value.description ? <KnowledgeText>{value.description}</KnowledgeText> : null}
       {type === "uoms" ? <KnowledgeText>Quantity decimal places: {value.decimalScale ?? 0}</KnowledgeText> : null}

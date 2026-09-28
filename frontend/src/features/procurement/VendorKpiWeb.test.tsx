@@ -8,7 +8,7 @@ import type { PermissionCode, Role } from "../../api/authorization-contract";
 import { authorizationFor } from "../../test/authFixtures";
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
-import type { VendorKpiAssessment, VendorKpiStaffDetail } from "../../../../shared/knowledge/vendorKpi";
+import type { VendorKpiAssessment, VendorKpiPublicInspection, VendorKpiStaffDetail } from "../../../../shared/knowledge/vendorKpi";
 import { VendorKpiStaffPage } from "./VendorKpiStaffPage";
 import { VendorKpiPublicPage } from "./VendorKpiPublicPage";
 import { vendorKpiKeys } from "./vendorKpiApi";
@@ -30,6 +30,10 @@ const assessment: VendorKpiAssessment = {
   id: "assessment-one", vendorId: "vendor-one", source: "procurement", vendorType: "execution", rubricVersion: 1,
   scores: [{ key: "timeline", score: 90 }, { key: "quality", score: 95 }, { key: "budget", score: 85 }, { key: "site_discipline", score: 90 }],
   averageScoreBps: 9000, revision: 1, comment: null, submittedAt: "2026-09-28T00:00:00.000Z"
+};
+const publicVendor: VendorKpiPublicInspection["vendor"] = {
+  name: "Sample Supplier", vendorType: "supplier", workProfile: "Supply",
+  representativeName: "Asha Demo", representativePosition: "Owner"
 };
 
 function staff() {
@@ -158,13 +162,26 @@ describe("one-time public vendor form", () => {
   it("scrubs token before rendering, validates supplier categories, and submits self score", async () => {
     const inspected: unknown[] = []; const submitted: unknown[] = [];
     server.use(
-      http.post("/api/v1/vendor-kpi/inspect", async ({ request }) => { inspected.push(await request.json()); return data({ vendor: { name: "Sample Supplier", code: "SUP-1", vendorType: "supplier", workProfile: "Supply", mainBasketNames: ["Fixtures"], subBasketNames: [] }, rubricVersion: 1, expiresAt: "2099-01-01T00:00:00Z" }); }),
+      http.post("/api/v1/vendor-kpi/inspect", async ({ request }) => { inspected.push(await request.json()); return data({ vendor: { ...publicVendor, code: "SUP-1", mainBasketNames: ["Fixtures"], subBasketNames: ["Hardware"] }, rubricVersion: 1, expiresAt: "2099-01-01T00:00:00Z" }); }),
       http.post("/api/v1/vendor-kpi/submit", async ({ request }) => { submitted.push(await request.json()); return data({ averageScoreBps: 8600, submittedAt: "2026-09-28T00:00:00Z" }); })
     );
     publicPage(); const user = userEvent.setup();
     expect(window.location.href).not.toContain(token);
     expect(await screen.findByRole("heading", { name: "Vendor self assessment" })).toBeVisible();
     expect(await screen.findByText("Sample Supplier")).toBeVisible();
+    const details = screen.getByRole("region", { name: "Vendor details" });
+    expect(within(details).getByText("Vendor name")).toBeVisible();
+    expect(within(details).getByText("Vendor type")).toBeVisible();
+    expect(within(details).getByText("Supplier")).toBeVisible();
+    expect(within(details).getByText("Work profile")).toBeVisible();
+    expect(within(details).getByText("Supply")).toBeVisible();
+    expect(within(details).getByText("Representative")).toBeVisible();
+    expect(within(details).getByText("Asha Demo")).toBeVisible();
+    expect(within(details).getByText("Position")).toBeVisible();
+    expect(within(details).getByText("Owner")).toBeVisible();
+    expect(within(details).queryByText("SUP-1")).not.toBeInTheDocument();
+    expect(within(details).queryByText(/basket/i)).not.toBeInTheDocument();
+    expect(within(details).queryByText("Fixtures")).not.toBeInTheDocument();
     expect(screen.queryByText("Procurement rating")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save Vendor KPI" }));
     expect(screen.getByRole("spinbutton", { name: /Rates offered/ })).toHaveFocus();
@@ -186,13 +203,25 @@ describe("one-time public vendor form", () => {
     expect(window.location.href).not.toContain(token);
   });
 
+  it("labels missing representative details without adding internal vendor fields", async () => {
+    server.use(http.post("/api/v1/vendor-kpi/inspect", () => data({
+      vendor: { ...publicVendor, vendorType: "execution", representativeName: "", representativePosition: "" },
+      rubricVersion: 1, expiresAt: "2099-01-01T00:00:00Z"
+    })));
+    publicPage();
+    const details = await screen.findByRole("region", { name: "Vendor details" });
+    expect(within(details).getByText("Execution vendor")).toBeVisible();
+    expect(within(details).getAllByText("Not recorded")).toHaveLength(2);
+    expect(within(details).queryByText(/basket|SUP-1/i)).not.toBeInTheDocument();
+  });
+
   it("generates a submission key when crypto.randomUUID is unavailable", async () => {
     const descriptor = Object.getOwnPropertyDescriptor(globalThis.crypto, "randomUUID");
     Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: undefined });
     try {
       let submitted: Record<string, unknown> | null = null;
       server.use(
-        http.post("/api/v1/vendor-kpi/inspect", () => data({ vendor: { name: "Sample Supplier", code: "SUP-1", vendorType: "supplier", workProfile: "Supply", mainBasketNames: [], subBasketNames: [] }, rubricVersion: 1, expiresAt: "2099-01-01T00:00:00Z" })),
+        http.post("/api/v1/vendor-kpi/inspect", () => data({ vendor: publicVendor, rubricVersion: 1, expiresAt: "2099-01-01T00:00:00Z" })),
         http.post("/api/v1/vendor-kpi/submit", async ({ request }) => { submitted = await request.json() as Record<string, unknown>; return data({ averageScoreBps: 8600, submittedAt: "2026-09-28T00:00:00Z" }); })
       );
       publicPage(); const user = userEvent.setup();
@@ -211,7 +240,7 @@ describe("one-time public vendor form", () => {
   it("sends edited self scores with a fresh key after an uncertain response", async () => {
     const writes: Array<{ idempotencyKey: string; scores: Array<{ key: string; score: number }> }> = [];
     server.use(
-      http.post("/api/v1/vendor-kpi/inspect", () => data({ vendor: { name: "Sample Supplier", code: "SUP-1", vendorType: "supplier", workProfile: "Supply", mainBasketNames: [], subBasketNames: [] }, rubricVersion: 1, expiresAt: "2099-01-01T00:00:00Z" })),
+      http.post("/api/v1/vendor-kpi/inspect", () => data({ vendor: publicVendor, rubricVersion: 1, expiresAt: "2099-01-01T00:00:00Z" })),
       http.post("/api/v1/vendor-kpi/submit", async ({ request }) => {
         writes.push(await request.json() as typeof writes[number]);
         return writes.length === 1 ? HttpResponse.json({ error: { code: "TEMPORARY", message: "Try again" } }, { status: 503 }) : data({ averageScoreBps: 8620, submittedAt: "2026-09-28T00:00:00Z" });
