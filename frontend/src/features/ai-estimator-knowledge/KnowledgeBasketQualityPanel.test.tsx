@@ -5,7 +5,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/client";
-import { KnowledgeBasketQualityPanel, type KnowledgeBasketQualityPanelHandle } from "./KnowledgeBasketQualityPanel";
+import { KnowledgeBasketQualityPanel, type KnowledgeBasketQualityPanelHandle, type KnowledgeQualitySaveCommandState } from "./KnowledgeBasketQualityPanel";
 import type { KnowledgePendingChangesSnapshot } from "./knowledgePendingChanges";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import * as api from "./knowledgeApi";
@@ -98,6 +98,45 @@ beforeEach(() => {
 });
 
 describe("shared Main Basket quality checklist", () => {
+  it("reports the current Save command and hides the inline action while the pinned action is active", async () => {
+    const loading = deferred<KnowledgeBasketQuality>();
+    vi.mocked(api.getKnowledgeBasketQuality).mockReturnValue(loading.promise);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const panelRef = createRef<KnowledgeBasketQualityPanelHandle>();
+    const onSaveCommandChange = vi.fn<(state: KnowledgeQualitySaveCommandState | null) => void>();
+    const view = render(<QueryClientProvider client={client}><KnowledgeBasketQualityPanel ref={panelRef} item={item} canUpdate pinnedSaveActive onSaveCommandChange={onSaveCommandChange} {...callbacks} /></QueryClientProvider>);
+    expect(onSaveCommandChange).toHaveBeenLastCalledWith(null);
+
+    await act(async () => loading.resolve(saved));
+    await screen.findByRole("button", { name: "Add Parameter" });
+    expect(onSaveCommandChange).toHaveBeenLastCalledWith({ editable: true, dirty: false, saving: false, saveError: null });
+    const inlineSave = view.container.querySelector<HTMLButtonElement>(".knowledge-section-command-bar__save");
+    expect(inlineSave).not.toBeNull();
+    expect(inlineSave).toHaveAttribute("aria-hidden", "true");
+    expect(inlineSave).toHaveAttribute("tabindex", "-1");
+    expect(inlineSave).toHaveStyle({ visibility: "hidden" });
+    expect(inlineSave).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Save shared checklist" })).not.toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.type(await parameterField(user, "textbox", "Acceptance criteria"), "Check installation tolerances");
+    expect(onSaveCommandChange).toHaveBeenLastCalledWith({ editable: true, dirty: true, saving: false, saveError: null });
+    await doneEditing(user);
+    inlineSave?.click();
+    expect(api.updateKnowledgeBasketQuality).not.toHaveBeenCalled();
+
+    const pendingSave = deferred<KnowledgeBasketQuality>();
+    vi.mocked(api.updateKnowledgeBasketQuality).mockReturnValueOnce(pendingSave.promise);
+    let saveResult: Promise<boolean> | undefined;
+    act(() => { saveResult = panelRef.current?.save(); });
+    expect(onSaveCommandChange).toHaveBeenLastCalledWith({ editable: true, dirty: true, saving: true, saveError: null });
+    await act(async () => pendingSave.resolve({ ...saved, version: 8, revisionId: "quality-v3", revisionNumber: 3 }));
+    expect(await saveResult).toBe(true);
+    expect(onSaveCommandChange).toHaveBeenLastCalledWith({ editable: true, dirty: false, saving: false, saveError: null });
+    view.unmount();
+    expect(onSaveCommandChange).toHaveBeenLastCalledWith(null);
+  });
+
   it("imports the painting check beside two incomplete drafts, then requires completing or deleting them before saving", async () => {
     vi.mocked(api.getKnowledgeBasketQuality).mockResolvedValue({ ...saved, revisionId: null, parameters: [] });
     const painting: KnowledgeJsonObject = {

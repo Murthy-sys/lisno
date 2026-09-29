@@ -25,6 +25,8 @@ export interface KnowledgeWorkspaceStatusProps {
   readonly item: Pick<KnowledgeItemDetail, "completeness">;
   /** Present only on tabs that save through the page and have a revision. */
   readonly command?: KnowledgeWorkspaceSaveCommand;
+  /** The compact pinned action has taken over this button's keyboard target. */
+  readonly pinnedSaveActive?: boolean;
 }
 
 const LAST_SAVED_REFRESH_MS = 30_000;
@@ -39,7 +41,7 @@ const LAST_SAVED_REFRESH_MS = 30_000;
  * Exclusions) pass a `command`; Quality keeps its own save, so the bar shows
  * completeness alone there and whenever there is no revision.
  */
-export function KnowledgeWorkspaceStatus({ item, command }: KnowledgeWorkspaceStatusProps) {
+export function KnowledgeWorkspaceStatus({ item, command, pinnedSaveActive = false }: KnowledgeWorkspaceStatusProps) {
   const percentage = item.completeness.percentage;
   const tabs = countConfiguredWorkspaceTabs(item.completeness.sections);
   const tabCount = `${tabs.configured} of ${tabs.total} tabs configured`;
@@ -61,7 +63,7 @@ export function KnowledgeWorkspaceStatus({ item, command }: KnowledgeWorkspaceSt
           valueText={`${percentage}% complete, ${tabCount}`}
         />
       </div>
-      {command ? <KnowledgeWorkspaceSaveCommands {...command} /> : null}
+      {command ? <KnowledgeWorkspaceSaveCommands {...command} inlineSaveInactive={pinnedSaveActive} /> : null}
     </Surface>
   );
 }
@@ -73,8 +75,9 @@ function KnowledgeWorkspaceSaveCommands({
   saving,
   saveError,
   lastSavedAt,
-  onSave
-}: KnowledgeWorkspaceSaveCommand) {
+  onSave,
+  inlineSaveInactive
+}: KnowledgeWorkspaceSaveCommand & { readonly inlineSaveInactive: boolean }) {
   /* The live region announces changes of state only; the refreshing
      "Last saved" wording sits outside it so a tick is never announced. */
   const status = !editable
@@ -121,10 +124,13 @@ function KnowledgeWorkspaceSaveCommands({
       {editable ? (
         <Button
           className="knowledge-workspace-status__save"
+          aria-hidden={inlineSaveInactive || undefined}
+          tabIndex={inlineSaveInactive ? -1 : undefined}
+          style={inlineSaveInactive ? { visibility: "hidden" } : undefined}
           leadingIcon={<Save />}
           busy={saving}
           busyLabel={`Saving ${sectionLabel}…`}
-          disabled={!dirty}
+          disabled={!dirty || inlineSaveInactive}
           onClick={onSave}
         >
           {saving ? `Saving ${sectionLabel}…` : `Save ${sectionLabel}`}
