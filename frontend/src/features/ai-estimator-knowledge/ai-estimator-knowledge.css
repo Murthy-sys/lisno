@@ -2863,6 +2863,7 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
    ========================================================================== */
 
 .knowledge-page--item-workspace {
+  --knowledge-workspace-sticky-top: calc(var(--workspace-topbar-height, 0px) + var(--workspace-safe-top, 0px) + var(--space-2));
   inline-size: 100%;
   max-inline-size: var(--content-wide);
   min-inline-size: 0;
@@ -2884,11 +2885,8 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   margin-inline-start: var(--space-1);
 }
 
-/* One bar carries completeness and, on the tabs that save through the page,
-   the save status and Save. Completeness takes the free width; the commands
-   keep their natural width and drop to a second row - status first, Save on
-   the trailing edge - whenever one row cannot hold both. The bar stays in
-   normal flow: the opaque sticky topbar would cover it once the page scrolls. */
+/* The status strip stays beneath the Main Line heading in normal flow. Only
+   the compact Save action pins after its inline button scrolls past the topbar. */
 .knowledge-workspace-status {
   display: flex;
   flex-wrap: wrap;
@@ -2953,6 +2951,34 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   margin-inline-start: auto;
 }
 
+.knowledge-page--item-workspace .knowledge-pinned-save.ui-button {
+  position: fixed;
+  inset-block-start: var(--knowledge-workspace-sticky-top);
+  inset-inline-end: max(var(--space-6), calc((100vw - 240px - var(--content-wide)) / 2));
+  z-index: calc(var(--z-overlay) - 2);
+  min-block-size: 44px;
+  max-inline-size: calc(100vw - 2 * var(--space-4));
+}
+
+@media (max-width: 1024px) {
+  .knowledge-page--item-workspace .knowledge-pinned-save.ui-button {
+    inset-inline-end: max(var(--space-4), env(safe-area-inset-right, 0px));
+  }
+}
+
+@media (max-width: 620px) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-pinned-save.ui-button {
+    inline-size: 44px;
+    min-inline-size: 44px;
+    padding-inline: 0;
+  }
+
+  .knowledge-pinned-save__label,
+  .knowledge-pinned-save .ui-button__busy > span:last-child {
+    display: none;
+  }
+}
+
 /* The role theme loads after this file and repaints every knowledge Surface,
    meter and button at three classes and an attribute. These item-scoped rules
    outrank it to keep the bar an opaque deck like the cards below it, give the
@@ -3005,9 +3031,7 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 }
 
 .knowledge-page--item-workspace .knowledge-section-command-bar {
-  position: sticky;
-  inset-block-start: var(--space-2);
-  z-index: var(--z-raised);
+  position: static;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -4964,7 +4988,6 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 
   .knowledge-page--item-workspace .knowledge-section-command-bar {
     position: static;
-    inset-block-start: auto;
     grid-template-columns: minmax(0, 1fr);
     align-items: stretch;
     gap: var(--space-2);

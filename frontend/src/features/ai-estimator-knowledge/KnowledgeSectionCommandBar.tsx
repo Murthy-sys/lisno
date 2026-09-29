@@ -9,6 +9,7 @@ export interface KnowledgeSectionCommandBarProps {
   readonly dirty: boolean;
   readonly saving: boolean;
   readonly saveError: string | null;
+  readonly inlineSaveInactive?: boolean;
   readonly onSave: () => void;
 }
 
@@ -19,6 +20,7 @@ export function KnowledgeSectionCommandBar({
   dirty,
   saving,
   saveError,
+  inlineSaveInactive = false,
   onSave
 }: KnowledgeSectionCommandBarProps) {
   const status = !editable
@@ -46,7 +48,10 @@ export function KnowledgeSectionCommandBar({
           leadingIcon={<Save />}
           busy={saving}
           busyLabel={`Saving ${sectionLabel}…`}
-          disabled={!dirty}
+          disabled={inlineSaveInactive || !dirty}
+          aria-hidden={inlineSaveInactive || undefined}
+          tabIndex={inlineSaveInactive ? -1 : undefined}
+          style={inlineSaveInactive ? { visibility: "hidden" } : undefined}
           onClick={onSave}
         >
           {saving ? `Saving ${sectionLabel}…` : `Save ${sectionLabel}`}

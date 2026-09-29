@@ -53,4 +53,19 @@ describe("KnowledgeWorkspaceStatus", () => {
     expect(meter).toHaveAttribute("aria-valuetext", "100% complete, 4 of 4 tabs configured");
     expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
   });
+
+  it("keeps only the pinned Save reachable after the inline action scrolls away", () => {
+    const command = { sectionLabel: "Overview", editable: true, dirty: true, saving: false,
+      saveError: null, lastSavedAt: null, onSave: () => {} };
+    const view = render(<KnowledgeWorkspaceStatus item={item(["overview"], 25)} command={command} pinnedSaveActive />);
+    const inline = view.container.querySelector<HTMLButtonElement>(".knowledge-workspace-status__save");
+    expect(inline).toHaveStyle({ visibility: "hidden" });
+    expect(inline).toHaveAttribute("aria-hidden", "true");
+    expect(inline).toHaveAttribute("tabindex", "-1");
+    expect(inline).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Save Overview" })).not.toBeInTheDocument();
+
+    view.rerender(<KnowledgeWorkspaceStatus item={item(["overview"], 25)} command={command} />);
+    expect(screen.getByRole("button", { name: "Save Overview" })).toBeVisible();
+  });
 });

@@ -33,7 +33,7 @@ import {
 import { KnowledgeLifecycleDialog, type KnowledgeLifecycleAction } from "./KnowledgeLifecycleDialogs";
 import { KnowledgeMasterEditorDialog } from "./KnowledgeMasterEditorDialog";
 import { KnowledgeSurfaceEditorDialog } from "./KnowledgeSurfaceEditorDialog";
-import { KnowledgeBasketQualityPanel, type KnowledgeBasketQualityPanelHandle } from "./KnowledgeBasketQualityPanel";
+import { KnowledgeBasketQualityPanel, type KnowledgeBasketQualityPanelHandle, type KnowledgeQualitySaveCommandState } from "./KnowledgeBasketQualityPanel";
 import { KnowledgeModePanel, type KnowledgeModePanelHandle } from "./KnowledgeModePanel";
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 import { KnowledgeRevisionHistory } from "./KnowledgeRevisionHistory";
@@ -41,7 +41,8 @@ import { KnowledgeSavedConfigurationSummary } from "./KnowledgeSavedConfiguratio
 import { KnowledgeReferenceContextRail } from "./KnowledgeReferenceContextRail";
 import { latestKnowledgeSectionSave } from "./knowledgeLastSaved";
 import { pendingValuesEqual } from "./knowledgePendingChanges";
-import { KnowledgeWorkspaceStatus } from "./KnowledgeWorkspaceStatus";
+import { KnowledgeWorkspaceStatus, type KnowledgeWorkspaceSaveCommand } from "./KnowledgeWorkspaceStatus";
+import { KnowledgePinnedSave, useKnowledgePinnedSave } from "./KnowledgePinnedSave";
 import {
   syncKnowledgeLifecycleMutation,
   syncKnowledgeMainLineDeletion,
@@ -161,8 +162,10 @@ export function KnowledgeItemWorkspacePage() {
   const queryClient = useQueryClient();
   const modePanelRef = useRef<KnowledgeModePanelHandle>(null);
   const qualityPanelRef = useRef<KnowledgeBasketQualityPanelHandle>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
   const [qualityDirty, setQualityDirty] = useState(false);
   const [qualitySaving, setQualitySaving] = useState(false);
+  const [qualitySaveCommand, setQualitySaveCommand] = useState<KnowledgeQualitySaveCommandState | null>(null);
   const [activeSection, setActiveSection] = useState<KnowledgeWorkspaceSectionKey>("overview");
   const [payload, setPayload] = useState<KnowledgeJsonObject>({});
   const [dirty, setDirty] = useState(false);
@@ -525,6 +528,11 @@ export function KnowledgeItemWorkspacePage() {
     });
   }
 
+  const inlineSaveSelector = activeSection === "quality"
+    ? qualitySaveCommand?.editable ? ".knowledge-section-command-bar__save" : null
+    : revision && editable ? ".knowledge-workspace-status__save" : null;
+  const pinnedSaveActive = useKnowledgePinnedSave(workspaceRef, inlineSaveSelector, pendingSession.sourceKey);
+
   const terminalItemError = itemQuery.error instanceof ApiError
     && (itemQuery.error.status === 401 || itemQuery.error.status === 403 || itemQuery.error.status === 404);
   if (itemQuery.isPending && !item) return <PageState state="loading" message="Loading estimation item workspace…" />;
@@ -538,6 +546,22 @@ export function KnowledgeItemWorkspacePage() {
   const lifecycleError = lifecycleMutation.error instanceof ApiError && lifecycleMutation.error.code === "VERSION_CONFLICT" ? "This item changed elsewhere. Refresh before retrying." : lifecycleMutation.error?.message ?? null;
   const commandError = commandMutation.error instanceof ApiError && commandMutation.error.code === "VERSION_CONFLICT" ? "This item changed elsewhere. Refresh before retrying." : commandMutation.error?.message ?? null;
   const activeSectionLabel = KNOWLEDGE_WORKSPACE_SECTION_LABELS[activeSection];
+  const pageSaveCommand: KnowledgeWorkspaceSaveCommand | undefined = revision && activeSection !== "quality" ? {
+    sectionLabel: activeSectionLabel,
+    editable,
+    dirty: activeDirty,
+    saving: activeSaving,
+    saveError: activeSaveError,
+    lastSavedAt,
+    onSave: () => void saveActiveSection()
+  } : undefined;
+  const pinnedSaveCommand = activeSection === "quality"
+    ? qualitySaveCommand ? {
+      sectionLabel: "shared checklist",
+      ...qualitySaveCommand,
+      onSave: () => { void qualityPanelRef.current?.save(); }
+    } : undefined
+    : pageSaveCommand;
   const referenceSection = activeSection === "recommendations" || activeSection === "quality" ? activeSection : undefined;
   const savedDetails = <>
     <KnowledgeRevisionHistory
@@ -559,7 +583,7 @@ export function KnowledgeItemWorkspacePage() {
   </>;
 
   return (
-    <div className="knowledge-page knowledge-page--item-workspace" data-reference-section={referenceSection} data-workspace-section={activeSection}>
+    <div ref={workspaceRef} className="knowledge-page knowledge-page--item-workspace" data-reference-section={referenceSection} data-workspace-section={activeSection}>
       <PageHeader
         id="knowledge-item-title"
         breadcrumb={<Button variant="quiet" size="compact" leadingIcon={<ArrowLeft />} onClick={() => guard.requestNavigation(() => navigate("/admin/configuration/estimation"))}>Back to Main Baskets</Button>}
@@ -588,16 +612,10 @@ export function KnowledgeItemWorkspacePage() {
       ) : null}
       <KnowledgeWorkspaceStatus
         item={item}
-        command={revision && activeSection !== "quality" ? {
-          sectionLabel: activeSectionLabel,
-          editable,
-          dirty: activeDirty,
-          saving: activeSaving,
-          saveError: activeSaveError,
-          lastSavedAt,
-          onSave: () => void saveActiveSection()
-        } : undefined}
+        command={pageSaveCommand}
+        pinnedSaveActive={pinnedSaveActive && activeSection !== "quality"}
       />
+      {pinnedSaveActive && pinnedSaveCommand ? <KnowledgePinnedSave command={pinnedSaveCommand} /> : null}
       <KnowledgeTemporaryMainLineInfo item={item} onOpenMainLine={(id) => guard.requestNavigation(() => navigate(`/admin/configuration/estimation/items/${encodeURIComponent(id)}`))} />
       {announcement ? <p className="sr-only" role="status">{announcement}</p> : null}
       {item.status === "archived" ? <InlineMessage tone="warning" title="Archived configuration">This item and its revision history are read-only.</InlineMessage> : revision && !editable && revision.status !== "draft" && activeSection !== "quality" ? <InlineMessage tone="info" title="Active history is read-only">Create a Draft revision to change section data. The active revision remains available until a new Draft is activated.</InlineMessage> : null}
@@ -606,7 +624,7 @@ export function KnowledgeItemWorkspacePage() {
         <div className="knowledge-workspace-main">
           <KnowledgeSectionNavigation activeSection={activeSection} onSectionChange={selectWorkspaceSection} panelBusy={activeSection === "mode" ? modeBusy : sectionQuery.isFetching}>
             {activeSection === "quality" ? (
-              <KnowledgeBasketQualityPanel key={pendingSession.sourceKey} ref={qualityPanelRef} item={item} revisionId={revision?.id} canUpdate={canUpdate} canCreateQualityOptions={canCreateQualityOptions} onDirtyChange={setQualityDirty} onSavingChange={setQualitySaving} />
+              <KnowledgeBasketQualityPanel key={pendingSession.sourceKey} ref={qualityPanelRef} item={item} revisionId={revision?.id} canUpdate={canUpdate} canCreateQualityOptions={canCreateQualityOptions} onDirtyChange={setQualityDirty} onSavingChange={setQualitySaving} onSaveCommandChange={setQualitySaveCommand} pinnedSaveActive={pinnedSaveActive} />
             ) : !revision ? (
               <PageState state="empty" message="This item has no revision to display." />
             ) : activeSection === "mode" ? (
