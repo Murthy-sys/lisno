@@ -38,6 +38,7 @@ export function ComposerTray({
   showCameraSettings,
   showMediaRetry,
   disabled,
+  writesPaused = false,
   onCancelReply,
   onCancelRecording,
   onClearPriority,
@@ -62,6 +63,7 @@ export function ComposerTray({
   readonly showCameraSettings: boolean;
   readonly showMediaRetry: boolean;
   readonly disabled: boolean;
+  readonly writesPaused?: boolean;
   readonly onCancelReply: () => void;
   readonly onCancelRecording: () => void;
   readonly onClearPriority: () => void;
@@ -120,7 +122,7 @@ export function ComposerTray({
                 : "Ready to retry upload"}
             </Text>
           </View>
-          {!uploading ? <TrayButton disabled={disabled} label="Retry attachment upload" text="Retry" onPress={onRetryUpload} /> : null}
+          {!uploading ? <TrayButton disabled={disabled || writesPaused} label="Retry attachment upload" text="Retry" onPress={onRetryUpload} /> : null}
           <TrayButton disabled={disabled} label={`Remove ${selectedAsset.name}`} text="×" onPress={onRemoveSelected} />
         </View>
       ) : null}
@@ -144,7 +146,7 @@ export function ComposerTray({
             <TrayButton disabled={disabled} label="Open camera settings" text="Open settings" onPress={onOpenCameraSettings} />
           ) : null}
           {showMediaRetry ? (
-            <TrayButton disabled={disabled} label="Retry media options" text="Retry" onPress={onRetryMedia} />
+            <TrayButton disabled={disabled || writesPaused} label="Retry media options" text="Retry" onPress={onRetryMedia} />
           ) : null}
         </View>
       ) : null}

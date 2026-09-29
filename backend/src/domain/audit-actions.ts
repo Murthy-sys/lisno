@@ -180,7 +180,9 @@ export const PROJECT_CHAT_AUDIT_ACTIONS = [
   "project_chat.participant_removed",
   "project_chat.participant_restored",
   "project_chat.action_type_created",
-  "project_chat.project_renamed"
+  "project_chat.project_renamed",
+  "project_chat.daily_critical_delivered",
+  "project_chat.daily_critical_acknowledged"
 ] as const;
 
 export const IDENTITY_PROFILE_PHOTO_AUDIT_ACTIONS = [

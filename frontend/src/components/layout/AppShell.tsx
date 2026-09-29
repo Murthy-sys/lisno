@@ -8,6 +8,8 @@ import { SkipLink } from "./SkipLink";
 import { WorkspaceTopbar } from "./WorkspaceTopbar";
 import { BrandLogo } from "../ui/BrandLogo";
 import { ProjectChatProvider } from "../../features/messages";
+import { ChatScheduleProvider } from "../../features/messages/ChatScheduleProvider";
+import { DailyCriticalTasksPrompt } from "../../features/messages/DailyCriticalTasksPrompt";
 import "../../features/messages/projectChatShell.css";
 import { NotificationProvider } from "../../features/notifications/NotificationProvider";
 import { NotificationBanners } from "../../features/notifications/NotificationBell";
@@ -30,6 +32,7 @@ export function AppShell() {
 
   return (
     <NotificationProvider>
+    <ChatScheduleProvider>
     <ProjectChatProvider>
     <div className={messaging ? "project-messaging-app ui-common-shell" : "ui-app-shell ui-common-shell"} data-role={messaging ? undefined : auth.user.role} data-configuration-backdrop={configurationBackdrop ? "true" : undefined}>
       <SkipLink />
@@ -40,7 +43,7 @@ export function AppShell() {
           onLogout={auth.logout}
         />
       </aside> : null}
-      <WorkspaceTopbar user={auth.user} onLogout={auth.logout} compact={messaging}
+      <WorkspaceTopbar user={auth.user} onLogout={auth.logout} compact={messaging} dailyTasksAction={<DailyCriticalTasksPrompt />}
         leading={messaging ? <Link className="workspace-topbar__home" to="/project-messages" aria-label="Project messages"><BrandLogo /></Link> : <>
           <MobileHeader user={auth.user} authorization={auth.authorization} onLogout={auth.logout} />
           <span className="workspace-topbar__mobile-brand"><BrandLogo /></span>
@@ -64,6 +67,7 @@ export function AppShell() {
       {!messaging && auth.user.role === "client" ? <AskLisnoLauncher /> : null}
     </div>
     </ProjectChatProvider>
+    </ChatScheduleProvider>
     </NotificationProvider>
   );
 }

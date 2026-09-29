@@ -103,7 +103,7 @@ describe("projectKnowledgeSavedSummary", () => {
       { key: "in-house-material-status", label: "In-house Material", value: "Unit price ₹567.89 per Square metre · Low quantity ≤0 · Impact 10% · Gross margin min 27.5% · start 42.5%" }
     ]);
     expect(result.preview).toEqual(result.details.slice(0, 4));
-    expect(values(result)).toContain("Mode · Shared description: Do not disclose this description.");
+    expect(values(result)).toContain("Mode · PMC · Description: Do not disclose this description.");
     expect(values(result)).toContain("Execution · Sub-Vendor · Inclusion 1: Transport · Selected");
     expect(values(result)).not.toMatch(/Base Rate|private/iu);
   });
@@ -255,7 +255,7 @@ describe("projectKnowledgeSavedSummary", () => {
     const detail = values(result);
     expect(result.preview).toEqual(result.details.slice(0, 4));
     for (const expected of [
-      "Mode · Shared description: Confirmed paragraph", "Mode configuration 1: PMC",
+      "Mode · PMC · Description: Confirmed paragraph", "Mode configuration 1: PMC",
       "Execution · Sub-Vendor · Inclusion 1: Transport · Not selected",
       "Execution · Sub-Vendor · Exclusion 1: Shifting · Selected",
       "PMC · Component 1: Crew", "PMC · Component 1 · Type: Number", "PMC · Component 1 · Saved answer: 4",

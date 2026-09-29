@@ -68,7 +68,7 @@ describe("mobile contract provenance", () => {
       permission: entry[2]!,
       superAdminBehavior: entry[3]!
     }));
-    expect(canonical).toHaveLength(254);
+    expect(canonical).toHaveLength(257);
     expect(PROTECTED_OPERATIONS).toEqual(canonical);
   });
 

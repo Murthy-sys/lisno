@@ -362,6 +362,25 @@ describe("chat composer submission", () => {
     expect(view.queryByText("Sensitive policy detail")).toBeNull();
   });
 
+  it("preserves a draft when the server closes chat during submission", async () => {
+    apiPost.mockRejectedValueOnce(new ApiError(403, "CHAT_CLOSED", "Internal chat opens at 7:30 AM India time."));
+    const onDenied = jest.fn();
+    const harness = composerHarness({ onDenied });
+    const view = await render(harness.element());
+    await fireEvent.changeText(view.getByLabelText("Message the project team"), "Keep this draft");
+    await fireEvent.press(view.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(apiPost).toHaveBeenCalledTimes(1));
+    await view.findByText("Internal chat opens at 7:30 AM India time.");
+    expect(onDenied).not.toHaveBeenCalled();
+    expect(view.getByLabelText("Message the project team").props.value).toBe("Keep this draft");
+
+    await view.rerender(harness.element({ ...harness.props, readOnly: true }));
+    expect(view.getByLabelText("Message the project team").props.editable).toBe(false);
+    expect(view.getByLabelText("Message the project team").props.value).toBe("Keep this draft");
+    await view.rerender(harness.element({ ...harness.props, readOnly: false }));
+    expect(view.getByLabelText("Message the project team").props.editable).toBe(true);
+  });
+
   it("renews the client identity when the reply target changes or is cancelled", async () => {
     apiPost.mockRejectedValue(new Error("offline"));
     const harness = composerHarness({ reply: message("reply-a", "Aditi") });
@@ -994,6 +1013,23 @@ describe("chat composer submission", () => {
     await act(async () => deletion.resolve(undefined));
     await waitFor(() => expect(view.queryByText("remove.pdf")).toBeNull());
     expect(apiPost).not.toHaveBeenCalled();
+  });
+
+  it("allows staged attachment cleanup while overnight sending is paused", async () => {
+    const asset = { uri: "file:///private/cache/overnight.pdf", name: "overnight.pdf", mimeType: "application/pdf", size: 2_048 };
+    pickDocumentMock.mockResolvedValueOnce({ status: "selected", asset });
+    uploadAttachment.mockReturnValueOnce({ result: Promise.resolve(stagedAttachment("overnight", "overnight.pdf", "application/pdf", 2_048)), cancel: jest.fn() });
+    const harness = composerHarness();
+    const view = await render(harness.element());
+    await fireEvent.press(await view.findByRole("button", { name: "Open attachment options" }));
+    await fireEvent.press(view.getByRole("button", { name: "Choose a file" }));
+    await view.findByText("document · 2 KB · Ready to send");
+    await view.rerender(harness.element({ ...harness.props, readOnly: true }));
+    expect(view.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(view.getByRole("button", { name: "Remove overnight.pdf" })).not.toBeDisabled();
+    await fireEvent.press(view.getByRole("button", { name: "Remove overnight.pdf" }));
+    await waitFor(() => expect(apiDelete).toHaveBeenCalledWith("/projects/project-a/chat/attachments/overnight"));
+    await waitFor(() => expect(view.queryByText("document · 2 KB · Ready to send")).toBeNull());
   });
 
   it("does not discard a staged attachment when a committed send is still in flight during unmount", async () => {

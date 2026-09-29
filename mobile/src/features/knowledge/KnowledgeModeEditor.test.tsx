@@ -168,17 +168,17 @@ describe("native Mode editing", () => {
     await render(<Harness readOnly />);
     expect(screen.getByLabelText("PMC Base Rate (₹)")).toHaveProp("editable", false);
     expect(screen.getByLabelText("PMC UOM")).toHaveProp("editable", false);
-    expect(screen.queryByRole("button", { name: "Edit Mode paragraph" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit Description" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Add Specification" })).toBeNull();
     await waitFor(() => expect(onPayload).not.toHaveBeenCalled());
   });
 
   it("requires paragraph apply/cancel and restores scope-synchronized text when cancelled", async () => {
     await render(<Harness initial={{ modeDescription: "Custom work, inclusions none and exclusions none." }} />);
-    await fireEvent.press(screen.getByRole("button", { name: "Edit Mode paragraph" }));
+    await fireEvent.press(screen.getByRole("button", { name: "Edit Description" }));
     expect(onValidity).toHaveBeenLastCalledWith(false);
-    await fireEvent.changeText(screen.getByLabelText("Mode paragraph"), "Changed wording");
-    await fireEvent.press(screen.getByRole("button", { name: "Cancel paragraph" }));
+    await fireEvent.changeText(screen.getByLabelText("Description"), "Changed wording");
+    await fireEvent.press(screen.getByRole("button", { name: "Cancel description" }));
     expect(onPayload.mock.lastCall?.[0].modeDescription).toBe("Custom work, inclusions none and exclusions none.");
     expect(onValidity).toHaveBeenLastCalledWith(true);
   });

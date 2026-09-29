@@ -57,7 +57,7 @@ export function budgetAlterationIssues(value: KnowledgeJsonValue | undefined, cu
     if (typeof row.targetBasketId !== "string" || !row.targetBasketId.trim()) add("targetBasketId", "Choose a Main Basket.");
     if (targetKind === "sub_basket") {
       if (row.targetType !== null) add("targetType", "Whole Sub-Basket rules do not use an item type.");
-      if (typeof row.targetSubBasketId !== "string" || !row.targetSubBasketId) add("targetSubBasketId", "Choose a Sub-Basket with at least one available item.");
+      if (typeof row.targetSubBasketId !== "string" || !row.targetSubBasketId) add("targetSubBasketId", "Choose a Sub-Basket.");
       if (row.targetMainLineId !== null) add("targetMainLineId", "Whole Sub-Basket rules do not select one related item.");
     } else {
       if (!["catalog", "temporary"].includes(String(row.targetType))) add("targetType", "Select a catalog or temporary item.");

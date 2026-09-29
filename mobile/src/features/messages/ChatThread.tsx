@@ -26,6 +26,7 @@ import { ChatTimeline } from "./ChatTimeline";
 import { MessageActionSheet } from "./MessageActionSheet";
 import { projectInitials, type PresentedChatParticipantPage, type PresentedMessage } from "./chatModel";
 import { useChatThread } from "./useChatThread";
+import { useChatAvailability } from "./useChatAvailability";
 import { useScaffoldNavigationGuard } from "../../navigation/AdaptiveAppScaffold";
 import { ChatIcon } from "./ChatIcon";
 import { chatColors } from "./chatTheme";
@@ -47,11 +48,13 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
   const { width } = useWindowDimensions();
   const compact = compactOverride ?? width < 600;
   const thread = useChatThread(projectId, session);
+  const availability = useChatAvailability(session);
   const navigationGuard = useScaffoldNavigationGuard();
   const screenBack = useScreenBack();
   const [replyTarget, setReplyTarget] = useState<OwnedReplyTarget | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [scheduleBridge, setScheduleBridge] = useState(false);
   const [composerOverlayOpen, setComposerOverlayOpen] = useState(false);
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [groupInfoOpen, setGroupInfoOpen] = useState(false);
@@ -68,10 +71,12 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
     [selectedMessageId, thread.messages]
   );
   const canSend = Boolean(
-    thread.summary?.capabilities.canSend &&
+    thread.summary &&
+    (thread.summary.capabilities.canSend || (session.user.role !== "client" && (!availability.writable || scheduleBridge))) &&
     session.authorization.permissions.includes("chat.send")
   );
   const canManageParticipants = Boolean(
+    availability.writable &&
     thread.summary?.capabilities.canManageParticipants &&
     session.authorization.permissions.includes("chat.participants.manage")
   );
@@ -95,6 +100,19 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
   useEffect(() => {
     if (!canSend) clearReply();
   }, [canSend, clearReply]);
+
+  useEffect(() => {
+    if (session.user.role === "client") return;
+    if (!availability.writable) {
+      setScheduleBridge(true);
+      return;
+    }
+    if (!scheduleBridge) return;
+    void Promise.resolve(thread.refresh()).then(
+      () => setScheduleBridge(false),
+      () => setScheduleBridge(false)
+    );
+  }, [availability.writable, scheduleBridge, session.user.role, thread.refresh]);
 
   useEffect(() => () => {
     if (headerFocusRequest.current !== null) cancelAnimationFrame(headerFocusRequest.current);
@@ -256,18 +274,29 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
           scrollToEndRequest={thread.scrollToEndRequest}
           onLoadOlder={() => void thread.loadOlder()}
           onOpenActions={openMessageActions}
-          onReply={canSend ? handleReply : undefined}
+          onReply={canSend && availability.writable ? handleReply : undefined}
           onNearBottomChange={thread.setNearBottom}
           onClearNewMessages={thread.clearNewMessages}
           onVisibleMessagesChange={thread.acknowledgeVisible}
           onDenied={thread.revokeAccess}
         />
         {canSend ? (
+          <>
+          {!availability.writable ? (
+            <View accessibilityRole="text" style={styles.readOnly}>
+              <Text accessibilityLiveRegion="polite" style={styles.readOnlyText}>
+                {availability.unavailable
+                  ? "Chat sending is temporarily unavailable. Your messages remain readable."
+                  : "Chat opens at 7:30 AM India time. You can read messages and today's task list meanwhile."}
+              </Text>
+            </View>
+          ) : null}
           <ChatComposer
             ref={composer}
             compact={compact}
             projectId={projectId}
             session={session}
+            readOnly={!availability.writable}
             reply={reply}
             onCancelReply={clearReply}
             onDenied={() => void thread.revokeAccess()}
@@ -278,6 +307,7 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
             onSendingChange={setSending}
             onOverlayChange={setComposerOverlayOpen}
           />
+          </>
         ) : (
           <View accessibilityRole="text" style={styles.readOnly}>
             <Text style={styles.readOnlyText}>You can read this conversation, but sending is unavailable for your project access.</Text>
@@ -288,7 +318,8 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
           message={selectedMessage}
           session={session}
           visible={Boolean(selectedMessage)}
-          canReply={canSend}
+          canReply={canSend && availability.writable}
+          readOnly={!availability.writable}
           onClose={closeMessageActions}
           onReply={handleReply}
           onRefresh={thread.refresh}

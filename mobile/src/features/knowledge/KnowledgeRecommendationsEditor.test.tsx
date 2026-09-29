@@ -26,8 +26,9 @@ it("adds native rules and carries stable IDs and target classification without o
   await fireEvent.press(screen.getByRole("button", { name: "Add Mandatory Item" }));
   await fireEvent.press(screen.getByRole("combobox", { name: "Main Basket" }));
   await fireEvent.press(screen.getByRole("radio", { name: "Joinery" }));
+  await waitFor(() => expect(screen.queryByText("Related items are loading…")).toBeNull());
   await fireEvent.press(screen.getByRole("combobox", { name: "Related item" }));
-  await fireEvent.press(screen.getByRole("radio", { name: "Framing (Temporary)" }));
+  await fireEvent.press(await screen.findByRole("radio", { name: "Framing (Temporary)" }));
   await fireEvent.changeText(screen.getByLabelText("Reason"), "Support the wall finish");
   await waitFor(() => expect(view.changes).toHaveBeenLastCalledWith(expect.objectContaining({ preserved: { legacy: true }, budgetAlterations: [expect.objectContaining({ targetKind: "main_line", targetType: "temporary", targetMainLineId: "related", targetBasketId: "basket", targetSubBasketId: null, trigger: "added", action: "add", requirement: "must", reason: "Support the wall finish" })] })));
   expect(view.validity).toHaveBeenLastCalledWith(true);

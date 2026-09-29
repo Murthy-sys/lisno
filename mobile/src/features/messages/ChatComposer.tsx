@@ -161,7 +161,8 @@ function composerError(cause: unknown, fallback: string): string {
 }
 
 function isAccessDenied(cause: unknown): boolean {
-  return (cause instanceof ApiError || cause instanceof TransferHttpError) && [401, 403, 404].includes(cause.status);
+  return (cause instanceof ApiError || cause instanceof TransferHttpError) &&
+    [401, 403, 404].includes(cause.status) && cause.code !== "CHAT_CLOSED";
 }
 
 export function canSubmitChatMessage(input: {
@@ -199,6 +200,7 @@ export interface ChatComposerProps {
   readonly onSendingChange?: (sending: boolean) => void;
   readonly onOverlayChange?: (open: boolean) => void;
   readonly compact?: boolean;
+  readonly readOnly?: boolean;
 }
 
 export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(function ChatComposer({
@@ -210,7 +212,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   onDenied,
   onSendingChange,
   onOverlayChange,
-  compact = true
+  compact = true,
+  readOnly = false
 }, ref) {
   const context = useConfiguredRuntime();
   const queryClient = useQueryClient();
@@ -1141,6 +1144,13 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     }
   }, [context.runtime.audio, isOperationCurrent, renewDraftIdentity]);
 
+  useEffect(() => {
+    if (!readOnly) return;
+    setAttachmentOpen(false);
+    setPriorityOpen(false);
+    if (recording || recordingStarting || recordingStopping) void cancelVoice();
+  }, [cancelVoice, readOnly, recording, recordingStarting, recordingStopping]);
+
   const cancelReply = useCallback(() => {
     if (pendingRef.current || stagedRemovalsRef.current.size > 0) return;
     renewDraftIdentity();
@@ -1154,7 +1164,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   }, [renewDraftIdentity]);
 
   const submit = useCallback(() => {
-    if (pendingRef.current || stagedRemovalsRef.current.size > 0) return;
+    if (readOnly || pendingRef.current || stagedRemovalsRef.current.size > 0) return;
     const replyToId = reply?.id ?? null;
     if (sendSnapshot.current && sendSnapshot.current.replyToId !== replyToId) {
       clientMessageId.current = createClientMessageId();
@@ -1177,7 +1187,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     setAttachmentOpen(false);
     setPriorityOpen(false);
     send.mutate({ operation, payload: snapshot });
-  }, [body, captureOperation, priority, reply?.id, send, staged]);
+  }, [body, captureOperation, priority, readOnly, reply?.id, send, staged]);
 
   useImperativeHandle(ref, () => ({
     hasTransientState() {
@@ -1219,7 +1229,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     }
   }), [attachmentOpen, cancelReply, cancelVoice, clearPriority, priority, priorityOpen, recording, recordingStarting, recordingStopping, removingStagedCount, reply, selectedAsset, selectingSource, send.isPending, staged, uploading]);
 
-  const submitEnabled = canSubmitChatMessage({
+  const submitEnabled = !readOnly && canSubmitChatMessage({
     body,
     stagedCount: staged.length,
     pending: send.isPending || removingStagedCount > 0,
@@ -1234,7 +1244,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   const aggregateLimitReached = Boolean(
     policy.data && stagedBytes >= policy.data.limits.maxMessageBytes
   );
-  const interactionLocked = send.isPending || removingStagedCount > 0;
+  const interactionLocked = readOnly || send.isPending || removingStagedCount > 0;
   const mediaLocked = interactionLocked || accessRevoked || uploading || Boolean(selectingSource) || recordingStarting || recording || recordingStopping;
   const canOpenAttachment = Boolean(
     policy.data?.enabled &&
@@ -1296,7 +1306,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
         error={trayError}
         showCameraSettings={error === CAMERA_SETTINGS_ERROR}
         showMediaRetry={policy.isError && !isAccessDenied(policy.error)}
-        disabled={interactionLocked}
+        disabled={send.isPending || removingStagedCount > 0}
+        writesPaused={readOnly}
         onCancelReply={cancelReply}
         onCancelRecording={() => void cancelVoice()}
         onClearPriority={clearPriority}

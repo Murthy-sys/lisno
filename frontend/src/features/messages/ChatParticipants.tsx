@@ -12,6 +12,7 @@ import type { ChatParticipant, ChatRemovedParticipant } from "./projectChatTypes
 const sourceLabels = { client: "Linked client", super_admin: "Super Admin", project_assignment: "Project assignment", estimate_assignment: "Estimate assignment", workflow_assignment: "Work assignment", access_grant: "Project access grant", selection: "Selected for this conversation" };
 export function ChatParticipants({ projectId, participants, removed = [], warnings, canManage }: { projectId: string; participants: ChatParticipant[]; removed?: ChatRemovedParticipant[]; warnings: string[]; canManage: boolean }) {
   const [editing, setEditing] = useState<{ mode: "remove" | "restore"; person: ChatParticipant | ChatRemovedParticipant } | "add" | null>(null);
+  useEffect(() => { if (!canManage) setEditing(null); }, [canManage]);
   return <section className="project-chat-participants" aria-label="Participants">
     <p className="project-chat-muted">Shared with the client and project team. New participants can read the conversation history.</p>
     {warnings.length ? <div className="project-chat-warning" role="status">{warnings.map((warning, index) => <p key={index}>{warning}</p>)}</div> : null}

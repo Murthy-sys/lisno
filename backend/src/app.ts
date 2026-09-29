@@ -25,6 +25,8 @@ import { createProjectChatEventsHub } from "./services/project-chat-events.servi
 import { createProjectChatStreamService } from "./services/project-chat-stream.service.js";
 import { createProjectChatTypingService } from "./services/project-chat-typing.service.js";
 import { createProjectChatRouter } from "./routes/project-chat.js";
+import { createDailyCriticalTasksRouter } from "./routes/daily-critical-tasks.js";
+import { createDailyCriticalTasksService } from "./services/daily-critical-tasks.service.js";
 import { createProjectChatAttachmentsRouter } from "./routes/project-chat-attachments.js";
 import { createProjectChatAttachmentService } from "./services/project-chat-attachments.service.js";
 import { createProjectChatAttachmentPolicy } from "./domain/project-chat-attachment-policy.js";
@@ -307,8 +309,9 @@ export function createApp(dependencies: AppDependencies) {
   const chatRepository = dependencies.chatRepository ?? createMemoryProjectChatRepository(repository);
   const attachmentPolicy = dependencies.chatAttachmentPolicy ?? createProjectChatAttachmentPolicy();
   const notificationHub = createNotificationEventsHub({watchChanges: chatRepository.kind === "mongo" && dependencies.chatEvents?.watchChanges !== false});
+  const dailyCriticalTasks = createDailyCriticalTasksService({chatRepository, clock, audit: auditService, onDue: id => notificationHub.wake(id)});
   const notifications = createNotificationService({repository: chatRepository, clock, onChange: id => notificationHub.wake(id)});
-  const notificationStream = createNotificationStreamService({auth: authService, service: notifications, hub: notificationHub});
+  const notificationStream = createNotificationStreamService({auth: authService, service: notifications, hub: notificationHub, dailyCriticalSignal: actor => dailyCriticalTasks.signal(actor)});
   const notificationEmail = createNotificationEmailDispatcher({repository: chatRepository, clock, mailer: dependencies.chatMentionMailer ?? {deliveryKind: "disabled"}, allowDemoAccountExternalEmail: dependencies.allowDemoAccountExternalEmail});
   const projectChatService = createProjectChatService({ repository, audit: auditService, clock, chatRepository, attachmentPolicy,
     onNotificationsCommitted: ids => { for (const id of ids) notificationHub.wake(id); notificationEmail.wake(); }
@@ -467,6 +470,7 @@ export function createApp(dependencies: AppDependencies) {
   app.use("/api/v1", createAuthRouter(authService, authRateLimit, profilePhotoService));
   app.use("/api/v1", createProfilePhotosRouter(authService, profilePhotoService));
   app.use("/api/v1", createNotificationsRouter(authService, notifications, notificationStream));
+  app.use("/api/v1", createDailyCriticalTasksRouter(authService, dailyCriticalTasks));
   app.use("/api/v1", createProjectChatRouter(authService, projectChatService, projectChatTyping));
   app.use("/api/v1", createProjectChatAttachmentsRouter(authService, chatAttachments));
   app.use("/api/v1", createProjectChatEventsRouter(authService, projectChatStream));
@@ -612,8 +616,8 @@ export function createApp(dependencies: AppDependencies) {
   app.use(errorHandler);
 
   return Object.assign(app, {
-    startNotificationDelivery: () => notificationEmail.start(),
-    closeProjectChat: async () => { await Promise.all([projectChatStream.close(), notificationStream.close(), notificationEmail.stop()]); },
+    startNotificationDelivery: () => { notificationEmail.start(); dailyCriticalTasks.start(); },
+    closeProjectChat: async () => { dailyCriticalTasks.stop(); await Promise.all([projectChatStream.close(), notificationStream.close(), notificationEmail.stop()]); },
     cleanupProjectChatAttachments: () => chatAttachments.cleanup(),
     cleanupProcurementVendorPhotos: () => procurementVendorPhotoService.cleanup(),
     cleanupProcurementVendorCertificates: () => procurementVendorCertificateService.cleanup()

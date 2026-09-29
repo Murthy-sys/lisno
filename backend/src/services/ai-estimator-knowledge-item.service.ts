@@ -3325,9 +3325,6 @@ async function validateBudgetAlterationReferences(mainLineId: string, rows: Row[
       if (childIds.includes(mainLineId)) {
         reject("targetSubBasketId", "Select a Sub Basket that does not contain this item.");
       }
-      if (childIds.length === 0) {
-        reject("targetSubBasketId", "Select a Sub Basket with at least one available item.");
-      }
       for (const childId of childIds) lineIds.add(childId);
       continue;
     }

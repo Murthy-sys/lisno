@@ -239,6 +239,9 @@ const PROTECTED_OPERATION_PERMISSIONS = [
   {"operation":"GET /notifications","permission":"chat.read"},
   {"operation":"PUT /notifications/:notificationId/read","permission":"chat.read_state"},
   {"operation":"GET /notifications/events","permission":"chat.read"},
+  {"operation":"GET /chat/availability","permission":"chat.read"},
+  {"operation":"GET /daily-critical-tasks","permission":"chat.read"},
+  {"operation":"PUT /daily-critical-tasks/:localDate/acknowledgment","permission":"chat.read_state"},
   {"operation":"GET /project-messages","permission":"chat.read"},
   {"operation":"GET /projects/:projectId/chat/attachment-policy","permission":"chat.read"},
   {"operation":"POST /projects/:projectId/chat/attachments","permission":"chat.send"},
@@ -304,11 +307,12 @@ const SUPER_ADMIN_BEHAVIORS = [
   "admin_override", "admin_override", "global_read", "admin_override", "admin_override", "admin_override", "global_read", "admin_override",
   "admin_override", "admin_override", "global_read", "admin_override", "admin_override", "admin_override", "global_read", "admin_override",
   "admin_override", "admin_override", "global_read", "admin_override", "admin_override", "admin_override", "global_read", "global_read",
-  "global_read", "global_read", "deny_personal", "deny_personal", "self", "self", "self", "global_read",
-  "global_read", "self", "self", "global_read", "global_read", "global_read", "global_read", "global_read",
-  "admin_override", "admin_override", "admin_override", "admin_override", "global_read", "admin_override", "admin_override", "global_read",
-  "self", "admin_override", "self", "self", "global_read", "global_read", "admin_override", "admin_override",
-  "global_read", "admin_override", "admin_override", "admin_override", "admin_override", "admin_override",
+  "global_read", "global_read", "deny_personal", "deny_personal", "self", "self", "self", "self",
+  "self", "self", "global_read", "global_read", "self", "self", "global_read", "global_read",
+  "global_read", "global_read", "global_read", "admin_override", "admin_override", "admin_override", "admin_override", "global_read",
+  "admin_override", "admin_override", "global_read", "self", "admin_override", "self", "self", "global_read",
+  "global_read", "admin_override", "admin_override", "global_read", "admin_override", "admin_override", "admin_override", "admin_override",
+  "admin_override",
 ] as const satisfies readonly SuperAdminBehavior[];
 
 function behaviorAt(index: number): SuperAdminBehavior {

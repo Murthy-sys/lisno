@@ -38,6 +38,7 @@ import {
   listKnowledgeBaskets,
   listKnowledgeItems,
   listKnowledgeMasters,
+  listKnowledgeSubBaskets,
   permanentlyDeleteKnowledgeBasket,
   updateKnowledgeBasket,
   type KnowledgeListParams
@@ -117,6 +118,7 @@ export function KnowledgeBaseIndexPage() {
   const [announcement, setAnnouncement] = useState("");
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [collapsedBaskets, setCollapsedBaskets] = useState<readonly string[]>([]);
+  const [expandedSubBaskets, setExpandedSubBaskets] = useState<readonly string[]>([]);
   /* Component state only: the safety notice returns on the next visit. */
   const [noticeDismissed, setNoticeDismissed] = useState(false);
   const manageBasketsButtonRef = useRef<HTMLButtonElement>(null);
@@ -203,6 +205,13 @@ export function KnowledgeBaseIndexPage() {
     }
     return [...groups.entries()];
   }, [itemsQuery.data?.items, basketsQuery.data?.items, hasActiveFilters]);
+  const subBasketQueries = useQueries({
+    queries: groupedItems.map(([basketId]) => ({
+      queryKey: [...knowledgeQueryKeys.subBasketLists(basketId), "index-catalog"],
+      queryFn: () => collectAllKnowledgeMasterPages((page) => listKnowledgeSubBaskets(basketId, page), "Sub-Basket"),
+      enabled: !collapsedBaskets.includes(basketId)
+    }))
+  });
   const total = itemsQuery.data?.pagination.total ?? 0;
   const advancedFilterCount = ADVANCED_FILTER_KEYS.filter((key) => filters[key]).length;
   const appliedChips = useMemo(() => {
@@ -259,6 +268,11 @@ export function KnowledgeBaseIndexPage() {
         ? current.filter((id) => id !== basketId)
         : [...current, basketId]
     );
+  }
+
+  function toggleSubBasket(subBasketId: string) {
+    setExpandedSubBaskets((current) => current.includes(subBasketId)
+      ? current.filter((id) => id !== subBasketId) : [...current, subBasketId]);
   }
 
   function dismissNotice() {
@@ -508,9 +522,20 @@ export function KnowledgeBaseIndexPage() {
         />
       ) : (
         <div className="knowledge-basket-groups" aria-label="Knowledge items">
-          {groupedItems.map(([basketId, group]) => {
+          {groupedItems.map(([basketId, group], groupIndex) => {
             const expanded = !collapsedBaskets.includes(basketId);
             const panelId = `knowledge-basket-panel-${basketId}`;
+            const subBasketQuery = subBasketQueries[groupIndex];
+            const subBasketNames = new Map<string, string>();
+            if (!hasActiveFilters) for (const subBasket of subBasketQuery?.data?.items ?? []) {
+              subBasketNames.set(subBasket.id, subBasket.name);
+            }
+            for (const item of group.items) if (item.subBasketId) {
+              if (!subBasketNames.has(item.subBasketId)) subBasketNames.set(item.subBasketId, item.subBasketName ?? "Unavailable Sub-Basket");
+            }
+            const directItems = group.items.filter((item) => !item.subBasketId);
+            const directKey = `direct:${basketId}`;
+            const directExpanded = hasActiveFilters || !expandedSubBaskets.includes(directKey);
             /* A filtered group whose basket record is not loaded has no description. */
             const basketDescription = (basketsQuery.data?.items ?? [])
               .find(({ id }) => id === basketId)?.description?.trim();
@@ -544,7 +569,7 @@ export function KnowledgeBaseIndexPage() {
                 </div>
                 <div className="knowledge-basket-panel__meta">
                   <span className="knowledge-count-pill">
-                    {group.items.length} {group.items.length === 1 ? "item" : "items"}
+                    {group.items.length} {group.items.length === 1 ? "item" : "items"} on this page
                   </span>
                   <div className="knowledge-row-actions">
                     {/* The count pill beside it already reports an empty basket, so
@@ -578,18 +603,28 @@ export function KnowledgeBaseIndexPage() {
                 </div>
               </div>
               <div id={panelId} className="knowledge-basket-panel__body" hidden={!expanded}>
-              <div className="knowledge-item-grid">
-                {group.items.map((item) => (
-                  <KnowledgeIndexItemCard
-                    key={item.id}
-                    item={item}
-                    uoms={masters.uoms}
-                    priorities={masters.priorities}
-                    catalogState={cardCatalogState}
-                    onOpen={() => navigate(`/admin/configuration/estimation/items/${encodeURIComponent(item.mainLineId)}`)}
-                  />
-                ))}
-              </div>
+                {subBasketQuery?.isPending ? <p role="status">Loading Sub-Baskets…</p> : null}
+                {subBasketQuery?.isError ? <InlineMessage tone="warning" role="alert">Sub-Baskets could not be loaded. Known items remain available. <Button type="button" variant="quiet" onClick={() => void subBasketQuery.refetch()}>Retry Sub-Baskets</Button></InlineMessage> : null}
+                {Array.from(subBasketNames, ([subBasketId, subBasketName]) => {
+                  const subItems = group.items.filter((item) => item.subBasketId === subBasketId);
+                  const subExpanded = hasActiveFilters || expandedSubBaskets.includes(subBasketId);
+                  const subPanelId = `knowledge-sub-basket-panel-${subBasketId}`;
+                  return <section key={subBasketId} className="knowledge-sub-basket" data-expanded={subExpanded || undefined}>
+                    <div className="knowledge-sub-basket__header">
+                      <h3><button type="button" className="knowledge-sub-basket__toggle" aria-expanded={subExpanded} aria-controls={subPanelId} onClick={() => toggleSubBasket(subBasketId)}><ChevronDown aria-hidden="true" /><span>{subBasketName}</span></button></h3>
+                      <span className="knowledge-count-pill">{subItems.length} {subItems.length === 1 ? "item" : "items"} on this page</span>
+                    </div>
+                    <div id={subPanelId} className="knowledge-sub-basket__body" hidden={!subExpanded}>
+                      {subItems.length ? <div className="knowledge-item-grid">{subItems.map((item) => <KnowledgeIndexItemCard key={item.id} item={item} uoms={masters.uoms} priorities={masters.priorities} catalogState={cardCatalogState} onOpen={() => navigate(`/admin/configuration/estimation/items/${encodeURIComponent(item.mainLineId)}`)} />)}</div>
+                        : <p>{!hasActiveFilters && total <= PAGE_SIZE ? "No items in this Sub-Basket yet." : "No items from this Sub-Basket on this page."}</p>}
+                    </div>
+                  </section>;
+                })}
+                {directItems.length ? <section className="knowledge-sub-basket" data-expanded={directExpanded || undefined}>
+                  <div className="knowledge-sub-basket__header"><h3><button type="button" className="knowledge-sub-basket__toggle" aria-expanded={directExpanded} aria-controls={`knowledge-direct-items-${basketId}`} onClick={() => toggleSubBasket(directKey)}><ChevronDown aria-hidden="true" /><span>Items directly under Main Basket</span></button></h3><span className="knowledge-count-pill">{directItems.length} {directItems.length === 1 ? "item" : "items"} on this page</span></div>
+                  <div id={`knowledge-direct-items-${basketId}`} className="knowledge-sub-basket__body" hidden={!directExpanded}><div className="knowledge-item-grid">{directItems.map((item) => <KnowledgeIndexItemCard key={item.id} item={item} uoms={masters.uoms} priorities={masters.priorities} catalogState={cardCatalogState} onOpen={() => navigate(`/admin/configuration/estimation/items/${encodeURIComponent(item.mainLineId)}`)} />)}</div></div>
+                </section> : null}
+                {!subBasketQuery?.isPending && subBasketNames.size === 0 && directItems.length === 0 ? <p>No Sub-Baskets or items are available in this Main Basket.</p> : null}
               </div>
             </Surface>
             );

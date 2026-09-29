@@ -194,6 +194,7 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
 };
 
 const operationsWithoutBodies = new Set<string>([
+  "PUT /daily-critical-tasks/:localDate/acknowledgment",
   "DELETE /auth/me/profile-photo",
   "PUT /notifications/:notificationId/read",
   "POST /leads/:leadId/estimate/submit",
@@ -1121,7 +1122,7 @@ function responsesFor(key: HumanJwtOperationKeyShape): Readonly<Record<string, O
   }
   if (key === "GET /notifications/events") {
     return {
-      "200": {description: "Recipient-only authenticated SSE. Event notifications carries the authorized first-page NotificationPage snapshot; event state reports denied or unavailable. Heartbeat comments carry no content. No credentials in the URL.", content: {"text/event-stream": {schema: {type: "string"}}}},
+      "200": {description: "Recipient-only authenticated SSE. Event notifications carries the authorized first-page NotificationPage snapshot; event daily-critical-tasks carries only an India-local date or null to refresh the authenticated task-list endpoint. Event state reports denied or unavailable. Heartbeat comments carry no content. No credentials in the URL.", content: {"text/event-stream": {schema: {type: "string"}}}},
       ...standardProtectedErrors,
       "503": { $ref: "#/components/responses/ServiceUnavailable" }
     };

@@ -8,6 +8,7 @@ import { ApiError } from "../middleware/errors.js";
 import type { ChatTypingRecord, ProjectChatRepository } from "../repositories/project-chat.js";
 import { authenticatedChatUser, projectChatContext } from "./project-chat-context.js";
 import type { Clock } from "./workflow.js";
+import { assertChatWritable, chatAvailability } from "../domain/chat-hours.js";
 
 const digest = (...values: unknown[]) => createHash("sha256").update(JSON.stringify(values)).digest("hex");
 const limited = (seconds = 3) => new ApiError(429, "CHAT_TYPING_LIMIT", "Typing updates are temporarily limited.", undefined, { "Retry-After": String(seconds) });
@@ -65,7 +66,7 @@ export function createProjectChatTypingService(options: { chatRepository: Projec
         const people = new Map<string, ChatTypingSnapshot["participants"][number]>();
         for (const lease of leases) {
           const user = users.get(lease.userId);
-          if (!user || !user.active || !memberIds.has(user.id) || !hasPermission(user.role, "chat.send") ||
+          if (!user || !user.active || !memberIds.has(user.id) || !hasPermission(user.role, "chat.send") || !chatAvailability(user.role, clock()).writable ||
             user.role !== lease.role || (user.sessionVersion ?? 1) !== lease.sessionVersion ||
             lease.sessionExpiresAt * 1000 <= currentTime || !lease.expiresAt || Date.parse(lease.expiresAt) <= currentTime) continue;
           const previous = people.get(user.id);
@@ -105,6 +106,7 @@ export function createProjectChatTypingService(options: { chatRepository: Projec
       const sessionScope = digest(actor.id, actor.role, actor.sessionVersion, actor.expiresAt);
       return store.mutate(async tx => {
         await projectChatContext(tx, actor, projectId, clock, "chat.send");
+        if (input.typing) assertChatWritable(actor.role, clock());
         timely(receivedAt);
         const nowMs = clock().getTime();
         const now = new Date(nowMs).toISOString();
@@ -138,6 +140,7 @@ export function createProjectChatTypingService(options: { chatRepository: Projec
         };
         timely(receivedAt);
         await tx.saveTyping(record);
+        if (input.typing) assertChatWritable(actor.role, clock());
         return effective(record, now);
       });
     },

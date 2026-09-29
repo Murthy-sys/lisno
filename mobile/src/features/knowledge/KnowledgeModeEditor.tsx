@@ -113,14 +113,16 @@ export function KnowledgeModeEditor({ item, payload, onChange, pricingPayload, o
       <View style={modeStyles.selectorRow}><View style={modeStyles.selector}><KnowledgeChoice multiple label="PMC" selected={visible.pmc} onPress={() => setVisible(previous => ({ ...previous, pmc: !previous.pmc }))} /></View><View style={modeStyles.selector}><KnowledgeChoice multiple label="Execution" selected={visible.execution} onPress={() => setVisible(previous => ({ ...previous, execution: !previous.execution }))} /></View></View>
       <KnowledgeText>Hidden settings are retained.</KnowledgeText>
       {issues.length || inputIssues.length ? <KnowledgeText error>{[...issues.map(issue => issue.message), ...inputIssues].filter((text, index, all) => all.indexOf(text) === index).join("\n")}</KnowledgeText> : null}
-      {visible.pmc || visible.execution ? <View style={modeStyles.description}><View style={knowledgeStyles.row}><Text style={[knowledgeStyles.subtitle, { flex: 1 }]}>Shared description</Text>{!readOnly && descriptionBackup === null ? <IconButton label="Edit Mode paragraph" icon="edit" variant="quiet" onPress={() => setDescriptionBackup({ value: payload.modeDescription })} /> : null}</View>
-        {descriptionBackup === null ? <KnowledgeText>{description}</KnowledgeText> : <><Field label="Mode paragraph" value={description} multiline editable={!readOnly} maxLength={4000} onChangeText={modeDescription => change({ ...payload, modeDescription })} /><View style={knowledgeStyles.row}>
-          <Button label="Cancel paragraph" variant="quiet" onPress={() => { const next = { ...payload }; if (descriptionBackup.value === undefined) delete next.modeDescription; else next.modeDescription = typeof descriptionBackup.value === "string" ? syncModeDescription(descriptionBackup.value, partition.primary.pmc, undefined, partition.primary.execution.in_house) : descriptionBackup.value; change(next); setDescriptionBackup(null); }} />
-          <Button label="Apply paragraph" disabled={readOnly || modeDescriptionIssues(description).length > 0} onPress={() => { change({ ...payload, modeDescription: syncModeDescription(description, partition.primary.pmc, undefined, partition.primary.execution.in_house) }); setDescriptionBackup(null); }} />
-        </View></>}
-      </View> : null}
     </View>
-    {visible.pmc ? section("pmc", "PMC", calculation("pmc")) : null}
+    {visible.pmc ? section("pmc", "PMC", <>
+      <View style={modeStyles.description}><View style={knowledgeStyles.row}><Text style={[knowledgeStyles.subtitle, { flex: 1 }]}>Description</Text>{!readOnly && descriptionBackup === null ? <IconButton label="Edit Description" icon="edit" variant="quiet" onPress={() => setDescriptionBackup({ value: payload.modeDescription })} /> : null}</View>
+        {descriptionBackup === null ? <KnowledgeText>{description}</KnowledgeText> : <><Field label="Description" value={description} multiline editable={!readOnly} maxLength={4000} onChangeText={modeDescription => change({ ...payload, modeDescription })} /><View style={knowledgeStyles.row}>
+          <Button label="Cancel description" variant="quiet" onPress={() => { const next = { ...payload }; if (descriptionBackup.value === undefined) delete next.modeDescription; else next.modeDescription = typeof descriptionBackup.value === "string" ? syncModeDescription(descriptionBackup.value, partition.primary.pmc, undefined, partition.primary.execution.in_house) : descriptionBackup.value; change(next); setDescriptionBackup(null); }} />
+          <Button label="Apply description" disabled={readOnly || modeDescriptionIssues(description).length > 0} onPress={() => { change({ ...payload, modeDescription: syncModeDescription(description, partition.primary.pmc, undefined, partition.primary.execution.in_house) }); setDescriptionBackup(null); }} />
+        </View></>}
+      </View>
+      {calculation("pmc")}
+    </>) : null}
     {visible.execution ? section("execution", "Execution", <>
       <KnowledgeText>Execution source. Select one or both; each keeps its own settings.</KnowledgeText>
       <View style={modeStyles.selectorRow}><View style={modeStyles.selector}><KnowledgeChoice multiple label="Sub-Vendor" selected={visible.sub_vendor} onPress={() => setVisible(previous => ({ ...previous, sub_vendor: !previous.sub_vendor }))} /></View><View style={modeStyles.selector}><KnowledgeChoice multiple label="In-house" selected={visible.in_house} onPress={() => setVisible(previous => ({ ...previous, in_house: !previous.in_house }))} /></View></View>

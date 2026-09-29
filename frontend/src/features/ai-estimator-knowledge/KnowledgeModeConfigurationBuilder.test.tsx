@@ -283,7 +283,7 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     expect(executionBody).toHaveAttribute("hidden");
     expect(pmcSelection).toBeChecked();
     expect(executionSelection).toBeChecked();
-    expect(screen.getByRole("heading", { name: "Shared description" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Description" })).not.toBeInTheDocument();
 
     await user.keyboard(" ");
     expect(executionToggle).toHaveAttribute("aria-expanded", "true");
@@ -293,6 +293,7 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     await user.click(pmcSelection);
     expect(screen.getByRole("button", { name: "Collapse PMC" })).toHaveAttribute("aria-expanded", "true");
     expect(pmcBody).toBeVisible();
+    expect(within(pmcBody!).getByRole("heading", { name: "Description" })).toBeVisible();
     expect(onPayload).not.toHaveBeenCalled();
     expect(onDirty).not.toHaveBeenCalled();
   });

@@ -26,14 +26,14 @@ export function chatIssueActions(message: ChatMessage) {
   return actions;
 }
 
-export function ChatIssueDialog({ projectId, message: initialMessage, participants, onClose }: { projectId: string; message: ChatMessage; participants: ChatParticipant[]; onClose: () => void }) {
+export function ChatIssueDialog({ projectId, message: initialMessage, participants, readOnly = false, onClose }: { projectId: string; message: ChatMessage; participants: ChatParticipant[]; readOnly?: boolean; onClose: () => void }) {
   const id = useId();
   const chat = useProjectChat();
   const latest = useQuery({ queryKey: [...chatKeys.project(chat.scope, projectId), "issue-context", initialMessage.id], queryFn: ({ signal }) => projectChatApi.messages(projectId, { around: initialMessage.id, limit: 1 }, signal), retry: false, enabled: chat.enabled && !chat.denied.has(projectId) });
   const message = latest.data?.items.find(item => item.id === initialMessage.id) ?? initialMessage;
   const { verifyAccess } = chat;
   useEffect(() => { if (isChatDenied(latest.error)) void verifyAccess(projectId); }, [latest.error, projectId, verifyAccess]);
-  const actions = chatIssueActions(message);
+  const actions = readOnly ? [] : chatIssueActions(message);
   const [action, setAction] = useState<ChatIssueAction>(actions[0]?.action ?? "raise");
   const [priority, setPriority] = useState<"important" | "critical">("important");
   const [owner, setOwner] = useState(message.capabilities.canAssign ? message.responsible?.id ?? "" : chat.userId);
@@ -48,7 +48,7 @@ export function ChatIssueDialog({ projectId, message: initialMessage, participan
   const validDueDate = action !== "reschedule" || isChatDueDate(dueDate);
   const available = !latest.isPending && !latest.isError && actions.some(item => item.action === action);
   function save() {
-    if (versionChanged || !available || !validOwner || !validDueDate || (needsNote && !note.trim())) return;
+    if (readOnly || versionChanged || !available || !validOwner || !validDueDate || (needsNote && !note.trim())) return;
     const input: Omit<ChatIssueInput, "idempotencyKey"> = {
       action, expectedVersion,
       ...(needsNote || note.trim() ? { note: note.trim() } : {}),
@@ -66,6 +66,7 @@ export function ChatIssueDialog({ projectId, message: initialMessage, participan
       {message.issueHistory.length ? <section className="project-chat-history" aria-label="Recent issue history"><h3>Recent issue history</h3><ol>{message.issueHistory.map(event => <li key={event.id}><strong>{event.actor.name}</strong> · {ROLE_LABELS[event.actor.role]} · {event.action}<br /><time dateTime={event.occurredAt}>{new Date(event.occurredAt).toLocaleString()}</time>{event.actionMetadata ? <p>Due {chatDueDate(event.actionMetadata.dueDate)} · Original due {chatDueDate(event.actionMetadata.originalDueDate)}</p> : null}{event.note ? <p>{event.note}</p> : null}</li>)}</ol></section> : null}
       {versionChanged ? <div className="project-chat-warning" role="status"><p>This issue has changed since you started editing. Review the current details and history above before applying your retained changes.</p><Button variant="secondary" disabled={mutation.busy || latest.isPending || latest.isError} onClick={() => setExpectedVersion(message.version)}>Review complete, keep my changes</Button></div> : null}
       {mutation.error ? <p className="project-chat-error" role="alert">{mutation.error}</p> : null}
+      {readOnly ? <p role="status">Chat is read-only until 7:30 AM India time. Issue details remain available.</p> : null}
       {latest.isPending ? <p role="status">Loading the latest issue…</p> : latest.isError ? <p role="alert">{chatErrorMessage(latest.error)} <Button variant="quiet" onClick={() => void latest.refetch()}>Retry issue</Button></p> : !available && actions.length ? <p role="status">This issue changed. Choose an available action.</p> : null}
       {actions.length ? <>
       <Field id={`${id}-action`} label="Action">{props => <Select {...props} value={available ? action : ""} onChange={event => setAction(event.target.value as ChatIssueAction)}><option value="" disabled>Choose action</option>{actions.map(item => <option key={item.action} value={item.action}>{item.label}</option>)}</Select>}</Field>

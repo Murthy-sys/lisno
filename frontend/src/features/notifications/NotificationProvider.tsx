@@ -135,6 +135,7 @@ function NotificationSession({ children, enabled, sessionToken }: { children: Re
       await runNotificationStream({
         signal: controller.signal,
         onSnapshot: page => { if (valid()) accept(page); },
+        onDailyCriticalTasks: () => { if (valid()) void queryClient.invalidateQueries({ queryKey: ["daily-critical-tasks"] }); },
         onStatus: status => { if (valid()) setConnection(status); },
         onDenied: () => { if (valid()) revoke(); }
       });

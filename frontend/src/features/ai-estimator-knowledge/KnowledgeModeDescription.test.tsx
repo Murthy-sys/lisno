@@ -43,11 +43,11 @@ describe("shared Mode paragraph", () => {
     expect(screen.getByText(expected)).toBeVisible();
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     expect(screen.getAllByText(expected)).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: "Edit Mode paragraph" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Edit Description" })).toHaveLength(1);
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
-    expect(screen.getByText(expected)).toBeVisible();
+    expect(screen.getByText(expected)).not.toBeVisible();
     await user.click(screen.getByRole("checkbox", { name: "In-house" }));
-    expect(screen.getByText(expected)).toBeVisible();
+    expect(screen.getByText(expected)).not.toBeVisible();
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     expect(screen.getByText(expected)).not.toBeVisible();
   });
@@ -56,23 +56,23 @@ describe("shared Mode paragraph", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     const view = render(<Harness onChange={onChange} />);
-    await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
-    const text = screen.getByRole("textbox", { name: "Mode paragraph" });
+    await user.click(screen.getByRole("button", { name: "Edit Description" }));
+    const text = screen.getByRole("textbox", { name: "Description" });
     expect(text).toHaveFocus();
     expect(text).toHaveValue(generated);
     await user.clear(text);
     await user.type(text, "Cancelled wording");
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByText(generated)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Edit Mode paragraph" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Edit Description" })).toHaveFocus();
     expect(onChange).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
-    const nextText = screen.getByRole("textbox", { name: "Mode paragraph" });
+    await user.click(screen.getByRole("button", { name: "Edit Description" }));
+    const nextText = screen.getByRole("textbox", { name: "Description" });
     await user.clear(nextText);
     await user.type(nextText, "Custom work for both Modes.\nKeep this wording.");
     expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
     await user.click(screen.getByRole("button", { name: "Save" }));
-    expect(screen.queryByRole("textbox", { name: "Mode paragraph" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Description" })).not.toBeInTheDocument();
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ modeDescription: "Custom work for both Modes.\nKeep this wording." }));
     expect(screen.getByRole("checkbox", { name: "Execution" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
@@ -82,7 +82,7 @@ describe("shared Mode paragraph", () => {
     view.unmount();
     render(<Harness initial={saved} readOnly />);
     expect(screen.getByText("Custom work for both Modes. Keep this wording. Inclusions: Shifting.")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Edit Mode paragraph" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit Description" })).not.toBeInTheDocument();
   });
 
   it("keeps checked items in the live preview during typing, deletion, and saving", async () => {
@@ -94,9 +94,9 @@ describe("shared Mode paragraph", () => {
     for (const list of ["Inclusions", "Exclusions"]) {
       await user.click(within(screen.getByRole("group", { name: list })).getByRole("checkbox", { name: list === "Inclusions" ? "Transport" : "Unloading" }));
     }
-    await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
-    const text = screen.getByRole("textbox", { name: "Mode paragraph" });
-    const preview = screen.getByRole("region", { name: "Paragraph preview" });
+    await user.click(screen.getByRole("button", { name: "Edit Description" }));
+    const text = screen.getByRole("textbox", { name: "Description" });
+    const preview = screen.getByRole("region", { name: "Description preview" });
     await user.clear(text);
     expect(text).toHaveValue("");
     expect(preview).toHaveTextContent("Inclusions: Transport. Exclusions: Unloading.");
@@ -110,13 +110,13 @@ describe("shared Mode paragraph", () => {
     const expected = "Custom fixing. Inclusions: Shifting. Exclusions: Unloading.";
     expect(screen.getByText(expected)).toBeVisible();
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ modeDescription: expected }));
-    await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
-    expect(screen.getByRole("textbox", { name: "Mode paragraph" })).toHaveValue(expected);
+    await user.click(screen.getByRole("button", { name: "Edit Description" }));
+    expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue(expected);
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(screen.getAllByText(expected)).toHaveLength(1);
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
     expect(screen.getAllByText(expected)).toHaveLength(1);
-    expect(screen.getByText(expected)).toBeVisible();
+    expect(screen.getByText(expected)).not.toBeVisible();
   });
 
   it("validates the complete paragraph length after inserting selected items", async () => {
@@ -126,8 +126,8 @@ describe("shared Mode paragraph", () => {
     expect(screen.getByRole("checkbox", { name: "Execution" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
-    await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
-    const text = screen.getByRole("textbox", { name: "Mode paragraph" });
+    await user.click(screen.getByRole("button", { name: "Edit Description" }));
+    const text = screen.getByRole("textbox", { name: "Description" });
     fireEvent.change(text, { target: { value: "a".repeat(3_995) } });
     onChange.mockClear();
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -140,8 +140,8 @@ describe("shared Mode paragraph", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
-    await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
-    const text = screen.getByRole("textbox", { name: "Mode paragraph" });
+    await user.click(screen.getByRole("button", { name: "Edit Description" }));
+    const text = screen.getByRole("textbox", { name: "Description" });
     expect(text).toHaveAttribute("maxlength", "4000");
     await user.clear(text);
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -156,6 +156,6 @@ describe("shared Mode paragraph", () => {
     render(<KnowledgeConflictReview sectionKey="advanced" payload={{ modeDescription: "Server wording" }}
       localVersion={1} serverVersion={2} masters={{}} relationshipBaskets={[]} relationshipItems={[]}
     />);
-    expect(screen.getByText("Mode paragraph").nextElementSibling).toHaveTextContent("Server wording");
+    expect(screen.getByText("Description").nextElementSibling).toHaveTextContent("Server wording");
   });
 });

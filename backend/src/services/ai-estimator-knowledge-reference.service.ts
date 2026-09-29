@@ -989,7 +989,8 @@ export function createAiEstimatorKnowledgeReferenceService(
         const id = `knowledge-${singular(masterType)}-${createId()}`;
         const code = masterType === "surfaces"
           ? input.code ?? generatedSurfaceCode(id)
-          : masterType === "vendors" ? input.code ?? `PV-${createHash("sha256").update(id).digest("hex").slice(0, 36).toUpperCase()}` : input.code;
+          : masterType === "vendors" ? input.code ?? `PV-${createHash("sha256").update(id).digest("hex").slice(0, 36).toUpperCase()}`
+            : masterType === "uoms" ? input.code ?? `UOM-${createHash("sha256").update(id).digest("hex").slice(0, 48).toUpperCase()}` : input.code;
         if (!code) {
           throw new ApiError(400, "VALIDATION_ERROR", "code is invalid.", {
             code: "Required bounded text."
@@ -1546,7 +1547,7 @@ function validateUpdateInput(input: AiEstimatorKnowledgeUpdateBasketInput): void
 
 function validateMasterCreate(masterType: AiEstimatorKnowledgeMasterType, input: AiEstimatorKnowledgeAnyCreateMasterInput): void {
   if (input.code !== undefined) validateName(input.code, "code", 64);
-  else if (masterType !== "surfaces" && masterType !== "vendors") {
+  else if (masterType !== "surfaces" && masterType !== "vendors" && masterType !== "uoms") {
     throw new ApiError(400, "VALIDATION_ERROR", "code is invalid.", {
       code: "Required bounded text."
     });

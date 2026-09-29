@@ -278,7 +278,7 @@ const surfaceCreateSchema = z
   })
   .strict();
 const uomCreateSchema = z
-  .object({ ...commonMasterFields, decimalScale: z.number().int().min(0).max(3) })
+  .object({ ...commonMasterFields, code: commonMasterFields.code.optional(), decimalScale: z.number().int().min(0).max(3) })
   .strict();
 const taxVersionSchema = z
   .object({

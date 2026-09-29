@@ -13,6 +13,7 @@ const mockComposerReply = jest.fn();
 const mockSetNavigationBlocked = jest.fn();
 const mockNavigationGuard = { setBlocked: mockSetNavigationBlocked };
 let mockBackInterceptor: (() => boolean) | undefined;
+let mockChatWritable = true;
 const mockSharedBack = jest.fn(() => mockBackInterceptor?.() ?? false);
 
 jest.mock("react-native-safe-area-context", () => {
@@ -21,6 +22,7 @@ jest.mock("react-native-safe-area-context", () => {
   return { SafeAreaView: ({ children }: { readonly children: import("react").ReactNode }) => React.createElement(View, null, children) };
 });
 jest.mock("./useChatThread", () => ({ useChatThread: jest.fn() }));
+jest.mock("./useChatAvailability", () => ({ useChatAvailability: () => ({ writable: mockChatWritable, unavailable: false, nextOpenAt: mockChatWritable ? null : "2026-09-30T02:00:00.000Z", refreshing: false }) }));
 jest.mock("../../navigation/AdaptiveAppScaffold", () => ({ useScaffoldNavigationGuard: () => mockNavigationGuard }));
 jest.mock("../../navigation/useScreenBack", () => {
   const React = jest.requireActual("react") as typeof import("react");
@@ -247,6 +249,7 @@ describe("ChatThread", () => {
     mockSetNavigationBlocked.mockClear();
     mockSharedBack.mockClear();
     mockBackInterceptor = undefined;
+    mockChatWritable = true;
   });
 
   it.each([
@@ -334,6 +337,24 @@ describe("ChatThread", () => {
 
     expect(view.getByText("Composer replying to Aditi")).toBeTruthy();
     expect(view.queryByText("Reply from sheet")).toBeNull();
+  });
+
+  it("keeps a reply draft mounted while overnight chat is read-only", async () => {
+    let current = threadState(false);
+    useChatThreadMock.mockImplementation(() => current);
+    const element = () => <ChatThread projectId="project-a" session={session} compact />;
+    const view = await render(element());
+    await fireEvent.press(view.getByRole("button", { name: "Reply directly to first message" }));
+    mockChatWritable = false;
+    current = { ...current, summary: current.summary ? { ...current.summary, capabilities: { ...current.summary.capabilities, canSend: false } } : null };
+    await view.rerender(element());
+    expect(view.getByText("Composer replying to Aditi")).toBeTruthy();
+    expect(view.queryByRole("button", { name: "Reply directly to first message" })).toBeNull();
+    expect(view.getByText(/Chat opens at 7:30 AM India time/u)).toBeTruthy();
+    mockChatWritable = true;
+    current = { ...current, summary: current.summary ? { ...current.summary, capabilities: { ...current.summary.capabilities, canSend: true } } : null };
+    await view.rerender(element());
+    expect(view.getByText("Composer replying to Aditi")).toBeTruthy();
   });
 
   it("does not expose direct reply without both backend capability and chat.send permission", async () => {

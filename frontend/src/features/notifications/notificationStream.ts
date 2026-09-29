@@ -36,6 +36,7 @@ function delay(signal: AbortSignal, milliseconds: number) {
 export async function runNotificationStream(options: {
   signal: AbortSignal;
   onSnapshot: (page: NotificationPage) => void;
+  onDailyCriticalTasks?: () => void;
   onStatus: (status: NotificationConnection) => void;
   onDenied: () => void;
   connect?: typeof apiClient.stream;
@@ -64,6 +65,10 @@ export async function runNotificationStream(options: {
           denied = true; controller.abort();
         } else if (frame.event === "notifications") {
           onSnapshot(parseNotificationSnapshot(frame.data));
+          onStatus("live");
+        } else if (frame.event === "daily-critical-tasks") {
+          // The event is deliberately content-free. Fetch recipient-scoped details over HTTP.
+          options.onDailyCriticalTasks?.();
           onStatus("live");
         }
       });

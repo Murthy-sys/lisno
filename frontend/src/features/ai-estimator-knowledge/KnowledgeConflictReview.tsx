@@ -154,7 +154,7 @@ function advancedValues(
   });
 
   if (Object.hasOwn(payload, "modeDescription")) values.push({
-    label: "Mode paragraph",
+    label: "Description",
     value: typeof payload.modeDescription === "string" ? payload.modeDescription : "Generated from the main line and selected inclusions and exclusions."
   });
   if (Object.hasOwn(payload, "pmcMinimumMarginBps") || Object.hasOwn(payload, "pmcMarginBps")) {

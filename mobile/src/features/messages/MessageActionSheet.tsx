@@ -64,6 +64,7 @@ export function MessageActionSheet({
   message,
   session,
   canReply,
+  readOnly = false,
   visible,
   onClose,
   onReply,
@@ -74,6 +75,7 @@ export function MessageActionSheet({
   readonly message: PresentedMessage | null;
   readonly session: AuthenticatedSession;
   readonly canReply: boolean;
+  readonly readOnly?: boolean;
   readonly visible: boolean;
   readonly onClose: () => void;
   readonly onReply: (message: PresentedMessage) => void;
@@ -91,8 +93,8 @@ export function MessageActionSheet({
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const attempt = useRef<{ payload: string; key: string } | null>(null);
-  const replyAvailable = canReply && session.authorization.permissions.includes("chat.send");
-  const canIssue = session.authorization.permissions.includes("chat.issue");
+  const replyAvailable = !readOnly && canReply && session.authorization.permissions.includes("chat.send");
+  const canIssue = !readOnly && session.authorization.permissions.includes("chat.issue");
   const issueActions = useMemo(
     () => message && canIssue ? messageIssueActions(message) : [],
     [canIssue, message]
@@ -148,7 +150,7 @@ export function MessageActionSheet({
       onClose();
     },
     onError: async (cause) => {
-      if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) {
+      if (cause instanceof ApiError && cause.code !== "CHAT_CLOSED" && [401, 403, 404].includes(cause.status)) {
         setError("This conversation is unavailable.");
         await onDenied();
         return;

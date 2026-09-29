@@ -409,7 +409,7 @@ describe("AI estimator knowledge item service", () => {
     if (results[0].status === "rejected") expect(results[0].reason).toMatchObject({ status: 400, code: "VALIDATION_ERROR" });
   });
 
-  it("saves non-empty whole Sub-Basket targets, exposes temporary child lineage, and rejects empty or self-containing scope", async () => {
+  it("saves whole Sub-Basket targets, including empty scopes, and rejects self-containing scope", async () => {
     const { service } = createService();
     const source = await service.createMainLine(ACTOR, "basket-carpentry", { name: "False Ceiling" });
     const temporary = await service.createMainLine(ACTOR, "basket-carpentry", {
@@ -446,12 +446,12 @@ describe("AI estimator knowledge item service", () => {
 
     const onlyChild = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Disposable child", subBasketName: "Empty scope" });
     await service.permanentlyDeleteMainLine(ACTOR, onlyChild.mainLineId, { expectedVersion: onlyChild.version });
-    await expect(service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations", {
+    const emptySaved = await service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations", {
       expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion,
       payload: { budgetAlterations: [{ ...rule, id: "empty-rule", targetSubBasketId: onlyChild.subBasketId! }] }
-    })).rejects.toMatchObject({ status: 400, fields: {
-      "payload.budgetAlterations.0.targetSubBasketId": "Select a Sub Basket with at least one available item."
-    } });
+    });
+    expect((await service.getSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations")).payload)
+      .toMatchObject({budgetAlterations: [{id: "empty-rule", targetKind: "sub_basket", targetSubBasketId: onlyChild.subBasketId, targetMainLineId: null}]});
 
     await AiEstimatorKnowledgeBasketModel.create(basketDocument("basket-electrical", "Electrical", "active", 2));
     const foreignChild = await service.createMainLine(ACTOR, "basket-electrical", {
@@ -459,7 +459,7 @@ describe("AI estimator knowledge item service", () => {
     });
     for (const targetSubBasketId of ["missing-sub-basket", foreignChild.subBasketId!] as const) {
       await expect(service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations", {
-        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion,
+        expectedVersion: emptySaved.version, expectedAggregateVersion: emptySaved.aggregateVersion,
         payload: { budgetAlterations: [{ ...rule, id: `invalid-${targetSubBasketId}`, targetSubBasketId }] }
       })).rejects.toMatchObject({ status: 400, fields: {
         "payload.budgetAlterations.0.targetSubBasketId": "Select a Sub Basket belonging to this Main Basket."
@@ -467,7 +467,7 @@ describe("AI estimator knowledge item service", () => {
     }
     await AiEstimatorKnowledgeBasketModel.updateOne({ _id: "basket-electrical" }, { $set: { status: "inactive" } });
     await expect(service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations", {
-      expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion,
+      expectedVersion: emptySaved.version, expectedAggregateVersion: emptySaved.aggregateVersion,
       payload: { budgetAlterations: [{ ...rule, id: "inactive-parent", targetBasketId: "basket-electrical",
         targetSubBasketId: foreignChild.subBasketId! }] }
     })).rejects.toMatchObject({ status: 400, fields: {

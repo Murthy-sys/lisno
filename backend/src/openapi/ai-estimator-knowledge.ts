@@ -526,7 +526,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
   KnowledgeSurfaceCreateRequest: strictObject(["name"], {
     ...masterCreateRequestProperties
   }),
-  KnowledgeUomCreateRequest: strictObject(["code", "name", "decimalScale"], {
+  KnowledgeUomCreateRequest: strictObject(["name", "decimalScale"], {
     ...masterCreateRequestProperties,
     decimalScale: { type: "integer", minimum: 0, maximum: 3 }
   }),

@@ -455,7 +455,7 @@ describe("Knowledge Mode section-state removal", () => {
     expect(props.onDirtyChange).toHaveBeenLastCalledWith(false);
   });
 
-  it("groups PMC and Execution controls separately while keeping the Mode paragraph shared", async () => {
+  it("groups the Description in PMC and keeps Execution controls separate", async () => {
     const user = userEvent.setup();
     const ref = createRef<KnowledgeModePanelHandle>();
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
@@ -467,7 +467,7 @@ describe("Knowledge Mode section-state removal", () => {
     const pmc = screen.getByRole("region", { name: "PMC" });
     const execution = screen.getByRole("region", { name: "Execution" });
     const paragraph = screen.getByText("Shared delivery requirements.");
-    const paragraphEditor = screen.getByRole("button", { name: "Edit Mode paragraph" });
+    const paragraphEditor = screen.getByRole("button", { name: "Edit Description" });
     const pmcCalculation = within(pmc).getByRole("region", { name: "PMC calculations" });
     const subVendorCalculation = within(execution).getByRole("region", { name: "Sub-Vendor calculations" });
 
@@ -481,11 +481,10 @@ describe("Knowledge Mode section-state removal", () => {
     );
     expect(within(execution).queryByRole("region", { name: "Sub-Vendor components" })).not.toBeInTheDocument();
     expect(within(execution).queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
-    for (const mode of [pmc, execution]) {
-      expect(mode).not.toContainElement(paragraph);
-      expect(mode).not.toContainElement(paragraphEditor);
-      expect(paragraph.compareDocumentPosition(mode) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    }
+    expect(pmc).toContainElement(paragraph);
+    expect(pmc).toContainElement(paragraphEditor);
+    expect(execution).not.toContainElement(paragraph);
+    expect(execution).not.toContainElement(paragraphEditor);
 
     await user.click(within(execution).getByRole("checkbox", { name: "In-house" }));
     expect(subVendorCalculation).toBeVisible();
@@ -992,23 +991,23 @@ describe("Knowledge Mode section-state removal", () => {
     const user = userEvent.setup();
     const ref = createRef<KnowledgeModePanelHandle>();
     const { props } = renderPanel(ref);
-    await user.click(await screen.findByRole("button", { name: "Edit Mode paragraph" }));
-    await user.clear(screen.getByRole("textbox", { name: "Mode paragraph" }));
-    await user.type(screen.getByRole("textbox", { name: "Mode paragraph" }), "Pending wording");
+    await user.click(await screen.findByRole("button", { name: "Edit Description" }));
+    await user.clear(screen.getByRole("textbox", { name: "Description" }));
+    await user.type(screen.getByRole("textbox", { name: "Description" }), "Pending wording");
     expect(props.onDirtyChange).toHaveBeenLastCalledWith(true);
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
-    expect(screen.queryByRole("textbox", { name: "Mode paragraph" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Description" })).not.toBeInTheDocument();
     await act(async () => { expect(await ref.current?.save()).toBe(false); });
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
     expect(screen.getByRole("checkbox", { name: "PMC" })).toBeChecked();
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "Mode paragraph" })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Description" })).toHaveFocus());
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(props.onDirtyChange).toHaveBeenLastCalledWith(false);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
-    await user.clear(screen.getByRole("textbox", { name: "Mode paragraph" }));
-    await user.type(screen.getByRole("textbox", { name: "Mode paragraph" }), "Saved shared wording");
+    await user.click(screen.getByRole("button", { name: "Edit Description" }));
+    await user.clear(screen.getByRole("textbox", { name: "Description" }));
+    await user.type(screen.getByRole("textbox", { name: "Description" }), "Saved shared wording");
     await user.click(screen.getByRole("button", { name: "Save" }));
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementationOnce(async (_line, _revision, key, input) => {
       const saved = savedSection(key as "advanced", input);
@@ -1021,10 +1020,10 @@ describe("Knowledge Mode section-state removal", () => {
       .toEqual({ modeDescription: "Saved shared wording" });
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     expect(screen.getAllByText("Saved shared wording")).toHaveLength(1);
-    await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
-    await user.type(screen.getByRole("textbox", { name: "Mode paragraph" }), " discarded");
+    await user.click(screen.getByRole("button", { name: "Edit Description" }));
+    await user.type(screen.getByRole("textbox", { name: "Description" }), " discarded");
     act(() => ref.current?.discard());
-    expect(screen.queryByRole("textbox", { name: "Mode paragraph" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Description" })).not.toBeInTheDocument();
     expect(screen.getByText("Saved shared wording")).toBeVisible();
     expect(props.onDirtyChange).toHaveBeenLastCalledWith(false);
   });
@@ -1034,11 +1033,11 @@ describe("Knowledge Mode section-state removal", () => {
     const ref = createRef<KnowledgeModePanelHandle>();
     provideSavedScope();
     renderPanel(ref);
-    await screen.findByRole("button", { name: "Edit Mode paragraph" });
+    await screen.findByRole("button", { name: "Edit Description" });
     if (edited === "paragraph") {
-      await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
-      await user.clear(screen.getByRole("textbox", { name: "Mode paragraph" }));
-      await user.type(screen.getByRole("textbox", { name: "Mode paragraph" }), "Local paragraph");
+      await user.click(screen.getByRole("button", { name: "Edit Description" }));
+      await user.clear(screen.getByRole("textbox", { name: "Description" }));
+      await user.type(screen.getByRole("textbox", { name: "Description" }), "Local paragraph");
       await user.click(screen.getByRole("button", { name: "Save" }));
     } else if (edited === "calculation") {
       fireEvent.change(screen.getByRole("textbox", { name: "Base Rate (₹)" }), { target: { value: "1500" } });
@@ -1077,15 +1076,15 @@ describe("Knowledge Mode section-state removal", () => {
     const user = userEvent.setup();
     const ref = createRef<KnowledgeModePanelHandle>();
     renderPanel(ref);
-    await user.click(await screen.findByRole("button", { name: "Edit Mode paragraph" }));
-    await user.clear(screen.getByRole("textbox", { name: "Mode paragraph" }));
-    await user.type(screen.getByRole("textbox", { name: "Mode paragraph" }), "Rejected wording");
+    await user.click(await screen.findByRole("button", { name: "Edit Description" }));
+    await user.clear(screen.getByRole("textbox", { name: "Description" }));
+    await user.type(screen.getByRole("textbox", { name: "Description" }), "Rejected wording");
     await user.click(screen.getByRole("button", { name: "Save" }));
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(400, "VALIDATION_ERROR", "Review the paragraph.", {
       "payload.modeDescription": "Please correct this paragraph."
     }));
     await act(async () => { expect(await ref.current?.save()).toBe(false); });
-    const text = await screen.findByRole("textbox", { name: "Mode paragraph" });
+    const text = await screen.findByRole("textbox", { name: "Description" });
     expect(text).toHaveValue("Rejected wording");
     expect(text).toHaveAccessibleDescription(/Please correct this paragraph\./);
     await user.clear(text);
@@ -1104,8 +1103,8 @@ describe("Knowledge Mode section-state removal", () => {
     await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
     await user.click(within(await screen.findByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
     await user.click(within(screen.getByRole("group", { name: "Exclusions" })).getByRole("checkbox", { name: "Shifting" }));
-    await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
-    const text = screen.getByRole("textbox", { name: "Mode paragraph" });
+    await user.click(screen.getByRole("button", { name: "Edit Description" }));
+    const text = screen.getByRole("textbox", { name: "Description" });
     await user.clear(text);
     await user.type(text, "Custom installation. Inclusions: none. Exclusions: none.");
     await user.click(screen.getByRole("button", { name: "Save" }));

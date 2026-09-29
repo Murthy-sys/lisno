@@ -257,7 +257,7 @@ export interface KnowledgeTaxVersionInput {
 }
 
 export interface KnowledgeCreateMasterInput {
-  readonly code: string;
+  readonly code?: string;
   readonly name: string;
   readonly description?: string | null;
   readonly displayOrder?: number;

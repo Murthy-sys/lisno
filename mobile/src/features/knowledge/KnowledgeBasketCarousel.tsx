@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Image, Pressable, ScrollView, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import Svg, { Circle, Path } from "react-native-svg";
 import { priorityDisplay, sectionSummary, unitLabel, type CatalogState } from "../../../../shared/knowledge/knowledgeIndexPresentation";
-import type { KnowledgeItemListItem, KnowledgeMaster } from "../../../../shared/knowledge/knowledgeTypes";
+import type { KnowledgeItemListItem, KnowledgeMaster, KnowledgeSubBasket } from "../../../../shared/knowledge/knowledgeTypes";
 import { colors, fonts } from "../../ui/tokens";
 
 export interface KnowledgeMenuAnchor {
@@ -17,6 +17,11 @@ interface KnowledgeBasketCarouselProps {
   readonly basketId: string;
   readonly name: string;
   readonly items: readonly KnowledgeItemListItem[];
+  readonly subBaskets?: readonly KnowledgeSubBasket[];
+  readonly subBasketsLoading?: boolean;
+  readonly subBasketsError?: boolean;
+  readonly onRetrySubBaskets?: () => void;
+  readonly filtered?: boolean;
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly onOpenItem: (id: string) => void;
@@ -89,12 +94,26 @@ function nearestOffset(offsets: readonly number[], x: number) {
   return offsets.reduce((closest, value, index) => Math.abs(value - x) < Math.abs(offsets[closest]! - x) ? index : closest, 0);
 }
 
-export function KnowledgeBasketCarousel({ basketId, name, items, expanded, onToggle, onOpenItem, onItemMenu, onBasketMenu, uoms, priorities, catalogState, isLoading = false }: KnowledgeBasketCarouselProps) {
+export function KnowledgeBasketCarousel({ basketId, name, items, subBaskets = [], subBasketsLoading = false, subBasketsError = false, onRetrySubBaskets, filtered = false, expanded, onToggle, onOpenItem, onItemMenu, onBasketMenu, uoms, priorities, catalogState, isLoading = false }: KnowledgeBasketCarouselProps) {
   const track = useRef<ScrollView>(null);
   const scrollX = useRef(0);
   const [width, setWidth] = useState(0);
   const [position, setPosition] = useState(0);
-  const contentWidth = items.length ? TRACK_INSET * 2 + items.length * CARD_WIDTH + (items.length - 1) * CARD_GAP : 0;
+  const [expandedGroupId, setExpandedGroupId] = useState<string | null>("direct");
+  const groups = useMemo(() => {
+    const byId = new Map<string, { id: string; name: string; items: KnowledgeItemListItem[] }>();
+    if (!filtered) for (const group of subBaskets) byId.set(group.id, { id: group.id, name: group.name, items: [] });
+    for (const item of items) {
+      const id = item.subBasketId || "direct";
+      const group = byId.get(id) ?? { id, name: item.subBasketName || "Items directly under Main Basket", items: [] };
+      group.items.push(item);
+      byId.set(id, group);
+    }
+    return [...byId.values()];
+  }, [filtered, items, subBaskets]);
+  const visibleGroup = groups.find(group => group.id === expandedGroupId);
+  const visibleItems = visibleGroup?.items ?? [];
+  const contentWidth = visibleItems.length ? TRACK_INSET * 2 + visibleItems.length * CARD_WIDTH + (visibleItems.length - 1) * CARD_GAP : 0;
   const maxScroll = width > 0 ? Math.max(0, contentWidth - width) : 0;
   const offsets = useMemo(() => {
     const result = [0];
@@ -107,7 +126,7 @@ export function KnowledgeBasketCarousel({ basketId, name, items, expanded, onTog
     scrollX.current = next;
     setPosition(nearestOffset(offsets, next));
     track.current?.scrollTo({ x: next, animated: false });
-  }, [maxScroll, offsets, expanded]);
+  }, [maxScroll, offsets, expanded, expandedGroupId]);
   const moveTo = (index: number) => {
     const clamped = Math.max(0, Math.min(offsets.length - 1, index));
     const x = offsets[clamped]!;
@@ -125,14 +144,23 @@ export function KnowledgeBasketCarousel({ basketId, name, items, expanded, onTog
         <Icon name={expanded ? "down" : "next"} size={16} />
         <Icon name="stack" size={19} />
         <Text numberOfLines={1} style={s.name}>{name}</Text>
-        <Text style={s.count}>{items.length} {items.length === 1 ? "item" : "items"}</Text>
+        <Text style={s.count}>{items.length} on page</Text>
       </Pressable>
       {onBasketMenu ? <MenuTrigger label={`Actions for ${name}`} onOpen={onBasketMenu} /> : null}
     </View>
-    {expanded ? items.length ? <>
+    {expanded ? <>
+      {subBasketsLoading ? <Text style={s.empty}>Loading Sub-Baskets…</Text> : null}
+      {subBasketsError ? <Pressable accessibilityRole="button" accessibilityLabel={`Retry Sub-Baskets in ${name}`} onPress={onRetrySubBaskets} style={s.groupHeader}><Text style={s.empty}>Sub-Baskets unavailable. Retry.</Text></Pressable> : null}
+      {groups.map(group => <View key={group.id} style={s.group}>
+        <Pressable accessibilityRole="button" accessibilityLabel={`${expandedGroupId === group.id ? "Collapse" : "Expand"} ${group.id === "direct" ? group.name : `Sub-Basket ${group.name}`}`} accessibilityHint={`${group.items.length} items on this page`} accessibilityState={{ expanded: expandedGroupId === group.id }} onPress={() => setExpandedGroupId(current => current === group.id ? null : group.id)} style={s.groupHeader}>
+          <Icon name={expandedGroupId === group.id ? "down" : "next"} size={16} />
+          <Text style={s.groupName}>{group.name}</Text>
+          <Text style={s.count}>{group.items.length} on page</Text>
+        </Pressable>
+        {expandedGroupId === group.id ? group.items.length ? <>
       <View style={s.carousel}>
-        <ScrollView ref={track} testID={`basket-carousel-${basketId}`} horizontal showsHorizontalScrollIndicator={false} onLayout={event => setWidth(event.nativeEvent.layout.width)} onScroll={onScroll} scrollEventThrottle={32} snapToOffsets={offsets} decelerationRate="fast" contentContainerStyle={s.track}>
-          {items.map(item => <ItemCard key={item.mainLineId} item={item} onOpen={onOpenItem} onMenu={onItemMenu} uoms={uoms} priorities={priorities} catalogState={catalogState} />)}
+        <ScrollView ref={track} testID={`basket-carousel-${basketId}-${group.id}`} horizontal showsHorizontalScrollIndicator={false} onLayout={event => setWidth(event.nativeEvent.layout.width)} onScroll={onScroll} scrollEventThrottle={32} snapToOffsets={offsets} decelerationRate="fast" contentContainerStyle={s.track}>
+          {visibleItems.map(item => <ItemCard key={item.mainLineId} item={item} onOpen={onOpenItem} onMenu={onItemMenu} uoms={uoms} priorities={priorities} catalogState={catalogState} />)}
         </ScrollView>
         {offsets.length > 1 ? <>
           <Pressable accessibilityRole="button" accessibilityLabel={`Previous items in ${name}`} accessibilityState={{ disabled: position === 0 }} disabled={position === 0} onPress={() => moveTo(position - 1)} style={[s.arrow, s.previous, position === 0 && s.disabled]}><View style={s.arrowCircle}><Icon name="previous" size={16} /></View></Pressable>
@@ -142,7 +170,10 @@ export function KnowledgeBasketCarousel({ basketId, name, items, expanded, onTog
       <View accessible accessibilityLabel={`${name}, carousel position ${position + 1} of ${offsets.length}`} style={s.pagination}>
         {offsets.map((offset, index) => <View key={offset} style={[s.dot, index === position && s.activeDot]} />)}
       </View>
-    </> : <Text style={s.empty}>{isLoading ? "Loading items…" : "No items on this page."}</Text> : null}
+    </> : <Text style={s.empty}>No items on this page.</Text> : null}
+      </View>)}
+      {!groups.length ? <Text style={s.empty}>{isLoading || subBasketsLoading ? "Loading classification…" : filtered ? "No matching items." : "No Sub-Baskets or items yet."}</Text> : null}
+    </> : null}
   </View>;
 }
 
@@ -153,6 +184,9 @@ const s = StyleSheet.create({
   name: { flex: 1, minWidth: 0, fontFamily: fonts.semibold, fontSize: 14, lineHeight: 20, color: colors.ink },
   count: { fontFamily: fonts.medium, fontSize: 10, lineHeight: 16, color: colors.inkMuted, paddingHorizontal: 6, paddingVertical: 2, backgroundColor: colors.surfaceMuted, borderRadius: 4 },
   basketMenu: { width: 44, minHeight: 44, alignItems: "center", justifyContent: "center" },
+  group: { marginHorizontal: 8, marginBottom: 6, borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
+  groupHeader: { minHeight: 42, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
+  groupName: { flex: 1, minWidth: 0, color: colors.ink, fontFamily: fonts.medium, fontSize: 13 },
   carousel: { position: "relative" },
   track: { paddingHorizontal: TRACK_INSET, gap: CARD_GAP, paddingBottom: 4 },
   card: { width: CARD_WIDTH, minHeight: 170, backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: 5 },

@@ -210,8 +210,8 @@ function savedModeComponentRows(details: SavedSummaryRow[], configuration: Knowl
 
 function savedModeConfigurationRows(input: SavedSummaryProjectionInput, payload: KnowledgeJsonObject, details: SavedSummaryRow[]) {
   if (typeof payload.modeDescription === "string" && payload.modeDescription.trim()) {
-    details.push(row("mode-description", "Mode · Shared description", payload.modeDescription.trim()));
-  } else if (present(payload.modeDescription)) review(details, "mode-description-review", "Mode · Shared description");
+    details.push(row("mode-description", "Mode · PMC · Description", payload.modeDescription.trim()));
+  } else if (present(payload.modeDescription)) review(details, "mode-description-review", "Mode · PMC · Description");
   const configurations = objectRows(payload.modeConfigurations, details, "mode-configurations", "Mode configurations");
   const seen = new Set<string>();
   configurations.forEach((configuration, index) => {

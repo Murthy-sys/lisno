@@ -147,7 +147,7 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
       oldInHouse
     );
     const currentDescription = input.pendingDescription ?? description(after, input.mainLineName, pmc, inHouse);
-    if (expectedDescription.trim() !== currentDescription.trim()) add("mode:paragraph", "Mode · Shared paragraph", [{ key: "mode:paragraph", title: "Mode paragraph", kind: "updated", fields: [field("paragraph", "Paragraph", currentDescription)], ...(!currentDescription.trim() ? { incomplete: true } : {}) }]);
+    if (expectedDescription.trim() !== currentDescription.trim()) add("mode:paragraph", "Mode · PMC · Description", [{ key: "mode:paragraph", title: "Description", kind: "updated", fields: [field("paragraph", "Description", currentDescription)], ...(!currentDescription.trim() ? { incomplete: true } : {}) }]);
     const oldCalculations = modeCalculationsForPayload(before);
     const calculations = modeCalculationsForPayload(after);
     for (const scope of MODE_CALCULATION_SCOPES) {

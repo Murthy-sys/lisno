@@ -15,6 +15,7 @@ import { GlassSelection } from "./GlassSelection";
 import { NavigationIcon, RootTabIcon } from "./NavigationIcon";
 import { ProfileAvatar } from "./ProfileAvatar";
 import { ProfileMenu } from "./ProfileMenu";
+import { DailyCriticalTasksControl } from "../features/notifications/DailyCriticalTasksControl";
 import { resolveAuthorizedFeature, rootTabsForAuthorization, type FeatureId, type RootTab } from "./registry";
 import { scaffoldNavigationMode } from "./scaffoldLayout";
 import { useScreenBack } from "./useScreenBack";
@@ -135,6 +136,7 @@ export function AdaptiveAppScaffold({
               <View accessible accessibilityRole="image" accessibilityLabel="Lisno" style={styles.brand}>
                 <LisnoWordmark tone="light" width={104} />
               </View>
+              {authenticated.user.role !== "client" && context.runtime.api?.authenticated ? <DailyCriticalTasksControl session={authenticated} /> : null}
               <Pressable accessibilityLabel="Open notifications" accessibilityRole="button" accessibilityState={{ disabled: navigationBlocked }} disabled={navigationBlocked} onPress={() => router.push("/feature/notifications")} style={[styles.notificationButton, navigationBlocked ? styles.disabled : null]}>
                 {({ pressed }) => (
                   <View testID="notification-circle" style={[styles.notificationCircle, pressed ? styles.notificationPressed : null]}>
@@ -201,6 +203,9 @@ export function AdaptiveAppScaffold({
       {navigationMode !== "immersive" ? (
         <ProfileMenu visible={profileMenuOpen} placement={navigationMode} onRequestClose={() => setProfileMenuOpen(false)} />
       ) : null}
+      {navigationMode === "immersive" && authenticated.user.role !== "client" && context.runtime.api?.authenticated ? (
+        <View style={styles.immersiveTasks}><DailyCriticalTasksControl session={authenticated} /></View>
+      ) : null}
     </View>
     </AppModalBackdrop>
   );
@@ -211,6 +216,7 @@ const styles = StyleSheet.create({
   topBar: { minHeight: 52, paddingHorizontal: spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
   brand: { alignItems: "flex-start" },
   notificationButton: { minWidth: 48, minHeight: 48, alignItems: "center", justifyContent: "center" },
+  immersiveTasks: { position: "absolute", top: spacing.xl, right: spacing.md, zIndex: 20 },
   notificationCircle: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   notificationPressed: { opacity: 0.8 },
   body: { flex: 1, flexDirection: "row", backgroundColor: colors.canvas },

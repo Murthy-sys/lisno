@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { RefreshControl, ScrollView, View } from "react-native";
 import type { KnowledgeListParams } from "../../../../shared/knowledge/knowledgeApi";
@@ -61,6 +61,12 @@ function KnowledgeCatalogContent({ session, context }: KnowledgeCatalogWorkspace
     const group = groups.get(item.basketId) ?? { basket: baskets.data?.find(basket => basket.id === item.basketId), name: item.basketName, items: [] };
     group.items.push(item); groups.set(item.basketId, group);
   }
+  const groupEntries = [...groups];
+  const subBasketQueries = useQueries({ queries: groupEntries.map(([basketId]) => ({
+    queryKey: context.key("sub-baskets", basketId, "catalog-index"),
+    queryFn: () => allKnowledgePages(page => context.api.listKnowledgeSubBaskets(basketId, page)),
+    enabled: context.ready && context.canRead
+  })) });
   const catalogState = masters.isPending ? "loading" : masters.isError ? "error" : "ready";
   useEffect(() => {
     if (items.isSuccess && !items.isFetching && offset > 0 && offset >= items.data.pagination.total) {
@@ -88,7 +94,7 @@ function KnowledgeCatalogContent({ session, context }: KnowledgeCatalogWorkspace
     else if (context.canCreate && action === "basket") setCreateBasket(true);
     else if (context.canCreate) setCreateItem({ itemType: action === "temporary" ? "temporary" : "main_line", basketId: "" });
   }
-  return <ScrollView contentContainerStyle={s.screen} keyboardShouldPersistTaps="handled" refreshControl={<RefreshControl refreshing={items.isRefetching} onRefresh={() => { void context.refresh(); void items.refetch(); void baskets.refetch(); void masters.refetch(); }} />}>
+  return <ScrollView contentContainerStyle={s.screen} keyboardShouldPersistTaps="handled" refreshControl={<RefreshControl refreshing={items.isRefetching} onRefresh={() => { void context.refresh(); void items.refetch(); void baskets.refetch(); void masters.refetch(); for (const query of subBasketQueries) void query.refetch(); }} />}>
     <KnowledgeCatalogHeader
       search={search} onSearchChange={setSearch} onSearch={apply}
       onFilters={() => { setFilters({ ...appliedFilters }); setFilterOpen(true); }}
@@ -101,10 +107,11 @@ function KnowledgeCatalogContent({ session, context }: KnowledgeCatalogWorkspace
     {items.isError ? <StateView title="Configuration unavailable" message={catalogError(items.error)} actionLabel="Retry configuration" onAction={() => void items.refetch()} /> : null}
     {baskets.isError ? <StateView title="Main baskets unavailable" message="Some basket actions are unavailable until the catalog loads." actionLabel="Retry main baskets" onAction={() => void baskets.refetch()} /> : null}
     <View style={{ gap: 8 }}>
-      {Array.from(groups, ([basketId, group]) => {
+      {groupEntries.map(([basketId, group], index) => {
         const expanded = expandedBaskets[basketId] ?? basketId === firstBasketId;
+        const subBaskets = subBasketQueries[index];
         const canManage = context.ready && group.basket && ((context.canCreate && group.basket.status === "active") || (context.canUpdate && group.basket.status !== "archived") || context.canLifecycle);
-        return <KnowledgeBasketCarousel key={basketId} basketId={basketId} name={group.name} items={group.items} expanded={expanded}
+        return <KnowledgeBasketCarousel key={basketId} basketId={basketId} name={group.name} items={group.items} subBaskets={subBaskets?.data ?? []} subBasketsLoading={subBaskets?.isPending ?? false} subBasketsError={subBaskets?.isError ?? false} onRetrySubBaskets={() => { void subBaskets?.refetch(); }} filtered={filtered} expanded={expanded}
           onToggle={() => setExpandedBaskets(current => ({ ...current, [basketId]: !expanded }))}
           onOpenItem={setSelectedId} onItemMenu={(item, anchor) => setMenu({ kind: "item", id: item.mainLineId, anchor })}
           {...(canManage ? { onBasketMenu: (anchor: KnowledgeMenuAnchor) => setMenu({ kind: "basket", id: basketId, anchor }) } : {})}

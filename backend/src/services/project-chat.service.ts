@@ -12,6 +12,7 @@ import type { AuditService, AuditWrite } from "./audit.service.js";
 import { systemClock, type Clock } from "./workflow.js";
 import { authenticatedChatUser, projectChatContext } from "./project-chat-context.js";
 import { createProjectChatAttachmentPolicy } from "../domain/project-chat-attachment-policy.js";
+import { assertChatWritable, chatAvailability } from "../domain/chat-hours.js";
 const BUILT_IN_ACTION_TYPES: readonly ChatActionType[] = [
     { id: "action", name: "Action", priority: "important", builtIn: true },
     { id: "escalation", name: "Escalation", priority: "critical", builtIn: true }
@@ -34,6 +35,12 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
     const store = options.chatRepository ?? createMemoryProjectChatRepository(options.repository);
     const clock = options.clock ?? systemClock;
     const attachmentPolicy = options.attachmentPolicy ?? createProjectChatAttachmentPolicy();
+    const writableMutation = <T>(actor: ChatActor, operation: (tx: ChatTransaction) => Promise<T>): Promise<T> => store.mutate(async tx => {
+        assertChatWritable(actor.role, clock());
+        const result = await operation(tx);
+        assertChatWritable(actor.role, clock());
+        return result;
+    });
     async function authenticated(tx: ChatTransaction, actor: ChatActor, permission: PermissionCode = "chat.read"): Promise<UserRecord> {
         return authenticatedChatUser(tx, actor, clock, permission);
     }
@@ -60,11 +67,14 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
         const project = ctx.sources.project;
         const state = await tx.state(project.id);
         const read = await tx.readState(project.id, actor.id);
-        return { project: { id: project.id, name: project.name, status: project.status, nameVersion: project.nameVersion ?? 1 }, counts: counts ?? await tx.counts(project.id, actor.id, read?.sequence ?? 0), participantCount: ctx.membership.participants.length, cursor: chatCursor(project.id, state.sequence), lastReadSequence: read?.sequence ?? 0, latestMessageSequence: state.latestMessageSequence, capabilities: { canSend: hasPermission(actor.role, "chat.send"), canManageParticipants: canManage(actor, ctx), canManageIssues: chatManager(actor), canRenameProject: canManage(actor, ctx) && hasPermission(actor.role, "chat.project_name.manage") }, setupWarnings: canManage(actor, ctx) ? ctx.membership.warnings : [] };
+        const writable = chatAvailability(actor.role, clock()).writable;
+        return { project: { id: project.id, name: project.name, status: project.status, nameVersion: project.nameVersion ?? 1 }, counts: counts ?? await tx.counts(project.id, actor.id, read?.sequence ?? 0), participantCount: ctx.membership.participants.length, cursor: chatCursor(project.id, state.sequence), lastReadSequence: read?.sequence ?? 0, latestMessageSequence: state.latestMessageSequence, capabilities: { canSend: writable && hasPermission(actor.role, "chat.send"), canManageParticipants: writable && canManage(actor, ctx), canManageIssues: writable && chatManager(actor), canRenameProject: writable && canManage(actor, ctx) && hasPermission(actor.role, "chat.project_name.manage") }, setupWarnings: canManage(actor, ctx) ? ctx.membership.warnings : [] };
     }
     async function present(tx: ChatTransaction, actor: ChatActor, ctx: Context, row: ChatStoredMessage): Promise<ChatMessage> {
         const responsible = row.responsible ? ctx.membership.participants.find((person) => person.id === row.responsible!.id) : null;
-        const message: ChatMessage = { ...row, attachments: row.attachments ?? [], responsible: row.responsible ? { ...row.responsible, ...(responsible ? chatPerson(responsible) : {}), available: Boolean(responsible) } : null, issueHistory: await tx.history(row.projectId, row.id), capabilities: issueCapabilities(actor, row) };
+        const capabilities = issueCapabilities(actor, row);
+        const writable = chatAvailability(actor.role, clock()).writable;
+        const message: ChatMessage = { ...row, attachments: row.attachments ?? [], responsible: row.responsible ? { ...row.responsible, ...(responsible ? chatPerson(responsible) : {}), available: Boolean(responsible) } : null, issueHistory: await tx.history(row.projectId, row.id), capabilities: writable ? capabilities : Object.fromEntries(Object.keys(capabilities).map(key => [key, false])) as ChatMessage["capabilities"] };
         return message;
     }
     async function conversationCounts(tx: ChatTransaction, actor: ChatActor, projectId: string): Promise<ChatCounts> {
@@ -109,7 +119,7 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
     }
     async function changeParticipant(actor: ChatActor, projectId: string, userId: string, input: unknown, removing: boolean): Promise<ChatParticipantPage> {
         const value = parseChatInput(chatRemovalSchema, input);
-        return store.mutate(async tx => {
+        return writableMutation(actor, async tx => {
             let ctx = await context(tx, actor, projectId, "chat.participants.manage");
             if (!canManage(actor, ctx)) chatForbidden();
             const kind = removing ? "participant.remove" : "participant.restore";
@@ -145,11 +155,11 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
     return {
         actionTypes: (actor, projectId) => store.snapshot(async tx => {
             const ctx = await context(tx, actor, projectId);
-            return { items: await actionTypes(tx), canCreate: actor.role === "super_admin" && ctx.membership.selectionManagers.has(actor.id) && hasPermission(actor.role, "chat.action_types.manage") };
+            return { items: await actionTypes(tx), canCreate: chatAvailability(actor.role, clock()).writable && actor.role === "super_admin" && ctx.membership.selectionManagers.has(actor.id) && hasPermission(actor.role, "chat.action_types.manage") };
         }),
         async createActionType(actor, projectId, input) {
             const value = parseChatInput(chatActionTypeSchema, input);
-            return store.mutate(async tx => {
+            return writableMutation(actor, async tx => {
                 const ctx = await context(tx, actor, projectId, "chat.action_types.manage");
                 if (actor.role !== "super_admin" || !ctx.membership.selectionManagers.has(actor.id) || await tx.app.countActiveUsersByRole("super_admin") !== 1) chatForbidden();
                 const catalogueId = "__chat_action_types__";
@@ -170,7 +180,7 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
         restoreParticipant: (actor, projectId, userId, input) => changeParticipant(actor, projectId, userId, input, false),
         async renameProject(actor, projectId, input) {
             const value = parseChatInput(chatProjectNameSchema, input);
-            return store.mutate(async tx => {
+            return writableMutation(actor, async tx => {
                 const ctx = await context(tx, actor, projectId, "chat.project_name.manage");
                 if (!canManage(actor, ctx)) chatForbidden();
                 if (await replay(tx, actor, projectId, "project.rename", value.idempotencyKey, value)) return summary(tx, actor, ctx);
@@ -250,7 +260,7 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
         },
         async addParticipant(actor, projectId, input) {
             const value = parseChatInput(chatParticipantSchema, input);
-            return store.mutate(async (tx) => {
+            return writableMutation(actor, async (tx) => {
                 let ctx = await context(tx, actor, projectId, "chat.participants.manage");
                 if (!canManage(actor, ctx))
                     chatForbidden();
@@ -280,7 +290,7 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
         },
         async revokeParticipant(actor, projectId, selectionId, input) {
             const value = parseChatInput(chatRevokeSchema, input);
-            return store.mutate(async (tx) => {
+            return writableMutation(actor, async (tx) => {
                 let ctx = await context(tx, actor, projectId, "chat.participants.manage");
                 if (!canManage(actor, ctx))
                     chatForbidden();
@@ -344,7 +354,7 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
             // Preserve the exact legacy fingerprint when attachments are omitted or empty.
             const value = { ...parsed, mentions: [...parsed.mentions].sort((a, b) => a.start - b.start || a.end - b.end), replyToId: parsed.replyToId ?? null, responsibleUserId: parsed.responsibleUserId ?? null, ...(attachmentIds.length ? {attachmentIds} : {}) };
             let notificationRecipients: string[] = [];
-            const result = await store.mutate(async (tx) => {
+            const result = await writableMutation(actor, async (tx) => {
                 notificationRecipients = [];
                 const ctx = await context(tx, actor, projectId, "chat.send");
                 const existing = await replay(tx, actor, projectId, "message.send", value.clientMessageId, value);
@@ -406,7 +416,7 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
         },
         async issue(actor, projectId, messageId, input) {
             const value = parseChatInput(chatIssueSchema, input);
-            return store.mutate(async (tx) => {
+            return writableMutation(actor, async (tx) => {
                 const ctx = await context(tx, actor, projectId, "chat.issue");
                 const payload = { messageId, ...value };
                 const existing = await replay(tx, actor, projectId, "message.issue", value.idempotencyKey, payload);

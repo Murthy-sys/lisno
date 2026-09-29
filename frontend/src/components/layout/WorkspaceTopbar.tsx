@@ -8,11 +8,13 @@ export function WorkspaceTopbar({
   user,
   onLogout,
   leading,
+  dailyTasksAction,
   compact = false
 }: {
   user: PublicUser;
   onLogout: () => void | Promise<void>;
   leading?: ReactNode;
+  dailyTasksAction?: ReactNode;
   compact?: boolean;
 }) {
   return (
@@ -22,6 +24,7 @@ export function WorkspaceTopbar({
     >
       <div className="workspace-topbar__leading">{leading}</div>
       <div className="workspace-topbar__actions">
+        {dailyTasksAction}
         <NotificationBell />
         <AccountMenu user={user} onLogout={onLogout} />
       </div>

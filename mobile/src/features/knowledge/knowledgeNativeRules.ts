@@ -4,14 +4,19 @@ import type { KnowledgeItemListItem, KnowledgeJsonObject, KnowledgeJsonValue } f
 export const knowledgeText = (value: KnowledgeJsonValue | undefined): string => typeof value === "string" ? value : "";
 export const knowledgeObject = (value: KnowledgeJsonValue | undefined): KnowledgeJsonObject => value && typeof value === "object" && !Array.isArray(value) ? value as KnowledgeJsonObject : {};
 
-export function nativeRecommendationCatalogIssues(value: KnowledgeJsonValue | undefined, items: readonly KnowledgeItemListItem[], mainLineId: string): readonly string[] {
+export function nativeRecommendationCatalogIssues(
+  value: KnowledgeJsonValue | undefined,
+  items: readonly KnowledgeItemListItem[],
+  mainLineId: string,
+  subBaskets: readonly { readonly id: string; readonly basketId: string }[] = []
+): readonly string[] {
   return budgetAlterationRows(value).flatMap((row, index) => {
     if (row.active === false) return [];
     const candidates = items.filter(item => item.mainLineId !== mainLineId && ["active", "draft"].includes(item.status) && item.basketId === row.targetBasketId);
     const available = recommendationTargetKind(row) === "sub_basket"
-      ? candidates.some(item => item.subBasketId === row.targetSubBasketId)
+      ? subBaskets.some(group => group.id === row.targetSubBasketId && group.basketId === row.targetBasketId)
       : candidates.some(item => item.mainLineId === row.targetMainLineId && (item.subBasketId ?? null) === (row.targetSubBasketId ?? null) && (item.itemType === "temporary" ? "temporary" : "catalog") === row.targetType);
-    return available ? [] : [`Rule ${index + 1}: choose an available related item or Sub-Basket with at least one available child, or disable/remove the rule.`];
+    return available ? [] : [`Rule ${index + 1}: choose an available related item or Sub-Basket, or disable/remove the rule.`];
   });
 }
 

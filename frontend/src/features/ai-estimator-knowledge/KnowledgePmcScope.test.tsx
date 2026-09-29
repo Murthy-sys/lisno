@@ -359,16 +359,16 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
       }] };
     render(<Harness initial={initial} onChange={onChange} />);
     await showSubVendor(user);
-    await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
-    const text = screen.getByRole("textbox", { name: "Mode paragraph" });
+    await user.click(screen.getByRole("button", { name: "Edit Description" }));
+    const text = screen.getByRole("textbox", { name: "Description" });
     await user.type(text, " Keep this edit.");
     await user.click(screen.getByRole("button", { name: "Delete inclusion Lift service" }));
-    expect(screen.getByRole("region", { name: "Paragraph preview" }))
+    expect(screen.getByRole("region", { name: "Description preview" }))
       .toHaveTextContent("Custom installation. Inclusions: Night unloading. Exclusions: Lift service. Keep this edit.");
     await user.click(screen.getByRole("button", { name: "Delete inclusion Night unloading" }));
     const expected = "Custom installation. Inclusions: none. Exclusions: Lift service.";
     expect(text).toHaveValue(`${expected} Keep this edit.`);
-    expect(screen.getByRole("region", { name: "Paragraph preview" })).toHaveTextContent(`${expected} Keep this edit.`);
+    expect(screen.getByRole("region", { name: "Description preview" })).toHaveTextContent(`${expected} Keep this edit.`);
     await user.click(screen.getByRole("button", { name: action }));
     const savedDescription = action === "Save" ? `${expected} Keep this edit.` : expected;
     expect(screen.getByText(savedDescription)).toBeVisible();
