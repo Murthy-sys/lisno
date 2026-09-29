@@ -12,11 +12,13 @@ describe("native recommendation identity", () => {
     expect(nativeRecommendationCatalogIssues([rule], [{ ...item, subBasketId: "different" }], "source")).toHaveLength(1);
     expect(nativeRecommendationCatalogIssues([rule], [item], "related")).toHaveLength(1);
   });
-  it("normalizes whole Sub-Basket targets and requires an available child", () => {
+  it("normalizes whole Sub-Basket targets and accepts an empty existing Sub-Basket", () => {
     const rule = { ...nativeRuleTargetKind(nativeRuleTarget(newRecommendationRule("exclusions"), item), "sub_basket"), targetSubBasketId: "group-a" };
+    const groups = [{ id: "group-a", basketId: "basket-a" }];
     expect(rule).toMatchObject({ targetType: null, targetMainLineId: null, targetKind: "sub_basket" });
-    expect(nativeRecommendationCatalogIssues([rule], [item], "source")).toEqual([]);
-    expect(nativeRecommendationCatalogIssues([rule], [{ ...item, status: "archived" }], "source")).toHaveLength(1);
+    expect(nativeRecommendationCatalogIssues([rule], [], "source", groups)).toEqual([]);
+    expect(nativeRecommendationCatalogIssues([rule], [item], "source", [])).toHaveLength(1);
+    expect(nativeRecommendationCatalogIssues([rule], [item], "source", [{ id: "group-a", basketId: "other" }])).toHaveLength(1);
     expect(nativeRecommendationCatalogIssues([{ ...rule, active: false }], [], "source")).toEqual([]);
   });
 });

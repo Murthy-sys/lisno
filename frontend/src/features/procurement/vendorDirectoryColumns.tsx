@@ -49,13 +49,14 @@ const basketName = (basket: { name: string | null } | null | undefined) => baske
 function displayStatus(vendor: KnowledgeMaster): { label: string; className: string } {
   if (vendor.status === "archived") return { label: "Archived", className: "archived" };
   if (vendor.status === "inactive") return { label: "Inactive", className: "inactive" };
-  if (vendor.procurementSummary?.currentAddressVerifiedPhysically !== true) return { label: "Under Review", className: "review" };
-  return { label: "Active", className: "active" };
+  if (vendor.vendorActivation?.effectiveStatus === "active") return { label: "Active", className: "active" };
+  // A missing readiness projection must never make a lifecycle-active vendor selectable.
+  return { label: "Under Review", className: "review" };
 }
 
 export const vendorDirectoryColumns: readonly VendorDirectoryColumn[] = [
   { id: "selection", header: "Select", width: { fixed: 48 }, sticky: "start", placement: "selection", render: (vendor, { selected, toggle }) => <label><Checkbox aria-label={`Select ${vendor.name}`} checked={selected} onChange={(event) => toggle(event.target.checked)} /></label> },
-  { id: "vendor", header: "Vendor Details", width: { fill: true, weight: 45, min: 220 }, sticky: "start", placement: "identity", render: (vendor, { onOpen, canOpenKpi }) => <div className="vendor-directory__identity"><span className="vendor-directory__avatar" aria-hidden="true">{initials(vendor.name)}</span><div><strong>{canOpenKpi ? <button type="button" className="vendor-directory__name-link" onClick={onOpen} aria-label={`Open KPI for ${vendor.name}`}>{vendor.name}</button> : vendor.name}</strong></div></div> },
+  { id: "vendor", header: "Vendor Details", width: { fill: true, weight: 45, min: 220 }, sticky: "start", placement: "identity", render: (vendor, { onOpen, canOpenKpi }) => <div className="vendor-directory__identity"><span className="vendor-directory__avatar" aria-hidden="true">{initials(vendor.name)}</span><div><strong>{canOpenKpi ? <button type="button" className="vendor-directory__name-link" onClick={onOpen} aria-label={`Open details for ${vendor.name}`}>{vendor.name}</button> : vendor.name}</strong></div></div> },
   { id: "type", header: "Type", width: { weight: 30, min: 150, max: 240 }, placement: "field", render: (vendor) => {
     const summary = vendor.procurementSummary;
     const types = normalizeExecutionTypes(summary?.executionType).map((type) => type === "labor" ? "Labor" : "Material + Labour");

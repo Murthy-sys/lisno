@@ -239,6 +239,9 @@ const PROTECTED_OPERATION_PERMISSIONS = [
   {"operation":"GET /notifications","permission":"chat.read"},
   {"operation":"PUT /notifications/:notificationId/read","permission":"chat.read_state"},
   {"operation":"GET /notifications/events","permission":"chat.read"},
+  {"operation":"GET /chat/availability","permission":"chat.read"},
+  {"operation":"GET /daily-critical-tasks","permission":"chat.read"},
+  {"operation":"PUT /daily-critical-tasks/:localDate/acknowledgment","permission":"chat.read_state"},
   {"operation":"GET /project-messages","permission":"chat.read"},
   {"operation":"GET /projects/:projectId/chat/attachment-policy","permission":"chat.read"},
   {"operation":"POST /projects/:projectId/chat/attachments","permission":"chat.send"},
@@ -264,6 +267,12 @@ const PROTECTED_OPERATION_PERMISSIONS = [
   {"operation":"GET /procurement/vendor-kpis/:vendorId","permission":"procurement.vendor_kpi.read"},
   {"operation":"PUT /procurement/vendor-kpis/:vendorId/procurement","permission":"procurement.vendor_kpi.rate"},
   {"operation":"POST /procurement/vendor-kpis/:vendorId/requests","permission":"procurement.vendor_kpi.request"},
+  {"operation":"GET /procurement/vendor-inductions/:vendorId","permission":"procurement.vendor_induction.read"},
+  {"operation":"PUT /procurement/vendor-inductions/:vendorId/draft","permission":"procurement.vendor_induction.manage"},
+  {"operation":"POST /procurement/vendor-inductions/:vendorId/publish","permission":"procurement.vendor_induction.manage"},
+  {"operation":"POST /procurement/vendor-inductions/:vendorId/requests","permission":"procurement.vendor_induction.request"},
+  {"operation":"POST /procurement/vendor-inductions/:vendorId/reviews","permission":"procurement.vendor_induction.review"},
+  {"operation":"POST /procurement/vendor-inductions/:vendorId/reopen","permission":"procurement.vendor_induction.review"},
 ] as const satisfies readonly ProtectedOperationPermission[];
 
 // This ordered mirror is intentionally separate from permission data so the
@@ -298,10 +307,12 @@ const SUPER_ADMIN_BEHAVIORS = [
   "admin_override", "admin_override", "global_read", "admin_override", "admin_override", "admin_override", "global_read", "admin_override",
   "admin_override", "admin_override", "global_read", "admin_override", "admin_override", "admin_override", "global_read", "admin_override",
   "admin_override", "admin_override", "global_read", "admin_override", "admin_override", "admin_override", "global_read", "global_read",
-  "global_read", "global_read", "deny_personal", "deny_personal", "self", "self", "self", "global_read",
-  "global_read", "self", "self", "global_read", "global_read", "global_read", "global_read", "global_read",
-  "admin_override", "admin_override", "admin_override", "admin_override", "global_read", "admin_override", "admin_override", "global_read",
-  "self", "admin_override", "self", "self", "global_read", "global_read", "admin_override", "admin_override",
+  "global_read", "global_read", "deny_personal", "deny_personal", "self", "self", "self", "self",
+  "self", "self", "global_read", "global_read", "self", "self", "global_read", "global_read",
+  "global_read", "global_read", "global_read", "admin_override", "admin_override", "admin_override", "admin_override", "global_read",
+  "admin_override", "admin_override", "global_read", "self", "admin_override", "self", "self", "global_read",
+  "global_read", "admin_override", "admin_override", "global_read", "admin_override", "admin_override", "admin_override", "admin_override",
+  "admin_override",
 ] as const satisfies readonly SuperAdminBehavior[];
 
 function behaviorAt(index: number): SuperAdminBehavior {
@@ -326,5 +337,7 @@ export const PUBLIC_API_OPERATIONS = [
   "POST /auth/user-invitations/inspect",
   "POST /auth/user-invitations/accept",
   "POST /vendor-kpi/inspect",
-  "POST /vendor-kpi/submit"
+  "POST /vendor-kpi/submit",
+  "POST /vendor-induction/inspect",
+  "POST /vendor-induction/submit"
 ] as const;

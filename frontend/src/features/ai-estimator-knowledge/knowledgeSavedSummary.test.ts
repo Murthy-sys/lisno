@@ -46,7 +46,7 @@ describe("projectKnowledgeSavedSummary", () => {
     }
   });
 
-  it("shows the three persisted Mode statuses for a loaded empty Advanced section", () => {
+  it("shows four persisted Mode scopes for a loaded empty Advanced section", () => {
     const result = projectKnowledgeSavedSummary(input({
       sections: { overview: {}, advanced: {}, recommendations: {} }, quality: quality([])
     }));
@@ -56,7 +56,8 @@ describe("projectKnowledgeSavedSummary", () => {
     expect(result.mode.details).toEqual([
       { key: "pmc-status", label: "PMC", value: "Not configured" },
       { key: "sub-vendor-status", label: "Sub-Vendor", value: "Not configured" },
-      { key: "in-house-status", label: "In-house", value: "Not configured" }
+      { key: "in-house-labor-status", label: "In-house Labor", value: "Not configured" },
+      { key: "in-house-material-status", label: "In-house Material", value: "Not configured" }
     ]);
     expect(result.mode.preview).toEqual(result.mode.details);
   });
@@ -80,13 +81,13 @@ describe("projectKnowledgeSavedSummary", () => {
     surfaces.forEach(surface => expect(values(result)).toContain(`${surface.name} · Examples: ${surface.description}`));
   });
 
-  it("reports only configured status for each Mode from complete persisted settings", () => {
-    const result = projectKnowledgeSavedSummary(input({ sections: { advanced: {
+  it("reports saved unit price, low quantity, impact and margins for each Mode scope", () => {
+    const result = projectKnowledgeSavedSummary(input({ sections: { overview: { uomId: "uom-private" }, advanced: {
       modeDescription: "Do not disclose this description.",
       modeConfigurations: [{ id: "private", modeKind: "pmc", inclusions: [{ id: "scope", name: "Transport", selected: true }] }],
       modeCalculations: {
         pmc: settings(12_345, 250, 7777, 8888),
-        sub_vendor: settings(987_654, 725, 2222, 3333),
+        sub_vendor: { ...settings(987_654, 725, 2222, 3333), lowQuantityLimit: "2.5" },
         in_house_labor: settings(0, 0, 1250, 2250),
         in_house_material: settings(56_789, 1000, 2750, 4250)
       },
@@ -95,13 +96,31 @@ describe("projectKnowledgeSavedSummary", () => {
       subVendorMinimumMarginBps: 0,
       subVendorMarginBps: 3_500
     } } })).mode;
-    expect(result.details).toEqual([
-      { key: "pmc-status", label: "PMC", value: "Configured" },
-      { key: "sub-vendor-status", label: "Sub-Vendor", value: "Configured" },
-      { key: "in-house-status", label: "In-house", value: "Configured" }
+    expect(result.details.slice(0, 4)).toEqual([
+      { key: "pmc-status", label: "PMC", value: "Unit price ₹123.45 per Square metre · Low quantity ≤0 · Impact 2.5% · Min 12.5% · Max 17.5%" },
+      { key: "sub-vendor-status", label: "Sub-Vendor", value: "Unit price ₹9,876.54 per Square metre · Low quantity ≤2.5 · Impact 7.25% · Min 0% · Max 35%" },
+      { key: "in-house-labor-status", label: "In-house Labor", value: "Unit price ₹0.00 per Square metre · Low quantity ≤0 · Impact 0% · Gross margin min 12.5% · start 22.5%" },
+      { key: "in-house-material-status", label: "In-house Material", value: "Unit price ₹567.89 per Square metre · Low quantity ≤0 · Impact 10% · Gross margin min 27.5% · start 42.5%" }
     ]);
+    expect(result.preview).toEqual(result.details.slice(0, 4));
+    expect(values(result)).toContain("Mode · PMC · Description: Do not disclose this description.");
+    expect(values(result)).toContain("Execution · Sub-Vendor · Inclusion 1: Transport · Selected");
+    expect(values(result)).not.toMatch(/Base Rate|private/iu);
+  });
+
+  it("does not invent a missing saved impact or unavailable UOM", () => {
+    const result = projectKnowledgeSavedSummary(input({ sections: { overview: { uomId: "missing-uom" }, advanced: {
+      modeCalculations: {
+        pmc: { baseRatePaise: 12_345, lowQuantityLimit: "0", minimumMarkupBps: 1_000, startingMarkupBps: 2_000 },
+        sub_vendor: settings(20_000, 0, 1_000, 2_000)
+      },
+      pmcMinimumMarginBps: 1_000, pmcMarginBps: 2_000,
+      subVendorMinimumMarginBps: 1_000, subVendorMarginBps: 2_000
+    } } })).mode;
+    expect(result.details[0]?.value).toBe("Not configured");
+    expect(result.details[1]?.value).toBe("Unit price ₹200.00 · Low quantity ≤0 · Impact 0% · Min 10% · Max 20%");
     expect(result.preview).toEqual(result.details);
-    expect(values(result)).not.toMatch(/description|Transport|Base Rate|Margin|Impact|private/iu);
+    expect(values(result)).not.toContain("missing-uom");
   });
 
   it("does not apply the In-house below-100% rule to hidden PMC or Sub-Vendor legacy fields", () => {
@@ -118,13 +137,18 @@ describe("projectKnowledgeSavedSummary", () => {
       subVendorMinimumMarginBps: 1_500,
       subVendorMarginBps: 2_000
     } } })).mode;
-    expect(result.details.map(row => row.value)).toEqual(["Configured", "Configured", "Not configured"]);
+    expect(result.details.map(row => row.value)).toEqual([
+      expect.stringContaining("Min 10% · Max 20%"),
+      expect.stringContaining("Min 15% · Max 20%"),
+      "Not configured",
+      expect.stringContaining("Gross margin min 10% · start 20%")
+    ]);
   });
 
   it.each([
     [false, false, false], [false, false, true], [false, true, false], [false, true, true],
     [true, false, false], [true, false, true], [true, true, false], [true, true, true]
-  ] as const)("derives asymmetric persisted status PMC=%s Sub-Vendor=%s In-house=%s", (pmc, subVendor, inHouse) => {
+  ] as const)("derives asymmetric persisted margins PMC=%s Sub-Vendor=%s In-house=%s", (pmc, subVendor, inHouse) => {
     const modeCalculations: KnowledgeJsonObject = {
       ...(pmc ? { pmc: settings(12_345, 750, 1_000, 2_000) } : {}),
       ...(subVendor ? { sub_vendor: settings(23_456, 500, 1_000, 2_000) } : {}),
@@ -140,9 +164,10 @@ describe("projectKnowledgeSavedSummary", () => {
     };
 
     expect(projectKnowledgeSavedSummary(input({ sections: { advanced } })).mode.details.map(row => row.value)).toEqual([
-      pmc ? "Configured" : "Not configured",
-      subVendor ? "Configured" : "Not configured",
-      inHouse ? "Configured" : "Not configured"
+      pmc ? expect.stringContaining("Min 10% · Max 20%") : "Not configured",
+      subVendor ? expect.stringContaining("Min 0% · Max 25%") : "Not configured",
+      inHouse ? expect.stringContaining("Gross margin min 10% · start 20%") : "Not configured",
+      inHouse ? expect.stringContaining("Gross margin min 10% · start 20%") : "Not configured"
     ]);
   });
 
@@ -158,10 +183,42 @@ describe("projectKnowledgeSavedSummary", () => {
     const before = JSON.stringify(advanced);
 
     expect(projectKnowledgeSavedSummary(input({ sections: { advanced } })).mode.details.map(row => row.value))
-      .toEqual(["Configured", "Configured", "Not configured"]);
+      .toEqual([expect.stringContaining("Impact 7.5% · 15%"), expect.stringContaining("Impact 5% · 25%"), "Not configured", "Not configured"]);
     expect(JSON.stringify(advanced)).toBe(before);
     expect(Object.hasOwn(advanced, "pmcMinimumMarginBps")).toBe(false);
     expect(Object.hasOwn(advanced, "subVendorMinimumMarginBps")).toBe(false);
+  });
+
+  it("projects saved legacy single and combined In-house calculations without migrating them", () => {
+    const single: KnowledgeJsonObject = {
+      modeCalculation: settings(12_345, 125, 1_000, 2_000),
+      pmcMarginBps: 1_500, subVendorMarginBps: 2_500
+    };
+    const beforeSingle = JSON.stringify(single);
+    const singleResult = projectKnowledgeSavedSummary(input({ sections: { advanced: single } })).mode;
+    expect(singleResult.details.map(row => row.value)).toEqual([
+      "Unit price ₹123.45 · Low quantity ≤0 · Impact 1.25% · 15%",
+      "Unit price ₹123.45 · Low quantity ≤0 · Impact 1.25% · 25%",
+      "Unit price ₹123.45 · Low quantity ≤0 · Impact 1.25% · Gross margin min 10% · start 20%",
+      "Unit price ₹123.45 · Low quantity ≤0 · Impact 1.25% · Gross margin min 10% · start 20%"
+    ]);
+    expect(JSON.stringify(single)).toBe(beforeSingle);
+
+    const combined: KnowledgeJsonObject = {
+      modeCalculations: {
+        pmc: settings(10_000, 0, 1_000, 2_000),
+        sub_vendor: settings(20_000, 0, 1_000, 2_000),
+        in_house: settings(42_000, 500, 1_500, 2_500)
+      },
+      pmcMarginBps: 1_500, subVendorMarginBps: 2_500
+    };
+    const beforeCombined = JSON.stringify(combined);
+    const combinedResult = projectKnowledgeSavedSummary(input({ sections: { advanced: combined } })).mode;
+    expect(combinedResult.details.slice(2).map(row => row.value)).toEqual([
+      "Unit price ₹420.00 · Low quantity ≤0 · Impact 5% · Gross margin min 15% · start 25%",
+      "Unit price ₹420.00 · Low quantity ≤0 · Impact 5% · Gross margin min 15% · start 25%"
+    ]);
+    expect(JSON.stringify(combined)).toBe(beforeCombined);
   });
 
   it("keeps incomplete, malformed and partial Mode settings not configured without exposing details", () => {
@@ -176,17 +233,81 @@ describe("projectKnowledgeSavedSummary", () => {
       subVendorMarginBps: 2_500,
       secret: { doNotDisplay: true }
     } } })).mode;
-    expect(result.details.map(row => row.value)).toEqual(["Not configured", "Configured", "Not configured"]);
-    expect(values(result)).not.toMatch(/123\.45|7\.50|secret|review|Margin|Base Rate/iu);
+    expect(result.details.map(row => row.value)).toEqual(["Not configured", expect.stringContaining("Unit price ₹123.45 · Low quantity ≤0 · Impact 7.5% · 25%"), "Unit price ₹0.00 · Low quantity ≤0 · Impact 0% · Gross margin min 0% · start 0%", "Not configured"]);
+    expect(values(result)).not.toMatch(/secret|review|Base Rate/iu);
   });
 
-  it("does not load pricing or disclose Mode descriptions, scopes, fields, calculations or specifications", () => {
+  it("shows saved Mode descriptions, scope choices, components, Specifications and Brands without internal price references", () => {
     const result = projectKnowledgeSavedSummary(input({ sections: {
-      advanced: { modeDescription: "Confirmed paragraph", modeCalculations: {}, modeConfigurations: [{ fields: [{ label: "Crew", value: "4" }] }] },
-      pricing: { specifications: [{ id: "spec", name: "Confirmed specification" }], priceEntries: [{ inputAmountPaise: 999_999 }] }
+      advanced: { modeDescription: "Confirmed paragraph", modeCalculations: {}, modeConfigurations: [
+        { id: "pmc-private", modeKind: "pmc", fields: [
+          { id: "field-private", label: "Crew", type: "number", options: [], value: "4" },
+          { id: "choice-private", label: "Finish", type: "dropdown", options: ["Matte", "Polished"], value: "Matte" }
+        ],
+          inclusions: [{ id: "scope-private", name: "Transport", selected: false }], exclusions: [{ id: "excluded-private", name: "Shifting", selected: true }] },
+        { id: "house-private", modeKind: "execution", executionSource: "in_house", fields: [{ id: "check-private", label: "Site ready", type: "checkbox", options: [], value: false }],
+          inclusions: [{ id: "labor-private", name: "Labour", selected: true }] }
+      ] },
+      pricing: { brands: [{ id: "brand-private", name: "Confirmed Brand", description: "Approved finish" }],
+        specifications: [{ id: "spec-private", name: "Confirmed specification", brandId: "brand-private", description: "Acoustic grade", type: "text", value: "hidden compatibility" }],
+        priceEntries: [{ inputAmountPaise: 999_999 }] }
     } })).mode;
-    expect(result.details).toHaveLength(3);
-    expect(values(result)).not.toMatch(/Confirmed paragraph|Crew|Confirmed specification|999999/iu);
+    const detail = values(result);
+    expect(result.preview).toEqual(result.details.slice(0, 4));
+    for (const expected of [
+      "Mode · PMC · Description: Confirmed paragraph", "Mode configuration 1: PMC",
+      "Execution · Sub-Vendor · Inclusion 1: Transport · Not selected",
+      "Execution · Sub-Vendor · Exclusion 1: Shifting · Selected",
+      "PMC · Component 1: Crew", "PMC · Component 1 · Type: Number", "PMC · Component 1 · Saved answer: 4",
+      "PMC · Component 2: Finish", "PMC · Component 2 · Type: Single choice",
+      "PMC · Component 2 · Options: Matte, Polished", "PMC · Component 2 · Saved answer: Matte",
+      "Mode configuration 2: Execution · In-house", "Execution · In-house · Inclusion 1: Labour · Selected",
+      "Execution · In-house · Component 1 · Saved answer: No",
+      "Brand 1: Confirmed Brand", "Confirmed Brand · Description: Approved finish",
+      "Specification 1: Confirmed specification", "Confirmed specification · Description: Acoustic grade",
+      "Confirmed specification · Brand: Confirmed Brand"
+    ]) expect(detail).toContain(expected);
+    expect(detail).not.toMatch(/private|999999|hidden compatibility/iu);
+  });
+
+  it("keeps Pricing-only saved content visible and does not invent Mode editor defaults", () => {
+    const result = projectKnowledgeSavedSummary(input({ sections: {
+      pricing: { brands: [{ id: "brand-private", name: "Aural" }],
+        specifications: [{ id: "spec-private", name: "Panel", brandId: "brand-private" }] }
+    } })).mode;
+    expect(values(result)).toContain("Brand 1: Aural");
+    expect(values(result)).toContain("Specification 1: Panel");
+    expect(values(result)).toContain("Panel · Brand: Aural");
+    expect(values(result)).not.toMatch(/PMC|Sub-Vendor|generated|private/iu);
+    expect(result.preview).toEqual(result.details.slice(0, 3));
+
+    const emptyAdvanced = projectKnowledgeSavedSummary(input({ sections: { advanced: {}, pricing: {} } })).mode;
+    expect(emptyAdvanced.details).toEqual(emptyAdvanced.preview);
+    expect(emptyAdvanced.details).toHaveLength(4);
+    expect(values(emptyAdvanced)).not.toMatch(/Transport|Supplier|generated/iu);
+  });
+
+  it("retains unresolved legacy Mode details and unavailable Brand links without leaking IDs", () => {
+    const result = projectKnowledgeSavedSummary(input({ sections: {
+      advanced: { modeConfigurations: [
+        { id: "legacy-private", modeId: "missing-mode-private", fields: [{ id: "field-private", type: "checkbox", label: "Accepted", options: [], value: false }],
+          exclusions: [{ id: "scope-private", name: "Legacy exclusion", selected: false }] },
+        { id: "invalid-private", modeKind: "execution", fields: [{ id: "field-2-private", type: "text", label: "Note", options: [], value: "0" }] }
+      ] },
+      pricing: { brands: [{ id: "brand-private", name: "First" }, { id: "brand-private", name: "Duplicate" }],
+        specifications: [{ id: "spec-private", name: "Ambiguous", brandId: "brand-private" },
+          { id: "unassigned-private", name: "Unassigned", brandId: null }] }
+    } })).mode;
+    const detail = values(result);
+    expect(detail).toContain("Needs review · Legacy Mode Name unavailable");
+    expect(detail).toContain("Accepted");
+    expect(detail).toContain("Saved answer: No");
+    expect(detail).toContain("Legacy exclusion · Not selected");
+    expect(detail).toContain("Note");
+    expect(detail).toContain("Saved answer: 0");
+    expect(detail).toContain("Ambiguous · Brand: Name unavailable");
+    expect(detail).toContain("Unassigned · Brand: Not assigned");
+    expect(detail).not.toContain("private");
   });
 
   it("renders complete rule targets, trigger, action, reason, inactive state and legacy recommendation dependency", () => {
@@ -332,7 +453,8 @@ describe("projectKnowledgeSavedSummary", () => {
       recommendations: { budgetAlterations: [null], exclusions: [{ id: "e", name: "Valid exclusion" }] }
     }, quality: quality([{ id: "q", label: "Future check", type: "unsupported", sampling: { method: "unknown" }, futurePrivateField: "do-not-display" }]) }));
     expect(values(result.overview)).toContain("needs review");
-    expect(result.mode.details.map(row => row.value)).toEqual(["Not configured", "Not configured", "Not configured"]);
+    expect(result.mode.details.slice(0, 4).map(row => row.value)).toEqual(["Not configured", "Not configured", "Not configured", "Not configured"]);
+    expect(values(result.mode)).toContain("needs review");
     expect(values(result.recommendations)).toContain("needs review");
     expect(values(result.quality)).toContain("needs review");
     expect(values(result.recommendations)).toContain("Valid exclusion");
@@ -351,14 +473,15 @@ describe("projectKnowledgeSavedSummary", () => {
     expect(result.preview.length).toBeLessThanOrEqual(3);
   });
 
-  it("bounds previews, omits Mode internals and leaves the source input unchanged", () => {
+  it("keeps the four Mode preview rows compact while retaining full saved prose and leaves the source unchanged", () => {
     const description = "Saved prose ".repeat(100);
     const source = input({ sections: { advanced: { modeDescription: description }, pricing: { specifications: [{ id: "s", name: "Specification", description }] } } });
     const before = JSON.stringify(source);
     const result = projectKnowledgeSavedSummary(source);
-    expect(values(result.mode)).not.toContain(description.trim());
-    expect(values(result.mode)).not.toContain("Specification");
-    for (const group of Object.values(result)) {
+    expect(values(result.mode)).toContain(description.trim());
+    expect(values(result.mode)).toContain("Specification");
+    expect(result.mode.preview).toEqual(result.mode.details.slice(0, 4));
+    for (const group of [result.overview, result.recommendations, result.quality]) {
       expect(group.preview.length).toBeLessThanOrEqual(3);
       group.preview.forEach(row => expect(row.value.length).toBeLessThanOrEqual(160));
       group.details.forEach(row => expect(typeof row.value).toBe("string"));

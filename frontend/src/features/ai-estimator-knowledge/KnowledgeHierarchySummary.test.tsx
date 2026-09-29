@@ -41,28 +41,68 @@ describe("KnowledgeHierarchySummary", () => {
     expect(group).toHaveTextContent("PMC, Sub-Vendor");
   });
 
-  it("shows the three Mode configuration statuses without a details disclosure", async () => {
+  it("shows all four full saved Mode values without clipping or a details disclosure", async () => {
+    const savedPmc = "Unit price ₹1,234.56 per Square foot of interior ceiling work for this project · Low quantity ≤12.5 · Impact 15.25% · Margin 10.5% to 20%";
+    expect(savedPmc.length).toBeGreaterThan(120);
+    const rows = [
+      { key: "pmc-status", label: "PMC", value: savedPmc },
+      { key: "sub-vendor-status", label: "Sub-Vendor", value: "Not configured" },
+      { key: "in-house-labor-status", label: "In-house Labor", value: "Unit price ₹0.00 · Low quantity ≤0 · Impact 0% · Margin 15%" },
+      { key: "in-house-material-status", label: "In-house Material", value: "Unit price ₹250.00 · Low quantity ≤7 · Impact 5% · Margin 20%" }
+    ];
     const statuses: SavedSummaryGroup = {
       key: "mode",
       label: "Mode",
       notices: [],
-      preview: [
-        { key: "pmc-status", label: "PMC", value: "Configured" },
-        { key: "sub-vendor-status", label: "Sub-Vendor", value: "Not configured" },
-        { key: "in-house-status", label: "In-house", value: "Configured" }
-      ],
-      details: [
-        { key: "pmc-status", label: "PMC", value: "Configured" },
-        { key: "sub-vendor-status", label: "Sub-Vendor", value: "Not configured" },
-        { key: "in-house-status", label: "In-house", value: "Configured" }
-      ]
+      preview: rows,
+      details: rows
     };
     render(<main><KnowledgeHierarchySummary item={item} groups={[statuses]} sourceKey="statuses" /></main>);
 
     const group = screen.getByRole("region", { name: "Mode saved summary" });
-    expect(within(group).getAllByRole("term").map(term => term.textContent)).toEqual(["PMC", "Sub-Vendor", "In-house"]);
-    expect(within(group).getAllByRole("definition").map(definition => definition.textContent)).toEqual(["Configured", "Not configured", "Configured"]);
+    expect(within(group).getAllByRole("term").map(term => term.textContent)).toEqual(["PMC", "Sub-Vendor", "In-house Labor", "In-house Material"]);
+    expect(within(group).getAllByRole("definition").map(definition => definition.textContent)).toEqual(statuses.preview.map(row => row.value));
+    expect(group).toHaveTextContent(savedPmc);
     expect(within(group).queryByRole("button", { name: /Mode details/ })).not.toBeInTheDocument();
+    expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  });
+
+  it("discloses the complete saved Mode detail count and full long values by keyboard", async () => {
+    const user = userEvent.setup();
+    const longScope = "Saved site discipline and handover scope. ".repeat(10);
+    const statuses: SavedSummaryGroup = {
+      key: "mode", label: "Mode", notices: [],
+      preview: [
+        { key: "pmc-status", label: "PMC", value: "Unit price ₹0.00 · Low quantity ≤0 · Impact 0%" },
+        { key: "sub-vendor-status", label: "Sub-Vendor", value: "Not configured" },
+        { key: "in-house-labor-status", label: "In-house Labor", value: "Not configured" },
+        { key: "in-house-material-status", label: "In-house Material", value: "Not configured" }
+      ],
+      details: [
+        { key: "pmc-status", label: "PMC", value: "Unit price ₹0.00 · Low quantity ≤0 · Impact 0%" },
+        { key: "sub-vendor-status", label: "Sub-Vendor", value: "Not configured" },
+        { key: "in-house-labor-status", label: "In-house Labor", value: "Not configured" },
+        { key: "in-house-material-status", label: "In-house Material", value: "Not configured" },
+        { key: "scope", label: "PMC · Inclusion", value: longScope },
+        { key: "selected", label: "PMC · Selected", value: "No" },
+        { key: "answer", label: "PMC · Saved answer", value: "0" },
+        { key: "brand", label: "Specification · Brand", value: "Heritage finishes" }
+      ]
+    };
+    render(<main><KnowledgeHierarchySummary item={item} groups={[statuses]} sourceKey="saved-mode" /></main>);
+    const group = screen.getByRole("region", { name: "Mode saved summary" });
+    const toggle = within(group).getByRole("button", { name: "Show Mode details" });
+    expect(toggle).toHaveTextContent("4 more saved details");
+    expect(toggle).toHaveAttribute("aria-describedby");
+    expect(group).not.toHaveTextContent("Heritage finishes");
+    toggle.focus();
+    await user.keyboard("{Enter}");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(within(group).getAllByRole("term")).toHaveLength(statuses.details.length);
+    expect(group).toHaveTextContent("Heritage finishes");
+    expect(group).toHaveTextContent("PMC · Saved answer");
+    await user.click(within(group).getByRole("button", { name: "Show full value: Mode, PMC · Inclusion" }));
+    expect(group).toHaveTextContent(longScope.trim());
     expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
   });
 

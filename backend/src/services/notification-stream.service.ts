@@ -5,7 +5,7 @@ import { ExpiredTokenError, InvalidTokenError, type AuthService } from "./auth.s
 import type { NotificationEventsHub } from "./notification-events.service.js";
 import { chatActorFromAuthenticatedUser } from "./project-chat-authentication.js";
 
-export function createNotificationStreamService(options: {auth: AuthService; service: NotificationService; hub: NotificationEventsHub; drainTimeoutMs?: number; maxStreams?: number; maxStreamsPerUser?: number}) {
+export function createNotificationStreamService(options: {auth: AuthService; service: NotificationService; hub: NotificationEventsHub; dailyCriticalSignal?: (actor: ReturnType<typeof chatActorFromAuthenticatedUser>) => Promise<string | null>; drainTimeoutMs?: number; maxStreams?: number; maxStreamsPerUser?: number}) {
   const connections = new Map<() => void, string>();
   let closed = false;
   return {
@@ -19,6 +19,7 @@ export function createNotificationStreamService(options: {auth: AuthService; ser
       const token = request.header("Authorization")!.slice("Bearer ".length);
       let ended = false, initialized = false, pumping = false, dirty = false;
       let signature: string | undefined;
+      let criticalDate: string | null = null;
       let unsubscribe = () => {};
       let drainTimer: ReturnType<typeof setTimeout> | undefined;
       let cancelDrain = () => {};
@@ -38,7 +39,8 @@ export function createNotificationStreamService(options: {auth: AuthService; ser
       });
       const snapshot = async () => {
         const user = await options.auth.authenticate(token, {remoteAddress: request.socket.remoteAddress});
-        await options.service.deliver(chatActorFromAuthenticatedUser(user, token), page => {
+        const actor = chatActorFromAuthenticatedUser(user, token);
+        await options.service.deliver(actor, page => {
           if (ended || response.destroyed) return;
           const next = JSON.stringify(page);
           const frame = next !== signature ? `event: notifications\ndata: ${next}\n\n` : ": heartbeat\n\n";
@@ -49,6 +51,15 @@ export function createNotificationStreamService(options: {auth: AuthService; ser
           }
           response.write(frame); signature = next;
         });
+        if (options.dailyCriticalSignal) {
+          const dueDate = await options.dailyCriticalSignal(actor);
+          if (dueDate !== criticalDate && !ended && !response.destroyed) {
+            const frame = `event: daily-critical-tasks\ndata: ${JSON.stringify({localDate: dueDate})}\n\n`;
+            if (response.writableLength > 128 * 1024) { stop(); return; }
+            response.write(frame);
+            criticalDate = dueDate;
+          }
+        }
         await drain();
       };
       const fail = (error: unknown) => {

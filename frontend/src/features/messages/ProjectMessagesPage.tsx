@@ -14,6 +14,7 @@ import { ChatTimeline } from "./ChatTimeline";
 import { ChatMediaProvider } from "./ChatMessageAttachments";
 import { ChatTypingIndicator } from "./ChatTypingIndicator";
 import { useChatTypingActivity } from "./useChatTypingActivity";
+import { useOptionalChatSchedule } from "./ChatScheduleProvider";
 import { useProjectChat, useChatProjectRegistration, type ChatSendAttempt } from "./ProjectChatProvider";
 import { chatErrorMessage, chatKeys } from "./projectChatApi";
 import { useChatMessages, useChatParticipants, useChatSummary, useChatAttachmentPolicy, useChatActionTypes } from "./projectChatQueries";
@@ -31,6 +32,8 @@ export function ProjectMessagesPage() {
 function ProjectConversation({ projectId }: { projectId: string }) {
   useChatProjectRegistration(projectId);
   const chat = useProjectChat();
+  const schedule = useOptionalChatSchedule();
+  const canWriteNow = schedule?.canWrite ?? true;
   const queryClient = useQueryClient();
   const [params, setParams] = useSearchParams();
   const filter = filters.find(item => item.value === params.get("filter"))?.value ?? "all";
@@ -53,7 +56,7 @@ function ProjectConversation({ projectId }: { projectId: string }) {
   const committedKeys = new Set(messages.filter(message => message.author.id === chat.userId).map(message => message.clientMessageId));
   const visibleAttempts = attempts.filter(attempt => !committedKeys.has(attempt.input.clientMessageId));
   const unavailable = !chat.enabled || chat.denied.has(projectId);
-  const typingActivity = useChatTypingActivity(projectId, !unavailable && chat.connection === "live" && Boolean(summary.data?.capabilities.canSend && participants.data && !participants.isError));
+  const typingActivity = useChatTypingActivity(projectId, canWriteNow && !unavailable && chat.connection === "live" && Boolean(summary.data?.capabilities.canSend && participants.data && !participants.isError));
   async function checkAccess() {
     setCheckingAccess(true);
     try { await chat.verifyAccess(projectId); }
@@ -70,6 +73,7 @@ function ProjectConversation({ projectId }: { projectId: string }) {
     requestAnimationFrame(() => composerRegion.current?.querySelector("textarea")?.focus());
   }
   function send() {
+    if (!canWriteNow) return;
     const input = { ...(draft.action ? { action: { ...draft.action } } : {}), body: draft.body, mentions: draft.mentions, priority: draft.priority, replyToId: draft.reply?.id ?? null, responsibleUserId: draft.responsibleUserId || null, clientMessageId: crypto.randomUUID() };
     void chat.send(projectId, input, true);
   }
@@ -92,7 +96,7 @@ function ProjectConversation({ projectId }: { projectId: string }) {
         </button>
         <h1 id="project-chat-title" className="sr-only">{name}</h1>
       </div>
-      {summary.data?.capabilities.canRenameProject && !unavailable ? <button type="button" className="project-chat-icon project-chat-rename" aria-label="Edit project name" onClick={() => setRenameOpen(true)}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15Z" /></svg></button> : null}
+      {summary.data?.capabilities.canRenameProject && !unavailable && canWriteNow ? <button type="button" className="project-chat-icon project-chat-rename" aria-label="Edit project name" onClick={() => setRenameOpen(true)}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15Z" /></svg></button> : null}
       {summary.data && !unavailable ? <button type="button" className="project-chat-critical" onClick={() => selectFilter("critical")} aria-label={`Critical ${summary.data.counts.openCritical}`}>Critical {summary.data.counts.openCritical}</button> : null}
       <ChatActionMenu label="Conversation options" items={[
         ...(!unavailable && summary.data ? filters.map(item => ({ label: item.label, selected: filter === item.value && !around, onSelect: () => selectFilter(item.value) })) : []),
@@ -104,23 +108,24 @@ function ProjectConversation({ projectId }: { projectId: string }) {
     {unavailable ? <div className="project-chat-empty project-chat-state" role="status"><h2>Conversation unavailable</h2><p>Your account does not currently have access to this conversation.</p>{chat.enabled ? <Button variant="secondary" busy={checkingAccess} onClick={() => void checkAccess()}>Check access again</Button> : null}</div> : summary.isPending ? <p role="status" className="project-chat-state project-chat-empty">Loading project conversation…</p> : !summary.data ? <div className="project-chat-empty project-chat-state" role="alert"><p>{chatErrorMessage(summary.error)}</p><Button onClick={() => void summary.refetch()}>Retry conversation</Button></div> : <>
       <div role="status" className={`project-chat-connection${chat.connection === "live" ? " sr-only" : ""}`}><span aria-hidden="true" />{connectionLabels[chat.connection]}</div>
       {summary.isError ? <p role="status" className="project-chat-warning">Project counts may be out of date. Retrying when the connection recovers.</p> : null}
+      {!canWriteNow ? <div className="project-chat-warning" role="status">{schedule?.pending ? "Checking chat hours. Sending is paused until availability is confirmed." : schedule?.error ? <>Chat hours could not be checked. Sending is paused. <Button variant="quiet" onClick={() => schedule.refresh()}>Retry chat hours</Button></> : <>Chat is read-only for internal teams from 8:00 PM to 7:30 AM India time. Messages and tasks remain available. {schedule?.nextOpenAt ? <span>Next opening: <time dateTime={schedule.nextOpenAt}>{new Date(schedule.nextOpenAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" })}</time>.</span> : null}</>}</div> : null}
       {around || filter !== "all" ? <div className="project-chat-context-note"><span>{around ? "Viewing an earlier message in context" : currentFilter.label}</span><button type="button" className="project-chat-icon" aria-label="Return to latest messages" onClick={latest}><X size={17} aria-hidden="true" /></button></div> : null}
       <ChatMediaProvider key={`${chat.scope}:${projectId}`} projectId={projectId}><div className="project-chat-conversation">
           {history.isError ? <p role="alert" className="project-chat-warning">{history.data ? "Messages may be out of date. " : ""}{chatErrorMessage(history.error)} <Button variant="quiet" onClick={() => void history.refetch()}>Retry messages</Button></p> : null}
-          {history.isPending ? <p role="status" className="project-chat-empty">Loading messages…</p> : history.data ? <ChatTimeline key={`${projectId}:${filter}:${around ?? "latest"}`} projectId={projectId} messages={messages} attempts={visibleAttempts} lastRead={summary.data.lastReadSequence} hasOlder={Boolean(history.hasNextPage)} hasNewer={Boolean(history.hasPreviousPage)} filtered={filter !== "all" || Boolean(around)} around={around} latestSequence={summary.data.latestMessageSequence} loadingOlder={history.isFetchingNextPage} loadingNewer={history.isFetchingPreviousPage} canSend={summary.data.capabilities.canSend} onOlder={() => void history.fetchNextPage()} onNewer={() => void history.fetchPreviousPage()} onLatest={latest} onReply={reply} onContext={context} onIssue={setSelectedIssue} onRetry={attempt => void chat.send(projectId, attempt.input)} onEditAttempt={editAttempt} onCancel={attempt => void chat.cancelAttempt(projectId, attempt.input.clientMessageId)} onDiscard={attempt => void chat.cancelAttempt(projectId, attempt.input.clientMessageId, true)} /> : null}
+          {history.isPending ? <p role="status" className="project-chat-empty">Loading messages…</p> : history.data ? <ChatTimeline key={`${projectId}:${filter}:${around ?? "latest"}`} projectId={projectId} messages={messages} attempts={visibleAttempts} lastRead={summary.data.lastReadSequence} hasOlder={Boolean(history.hasNextPage)} hasNewer={Boolean(history.hasPreviousPage)} filtered={filter !== "all" || Boolean(around)} around={around} latestSequence={summary.data.latestMessageSequence} loadingOlder={history.isFetchingNextPage} loadingNewer={history.isFetchingPreviousPage} canSend={canWriteNow && summary.data.capabilities.canSend} onOlder={() => void history.fetchNextPage()} onNewer={() => void history.fetchPreviousPage()} onLatest={latest} onReply={reply} onContext={context} onIssue={setSelectedIssue} onRetry={attempt => { if (canWriteNow) void chat.send(projectId, attempt.input); }} onEditAttempt={editAttempt} onCancel={attempt => void chat.cancelAttempt(projectId, attempt.input.clientMessageId)} onDiscard={attempt => void chat.cancelAttempt(projectId, attempt.input.clientMessageId, true)} /> : null}
           <div ref={composerRegion} className="project-chat-composer-region">
             {participants.isError ? <p className="project-chat-warning" role="status">Participants are unavailable. Retry before sending a message. <Button variant="quiet" onClick={() => void participants.refetch()}>Retry participants</Button></p> : null}
             {(draft.body || draft.files.length || draft.reply || draft.priority !== "normal") && attempts.some(attempt => attempt.status === "failed") ? <p className="project-chat-muted">Finish or clear your current draft before editing a failed message.</p> : null}
             <ChatTypingIndicator people={chat.currentProjectId === projectId ? chat.typing : []} />
-            <ChatComposer projectId={projectId} actionTypes={actionTypes.isError ? undefined : actionTypes.data} actionTypesError={actionTypes.isError ? "Actions are temporarily unavailable. Your draft is retained." : undefined} onRetryActionTypes={() => void actionTypes.refetch()} draft={draft} participants={participants.data?.items ?? []} sender={participants.data?.items.find(person => person.id === chat.userId)} onTypingEdit={typingActivity.edit} onTypingStop={typingActivity.stop} disabled={!summary.data.capabilities.canSend || !participants.data || participants.isError} onChange={next => chat.setDraft(projectId, next)} onSend={send} policy={attachmentPolicy.data} policyError={attachmentPolicy.isError && !attachmentPolicy.unsupported ? "Attachments are temporarily unavailable." : undefined} onRetryPolicy={() => void attachmentPolicy.refetch()} />
+            <ChatComposer projectId={projectId} actionTypes={actionTypes.isError ? undefined : actionTypes.data} actionTypesError={actionTypes.isError ? "Actions are temporarily unavailable. Your draft is retained." : undefined} onRetryActionTypes={() => void actionTypes.refetch()} draft={draft} participants={participants.data?.items ?? []} sender={participants.data?.items.find(person => person.id === chat.userId)} onTypingEdit={typingActivity.edit} onTypingStop={typingActivity.stop} disabled={!canWriteNow || !summary.data.capabilities.canSend || !participants.data || participants.isError} onChange={next => chat.setDraft(projectId, next)} onSend={send} policy={attachmentPolicy.data} policyError={attachmentPolicy.isError && !attachmentPolicy.unsupported ? "Attachments are temporarily unavailable." : undefined} onRetryPolicy={() => void attachmentPolicy.refetch()} />
             {!summary.data.capabilities.canSend ? <p role="status">Sending is not available for your current access.</p> : null}
           </div>
       </div></ChatMediaProvider>
       {panel ? <Drawer id="project-chat-group-info" open title="Project participants" eyebrow="Group information" variant="contextual" className="project-chat-details" onClose={() => setPanel(null)}>
-        {participants.isPending ? <p role="status">Loading participants…</p> : participants.isError ? <p role="alert">{chatErrorMessage(participants.error)} <Button variant="quiet" onClick={() => void participants.refetch()}>Retry</Button></p> : <ChatParticipants projectId={projectId} participants={participants.data?.items ?? []} removed={participants.data?.removed ?? []} warnings={participants.data?.setupWarnings ?? []} canManage={summary.data.capabilities.canManageParticipants} />}
+        {participants.isPending ? <p role="status">Loading participants…</p> : participants.isError ? <p role="alert">{chatErrorMessage(participants.error)} <Button variant="quiet" onClick={() => void participants.refetch()}>Retry</Button></p> : <ChatParticipants projectId={projectId} participants={participants.data?.items ?? []} removed={participants.data?.removed ?? []} warnings={participants.data?.setupWarnings ?? []} canManage={canWriteNow && summary.data.capabilities.canManageParticipants} />}
       </Drawer> : null}
       {renameOpen ? <ChatProjectNameDialog projectId={projectId} summary={summary.data} onClose={() => setRenameOpen(false)} /> : null}
-      {selectedIssue ? <ChatIssueDialog projectId={projectId} message={messages.find(message => message.id === selectedIssue.id) ?? selectedIssue} participants={participants.data?.items ?? []} onClose={() => setSelectedIssue(null)} /> : null}
+      {selectedIssue ? <ChatIssueDialog projectId={projectId} message={messages.find(message => message.id === selectedIssue.id) ?? selectedIssue} participants={participants.data?.items ?? []} readOnly={!canWriteNow} onClose={() => setSelectedIssue(null)} /> : null}
     </>}
   </section>;
 }

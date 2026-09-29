@@ -3,6 +3,7 @@ import type {
   KnowledgeMaster,
   KnowledgePrioritySemanticTier
 } from "./knowledgeTypes";
+import { countConfiguredWorkspaceTabs } from "./knowledgeWorkspaceSections";
 
 export type CatalogState = "loading" | "ready" | "error";
 export type PriorityTone = "high" | "medium" | "low" | "none" | "unavailable";
@@ -19,11 +20,11 @@ const PRIORITY_TIER_TONES = {
 export function sectionSummary(
   completeness: KnowledgeCompleteness
 ): { complete: number; applicable: number } | null {
-  const applicable = completeness.sections.filter(({ state }) => state !== "not_applicable");
-  if (applicable.length === 0) return null;
+  if (completeness.sections.length === 0) return null;
+  const progress = countConfiguredWorkspaceTabs(completeness.sections);
   return {
-    complete: applicable.filter(({ state }) => state === "complete").length,
-    applicable: applicable.length
+    complete: progress.configured,
+    applicable: progress.total
   };
 }
 

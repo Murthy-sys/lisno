@@ -11,6 +11,7 @@ import type { AppRepository } from "../repositories/types.js";
 import type { ManagedFileStorage } from "../storage/managed-storage.js";
 import type { AuditService, AuditWrite } from "./audit.service.js";
 import { projectChatContext } from "./project-chat-context.js";
+import { assertChatWritable, chatAvailability } from "../domain/chat-hours.js";
 import { systemClock, type Clock } from "./workflow.js";
 
 export interface ProjectChatAttachmentServiceOptions {
@@ -71,13 +72,14 @@ export function createProjectChatAttachmentService(options: ProjectChatAttachmen
     async policy(actor, projectId) {
       const context = await store.snapshot(tx => projectChatContext(tx, actor, projectId, clock));
       const enabled = policy.enabled && Boolean(options.storage);
-      const canUpload = enabled && hasPermission(context.user.role, "chat.send");
+      const canUpload = enabled && chatAvailability(actor.role, clock()).writable && hasPermission(context.user.role, "chat.send");
       return {...structuredClone(policy), enabled, capabilities: {canUpload, canRecord: canUpload}};
     },
     async beginUpload(actor, projectId, input) {
       if (!/^[A-Za-z0-9_-]{8,200}$/.test(input.uploadId) || !Number.isSafeInteger(input.sizeBytes) || input.sizeBytes <= 0) invalid("Choose a valid upload identity and file size.");
       return store.mutate(async tx => {
         await projectChatContext(tx, actor, projectId, clock, "chat.send");
+        assertChatWritable(actor.role, clock());
         if (!policy.enabled || !options.storage) unavailable();
         if (input.sizeBytes > policy.limits.maxFileBytes) throw new ApiError(413, "CHAT_ATTACHMENT_LIMIT", "The file exceeds the attachment size limit.");
         const at = now();
@@ -88,6 +90,7 @@ export function createProjectChatAttachmentService(options: ProjectChatAttachmen
           requestFilename: null, requestMimeType: null, transfer: {token: randomUUID(), expiresAt: expires, kind: "upload"},
           expiresAt: null, messageId: null, messagePosition: null, cleanupAfter: expires, cleanup: null, createdAt: at, updatedAt: at}, policy.limits);
         await audit(tx, record, "project_chat.attachment_reserved");
+        assertChatWritable(actor.role, clock());
         return {record, timeoutMs};
       });
     },
@@ -127,8 +130,10 @@ export function createProjectChatAttachmentService(options: ProjectChatAttachmen
         controller.signal.throwIfAborted();
         const ready = await store.mutate(async tx => {
           await projectChatContext(tx, actor, row.projectId, clock, "chat.send");
+          assertChatWritable(actor.role, clock());
           const result = await tx.finalizeAttachment({...lease(row), now: now(), expiresAt: new Date(clock().getTime() + policy.limits.stagedTtlSeconds * 1000).toISOString(), sha256, filename, claimedMimeType, metadata});
           await audit(tx, result, "project_chat.attachment_ready");
+          assertChatWritable(actor.role, clock());
           return result;
         });
         return {clientUploadId: ready.clientUploadId, attachment: ready.metadata!, expiresAt: ready.expiresAt!};

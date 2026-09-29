@@ -29,6 +29,16 @@ export interface ChatWorkflowSource {
     assigneeUserId: string | null;
     sourceSectionId: string | null;
     sourceLineItemKey: string | null;
+    title?: string;
+    status?: string;
+    openedAt?: Date | string;
+    dueAt?: Date | string | null;
+}
+export interface DailyCriticalTaskReceipt {
+    userId: string;
+    localDate: string;
+    createdAt: string;
+    acknowledgedAt: string | null;
 }
 export interface ChatExclusion {
     id: string;
@@ -185,6 +195,10 @@ export interface ChatTypingRateRecord {
     cleanupAt: string;
 }
 export interface ChatTransaction extends ChatAttachmentTransactions, NotificationTransactions {
+    ensureDigestScheduleStart(localDate: string, now: string): Promise<string>;
+    digestReceipts(userId: string, throughDate: string): Promise<DailyCriticalTaskReceipt[]>;
+    ensureDigestReceipt(userId: string, localDate: string, now: string): Promise<boolean>;
+    acknowledgeDigestReceipt(userId: string, localDate: string, now: string): Promise<DailyCriticalTaskReceipt | null>;
     typingByComposer(projectId: string, userId: string, sessionScope: string, composerId: string): Promise<ChatTypingRecord | null>;
     typingByUser(projectId: string, userId: string, now: string, limit: number): Promise<ChatTypingRecord[]>;
     activeTyping(projectId: string, now: string, limit: number): Promise<ChatTypingRecord[]>;

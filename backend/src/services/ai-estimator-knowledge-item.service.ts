@@ -27,6 +27,7 @@ import {
   isExactFixedGstVersion
 } from "../domain/ai-estimator-knowledge-fixed-gst.js";
 import {
+  countConfiguredKnowledgeWorkspaceTabs,
   createKnowledgeRevisionDigest,
   deriveKnowledgeCompleteness
 } from "../domain/ai-estimator-knowledge-completeness.js";
@@ -70,6 +71,7 @@ import { AiEstimatorKnowledgeTaxRuleModel } from "../models/AiEstimatorKnowledge
 import { AiEstimatorKnowledgeTaxVersionModel } from "../models/AiEstimatorKnowledgeTaxVersion.js";
 import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
 import { AiEstimatorKnowledgeVendorModel } from "../models/AiEstimatorKnowledgeVendor.js";
+import { vendorActivation } from "./vendor-readiness.service.js";
 import type { AuditAction } from "../domain/audit-actions.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
@@ -827,8 +829,8 @@ export function createAiEstimatorKnowledgeItemService(
             })
           : sectionKey === "advanced"
             ? preserveModeConfigurationCompatibility(previousPayload, input.payload)
-          : temporaryRecommendations
-            ? normalizeTemporaryRecommendationPayload(input.payload)
+          : sectionKey === "recommendations"
+            ? normalizeRecommendationPayload(input.payload)
             : structuredClone(input.payload);
         await coordinateNewBasketReferences(
           sectionKey,
@@ -1440,12 +1442,13 @@ async function materializePriceCommands(input: {
           }
         ).lean().exec()
       : null;
+    const vendorReady = !!vendor && (await vendorActivation(vendor, input.session)).effectiveStatus === "active";
     const effectiveFrom = validDate(command.effectiveFrom, "effectiveFrom");
     const effectiveTo = command.effectiveTo == null ? null : validDate(command.effectiveTo, "effectiveTo");
     if (effectiveTo && effectiveFrom >= effectiveTo) invalid("effectiveTo", "Effective end must be later than start.");
-    if (isBudgetCommand && (!vendor || !uom || (modeId && !mode))) {
+    if (isBudgetCommand && (!vendorReady || !uom || (modeId && !mode))) {
       invalidBudgetRelationships(commandIndex, {
-        vendor: Boolean(vendor),
+        vendor: vendorReady,
         uom: Boolean(uom),
         legacyMode: !modeId || Boolean(mode)
       });
@@ -1455,7 +1458,7 @@ async function materializePriceCommands(input: {
       revisionId: input.revisionId,
       priceEntryId
     }).sort({ versionNumber: -1, _id: 1 }).session(input.session).lean().exec();
-    if (!vendor || !uom || (modeId && !mode)) {
+    if (!vendorReady || !uom || (modeId && !mode)) {
       throw new ApiError(409, "KNOWLEDGE_REFERENCE_INVALID", "An active price reference is unavailable.");
     }
     const taxVersionId = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id;
@@ -2202,8 +2205,7 @@ function effectiveBasketQualityCompleteness(
   historical: KnowledgeCompletenessSummary,
   basketQuality: AiEstimatorKnowledgeBasketQualityRevision | null
 ): KnowledgeCompletenessSummary {
-  if (!basketQuality) return historical;
-  const hasChecks = basketQuality.parameters.length > 0;
+  const hasChecks = (basketQuality?.parameters.length ?? 0) > 0;
   const quality: KnowledgeCompletenessSummary["sections"][number] = {
     sectionKey: "quality", state: hasChecks ? "complete" : "not_configured",
     findings: hasChecks ? [] : [{ code: "SECTION_NOT_CONFIGURED", sectionKey: "quality",
@@ -2211,10 +2213,9 @@ function effectiveBasketQualityCompleteness(
   };
   const sections = historical.sections.map((section) => section.sectionKey === "quality" ? quality : section);
   if (!sections.some((section) => section.sectionKey === "quality")) sections.push(quality);
-  const applicable = sections.filter((section) => section.state !== "not_applicable");
   const findings = sections.flatMap((section) => section.findings);
   return {
-    percentage: applicable.length ? Math.round(100 * applicable.filter((section) => section.state === "complete").length / applicable.length) : 100,
+    percentage: countConfiguredKnowledgeWorkspaceTabs(sections).percentage,
     sections,
     blockers: findings.filter((finding) => finding.blocking),
     warnings: findings.filter((finding) => !finding.blocking)
@@ -2412,7 +2413,8 @@ function completenessDto(value: unknown): KnowledgeCompletenessSummary {
   if (!row || !Array.isArray(row.sections) || !Array.isArray(row.blockers) || !Array.isArray(row.warnings)) {
     unresolved("Knowledge completeness is unavailable.");
   }
-  return structuredClone(row) as unknown as KnowledgeCompletenessSummary;
+  const historical = structuredClone(row) as unknown as KnowledgeCompletenessSummary;
+  return { ...historical, percentage: countConfiguredKnowledgeWorkspaceTabs(historical.sections).percentage };
 }
 
 function sectionGraphIssues(rows: Row[]): string[] {
@@ -3323,9 +3325,6 @@ async function validateBudgetAlterationReferences(mainLineId: string, rows: Row[
       if (childIds.includes(mainLineId)) {
         reject("targetSubBasketId", "Select a Sub Basket that does not contain this item.");
       }
-      if (childIds.length === 0) {
-        reject("targetSubBasketId", "Select a Sub Basket with at least one available item.");
-      }
       for (const childId of childIds) lineIds.add(childId);
       continue;
     }
@@ -3647,7 +3646,7 @@ function copyRevisionSections(
   }
   return rows.map((row) => {
     const payload = normalizeTemporaryRecommendations && row.sectionKey === "recommendations"
-      ? normalizeTemporaryRecommendationPayload(payloadFor(row))
+      ? normalizeRecommendationPayload(payloadFor(row))
       : structuredClone(payloadFor(row));
     if (remapStepIds && row.sectionKey === "execution" && Array.isArray(payload.steps)) {
       payload.steps = payload.steps.map((entry) => {
@@ -3684,7 +3683,7 @@ function copyRevisionSections(
   });
 }
 
-function normalizeTemporaryRecommendationPayload(payload: Row): Row {
+function normalizeRecommendationPayload(payload: Row): Row {
   const normalized = structuredClone(payload);
   for (const field of ["recommendations", "exclusions", "budgetAlterations"] as const) {
     if (Array.isArray(normalized[field]) && normalized[field].length === 0) delete normalized[field];

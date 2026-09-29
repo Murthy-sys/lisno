@@ -23,11 +23,15 @@ export function KnowledgeReusableValues({ context, onClose }: { readonly context
   const [editor, setEditor] = useState<KnowledgeMaster | "new" | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<KnowledgeMaster | null>(null);
   const values = useQuery({ queryKey: context.key("masters", type, "management"), queryFn: () => allKnowledgePages(page => context.api.listKnowledgeMasters(type, { ...page, includeArchived: true })), enabled: context.ready && context.canRead });
-  const visible = (values.data ?? []).filter(value => (!status ? value.status !== "archived" : value.status === status) && `${value.name} ${value.code}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
+  const visible = (values.data ?? []).filter(value => {
+    const effectiveStatus = vendorDisplayStatus(value);
+    const selectedStatus = type === "vendors" ? ({ Active: "active", "Under Review": "under_review", Inactive: "inactive", Archived: "archived" } as const)[effectiveStatus] : value.status;
+    return (!status ? selectedStatus !== "archived" : selectedStatus === status) && `${value.name} ${value.code}`.toLocaleLowerCase().includes(search.toLocaleLowerCase());
+  });
   return <KnowledgeModal title="Reusable values" onClose={onClose}>
     <KnowledgeSelect label="Reusable value category" value={type} options={TYPES} allowEmpty={false} onChange={value => { setType(value as KnowledgeMasterType); setSearch(""); setStatus(""); setEditor(null); setArchiveTarget(null); }} />
     <Field label={`Search ${SINGULAR[type]}`} value={search} onChangeText={setSearch} />
-    <KnowledgeSelect label="Status" value={status} options={[{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }, { value: "archived", label: "Archived" }]} placeholder="All current" onChange={setStatus} />
+    <KnowledgeSelect label="Status" value={status} options={[{ value: "active", label: "Active" }, ...(type === "vendors" ? [{ value: "under_review", label: "Under Review" }] : []), { value: "inactive", label: "Inactive" }, { value: "archived", label: "Archived" }]} placeholder="All current" onChange={setStatus} />
     {context.canCreate ? <Button label={`Add ${SINGULAR[type]}`} onPress={() => setEditor("new")} /> : null}
     {values.isPending ? <KnowledgeText>Loading reusable values…</KnowledgeText> : null}
     {values.isError ? <StateView title="Reusable values unavailable" message={catalogError(values.error)} actionLabel="Retry reusable values" onAction={() => void values.refetch()} /> : null}
@@ -67,18 +71,18 @@ export function KnowledgeReusableEditor({ context, type, existing, onClose, onSa
   const effectiveTo = to.trim() ? date(to) : null;
   const taxValid = !appendTax || (type === "taxes" && rate.trim() !== "" && Number.isSafeInteger(Number(rate)) && Number(rate) >= 0 && Number(rate) <= 100000 && applicability.trim() && effectiveFrom && (!to.trim() || (effectiveTo && effectiveTo > effectiveFrom)));
   const canWrite = context.ready && context.canRead && (existing ? context.canUpdate : context.canCreate);
-  const valid = canWrite && type !== "vendors" && !conflict && name.trim() && (type === "surfaces" || code.trim()) && Number.isSafeInteger(Number(order)) && Number(order) >= 0 && (type !== "uoms" || [0, 1, 2, 3].includes(Number(scale))) && taxValid;
+  const valid = canWrite && type !== "vendors" && !conflict && name.trim() && (type === "surfaces" || type === "uoms" || code.trim()) && Number.isSafeInteger(Number(order)) && Number(order) >= 0 && (type !== "uoms" || [0, 1, 2, 3].includes(Number(scale))) && taxValid;
   const mutation = useMutation({ mutationFn: async () => {
     if (!valid) throw new Error("Review the reusable value fields before saving.");
     if (type === "surfaces") return existing ? context.api.updateKnowledgeSurface(existing.id, { expectedVersion: existing.version, name: name.trim(), description: description.trim() || null, status: status as "active" | "inactive" }) : context.api.createKnowledgeSurface({ name: name.trim(), description: description.trim() || null });
     const taxVersion: KnowledgeTaxVersionInput | undefined = appendTax && effectiveFrom ? { rateBps: Number(rate), treatment: treatment as "exclusive" | "inclusive", applicability: applicability.trim(), effectiveFrom, effectiveTo, status: taxStatus as "draft" | "active" | "inactive" } : undefined;
-    const input: KnowledgeCreateMasterInput = { code: code.trim(), name: name.trim(), description: description.trim() || null, ...(type === "uoms" ? { decimalScale: Number(scale) } : {}), ...(taxVersion ? { taxVersion } : {}) };
+    const input: KnowledgeCreateMasterInput = { ...(type === "uoms" ? {} : { code: code.trim() }), name: name.trim(), description: description.trim() || null, ...(type === "uoms" ? { decimalScale: Number(scale) } : {}), ...(taxVersion ? { taxVersion } : {}) };
     return existing ? context.api.updateKnowledgeMaster(type, existing.id, { ...input, expectedVersion: existing.version, displayOrder: Number(order), status: status as "active" | "inactive" }) : context.api.createKnowledgeMaster(type, input);
   }, retry: false, onSuccess: async value => { await context.refresh(); onSaved(value); }, onError: error => { if (error instanceof ApiError && error.code === "VERSION_CONFLICT") setConflict(true); } });
-  const dirty = code !== (existing?.code ?? "") || name !== (existing?.name ?? "") || description !== (existing?.description ?? "") || order !== String(existing?.displayOrder ?? 0) || status !== (existing?.status === "inactive" ? "inactive" : "active") || scale !== String(existing?.decimalScale ?? 0) || appendTax !== (!existing && type === "taxes") || Boolean(rate || applicability || from || to) || treatment !== "exclusive" || taxStatus !== "draft";
+  const dirty = (type !== "uoms" && code !== (existing?.code ?? "")) || name !== (existing?.name ?? "") || description !== (existing?.description ?? "") || order !== String(existing?.displayOrder ?? 0) || status !== (existing?.status === "inactive" ? "inactive" : "active") || scale !== String(existing?.decimalScale ?? 0) || appendTax !== (!existing && type === "taxes") || Boolean(rate || applicability || from || to) || treatment !== "exclusive" || taxStatus !== "draft";
   const disabled = mutation.isPending || conflict;
   return <KnowledgeModal title={`${existing ? "Edit" : "Add"} ${SINGULAR[type]}`} onClose={() => closeCatalogDraft(dirty, onClose)} busy={mutation.isPending}>
-    {type !== "surfaces" ? <Field label="Code" value={code} onChangeText={setCode} maxLength={64} editable={!disabled} /> : null}
+    {type !== "surfaces" && type !== "uoms" ? <Field label="Code" value={code} onChangeText={setCode} maxLength={64} editable={!disabled} /> : null}
     <Field label="Name" value={name} onChangeText={setName} maxLength={240} editable={!disabled} />
     <Field label="Description" value={description} onChangeText={setDescription} multiline maxLength={4000} editable={!disabled} />
     {existing && type !== "surfaces" ? <Field label="Display order" value={order} onChangeText={setOrder} keyboardType="number-pad" editable={!disabled} /> : null}

@@ -5,6 +5,7 @@ import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowle
 import { AiEstimatorKnowledgeSubBasketModel } from "../src/models/AiEstimatorKnowledgeSubBasket.js";
 import { AiEstimatorKnowledgeDisplayOrderSequenceModel } from "../src/models/AiEstimatorKnowledgeDisplayOrderSequence.js";
 import { ProcurementVendorSaveCommandModel } from "../src/models/ProcurementVendorSaveCommand.js";
+import { VendorInductionRequestModel, VendorInductionReviewModel } from "../src/models/VendorInduction.js";
 import { UserModel } from "../src/models/User.js";
 import { createAiEstimatorKnowledgeReferenceService } from "../src/services/ai-estimator-knowledge-reference.service.js";
 import { createAuditService } from "../src/services/audit.service.js";
@@ -12,6 +13,7 @@ import { createMemoryRepository } from "../src/repositories/memory.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 import { legacyVendorProfileFixture, vendorBankAccountFixture, vendorProfileFixture } from "./procurement-vendor-profile.fixture.js";
 import { vendorSaveCommand } from "../src/services/procurement-vendor-save-command.js";
+import { currentVendorInductionApproval } from "../src/services/vendor-induction-read.js";
 
 const actor = { id: "vendor-test-admin", role: "super_admin" as const, name: "Synthetic Admin", email: "admin@example.invalid" };
 const actorGuard = { requireReadActor: async () => actor, requireMutationActor: async () => actor };
@@ -20,7 +22,7 @@ const audit = createAuditService(createMemoryRepository());
 const reference = createAiEstimatorKnowledgeReferenceService({ actorGuard, audit });
 beforeAll(async () => {
   replica = await startMongoReplicaSet("procurement-vendor-profile");
-  await Promise.all([AuditEventModel, AiEstimatorKnowledgeVendorModel, AiEstimatorKnowledgeBasketModel, AiEstimatorKnowledgeSubBasketModel, AiEstimatorKnowledgeDisplayOrderSequenceModel, ProcurementVendorSaveCommandModel, UserModel].map(model => model.syncIndexes()));
+  await Promise.all([AuditEventModel, AiEstimatorKnowledgeVendorModel, AiEstimatorKnowledgeBasketModel, AiEstimatorKnowledgeSubBasketModel, AiEstimatorKnowledgeDisplayOrderSequenceModel, ProcurementVendorSaveCommandModel, VendorInductionRequestModel, VendorInductionReviewModel, UserModel].map(model => model.syncIndexes()));
 }, 120_000);
 beforeEach(async () => { await replica.clear(); });
 afterAll(async () => { await replica.stop(); });
@@ -32,6 +34,36 @@ async function fixture() {
 }
 
 describe("vendor profile shared persistence", () => {
+  it("does not revive an old induction approval when vendor type changes away and back", async () => {
+    const { profile } = await fixture();
+    const vendor = await reference.createMaster(actor, "vendors", { name: "Type transition", procurementProfile: profile });
+    await VendorInductionReviewModel.collection.insertOne({ _id: "approved-execution", vendorId: vendor.id,
+      version: 1, submissionId: "submitted-execution", vendorType: "execution", decision: "approved",
+      reason: null, actorId: actor.id, reviewedAt: new Date(), idempotencyKey: "approved-execution", payloadHash: "approved" });
+    expect(await currentVendorInductionApproval(vendor.id, "execution")).toBe(true);
+    await reference.updateMaster(actor, "vendors", vendor.id, { expectedVersion: 1,
+      procurementProfile: { ...profile, vendorType: "supplier", executionType: null, supplier: false } });
+    expect(await currentVendorInductionApproval(vendor.id, "supplier")).toBe(false);
+    const decision = await VendorInductionReviewModel.findOne({ vendorId: vendor.id }).sort({ version: -1 }).lean();
+    expect(decision).toMatchObject({ version: 2, decision: "reopened", submissionId: "submitted-execution", actorId: actor.id });
+    await reference.updateMaster(actor, "vendors", vendor.id, { expectedVersion: 2, procurementProfile: profile });
+    expect(await currentVendorInductionApproval(vendor.id, "execution")).toBe(false);
+    expect(await VendorInductionReviewModel.countDocuments({ vendorId: vendor.id })).toBe(2);
+    expect(await AuditEventModel.countDocuments({ entityId: vendor.id, action: "vendor_induction.reopened" })).toBe(1);
+  });
+  it("supersedes outstanding induction links when the recipient changes or the vendor is archived", async () => {
+    const { profile } = await fixture();
+    const vendor = await reference.createMaster(actor, "vendors", { name: "Link lifecycle", procurementProfile: profile });
+    await VendorInductionRequestModel.collection.insertOne({ _id: "request-one", vendorId: vendor.id, version: 1,
+      tokenHash: "token-one", idempotencyKey: "request-one", status: "sent" });
+    await reference.updateMaster(actor, "vendors", vendor.id, { expectedVersion: 1,
+      procurementProfile: { ...profile, email: "new@example.invalid" } });
+    expect((await VendorInductionRequestModel.findById("request-one").lean())?.status).toBe("superseded");
+    await VendorInductionRequestModel.collection.insertOne({ _id: "request-two", vendorId: vendor.id, version: 2,
+      tokenHash: "token-two", idempotencyKey: "request-two", status: "sent" });
+    await reference.archiveMaster(actor, "vendors", vendor.id, { expectedVersion: 2, reason: "Retired fixture" });
+    expect((await VendorInductionRequestModel.findById("request-two").lean())?.status).toBe("superseded");
+  });
   it("lets a stored active Procurement actor manage the shared vendor while denying unrelated masters", async () => {
     const procurement = { id: "vendor-test-procurement", role: "procurement" as const, name: "Synthetic Procurement", email: "procurement@example.invalid" };
     for (const user of [actor, procurement]) {
@@ -155,7 +187,8 @@ describe("vendor profile shared persistence", () => {
     await reference.archiveMaster(actor, "vendors", archived.id, { expectedVersion: 1, reason: "Synthetic directory fixture" });
     await reference.createMaster(actor, "vendors", { name: "Other verified execution", status: "inactive", procurementProfile: verified });
 
-    const expectedOverview = { totalVendors: 7, activeVendors: 4, underReviewVendors: 4 };
+    const expectedOverview = { totalVendors: 7, activeVendors: 0, underReviewVendors: 4,
+      ratedVendors: 0, averageKpiScoreBps: null };
     const firstPage = await reference.listMasters(actor, "vendors", { includeDirectoryOverview: true }, { limit: 5, offset: 0 });
     expect(firstPage).toMatchObject({ total: 7, directoryOverview: expectedOverview });
     expect(firstPage.items).toHaveLength(5);
@@ -179,14 +212,16 @@ describe("vendor profile shared persistence", () => {
       expect(await reference.listMasters(actor, "vendors", { ...filters, includeDirectoryOverview: true }, pagination)).toMatchObject({ total: filteredTotal, directoryOverview: expectedOverview });
     }
     await reference.updateMaster(actor, "vendors", both.id, { expectedVersion: 1, procurementProfile: { ...verified, executionType: ["labor", "material_labour"] } });
-    expect((await reference.listMasters(actor, "vendors", { includeDirectoryOverview: true }, { limit: 1, offset: 0 })).directoryOverview).toEqual({ ...expectedOverview, underReviewVendors: 3 });
+    expect((await reference.listMasters(actor, "vendors", { includeDirectoryOverview: true }, { limit: 1, offset: 0 })).directoryOverview).toEqual(expectedOverview);
     await reference.archiveMaster(actor, "vendors", legacy.id, { expectedVersion: 1, reason: "Retired synthetic directory record" });
-    expect((await reference.listMasters(actor, "vendors", { includeDirectoryOverview: true }, { limit: 1, offset: 0 })).directoryOverview).toEqual({ totalVendors: 6, activeVendors: 3, underReviewVendors: 2 });
+    expect((await reference.listMasters(actor, "vendors", { includeDirectoryOverview: true }, { limit: 1, offset: 0 })).directoryOverview).toEqual({ totalVendors: 6, activeVendors: 0, underReviewVendors: 3,
+      ratedVendors: 0, averageKpiScoreBps: null });
     expect(await reference.listMasters(actor, "vendors", {}, { limit: 5, offset: 0 })).not.toHaveProperty("directoryOverview");
     expect(await reference.listMasters(actor, "vendors", { includeDirectoryOverview: false }, { limit: 5, offset: 0 })).not.toHaveProperty("directoryOverview");
   });
   it("returns truthful zero overview counts for an empty directory", async () => {
-    expect(await reference.listMasters(actor, "vendors", { includeDirectoryOverview: true }, { limit: 1, offset: 0 })).toEqual({ items: [], total: 0, directoryOverview: { totalVendors: 0, activeVendors: 0, underReviewVendors: 0 } });
+    expect(await reference.listMasters(actor, "vendors", { includeDirectoryOverview: true }, { limit: 1, offset: 0 })).toEqual({ items: [], total: 0, directoryOverview: { totalVendors: 0, activeVendors: 0, underReviewVendors: 0,
+      ratedVendors: 0, averageKpiScoreBps: null } });
   });
   it("preserves stored verification for incomplete profiles without leaking private fields or contradicting overview counts", async () => {
     const { profile } = await fixture();
@@ -196,7 +231,8 @@ describe("vendor profile shared persistence", () => {
     await AiEstimatorKnowledgeVendorModel.collection.updateMany({ _id: { $in: [verified.id, unverified.id, missing.id] } }, { $unset: { "procurementProfile.email": "" } });
     await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: missing.id }, { $unset: { "procurementProfile.currentAddressVerifiedPhysically": "" } });
     const page = await reference.listMasters(actor, "vendors", { includeDirectoryOverview: true }, { limit: 5, offset: 0 });
-    expect(page.directoryOverview).toEqual({ totalVendors: 3, activeVendors: 3, underReviewVendors: 2 });
+    expect(page.directoryOverview).toEqual({ totalVendors: 3, activeVendors: 0, underReviewVendors: 3,
+      ratedVendors: 0, averageKpiScoreBps: null });
     for (const [id, verification] of [[verified.id, true], [unverified.id, false], [missing.id, null]] as const) {
       const item = page.items.find(row => row.id === id)!;
       expect(item.procurementSummary).toEqual({ vendorType: null, executionType: null, profileComplete: false, currentAddressVerifiedPhysically: verification, mainBaskets: [], subBaskets: [], mainBasket: null, subBasket: null });
@@ -309,7 +345,7 @@ describe("vendor profile shared persistence", () => {
     const detail = await reference.getVendorDetail(actor, created.id);
     expect(detail).toMatchObject({ msmeCertificate: null, procurementProfile: { gstNumber: null, gstRegistered: true, msmeRegistered: true, email: profile.email, currentAddressVerifiedPhysically: true, physicalAddressVerifiedById: actor.id }, procurementSummary: { profileComplete: false, mainBasket: { id: parent.id }, subBasket: { id: child.id }, currentAddressVerifiedPhysically: true } });
     const page = await reference.listMasters(actor, "vendors", { includeDirectoryOverview: true }, { limit: 10, offset: 0 });
-    expect(page.directoryOverview).toMatchObject({ underReviewVendors: 0 });
+    expect(page.directoryOverview).toMatchObject({ underReviewVendors: 1 });
     expect(page.items[0]?.procurementSummary).toMatchObject({ profileComplete: false, vendorType: "execution" });
     expect(JSON.stringify(page)).not.toContain("gstNumber");
     expect(JSON.stringify(page)).not.toContain("msmeCertificate");

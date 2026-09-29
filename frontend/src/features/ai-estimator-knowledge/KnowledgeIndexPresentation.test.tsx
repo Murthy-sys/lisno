@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { KnowledgeIndexItemCard } from "./KnowledgeIndexItemCard";
 import { priorityDisplay, sectionSummary, unitLabel, type CatalogState } from "./knowledgeIndexPresentation";
+import { countConfiguredWorkspaceTabs, KNOWLEDGE_WORKSPACE_BACKEND_SECTIONS } from "./knowledgeWorkspaceSections";
 import type {
   KnowledgeCompleteness,
   KnowledgeCompletenessState,
@@ -36,7 +37,7 @@ const baseItem: KnowledgeItemListItem = {
   ...meta, id: "item-1", itemType: "main_line", completionRequired: false, basketId: "basket-1", basketName: "Finishes",
   mainLineId: "main line/1", mainLineName: "POP False Ceiling", description: null, status: "active", activeRevisionId: "rev-1",
   draftRevisionId: null, revisionNumber: 1, uomId: "uom-sqft", priorityId: "p-high", modeIds: [], surfaceIds: [], vendorIds: [],
-  completeness: completeness(["complete", "complete", "needs_attention", "not_configured", "not_applicable"], 72), allowedActions: []
+  completeness: completeness(["complete", "complete", "needs_attention", "not_configured", "not_applicable"], 50), allowedActions: []
 };
 
 function renderCard(overrides: Partial<KnowledgeItemListItem> = {}, catalogState: CatalogState = "ready", onOpen = vi.fn()) {
@@ -55,15 +56,21 @@ function renderCard(overrides: Partial<KnowledgeItemListItem> = {}, catalogState
 }
 
 describe("knowledge index presentation helpers", () => {
-  it("counts complete sections over applicable sections and excludes not-applicable ones", () => {
+  it("counts configured visible tabs once, even when Mode has multiple backend sections", () => {
     expect(sectionSummary(completeness(["complete", "complete", "needs_attention", "not_configured", "not_applicable", "not_applicable"]))).toEqual({ complete: 2, applicable: 4 });
-    expect(sectionSummary(completeness(["complete", "complete"]))).toEqual({ complete: 2, applicable: 2 });
-    expect(sectionSummary(completeness(["needs_attention", "not_applicable"]))).toEqual({ complete: 0, applicable: 1 });
+    expect(sectionSummary(completeness(["complete", "complete"]))).toEqual({ complete: 2, applicable: 4 });
+    expect(sectionSummary(completeness(["needs_attention", "not_applicable"]))).toEqual({ complete: 0, applicable: 4 });
   });
 
-  it("returns no section summary when no section applies", () => {
+  it("returns no summary before section states load and includes unconfigured visible tabs", () => {
     expect(sectionSummary(completeness([]))).toBeNull();
-    expect(sectionSummary(completeness(["not_applicable", "not_applicable"]))).toBeNull();
+    expect(sectionSummary(completeness(["not_applicable", "not_applicable"]))).toEqual({ complete: 0, applicable: 4 });
+  });
+
+  it("automatically increases the denominator when a fifth tab is registered", () => {
+    const sections = completeness(["complete", "not_applicable", "not_applicable", "not_configured", "complete", "complete", "not_applicable", "complete"]).sections;
+    expect(countConfiguredWorkspaceTabs(sections)).toEqual({ configured: 4, total: 4, percentage: 100 });
+    expect(countConfiguredWorkspaceTabs(sections, { ...KNOWLEDGE_WORKSPACE_BACKEND_SECTIONS, future: ["scope"] })).toEqual({ configured: 4, total: 5, percentage: 80 });
   });
 
   it("labels units from the loaded catalog with explicit fallbacks", () => {
@@ -100,16 +107,16 @@ describe("knowledge index item card", () => {
     expect(link).not.toHaveAttribute("aria-describedby");
     expect(within(card).getByRole("heading", { level: 3, name: "POP False Ceiling" })).toBeInTheDocument();
     expect(within(card).queryByText("Temporary item")).not.toBeInTheDocument();
-    expect(within(card).getByText("72% complete")).toBeInTheDocument();
+    expect(within(card).getByText("50% complete")).toBeInTheDocument();
     const progress = within(card).getByRole("progressbar", { name: "POP False Ceiling completeness" });
-    expect(progress).toHaveAttribute("aria-valuenow", "72");
-    expect(progress).toHaveAttribute("aria-valuetext", "72% complete");
+    expect(progress).toHaveAttribute("aria-valuenow", "50");
+    expect(progress).toHaveAttribute("aria-valuetext", "50% complete, 2 of 4 tabs configured");
 
     const metrics = within(card).getByRole("list", { name: "POP False Ceiling details" });
-    const sections = metrics.querySelector('[data-metric="sections"]');
-    expect(sections).toHaveTextContent("2/4 sections");
-    expect(within(metrics).getByText("2/4 sections")).toHaveAttribute("aria-hidden", "true");
-    expect(within(metrics).getByText("2 of 4 sections complete")).toHaveClass("sr-only");
+    const tabs = metrics.querySelector('[data-metric="tabs"]');
+    expect(tabs).toHaveTextContent("2/4 tabs");
+    expect(within(metrics).getByText("2/4 tabs")).toHaveAttribute("aria-hidden", "true");
+    expect(within(metrics).getByText("2 of 4 tabs configured")).toHaveClass("sr-only");
     expect(metrics.querySelector('[data-metric="unit"]')).toHaveTextContent("Square feet");
     const chip = metrics.querySelector(".knowledge-priority-chip");
     expect(chip).toHaveAttribute("data-tone", "high");
@@ -145,11 +152,11 @@ describe("knowledge index item card", () => {
     expect(screen.getByRole("link", { name: "POP False Ceiling" })).toHaveAccessibleDescription("Temporary item");
   });
 
-  it("omits the sections metric without applicable sections and shows catalog fallbacks", () => {
-    const { card, item } = renderCard({ uomId: null, priorityId: null, completeness: completeness(["not_applicable"], 0) });
+  it("omits the tab metric without saved section states and shows catalog fallbacks", () => {
+    const { card, item } = renderCard({ uomId: null, priorityId: null, completeness: completeness([], 0) });
     const metrics = within(card).getByRole("list", { name: `${item.mainLineName} details` });
-    expect(metrics.querySelector('[data-metric="sections"]')).toBeNull();
-    expect(within(metrics).queryByText(/sections/)).not.toBeInTheDocument();
+    expect(metrics.querySelector('[data-metric="tabs"]')).toBeNull();
+    expect(within(metrics).queryByText(/tabs/)).not.toBeInTheDocument();
     expect(within(metrics).getAllByRole("listitem")).toHaveLength(2);
     expect(metrics.querySelector('[data-metric="unit"]')).toHaveTextContent("No unit");
     expect(metrics.querySelector(".knowledge-priority-chip")).toHaveAttribute("data-tone", "none");

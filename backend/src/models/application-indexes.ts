@@ -6,6 +6,8 @@ import { prepareEstimateClientReviewIndexes } from "./EstimateClientReviewRound.
 import { DesignPlanResponseProofModel } from "./DesignPlanResponseProof.js";
 import { DesignPlanReviewRoundModel } from "./DesignPlanReviewRound.js";
 import { ProjectWorkflowTaskModel } from "./ProjectWorkflowTask.js";
+import { DailyCriticalTaskReceiptModel } from "./DailyCriticalTaskReceipt.js";
+import { DailyCriticalScheduleStateModel } from "./DailyCriticalScheduleState.js";
 import { ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel } from "./ProjectChat.js";
 import { ProjectChatAttachmentModel } from "./ProjectChatAttachment.js";
 import { ProjectFinanceBucketModel } from "./ProjectFinanceBucket.js";
@@ -32,6 +34,7 @@ import { AiEstimatorKnowledgeUomModel } from "./AiEstimatorKnowledgeUom.js";
 import { AiEstimatorKnowledgeVendorModel } from "./AiEstimatorKnowledgeVendor.js";
 import { VendorKpiAssessmentModel } from "./VendorKpiAssessment.js";
 import { VendorKpiRequestModel } from "./VendorKpiRequest.js";
+import { VendorInductionDraftModel, VendorInductionQuestionnaireModel, VendorInductionRequestModel, VendorInductionSubmissionModel, VendorInductionReviewModel } from "./VendorInduction.js";
 
 export async function initializeApplicationIndexes(): Promise<void> {
   await ProjectProcurementItemModel.init();
@@ -45,6 +48,8 @@ export async function initializeApplicationIndexes(): Promise<void> {
   await DesignPlanReviewRoundModel.init();
   await DesignPlanResponseProofModel.init();
   await ProjectWorkflowTaskModel.init();
+  await DailyCriticalTaskReceiptModel.init();
+  await DailyCriticalScheduleStateModel.init();
   await ProjectFinanceBucketModel.init();
   await FinanceLedgerEntryModel.init();
   await FinanceEntryDocumentModel.init();
@@ -60,6 +65,11 @@ export async function initializeApplicationIndexes(): Promise<void> {
   await AiEstimatorKnowledgeVendorModel.init();
   await VendorKpiAssessmentModel.init();
   await VendorKpiRequestModel.init();
+  await VendorInductionDraftModel.init();
+  await VendorInductionQuestionnaireModel.init();
+  await VendorInductionRequestModel.init();
+  await VendorInductionSubmissionModel.init();
+  await VendorInductionReviewModel.init();
   await ProcurementVendorCertificateUploadModel.init();
   await ProcurementVendorCertificateCleanupModel.init();
   await ProcurementVendorSaveCommandModel.init();

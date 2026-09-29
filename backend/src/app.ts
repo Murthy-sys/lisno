@@ -25,6 +25,8 @@ import { createProjectChatEventsHub } from "./services/project-chat-events.servi
 import { createProjectChatStreamService } from "./services/project-chat-stream.service.js";
 import { createProjectChatTypingService } from "./services/project-chat-typing.service.js";
 import { createProjectChatRouter } from "./routes/project-chat.js";
+import { createDailyCriticalTasksRouter } from "./routes/daily-critical-tasks.js";
+import { createDailyCriticalTasksService } from "./services/daily-critical-tasks.service.js";
 import { createProjectChatAttachmentsRouter } from "./routes/project-chat-attachments.js";
 import { createProjectChatAttachmentService } from "./services/project-chat-attachments.service.js";
 import { createProjectChatAttachmentPolicy } from "./domain/project-chat-attachment-policy.js";
@@ -85,6 +87,10 @@ import { createProcurementRouter } from "./routes/procurement.js";
 import { createVendorKpiRouter } from "./routes/vendor-kpi.js";
 import { createVendorKpiService } from "./services/vendor-kpi.service.js";
 import type { VendorKpiMailer } from "./services/vendor-kpi-mailer.js";
+import { createVendorInductionRouter } from "./routes/vendor-induction.js";
+import { createVendorInductionService } from "./services/vendor-induction.service.js";
+import type { VendorInductionMailer } from "./services/vendor-induction-mailer.js";
+import { vendorActivation } from "./services/vendor-readiness.service.js";
 import { createTasksRouter } from "./routes/tasks.js";
 import { createUserInvitationsRouter } from "./routes/user-invitations.js";
 import { createAuditService } from "./services/audit.service.js";
@@ -165,6 +171,7 @@ export interface AppDependencies {
   };
   invitationMailer?: InvitationMailer;
   vendorKpiMailer?: VendorKpiMailer;
+  vendorInductionMailer?: VendorInductionMailer;
   allowDemoAccountExternalEmail?: boolean;
   invitationPublicRateLimit?: InvitationRateLimitOptions;
   invitationDeliveryRateLimit?: InvitationRateLimitOptions;
@@ -252,6 +259,8 @@ export function createApp(dependencies: AppDependencies) {
   });
   const vendorKpiPublicRateLimit = createInvitationPublicRateLimit({ maxAttempts: 30, clock: () => clock().getTime() });
   const vendorKpiDeliveryRateLimit = createInvitationDeliveryRateLimit({ maxAttempts: 10, clock: () => clock().getTime() });
+  const vendorInductionPublicRateLimit = createInvitationPublicRateLimit({ maxAttempts: 30, clock: () => clock().getTime() });
+  const vendorInductionDeliveryRateLimit = createInvitationDeliveryRateLimit({ maxAttempts: 10, clock: () => clock().getTime() });
   const passwordResetRateLimit = createPasswordResetRateLimit({
     ...dependencies.passwordResetRateLimit,
     clock:
@@ -300,8 +309,9 @@ export function createApp(dependencies: AppDependencies) {
   const chatRepository = dependencies.chatRepository ?? createMemoryProjectChatRepository(repository);
   const attachmentPolicy = dependencies.chatAttachmentPolicy ?? createProjectChatAttachmentPolicy();
   const notificationHub = createNotificationEventsHub({watchChanges: chatRepository.kind === "mongo" && dependencies.chatEvents?.watchChanges !== false});
+  const dailyCriticalTasks = createDailyCriticalTasksService({chatRepository, clock, audit: auditService, onDue: id => notificationHub.wake(id)});
   const notifications = createNotificationService({repository: chatRepository, clock, onChange: id => notificationHub.wake(id)});
-  const notificationStream = createNotificationStreamService({auth: authService, service: notifications, hub: notificationHub});
+  const notificationStream = createNotificationStreamService({auth: authService, service: notifications, hub: notificationHub, dailyCriticalSignal: actor => dailyCriticalTasks.signal(actor)});
   const notificationEmail = createNotificationEmailDispatcher({repository: chatRepository, clock, mailer: dependencies.chatMentionMailer ?? {deliveryKind: "disabled"}, allowDemoAccountExternalEmail: dependencies.allowDemoAccountExternalEmail});
   const projectChatService = createProjectChatService({ repository, audit: auditService, clock, chatRepository, attachmentPolicy,
     onNotificationsCommitted: ids => { for (const id of ids) notificationHub.wake(id); notificationEmail.wake(); }
@@ -348,6 +358,8 @@ export function createApp(dependencies: AppDependencies) {
   });
   const projectVendorSuggestionService = createProjectVendorSuggestionService({ audit: auditService, now: clock });
   const vendorKpiService = createVendorKpiService({ audit: auditService, mailer: dependencies.vendorKpiMailer ?? { deliveryKind: "disabled" }, now: clock });
+  const vendorInductionService = createVendorInductionService({ audit: auditService,
+    mailer: dependencies.vendorInductionMailer ?? { deliveryKind: "disabled" }, activationForVendor: vendorActivation, now: clock });
   const projectProcurementService = createProjectProcurementService({ audit: auditService, now: clock });
   const procurementVendorBaselineService = createProcurementVendorBaselineService({ audit: auditService, now: clock });
   const procurementVendorCertificateService = createProcurementVendorCertificateService({ storage, maxUploadBytes, now: clock });
@@ -458,6 +470,7 @@ export function createApp(dependencies: AppDependencies) {
   app.use("/api/v1", createAuthRouter(authService, authRateLimit, profilePhotoService));
   app.use("/api/v1", createProfilePhotosRouter(authService, profilePhotoService));
   app.use("/api/v1", createNotificationsRouter(authService, notifications, notificationStream));
+  app.use("/api/v1", createDailyCriticalTasksRouter(authService, dailyCriticalTasks));
   app.use("/api/v1", createProjectChatRouter(authService, projectChatService, projectChatTyping));
   app.use("/api/v1", createProjectChatAttachmentsRouter(authService, chatAttachments));
   app.use("/api/v1", createProjectChatEventsRouter(authService, projectChatStream));
@@ -523,6 +536,7 @@ export function createApp(dependencies: AppDependencies) {
   );
   app.use("/api/v1", createProjectVendorSuggestionRouter(authService, projectVendorSuggestionService));
   app.use("/api/v1", createVendorKpiRouter(authService, vendorKpiService, vendorKpiPublicRateLimit, vendorKpiDeliveryRateLimit));
+  app.use("/api/v1", createVendorInductionRouter(authService, vendorInductionService, vendorInductionPublicRateLimit, vendorInductionDeliveryRateLimit));
   app.use("/api/v1", createProcurementVendorBaselineRouter(authService, procurementVendorBaselineService));
   app.use("/api/v1", createProcurementVendorPhotoRouter({ authService, photoService: procurementVendorPhotoService, maxUploadBytes }));
   app.use(
@@ -602,8 +616,8 @@ export function createApp(dependencies: AppDependencies) {
   app.use(errorHandler);
 
   return Object.assign(app, {
-    startNotificationDelivery: () => notificationEmail.start(),
-    closeProjectChat: async () => { await Promise.all([projectChatStream.close(), notificationStream.close(), notificationEmail.stop()]); },
+    startNotificationDelivery: () => { notificationEmail.start(); dailyCriticalTasks.start(); },
+    closeProjectChat: async () => { dailyCriticalTasks.stop(); await Promise.all([projectChatStream.close(), notificationStream.close(), notificationEmail.stop()]); },
     cleanupProjectChatAttachments: () => chatAttachments.cleanup(),
     cleanupProcurementVendorPhotos: () => procurementVendorPhotoService.cleanup(),
     cleanupProcurementVendorCertificates: () => procurementVendorCertificateService.cleanup()

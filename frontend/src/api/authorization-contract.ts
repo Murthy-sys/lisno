@@ -247,13 +247,17 @@ export const PERMISSION_CODES = [
   "procurement.vendor_allocation_baseline.correct",
   "procurement.vendor_kpi.read",
   "procurement.vendor_kpi.rate",
-  "procurement.vendor_kpi.request"
+  "procurement.vendor_kpi.request",
+  "procurement.vendor_induction.read",
+  "procurement.vendor_induction.manage",
+  "procurement.vendor_induction.request",
+  "procurement.vendor_induction.review"
 ] as const;
 
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-09-28.vendor-kpi.v1" as const;
+  "2026-09-28.vendor-induction.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

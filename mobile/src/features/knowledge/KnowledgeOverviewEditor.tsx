@@ -10,7 +10,6 @@ export function KnowledgeOverviewEditor({ payload, onChange, readOnly, context, 
   const [selecting, setSelecting] = useState(false);
   const [editor, setEditor] = useState<{ type: "uoms" | "surfaces"; existing?: KnowledgeMaster } | null>(null);
   const [name, setName] = useState("");
-  const [code, setCode] = useState("");
   const [description, setDescription] = useState("");
   const [scale, setScale] = useState("2");
   const [error, setError] = useState("");
@@ -29,17 +28,17 @@ export function KnowledgeOverviewEditor({ payload, onChange, readOnly, context, 
   }
   function open(type: "uoms" | "surfaces", existing?: KnowledgeMaster) {
     setEditor({ type, ...(existing ? { existing } : {}) });
-    setName(existing?.name ?? ""); setCode(existing?.code ?? ""); setDescription(existing?.description ?? ""); setScale(String(existing?.decimalScale ?? 2)); setError("");
+    setName(existing?.name ?? ""); setDescription(existing?.description ?? ""); setScale(String(existing?.decimalScale ?? 2)); setError("");
   }
   async function save() {
     if (!editor || busy || operation.current || readOnly) return;
-    if (!name.trim() || (editor.type === "uoms" && !code.trim())) { setError("Enter the required name and code."); return; }
+    if (!name.trim()) { setError("Enter the required name."); return; }
     if (editor.type === "uoms" && (!/^\d$/u.test(scale) || Number(scale) > 3)) { setError("Choose a UOM decimal scale from 0 to 3."); return; }
     if (editor.existing ? !context.canUpdate : !context.canCreate) return;
     operation.current = true; setBusy(true); setError("");
     try {
       const value = editor.type === "uoms"
-        ? await context.api.createKnowledgeMaster("uoms", { name: name.trim(), code: code.trim(), description: description.trim() || null, decimalScale: Number(scale) })
+        ? await context.api.createKnowledgeMaster("uoms", { name: name.trim(), description: description.trim() || null, decimalScale: Number(scale) })
         : editor.existing
           ? await context.api.updateKnowledgeSurface(editor.existing.id, { expectedVersion: editor.existing.version, name: name.trim(), description: description.trim() || null })
           : await context.api.createKnowledgeSurface({ name: name.trim(), description: description.trim() || null });
@@ -75,7 +74,7 @@ export function KnowledgeOverviewEditor({ payload, onChange, readOnly, context, 
     </KnowledgeModal> : null}
     {editor ? <KnowledgeModal title={`${editor.existing ? "Edit" : "Add"} ${editor.type === "uoms" ? "Unit" : "Surface"}`} busy={busy} onClose={() => setEditor(null)}>
       <Field label="Name" value={name} onChangeText={setName} editable={!busy} maxLength={240} />
-      {editor.type === "uoms" ? <><Field label="Code" value={code} onChangeText={setCode} editable={!busy} maxLength={80} /><Field label="Decimal scale" value={scale} onChangeText={setScale} editable={!busy} keyboardType="number-pad" /></> : null}
+      {editor.type === "uoms" ? <Field label="Decimal scale" value={scale} onChangeText={setScale} editable={!busy} keyboardType="number-pad" /> : null}
       <Field label="Description" value={description} onChangeText={setDescription} editable={!busy} multiline maxLength={4000} />
       {error ? <KnowledgeText error>{error}</KnowledgeText> : null}
       <Button label="Save reusable value" loading={busy} onPress={() => void save()} />

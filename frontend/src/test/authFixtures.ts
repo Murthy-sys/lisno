@@ -48,6 +48,10 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "procurement.vendor_kpi.read",
     "procurement.vendor_kpi.rate",
     "procurement.vendor_kpi.request",
+    "procurement.vendor_induction.read",
+    "procurement.vendor_induction.manage",
+    "procurement.vendor_induction.request",
+    "procurement.vendor_induction.review",
     "procurement.vendor_classification.create",
     "procurement.vendor_allocation_baseline.correct"
   ],
@@ -97,6 +101,10 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "procurement.vendor_kpi.read",
     "procurement.vendor_kpi.rate",
     "procurement.vendor_kpi.request",
+    "procurement.vendor_induction.read",
+    "procurement.vendor_induction.manage",
+    "procurement.vendor_induction.request",
+    "procurement.vendor_induction.review",
     "procurement.vendor_classification.create",
     "procurement.vendor_allocation_baseline.correct",
     "access_request.self.read"

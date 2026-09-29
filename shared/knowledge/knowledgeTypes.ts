@@ -1,4 +1,5 @@
 import type { VendorKpiDirectorySummary } from "./vendorKpi";
+import type { VendorActivation } from "./vendorInduction";
 
 export const KNOWLEDGE_SECTION_KEYS = [
   "overview",
@@ -139,6 +140,7 @@ export interface KnowledgeMaster extends KnowledgeVersionedResource {
   readonly taxVersions?: readonly KnowledgeTaxVersion[];
   readonly procurementSummary?: ProcurementVendorSummary;
   readonly vendorKpi?: VendorKpiDirectorySummary;
+  readonly vendorActivation?: VendorActivation;
 }
 
 export interface KnowledgeSurface extends KnowledgeMaster {

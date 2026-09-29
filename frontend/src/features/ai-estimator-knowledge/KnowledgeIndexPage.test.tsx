@@ -51,6 +51,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     ...actual,
     listKnowledgeItems: vi.fn(),
     listKnowledgeBaskets: vi.fn(),
+    listKnowledgeSubBaskets: vi.fn(),
     listKnowledgeMasters: vi.fn(),
     getKnowledgeBasketDeletionImpact: vi.fn()
   };
@@ -210,6 +211,7 @@ beforeEach(() => {
     items: [panelling, pipework],
     pagination: { ...pagination, limit: 20, total: 2 }
   });
+  vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockResolvedValue({ items: [], pagination });
   mockMasters({ priorities: [highPriority, lowPriority], uoms: [squareFoot, runningMetre] });
   vi.mocked(knowledgeApi.getKnowledgeBasketDeletionImpact).mockImplementation(async (basketId) => ({
     basketId,
@@ -305,6 +307,32 @@ describe("Knowledge Base index page", () => {
       const button = within(panel).getByRole("button", { name });
       expect(button.querySelector(".ui-button__icon svg")).not.toBeNull();
     }
+  });
+
+  it("discloses Sub-Baskets before their items and includes empty groups", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({
+      items: [{ ...panelling, subBasketId: "sub-finish", subBasketName: "Paint finishes" }, pipework],
+      pagination: { ...pagination, limit: 20, total: 2 }
+    });
+    vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockImplementation(async (basketId) => ({
+      items: basketId === carpentry.id ? [
+        { ...carpentry, id: "sub-finish", name: "Paint finishes", basketId: carpentry.id },
+        { ...carpentry, id: "sub-empty", name: "Empty finishes", basketId: carpentry.id }
+      ] : [],
+      pagination: { ...pagination, total: basketId === carpentry.id ? 2 : 0 }
+    }));
+    renderIndex();
+    const group = await screen.findByRole("button", { name: "Paint finishes" });
+    expect(group).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("link", { name: "Wall panelling" })).not.toBeInTheDocument();
+    group.focus();
+    await user.keyboard("{Enter}");
+    expect(group).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "Wall panelling" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Empty finishes" }));
+    expect(screen.getByText("No items in this Sub-Basket yet.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Items directly under Main Basket" })).toBeVisible();
   });
 
   it("opens the basket editor from the icon-only Edit button for the right basket", async () => {

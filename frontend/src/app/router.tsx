@@ -62,6 +62,7 @@ import { ProcurementDashboardPage } from "../features/procurement/ProcurementDas
 import { ProcurementVendorDirectory } from "../features/procurement/ProcurementVendorDirectory";
 import { VendorKpiStaffPage } from "../features/procurement/VendorKpiStaffPage";
 import { VendorKpiPublicPage } from "../features/procurement/VendorKpiPublicPage";
+import { VendorInductionPublicPage } from "../features/procurement/VendorInductionPublicPage";
 import { KnowledgeBaseIndexPage } from "../features/ai-estimator-knowledge/KnowledgeBaseIndexPage";
 import { KnowledgeItemWorkspacePage } from "../features/ai-estimator-knowledge/KnowledgeItemWorkspacePage";
 import { KnowledgeReusableValuesPage } from "../features/ai-estimator-knowledge/KnowledgeReusableValuesPage";
@@ -363,6 +364,7 @@ export function AppRoutes() {
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<PasswordResetPage />} />
       <Route path="/vendor-kpi" element={<VendorKpiPublicPage />} />
+      <Route path="/vendor-induction" element={<VendorInductionPublicPage />} />
       <Route path="/accept-invitation" element={<InvitationAcceptancePage />} />
       <Route path="/" element={<HomeRedirect />} />
       <Route

@@ -97,9 +97,10 @@ export function KnowledgeIndexItemCard({ item, uoms, priorities, catalogState, o
   const temporary = item.itemType === "temporary";
   const badgeId = `temporary-kind-${item.id}`;
   const badgeTitle = item.completionRequired ? "Temporary item · Must be completed" : "Temporary item";
-  const sections = sectionSummary(item.completeness);
+  const tabs = sectionSummary(item.completeness);
   const priority = priorityDisplay(item.priorityId, priorities, catalogState);
   const percentage = item.completeness.percentage;
+  const tabCount = tabs ? `${tabs.complete} of ${tabs.applicable} tabs configured` : null;
 
   return (
     <article className="knowledge-item-card knowledge-index-card" data-item-type={item.itemType ?? "main_line"}>
@@ -127,15 +128,16 @@ export function KnowledgeIndexItemCard({ item, uoms, priorities, catalogState, o
         ) : null}
         <div className="knowledge-item-card__progress">
           <span>{percentage}% complete</span>
-          <ProgressBar value={percentage} label={`${item.mainLineName} completeness`} valueText={`${percentage}% complete`} />
+          <ProgressBar value={percentage} label={`${item.mainLineName} completeness`}
+            valueText={`${percentage}% complete${tabCount ? `, ${tabCount}` : ""}`} />
         </div>
       </div>
       <ul className="knowledge-index-card__metrics" aria-label={`${item.mainLineName} details`}>
-        {sections ? (
-          <li className="knowledge-index-metric" data-metric="sections">
+        {tabs ? (
+          <li className="knowledge-index-metric" data-metric="tabs">
             <FileText aria-hidden="true" />
-            <span aria-hidden="true">{`${sections.complete}/${sections.applicable} sections`}</span>
-            <span className="sr-only">{`${sections.complete} of ${sections.applicable} sections complete`}</span>
+            <span aria-hidden="true">{`${tabs.complete}/${tabs.applicable} tabs`}</span>
+            <span className="sr-only">{tabCount}</span>
           </li>
         ) : null}
         <li className="knowledge-index-metric" data-metric="unit">

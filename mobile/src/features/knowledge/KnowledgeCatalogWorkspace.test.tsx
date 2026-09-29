@@ -11,7 +11,7 @@ import { KnowledgeBasketEditor, KnowledgeCatalogManagement } from "./KnowledgeCa
 import { KnowledgeReusableEditor } from "./KnowledgeReusableValues";
 import { useKnowledgeContext, type KnowledgeMobileContext } from "./knowledgeRuntime";
 
-jest.mock("../../navigation/useScreenBack", () => ({ useScreenBack: () => ({ onBack: jest.fn(), visible: true, disabled: false }) }));
+jest.mock("../../navigation/useScreenBack", () => ({ useScreenBack: () => ({ onBack: jest.fn(), visible: true, disabled: false }), useBackInterceptor: jest.fn() }));
 jest.mock("react-native-safe-area-context", () => ({ SafeAreaView: require("react-native").View, useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 jest.mock("../../runtime/RuntimeProvider", () => ({ useConfiguredRuntime: jest.fn() }));
 jest.mock("./KnowledgeVendorEditor", () => ({ KnowledgeVendorEditor: () => null }));
@@ -232,11 +232,11 @@ describe("Native Configuration catalog", () => {
 
   it("creates UOM decimal precision through the shared typed contract", async () => {
     const view = await mount(<KnowledgeReusableEditor context={context()} type="uoms" onClose={jest.fn()} onSaved={jest.fn()} />);
-    await fireEvent.changeText(view.getByLabelText("Code"), "SQFT");
+    expect(view.queryByLabelText("Code")).toBeNull();
     await fireEvent.changeText(view.getByLabelText("Name"), "Square feet");
     await fireEvent.press(view.getByRole("combobox", { name: "Quantity decimal places" }));
     await fireEvent.press(view.getByRole("radio", { name: "2" }));
     await fireEvent.press(view.getByRole("button", { name: "Add UOM" }));
-    await waitFor(() => expect(post).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/uoms", { code: "SQFT", name: "Square feet", description: null, decimalScale: 2 }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/uoms", { name: "Square feet", description: null, decimalScale: 2 }));
   });
 });

@@ -1,5 +1,5 @@
 import { fireEvent, render } from "@testing-library/react-native";
-import type { KnowledgeItemListItem, KnowledgeMaster } from "../../../../shared/knowledge/knowledgeTypes";
+import type { KnowledgeItemListItem, KnowledgeMaster, KnowledgeSubBasket } from "../../../../shared/knowledge/knowledgeTypes";
 import { KnowledgeBasketCarousel } from "./KnowledgeBasketCarousel";
 
 jest.mock("react-native", () => {
@@ -15,11 +15,14 @@ jest.mock("react-native", () => {
 const actor = { id: "record-a", version: 1, createdById: "actor", updatedById: "actor", createdAt: "2026-09-25T10:00:00Z", updatedAt: "2026-09-25T10:00:00Z" };
 const item: KnowledgeItemListItem = {
   ...actor, mainLineId: "line-a", mainLineName: "Plain False Ceiling", basketId: "basket-a", basketName: "POP / Gypsum", subBasketId: "sub-a", subBasketName: "sub1", itemType: "main_line", description: null, completionRequired: false, status: "draft", activeRevisionId: null, draftRevisionId: "revision-a", revisionNumber: 1, uomId: null, priorityId: "priority-a", modeIds: [], surfaceIds: [], vendorIds: [], allowedActions: [],
-  completeness: { percentage: 33, sections: ["overview", "pricing", "quantity-margin", "scope", "recommendations", "quality"].map((sectionKey, index) => ({ sectionKey, state: index < 2 ? "complete" : "not_configured", findings: [] })) as KnowledgeItemListItem["completeness"]["sections"], blockers: [], warnings: [] }
+  completeness: { percentage: 50, sections: ["overview", "pricing", "quantity-margin", "scope", "recommendations", "quality"].map((sectionKey, index) => ({ sectionKey, state: index < 2 ? "complete" : "not_configured", findings: [] })) as KnowledgeItemListItem["completeness"]["sections"], blockers: [], warnings: [] }
 };
 const priority: KnowledgeMaster = { ...actor, id: "priority-a", masterType: "priorities", code: "HIGH", name: "High priority", description: null, displayOrder: 0, status: "active", semanticTier: "high" };
 const props = { basketId: "basket-a", name: "POP / Gypsum", items: [item], expanded: true, onToggle: jest.fn(), onOpenItem: jest.fn(), onItemMenu: jest.fn(), onBasketMenu: jest.fn(), uoms: [], priorities: [priority], catalogState: "ready" as const };
 beforeEach(() => jest.clearAllMocks());
+async function expandSubBasket(view: Awaited<ReturnType<typeof render>>) {
+  await fireEvent.press(view.getByRole("button", { name: "Expand Sub-Basket sub1" }));
+}
 
 it("uses a controlled accordion and keeps item identity distinct from its display name", async () => {
   const view = await render(<KnowledgeBasketCarousel {...props} expanded={false} />);
@@ -27,23 +30,44 @@ it("uses a controlled accordion and keeps item identity distinct from its displa
   await fireEvent.press(view.getByRole("button", { name: "Expand POP / Gypsum" }));
   expect(props.onToggle).toHaveBeenCalledTimes(1);
   await view.rerender(<KnowledgeBasketCarousel {...props} />);
+  expect(view.queryByRole("button", { name: "Open Plain False Ceiling" })).toBeNull();
+  await expandSubBasket(view);
   await fireEvent.press(view.getByRole("button", { name: "Open Plain False Ceiling" }));
   expect(props.onOpenItem).toHaveBeenCalledWith("line-a");
   expect(view.getByRole("button", { name: "Collapse POP / Gypsum" }).props.accessibilityState.expanded).toBe(true);
-  expect(view.getByText("1 item")).toBeTruthy();
+  expect(view.getByRole("button", { name: "Collapse Sub-Basket sub1" })).toBeTruthy();
 });
 
-it("shows server completeness, applicable section counts and catalog values without inventing metadata", async () => {
+it("shows every Sub-Basket before its items, including an empty Sub-Basket", async () => {
+  const subBaskets: KnowledgeSubBasket[] = [
+    { ...actor, basketId: "basket-a", id: "sub-a", name: "sub1", displayOrder: 0 },
+    { ...actor, basketId: "basket-a", id: "sub-empty", name: "Unconfigured", displayOrder: 1 }
+  ];
+  const view = await render(<KnowledgeBasketCarousel {...props} subBaskets={subBaskets} />);
+  expect(view.queryByRole("button", { name: "Open Plain False Ceiling" })).toBeNull();
+  expect(view.getByRole("button", { name: "Expand Sub-Basket Unconfigured" })).toBeTruthy();
+  await fireEvent.press(view.getByRole("button", { name: "Expand Sub-Basket Unconfigured" }));
+  expect(view.getByText("No items on this page.")).toBeTruthy();
+  await fireEvent.press(view.getByRole("button", { name: "Expand Sub-Basket sub1" }));
+  expect(view.getByRole("button", { name: "Open Plain False Ceiling" })).toBeTruthy();
+  expect(view.queryByText("No items on this page.")).toBeNull();
+});
+
+it("shows server completeness, configured tab counts and catalog values without inventing metadata", async () => {
   const view = await render(<KnowledgeBasketCarousel {...props} />);
-  expect(view.getByText("33%")).toBeTruthy();
-  expect(view.getByText("2/6 · No unit")).toBeTruthy();
+  await expandSubBasket(view);
+  expect(view.getByText("50%")).toBeTruthy();
+  expect(view.getByText("2/4 · No unit")).toBeTruthy();
   expect(view.getByText("draft · sub1")).toBeTruthy();
-  expect(view.getByRole("button", { name: "Open Plain False Ceiling" }).props.accessibilityHint).toContain("High priority");
+  const hint = view.getByRole("button", { name: "Open Plain False Ceiling" }).props.accessibilityHint;
+  expect(hint).toContain("2 of 4 tabs configured");
+  expect(hint).toContain("High priority");
   expect(view.getByRole("button", { name: "Collapse POP / Gypsum" }).props.accessibilityHint).toBe("1 item on this page");
 });
 
 it("opens measured item and basket menus independently from opening or collapsing the item", async () => {
   const view = await render(<KnowledgeBasketCarousel {...props} />);
+  await expandSubBasket(view);
   await fireEvent.press(view.getByRole("button", { name: "Actions for Plain False Ceiling" }));
   expect(props.onItemMenu).toHaveBeenCalledWith(item, expect.objectContaining({ x: 120, y: 260, width: 44, height: 44, trigger: expect.anything() }));
   await fireEvent.press(view.getByRole("button", { name: "Actions for POP / Gypsum" }));
@@ -54,8 +78,9 @@ it("opens measured item and basket menus independently from opening or collapsin
 
 it("represents temporary items and unavailable catalogs truthfully", async () => {
   const view = await render(<KnowledgeBasketCarousel {...props} catalogState="error" priorities={[]} items={[{ ...item, itemType: "temporary", completionRequired: true, uomId: "missing-uom" }]} />);
+  await expandSubBasket(view);
   expect(view.getByText("Temporary")).toBeTruthy();
-  expect(view.getByText("2/6 · Unit unavailable")).toBeTruthy();
+  expect(view.getByText("2/4 · Unit unavailable")).toBeTruthy();
   const hint = view.getByRole("button", { name: "Open Plain False Ceiling" }).props.accessibilityHint;
   expect(hint).toContain("Temporary item, must be completed");
   expect(hint).toContain("Priority unavailable");
@@ -64,7 +89,8 @@ it("represents temporary items and unavailable catalogs truthfully", async () =>
 it("tracks real scroll positions, navigation edges and resizing instead of hardcoded pages", async () => {
   const items = [0, 1, 2, 3].map(index => ({ ...item, mainLineId: `line-${index}`, mainLineName: `Item ${index}` }));
   const view = await render(<KnowledgeBasketCarousel {...props} items={items} />);
-  const track = view.getByTestId("basket-carousel-basket-a");
+  await expandSubBasket(view);
+  const track = view.getByTestId("basket-carousel-basket-a-sub-a");
   await fireEvent(track, "layout", { nativeEvent: { layout: { width: 200, height: 138, x: 0, y: 0 } } });
   expect(view.getByLabelText("POP / Gypsum, carousel position 1 of 4")).toBeTruthy();
   expect(view.getByRole("button", { name: "Previous items in POP / Gypsum" })).toBeDisabled();
@@ -81,7 +107,8 @@ it("tracks real scroll positions, navigation edges and resizing instead of hardc
 it("clamps the carousel when a filter reduces the item list", async () => {
   const items = [0, 1, 2, 3].map(index => ({ ...item, mainLineId: `line-${index}`, mainLineName: `Item ${index}` }));
   const view = await render(<KnowledgeBasketCarousel {...props} items={items} />);
-  await fireEvent(view.getByTestId("basket-carousel-basket-a"), "layout", { nativeEvent: { layout: { width: 200, height: 138, x: 0, y: 0 } } });
+  await expandSubBasket(view);
+  await fireEvent(view.getByTestId("basket-carousel-basket-a-sub-a"), "layout", { nativeEvent: { layout: { width: 200, height: 138, x: 0, y: 0 } } });
   await fireEvent.press(view.getByRole("button", { name: "Next items in POP / Gypsum" }));
   await view.rerender(<KnowledgeBasketCarousel {...props} />);
   expect(view.getByLabelText("POP / Gypsum, carousel position 1 of 1")).toBeTruthy();
@@ -90,9 +117,9 @@ it("clamps the carousel when a filter reduces the item list", async () => {
 it("keeps loading and empty baskets compact and can omit unavailable basket actions", async () => {
   const { onBasketMenu: _onBasketMenu, ...readOnlyProps } = props;
   const view = await render(<KnowledgeBasketCarousel {...readOnlyProps} items={[]} isLoading />);
-  expect(view.getByText("Loading items…")).toBeTruthy();
+  expect(view.getByText("Loading classification…")).toBeTruthy();
   expect(view.queryByRole("button", { name: "Actions for POP / Gypsum" })).toBeNull();
   await view.rerender(<KnowledgeBasketCarousel {...props} items={[]} />);
-  expect(view.getByText("No items on this page.")).toBeTruthy();
-  expect(view.queryByTestId("basket-carousel-basket-a")).toBeNull();
+  expect(view.getByText("No Sub-Baskets or items yet.")).toBeTruthy();
+  expect(view.queryByTestId("basket-carousel-basket-a-sub-a")).toBeNull();
 });

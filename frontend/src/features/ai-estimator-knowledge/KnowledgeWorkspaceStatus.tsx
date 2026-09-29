@@ -7,6 +7,7 @@ import { Surface } from "../../components/ui/Surface";
 import { formatKnowledgeRelativeTime } from "./knowledgeLastSaved";
 import { formatKnowledgeDateTime } from "./knowledgePresentation";
 import type { KnowledgeItemDetail } from "./knowledgeTypes";
+import { countConfiguredWorkspaceTabs } from "./knowledgeWorkspaceSections";
 
 /** The page-level save of the active tab, shown in the bar beside completeness. */
 export interface KnowledgeWorkspaceSaveCommand {
@@ -21,7 +22,7 @@ export interface KnowledgeWorkspaceSaveCommand {
 }
 
 export interface KnowledgeWorkspaceStatusProps {
-  readonly item: KnowledgeItemDetail;
+  readonly item: Pick<KnowledgeItemDetail, "completeness">;
   /** Present only on tabs that save through the page and have a revision. */
   readonly command?: KnowledgeWorkspaceSaveCommand;
 }
@@ -40,6 +41,8 @@ const LAST_SAVED_REFRESH_MS = 30_000;
  */
 export function KnowledgeWorkspaceStatus({ item, command }: KnowledgeWorkspaceStatusProps) {
   const percentage = item.completeness.percentage;
+  const tabs = countConfiguredWorkspaceTabs(item.completeness.sections);
+  const tabCount = `${tabs.configured} of ${tabs.total} tabs configured`;
 
   return (
     <Surface
@@ -51,10 +54,11 @@ export function KnowledgeWorkspaceStatus({ item, command }: KnowledgeWorkspaceSt
       <div className="knowledge-workspace-status__completeness">
         <span className="knowledge-workspace-status__label">Configuration completeness</span>
         <strong className="knowledge-workspace-status__percentage">{percentage}%</strong>
+        <span className="knowledge-workspace-status__tab-count">{tabCount}</span>
         <ProgressBar
           value={percentage}
           label="Configuration completeness"
-          valueText={`${percentage}% complete`}
+          valueText={`${percentage}% complete, ${tabCount}`}
         />
       </div>
       {command ? <KnowledgeWorkspaceSaveCommands {...command} /> : null}

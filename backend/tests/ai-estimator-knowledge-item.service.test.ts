@@ -6,6 +6,7 @@ import {
 } from "../src/domain/ai-estimator-knowledge-priority.js";
 import { AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY } from "../src/domain/ai-estimator-knowledge-fixed-gst.js";
 import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
+import { AiEstimatorKnowledgeBasketQualityRevisionModel } from "../src/models/AiEstimatorKnowledgeBasketQualityRevision.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnowledgeMainLine.js";
 import { AiEstimatorKnowledgeModeModel } from "../src/models/AiEstimatorKnowledgeMode.js";
 import { AiEstimatorKnowledgePriceVersionModel } from "../src/models/AiEstimatorKnowledgePriceVersion.js";
@@ -17,10 +18,14 @@ import { AiEstimatorKnowledgeTaxRuleModel } from "../src/models/AiEstimatorKnowl
 import { AiEstimatorKnowledgeTaxVersionModel } from "../src/models/AiEstimatorKnowledgeTaxVersion.js";
 import { AiEstimatorKnowledgeUomModel } from "../src/models/AiEstimatorKnowledgeUom.js";
 import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowledgeVendor.js";
+import { VendorKpiAssessmentModel } from "../src/models/VendorKpiAssessment.js";
+import { VendorInductionReviewModel } from "../src/models/VendorInduction.js";
 import {
   createAiEstimatorKnowledgeItemService
 } from "../src/services/ai-estimator-knowledge-item.service.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
+import { vendorProfileFixture } from "./procurement-vendor-profile.fixture.js";
+import { basketQualityDigest } from "../src/services/ai-estimator-knowledge-basket-quality.js";
 
 const NOW = new Date("2026-08-28T10:00:00.000Z");
 const ACTOR = {
@@ -36,6 +41,7 @@ beforeAll(async () => {
   replica = await startMongoReplicaSet("ai-estimator-knowledge-item-tests");
   await Promise.all([
     AiEstimatorKnowledgeBasketModel.syncIndexes(),
+    AiEstimatorKnowledgeBasketQualityRevisionModel.syncIndexes(),
     AiEstimatorKnowledgeMainLineModel.syncIndexes(),
     AiEstimatorKnowledgeModeModel.syncIndexes(),
     AiEstimatorKnowledgePriceVersionModel.syncIndexes(),
@@ -46,13 +52,16 @@ beforeAll(async () => {
     AiEstimatorKnowledgeTaxRuleModel.syncIndexes(),
     AiEstimatorKnowledgeTaxVersionModel.syncIndexes(),
     AiEstimatorKnowledgeUomModel.syncIndexes(),
-    AiEstimatorKnowledgeVendorModel.syncIndexes()
+    AiEstimatorKnowledgeVendorModel.syncIndexes(),
+    VendorKpiAssessmentModel.syncIndexes(),
+    VendorInductionReviewModel.syncIndexes()
   ]);
 }, 120_000);
 
 beforeEach(async () => {
   await replica.clear();
   await seedReferences();
+  await onboardVendor("vendor-local");
 });
 
 afterAll(async () => {
@@ -60,6 +69,57 @@ afterAll(async () => {
 });
 
 describe("AI estimator knowledge item service", () => {
+  it.each(["main_line", "temporary"] as const)(
+    "reprojects legacy %s completeness on reads without rewriting its revision",
+    async (itemType) => {
+      const { service } = createService();
+      const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+        name: `Legacy progress ${itemType}`, itemType
+      });
+      const revisionId = created.draftRevisionId!;
+      const original = await AiEstimatorKnowledgeRevisionModel.findById(revisionId).lean();
+      const sections = original!.completeness.sections.map((section) =>
+        ["overview", "advanced", "recommendations", "quality"].includes(section.sectionKey)
+          ? { sectionKey: section.sectionKey, state: "complete", findings: [] }
+          : section
+      );
+      await AiEstimatorKnowledgeRevisionModel.updateOne({ _id: revisionId }, {
+        $set: { "completeness.percentage": 83, "completeness.sections": sections }
+      }).exec();
+
+      const detail = await service.getItem(ACTOR, created.mainLineId);
+      expect(detail.completeness.percentage).toBe(75);
+      expect(detail.completeness.sections.find(({ sectionKey }) => sectionKey === "quality")?.state)
+        .toBe("not_configured");
+      expect(detail.draftRevision?.completeness.percentage).toBe(100);
+      expect((await service.listItems(ACTOR, { basketId: "basket-carpentry" }, { limit: 20, offset: 0 }))
+        .items.find(({ mainLineId }) => mainLineId === created.mainLineId)?.completeness.percentage).toBe(75);
+      expect((await service.history(ACTOR, created.mainLineId, { limit: 20, offset: 0 }))
+        .items[0]?.completeness.percentage).toBe(100);
+      expect((await AiEstimatorKnowledgeRevisionModel.findById(revisionId).lean())?.completeness.percentage).toBe(83);
+
+      if (itemType === "main_line") {
+        const qualityRevisionId = "quality-empty-progress";
+        const parameters: Record<string, unknown>[] = [];
+        await AiEstimatorKnowledgeBasketQualityRevisionModel.collection.insertOne({
+          _id: qualityRevisionId, basketId: "basket-carpentry", revisionNumber: 1,
+          parameters, contentDigest: basketQualityDigest("basket-carpentry", parameters),
+          createdById: ACTOR.id, createdAt: NOW
+        });
+        await AiEstimatorKnowledgeBasketModel.updateOne({ _id: "basket-carpentry" }, {
+          $set: { qualityRevisionId }
+        }).exec();
+        const current = await service.getItem(ACTOR, created.mainLineId);
+        expect(current.completeness.percentage).toBe(75);
+        expect(current.completeness.sections.find(({ sectionKey }) => sectionKey === "quality")?.state)
+          .toBe("not_configured");
+        expect(current.draftRevision?.completeness.percentage).toBe(100);
+        expect((await service.history(ACTOR, created.mainLineId, { limit: 20, offset: 0 }))
+          .items[0]?.completeness.percentage).toBe(100);
+      }
+    }
+  );
+
   it("preserves the active-item deletion gate before stale-version handling for unguarded workspace deletes", async () => {
     const { service } = createService();
     const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Active protected item" });
@@ -136,6 +196,32 @@ describe("AI estimator knowledge item service", () => {
     expect(duplicate).toMatchObject({ itemType: "temporary", completionRequired: true });
     expect((await service.getSection(ACTOR, duplicate.mainLineId, duplicate.draftRevisionId!, "advanced")).payload).toMatchObject({ pmcMarginBps: 1_500 });
     expect((await service.getSection(ACTOR, duplicate.mainLineId, duplicate.draftRevisionId!, "recommendations")).applicability).toBe("not_configured");
+  });
+
+  it("removes the Recommendations tab from progress after a regular item clears its last exclusion", async () => {
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Clear final exclusion" });
+    const revisionId = created.draftRevisionId!;
+    const original = await service.getSection(ACTOR, created.mainLineId, revisionId, "recommendations");
+    const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "recommendations", {
+      expectedVersion: original.version, expectedAggregateVersion: created.version,
+      payload: { exclusions: [{ id: "saved-exclusion", name: "Existing flooring", reason: "Retain the existing floor.", active: true }] }
+    });
+    expect(saved.applicability).toBe("configured");
+    expect((await service.getItem(ACTOR, created.mainLineId)).draftRevision?.completeness.sections
+      .find(({ sectionKey }) => sectionKey === "recommendations")?.state).toBe("complete");
+
+    const cleared = await service.updateSection(ACTOR, created.mainLineId, revisionId, "recommendations", {
+      expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion,
+      payload: { exclusions: [] }
+    });
+    expect(cleared).toMatchObject({ applicability: "not_configured", payload: {} });
+    const detail = await service.getItem(ACTOR, created.mainLineId);
+    expect(detail.completeness.sections.find(({ sectionKey }) => sectionKey === "recommendations")?.state)
+      .toBe("not_configured");
+    expect(detail.completeness.percentage).toBe(0);
+    expect((await service.listItems(ACTOR, { basketId: "basket-carpentry" }, { limit: 20, offset: 0 }))
+      .items.find(({ mainLineId }) => mainLineId === created.mainLineId)?.completeness.percentage).toBe(0);
   });
 
   it("saves legacy temporary recommendations from their payload and keeps empty rule lists not configured", async () => {
@@ -323,7 +409,7 @@ describe("AI estimator knowledge item service", () => {
     if (results[0].status === "rejected") expect(results[0].reason).toMatchObject({ status: 400, code: "VALIDATION_ERROR" });
   });
 
-  it("saves non-empty whole Sub-Basket targets, exposes temporary child lineage, and rejects empty or self-containing scope", async () => {
+  it("saves whole Sub-Basket targets, including empty scopes, and rejects self-containing scope", async () => {
     const { service } = createService();
     const source = await service.createMainLine(ACTOR, "basket-carpentry", { name: "False Ceiling" });
     const temporary = await service.createMainLine(ACTOR, "basket-carpentry", {
@@ -360,12 +446,12 @@ describe("AI estimator knowledge item service", () => {
 
     const onlyChild = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Disposable child", subBasketName: "Empty scope" });
     await service.permanentlyDeleteMainLine(ACTOR, onlyChild.mainLineId, { expectedVersion: onlyChild.version });
-    await expect(service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations", {
+    const emptySaved = await service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations", {
       expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion,
       payload: { budgetAlterations: [{ ...rule, id: "empty-rule", targetSubBasketId: onlyChild.subBasketId! }] }
-    })).rejects.toMatchObject({ status: 400, fields: {
-      "payload.budgetAlterations.0.targetSubBasketId": "Select a Sub Basket with at least one available item."
-    } });
+    });
+    expect((await service.getSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations")).payload)
+      .toMatchObject({budgetAlterations: [{id: "empty-rule", targetKind: "sub_basket", targetSubBasketId: onlyChild.subBasketId, targetMainLineId: null}]});
 
     await AiEstimatorKnowledgeBasketModel.create(basketDocument("basket-electrical", "Electrical", "active", 2));
     const foreignChild = await service.createMainLine(ACTOR, "basket-electrical", {
@@ -373,7 +459,7 @@ describe("AI estimator knowledge item service", () => {
     });
     for (const targetSubBasketId of ["missing-sub-basket", foreignChild.subBasketId!] as const) {
       await expect(service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations", {
-        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion,
+        expectedVersion: emptySaved.version, expectedAggregateVersion: emptySaved.aggregateVersion,
         payload: { budgetAlterations: [{ ...rule, id: `invalid-${targetSubBasketId}`, targetSubBasketId }] }
       })).rejects.toMatchObject({ status: 400, fields: {
         "payload.budgetAlterations.0.targetSubBasketId": "Select a Sub Basket belonging to this Main Basket."
@@ -381,7 +467,7 @@ describe("AI estimator knowledge item service", () => {
     }
     await AiEstimatorKnowledgeBasketModel.updateOne({ _id: "basket-electrical" }, { $set: { status: "inactive" } });
     await expect(service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations", {
-      expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion,
+      expectedVersion: emptySaved.version, expectedAggregateVersion: emptySaved.aggregateVersion,
       payload: { budgetAlterations: [{ ...rule, id: "inactive-parent", targetBasketId: "basket-electrical",
         targetSubBasketId: foreignChild.subBasketId! }] }
     })).rejects.toMatchObject({ status: 400, fields: {
@@ -2356,6 +2442,7 @@ describe("AI estimator knowledge item service", () => {
       createdAt: NOW,
       updatedAt: NOW
     });
+    await onboardVendor("vendor-alternate");
     await AiEstimatorKnowledgeUomModel.create({
       _id: "uom-number",
       code: "NO",
@@ -2656,6 +2743,22 @@ describe("AI estimator knowledge item service", () => {
     expect(appendAudit).toHaveBeenCalledTimes(auditCount);
   });
 
+  it("rejects a new Budget price after induction approval is reopened", async () => {
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Induction gate" });
+    const revisionId = created.draftRevisionId!;
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+    await VendorInductionReviewModel.collection.insertOne({ _id: "review-reopened-local", vendorId: "vendor-local",
+      version: 2, vendorType: "execution", decision: "reopened", idempotencyKey: "reopen-local" });
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version, expectedAggregateVersion: created.version,
+      payload: { priceEntries: [{ operation: "set_budget", vendorId: "vendor-local", uomId: "uom-sqft",
+        inputAmountPaise: 10_000, effectiveFrom: "2026-09-01T00:00:00.000Z", effectiveTo: null }] }
+    })).rejects.toMatchObject({ status: 409, code: "KNOWLEDGE_REFERENCE_INVALID",
+      fields: { "payload.priceEntries.0.vendorId": expect.any(String) } });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(0);
+  });
+
   it.each([
     ["mismatched rule identity", async () => {
       await AiEstimatorKnowledgeTaxRuleModel.collection.updateOne(
@@ -2801,8 +2904,11 @@ describe("AI estimator knowledge item service", () => {
       payload: { parameters: [{ id: "quality-1", type: "text", label: "Notes" }] }
     });
     expect(quality.applicability).toBe("configured");
-    expect((await service.getItem(ACTOR, created.mainLineId)).completeness.sections
+    const itemWithLegacyQuality = await service.getItem(ACTOR, created.mainLineId);
+    expect(itemWithLegacyQuality.draftRevision?.completeness.sections
       .find(({ sectionKey }) => sectionKey === "quality")?.state).toBe("complete");
+    expect(itemWithLegacyQuality.completeness.sections
+      .find(({ sectionKey }) => sectionKey === "quality")?.state).toBe("not_configured");
 
     /* Clearing the section returns it to not configured. */
     quality = await service.updateSection(ACTOR, created.mainLineId, revisionId, "quality", {
@@ -3776,6 +3882,7 @@ describe("AI estimator knowledge item service", () => {
       createdAt: NOW,
       updatedAt: NOW
     });
+    await onboardVendor("vendor-replacement");
     const vendorReplaced = await service.updateSection(ACTOR, created.mainLineId, draftRevisionId, "pricing", {
       expectedVersion: saved.version,
       expectedAggregateVersion: withDraft.version + 1,
@@ -5228,4 +5335,17 @@ async function seedReferences(): Promise<void> {
       updatedAt: NOW
     })
   ]);
+}
+
+async function onboardVendor(id: string): Promise<void> {
+  await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: id }, { $set: { procurementProfile: {
+    ...vendorProfileFixture(), currentAddressVerifiedPhysically: true,
+    physicalAddressVerifiedAt: NOW.toISOString(), physicalAddressVerifiedById: ACTOR.id
+  } } });
+  await VendorInductionReviewModel.collection.insertOne({ _id: `review-${id}`, vendorId: id,
+    version: 1, vendorType: "execution", decision: "approved", idempotencyKey: `review-${id}` });
+  await VendorKpiAssessmentModel.collection.insertMany(["vendor_self", "procurement"].map(source => ({
+    _id: `kpi-${source}-${id}`, vendorId: id, source, vendorType: "execution",
+    rubricVersion: 1, rubricGeneration: 0, revision: 1, averageScoreBps: 0
+  })));
 }

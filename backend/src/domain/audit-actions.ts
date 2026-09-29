@@ -120,6 +120,15 @@ export const PROCUREMENT_AUDIT_ACTIONS = [
   "vendor_kpi.delivery_sent",
   "vendor_kpi.delivery_failed",
   "vendor_kpi.self_submitted",
+  "vendor_induction.draft_saved",
+  "vendor_induction.published",
+  "vendor_induction.requested",
+  "vendor_induction.delivery_sent",
+  "vendor_induction.delivery_failed",
+  "vendor_induction.submitted",
+  "vendor_induction.approved",
+  "vendor_induction.changes_requested",
+  "vendor_induction.reopened",
   "procurement_vendor_allocation_baseline_recorded",
   "procurement_vendor_photo_updated",
   "procurement_vendor_photo_removed",
@@ -171,7 +180,9 @@ export const PROJECT_CHAT_AUDIT_ACTIONS = [
   "project_chat.participant_removed",
   "project_chat.participant_restored",
   "project_chat.action_type_created",
-  "project_chat.project_renamed"
+  "project_chat.project_renamed",
+  "project_chat.daily_critical_delivered",
+  "project_chat.daily_critical_acknowledged"
 ] as const;
 
 export const IDENTITY_PROFILE_PHOTO_AUDIT_ACTIONS = [

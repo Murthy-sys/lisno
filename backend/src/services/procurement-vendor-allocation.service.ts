@@ -3,6 +3,7 @@ import { assertVendorAllocationAllowed, invalidAllocation, type VendorAllocation
 import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeVendorModel } from "../models/AiEstimatorKnowledgeVendor.js";
 import { ProjectProcurementItemModel } from "../models/ProjectProcurementItem.js";
+import { vendorActivation } from "./vendor-readiness.service.js";
 
 type Row = Record<string, any>;
 
@@ -45,15 +46,16 @@ export async function prepareProcurementAllocation(input: {
   if (input.vendorId && (input.allocatedWorkPaise === null || ((!input.current || vendorChanged) && amount == null))) invalidAllocation("Enter a positive allocated work amount for this vendor.");
   const vendors = await lockProcurementVendors([currentVendorId, input.vendorId], session);
   const vendor = input.vendorId ? vendors.get(input.vendorId) ?? null : null;
-  if (input.vendorId && (!input.current || vendorChanged) && vendor?.status !== "active") {
+  const increasesAllocation = !!input.vendorId && amount != null && amount > (vendorChanged ? 0 : previous ?? 0);
+  const needsActiveVendor = !!input.vendorId && (!input.current || vendorChanged || increasesAllocation);
+  if (needsActiveVendor && (!vendor || (await vendorActivation(vendor, session)).effectiveStatus !== "active")) {
     throw new ApiError(400, "VALIDATION_ERROR", "Choose an active reference.", { vendorId: "This vendor is no longer available. Choose an active option." });
   }
   if (input.vendorId && amount != null) {
     const previousItemPaise = vendorChanged ? 0 : previous ?? 0;
     if (amount > previousItemPaise) {
-      if (vendor?.status !== "active") throw new ApiError(400, "VALIDATION_ERROR", "Choose an active reference.", { vendorId: "This vendor is no longer available for increased allocation." });
       assertVendorAllocationAllowed({ ...await procurementVendorAllocationTotals(input.vendorId, session),
-        physicallyVerified: vendor.procurementProfile?.currentAddressVerifiedPhysically === true,
+        physicallyVerified: vendor!.procurementProfile?.currentAddressVerifiedPhysically === true,
         previousItemPaise, nextItemPaise: amount });
     }
   }

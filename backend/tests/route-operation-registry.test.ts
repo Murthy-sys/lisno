@@ -47,8 +47,16 @@ const EXPECTED_ALL_HUMAN_JWT_OPERATIONS = [
   { key: "POST /estimate-plan-change-requests/:requestId/replacement-upload", permission: "estimation.drawing.replace", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "baseline" },
   { key: "GET /procurement/vendor-kpis/:vendorId", permission: "procurement.vendor_kpi.read", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "read", superAdminBehavior: "global_read", availability: "ai_estimator_knowledge" },
   { key: "PUT /procurement/vendor-kpis/:vendorId/procurement", permission: "procurement.vendor_kpi.rate", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "ai_estimator_knowledge" },
-  { key: "POST /procurement/vendor-kpis/:vendorId/requests", permission: "procurement.vendor_kpi.request", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "ai_estimator_knowledge" }
+  { key: "POST /procurement/vendor-kpis/:vendorId/requests", permission: "procurement.vendor_kpi.request", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "ai_estimator_knowledge" },
+  { key: "GET /procurement/vendor-inductions/:vendorId", permission: "procurement.vendor_induction.read", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "read", superAdminBehavior: "global_read", availability: "ai_estimator_knowledge" },
+  { key: "PUT /procurement/vendor-inductions/:vendorId/draft", permission: "procurement.vendor_induction.manage", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "ai_estimator_knowledge" },
+  { key: "POST /procurement/vendor-inductions/:vendorId/publish", permission: "procurement.vendor_induction.manage", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "ai_estimator_knowledge" },
+  { key: "POST /procurement/vendor-inductions/:vendorId/requests", permission: "procurement.vendor_induction.request", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "ai_estimator_knowledge" },
+  { key: "POST /procurement/vendor-inductions/:vendorId/reviews", permission: "procurement.vendor_induction.review", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "ai_estimator_knowledge" },
+  { key: "POST /procurement/vendor-inductions/:vendorId/reopen", permission: "procurement.vendor_induction.review", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "ai_estimator_knowledge" }
 ] as const;
+const EXPECTED_VENDOR_OPERATIONS = EXPECTED_ALL_HUMAN_JWT_OPERATIONS.filter(operation =>
+  operation.key.includes("/vendor-kpis/") || operation.key.includes("/vendor-inductions/"));
 const EXPECTED_STAFF_INVITATION_OPERATIONS =
   EXPECTED_STAFF_INVITATION_HUMAN_JWT_OPERATIONS.slice(
     EXPECTED_PROMPT_2_HUMAN_JWT_OPERATIONS.length
@@ -221,9 +229,9 @@ describe("human JWT operation registry", () => {
     expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => expected.some((row) => row.key === key))).toEqual(expected);
   });
 
-  it("matches all 248 normative operation rows", () => {
+  it("matches all 254 normative operation rows", () => {
     expect(Object.values(HUMAN_JWT_OPERATIONS).sort((a, b) => a.key.localeCompare(b.key))).toEqual([...EXPECTED_ALL_HUMAN_JWT_OPERATIONS].sort((a, b) => a.key.localeCompare(b.key)));
-    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(248);
+    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(254);
   });
 
   it("mounts rows 2 through 23 as exact router groups with one ordered marker pair", () => {
@@ -461,12 +469,12 @@ describe("human JWT operation registry", () => {
     );
   });
 
-  it("appends exactly 66 AI Estimator Knowledge and Vendor KPI operations with one closed namespace", () => {
+  it("appends AI Estimator Knowledge, Vendor KPI and induction operations with one closed namespace", () => {
     expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS.some((row) => row.key === key))).toEqual(EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS);
     expect(EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS).toHaveLength(63);
     expect(HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability }) => availability === "ai_estimator_knowledge"
-    )).toEqual([...EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS, ...EXPECTED_ALL_HUMAN_JWT_OPERATIONS.slice(-3)]);
+    )).toEqual([...EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS, ...EXPECTED_VENDOR_OPERATIONS]);
     for (const operation of EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS) {
       expect(operation.scope).toEqual({
         kind: "non_project",
@@ -515,7 +523,7 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("mounts the exact 248-operation manifest with one ordered marker pair each", () => {
+  it("mounts the exact 254-operation manifest with one ordered marker pair each", () => {
     const expectedKeys = EXPECTED_ALL_HUMAN_JWT_OPERATIONS.map(
       ({ key }) => key
     ).sort();
@@ -525,8 +533,8 @@ describe("human JWT operation registry", () => {
     const mountedOperations = mountedRoutes.map(({ key }) => key);
 
     expect([...mountedOperations].sort()).toEqual(expectedKeys);
-    expect(expectedKeys).toHaveLength(248);
-    expect(new Set(expectedKeys).size).toBe(248);
+    expect(expectedKeys).toHaveLength(254);
+    expect(new Set(expectedKeys).size).toBe(254);
     expect(mountedOperations).toContain(
       "POST /execution/worker-assignments/override"
     );
@@ -573,9 +581,9 @@ describe("human JWT operation registry", () => {
     expect(() => assertTaskSixRouteMounts(routers)).toThrow();
   });
 
-  it("has 248 unique keys and exactly 147 routed permissions", () => {
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(248);
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(147);
+  it("has 254 unique keys and exactly 151 routed permissions", () => {
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(254);
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(151);
     expect(HUMAN_JWT_OPERATION_LIST.every(({ permission }) =>
       (PERMISSION_CODES as readonly string[]).includes(permission)
     )).toBe(true);

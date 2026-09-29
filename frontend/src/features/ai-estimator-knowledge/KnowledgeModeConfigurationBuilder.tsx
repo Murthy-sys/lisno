@@ -28,7 +28,7 @@ import { generateModeDescription, modeDescriptionIssues, syncModeDescription } f
 import { calculationScopeForIssue, MODE_CALCULATION_SCOPES, modeCalculationIssues, modeCalculationsIssues, type ModeCalculationScope } from "./knowledgeModeCalculation";
 import { pmcMarginRange, pmcMarginRangeIssues, subVendorMarginRange, subVendorMarginRangeIssues, withPmcMargin, withSubVendorMargin } from "./knowledgePmcMargin";
 import { KnowledgePmcMarginRange, KnowledgeSubVendorMarginRange } from "./KnowledgePmcMarginInput";
-import { inHouseScopeStarterItems, PMC_SCOPE_LISTS, type KnowledgePmcScopeList } from "./knowledgePmcScope";
+import { inHouseScopeStarterItems, subVendorScopeStarterItems, PMC_SCOPE_LISTS, type KnowledgePmcScopeList } from "./knowledgePmcScope";
 import type {
   KnowledgeJsonObject,
   KnowledgeMaster
@@ -163,8 +163,8 @@ export function KnowledgeModeConfigurationBuilder({
     }
     if (validationAttempt <= lastValidationAttempt.current || (!issues.length && !paragraphPending && calculationValid)) return;
     lastValidationAttempt.current = validationAttempt;
-    if ((paragraphPending || issues[0]?.path === "modeDescription") && !visibleModes.pmc && !visibleModes.execution) showMode("pmc");
-    const firstIssue = paragraphPending ? { path: "modeDescription", message: "Save or cancel the paragraph." }
+    if (paragraphPending || issues[0]?.path === "modeDescription") showMode("pmc");
+    const firstIssue = paragraphPending ? { path: "modeDescription", message: "Save or cancel the description." }
       : invalidCalculationScope ? { path: `modeCalculations.${invalidCalculationScope}`, message: "Review the calculation inputs." } : issues[0]!;
     if (firstIssue.path === "pmcMarginBps" || firstIssue.path === "pmcMinimumMarginBps") showMode("pmc");
     selectConfigurationForIssue(
@@ -260,6 +260,25 @@ export function KnowledgeModeConfigurationBuilder({
     });
   }
 
+  function subVendorScopeItems(list: KnowledgePmcScopeList) {
+    return partitioned.primary.pmc?.[list] ?? (partitioned.primary.pmc || readOnly ? [] : subVendorScopeStarterItems(list));
+  }
+
+  function updateSubVendorScope(list: KnowledgePmcScopeList, items: ReturnType<typeof subVendorScopeItems>) {
+    const existing = partitioned.primary.pmc;
+    if (existing) {
+      // An omitted list in a saved configuration is intentional; leave it omitted.
+      updateConfiguration({ ...existing, [list]: items });
+      return;
+    }
+    const configuration = createKnowledgeModeConfiguration("pmc");
+    updateConfiguration({
+      ...configuration,
+      inclusions: list === "inclusions" ? items : subVendorScopeStarterItems("inclusions"),
+      exclusions: list === "exclusions" ? items : subVendorScopeStarterItems("exclusions")
+    });
+  }
+
   const subVendorMarginControl = <KnowledgeSubVendorMarginRange key={descriptionResetKey}
     {...subVendorMarginRange(payload)} readOnly={readOnly}
     errors={{ minimum: issueFor("subVendorMinimumMarginBps"), maximum: issueFor("subVendorMarginBps") }}
@@ -347,7 +366,7 @@ export function KnowledgeModeConfigurationBuilder({
                   type="button"
                   onClick={() => {
                     if (issue.path === "pmcMarginBps" || issue.path === "pmcMinimumMarginBps") showMode("pmc");
-                    if (issue.path === "modeDescription" && !visibleModes.pmc && !visibleModes.execution) showMode("pmc");
+                    if (issue.path === "modeDescription") showMode("pmc");
                     selectConfigurationForIssue(
                       issue,
                       parsed.configurations,
@@ -394,31 +413,6 @@ export function KnowledgeModeConfigurationBuilder({
           </div>
         </fieldset>
 
-        <div className="knowledge-mode-configuration__shared" hidden={!visibleModes.pmc && !visibleModes.execution}
-          ref={(node) => {
-            if (node) fieldRefs.current.set("modeDescription", node);
-            else fieldRefs.current.delete("modeDescription");
-          }}
-        >
-          <h3 className="knowledge-mode-configuration__shared-title">Shared description</h3>
-          <KnowledgeModeDescriptionEditor
-            key={descriptionResetKey}
-            description={description}
-            pmc={partitioned.primary.pmc}
-            inHouse={inHouseConfiguration}
-            readOnly={readOnly}
-            validationAttempt={validationAttempt}
-            error={issueFor("modeDescription")}
-            onPendingChange={handlePendingDescriptionChange}
-            onPendingTextChange={onPendingDescriptionTextChange}
-            onSave={(text) => {
-              const modeDescription = text === generatedDescription ? null : text;
-              if (modeDescription === (payload.modeDescription ?? null)) return;
-              onDirty();
-              onChange({ ...payload, modeDescription });
-            }}
-          />
-        </div>
       </div>
 
       <div className="knowledge-mode-configuration__sections">
@@ -426,6 +420,31 @@ export function KnowledgeModeConfigurationBuilder({
           className="knowledge-mode-configuration__section knowledge-mode-configuration__section--pmc" hidden={!visibleModes.pmc}>
           {visibleModes.pmc ? sectionHeader("pmc") : null}
           <div id="knowledge-mode-body-pmc" className="knowledge-mode-configuration__section-body" hidden={!expandedModes.pmc}>
+            <div className="knowledge-mode-configuration__shared"
+              ref={(node) => {
+                if (node) fieldRefs.current.set("modeDescription", node);
+                else fieldRefs.current.delete("modeDescription");
+              }}
+            >
+              <h3 className="knowledge-mode-configuration__shared-title">Description</h3>
+              <KnowledgeModeDescriptionEditor
+                key={descriptionResetKey}
+                description={description}
+                pmc={partitioned.primary.pmc}
+                inHouse={inHouseConfiguration}
+                readOnly={readOnly}
+                validationAttempt={validationAttempt}
+                error={issueFor("modeDescription")}
+                onPendingChange={handlePendingDescriptionChange}
+                onPendingTextChange={onPendingDescriptionTextChange}
+                onSave={(text) => {
+                  const modeDescription = text === generatedDescription ? null : text;
+                  if (modeDescription === (payload.modeDescription ?? null)) return;
+                  onDirty();
+                  onChange({ ...payload, modeDescription });
+                }}
+              />
+            </div>
             {!calculation ? pmcMarginControl : calculationSlot("pmc")}
           </div>
         </section>
@@ -473,16 +492,10 @@ export function KnowledgeModeConfigurationBuilder({
                             <KnowledgePmcScopeChecklist
                               key={list}
                               list={list}
-                              items={partitioned.primary.pmc?.[list] ?? []}
-                              oppositeItems={partitioned.primary.pmc?.[list === "inclusions" ? "exclusions" : "inclusions"] ?? []}
+                              items={subVendorScopeItems(list)}
+                              oppositeItems={subVendorScopeItems(list === "inclusions" ? "exclusions" : "inclusions")}
                               readOnly={readOnly}
-                              onChange={(items) => {
-                                const configuration = partitioned.primary.pmc ?? createKnowledgeModeConfiguration("pmc");
-                                updateConfiguration({
-                                  ...configuration,
-                                  [list]: items
-                                });
-                              }}
+                              onChange={(items) => updateSubVendorScope(list, items)}
                             />
                           ))}
                         </div>

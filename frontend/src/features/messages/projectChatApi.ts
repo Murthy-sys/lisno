@@ -1,5 +1,6 @@
 import { apiClient, ApiError } from "../../api/client";
 import type { ChatActionType, ChatActionTypes, ChatAttachmentPolicy, ChatStagedAttachment, ChatConversationPage, ChatIssueInput, ChatMessage, ChatMessagePage, ChatMessageQuery, ChatParticipantInput, ChatParticipantOptions, ChatParticipantPage, ChatParticipantRevokeInput, ChatReadInput, ChatReadResult, ChatSendInput, ChatSummary, ChatTypingInput, ChatTypingResult } from "./projectChatTypes";
+import type { ChatAvailability, DailyCriticalTasks } from "../../../../shared/chat/dailyCriticalTasks";
 
 export const chatPath = (projectId: string) => `/projects/${encodeURIComponent(projectId)}/chat`;
 export const chatKeys = {
@@ -18,14 +19,18 @@ function queryString(query: object) {
   return params.toString();
 }
 export function isChatDenied(error: unknown) {
-  return error instanceof ApiError && [401, 403, 404].includes(error.status);
+  return error instanceof ApiError && error.code !== "CHAT_CLOSED" && [401, 403, 404].includes(error.status);
 }
 export function chatErrorMessage(error: unknown) {
+  if (error instanceof ApiError && error.code === "CHAT_CLOSED") return "Chat is read-only until 7:30 AM India time. Your draft is retained.";
   if (isChatDenied(error)) return "This item is unavailable or your access has changed.";
   if (error instanceof ApiError && error.status === 409) return "This item changed. The latest information has been loaded; review it before trying again.";
   return error instanceof ApiError ? error.message : "Unable to connect. Please try again.";
 }
 export const projectChatApi = {
+  availability: (signal?: AbortSignal) => apiClient.get<ChatAvailability>("/chat/availability", { ...quiet, signal }),
+  dailyCriticalTasks: (signal?: AbortSignal) => apiClient.get<DailyCriticalTasks | null>("/daily-critical-tasks", { ...quiet, signal }),
+  acknowledgeDailyCriticalTasks: (localDate: string, signal?: AbortSignal) => apiClient.put<DailyCriticalTasks>(`/daily-critical-tasks/${encodeURIComponent(localDate)}/acknowledgment`, {}, { ...quiet, signal }),
   actionTypes: (id: string, signal?: AbortSignal) => apiClient.get<ChatActionTypes>(`${chatPath(id)}/action-types`, { ...quiet, signal }),
   createActionType: (id: string, input: { name: string; idempotencyKey: string }, signal?: AbortSignal) => apiClient.post<ChatActionType>(`${chatPath(id)}/action-types`, input, { ...quiet, signal }),
   renameProject: (id: string, input: { name: string; expectedVersion: number; idempotencyKey: string }, signal?: AbortSignal) => apiClient.patch<ChatSummary>(`${chatPath(id)}/project-name`, input, { ...quiet, signal }),

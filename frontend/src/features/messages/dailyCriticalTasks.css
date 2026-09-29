@@ -1,0 +1,9 @@
+.daily-critical-tasks { display: grid; gap: 16px; padding: 20px; }
+.daily-critical-tasks__list { display: grid; gap: 0; max-block-size: min(56vh, 540px); overflow: auto; margin: 0; padding: 0; list-style: none; }
+.daily-critical-tasks__list li { display: grid; gap: 4px; padding: 14px 0; border-bottom: 1px solid var(--role-line, var(--color-border)); }
+.daily-critical-tasks__list li:first-child { border-top: 1px solid var(--role-line, var(--color-border)); }
+.daily-critical-tasks__kind { color: var(--color-text-muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.daily-critical-tasks__list strong { overflow-wrap: anywhere; }
+.daily-critical-tasks__list a { justify-self: start; color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.daily-critical-tasks__list a:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.daily-critical-tasks__actions { display: flex; justify-content: flex-end; }

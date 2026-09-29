@@ -1039,6 +1039,19 @@ describe("AI estimator knowledge reference service", () => {
     expect(await AiEstimatorKnowledgeVendorModel.countDocuments()).toBe(0);
   });
 
+  it("generates stable unique UOM codes when omitted and preserves explicit legacy codes", async () => {
+    const {service} = harness();
+    const first = await service.createMaster(actor, "uoms", {name: "Square feet", decimalScale: 2});
+    const second = await service.createMaster(actor, "uoms", {name: "Running feet", decimalScale: 2});
+    const explicit = await service.createMaster(actor, "uoms", {code: "SQM", name: "Square metres", decimalScale: 2});
+    expect(first.code).toMatch(/^UOM-[A-F0-9]{48}$/u);
+    expect(second.code).toMatch(/^UOM-[A-F0-9]{48}$/u);
+    expect(second.code).not.toBe(first.code);
+    expect(explicit.code).toBe("SQM");
+    const renamed = await service.updateMaster(actor, "uoms", first.id, {expectedVersion: first.version, name: "Square foot"});
+    expect(renamed.code).toBe(first.code);
+  });
+
   it("protects masters referenced by current Draft or Active sections", async () => {
     const { service } = harness();
     const basket = await service.createBasket(actor, { name: "POP / Gypsum" });

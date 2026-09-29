@@ -678,11 +678,11 @@ export interface ProcurementVendorReference {
   id: string;
   code: string;
   name: string;
-  status: "active" | "inactive" | "archived" | "unavailable";
+  status: "active" | "under_review" | "inactive" | "archived" | "unavailable";
 }
 
 export interface ProcurementVendorOption extends ProcurementVendorReference {
-  status: "active";
+  status: "active" | "under_review";
 }
 
 export interface ProcurementVendorPage {

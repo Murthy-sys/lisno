@@ -12,7 +12,13 @@ jest.mock("../../runtime/RuntimeProvider", () => ({ useConfiguredRuntime: jest.f
 jest.mock("./knowledgeRuntime", () => ({ ...jest.requireActual("./knowledgeRuntime"), useKnowledgeContext: jest.fn() }));
 jest.mock("../../navigation/useScreenBack", () => ({ useBackInterceptor: jest.fn() }));
 jest.mock("../../navigation/AdaptiveAppScaffold", () => ({ useScaffoldNavigationGuard: () => null }));
-jest.mock("./KnowledgeModeEditor", () => ({ KnowledgeModeEditor: () => null }));
+jest.mock("./KnowledgeModeEditor", () => ({ KnowledgeModeEditor: ({ payload, onChange, readOnly }: {
+  payload: KnowledgeJsonObject; onChange: (value: KnowledgeJsonObject) => void; readOnly: boolean;
+}) => {
+  const { TextInput } = require("react-native") as typeof import("react-native");
+  return <TextInput accessibilityLabel="Mode paragraph" value={typeof payload.modeDescription === "string" ? payload.modeDescription : ""}
+    editable={!readOnly} onChangeText={value => onChange({ ...payload, modeDescription: value })} />;
+} }));
 jest.mock("./KnowledgeQualityEditor", () => ({ KnowledgeQualityEditor: () => null }));
 
 const meta = { createdAt: "2026-09-25T00:00:00Z", updatedAt: "2026-09-25T00:00:00Z", createdById: "tester", updatedById: "tester" };
@@ -22,17 +28,22 @@ const uoms = [{ id: "area", name: "Square feet", status: "active", decimalScale:
 const page = (items: unknown[]) => ({ items, pagination: { offset: 0, limit: 100, total: items.length, hasMore: false } });
 const section = (payload: KnowledgeJsonObject = { uomId: "area" }, version = 4) => ({ id: "section-a", revisionId: "rev-a", mainLineId: "line-a", sectionKey: "overview", version, payload, applicability: "configured", ...meta } as KnowledgeSectionEnvelope);
 
-async function setup({ update = true, itemType = "main_line", recommendationsPayload = {}, recommendationsFailure = false, recommendationsPending = false }: {
-  update?: boolean; itemType?: "main_line" | "temporary"; recommendationsPayload?: KnowledgeJsonObject; recommendationsFailure?: boolean; recommendationsPending?: boolean;
+async function setup({ update = true, itemType = "main_line", advancedPayload = {}, advancedFailure = false, pricingPayload = {}, pricingFailure = false, pricingPending = false, recommendationsPayload = {}, recommendationsFailure = false, recommendationsPending = false }: {
+  update?: boolean; itemType?: "main_line" | "temporary"; advancedPayload?: KnowledgeJsonObject; advancedFailure?: boolean; pricingPayload?: KnowledgeJsonObject; pricingFailure?: boolean; pricingPending?: boolean; recommendationsPayload?: KnowledgeJsonObject; recommendationsFailure?: boolean; recommendationsPending?: boolean;
 } = {}) {
   let latestItem = { ...item, itemType } as KnowledgeItemDetail;
+  let failAdvanced = advancedFailure;
+  let failPricing = pricingFailure;
+  let pricingError: Error = new Error("Unavailable");
   let failRecommendations = recommendationsFailure;
+  let releasePricingLoad: () => void = () => {};
+  const pricingLoad = pricingPending ? new Promise<void>(resolve => { releasePricingLoad = resolve; }) : Promise.resolve();
   let releaseRecommendationLoad: () => void = () => {};
   const recommendationLoad = recommendationsPending ? new Promise<void>(resolve => { releaseRecommendationLoad = resolve; }) : Promise.resolve();
   const sections = new Map<string, KnowledgeSectionEnvelope>([
     ["overview", section()],
-    ["advanced", { ...section({}), sectionKey: "advanced" }],
-    ["pricing", { ...section({}), sectionKey: "pricing" }],
+    ["advanced", { ...section(advancedPayload), sectionKey: "advanced" }],
+    ["pricing", { ...section(pricingPayload), sectionKey: "pricing" }],
     ["recommendations", { ...section(recommendationsPayload), sectionKey: "recommendations", applicability: itemType === "temporary" ? "not_applicable" : "not_configured" }]
   ]);
   const updateSection = jest.fn(async (_id, _rev, key, body) => {
@@ -44,7 +55,7 @@ async function setup({ update = true, itemType = "main_line", recommendationsPay
   });
   const api = {
     getKnowledgeItem: jest.fn(async () => latestItem), getKnowledgeHistory: jest.fn(async () => page([revision])),
-    getKnowledgeSection: jest.fn(async (_id, _rev, key) => { if (key === "recommendations") { await recommendationLoad; if (failRecommendations) throw new Error("Unavailable"); } return sections.get(key)!; }),
+    getKnowledgeSection: jest.fn(async (_id, _rev, key) => { if (key === "advanced" && failAdvanced) throw new Error("Unavailable"); if (key === "pricing") { await pricingLoad; if (failPricing) throw pricingError; } if (key === "recommendations") { await recommendationLoad; if (failRecommendations) throw new Error("Unavailable"); } return sections.get(key)!; }),
     listKnowledgeMasters: jest.fn(async type => page(type === "uoms" ? uoms : [])),
     listKnowledgeBaskets: jest.fn(async () => page([{ id: "basket-a", name: "Joinery", status: "active" }])),
     listKnowledgeItems: jest.fn(async () => page([{ ...item, mainLineId: "line-b", mainLineName: "Frame kit", itemType: "main_line", status: "active", version: 1 }])),
@@ -57,7 +68,7 @@ async function setup({ update = true, itemType = "main_line", recommendationsPay
   const onBack = jest.fn();
   await render(<QueryClientProvider client={client}><KnowledgeItemWorkspace session={{} as AuthenticatedSession} mainLineId="line-a" onBack={onBack} /></QueryClientProvider>);
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Unit of measure (UOM)" }).props.accessibilityState.disabled).toBe(!update));
-  return { api, context, client, onBack, setSection: (value: KnowledgeSectionEnvelope) => { sections.set(value.sectionKey, value); }, setItem: (value: KnowledgeItemDetail) => { latestItem = value; client.setQueryData(context.key("detail", "line-a"), value); }, setRecommendationFailure: (value: boolean) => { failRecommendations = value; }, releaseRecommendationLoad };
+  return { api, context, client, onBack, setSection: (value: KnowledgeSectionEnvelope) => { sections.set(value.sectionKey, value); }, setItem: (value: KnowledgeItemDetail) => { latestItem = value; client.setQueryData(context.key("detail", "line-a"), value); }, setAdvancedFailure: (value: boolean) => { failAdvanced = value; }, setPricingFailure: (value: boolean, cause: Error = new Error("Unavailable")) => { failPricing = value; pricingError = cause; }, releasePricingLoad, setRecommendationFailure: (value: boolean) => { failRecommendations = value; }, releaseRecommendationLoad };
 }
 async function editUom() {
   await fireEvent.press(screen.getByRole("combobox", { name: "Unit of measure (UOM)" }));
@@ -114,6 +125,7 @@ it("keeps all tabs accessible and saved context expandable without obscuring the
   expect(screen.getAllByRole("tab")).toHaveLength(4);
   expect(screen.getByRole("tab", { name: "Overview" })).toHaveProp("accessibilityState", expect.objectContaining({ selected: true }));
   expect(screen.getByRole("progressbar", { name: "Configuration completeness" })).toHaveProp("accessibilityValue", expect.objectContaining({ now: 0, min: 0, max: 100 }));
+  expect(screen.getByText("0 of 4 tabs configured")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Quick summary" })).toHaveProp("accessibilityState", expect.objectContaining({ expanded: false }));
   expect(screen.queryByText("Main Basket")).toBeNull();
   await fireEvent.press(screen.getByRole("button", { name: "Quick summary" }));
@@ -126,6 +138,185 @@ it("keeps all tabs accessible and saved context expandable without obscuring the
   expect(test.api.updateKnowledgeSection).not.toHaveBeenCalled();
   await fireEvent.press(screen.getByRole("button", { name: "Discard and continue" }));
   expect(screen.getByRole("tab", { name: "Mode" })).toHaveProp("accessibilityState", expect.objectContaining({ selected: true }));
+});
+
+it("shows a tab-based percentage and count from a refreshed item", async () => {
+  const test = await setup();
+  const sections = ["overview", "advanced", "pricing", "recommendations", "quality", "quantity-margin", "scope"].map(sectionKey => ({
+    sectionKey, state: ["overview", "advanced", "quality"].includes(sectionKey) ? "complete" : "not_configured", findings: []
+  }));
+  await act(async () => { test.setItem({ ...item, completeness: { percentage: 75, sections, blockers: [], warnings: [] } } as KnowledgeItemDetail); });
+  await waitFor(() => expect(screen.getByRole("progressbar", { name: "Configuration completeness" })).toHaveProp("accessibilityValue", expect.objectContaining({ now: 75 })));
+  expect(screen.getByText("3 of 4 tabs configured")).toBeTruthy();
+});
+
+it("renders all four saved Mode rates, thresholds, impacts and margins in the mobile Quick summary", async () => {
+  const calculation = { baseRatePaise: 12_345, lowQuantityLimit: "0", impactBps: 0, minimumMarkupBps: 1_000, startingMarkupBps: 2_000 };
+  const test = await setup({ advancedPayload: {
+    pmcMinimumMarginBps: 1_250, pmcMarginBps: 1_750,
+    subVendorMinimumMarginBps: 500, subVendorMarginBps: 1_500,
+    modeCalculations: {
+      pmc: calculation,
+      sub_vendor: { ...calculation, baseRatePaise: 150_000, lowQuantityLimit: "6", impactBps: 1_250 },
+      in_house_labor: { ...calculation, baseRatePaise: 9_800, lowQuantityLimit: "12", impactBps: 1_000, minimumMarkupBps: 2_500, startingMarkupBps: 3_500 },
+      in_house_material: { ...calculation, baseRatePaise: 45_025, lowQuantityLimit: "9", impactBps: 125, minimumMarkupBps: 2_000, startingMarkupBps: 3_000 }
+    }
+  } });
+  await fireEvent.press(screen.getByRole("button", { name: "Quick summary" }));
+  const summary = screen.getByTestId("saved-summary-mode");
+  expect(within(summary).getByText("Unit price ₹123.45 per Square feet · Low quantity ≤0 · Impact 0% · Min 12.5% · Max 17.5%")).toBeTruthy();
+  expect(within(summary).getByText("Unit price ₹1,500.00 per Square feet · Low quantity ≤6 · Impact 12.5% · Min 5% · Max 15%")).toBeTruthy();
+  expect(within(summary).getByText("Unit price ₹98.00 per Square feet · Low quantity ≤12 · Impact 10% · Gross margin min 25% · start 35%")).toBeTruthy();
+  expect(within(summary).getByText("Unit price ₹450.25 per Square feet · Low quantity ≤9 · Impact 1.25% · Gross margin min 20% · start 30%")).toBeTruthy();
+  for (const label of ["PMC", "Sub-Vendor", "In-house Labor", "In-house Material"]) {
+    expect(StyleSheet.flatten(within(summary).getByText(label).parent?.props.style).flexDirection).toBe("column");
+  }
+  await act(async () => {
+    test.setSection({ ...section({ pmcMinimumMarginBps: 1_500, pmcMarginBps: 2_000,
+      modeCalculations: { pmc: calculation } }, 5), sectionKey: "advanced" });
+    await test.client.invalidateQueries({ queryKey: test.context.key("section", "line-a", "rev-a", "advanced") });
+  });
+  await waitFor(() => expect(within(summary).getByText("Unit price ₹123.45 per Square feet · Low quantity ≤0 · Impact 0% · Min 15% · Max 20%")).toBeTruthy());
+  expect(within(summary).queryByText("Unit price ₹123.45 per Square feet · Low quantity ≤0 · Impact 0% · Min 12.5% · Max 17.5%")).toBeNull();
+  expect(test.api.updateKnowledgeSection).not.toHaveBeenCalled();
+});
+
+it("reveals every confirmed Mode and Specifications value in a counted, accessible mobile disclosure", async () => {
+  const longDescription = "Acoustic partitions with a confirmed site method. ".repeat(7).trim();
+  await setup({ advancedPayload: {
+    modeDescription: longDescription,
+    modeConfigurations: [
+      { id: "pmc-private", modeKind: "pmc", fields: [{ id: "crew-private", label: "Crew size", type: "number", options: [], value: "0" }], inclusions: [{ id: "transport-private", name: "Transport", selected: false }] },
+      { id: "house-private", modeKind: "execution", executionSource: "in_house", fields: [{ id: "site-private", label: "Site ready", type: "checkbox", options: [], value: false }], exclusions: [{ id: "waste-private", name: "Waste removal", selected: true }] }
+    ]
+  }, pricingPayload: {
+    brands: [{ id: "brand-private", name: "Acoustic Works", description: "Approved finish" }],
+    specifications: [{ id: "spec-private", name: "Sound rated panel", brandId: "brand-private", description: "Fire tested" }],
+    priceEntries: [{ inputAmountPaise: 999_999 }]
+  } });
+  await fireEvent.press(screen.getByRole("button", { name: "Quick summary" }));
+  const summary = screen.getByTestId("saved-summary-mode");
+  const disclosure = screen.getByRole("button", { name: /Show Mode details, \d+ more saved values/u });
+  expect(disclosure).toHaveProp("accessibilityState", expect.objectContaining({ expanded: false }));
+  expect(within(summary).queryByText(longDescription)).toBeNull();
+  await fireEvent.press(disclosure);
+  expect(screen.getByRole("button", { name: /Hide Mode details, \d+ more saved values/u })).toHaveProp("accessibilityState", expect.objectContaining({ expanded: true }));
+  expect(within(summary).getByText(longDescription)).toBeTruthy();
+  expect(StyleSheet.flatten(within(summary).getByText(longDescription).props.style).width).toBe("100%");
+  for (const value of ["Transport · Not selected", "Waste removal · Selected", "Crew size", "Site ready", "0", "No", "Acoustic Works", "Approved finish", "Sound rated panel", "Fire tested"]) {
+    expect(within(summary).getAllByText(value).length).toBeGreaterThan(0);
+  }
+  expect(within(summary).queryByText(/private|999,999|hidden compatibility/u)).toBeNull();
+});
+
+it("keeps confirmed Mode rows while Specifications loads, fails, retries, and later becomes stale", async () => {
+  const test = await setup({ advancedPayload: { modeDescription: "Confirmed procurement method" }, pricingPayload: {
+    brands: [{ id: "brand-private", name: "Confirmed Brand" }]
+  }, pricingPending: true });
+  await fireEvent.press(screen.getByRole("button", { name: "Quick summary" }));
+  const summary = screen.getByTestId("saved-summary-mode");
+  expect(within(summary).getByText("Loading saved Specifications…")).toBeTruthy();
+  await fireEvent.press(screen.getByRole("button", { name: /Show Mode details/u }));
+  expect(within(summary).getByText("Confirmed procurement method")).toBeTruthy();
+  await act(async () => { test.releasePricingLoad(); });
+  await waitFor(() => expect(within(summary).getByText("Confirmed Brand")).toBeTruthy());
+  test.setPricingFailure(true);
+  await act(async () => { await test.client.invalidateQueries({ queryKey: test.context.key("section", "line-a", "rev-a", "pricing") }); });
+  await waitFor(() => expect(within(summary).getByText("The latest saved Specifications could not be loaded. Last saved details are shown.")).toBeTruthy());
+  expect(within(summary).getByText("Confirmed procurement method")).toBeTruthy();
+  expect(within(summary).getByText("Confirmed Brand")).toBeTruthy();
+  test.setPricingFailure(false);
+  test.setSection({ ...section({ brands: [{ id: "brand-private", name: "Refreshed Brand" }] }, 5), sectionKey: "pricing" });
+  await fireEvent.press(screen.getByRole("button", { name: "Retry saved Specifications" }));
+  await waitFor(() => expect(within(summary).getByText("Refreshed Brand")).toBeTruthy());
+  expect(within(summary).queryByText("Confirmed Brand")).toBeNull();
+});
+
+it("shows a separate Pricing error and excludes an unverified revision response without concealing Advanced", async () => {
+  const test = await setup({ advancedPayload: { modeDescription: "Confirmed method" }, pricingFailure: true });
+  await fireEvent.press(screen.getByRole("button", { name: "Quick summary" }));
+  const summary = screen.getByTestId("saved-summary-mode");
+  await waitFor(() => expect(within(summary).getByText("Saved Specifications could not be loaded.")).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: /Show Mode details/u }));
+  expect(within(summary).getByText("Confirmed method")).toBeTruthy();
+  test.setPricingFailure(false);
+  test.setSection({ ...section({ brands: [{ id: "other-private", name: "Other revision brand" }] }), sectionKey: "pricing", revisionId: "rev-other" });
+  await fireEvent.press(screen.getByRole("button", { name: "Retry saved Specifications" }));
+  await waitFor(() => expect(within(summary).getByText("Saved Specifications could not be verified for this revision.")).toBeTruthy());
+  expect(within(summary).queryByText("Other revision brand")).toBeNull();
+  expect(within(summary).getByText("Confirmed method")).toBeTruthy();
+});
+
+it("keeps saved Specifications visible and retryable when Mode fails independently", async () => {
+  const test = await setup({ advancedFailure: true, pricingPayload: { brands: [{ id: "brand-private", name: "Saved Brand" }] } });
+  await fireEvent.press(screen.getByRole("button", { name: "Quick summary" }));
+  const summary = screen.getByTestId("saved-summary-mode");
+  await waitFor(() => expect(within(summary).getByText("Saved Mode could not be loaded.")).toBeTruthy());
+  expect(within(summary).getByText("Saved Brand")).toBeTruthy();
+  test.setAdvancedFailure(false);
+  test.setSection({ ...section({ modeDescription: "Recovered method" }), sectionKey: "advanced" });
+  await fireEvent.press(screen.getByRole("button", { name: "Retry saved Mode" }));
+  await waitFor(() => expect(within(summary).getByText("PMC")).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: /Show Mode details/u }));
+  expect(within(summary).getByText("Recovered method")).toBeTruthy();
+  expect(within(summary).getByText("Saved Brand")).toBeTruthy();
+});
+
+it("opens full Pricing-only text even when the preview and details have the same row count", async () => {
+  const longDescription = "Full saved acoustic performance description. ".repeat(8).trim();
+  await setup({ advancedFailure: true, pricingPayload: {
+    brands: [{ id: "brand-private", name: "Saved Brand", description: longDescription }]
+  } });
+  await fireEvent.press(screen.getByRole("button", { name: "Quick summary" }));
+  const summary = screen.getByTestId("saved-summary-mode");
+  expect(within(summary).getByText("Saved Brand")).toBeTruthy();
+  expect(within(summary).queryByText(longDescription)).toBeNull();
+  const disclosure = screen.getByRole("button", { name: "Show full Mode details" });
+  expect(disclosure).toHaveProp("accessibilityState", expect.objectContaining({ expanded: false }));
+  await fireEvent.press(disclosure);
+  expect(screen.getByRole("button", { name: "Hide full Mode details" })).toHaveProp("accessibilityState", expect.objectContaining({ expanded: true }));
+  expect(within(summary).getByText(longDescription)).toBeTruthy();
+});
+
+it("hides a cached Specifications section after access is denied while retaining allowed Mode details", async () => {
+  const test = await setup({ advancedPayload: { modeDescription: "Allowed method" }, pricingPayload: {
+    brands: [{ id: "brand-private", name: "Restricted Brand" }]
+  } });
+  await fireEvent.press(screen.getByRole("button", { name: "Quick summary" }));
+  await fireEvent.press(screen.getByRole("button", { name: /Show Mode details/u }));
+  const summary = screen.getByTestId("saved-summary-mode");
+  expect(within(summary).getByText("Restricted Brand")).toBeTruthy();
+  test.setPricingFailure(true, new ApiError(403, "FORBIDDEN", "Access denied"));
+  await act(async () => { await test.client.invalidateQueries({ queryKey: test.context.key("section", "line-a", "rev-a", "pricing") }); });
+  await waitFor(() => expect(within(summary).getByText("Saved Specifications is unavailable with your current access.")).toBeTruthy());
+  expect(within(summary).queryByText("Restricted Brand")).toBeNull();
+  expect(within(summary).getByText("Allowed method")).toBeTruthy();
+  test.setPricingFailure(false);
+  await fireEvent.press(screen.getByRole("button", { name: "Retry saved Specifications" }));
+  await waitFor(() => expect(within(summary).getByText("Restricted Brand")).toBeTruthy());
+});
+
+it("keeps Mode typing and a failed save out of Quick summary, then shows confirmed save and refetch", async () => {
+  const test = await setup({ advancedPayload: { modeDescription: "Saved baseline" } });
+  await fireEvent.press(screen.getByRole("button", { name: "Quick summary" }));
+  await fireEvent.press(screen.getByRole("button", { name: /Show Mode details/u }));
+  const summary = screen.getByTestId("saved-summary-mode");
+  expect(within(summary).getByText("Saved baseline")).toBeTruthy();
+  await fireEvent.press(screen.getByRole("tab", { name: "Mode" }));
+  await fireEvent.changeText(screen.getByLabelText("Mode paragraph"), "Locally typed method");
+  expect(within(summary).queryByText("Locally typed method")).toBeNull();
+  test.api.updateKnowledgeSection.mockRejectedValueOnce(new ApiError(503, "UNAVAILABLE", "Save unavailable"));
+  await fireEvent.press(screen.getByRole("button", { name: "Save Mode" }));
+  await waitFor(() => expect(screen.getAllByText("Save unavailable").length).toBeGreaterThan(0));
+  expect(within(summary).getByText("Saved baseline")).toBeTruthy();
+  expect(within(summary).queryByText("Locally typed method")).toBeNull();
+  await fireEvent.press(screen.getByRole("button", { name: "Save Mode" }));
+  await waitFor(() => expect(within(summary).getByText("Locally typed method")).toBeTruthy());
+  expect(test.api.updateKnowledgeSection).toHaveBeenCalledTimes(2);
+  test.setSection({ ...section({ modeDescription: "Refetched method" }, 6), sectionKey: "advanced" });
+  await act(async () => { await test.client.invalidateQueries({ queryKey: test.context.key("section", "line-a", "rev-a", "advanced") }); });
+  await waitFor(() => expect(within(summary).getByText("Refetched method")).toBeTruthy());
+  expect(within(summary).queryByText("Locally typed method")).toBeNull();
 });
 
 it("keeps four touch-accessible tabs and readable activation checks for temporary items", async () => {

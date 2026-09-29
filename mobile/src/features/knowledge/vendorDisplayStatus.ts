@@ -1,8 +1,8 @@
 import type { KnowledgeMaster } from "../../../../shared/knowledge/knowledgeTypes";
 
-/** The directory shows the review state as one status, while retaining the stored lifecycle. */
-export function vendorDisplayStatus(vendor: Pick<KnowledgeMaster, "status" | "procurementSummary">): "Archived" | "Inactive" | "Under Review" | "Active" {
+/** Availability is supplied by the backend. Missing projections are never treated as Active. */
+export function vendorDisplayStatus(vendor: Pick<KnowledgeMaster, "status" | "vendorActivation">): "Archived" | "Inactive" | "Under Review" | "Active" {
   if (vendor.status === "archived") return "Archived";
   if (vendor.status === "inactive") return "Inactive";
-  return vendor.procurementSummary?.currentAddressVerifiedPhysically === true ? "Active" : "Under Review";
+  return vendor.vendorActivation?.effectiveStatus === "active" ? "Active" : "Under Review";
 }

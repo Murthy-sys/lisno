@@ -86,9 +86,9 @@ export function storedProcurementSource(row: Record<string, unknown>): Procureme
   return parsed.data;
 }
 export interface ProjectProcurementUomOption { id: string; code: string; name: string }
-export type ProcurementReferenceStatus = "active" | "inactive" | "archived" | "unavailable";
+export type ProcurementReferenceStatus = "active" | "under_review" | "inactive" | "archived" | "unavailable";
 export interface ProcurementReferenceSnapshot extends ProjectProcurementUomOption { status: ProcurementReferenceStatus }
-export interface ProcurementVendorOption extends ProjectProcurementUomOption { status: "active" }
+export interface ProcurementVendorOption extends ProjectProcurementUomOption { status: "active" | "under_review" }
 export interface ProcurementVendorPage { items: ProcurementVendorOption[]; total: number; limit: number; offset: number }
 export interface ProjectProcurementItemDto {
   id: string;

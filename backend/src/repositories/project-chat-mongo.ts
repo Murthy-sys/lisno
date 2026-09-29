@@ -1,5 +1,7 @@
 import { ProjectChatActionTypeModel, ProjectChatExclusionModel } from "../models/ProjectChatAction.js";
 import { ChatNotificationModel } from "../models/ChatNotification.js";
+import { DailyCriticalTaskReceiptModel } from "../models/DailyCriticalTaskReceipt.js";
+import { DailyCriticalScheduleStateModel } from "../models/DailyCriticalScheduleState.js";
 import type { NotificationRecord } from "./notifications.js";
 import mongoose, { type ClientSession, type Model } from "mongoose";
 import { randomUUID } from "node:crypto";
@@ -59,6 +61,25 @@ function mongoTransaction(app: AppRepository, session: ClientSession): ChatTrans
     const typingRecord = <T>(row: any): T => row ? record<T>({ ...row, cleanupAt: new Date(row.cleanupAt).toISOString() }) : row;
     return {
         app, session,
+        async ensureDigestScheduleStart(localDate, now) {
+            const row = await DailyCriticalScheduleStateModel.findOneAndUpdate({_id: "daily-critical-schedule"},
+                {$setOnInsert: {firstLocalDate: localDate, createdAt: new Date(now)}},
+                {upsert: true, returnDocument: "after", session}).lean();
+            return String(row!.firstLocalDate);
+        },
+        async digestReceipts(userId, throughDate) {
+            return (await DailyCriticalTaskReceiptModel.find({userId, localDate: {$lte: throughDate}}).sort({localDate: 1}).session(session).lean())
+                .map(row => ({userId: String(row.userId), localDate: String(row.localDate), createdAt: new Date(row.createdAt).toISOString(), acknowledgedAt: row.acknowledgedAt ? new Date(row.acknowledgedAt).toISOString() : null}));
+        },
+        async ensureDigestReceipt(userId, localDate, now) {
+            const result = await DailyCriticalTaskReceiptModel.updateOne({_id: `${userId}:${localDate}`}, {$setOnInsert: {userId, localDate, createdAt: new Date(now), acknowledgedAt: null}}, {upsert: true, session});
+            return result.upsertedCount === 1;
+        },
+        async acknowledgeDigestReceipt(userId, localDate, now) {
+            const row = await DailyCriticalTaskReceiptModel.findOneAndUpdate({_id: `${userId}:${localDate}`, userId, localDate, acknowledgedAt: null}, {$set: {acknowledgedAt: new Date(now)}}, {returnDocument: "after", session}).lean()
+              ?? await DailyCriticalTaskReceiptModel.findOne({_id: `${userId}:${localDate}`, userId, localDate}).session(session).lean();
+            return row ? {userId, localDate, createdAt: new Date(row.createdAt).toISOString(), acknowledgedAt: row.acknowledgedAt ? new Date(row.acknowledgedAt).toISOString() : null} : null;
+        },
         async insertNotification(row) { await ChatNotificationModel.create([document(row)], {session}); },
         async notification(id, recipientId) { return record(await ChatNotificationModel.findOne({_id: id, recipientId}).session(session).lean()); },
         async notificationProjectIds(recipientId) { return ChatNotificationModel.distinct("projectId", {recipientId}).session(session).exec(); },

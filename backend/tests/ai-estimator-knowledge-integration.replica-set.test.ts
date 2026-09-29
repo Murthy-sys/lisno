@@ -25,6 +25,8 @@ import { AiEstimatorKnowledgeTaxRuleModel } from "../src/models/AiEstimatorKnowl
 import { AiEstimatorKnowledgeTaxVersionModel } from "../src/models/AiEstimatorKnowledgeTaxVersion.js";
 import { AiEstimatorKnowledgeUomModel } from "../src/models/AiEstimatorKnowledgeUom.js";
 import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowledgeVendor.js";
+import { VendorInductionReviewModel } from "../src/models/VendorInduction.js";
+import { VendorKpiAssessmentModel } from "../src/models/VendorKpiAssessment.js";
 import { UserModel } from "../src/models/User.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { createAiEstimatorKnowledgeAdminRouter } from "../src/routes/ai-estimator-knowledge-admin.js";
@@ -39,6 +41,7 @@ import {
 } from "../src/services/ai-estimator-knowledge-reference.service.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
+import { vendorProfileFixture } from "./procurement-vendor-profile.fixture.js";
 
 const NOW = new Date("2026-08-28T10:00:00.000Z");
 const BASKET_ID = "integration-basket-carpentry";
@@ -87,7 +90,9 @@ beforeAll(async () => {
     AiEstimatorKnowledgeTaxRuleModel.syncIndexes(),
     AiEstimatorKnowledgeTaxVersionModel.syncIndexes(),
     AiEstimatorKnowledgeUomModel.syncIndexes(),
-    AiEstimatorKnowledgeVendorModel.syncIndexes()
+    AiEstimatorKnowledgeVendorModel.syncIndexes(),
+    VendorInductionReviewModel.syncIndexes(),
+    VendorKpiAssessmentModel.syncIndexes()
   ]);
 }, 120_000);
 
@@ -1035,6 +1040,7 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
       code: "BUDGET-ALT",
       name: "Alternate Budget Vendor"
     });
+    await onboardVendor(alternateVendor.id);
     const draft = await createConfiguredDraft(
       services.item,
       "Concurrent Budget Wardrobe"
@@ -1114,15 +1120,15 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     "serializes a first Budget %s reference against archive in both commit orders",
     async (masterType, label) => {
       const base = createServices();
-      const createTarget = async (suffix: string) => base.reference.createMaster(
-        SUPER_ADMIN,
-        masterType,
-        {
+      const createTarget = async (suffix: string) => {
+        const target = await base.reference.createMaster(SUPER_ADMIN, masterType, {
           code: `${label.toUpperCase()}-${suffix}`,
           name: `${label} ${suffix}`,
           ...(masterType === "uoms" ? { decimalScale: 2 } : {}),
-        }
-      );
+        });
+        if (masterType === "vendors") await onboardVendor(target.id);
+        return target;
+      };
       const budgetCommand = (targetId: string) => ({
         operation: "set_budget" as const,
         vendorId: masterType === "vendors" ? targetId : VENDOR_ID,
@@ -4867,6 +4873,22 @@ async function seedKnowledgeReferences(): Promise<void> {
       archivedById: null
     })
   ]);
+  await onboardVendor(VENDOR_ID);
+}
+
+/** A lifecycle-active directory row alone is Under Review until every onboarding gate is complete. */
+async function onboardVendor(id: string): Promise<void> {
+  await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: id }, { $set: { procurementProfile: {
+    ...vendorProfileFixture(), mainBasketId: BASKET_ID, subBasketId: "integration-sub-basket",
+    currentAddressVerifiedPhysically: true, physicalAddressVerifiedAt: NOW.toISOString(),
+    physicalAddressVerifiedById: SUPER_ADMIN.id
+  } } });
+  await VendorInductionReviewModel.collection.insertOne({ _id: `review-${id}`, vendorId: id,
+    version: 1, vendorType: "execution", decision: "approved", idempotencyKey: `review-${id}` });
+  await VendorKpiAssessmentModel.collection.insertMany(["vendor_self", "procurement"].map(source => ({
+    _id: `kpi-${source}-${id}`, vendorId: id, source, vendorType: "execution",
+    rubricVersion: 1, rubricGeneration: 0, revision: 1, averageScoreBps: 0
+  })));
 }
 
 async function seedCompatibilityMasters(): Promise<void> {

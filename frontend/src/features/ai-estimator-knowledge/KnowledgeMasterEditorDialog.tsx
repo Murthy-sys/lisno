@@ -77,7 +77,7 @@ export function KnowledgeMasterEditorDialog({
   }, [effectiveFrom, effectiveTo, includeTaxVersion, masterType, taxApplicability, taxRateBps, taxStatus, taxTreatment]);
 
   const formValid = Boolean(
-    code.trim() &&
+    (masterType === "uoms" || code.trim()) &&
       name.trim() &&
       (!existing || (
         displayOrder.trim() !== "" &&
@@ -91,7 +91,7 @@ export function KnowledgeMasterEditorDialog({
   const mutation = useMutation({
     mutationFn: async () => {
       const common: KnowledgeCreateMasterInput = {
-        code: code.trim(),
+        ...(masterType === "uoms" ? {} : { code: code.trim() }),
         name: name.trim(),
         description: description.trim() || null,
         ...(masterType === "uoms" ? { decimalScale: Number(decimalScale) } : {}),
@@ -117,7 +117,7 @@ export function KnowledgeMasterEditorDialog({
     if (formValid) mutation.mutate();
   }
 
-  const dirty = code !== (existing?.code ?? "")
+  const dirty = (masterType !== "uoms" && code !== (existing?.code ?? ""))
     || name !== (existing?.name ?? "")
     || description !== (existing?.description ?? "")
     || displayOrder !== String(existing?.displayOrder ?? "")
@@ -157,9 +157,9 @@ export function KnowledgeMasterEditorDialog({
             <InlineMessage tone="error" role="alert">{mutation.error.message}</InlineMessage>
           ) : null}
           <div className="knowledge-form-grid">
-            <Field id="master-code" label="Code" required>
+            {masterType !== "uoms" ? <Field id="master-code" label="Code" required>
               {(props) => <Input {...props} value={code} maxLength={64} onChange={(event) => setCode(event.target.value)} />}
-            </Field>
+            </Field> : null}
             <Field id="master-name" label="Name" required>
               {(props) => <Input {...props} value={name} maxLength={240} onChange={(event) => setName(event.target.value)} />}
             </Field>

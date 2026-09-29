@@ -866,7 +866,7 @@ describe("Budget Alterations", () => {
     expect(screen.getAllByText("Overlapping target")).toHaveLength(2);
     await openRule(user, 2);
     const selector = screen.getByRole("combobox", { name: "Sub Basket" });
-    const emptyOption = within(selector).getByRole("option", { name: "Empty Sub-Basket · Empty · Add a sub-item" });
+    const emptyOption = within(selector).getByRole("option", { name: "Empty Sub-Basket · Needs items" });
     expect(emptyOption).toBeEnabled();
     expect(within(selector).getByRole("option", { name: "Source group · Contains this item" })).toBeDisabled();
     await user.selectOptions(selector, empty.id);
@@ -876,18 +876,15 @@ describe("Budget Alterations", () => {
     expect(change.mock.lastCall![0][1]).toMatchObject({ targetKind: "sub_basket", targetSubBasketId: empty.id, targetMainLineId: null });
   });
 
-  it("creates a missing Main Basket and Sub-Basket with a generic temporary child", async () => {
+  it("creates an empty Sub-Basket without a temporary child and selects its stable target", async () => {
     const created = {
-      ...items[2],
-      mainLineId: "lights-placeholder",
-      mainLineName: "Lights",
+      ...sub,
       basketId: "basket-new",
-      basketName: "Lighting",
-      subBasketId: "sub-false-ceiling",
-      subBasketName: "False ceiling lights",
-      itemType: "temporary"
-    } as KnowledgeItemDetail;
-    vi.mocked(api.createKnowledgeMainLine).mockResolvedValue(created);
+      id: "sub-false-ceiling",
+      name: "False ceiling lights"
+    } as KnowledgeSubBasket;
+    vi.mocked(api.createKnowledgeSubBasket).mockResolvedValue(created);
+    vi.mocked(api.listKnowledgeSubBaskets).mockImplementation(async (basketId) => page(basketId === created.basketId ? [created] : [sub]));
     const { user, change } = setup();
     await user.click(screen.getByRole("button", { name: "Add Mandatory Item" }));
     await user.selectOptions(screen.getByRole("combobox", { name: "Addition type" }), "sub_basket");
@@ -899,14 +896,11 @@ describe("Budget Alterations", () => {
     await user.click(within(dialog).getByRole("button", { name: "Save main basket" }));
     await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Main basket" })).toHaveValue("basket-new"));
     await user.type(within(dialog).getByRole("textbox", { name: "New Sub-Basket name" }), "False ceiling lights");
-    expect(within(dialog).getByRole("textbox", { name: "Temporary item name" })).toHaveValue("Lights");
-    await user.click(within(dialog).getByRole("button", { name: "Add Sub-Basket" }));
+    expect(within(dialog).queryByRole("textbox", { name: "Temporary item name" })).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Save Sub-Basket" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add Sub-Basket" })).not.toBeInTheDocument());
-    expect(api.createKnowledgeMainLine).toHaveBeenCalledWith("basket-new", {
-      name: "Lights",
-      subBasketName: "False ceiling lights",
-      itemType: "temporary"
-    });
+    expect(api.createKnowledgeSubBasket).toHaveBeenCalledWith("basket-new", { name: "False ceiling lights" });
+    expect(api.createKnowledgeMainLine).not.toHaveBeenCalled();
     expect(change.mock.lastCall![0][0]).toMatchObject({
       targetKind: "sub_basket",
       targetType: null,
@@ -914,8 +908,7 @@ describe("Budget Alterations", () => {
       targetSubBasketId: "sub-false-ceiling",
       targetMainLineId: null
     });
-    await user.click(screen.getByRole("button", { name: "Done" }));
-    expect(screen.getByText("Temporary child · Must be completed")).toBeVisible();
+    expect(screen.getByText(/Needs items before recommendations can appear/)).toBeVisible();
   });
 
   it("normalizes a legacy line-item rule when it is edited", async () => {

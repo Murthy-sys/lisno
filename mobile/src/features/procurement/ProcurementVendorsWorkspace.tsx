@@ -3,7 +3,8 @@ import { useEffect, useState } from "react";
 import { router } from "expo-router";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { KnowledgeReferenceListParams } from "../../../../shared/knowledge/knowledgeApi";
-import type { KnowledgeMaster, KnowledgeMasterStatus } from "../../../../shared/knowledge/knowledgeTypes";
+import type { KnowledgeMaster } from "../../../../shared/knowledge/knowledgeTypes";
+import type { VendorEffectiveStatus } from "../../../../shared/knowledge/vendorInduction";
 import type { AuthenticatedSession } from "../../contracts/session";
 import { ApiError } from "../../core/http/apiClient";
 import { Button, Field, StateView } from "../../ui/primitives";
@@ -19,7 +20,7 @@ import { formatVendorKpiScore } from "./vendorKpiPresentation";
 
 const PAGE_SIZE = 10;
 const EMPTY_FILTERS = { search: "", status: "", vendorType: "", mainBasketId: "", subBasketId: "" } as const;
-type Filters = { search: string; status: KnowledgeMasterStatus | ""; vendorType: "execution" | "supplier" | ""; mainBasketId: string; subBasketId: string };
+type Filters = { search: string; status: VendorEffectiveStatus | ""; vendorType: "execution" | "supplier" | ""; mainBasketId: string; subBasketId: string };
 const denied = (error: unknown) => error instanceof ApiError && (error.status === 401 || error.status === 403);
 
 export function ProcurementVendorsWorkspace({ session }: { readonly session: AuthenticatedSession }) {
@@ -39,7 +40,7 @@ function VendorDirectory({ session, context }: { readonly session: Authenticated
   const params: KnowledgeReferenceListParams = {
     limit: PAGE_SIZE, offset,
     ...(filters.search ? { search: filters.search } : {}),
-    ...(filters.status ? { status: filters.status } : {}),
+    ...(filters.status ? { effectiveStatus: filters.status } : {}),
     ...(filters.vendorType ? { vendorType: filters.vendorType } : {}),
     ...(filters.mainBasketId ? { mainBasketId: filters.mainBasketId } : {}),
     ...(filters.subBasketId ? { subBasketId: filters.subBasketId } : {}),
@@ -90,7 +91,7 @@ function VendorDirectory({ session, context }: { readonly session: Authenticated
     <View style={styles.filters}>
       <Field label="Search vendors" value={search} onChangeText={setSearch} onSubmitEditing={applySearch} returnKeyType="search" maxLength={100} placeholder="Vendor name or code" />
       <Button label="Search" variant="secondary" size="compact" onPress={applySearch} />
-      <KnowledgeSelect label="Status" value={filters.status} placeholder="All current" options={(["active", "inactive", "archived"] as const).map(value => ({ value, label: value.charAt(0).toUpperCase() + value.slice(1) }))} onChange={value => changeFilters({ status: value as Filters["status"] })} />
+      <KnowledgeSelect label="Status" value={filters.status} placeholder="All current" options={[{ value: "active", label: "Active" }, { value: "under_review", label: "Under Review" }, { value: "inactive", label: "Inactive" }, { value: "archived", label: "Archived" }]} onChange={value => changeFilters({ status: value as Filters["status"] })} />
       <KnowledgeSelect label="Vendor Type" value={filters.vendorType} placeholder="All types" options={[{ value: "execution", label: "Execution" }, { value: "supplier", label: "Supplier" }]} onChange={value => changeFilters({ vendorType: value as Filters["vendorType"] })} />
       <KnowledgeSelect label="Main Basket" value={filters.mainBasketId} placeholder="All Main Baskets" options={(baskets.data ?? []).map(value => ({ value: value.id, label: value.name }))} disabled={!baskets.isSuccess} onChange={value => changeFilters({ mainBasketId: value, subBasketId: "" })} />
       <KnowledgeSelect label="Sub Basket" value={filters.subBasketId} placeholder="All Sub Baskets" options={(subBaskets.data ?? []).filter(value => value.basketId === filters.mainBasketId).map(value => ({ value: value.id, label: value.name }))} disabled={!filters.mainBasketId || !subBaskets.isSuccess} onChange={value => changeFilters({ subBasketId: value })} />

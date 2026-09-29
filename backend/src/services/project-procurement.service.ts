@@ -21,6 +21,7 @@ import type { PublicUser } from "./auth.service.js";
 import { assertProcurementProjectAccess, requireProcurementActor, procurementItemSourceSnapshot } from "./procurement.service.js";
 import { requireProcurementVendorReader } from "./project-vendor-suggestions.service.js";
 import { prepareProcurementAllocation } from "./procurement-vendor-allocation.service.js";
+import { vendorActivation, vendorActivations } from "./vendor-readiness.service.js";
 
 type Row = Record<string, any>;
 type Statuses = Map<string, ProcurementReferenceStatus>;
@@ -160,10 +161,11 @@ export function createProjectProcurementService(input: { audit: AuditService; no
       return transaction(actor, async (session) => {
         const { q, limit, offset } = validate(projectProcurementQuerySchema, query);
         const filter = { status: "active", ...searchFilter(q, ["codeNormalized", "nameNormalized"]) };
-        const total = await AiEstimatorKnowledgeVendorModel.countDocuments(filter).session(session);
-        const rows = await AiEstimatorKnowledgeVendorModel.find(filter).select({ _id: 1, code: 1, name: 1 })
-          .sort({ displayOrder: 1, _id: 1 }).skip(offset).limit(limit).session(session).lean();
-        return { items: rows.map(vendorOption), total, limit, offset };
+        const rows = await AiEstimatorKnowledgeVendorModel.find(filter)
+          .sort({ displayOrder: 1, _id: 1 }).session(session).lean();
+        const activations = await vendorActivations(rows, session);
+        const available = rows.filter(row => activations.get(String(row._id))?.effectiveStatus === "active");
+        return { items: available.slice(offset, offset + limit).map(row => vendorOption(row, "active")), total: available.length, limit, offset };
       }, undefined, true);
     },
     async createVendor(actor, value) {
@@ -176,7 +178,7 @@ export function createProjectProcurementService(input: { audit: AuditService; no
             const nameNormalized = normalizeKnowledgeIdentity(name);
             const existing = await AiEstimatorKnowledgeVendorModel.findOne({ nameNormalized, status: { $in: ["active", "inactive"] } }).session(session).lean();
             if (existing?.status === "inactive") throw new ApiError(409, "PROCUREMENT_VENDOR_INACTIVE", "A vendor with this name is inactive. Ask Configuration to reactivate it or use a different name.");
-            if (existing) return { vendor: vendorOption(existing), created: false };
+            if (existing) return { vendor: vendorOption(existing, (await vendorActivation(existing, session)).effectiveStatus === "active" ? "active" : "under_review"), created: false };
             const displayOrder = await allocateAiEstimatorKnowledgeDisplayOrder({
               scope: createAiEstimatorKnowledgeMasterDisplayOrderScope("vendors"),
               resourceModel: AiEstimatorKnowledgeVendorModel, resourceFilter: {}, session
@@ -195,7 +197,7 @@ export function createProjectProcurementService(input: { audit: AuditService; no
               entityId: String(created._id), occurredAt: timestamp.toISOString(),
               newValues: { masterType: "vendors", status: "active", version: 1, displayOrder, source: "procurement" }
             }, session);
-            return { vendor: vendorOption(created.toObject()), created: true };
+            return { vendor: vendorOption(created.toObject(), "under_review"), created: true };
           });
         } catch (error) {
           if (!isDuplicate(error) || attempt >= 2) throw error;
@@ -246,13 +248,16 @@ async function statuses(model: Model<any>, ids: string[], session: ClientSession
 async function referenceStatuses(rows: Row[], session: ClientSession) {
   // Mongoose transactions must not run parallel queries on one session.
   const uoms = await statuses(AiEstimatorKnowledgeUomModel, rows.map((row) => row.uomId), session);
-  const vendors = await statuses(AiEstimatorKnowledgeVendorModel, rows.flatMap((row) => row.vendorId ? [row.vendorId] : []), session);
+  const vendorRows = await AiEstimatorKnowledgeVendorModel.find({ _id: { $in: [...new Set(rows.flatMap(row => row.vendorId ? [row.vendorId] : []))] } })
+    .select({ _id: 1, status: 1, procurementProfile: 1, msmeCertificate: 1, kpiRubricGeneration: 1 }).session(session).lean();
+  const activations = await vendorActivations(vendorRows, session);
+  const vendors = new Map<string, ProcurementReferenceStatus>(vendorRows.map(row => [String(row._id), activations.get(String(row._id))!.effectiveStatus]));
   return { uoms, vendors };
 }
 function option(row: Row): ProjectProcurementUomOption {
   return { id: String(row._id), code: String(row.code), name: String(row.name) };
 }
-function vendorOption(row: Row): ProcurementVendorOption { return { ...option(row), status: "active" }; }
+function vendorOption(row: Row, status: ProcurementVendorOption["status"]): ProcurementVendorOption { return { ...option(row), status }; }
 function dto(row: Row, referenceStatus: { uoms: Statuses; vendors: Statuses }): ProjectProcurementItemDto {
   return {
     id: String(row._id), projectId: row.projectId, estimateSource: itemSource(row), itemName: row.itemName, brand: row.brand,

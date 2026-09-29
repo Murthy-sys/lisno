@@ -72,7 +72,7 @@ export function KnowledgeModeDescriptionEditor({ description, pmc, inHouse, read
   useEffect(() => {
     if (validationAttempt > lastValidationAttempt.current && (pending || error)) {
       setText((current) => current ?? description);
-      setLocalError(error ?? "Save or cancel this paragraph before saving Mode.");
+      setLocalError(error ?? "Save or cancel this description before saving Mode.");
       inputRef.current?.focus();
     }
     lastValidationAttempt.current = validationAttempt;
@@ -87,7 +87,7 @@ export function KnowledgeModeDescriptionEditor({ description, pmc, inHouse, read
   function save() {
     if (readOnly || text === null) return;
     if (!preview.trim() || preview.trim().length > MAX_MODE_DESCRIPTION_LENGTH) {
-      setLocalError(`Enter a paragraph of 1–${MAX_MODE_DESCRIPTION_LENGTH} characters.`);
+      setLocalError(`Enter a description of 1–${MAX_MODE_DESCRIPTION_LENGTH} characters.`);
       inputRef.current?.focus();
       return;
     }
@@ -99,8 +99,8 @@ export function KnowledgeModeDescriptionEditor({ description, pmc, inHouse, read
     <div className="knowledge-mode-description">
       {editing ? (
         <>
-          <Field id={`${id}-paragraph`} label="Mode paragraph" error={localError ?? error}
-            hint="Checked inclusions and exclusions are kept in the paragraph shown below.">
+          <Field id={`${id}-paragraph`} label="Description" error={localError ?? error}
+            hint="Checked inclusions and exclusions are kept in the description shown below.">
             {(props) => <Textarea {...props} ref={inputRef} rows={4} value={text} disabled={readOnly}
               maxLength={MAX_MODE_DESCRIPTION_LENGTH}
               onChange={(event) => { setText(event.target.value); setLocalError(undefined); }}
@@ -113,8 +113,8 @@ export function KnowledgeModeDescriptionEditor({ description, pmc, inHouse, read
               }}
             />}
           </Field>
-          <div className="knowledge-mode-description__preview" role="region" aria-label="Paragraph preview">
-            <span className="ui-field__label">Paragraph preview</span>
+          <div className="knowledge-mode-description__preview" role="region" aria-label="Description preview">
+            <span className="ui-field__label">Description preview</span>
             <p className="knowledge-mode-description__text">{preview}</p>
           </div>
           <div className="knowledge-mode-description__actions">
@@ -125,7 +125,7 @@ export function KnowledgeModeDescriptionEditor({ description, pmc, inHouse, read
       ) : (
         <p className="knowledge-mode-description__text knowledge-mode-description__display">
           <span className="knowledge-mode-description__value" tabIndex={0} title={description}>{description}</span>{!readOnly ? <IconButton
-            ref={editRef} label="Edit Mode paragraph" variant="quiet" icon={<Pencil aria-hidden="true" />}
+            ref={editRef} label="Edit Description" variant="quiet" icon={<Pencil aria-hidden="true" />}
             onClick={() => { setText(description); setLocalError(undefined); }}
           /> : null}
         </p>

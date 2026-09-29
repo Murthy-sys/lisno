@@ -1517,7 +1517,7 @@ describe("AI estimator knowledge screens", () => {
     expect((await screen.findAllByText("Square foot"))[0]).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Add UOM" }));
     const dialog = screen.getByRole("dialog", { name: "Add UOM" });
-    expect(within(dialog).getByRole("textbox", { name: /code/i })).toBeVisible();
+    expect(within(dialog).queryByRole("textbox", { name: /code/i })).not.toBeInTheDocument();
     expect(within(dialog).getByRole("combobox", { name: /quantity decimal places/i })).toBeVisible();
   });
 
@@ -2749,13 +2749,12 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.queryByRole("button", { name: "Add unit of measure" })).not.toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "Add Unit" }));
     const dialog = screen.getByRole("dialog", { name: "Quick add UOM" });
-    await user.type(within(dialog).getByRole("textbox", { name: "Code" }), "SQM");
+    expect(within(dialog).queryByRole("textbox", { name: "Code" })).not.toBeInTheDocument();
     await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Square metre");
     await user.selectOptions(within(dialog).getByRole("combobox", { name: "Quantity decimal places" }), "2");
     await user.click(within(dialog).getByRole("button", { name: "Add UOM" }));
 
     await waitFor(() => expect(knowledgeApi.createKnowledgeMaster).toHaveBeenCalledWith("uoms", {
-      code: "SQM",
       name: "Square metre",
       description: null,
       decimalScale: 2

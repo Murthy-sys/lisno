@@ -370,10 +370,10 @@
   display: none;
 }
 
-/* Label, percentage, compact col-3 meter, then the existing save commands. */
+/* Label, percentage, tab count, compact meter, then the save commands. */
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-status {
   display: grid;
-  grid-template-columns: max-content max-content minmax(8rem, 25%) minmax(0, 1fr);
+  grid-template-columns: max-content max-content max-content minmax(8rem, 25%) minmax(0, 1fr);
 }
 
 .knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status__completeness {
@@ -390,13 +390,20 @@
   font-size: 0.875rem;
 }
 
-.knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status__completeness .ui-progress {
+.knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status__tab-count {
   grid-column: 3;
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+
+.knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status__completeness .ui-progress {
+  grid-column: 4;
   inline-size: 100%;
 }
 
 .knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status__commands {
-  grid-column: 4;
+  grid-column: 5;
   justify-self: end;
   justify-content: flex-end;
 }
@@ -407,12 +414,32 @@
 
 @media (max-width: 900px) {
   .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-status {
-    grid-template-columns: minmax(0, max-content) max-content minmax(5rem, 1fr);
+    grid-template-columns: minmax(0, max-content) max-content max-content minmax(5rem, 1fr);
   }
 
   .knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status__commands {
     grid-column: 1 / -1;
     inline-size: 100%;
+  }
+}
+
+@media (max-width: 620px) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-status {
+    grid-template-columns: minmax(0, 1fr) max-content;
+  }
+
+  .knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status__tab-count {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status__completeness .ui-progress {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
+
+  .knowledge-page.knowledge-page--item-workspace .knowledge-workspace-status__commands {
+    grid-row: 4;
   }
 }
 

@@ -285,8 +285,7 @@ describe("automatic knowledge-base display order forms", () => {
     );
 
     const dialog = screen.getByRole("dialog", { name: "Quick add UOM" });
-    expect(within(dialog).getByRole("textbox", { name: "Code" })).toBeRequired();
-    await user.type(within(dialog).getByRole("textbox", { name: "Code" }), "SQM");
+    expect(within(dialog).queryByRole("textbox", { name: "Code" })).not.toBeInTheDocument();
     await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Square metre");
     await user.selectOptions(
       within(dialog).getByRole("combobox", { name: "Quantity decimal places" }),
@@ -297,7 +296,6 @@ describe("automatic knowledge-base display order forms", () => {
     await waitFor(() => expect(knowledgeApi.createKnowledgeMaster).toHaveBeenCalledWith(
       "uoms",
       {
-        code: "SQM",
         name: "Square metre",
         description: null,
         decimalScale: 2
@@ -308,7 +306,7 @@ describe("automatic knowledge-base display order forms", () => {
       expect.not.objectContaining({ displayOrder: expect.anything() })
     );
     await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({
-      code: "SQM",
+      code: expect.any(String),
       name: "Square metre"
     })));
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -361,6 +359,7 @@ describe("automatic knowledge-base display order forms", () => {
     );
 
     const dialog = screen.getByRole("dialog", { name: "Edit UOM" });
+    expect(within(dialog).queryByRole("textbox", { name: "Code" })).not.toBeInTheDocument();
     const order = within(dialog).getByRole("spinbutton", { name: "Display order" });
     expect(order).toHaveValue(12);
 
@@ -379,7 +378,6 @@ describe("automatic knowledge-base display order forms", () => {
       "uoms",
       existing.id,
       {
-        code: existing.code,
         name: existing.name,
         description: existing.description,
         decimalScale: existing.decimalScale,

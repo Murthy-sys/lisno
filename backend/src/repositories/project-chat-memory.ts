@@ -1,6 +1,6 @@
 import type { NotificationRecord } from "./notifications.js";
 import { chatConflict } from "../domain/project-chat.js";
-import type { ChatActionTypeRecord, ChatExclusion, ChatAttachmentRecord, ChatEstimateSource, ChatHistoryRow, ChatMessageScan, ChatOperation, ChatReadState, ChatSelection, ChatSources, ChatState, ChatStoredEvent, ChatStoredMessage, ChatTransaction, ChatTypingRecord, ChatTypingRateRecord, ChatWorkflowSource, ProjectChatRepository } from "./project-chat.js";
+import type { ChatActionTypeRecord, ChatExclusion, ChatAttachmentRecord, ChatEstimateSource, ChatHistoryRow, ChatMessageScan, ChatOperation, ChatReadState, ChatSelection, ChatSources, ChatState, ChatStoredEvent, ChatStoredMessage, ChatTransaction, ChatTypingRecord, ChatTypingRateRecord, ChatWorkflowSource, DailyCriticalTaskReceipt, ProjectChatRepository } from "./project-chat.js";
 import { createChatAttachmentOperations } from "./project-chat-attachment-operations.js";
 import type { AppRepository, ProjectRecord, UserRecord } from "./types.js";
 import type { ProjectModule } from "../domain/authorization.js";
@@ -11,6 +11,8 @@ export interface MemoryChatSources {
     projectIds?: string[];
 }
 interface MemoryChatState {
+    digestScheduleStartDate: string | null;
+    digestReceipts: DailyCriticalTaskReceipt[];
     exclusions: ChatExclusion[];
     actionTypes: ChatActionTypeRecord[];
     notifications: NotificationRecord[];
@@ -28,7 +30,7 @@ interface MemoryChatState {
 const modules: ProjectModule[] = ["projects", "design", "procurement", "finance", "execution"];
 const copy = <T>(value: T): T => structuredClone(value);
 export function createMemoryProjectChatRepository(repository: AppRepository, supplemental: MemoryChatSources = {}): ProjectChatRepository {
-    let state: MemoryChatState = { exclusions: [], actionTypes: [], notifications: [], selections: [], messages: [], states: {}, reads: [], operations: [], events: [], histories: [], attachments: [], typing: [], typingRates: [] };
+    let state: MemoryChatState = { digestScheduleStartDate: null, digestReceipts: [], exclusions: [], actionTypes: [], notifications: [], selections: [], messages: [], states: {}, reads: [], operations: [], events: [], histories: [], attachments: [], typing: [], typingRates: [] };
     let tail: Promise<void> = Promise.resolve();
     const run = async <T>(write: boolean, operation: (tx: ChatTransaction) => Promise<T>): Promise<T> => {
         const previous = tail;
@@ -71,6 +73,17 @@ function memoryTransaction(app: AppRepository, state: MemoryChatState, supplemen
     };
     return {
         app,
+        async ensureDigestScheduleStart(localDate) { state.digestScheduleStartDate ??= localDate; return state.digestScheduleStartDate; },
+        async digestReceipts(userId, throughDate) { return copy(state.digestReceipts.filter(row => row.userId === userId && row.localDate <= throughDate).sort((a,b) => a.localDate.localeCompare(b.localDate))); },
+        async ensureDigestReceipt(userId, localDate, now) {
+            if (state.digestReceipts.some(row => row.userId === userId && row.localDate === localDate)) return false;
+            state.digestReceipts.push({userId, localDate, createdAt: now, acknowledgedAt: null}); return true;
+        },
+        async acknowledgeDigestReceipt(userId, localDate, now) {
+            const row = state.digestReceipts.find(row => row.userId === userId && row.localDate === localDate);
+            if (!row) return null;
+            row.acknowledgedAt ??= now; return copy(row);
+        },
         async insertNotification(row) {
             if (state.notifications.some(item => item.recipientId === row.recipientId && item.messageId === row.messageId)) chatConflict();
             state.notifications.push(copy(row));

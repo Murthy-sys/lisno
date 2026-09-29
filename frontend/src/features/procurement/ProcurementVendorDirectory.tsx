@@ -13,14 +13,15 @@ import { archiveKnowledgeMaster, listKnowledgeMasters, listKnowledgeBaskets, lis
 import { collectAllKnowledgeMasterPages } from "../ai-estimator-knowledge/knowledgeMasterPagination";
 import { syncKnowledgeMasterMutation } from "../ai-estimator-knowledge/knowledgeMutationSync";
 import { knowledgeQueryKeys } from "../ai-estimator-knowledge/knowledgeQueryKeys";
-import type { KnowledgeMaster, KnowledgeMasterStatus } from "../ai-estimator-knowledge/knowledgeTypes";
+import type { KnowledgeMaster } from "../ai-estimator-knowledge/knowledgeTypes";
+import type { VendorEffectiveStatus } from "../../../../shared/knowledge/vendorInduction";
 import { ProcurementVendorEditor } from "./ProcurementVendorEditor";
 import { procurementError } from "./procurementPresentation";
 import { DirectoryIcon, VendorDirectoryHeader, VendorDirectoryOverview } from "./VendorDirectoryOverview";
 import { VendorDirectoryPagination, VendorDirectoryTable, type VendorDirectoryPageSize } from "./VendorDirectoryTable";
 import "./vendorDirectory.css";
 
-const emptyFilters = { search: "", status: "" as KnowledgeMasterStatus | "", vendorType: "" as "" | "execution" | "supplier", mainBasketId: "", subBasketId: "" };
+const emptyFilters = { search: "", effectiveStatus: "" as VendorEffectiveStatus | "", vendorType: "" as "" | "execution" | "supplier", mainBasketId: "", subBasketId: "" };
 const denied = (error: unknown) => error instanceof ApiError && (error.status === 401 || error.status === 403);
 
 export function ProcurementVendorDirectory() {
@@ -47,7 +48,7 @@ export function ProcurementVendorDirectory() {
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const baskets = useQuery({ queryKey: [...knowledgeQueryKeys.basketLists(), "directory-catalog"], queryFn: () => collectAllKnowledgeMasterPages((page) => listKnowledgeBaskets({ ...page, includeArchived: true }), "Main Basket"), enabled: canRead });
   const subs = useQuery({ queryKey: [...knowledgeQueryKeys.subBasketLists(filters.mainBasketId), "directory-catalog"], queryFn: () => collectAllKnowledgeMasterPages((page) => listKnowledgeSubBaskets(filters.mainBasketId, page), "Sub Basket"), enabled: canRead && Boolean(filters.mainBasketId) });
-  const params = { vendorType: filters.vendorType || undefined, mainBasketId: filters.mainBasketId || undefined, subBasketId: filters.subBasketId || undefined, search: filters.search || undefined, status: filters.status || undefined, includeArchived: filters.status === "archived" || undefined, offset, limit: pageSize };
+  const params = { vendorType: filters.vendorType || undefined, mainBasketId: filters.mainBasketId || undefined, subBasketId: filters.subBasketId || undefined, search: filters.search || undefined, effectiveStatus: filters.effectiveStatus || undefined, includeArchived: filters.effectiveStatus === "archived" || undefined, offset, limit: pageSize };
   const query = useQuery({ queryKey: knowledgeQueryKeys.masterList("vendors", params), queryFn: () => listKnowledgeMasters("vendors", params), enabled: canRead });
   const overview = useQuery({ queryKey: knowledgeQueryKeys.vendorDirectoryOverview(), queryFn: () => listKnowledgeMasters("vendors", { includeDirectoryOverview: true, limit: 1, offset: 0 }), enabled: canRead });
   const mutation = useMutation({
@@ -84,7 +85,7 @@ export function ProcurementVendorDirectory() {
       <div className="vendor-directory__heading"><div><h2 id={`${id}-title`}>Configured vendors</h2><p>Active vendors are available to Sales Managers and Procurement.</p></div>{canCreate ? <Button leadingIcon={<DirectoryIcon name="plus" />} onClick={() => setEditor("new")}>Add vendor</Button> : null}</div>
       <form className="vendor-directory__filters" role="search" aria-label="Search configured vendors" onSubmit={apply}>
         <Field id={`${id}-search`} label="Search vendors" className="vendor-directory__search">{(props) => <div className="vendor-directory__search-control"><DirectoryIcon name="search" /><Input {...props} type="search" value={search} maxLength={100} placeholder="Vendor name or code" onChange={(event) => searchChanged(event.target.value)} /></div>}</Field>
-        <Field id={`${id}-status`} label="Status">{(props) => <Select {...props} value={filters.status} onChange={(event) => changeFilters({ status: event.target.value as KnowledgeMasterStatus | "" })}><option value="">All current</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="archived">Archived</option></Select>}</Field>
+        <Field id={`${id}-status`} label="Status">{(props) => <Select {...props} value={filters.effectiveStatus} onChange={(event) => changeFilters({ effectiveStatus: event.target.value as VendorEffectiveStatus | "" })}><option value="">All current</option><option value="active">Active</option><option value="under_review">Under Review</option><option value="inactive">Inactive</option><option value="archived">Archived</option></Select>}</Field>
         <Field id={`${id}-type`} label="Vendor Type">{(props) => <Select {...props} value={filters.vendorType} onChange={(event) => changeFilters({ vendorType: event.target.value as typeof filters.vendorType })}><option value="">All types</option><option value="execution">Execution</option><option value="supplier">Supplier</option></Select>}</Field>
         <Field id={`${id}-main`} label="Main Basket">{(props) => <Select {...props} disabled={baskets.isPending || baskets.isError} value={filters.mainBasketId} onChange={(event) => changeFilters({ mainBasketId: event.target.value, subBasketId: "" })}><option value="">{baskets.isPending ? "Loading Main Baskets…" : "All Main Baskets"}</option>{filters.mainBasketId && !baskets.data?.items.some((basket) => basket.id === filters.mainBasketId) ? <option value={filters.mainBasketId}>Unavailable Main Basket</option> : null}{baskets.data?.items.map((basket) => <option key={basket.id} value={basket.id}>{basket.name}</option>)}</Select>}</Field>
         <Field id={`${id}-sub`} label="Sub Basket">{(props) => <Select {...props} disabled={!filters.mainBasketId || subs.isPending || subs.isError} value={filters.subBasketId} onChange={(event) => changeFilters({ subBasketId: event.target.value })}><option value="">{filters.mainBasketId && subs.isPending ? "Loading Sub Baskets…" : "All Sub Baskets"}</option>{filters.subBasketId && !subs.data?.items.some((sub) => sub.id === filters.subBasketId && sub.basketId === filters.mainBasketId) ? <option value={filters.subBasketId}>Unavailable Sub Basket</option> : null}{subs.data?.items.filter((sub) => sub.basketId === filters.mainBasketId).map((sub) => <option key={sub.id} value={sub.id}>{sub.name}</option>)}</Select>}</Field>

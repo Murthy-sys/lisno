@@ -21,6 +21,18 @@ describe("notification snapshot stream", () => {
     expect(connect).toHaveBeenCalledExactlyOnceWith("/notifications/events", { signal: expect.any(AbortSignal) });
   });
 
+  it("refreshes the authenticated digest on a content-free daily signal", async () => {
+    const signal = new AbortController();
+    const onDailyCriticalTasks = vi.fn(() => signal.abort());
+    const onSnapshot = vi.fn();
+    const connect = vi.fn().mockResolvedValue(response(new ReadableStream({ start(controller) {
+      controller.enqueue(new TextEncoder().encode("event: daily-critical-tasks\ndata: {}\n\n"));
+    } })));
+    await runNotificationStream({ signal: signal.signal, connect, onSnapshot, onDailyCriticalTasks, onStatus: vi.fn(), onDenied: vi.fn() });
+    expect(onDailyCriticalTasks).toHaveBeenCalledTimes(1);
+    expect(onSnapshot).not.toHaveBeenCalled();
+  });
+
   it("stops on a denied control frame without reconnecting", async () => {
     const onDenied = vi.fn();
     const connect = vi.fn().mockResolvedValue(response(new ReadableStream({ start(controller) {

@@ -66,7 +66,7 @@ describe("Mode pending publication lifecycle", () => {
     expect(panel.latest()?.groups.map(({ key, label }) => ({ key, label }))).toEqual([
       { key: "in_house:inclusions", label: "Execution · In-house · Inclusions" },
       { key: "in_house:exclusions", label: "Execution · In-house · Exclusions" },
-      { key: "mode:paragraph", label: "Mode · Shared paragraph" }
+      { key: "mode:paragraph", label: "Mode · PMC · Description" }
     ]);
     expect(panel.latest()?.groups[0]?.entries.find(({ title }) => title === "Supplier")?.fields)
       .toContainEqual({ key: "selected", label: "State", value: "Selected" });
@@ -256,14 +256,14 @@ describe("Mode pending publication lifecycle", () => {
   it("publishes unapplied paragraph text, cancels it, and keeps applied text until section save", async () => {
     const user = userEvent.setup();
     const panel = setup();
-    await user.click(await screen.findByRole("button", { name: "Edit Mode paragraph" }));
-    const paragraph = screen.getByRole("textbox", { name: "Mode paragraph" });
+    await user.click(await screen.findByRole("button", { name: "Edit Description" }));
+    const paragraph = screen.getByRole("textbox", { name: "Description" });
     fireEvent.change(paragraph, { target: { value: "Pending ceiling requirement." } });
     expect(panel.latest()?.groups[0]?.entries[0]?.fields[0]?.value).toBe("Pending ceiling requirement.");
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(panel.latest()?.groups).toEqual([]);
-    await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Mode paragraph" }), { target: { value: "Applied ceiling requirement." } });
+    await user.click(screen.getByRole("button", { name: "Edit Description" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Description" }), { target: { value: "Applied ceiling requirement." } });
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(panel.latest()?.groups[0]?.entries[0]?.fields[0]?.value).toBe("Applied ceiling requirement.");
     await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
@@ -273,8 +273,8 @@ describe("Mode pending publication lifecycle", () => {
   it("freezes the paragraph baseline while its local editor has not applied and a refetch arrives", async () => {
     const user = userEvent.setup();
     const panel = setup();
-    await user.click(await screen.findByRole("button", { name: "Edit Mode paragraph" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Mode paragraph" }), { target: { value: "Unapplied local wording." } });
+    await user.click(await screen.findByRole("button", { name: "Edit Description" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Description" }), { target: { value: "Unapplied local wording." } });
     act(() => panel.queryClient.setQueryData(knowledgeQueryKeys.section(item.mainLineId, "revision-1", "advanced"), section("advanced", { modeDescription: "Remote saved wording.", pmcMarginBps: 1_900 }, 2)));
     expect(panel.latest()?.groups).toHaveLength(1);
     expect(JSON.stringify(panel.latest())).not.toContain("Remote");

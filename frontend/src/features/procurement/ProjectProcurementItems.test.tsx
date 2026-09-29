@@ -374,7 +374,7 @@ describe("ProjectProcurementItems", () => {
     await user.type(screen.getByRole("textbox", { name: "Item name" }), "My unsaved item");
     await user.click(screen.getByRole("button", { name: "Add vendor" }));
     await user.type(screen.getByRole("textbox", { name: "New vendor name" }), " Shared   Timber ");
-    expect(screen.getByText(/even if you cancel this item/)).toBeVisible();
+    expect(screen.getByText(/It can be assigned only after induction/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Save vendor" }));
     expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Add item" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
@@ -397,6 +397,32 @@ describe("ProjectProcurementItems", () => {
     await user.click(within(panel).getByRole("button", { name: "Add item" }));
     await waitFor(() => expect(itemPosts).toHaveBeenCalledWith({ itemName: "Plywood", brand: "Greenply", uomId: uom.id, vendorId: savedVendor.id, pricePaise: 8801, allocatedWorkPaise: 3000000, ...sourceFor("project-two") }));
     expect(view.queryClient.getQueryState(projectProcurementKeys.list("project-one", "", 0, sourceFor()))?.isInvalidated).toBe(false);
+  });
+
+  it("keeps a quick-added Under Review candidate out of the item vendor selection", async () => {
+    const candidate: ProcurementVendorOption = { id: "candidate-one", code: "PV-C", name: "New Joinery", status: "under_review" };
+    const itemPosts: Array<Record<string, unknown>> = [];
+    server.use(
+      http.post("/api/v1/procurement/vendors", () => HttpResponse.json({ data: candidate }, { status: 201 })),
+      http.post("/api/v1/procurement/projects/project-one/items", async ({ request }) => {
+        const body = await request.json() as Record<string, unknown>; itemPosts.push(body);
+        return HttpResponse.json({ data: { ...item, itemName: body.itemName, brand: body.brand, vendor: null } }, { status: 201 });
+      })
+    );
+    start(); const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Add item" }));
+    await user.type(screen.getByRole("textbox", { name: "Item name" }), "Joinery scope");
+    await user.type(screen.getByRole("textbox", { name: "Brand" }), "Bespoke");
+    await user.selectOptions(screen.getByRole("combobox", { name: "UOM" }), uom.id);
+    await user.type(screen.getByRole("textbox", { name: "Price (INR)" }), "100");
+    await user.click(screen.getByRole("button", { name: "Add vendor" }));
+    await user.type(screen.getByRole("textbox", { name: "New vendor name" }), "New Joinery");
+    await user.click(screen.getByRole("button", { name: "Save vendor" }));
+    expect(await screen.findByText(/New Joinery was added as Under Review/)).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Vendor" })).toHaveValue("");
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add item" }));
+    await waitFor(() => expect(itemPosts).toHaveLength(1));
+    expect(itemPosts[0].vendorId).toBeNull();
   });
 
   it("preserves an unknown legacy amount on price-only edits and displays cap errors without losing input", async () => {

@@ -20,6 +20,11 @@ const query = (name: string, schema: unknown) => ({ name, in: "query", required:
 const summaryProperties = { project: object({ id, name: { type: "string" }, status: { type: "string" }, nameVersion: version }, ["id", "name", "status"]), counts: ref("ChatCounts"), participantCount: integer, cursor: { type: "string" }, lastReadSequence: integer, latestMessageSequence: integer, capabilities: ref("ChatCapabilities"), setupWarnings: { type: "array", items: { type: "string" } } };
 
 export const CHAT_COMPONENT_SCHEMAS: Record<string, Record<string, unknown>> = {
+  ChatAvailability: object({timezone: {type: "string", enum: ["Asia/Kolkata"]}, writable: {type: "boolean"}, nextOpenAt: {...timestamp, nullable: true}, nextChangeAt: timestamp}),
+  DailyCriticalChatAction: object({kind: {type: "string", enum: ["chat_action"]}, id, projectId: id, projectName: {type: "string"}, title: {type: "string"}, dueDate: calendarDate, messageId: id}),
+  DailyCriticalWorkflowTask: object({kind: {type: "string", enum: ["workflow_task"]}, id, projectId: id, projectName: {type: "string"}, title: {type: "string"}, dueAt: timestamp, status: {type: "string"}}),
+  DailyCriticalTasks: object({timezone: {type: "string", enum: ["Asia/Kolkata"]}, localDate: calendarDate, scheduledAt: timestamp, acknowledgedAt: {...timestamp, nullable: true}, items: {type: "array", items: {oneOf: [ref("DailyCriticalChatAction"), ref("DailyCriticalWorkflowTask")]}}}),
+  DailyCriticalAcknowledgment: object({localDate: calendarDate, acknowledgedAt: timestamp}),
   ChatNotification: object({id, type: {type: "string", enum: ["chat.mention", "chat.mention.oversight"]}, projectId: id, projectName: {type: "string"}, messageId: id, actor: object({id, name: {type: "string"}}), excerpt: {type: "string", maxLength: 240}, createdAt: timestamp, readAt: {...timestamp, nullable: true}}),
   NotificationPage: object({items: array("ChatNotification"), unreadCount: integer, pagination: ref("Pagination")}),
   ChatAttachment: object({ id, kind: attachmentKind, filename: { type: "string" }, mimeType: { type: "string" }, byteSize: version,
@@ -90,6 +95,9 @@ export const CHAT_REQUEST_BODIES = {
   "PUT /projects/:projectId/chat/typing": json("ChatTypingRequest")
 };
 export const CHAT_RESPONSE_SCHEMAS = {
+  "GET /chat/availability": "ChatAvailability",
+  "GET /daily-critical-tasks": "DailyCriticalTasks",
+  "PUT /daily-critical-tasks/:localDate/acknowledgment": "DailyCriticalAcknowledgment",
   "GET /projects/:projectId/chat/action-types": "ChatActionTypePage",
   "POST /projects/:projectId/chat/action-types": "ChatActionType",
   "PATCH /projects/:projectId/chat/project-name": "ChatSummary",
