@@ -109,6 +109,8 @@ const VENDOR_DIRECTORY_PERMISSIONS = [
   "procurement.vendor_allocation_baseline.correct"
 ] as const;
 const VENDOR_KPI_PERMISSIONS = ["procurement.vendor_kpi.read", "procurement.vendor_kpi.rate", "procurement.vendor_kpi.request"] as const;
+const VENDOR_INDUCTION_PERMISSIONS = ["procurement.vendor_induction.read", "procurement.vendor_induction.manage",
+  "procurement.vendor_induction.request", "procurement.vendor_induction.review"] as const;
 
 const AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS = [
   "ai_estimator_knowledge.configuration.read",
@@ -216,6 +218,7 @@ describe("authorization policy", () => {
           !permission.startsWith("procurement.items.") && !permission.startsWith("procurement.vendors.") && !permission.startsWith("procurement.vendor_suggestions.") &&
           !VENDOR_DIRECTORY_PERMISSIONS.includes(permission as never) &&
           !VENDOR_KPI_PERMISSIONS.includes(permission as never) &&
+          !VENDOR_INDUCTION_PERMISSIONS.includes(permission as never) &&
           permission !== "projects.design_workflow.read" &&
           permission !== "estimation.design_upload.delete" &&
           permission !== "projects.design_workflow.act" &&
@@ -245,8 +248,8 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(147);
-    expect(new Set(PERMISSION_CODES).size).toBe(147);
+    expect(PERMISSION_CODES).toHaveLength(151);
+    expect(new Set(PERMISSION_CODES).size).toBe(151);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
@@ -432,7 +435,8 @@ describe("authorization policy", () => {
   });
 
   it("grants all six scoped vendor-directory capabilities only to Procurement and Super Admin", () => {
-    expect(PERMISSION_CODES.slice(-(VENDOR_DIRECTORY_PERMISSIONS.length + VENDOR_KPI_PERMISSIONS.length), -VENDOR_KPI_PERMISSIONS.length)).toEqual(VENDOR_DIRECTORY_PERMISSIONS);
+    expect(PERMISSION_CODES.slice(-(VENDOR_DIRECTORY_PERMISSIONS.length + VENDOR_KPI_PERMISSIONS.length + VENDOR_INDUCTION_PERMISSIONS.length),
+      -(VENDOR_KPI_PERMISSIONS.length + VENDOR_INDUCTION_PERMISSIONS.length))).toEqual(VENDOR_DIRECTORY_PERMISSIONS);
     for (const role of ROLE_CODES) {
       for (const permission of VENDOR_DIRECTORY_PERMISSIONS) {
         expect(hasPermission(role, permission), `${role} ${permission}`).toBe(role === "procurement" || role === "super_admin");
@@ -443,14 +447,20 @@ describe("authorization policy", () => {
     }
   });
   it("grants only Procurement and the sole Super Admin the three vendor KPI operations", () => {
-    expect(PERMISSION_CODES.slice(-VENDOR_KPI_PERMISSIONS.length)).toEqual(VENDOR_KPI_PERMISSIONS);
+    expect(PERMISSION_CODES.slice(-(VENDOR_KPI_PERMISSIONS.length + VENDOR_INDUCTION_PERMISSIONS.length), -VENDOR_INDUCTION_PERMISSIONS.length)).toEqual(VENDOR_KPI_PERMISSIONS);
     for (const role of ROLE_CODES) for (const permission of VENDOR_KPI_PERMISSIONS)
       expect(hasPermission(role, permission), `${role} ${permission}`).toBe(role === "procurement" || role === "super_admin");
-    expect(HUMAN_JWT_OPERATION_LIST.slice(-3).map(operation => [operation.key, operation.permission])).toEqual([
+    expect(HUMAN_JWT_OPERATION_LIST.filter(operation => operation.key.includes("/vendor-kpis/")).map(operation => [operation.key, operation.permission])).toEqual([
       ["GET /procurement/vendor-kpis/:vendorId", "procurement.vendor_kpi.read"],
       ["PUT /procurement/vendor-kpis/:vendorId/procurement", "procurement.vendor_kpi.rate"],
       ["POST /procurement/vendor-kpis/:vendorId/requests", "procurement.vendor_kpi.request"]
     ]);
+  });
+  it("grants vendor induction authoring and review only to Procurement and Super Admin", () => {
+    expect(PERMISSION_CODES.slice(-VENDOR_INDUCTION_PERMISSIONS.length)).toEqual(VENDOR_INDUCTION_PERMISSIONS);
+    for (const role of ROLE_CODES) for (const permission of VENDOR_INDUCTION_PERMISSIONS)
+      expect(hasPermission(role, permission), `${role} ${permission}`).toBe(role === "procurement" || role === "super_admin");
+    expect(HUMAN_JWT_OPERATION_LIST.filter(operation => operation.key.includes("/vendor-inductions/"))).toHaveLength(6);
   });
   it("limits project vendor suggestions to assigned manager writes and three-role reads", () => {
     for (const role of ROLE_CODES) {
@@ -500,6 +510,9 @@ describe("authorization policy", () => {
   it("registers the sanitized procurement and vendor audit actions", () => {
     expect(PROCUREMENT_AUDIT_ACTIONS).toEqual([
       "vendor_kpi.procurement_saved", "vendor_kpi.requested", "vendor_kpi.delivery_sent", "vendor_kpi.delivery_failed", "vendor_kpi.self_submitted",
+      "vendor_induction.draft_saved", "vendor_induction.published", "vendor_induction.requested", "vendor_induction.delivery_sent",
+      "vendor_induction.delivery_failed", "vendor_induction.submitted", "vendor_induction.approved",
+      "vendor_induction.changes_requested", "vendor_induction.reopened",
       "procurement_vendor_allocation_baseline_recorded",
       "procurement_vendor_photo_updated", "procurement_vendor_photo_removed",
       "procurement_expense_recorded", "project_procurement_item_created",

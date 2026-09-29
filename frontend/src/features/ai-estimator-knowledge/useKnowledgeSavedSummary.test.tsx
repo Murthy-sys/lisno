@@ -56,8 +56,8 @@ describe("saved summary queries", () => {
   it("loads every saved source initially and shares existing editor query keys without repeat reads", async () => {
     const { result, client, rerender } = setup();
     await waitFor(() => expect(result.current.every((group) => !group.notices.length)).toBe(true));
-    expect(api.getKnowledgeSection).toHaveBeenCalledTimes(3);
-    expect(api.getKnowledgeSection).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), "pricing");
+    expect(api.getKnowledgeSection).toHaveBeenCalledTimes(4);
+    expect(api.getKnowledgeSection).toHaveBeenCalledWith(item.mainLineId, "revision-1", "pricing");
     expect(api.getKnowledgeSection).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), "quality");
     expect(api.getKnowledgeBasketQuality).toHaveBeenCalledWith(item.basketId);
     expect(JSON.stringify(result.current)).toContain("Square foot");
@@ -65,7 +65,7 @@ describe("saved summary queries", () => {
     await client.fetchQuery({ queryKey: knowledgeQueryKeys.section(item.mainLineId, "revision-1", "overview"),
       queryFn: () => api.getKnowledgeSection(item.mainLineId, "revision-1", "overview") });
     rerender({ ...input });
-    expect(api.getKnowledgeSection).toHaveBeenCalledTimes(3);
+    expect(api.getKnowledgeSection).toHaveBeenCalledTimes(4);
     expect(api.previewKnowledge).not.toHaveBeenCalled();
     expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
   });
@@ -124,31 +124,105 @@ describe("saved summary queries", () => {
     expect(JSON.stringify(result.current[3])).not.toContain("Saved basket alignment");
   });
 
-  it("updates Mode status from confirmed Advanced cache writes without loading Pricing", async () => {
+  it("updates saved Mode details from confirmed Advanced cache writes without retaining removed fields", async () => {
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => section(key,
-      key === "advanced" ? { pmcMarginBps: 1_000, modeDescription: "Do not disclose" } : {}));
+      key === "advanced" ? { pmcMarginBps: 1_000, modeDescription: "Previous saved description" } : {}));
     const { result, client } = setup();
-    await waitFor(() => expect(result.current[1].details.find(row => row.label === "PMC")?.value).toBe("Not configured"));
+    await waitFor(() => expect(JSON.stringify(result.current[1])).toContain("Previous saved description"));
+    expect(result.current[1].details.find(row => row.label === "PMC")?.value).toBe("Not configured");
     await act(async () => { commitKnowledgeSectionMutation(client, { ...section("advanced", configuredPmc, 3), aggregateVersion: 5 }); });
-    await waitFor(() => expect(result.current[1].details.find(row => row.label === "PMC")?.value).toBe("Configured"));
-    expect(JSON.stringify(result.current[1])).not.toContain("Do not disclose");
-    expect(api.getKnowledgeSection).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), "pricing");
+    await waitFor(() => expect(result.current[1].details.find(row => row.label === "PMC")?.value).toBe("Unit price ₹123.45 · Low quantity ≤0 · Impact 7.5% · Min 10% · Max 20%"));
+    expect(JSON.stringify(result.current[1])).not.toContain("Previous saved description");
+    expect(api.getKnowledgeSection).toHaveBeenCalledWith(item.mainLineId, "revision-1", "pricing");
+  });
+
+  it("updates saved Specifications and Brands from a confirmed Pricing cache write", async () => {
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => section(key,
+      key === "pricing" ? {
+        brands: [{ id: "saved-brand", name: "Original brand", description: "Original warranty" }],
+        specifications: [{ id: "saved-spec", name: "Original finish", brandId: "saved-brand", description: "Original grade" }]
+      } : {}));
+    const { result, client } = setup();
+    await waitFor(() => expect(JSON.stringify(result.current[1])).toContain("Original finish"));
+    await act(async () => { commitKnowledgeSectionMutation(client, { ...section("pricing", {
+      brands: [{ id: "saved-brand", name: "Confirmed brand", description: "Confirmed warranty" }],
+      specifications: [{ id: "saved-spec", name: "Confirmed finish", brandId: "saved-brand", description: "Confirmed grade" }]
+    }, 3), aggregateVersion: 5 }); });
+    await waitFor(() => expect(JSON.stringify(result.current[1])).toContain("Confirmed finish"));
+    expect(JSON.stringify(result.current[1])).toContain("Confirmed brand");
+    expect(JSON.stringify(result.current[1])).not.toContain("Original finish");
+    expect(JSON.stringify(result.current[1])).not.toContain("Original brand");
   });
 
   it("keeps available sources visible through an independent failure and scoped retry", async () => {
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => {
       if (key === "advanced") throw new Error("Unavailable");
-      return section(key, {});
+      return section(key, key === "pricing" ? { specifications: [{ id: "saved-spec", name: "Saved finish" }] } : {});
     });
     const { result } = setup();
     await waitFor(() => expect(result.current[1].notices.some((notice) => notice.tone === "error")).toBe(true));
-    expect(result.current[1].details).toEqual([]);
+    expect(result.current[1].details.find((row) => row.value === "Saved finish")).toBeDefined();
+    expect(result.current[1].preview.find((row) => row.value === "Saved finish")).toBeDefined();
     expect(JSON.stringify(result.current[3])).toContain("Saved basket alignment");
     vi.mocked(api.getKnowledgeSection).mockResolvedValue(section("advanced", configuredPmc));
     await act(async () => { result.current[1].notices.find((notice) => notice.onRetry)?.onRetry?.(); });
     await waitFor(() => expect(result.current[1].notices).toEqual([]));
-    expect(api.getKnowledgeSection).toHaveBeenCalledTimes(4);
-    expect(result.current[1].details.find(row => row.label === "PMC")?.value).toBe("Configured");
+    expect(api.getKnowledgeSection).toHaveBeenCalledTimes(5);
+    expect(result.current[1].details.find(row => row.label === "PMC")?.value).toBe("Unit price ₹123.45 · Low quantity ≤0 · Impact 7.5% · Min 10% · Max 20%");
+  });
+
+  it("keeps saved Advanced rows visible while Pricing is still loading", async () => {
+    const pricing = deferred<KnowledgeSectionEnvelope<KnowledgeJsonObject>>();
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => key === "pricing"
+      ? pricing.promise : section(key, key === "advanced" ? configuredPmc : {}));
+    const { result } = setup();
+    await waitFor(() => expect(result.current[1].preview[0]?.value).toContain("Unit price ₹123.45"));
+    expect(result.current[1].preview).toHaveLength(4);
+    expect(result.current[1].notices.find((notice) => notice.key === "pricing")?.message).toBe("Loading Mode specifications and brands…");
+    await act(async () => { pricing.resolve(section("pricing", { specifications: [{ id: "spec-1", name: "Late saved finish" }] })); });
+    await waitFor(() => expect(JSON.stringify(result.current[1])).toContain("Late saved finish"));
+    expect(result.current[1].notices).toEqual([]);
+  });
+
+  it("keeps confirmed Advanced rows visible while Pricing fails, then retries only Pricing", async () => {
+    let pricingUnavailable = true;
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => {
+      if (key === "pricing" && pricingUnavailable) throw new Error("Pricing unavailable");
+      return section(key, key === "advanced" ? { ...configuredPmc, modeDescription: "Saved work scope" }
+        : key === "pricing" ? { specifications: [{ id: "spec-1", name: "Recovered finish" }] } : {});
+    });
+    const { result } = setup();
+    await waitFor(() => expect(result.current[1].notices.find((notice) => notice.key === "pricing")?.tone).toBe("error"));
+    expect(result.current[1].preview).toHaveLength(4);
+    expect(JSON.stringify(result.current[1])).toContain("Saved work scope");
+    expect(JSON.stringify(result.current[1])).not.toContain("Recovered finish");
+    expect(result.current[1].notices.find((notice) => notice.key === "pricing")?.message).toContain("Mode specifications and brands");
+    pricingUnavailable = false;
+    await act(async () => { result.current[1].notices.find((notice) => notice.key === "pricing")?.onRetry?.(); });
+    await waitFor(() => expect(JSON.stringify(result.current[1])).toContain("Recovered finish"));
+    expect(result.current[1].notices).toEqual([]);
+    expect(vi.mocked(api.getKnowledgeSection).mock.calls.filter(([, , key]) => key === "pricing")).toHaveLength(2);
+    expect(vi.mocked(api.getKnowledgeSection).mock.calls.filter(([, , key]) => key === "advanced")).toHaveLength(1);
+  });
+
+  it("rejects mismatched Pricing identity and hides its cached details after access is denied", async () => {
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => key === "pricing"
+      ? { ...section(key, { specifications: [{ id: "spec-1", name: "Another revision finish" }] }), revisionId: "revision-other" }
+      : section(key, key === "advanced" ? { modeDescription: "Confirmed work scope" } : {}));
+    const { result, client } = setup();
+    await waitFor(() => expect(result.current[1].notices.find((notice) => notice.key === "pricing")?.tone).toBe("error"));
+    expect(JSON.stringify(result.current[1])).toContain("Confirmed work scope");
+    expect(JSON.stringify(result.current[1])).not.toContain("Another revision finish");
+
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => section(key,
+      key === "pricing" ? { brands: [{ id: "brand-1", name: "Saved fittings" }] } : {}));
+    await act(async () => { result.current[1].notices.find((notice) => notice.key === "pricing")?.onRetry?.(); });
+    await waitFor(() => expect(JSON.stringify(result.current[1])).toContain("Saved fittings"));
+    vi.mocked(api.getKnowledgeSection).mockRejectedValue(new ApiError(403, "FORBIDDEN", "Access denied"));
+    await act(async () => { await client.refetchQueries({ queryKey: knowledgeQueryKeys.section(item.mainLineId, "revision-1", "pricing"), exact: true }); });
+    await waitFor(() => expect(result.current[1].notices.find((notice) => notice.key === "pricing")?.tone).toBe("error"));
+    expect(JSON.stringify(result.current[1])).not.toContain("Saved fittings");
+    expect(result.current[1].preview).toHaveLength(4);
   });
 
   it("marks failed refreshes stale, but hides cached data after an authorization denial", async () => {
@@ -190,7 +264,7 @@ describe("saved summary queries", () => {
     expect(result.current[2].emptyMessage).toBe("No revision available");
     rerender({ ...input, item: { ...item, itemType: "temporary" } });
     await waitFor(() => expect(result.current[2].notices).toEqual([]));
-    expect(api.getKnowledgeSection).toHaveBeenCalledTimes(3);
+    expect(api.getKnowledgeSection).toHaveBeenCalledTimes(4);
     expect(api.getKnowledgeSection).toHaveBeenCalledWith(item.mainLineId, "revision-1", "recommendations");
     expect(result.current[2].emptyMessage).toBe("Not configured");
   });

@@ -12,7 +12,7 @@ export const VENDOR_SUGGESTION_SCHEMAS = {
   VendorSuggestionProject: object(project),
   VendorSuggestionProjectPage: object({ items: { type: "array", items: ref("VendorSuggestionProject") }, ...pagination }),
   ProjectVendorSuggestion: object({ id, projectId: id, estimateId: id, estimateVersion: version, estimateReviewRoundId: { ...id, nullable: true }, designPlanVersion: version,
-    vendor: object({ id, code: text, name: text, status: { type: "string", enum: ["active", "inactive", "archived", "unavailable"] } }),
+    vendor: object({ id, code: text, name: text, status: { type: "string", enum: ["active", "under_review", "inactive", "archived", "unavailable"] } }),
     note, status, version, suggestedBy: person, updatedBy: person, createdAt: { type: "string", format: "date-time" }, updatedAt: { type: "string", format: "date-time" },
     kpi: object({ status: { type: "string", enum: ["not_available", "not_rated", "rated"] }, score: { type: "number", minimum: 0, maximum: 100, nullable: true, description: "Procurement's official score on a 0–100 scale, with up to two decimals; null for Admin or unrated vendors." } })
   }),

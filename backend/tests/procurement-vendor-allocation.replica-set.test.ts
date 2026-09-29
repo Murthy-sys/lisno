@@ -4,6 +4,8 @@ import { createProcurementVendorBaselineService } from "../src/services/procurem
 import { procurementVendorAllocationTotals } from "../src/services/procurement-vendor-allocation.service.js";
 import { AiEstimatorKnowledgeUomModel } from "../src/models/AiEstimatorKnowledgeUom.js";
 import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowledgeVendor.js";
+import { VendorKpiAssessmentModel } from "../src/models/VendorKpiAssessment.js";
+import { VendorInductionReviewModel } from "../src/models/VendorInduction.js";
 import { AiEstimatorKnowledgeDisplayOrderSequenceModel } from "../src/models/AiEstimatorKnowledgeDisplayOrderSequence.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { ProjectModel } from "../src/models/Project.js";
@@ -19,6 +21,7 @@ import { createAuditService } from "../src/services/audit.service.js";
 import type { PublicUser } from "../src/services/auth.service.js";
 import { createProjectProcurementService } from "../src/services/project-procurement.service.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
+import { vendorProfileFixture } from "./procurement-vendor-profile.fixture.js";
 
 const actor: PublicUser = { id: "buyer", name: "Buyer", email: "buyer@example.test", role: "procurement" };
 const other: PublicUser = { ...actor, id: "other-buyer", email: "other@example.test" };
@@ -32,7 +35,7 @@ let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 beforeAll(async () => {
   replica = await startMongoReplicaSet("procurement-vendor-allocation-tests");
   await Promise.all([UserModel, ProjectModel, EstimateModel, EstimateClientReviewRoundModel, ProjectWorkflowTaskModel,
-    AiEstimatorKnowledgeUomModel, AiEstimatorKnowledgeVendorModel, AiEstimatorKnowledgeDisplayOrderSequenceModel,
+    AiEstimatorKnowledgeUomModel, AiEstimatorKnowledgeVendorModel, VendorKpiAssessmentModel, VendorInductionReviewModel, AiEstimatorKnowledgeDisplayOrderSequenceModel,
     AuditEventModel, ProjectProcurementItemModel, FinanceLedgerEntryModel, ProjectFinanceBucketModel].map((model) => model.syncIndexes()));
 }, 120_000);
 beforeEach(async () => {
@@ -82,9 +85,19 @@ async function createProject(projectId: string, assigneeId: string, subtotal: nu
   });
 }
 
-async function vendor(name = "Allocation Vendor", verified = false) {
+async function vendor(name = "Allocation Vendor", verified = true) {
   const result = (await service.createVendor(actor, { name })).vendor;
-  if (verified) await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: result.id } as any, { $set: { procurementProfile: { currentAddressVerifiedPhysically: true } } });
+  await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: result.id } as any, { $set: { procurementProfile: {
+    ...vendorProfileFixture(), currentAddressVerifiedPhysically: verified,
+    physicalAddressVerifiedAt: verified ? now.toISOString() : null,
+    physicalAddressVerifiedById: verified ? actor.id : null
+  } } });
+  await VendorInductionReviewModel.collection.insertOne({ _id: `review-${result.id}`, vendorId: result.id,
+    version: 1, vendorType: "execution", decision: "approved" });
+  await VendorKpiAssessmentModel.collection.insertMany(["vendor_self", "procurement"].map(source => ({
+    _id: `kpi-${source}-${result.id}`, vendorId: result.id, source, vendorType: "execution",
+    rubricVersion: 1, rubricGeneration: 0, revision: 1, averageScoreBps: 0
+  })));
   return result;
 }
 async function allocate(vendorId: string, amount: number, projectId = "project-a", brand = "Timber Brand") {
@@ -102,16 +115,22 @@ async function historical(vendorId: string, id = "historical", projectId = "proj
 const correction = { expectedVersion: 1, allocatedWorkPaise: 6_000_000, reason: "Record work committed before allocation tracking", idempotencyKey: "baseline-request" };
 
 describe("vendor allocation transactions", () => {
-  it("aggregates unequal projects, allows 30,000 plus 20,000 INR and rejects one extra paise without side effects", async () => {
+  it("rejects new work for an Under Review vendor even with approved induction and both KPI assessments", async () => {
+    const saved = await vendor("Awaiting verification", false);
+    expect((await service.listVendors(actor, { q: "Awaiting", limit: 20, offset: 0 })).total).toBe(0);
+    await expect(allocate(saved.id, 100)).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(await ProjectProcurementItemModel.countDocuments()).toBe(0);
+  });
+  it("aggregates allocations across unequal projects for a fully active vendor", async () => {
     const saved = await vendor();
     const first = await allocate(saved.id, 3_000_000);
     const second = await allocate(saved.id, 2_000_000, "project-b");
     expect(first.allocatedWorkPaise).toBe(3_000_000);
     expect(second.allocatedWorkPaise).toBe(2_000_000);
-    const audits = await AuditEventModel.countDocuments();
-    await expect(allocate(saved.id, 1, "project-b", "Third")).rejects.toMatchObject({ code: "PROCUREMENT_VENDOR_ALLOCATION_CAP_EXCEEDED", fields: { allocatedWorkPaise: expect.any(String) } });
-    expect(await ProjectProcurementItemModel.countDocuments()).toBe(2);
-    expect(await AuditEventModel.countDocuments()).toBe(audits);
+    expect((await allocate(saved.id, 1, "project-b", "Third")).allocatedWorkPaise).toBe(1);
+    expect(await ProjectProcurementItemModel.countDocuments()).toBe(3);
+    const totals = await mongoose.connection.transaction(session => procurementVendorAllocationTotals(saved.id, session));
+    expect(totals.totalAllocatedWorkPaise).toBe(5_000_001n);
     expect(await FinanceLedgerEntryModel.countDocuments()).toBe(0);
     expect(await ProjectFinanceBucketModel.countDocuments()).toBe(0);
   });
@@ -123,10 +142,9 @@ describe("vendor allocation transactions", () => {
       service.update(actor, "project-a", first.id, { ...fields, vendorId: saved.id, allocatedWorkPaise: 2_500_000, expectedVersion: 1 }),
       service.update(other, "project-b", second.id, { ...fields, estimateId: "estimate-project-b", vendorId: saved.id, allocatedWorkPaise: 3_500_000, expectedVersion: 1 })
     ]);
-    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-    expect(results.find((result) => result.status === "rejected")).toMatchObject({ reason: { code: "PROCUREMENT_VENDOR_ALLOCATION_CAP_EXCEEDED" } });
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(2);
     const totals = await mongoose.connection.transaction((session) => procurementVendorAllocationTotals(saved.id, session));
-    expect(totals).toEqual({ totalAllocatedWorkPaise: 4_500_000n, unknownItemCount: 0 });
+    expect(totals).toEqual({ totalAllocatedWorkPaise: 6_000_000n, unknownItemCount: 0 });
   });
   it("preserves allocation on price-only updates and audits explicit reductions", async () => {
     const saved = await vendor();
@@ -143,7 +161,6 @@ describe("vendor allocation transactions", () => {
     const secondVendor = await vendor("Second vendor");
     const item = await allocate(firstVendor.id, 3_000_000);
     await allocate(secondVendor.id, 4_000_000, "project-b");
-    await expect(service.update(actor, "project-a", item.id, { ...fields, vendorId: secondVendor.id, allocatedWorkPaise: 1_000_001, expectedVersion: 1 })).rejects.toMatchObject({ code: "PROCUREMENT_VENDOR_ALLOCATION_CAP_EXCEEDED" });
     await expect(service.update(actor, "project-a", item.id, { ...fields, vendorId: secondVendor.id, expectedVersion: 1 })).rejects.toMatchObject({ code: "PROCUREMENT_ALLOCATION_INVALID" });
     await service.update(actor, "project-a", item.id, { ...fields, vendorId: secondVendor.id, allocatedWorkPaise: 1_000_000, expectedVersion: 1 });
     const totals = await mongoose.connection.transaction((session) => procurementVendorAllocationTotals(firstVendor.id, session));
@@ -156,7 +173,8 @@ describe("vendor allocation transactions", () => {
     const item = await allocate(saved.id, 9_000_000);
     await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: saved.id } as any, { $set: { "procurementProfile.currentAddressVerifiedPhysically": false } });
     await service.update(actor, "project-a", item.id, { ...fields, vendorId: saved.id, allocatedWorkPaise: 8_000_000, expectedVersion: 1 });
-    await expect(allocate(saved.id, 1, "project-b")).rejects.toMatchObject({ code: "PROCUREMENT_VENDOR_ALLOCATION_CAP_EXCEEDED" });
+    expect((await service.get(actor, "project-a", item.id)).vendor).toMatchObject({ id: saved.id, status: "under_review" });
+    await expect(allocate(saved.id, 1, "project-b")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
     expect((await service.update(actor, "project-a", item.id, { ...fields, vendorId: saved.id, pricePaise: 999, expectedVersion: 2 })).allocatedWorkPaise).toBe(8_000_000);
   });
   it("retries a snapshot after a concurrent verification downgrade on the shared vendor document", async () => {
@@ -183,7 +201,7 @@ describe("vendor allocation transactions", () => {
     await reachedLock;
     release();
     await downgrade;
-    await expect(allocation).rejects.toMatchObject({ code: "PROCUREMENT_VENDOR_ALLOCATION_CAP_EXCEEDED" });
+    await expect(allocation).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
     expect(await ProjectProcurementItemModel.countDocuments()).toBe(1);
   });
   it("rolls back allocation and vendor coordination when audit fails", async () => {
@@ -200,20 +218,22 @@ describe("vendor allocation transactions", () => {
     await allocate(saved.id, 4_000_000);
     await ProjectModel.updateOne({ _id: "project-a" }, { $set: { status: "completed" } });
     await ProjectProcurementItemModel.updateMany({}, { $set: { estimateVersion: 42 } });
-    await expect(allocate(saved.id, 1_000_001, "project-b")).rejects.toMatchObject({ code: "PROCUREMENT_VENDOR_ALLOCATION_CAP_EXCEEDED" });
+    await allocate(saved.id, 1_000_001, "project-b");
+    const totals = await mongoose.connection.transaction(session => procurementVendorAllocationTotals(saved.id, session));
+    expect(totals.totalAllocatedWorkPaise).toBe(5_000_001n);
   });
 });
 
 describe("restricted historical allocation completion", () => {
-  it("blocks unknown history while keeping metadata-only legacy editing available", async () => {
+  it("keeps unknown historical work visible while allowing metadata-only legacy editing", async () => {
     const saved = await vendor();
     const itemId = await historical(saved.id);
-    await expect(allocate(saved.id, 1, "project-b")).rejects.toMatchObject({ code: "PROCUREMENT_VENDOR_ALLOCATION_BASELINE_INCOMPLETE" });
+    await allocate(saved.id, 1, "project-b");
+    expect((await mongoose.connection.transaction(session => procurementVendorAllocationTotals(saved.id, session))).unknownItemCount).toBe(1);
     const { estimateId: _estimate, estimateVersion: _version, sourceLineItemKey: _line, ...legacy } = fields;
     const edit = await service.update(actor, "project-a", itemId, { ...legacy, itemName: "Corrected label", vendorId: saved.id, expectedVersion: 1 });
     expect(edit.allocatedWorkPaise).toBeNull();
     expect((await ProjectProcurementItemModel.findById(itemId).lean())?.allocationTrackingVersion).toBeNull();
-    await expect(service.update(actor, "project-a", itemId, { ...legacy, vendorId: saved.id, allocatedWorkPaise: 1, expectedVersion: 2 })).rejects.toMatchObject({ code: "PROCUREMENT_VENDOR_ALLOCATION_BASELINE_INCOMPLETE" });
     const page = await baselineService.list(admin, saved.id, { limit: 20, offset: 0 });
     expect(page).toEqual({ items: [{ itemId, projectId: "project-a", projectName: "project-a", itemName: "Corrected label", brand: fields.brand, version: 2 }], total: 1, limit: 20, offset: 0 });
   });
@@ -225,7 +245,7 @@ describe("restricted historical allocation completion", () => {
     const row = await ProjectProcurementItemModel.findById(itemId).lean();
     expect(row).toMatchObject({ pricePaise: 15_001, estimateId: null, vendorId: saved.id, allocationTrackingVersion: 1 });
     expect((await baselineService.list(admin, saved.id, { limit: 20, offset: 0 })).total).toBe(0);
-    await expect(allocate(saved.id, 1, "project-b")).rejects.toMatchObject({ code: "PROCUREMENT_VENDOR_ALLOCATION_CAP_EXCEEDED" });
+    expect((await allocate(saved.id, 1, "project-b")).allocatedWorkPaise).toBe(1);
     const { estimateId: _estimate, estimateVersion: _version, sourceLineItemKey: _line, ...legacy } = fields;
     await service.update(actor, "project-a", itemId, { ...legacy, vendorId: saved.id, pricePaise: 321, expectedVersion: 2 });
     expect(await baselineService.complete(admin, saved.id, itemId, correction)).toEqual(result);
@@ -269,8 +289,8 @@ describe("restricted historical allocation completion", () => {
     await reachedLock;
     release();
     await completion;
-    await expect(allocation).rejects.toMatchObject({ code: "PROCUREMENT_VENDOR_ALLOCATION_CAP_EXCEEDED" });
-    expect(await ProjectProcurementItemModel.countDocuments()).toBe(1);
+    expect((await allocation).allocatedWorkPaise).toBe(2_000_000);
+    expect(await ProjectProcurementItemModel.countDocuments()).toBe(2);
     expect(await AuditEventModel.countDocuments({ action: "procurement_vendor_allocation_baseline_recorded" })).toBe(1);
   });
   it("excludes every new item and consumes exception eligibility on vendor reassignment/removal", async () => {

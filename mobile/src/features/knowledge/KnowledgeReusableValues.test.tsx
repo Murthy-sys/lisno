@@ -9,15 +9,16 @@ jest.mock("react-native-safe-area-context", () => ({ SafeAreaView: require("reac
 jest.mock("./knowledgeRuntime", () => ({ allKnowledgePages: async (load: (page: { limit: number; offset: number }) => Promise<{ items: readonly unknown[] }>) => (await load({ limit: 100, offset: 0 })).items }));
 jest.mock("./KnowledgeVendorEditor", () => ({ KnowledgeVendorEditor: () => null }));
 
-const makeVendor = (id: string, name: string, status: "active" | "inactive" | "archived", verified: boolean | null) => ({
+const makeVendor = (id: string, name: string, status: "active" | "inactive" | "archived", effectiveStatus: "active" | "under_review" | "inactive" | "archived", verified: boolean | null) => ({
   id, name, code: `PV-${id.toUpperCase()}`, masterType: "vendors", status, version: 1, description: null,
-  procurementSummary: { currentAddressVerifiedPhysically: verified, vendorType: "supplier" }
+  procurementSummary: { currentAddressVerifiedPhysically: verified, vendorType: "supplier" },
+  vendorActivation: { lifecycleStatus: status, effectiveStatus, gates: { inductionApproved: effectiveStatus === "active", vendorSelfKpiComplete: effectiveStatus === "active", procurementKpiComplete: effectiveStatus === "active", profileComplete: true, physicalAddressVerified: Boolean(verified) } }
 });
 const vendors = [
-  makeVendor("review", "Review Co", "active", false),
-  makeVendor("verified", "Verified Co", "active", true),
-  makeVendor("inactive", "Inactive Co", "inactive", false),
-  makeVendor("archived", "Archived Co", "archived", false)
+  makeVendor("review", "Review Co", "active", "under_review", true),
+  makeVendor("verified", "Verified Co", "active", "active", true),
+  makeVendor("inactive", "Inactive Co", "inactive", "inactive", false),
+  makeVendor("archived", "Archived Co", "archived", "archived", false)
 ];
 
 it("shows a single review-aware status without vendor codes in Configuration", async () => {
@@ -44,4 +45,8 @@ it("shows a single review-aware status without vendor codes in Configuration", a
   expect(view.getByRole("link", { name: "Open Archived Co KPI" })).toBeTruthy();
   expect(view.getAllByText("Archived").length).toBeGreaterThan(1);
   expect(view.queryByText(/PV-ARCHIVED/)).toBeNull();
+  await fireEvent.press(view.getByRole("combobox", { name: "Status" }));
+  await fireEvent.press(view.getByRole("radio", { name: "Under Review" }));
+  expect(view.getByRole("link", { name: "Open Review Co KPI" })).toBeTruthy();
+  expect(view.queryByRole("link", { name: "Open Verified Co KPI" })).toBeNull();
 });

@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import type { ProcurementVendorDetail } from "../../../../shared/knowledge/knowledgeTypes";
+import type { VendorInductionStaffDetail } from "../../../../shared/knowledge/vendorInduction";
 import {
   VENDOR_KPI_RUBRICS, VENDOR_KPI_RUBRIC_VERSION,
   type VendorKpiCategoryScore, type VendorKpiSaveInput, type VendorKpiStaffDetail,
@@ -21,10 +22,12 @@ import { KnowledgeVendorEditor } from "../knowledge/KnowledgeVendorEditor";
 import { useKnowledgeContext } from "../knowledge/knowledgeRuntime";
 import { useProcurementVendorContext } from "../knowledge/vendorRuntime";
 import { formatVendorKpiScore, scoreRows } from "./vendorKpiPresentation";
+import { VendorInductionStaffSection, VendorActivationSummary } from "./VendorInductionStaffSection";
 
 const denied = (error: unknown) => error instanceof ApiError && (error.status === 401 || error.status === 403);
 const conflict = (error: unknown) => error instanceof ApiError && error.status === 409;
 const detailPath = (vendorId: string) => `/procurement/vendor-kpis/${encodeURIComponent(vendorId)}`;
+const inductionPath = (vendorId: string) => `/procurement/vendor-inductions/${encodeURIComponent(vendorId)}`;
 const dateLabel = (value: string) => {
   const parsed = new Date(value);
   return Number.isFinite(parsed.getTime()) ? parsed.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "Date unavailable";
@@ -41,7 +44,10 @@ export function VendorKpiStaffScreen({ session, vendorId }: { readonly session: 
   const canRead = (session.user.role === "procurement" || session.user.role === "super_admin") && permissions.includes("procurement.vendor_kpi.read");
   const canRate = canRead && permissions.includes("procurement.vendor_kpi.rate");
   const canRequest = canRead && permissions.includes("procurement.vendor_kpi.request");
+  const canReadInduction = canRead && new Set<string>(permissions).has("procurement.vendor_induction.read");
+  const [section, setSection] = useState<"overview" | "induction">("overview");
   const queryKey = privateQueryKey({ environmentId: configured.environment.environment.id, userId: session.user.id }, "vendors", "vendor-kpi", vendorId);
+  const inductionKey = privateQueryKey({ environmentId: configured.environment.environment.id, userId: session.user.id }, "vendors", "vendor-induction", vendorId);
   const [editing, setEditing] = useState<ProcurementVendorDetail | null>(null);
   const [editError, setEditError] = useState<unknown>(null);
   const [notice, setNotice] = useState("");
@@ -51,6 +57,11 @@ export function VendorKpiStaffScreen({ session, vendorId }: { readonly session: 
     if (result.vendor.id !== vendorId) throw new Error("Vendor identity changed. Refresh before continuing.");
     return result;
   }, enabled: canRead && configured.environment.status === "ready", retry: false, refetchOnMount: "always" });
+  const induction = useQuery({ queryKey: inductionKey, queryFn: async ({ signal }) => {
+    const result = await configured.runtime.api.authenticated.get<VendorInductionStaffDetail>(inductionPath(vendorId), { signal });
+    if (result.vendor.id !== vendorId) throw new Error("Vendor identity changed. Refresh before continuing.");
+    return result;
+  }, enabled: canReadInduction && configured.environment.status === "ready", retry: false, refetchOnMount: "always" });
   const edit = useMutation({ mutationFn: async () => {
     if (!vendorContext.canRead) throw new Error("Vendor profile access is required.");
     const result = await configured.runtime.api.authenticated.get<ProcurementVendorDetail>(`/admin/ai-estimator-knowledge/vendors/${encodeURIComponent(vendorId)}`);
@@ -62,7 +73,7 @@ export function VendorKpiStaffScreen({ session, vendorId }: { readonly session: 
     const result = await configured.runtime.api.authenticated.put<VendorKpiStaffDetail>(`${detailPath(vendorId)}/procurement`, input);
     if (result.vendor.id !== vendorId) throw new Error("Vendor identity changed. Refresh before continuing.");
     return result;
-  }, retry: false, onSuccess: async result => { client.setQueryData(queryKey, result); setNotice("Procurement KPI saved."); await invalidate("knowledge-changed"); } });
+  }, retry: false, onSuccess: async result => { client.setQueryData(queryKey, result); setNotice("Procurement KPI saved."); await invalidate("knowledge-changed"); if (canReadInduction) await client.invalidateQueries({ queryKey: inductionKey }); } });
   const request = useMutation({ mutationFn: async (input: VendorKpiRequestInput) => {
     if (!canRequest || !query.data) throw new Error("Vendor KPI request permission is required.");
     const result = await configured.runtime.api.authenticated.post<VendorKpiStaffDetail>(`${detailPath(vendorId)}/requests`, input);
@@ -70,33 +81,42 @@ export function VendorKpiStaffScreen({ session, vendorId }: { readonly session: 
     return result;
   }, retry: false, onSuccess: async result => { client.setQueryData(queryKey, result); requestKey.current = createIdempotencyKey(); setNotice("KPI request saved. Check its delivery status below."); await invalidate("knowledge-changed"); } });
 
-  const accessLost = denied(query.error) || denied(editError) || denied(save.error) || denied(request.error);
+  const accessLost = denied(query.error) || denied(induction.error) || denied(editError) || denied(save.error) || denied(request.error);
   if (!canRead || accessLost) return <StateView tone="denied" title="Vendor KPI unavailable" message="Your current account cannot view this vendor KPI." />;
   if (configured.environment.status !== "ready" || query.isPending) return <StateView title="Loading Vendor KPI" message="Loading the latest vendor assessment…" />;
   if (query.isError && !query.data) return <StateView tone="error" title="Vendor KPI could not be loaded" message="Check your connection and try again." actionLabel="Retry Vendor KPI" onAction={() => void query.refetch()} />;
   const detail = query.data;
   if (!detail) return <StateView tone="error" title="Vendor KPI unavailable" message="The vendor assessment was not returned." />;
+  const availability = induction.data?.activation.effectiveStatus;
+  const availabilityLabel = availability === "active" ? "Active" : availability === "inactive" ? "Inactive" : availability === "archived" ? "Archived" : detail.vendor.status === "archived" ? "Archived" : detail.vendor.status === "inactive" ? "Inactive" : "Under Review";
   const rubricCurrent = detail.rubricVersion === VENDOR_KPI_RUBRIC_VERSION;
   const vendorType = detail.vendor.vendorType;
   const mayRequest = canRequest && detail.requestEligibility === "ready" && !detail.selfAssessment && vendorType !== null && detail.vendor.emailAvailable && detail.vendor.status !== "archived" && !query.isRefetchError;
   const requestLabel = detail.request ? "Resend KPI request" : "Request KPI from vendor";
-  const refresh = () => { requestKey.current = createIdempotencyKey(); setNotice(""); save.reset(); request.reset(); edit.reset(); setEditError(null); void query.refetch(); };
+  const refresh = () => { requestKey.current = createIdempotencyKey(); setNotice(""); save.reset(); request.reset(); edit.reset(); setEditError(null); void query.refetch(); if (canReadInduction) void induction.refetch(); };
 
   return <ScrollView contentContainerStyle={styles.screen} keyboardShouldPersistTaps="handled" refreshControl={<RefreshControl refreshing={query.isRefetching} onRefresh={refresh} tintColor={colors.primary} />}>
     <ScaffoldContentBack />
     <View style={styles.heading}>
       <Text style={styles.eyebrow}>VENDOR PERFORMANCE</Text>
       <Text accessibilityRole="header" style={styles.title}>{detail.vendor.name}</Text>
-      <Text style={styles.meta}>{detail.vendor.code} · {detail.vendor.status} · {vendorType === "execution" ? "Execution vendor" : vendorType === "supplier" ? "Supplier" : "Type not configured"}</Text>
-      <View style={styles.actions}>
+      <Text style={styles.meta}>{availabilityLabel} · {vendorType === "execution" ? "Execution vendor" : vendorType === "supplier" ? "Supplier" : "Type not configured"}</Text>
+      {canReadInduction ? <View style={styles.actions} accessibilityRole="tablist">
+        <Button label="Overview" variant={section === "overview" ? "primary" : "secondary"} size="compact" onPress={() => setSection("overview")} />
+        <Button label="Induction" variant={section === "induction" ? "primary" : "secondary"} size="compact" onPress={() => setSection("induction")} />
+      </View> : null}
+      {section === "overview" ? <View style={styles.actions}>
         {mayRequest ? <Button label={requestLabel} size="compact" loading={request.isPending} disabled={request.isPending || save.isPending || !rubricCurrent} onPress={() => request.mutate({ idempotencyKey: requestKey.current, expectedRequestVersion: detail.request?.version ?? null })} /> : null}
         {vendorContext.canRead ? <Button label={vendorContext.canUpdate && detail.vendor.status !== "archived" ? "Edit vendor" : "View vendor profile"} variant="secondary" size="compact" loading={edit.isPending} onPress={() => edit.mutate()} /> : null}
-      </View>
+      </View> : null}
       {notice ? <Text accessibilityLiveRegion="polite" style={styles.notice}>{notice}</Text> : null}
     </View>
+    {section === "induction" && canReadInduction ? <VendorInductionStaffSection session={session} vendorId={vendorId} detail={induction.data ?? null} loading={induction.isPending} error={induction.error} stale={induction.isRefetchError} onRefresh={() => void induction.refetch()} /> : null}
+    {section === "overview" ? <>
     {query.isRefetchError ? <StateView tone="error" title="Vendor KPI may be out of date" message="Refresh before making another change." actionLabel="Refresh Vendor KPI" onAction={refresh} /> : null}
     {query.isRefetching ? <Text accessibilityLiveRegion="polite" style={styles.meta}>Updating Vendor KPI…</Text> : null}
     {edit.isError ? <StateView tone="error" title="Vendor profile unavailable" message="The vendor profile could not be loaded. Retry from this page." actionLabel="Retry profile" onAction={() => edit.mutate()} /> : null}
+    {canReadInduction ? induction.isPending ? <StateView title="Checking vendor availability" message="Loading activation requirements…" /> : induction.isError && !induction.data ? <StateView tone="error" title="Availability unavailable" message="Refresh to see the latest activation requirements." actionLabel="Retry availability" onAction={() => void induction.refetch()} /> : induction.data ? <VendorActivationSummary activation={induction.data.activation} onOpenInduction={() => setSection("induction")} /> : null : null}
     <View style={styles.summary}>
       <Metric label="Official Vendor KPI" value={formatVendorKpiScore(detail.officialScoreBps)} />
       <Metric label="Vendor self rating" value={formatVendorKpiScore(detail.selfAssessment?.averageScoreBps ?? null)} />
@@ -122,7 +142,8 @@ export function VendorKpiStaffScreen({ session, vendorId }: { readonly session: 
       {detail.requestEligibility === "archived" ? <Text style={styles.meta}>Archived vendors cannot receive requests.</Text> : null}
       {request.isError ? <Text accessibilityLiveRegion="assertive" style={styles.error}>{conflict(request.error) ? "The request changed. Refresh before retrying." : "The request could not be confirmed. Retry keeps the same request identity."}</Text> : null}
     </View>
-    {editing ? <KnowledgeVendorEditor context={vendorContext} existing={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void invalidate("knowledge-changed"); void query.refetch(); }} /> : null}
+    {editing ? <KnowledgeVendorEditor context={vendorContext} existing={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void invalidate("knowledge-changed"); void query.refetch(); if (canReadInduction) void induction.refetch(); }} /> : null}
+    </> : null}
   </ScrollView>;
 }
 

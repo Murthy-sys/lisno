@@ -257,7 +257,7 @@ function renderPanel(
 }
 
 async function selectExecutionSource(user: ReturnType<typeof userEvent.setup>, source: "Sub-Vendor" | "In-house") {
-  const execution = screen.getByRole("checkbox", { name: "Execution" }) as HTMLInputElement;
+  const execution = await screen.findByRole("checkbox", { name: "Execution" }) as HTMLInputElement;
   if (!execution.checked) await user.click(execution);
   for (const label of ["Sub-Vendor", "In-house"] as const) {
     const checkbox = screen.getByRole("checkbox", { name: label }) as HTMLInputElement;
@@ -1162,10 +1162,10 @@ describe("Knowledge Mode section-state removal", () => {
     expect(other).not.toBeChecked();
   });
 
-  it("adds to a missing backend list and saves/reloads without populating the opposite list", async () => {
+  it("adds to a saved configuration with missing lists without populating the opposite list", async () => {
     const user = userEvent.setup();
     const ref = createRef<KnowledgeModePanelHandle>();
-    let stored = section("advanced", "configured", {});
+    let stored = section("advanced", "configured", { modeConfigurations: [{ id: "saved-scope", modeKind: "pmc", fields: [] }] });
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
       key === "advanced" ? stored : section(key as "pricing" | "overview"));
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, key, input) => {
@@ -1186,6 +1186,47 @@ describe("Knowledge Mode section-state removal", () => {
     await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
     expect(screen.getByRole("checkbox", { name: "Custom permit" })).not.toBeChecked();
     expect(screen.getByText("No inclusions added.")).toBeVisible();
+  });
+
+  it("keeps new starter rows unsaved, restores them on discard, and persists both lists after the first edit", async () => {
+    const user = userEvent.setup();
+    const ref = createRef<KnowledgeModePanelHandle>();
+    let stored = section("advanced", "configured", {});
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
+      key === "advanced" ? stored : section(key as "pricing" | "overview"));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, key, input) => {
+      const result = savedSection(key as "advanced", input);
+      stored = result;
+      return result;
+    });
+    const view = renderPanel(ref);
+    await selectExecutionSource(user, "Sub-Vendor");
+    const inclusions = within(screen.getByRole("group", { name: "Inclusions" }));
+    const exclusions = within(screen.getByRole("group", { name: "Exclusions" }));
+    expect(inclusions.getAllByRole("checkbox")).toHaveLength(6);
+    expect(exclusions.getAllByRole("checkbox")).toHaveLength(6);
+    expect(stored.payload.modeConfigurations).toBeUndefined();
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    await user.click(inclusions.getByRole("checkbox", { name: "Transport" }));
+    expect(exclusions.getByRole("checkbox", { name: "Transport" })).toBeDisabled();
+    act(() => ref.current?.discard());
+    await selectExecutionSource(user, "Sub-Vendor");
+    const restoredInclusions = within(screen.getByRole("group", { name: "Inclusions" }));
+    const restoredExclusions = within(screen.getByRole("group", { name: "Exclusions" }));
+    expect(restoredInclusions.getByRole("checkbox", { name: "Transport" })).not.toBeChecked();
+    expect(restoredExclusions.getByRole("checkbox", { name: "Transport" })).toBeEnabled();
+    expect(stored.payload.modeConfigurations).toBeUndefined();
+    await user.click(restoredExclusions.getByRole("checkbox", { name: "Shifting" }));
+    await act(async () => { expect(await ref.current?.save()).toBe(true); });
+    const saved = (stored.payload.modeConfigurations as KnowledgeJsonObject[])[0]!;
+    expect(saved.inclusions).toHaveLength(6);
+    expect(saved.exclusions).toHaveLength(6);
+    expect(saved.exclusions).toEqual(expect.arrayContaining([expect.objectContaining({ name: "Shifting", selected: true })]));
+    view.unmount();
+    renderPanel(ref);
+    await selectExecutionSource(user, "Sub-Vendor");
+    expect(within(screen.getByRole("group", { name: "Inclusions" })).getAllByRole("checkbox")).toHaveLength(6);
+    expect(within(screen.getByRole("group", { name: "Exclusions" })).getByRole("checkbox", { name: "Shifting" })).toBeChecked();
   });
 
   it("blocks a legacy conflicting save, supports discard, and saves its deletion repair", async () => {

@@ -1,6 +1,8 @@
 import mongoose from "mongoose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowledgeVendor.js";
+import { VendorKpiAssessmentModel } from "../src/models/VendorKpiAssessment.js";
+import { VendorInductionReviewModel } from "../src/models/VendorInduction.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoordination.js";
 import { ProjectModel } from "../src/models/Project.js";
@@ -18,6 +20,7 @@ import type { PublicUser } from "../src/services/auth.service.js";
 import { createProjectVendorSuggestionService } from "../src/services/project-vendor-suggestions.service.js";
 import { createProjectProcurementService } from "../src/services/project-procurement.service.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
+import { vendorProfileFixture } from "./procurement-vendor-profile.fixture.js";
 const actor: PublicUser = { id: "manager-a", name: "Manager A", email: "a@example.test", role: "admin" };
 const other: PublicUser = { id: "manager-b", name: "Manager B", email: "b@example.test", role: "admin" };
 const buyer: PublicUser = { id: "buyer", name: "Buyer", email: "buyer@example.test", role: "procurement" };
@@ -31,7 +34,7 @@ const fields = { estimateId: "estimate-project-a", estimateVersion: 1, designPla
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 beforeAll(async () => {
   replica = await startMongoReplicaSet("vendor-suggestions-tests");
-  await Promise.all([UserModel, ProjectModel, ProjectAccessGrantModel, EstimateModel, EstimateClientReviewRoundModel, ProjectWorkflowTaskModel, AiEstimatorKnowledgeVendorModel, ProjectVendorSuggestionModel, AuditEventModel, AuthorizationCoordinationModel, FinanceLedgerEntryModel, ProjectFinanceBucketModel].map((model) => model.syncIndexes()));
+  await Promise.all([UserModel, ProjectModel, ProjectAccessGrantModel, EstimateModel, EstimateClientReviewRoundModel, ProjectWorkflowTaskModel, AiEstimatorKnowledgeVendorModel, VendorKpiAssessmentModel, VendorInductionReviewModel, ProjectVendorSuggestionModel, AuditEventModel, AuthorizationCoordinationModel, FinanceLedgerEntryModel, ProjectFinanceBucketModel].map((model) => model.syncIndexes()));
 }, 120_000);
 beforeEach(async () => {
   vi.restoreAllMocks(); await replica.clear();
@@ -39,7 +42,16 @@ beforeEach(async () => {
   await createProject("project-a", buyer.id, 10000);
   await createProject("project-b", buyer.id, 23500);
   await ProjectAccessGrantModel.create([actor, other].map((user, index) => ({ _id: `grant-${user.id}`, projectId: index === 0 ? "project-a" : "project-b", userId: user.id, module: "projects", source: "admin_initiator", grantedById: superAdmin.id, grantedAt: now, active: true })));
-  await AiEstimatorKnowledgeVendorModel.create([1, 2].map((index) => ({ _id: `vendor-${index}`, code: `V${index}`, name: `Vendor ${index}`, status: "active", version: 1, displayOrder: index, createdById: superAdmin.id, updatedById: superAdmin.id })));
+  await AiEstimatorKnowledgeVendorModel.create([1, 2].map((index) => ({ _id: `vendor-${index}`, code: `V${index}`, name: `Vendor ${index}`, status: "active", version: 1, displayOrder: index,
+    procurementProfile: { ...vendorProfileFixture(), currentAddressVerifiedPhysically: true,
+      physicalAddressVerifiedAt: now.toISOString(), physicalAddressVerifiedById: buyer.id },
+    createdById: superAdmin.id, updatedById: superAdmin.id })));
+  await VendorInductionReviewModel.collection.insertMany([1, 2].map(index => ({ _id: `review-${index}`, vendorId: `vendor-${index}`,
+    version: 1, vendorType: "execution", decision: "approved" })));
+  await VendorKpiAssessmentModel.collection.insertMany([1, 2].flatMap(index => ["vendor_self", "procurement"].map(source => ({
+    _id: `kpi-${index}-${source}`, vendorId: `vendor-${index}`, source, vendorType: "execution",
+    rubricVersion: 1, rubricGeneration: 0, revision: 1, averageScoreBps: 0
+  }))));
 });
 afterAll(async () => { await replica?.stop(); });
 async function createProject(projectId: string, assigneeId: string, subtotal: number) {
@@ -76,6 +88,19 @@ async function createProject(projectId: string, assigneeId: string, subtotal: nu
 }
 
 describe("project vendor suggestions", () => {
+  it("keeps historical suggestions readable but blocks reinstatement after induction approval is reopened", async () => {
+    const created = await service.create(actor, "project-a", fields);
+    const withdrawn = await service.update(actor, "project-a", created.suggestion.id,
+      { expectedVersion: 1, note: "Needs renewed induction", status: "withdrawn" });
+    await VendorInductionReviewModel.collection.insertOne({ _id: "review-reopened-1", vendorId: "vendor-1",
+      version: 2, vendorType: "execution", decision: "reopened", idempotencyKey: "reopen-vendor-1" });
+    expect((await service.list(buyer, "project-a", query)).items).toMatchObject([{
+      id: created.suggestion.id, vendor: { id: "vendor-1", status: "under_review" }
+    }]);
+    await expect(service.update(actor, "project-a", created.suggestion.id,
+      { expectedVersion: withdrawn.version, note: "Reinstate", status: "suggested" }))
+      .rejects.toMatchObject({ code: "VENDOR_SUGGESTION_VENDOR_UNAVAILABLE" });
+  });
   it("scopes two managers to their grants while Procurement and Super Admin can read eligible projects", async () => {
     expect((await service.projects(actor, query)).items.map((row) => row.projectId)).toEqual(["project-a"]);
     expect((await service.projects(other, query)).items.map((row) => row.projectId)).toEqual(["project-b"]);
@@ -96,7 +121,7 @@ describe("project vendor suggestions", () => {
     const created = await service.create(actor, "project-a", fields);
     expect(created).toMatchObject({ created: true, suggestion: { projectId: "project-a", estimateId: fields.estimateId, estimateVersion: 1, estimateReviewRoundId: "round-project-a", designPlanVersion: 1, vendor: { id: "vendor-1", code: "V1", name: "Vendor 1", status: "active" }, suggestedBy: { id: actor.id, name: actor.name }, version: 1, kpi: { status: "not_available", score: null } } });
     const page = await service.list(buyer, "project-a", query);
-    expect(page.items).toEqual([{ ...created.suggestion, kpi: { status: "not_rated", score: null } }]);
+    expect(page.items).toEqual([{ ...created.suggestion, kpi: { status: "rated", score: 0 } }]);
     expect(page.performance).toEqual({ status: "not_available", recommendations: [] });
     expect(page.project).toEqual({ projectId: "project-a", projectName: "project-a", estimateId: fields.estimateId, estimateVersion: 1, designPlanVersion: 1 });
     expect(await EstimateModel.find().select({ procurementSourceEpoch: 0 }).sort({ _id: 1 }).lean()).toEqual(estimates);
@@ -137,7 +162,7 @@ describe("project vendor suggestions", () => {
     expect((await service.list(actor, "project-a", query)).items).toEqual([]);
     await expect(service.update(actor, "project-a", saved.id, { expectedVersion: 1, note: "", status: "withdrawn" })).rejects.toMatchObject({ code: "VENDOR_SUGGESTION_SOURCE_CONFLICT" });
     const current = await service.create(actor, "project-a", { ...fields, designPlanVersion: 2, idempotencyKey: "new-round-request" });
-    expect((await service.list(buyer, "project-a", query)).items).toEqual([{ ...current.suggestion, kpi: { status: "not_rated", score: null } }]);
+    expect((await service.list(buyer, "project-a", query)).items).toEqual([{ ...current.suggestion, kpi: { status: "rated", score: 0 } }]);
     expect(await ProjectVendorSuggestionModel.countDocuments()).toBe(2);
   });
   it("withdraws/reinstates with CAS, retains history and lets a newly assigned manager edit", async () => {
@@ -247,6 +272,6 @@ describe("project vendor suggestions", () => {
     expect(new Set([...page1.items, ...page2.items].map((row) => row.id)).size).toBe(2);
     expect((await service.list(actor, "project-a", { ...query, q: ".*" })).total).toBe(1);
     expect((await service.list(actor, "project-b", query).catch(() => null))).toBeNull();
-    expect((await service.list(buyer, "project-a", { ...query, q: "Vendor 2" })).items).toEqual([{ ...next, kpi: { status: "not_rated", score: null } }]);
+    expect((await service.list(buyer, "project-a", { ...query, q: "Vendor 2" })).items).toEqual([{ ...next, kpi: { status: "rated", score: 0 } }]);
   });
 });

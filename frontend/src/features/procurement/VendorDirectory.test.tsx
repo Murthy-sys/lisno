@@ -221,7 +221,7 @@ describe("reference vendor directory", () => {
       { ...rows[0], procurementSummary: undefined },
       { ...rows[1], status: "inactive" },
       { ...rows[2], status: "archived" },
-      { ...rows[3], procurementSummary: { ...rows[3].procurementSummary!, currentAddressVerifiedPhysically: true } }
+      { ...rows[3], procurementSummary: { ...rows[3].procurementSummary!, currentAddressVerifiedPhysically: true }, vendorActivation: { lifecycleStatus: "active", effectiveStatus: "active", gates: { inductionApproved: true, vendorSelfKpiComplete: true, procurementKpiComplete: true, profileComplete: true, physicalAddressVerified: true } } }
     ];
     start(); const table = await screen.findByRole("table");
     const legacy = within(table).getByRole("rowheader", { name: /Timber House/ }).closest("tr")!;
@@ -237,6 +237,17 @@ describe("reference vendor directory", () => {
     const active = within(table).getByRole("rowheader", { name: /Vendor 4/ }).closest("tr")!;
     expect(within(active).getByText("Active")).toBeVisible();
     expect(within(active).queryByText("Under Review")).not.toBeInTheDocument();
+  });
+
+  it("filters by backend effective status and never infers Active from the address flag", async () => {
+    rows[0] = { ...rows[0], procurementSummary: { ...rows[0].procurementSummary!, currentAddressVerifiedPhysically: true } };
+    start(); const user = userEvent.setup();
+    const table = await screen.findByRole("table");
+    const row = within(table).getByRole("rowheader", { name: /Timber House/ }).closest("tr")!;
+    expect(within(row).getByText("Under Review")).toBeVisible();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Status" }), "under_review");
+    await waitFor(() => expect(pageRequests().at(-1)?.get("effectiveStatus")).toBe("under_review"));
+    expect(pageRequests().at(-1)?.has("status")).toBe(false);
   });
 
   it("changes rows per page, returns to the first page, clears selection and survives Reset", async () => {

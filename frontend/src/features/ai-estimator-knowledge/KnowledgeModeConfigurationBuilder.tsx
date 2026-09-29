@@ -28,7 +28,7 @@ import { generateModeDescription, modeDescriptionIssues, syncModeDescription } f
 import { calculationScopeForIssue, MODE_CALCULATION_SCOPES, modeCalculationIssues, modeCalculationsIssues, type ModeCalculationScope } from "./knowledgeModeCalculation";
 import { pmcMarginRange, pmcMarginRangeIssues, subVendorMarginRange, subVendorMarginRangeIssues, withPmcMargin, withSubVendorMargin } from "./knowledgePmcMargin";
 import { KnowledgePmcMarginRange, KnowledgeSubVendorMarginRange } from "./KnowledgePmcMarginInput";
-import { inHouseScopeStarterItems, PMC_SCOPE_LISTS, type KnowledgePmcScopeList } from "./knowledgePmcScope";
+import { inHouseScopeStarterItems, subVendorScopeStarterItems, PMC_SCOPE_LISTS, type KnowledgePmcScopeList } from "./knowledgePmcScope";
 import type {
   KnowledgeJsonObject,
   KnowledgeMaster
@@ -260,6 +260,25 @@ export function KnowledgeModeConfigurationBuilder({
     });
   }
 
+  function subVendorScopeItems(list: KnowledgePmcScopeList) {
+    return partitioned.primary.pmc?.[list] ?? (partitioned.primary.pmc || readOnly ? [] : subVendorScopeStarterItems(list));
+  }
+
+  function updateSubVendorScope(list: KnowledgePmcScopeList, items: ReturnType<typeof subVendorScopeItems>) {
+    const existing = partitioned.primary.pmc;
+    if (existing) {
+      // An omitted list in a saved configuration is intentional; leave it omitted.
+      updateConfiguration({ ...existing, [list]: items });
+      return;
+    }
+    const configuration = createKnowledgeModeConfiguration("pmc");
+    updateConfiguration({
+      ...configuration,
+      inclusions: list === "inclusions" ? items : subVendorScopeStarterItems("inclusions"),
+      exclusions: list === "exclusions" ? items : subVendorScopeStarterItems("exclusions")
+    });
+  }
+
   const subVendorMarginControl = <KnowledgeSubVendorMarginRange key={descriptionResetKey}
     {...subVendorMarginRange(payload)} readOnly={readOnly}
     errors={{ minimum: issueFor("subVendorMinimumMarginBps"), maximum: issueFor("subVendorMarginBps") }}
@@ -473,16 +492,10 @@ export function KnowledgeModeConfigurationBuilder({
                             <KnowledgePmcScopeChecklist
                               key={list}
                               list={list}
-                              items={partitioned.primary.pmc?.[list] ?? []}
-                              oppositeItems={partitioned.primary.pmc?.[list === "inclusions" ? "exclusions" : "inclusions"] ?? []}
+                              items={subVendorScopeItems(list)}
+                              oppositeItems={subVendorScopeItems(list === "inclusions" ? "exclusions" : "inclusions")}
                               readOnly={readOnly}
-                              onChange={(items) => {
-                                const configuration = partitioned.primary.pmc ?? createKnowledgeModeConfiguration("pmc");
-                                updateConfiguration({
-                                  ...configuration,
-                                  [list]: items
-                                });
-                              }}
+                              onChange={(items) => updateSubVendorScope(list, items)}
                             />
                           ))}
                         </div>

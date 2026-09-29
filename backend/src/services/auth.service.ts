@@ -68,7 +68,7 @@ export interface AuthPayload {
 }
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-09-28.vendor-kpi.v1" as const;
+  "2026-09-28.vendor-induction.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

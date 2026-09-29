@@ -1,6 +1,7 @@
 import { BUDGET_ACTIONS, budgetAlterationIssues, recommendationItemRequiresCompletion, recommendationTargetKind } from "./knowledgeBudgetAlterations";
-import { modeCalculationIssues } from "./knowledgeModeCalculation";
+import { modeCalculationIssues, modeCalculationsForPayload } from "./knowledgeModeCalculation";
 import { pmcMarginRange, pmcMarginRangeIssues, subVendorMarginRange, subVendorMarginRangeIssues } from "./knowledgePmcMargin";
+import { formatKnowledgeMoney } from "./knowledgePresentation";
 import { validateQualityParametersForSave } from "./knowledgeQuality";
 import { qualityFrequencyPresentation, qualityPassRange, qualityPerformerPresentation, qualitySeverityPresentation } from "./knowledgeQualityPresentation";
 import type { KnowledgeJsonObject, KnowledgeJsonValue, KnowledgeMasterType } from "./knowledgeTypes";
@@ -60,6 +61,49 @@ function content(details: readonly SavedSummaryRow[], previews: readonly SavedSu
   return { details, preview: previews.slice(0, 3).map(item => ({ ...item, value: concise(item.value) })) };
 }
 
+function percent(bps: number): string {
+  const whole = Math.trunc(bps / 100);
+  const fractional = bps % 100;
+  if (fractional === 0) return `${whole}%`;
+  return `${whole}.${fractional % 10 === 0 ? fractional / 10 : String(fractional).padStart(2, "0")}%`;
+}
+
+function savedMarginRange(minimum: number, maximum: number): string {
+  return minimum === maximum ? percent(minimum) : `Min ${percent(minimum)} · Max ${percent(maximum)}`;
+}
+
+function savedGrossMargin(value: KnowledgeJsonValue | undefined): string {
+  if (!object(value) || typeof value.minimumMarkupBps !== "number" || typeof value.startingMarkupBps !== "number") {
+    return NEEDS_REVIEW;
+  }
+  return `Gross margin min ${percent(value.minimumMarkupBps)} · start ${percent(value.startingMarkupBps)}`;
+}
+
+type ModeSummaryCalculation = KnowledgeJsonObject & {
+  readonly baseRatePaise: number;
+  readonly lowQuantityLimit: string;
+  readonly impactBps: number;
+};
+
+function completeModeCalculation(value: KnowledgeJsonValue | undefined, rootPath: string): value is ModeSummaryCalculation {
+  return object(value) && modeCalculationIssues(value, rootPath).length === 0
+    && typeof value.baseRatePaise === "number" && typeof value.lowQuantityLimit === "string"
+    && typeof value.impactBps === "number";
+}
+
+function savedModeValues(value: ModeSummaryCalculation, margin: string, uom: string | undefined): string {
+  const unit = uom ? ` per ${uom}` : "";
+  return `Unit price ${formatKnowledgeMoney(value.baseRatePaise)}${unit} · Low quantity ≤${value.lowQuantityLimit} · Impact ${percent(value.impactBps)} · ${margin}`;
+}
+
+function savedModeRow(
+  key: string, label: string, value: KnowledgeJsonValue | undefined,
+  rootPath: string, margin: string | undefined, uom: string | undefined
+): SavedSummaryRow {
+  return row(key, label, margin && completeModeCalculation(value, rootPath)
+    ? savedModeValues(value, margin, uom) : NOT_CONFIGURED);
+}
+
 function masterName(input: SavedSummaryProjectionInput, type: KnowledgeMasterType, id: KnowledgeJsonValue | undefined): string {
   if (!present(id)) return NOT_CONFIGURED;
   return input.masters[type]?.find(master => master.id === id)?.name.trim() || NAME_UNAVAILABLE;
@@ -103,28 +147,142 @@ function overview(input: SavedSummaryProjectionInput): SavedSummaryContent {
   return content(details, preview);
 }
 
+const MODE_FIELD_TYPES: Readonly<Record<string, string>> = {
+  text: "Text", textarea: "Long text", number: "Number", radio: "Single choice (radio)",
+  dropdown: "Single choice", checkbox: "Checkbox"
+};
+
+function savedModeGroup(input: SavedSummaryProjectionInput, configuration: KnowledgeJsonObject, seen: Set<string>): string {
+  if (present(configuration.modeId)) return `Needs review · Legacy Mode ${masterName(input, "modes", configuration.modeId)}`;
+  const group = configuration.modeKind === "pmc" && !present(configuration.executionSource) ? "PMC"
+    : configuration.modeKind === "execution" && configuration.executionSource === "sub_vendor" ? "Execution · Sub-Vendor"
+      : configuration.modeKind === "execution" && configuration.executionSource === "in_house" ? "Execution · In-house"
+        : null;
+  if (!group) return "Needs review · Mode configuration";
+  if (seen.has(group)) return `Needs review · Duplicate ${group} configuration`;
+  seen.add(group);
+  return group;
+}
+
+function savedModeScopeRows(
+  details: SavedSummaryRow[], configuration: KnowledgeJsonObject, key: string, group: string
+) {
+  for (const [field, title] of [["inclusions", "Inclusion"], ["exclusions", "Exclusion"]] as const) {
+    // The Mode editor stores the Sub-Vendor checklist on its PMC configuration.
+    const scopeGroup = group === "PMC" ? "Execution · Sub-Vendor" : group;
+    const items = objectRows(configuration[field], details, `${key}-${field}`, `${scopeGroup} · ${title}s`);
+    items.forEach((item, index) => {
+      const label = `${scopeGroup} · ${title} ${index + 1}`;
+      const name = text(item.name) || NAME_UNAVAILABLE;
+      if (typeof item.selected === "boolean") {
+        details.push(row(`${key}-${field}-${index}`, label, `${name} · ${item.selected ? "Selected" : "Not selected"}`));
+      } else {
+        details.push(row(`${key}-${field}-${index}`, label, name));
+        review(details, `${key}-${field}-${index}-review`, label);
+      }
+    });
+  }
+}
+
+function savedModeComponentRows(details: SavedSummaryRow[], configuration: KnowledgeJsonObject, key: string, group: string) {
+  const fields = objectRows(configuration.fields, details, `${key}-fields`, `${group} · Components`);
+  fields.forEach((field, index) => {
+    const fieldKey = `${key}-field-${index}`;
+    const title = `${group} · Component ${index + 1}`;
+    const label = text(field.label) || NAME_UNAVAILABLE;
+    details.push(row(fieldKey, title, label));
+    if (present(field.type)) details.push(row(`${fieldKey}-type`, `${title} · Type`, MODE_FIELD_TYPES[text(field.type) ?? ""] || NEEDS_REVIEW));
+    if (Array.isArray(field.options)) {
+      const options = field.options.filter((option): option is string => typeof option === "string");
+      if (options.length) details.push(row(`${fieldKey}-options`, `${title} · Options`, options.join(", ")));
+      if (options.length !== field.options.length) review(details, `${fieldKey}-options-review`, `${title} · Options`);
+    } else if (present(field.options)) review(details, `${fieldKey}-options-review`, `${title} · Options`);
+    if (present(field.value)) {
+      if (typeof field.value === "string" || typeof field.value === "boolean") {
+        details.push(row(`${fieldKey}-answer`, `${title} · Saved answer`, scalar(field.value)));
+      } else review(details, `${fieldKey}-answer-review`, `${title} · Saved answer`);
+    }
+    if (Object.keys(field).some(name => !["id", "label", "type", "options", "value"].includes(name))) {
+      review(details, `${fieldKey}-review`, title, true);
+    }
+  });
+}
+
+function savedModeConfigurationRows(input: SavedSummaryProjectionInput, payload: KnowledgeJsonObject, details: SavedSummaryRow[]) {
+  if (typeof payload.modeDescription === "string" && payload.modeDescription.trim()) {
+    details.push(row("mode-description", "Mode · Shared description", payload.modeDescription.trim()));
+  } else if (present(payload.modeDescription)) review(details, "mode-description-review", "Mode · Shared description");
+  const configurations = objectRows(payload.modeConfigurations, details, "mode-configurations", "Mode configurations");
+  const seen = new Set<string>();
+  configurations.forEach((configuration, index) => {
+    const key = `mode-configuration-${index}`;
+    const group = savedModeGroup(input, configuration, seen);
+    details.push(row(key, `Mode configuration ${index + 1}`, group));
+    savedModeScopeRows(details, configuration, key, group);
+    savedModeComponentRows(details, configuration, key, group);
+    if (group.startsWith("Needs review") || Object.keys(configuration).some(name =>
+      !["id", "modeKind", "modeId", "executionSource", "fields", "inclusions", "exclusions"].includes(name))) {
+      review(details, `${key}-review`, group, true);
+    }
+  });
+}
+
+function savedBrandAssociation(brands: readonly KnowledgeJsonObject[], id: KnowledgeJsonValue | undefined): string {
+  if (id === null) return "Not assigned";
+  if (typeof id !== "string" || !id.trim()) return NAME_UNAVAILABLE;
+  const matches = brands.filter(brand => brand.id === id);
+  return matches.length === 1 ? text(matches[0]?.name) || NAME_UNAVAILABLE : NAME_UNAVAILABLE;
+}
+
+function savedModePricingRows(pricing: KnowledgeJsonObject, details: SavedSummaryRow[]) {
+  const brands = objectRows(pricing.brands, details, "mode-brands", "Brands");
+  brands.forEach((brand, index) => {
+    const key = `mode-brand-${index}`;
+    const name = text(brand.name) || NAME_UNAVAILABLE;
+    details.push(row(key, `Brand ${index + 1}`, name));
+    add(details, `${key}-description`, `${name} · Description`, brand.description);
+    if (Object.keys(brand).some(field => !["id", "name", "description"].includes(field))) review(details, `${key}-review`, `Brand ${index + 1}`, true);
+  });
+  const specifications = objectRows(pricing.specifications, details, "mode-specifications", "Specifications");
+  specifications.forEach((specification, index) => {
+    const key = `mode-specification-${index}`;
+    const name = text(specification.name) || NAME_UNAVAILABLE;
+    details.push(row(key, `Specification ${index + 1}`, name));
+    add(details, `${key}-description`, `${name} · Description`, specification.description);
+    if (Object.hasOwn(specification, "brandId")) {
+      details.push(row(`${key}-brand`, `${name} · Brand`, savedBrandAssociation(brands, specification.brandId)));
+    }
+    if (Object.keys(specification).some(field => !["id", "name", "brandId", "description", "type", "options", "value"].includes(field))) {
+      review(details, `${key}-review`, `Specification ${index + 1}`, true);
+    }
+  });
+}
+
 function mode(input: SavedSummaryProjectionInput): SavedSummaryContent {
   const payload = input.sections.advanced;
-  if (!payload) return content([]);
-  const calculations = payload && object(payload.modeCalculations) ? payload.modeCalculations : undefined;
-  const validCalculation = (value: KnowledgeJsonValue | undefined, rootPath = "modeCalculation") =>
-    object(value) && modeCalculationIssues(value, rootPath).length === 0;
+  const pricing = input.sections.pricing;
+  if (!payload && !pricing) return content([]);
+  const calculations = payload ? modeCalculationsForPayload(payload) : null;
   const completeRange = (range: { minimum: KnowledgeJsonValue | undefined; maximum: KnowledgeJsonValue | undefined }) =>
     typeof range.minimum === "number" && typeof range.maximum === "number";
-  const pmcRange = pmcMarginRange(payload);
-  const subVendorRange = subVendorMarginRange(payload);
-  const pmcConfigured = Boolean(validCalculation(calculations?.pmc)
-    && completeRange(pmcRange) && pmcMarginRangeIssues(payload).length === 0);
-  const subVendorConfigured = Boolean(validCalculation(calculations?.sub_vendor)
-    && completeRange(subVendorRange) && subVendorMarginRangeIssues(payload).length === 0);
-  const inHouseConfigured = Boolean(validCalculation(calculations?.in_house_labor, "modeCalculations.in_house_labor")
-    && validCalculation(calculations?.in_house_material, "modeCalculations.in_house_material"));
-  const statuses = [
-    row("pmc-status", "PMC", pmcConfigured ? "Configured" : "Not configured"),
-    row("sub-vendor-status", "Sub-Vendor", subVendorConfigured ? "Configured" : "Not configured"),
-    row("in-house-status", "In-house", inHouseConfigured ? "Configured" : "Not configured")
-  ];
-  return content(statuses, statuses);
+  const pmcRange = payload ? pmcMarginRange(payload) : null;
+  const subVendorRange = payload ? subVendorMarginRange(payload) : null;
+  const uomId = input.sections.overview?.uomId;
+  const uom = typeof uomId === "string" ? input.masters.uoms?.find((master) => master.id === uomId)?.name.trim() : undefined;
+  const pmcMargin = payload && pmcRange && completeRange(pmcRange) && pmcMarginRangeIssues(payload).length === 0
+    ? savedMarginRange(pmcRange.minimum as number, pmcRange.maximum as number) : undefined;
+  const subVendorMargin = payload && subVendorRange && completeRange(subVendorRange) && subVendorMarginRangeIssues(payload).length === 0
+    ? savedMarginRange(subVendorRange.minimum as number, subVendorRange.maximum as number) : undefined;
+  const statuses: SavedSummaryRow[] = payload ? [
+    savedModeRow("pmc-status", "PMC", calculations?.pmc, "modeCalculations.pmc", pmcMargin, uom),
+    savedModeRow("sub-vendor-status", "Sub-Vendor", calculations?.sub_vendor, "modeCalculations.sub_vendor", subVendorMargin, uom),
+    savedModeRow("in-house-labor-status", "In-house Labor", calculations?.in_house_labor, "modeCalculations.in_house_labor", savedGrossMargin(calculations?.in_house_labor), uom),
+    savedModeRow("in-house-material-status", "In-house Material", calculations?.in_house_material, "modeCalculations.in_house_material", savedGrossMargin(calculations?.in_house_material), uom)
+  ] : [];
+  const details = [...statuses];
+  if (payload) savedModeConfigurationRows(input, payload, details);
+  if (pricing) savedModePricingRows(pricing, details);
+  return { details, preview: statuses.length ? statuses : details.slice(0, 3).map(item => ({ ...item, value: concise(item.value) })) };
 }
 
 function targetRows(input: SavedSummaryProjectionInput, value: KnowledgeJsonObject, key: string): SavedSummaryRow[] {

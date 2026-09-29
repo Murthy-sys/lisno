@@ -87,13 +87,13 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-09-28.vendor-kpi.v1"
+      "2026-09-28.vendor-induction.v1"
     );
   });
 
-  it("publishes all 147 unique permissions in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(147);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(147);
+  it("publishes all 151 unique permissions in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(151);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(151);
     expect(PERMISSION_CODES).toContain("chat.action_types.manage");
     expect(PERMISSION_CODES).toContain("chat.project_name.manage");
     expect(PERMISSION_CODES).toContain("estimation.design_upload.delete");
@@ -109,7 +109,7 @@ describe("frontend authorization contract", () => {
       ...invitationPermissions,
       "access_request.create"
     ]);
-    expect(PERMISSION_CODES.slice(-41)).toEqual([
+    expect(PERMISSION_CODES.slice(-45)).toEqual([
       "access_request.review.read",
       "access_request.review.decide",
       "project_access_grant.revoke",
@@ -139,10 +139,14 @@ describe("frontend authorization contract", () => {
       "procurement.vendor_allocation_baseline.correct",
       "procurement.vendor_kpi.read",
       "procurement.vendor_kpi.rate",
-      "procurement.vendor_kpi.request"
+      "procurement.vendor_kpi.request",
+      "procurement.vendor_induction.read",
+      "procurement.vendor_induction.manage",
+      "procurement.vendor_induction.request",
+      "procurement.vendor_induction.review"
     ]);
     expect(PERMISSION_CODES.at(-1)).toBe(
-      "procurement.vendor_kpi.request"
+      "procurement.vendor_induction.review"
     );
     expect(
       PERMISSION_CODES.filter((permission) =>

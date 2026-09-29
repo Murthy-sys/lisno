@@ -691,7 +691,8 @@ function registerMasterRoutes(
     search: z.string().trim().min(1).max(240).optional(),
     status: z.enum(AI_ESTIMATOR_KNOWLEDGE_MASTER_STATUSES).optional(),
     includeArchived: includeArchivedSchema,
-    ...(master.kind === "vendors" ? { vendorType: z.enum(["execution", "supplier"]).optional(), mainBasketId: stableIdSchema.optional(), subBasketId: stableIdSchema.optional(), includeDirectoryOverview: includeArchivedSchema } : {})
+    ...(master.kind === "vendors" ? { vendorType: z.enum(["execution", "supplier"]).optional(), mainBasketId: stableIdSchema.optional(), subBasketId: stableIdSchema.optional(),
+      effectiveStatus: z.enum(["active", "under_review", "inactive", "archived"]).optional(), includeDirectoryOverview: includeArchivedSchema } : {})
   }).strict();
 
   router.get(basePath, protectedRoute, requireOperation(listOperation), validateQuery(listSchema),

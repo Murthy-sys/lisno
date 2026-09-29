@@ -229,6 +229,10 @@ export const AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS: Readonly<
   ...Object.fromEntries(masterFamilies.map((family) => [
     `GET ${admin}/${family}`,
     [searchParameter, masterStatusParameter, includeArchivedParameter, ...(family === "vendors" ? [{
+      name: "effectiveStatus", in: "query", required: false,
+      schema: { type: "string", enum: ["active", "under_review", "inactive", "archived"] },
+      description: "Filter by derived availability after induction, KPI and verification gates. `status` remains the stored lifecycle filter."
+    }, {
       name: "includeDirectoryOverview", in: "query", required: false,
       schema: { type: "boolean", default: false },
       description: "When true, include global non-archived vendor counts independently of all list filters and pagination. Omitted or false preserves the standard page response."

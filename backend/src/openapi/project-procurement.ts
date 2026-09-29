@@ -8,7 +8,7 @@ const allocatedWorkPaise = { type: "integer", minimum: 1, maximum: MAX_FINANCE_A
 const version = { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER };
 const object = (properties: Record<string, unknown>, required = Object.keys(properties)) => ({ type: "object", additionalProperties: false, required, properties });
 const option = { id, code: { type: "string" }, name: { type: "string" } };
-const reference = object({ ...option, status: { type: "string", enum: ["active", "inactive", "archived", "unavailable"] } });
+const reference = object({ ...option, status: { type: "string", enum: ["active", "under_review", "inactive", "archived", "unavailable"] } });
 const input = { itemName: label, brand: label, uomId: id, vendorId: { ...id, nullable: true, default: null }, pricePaise, allocatedWorkPaise };
 const inputRequired = ["itemName", "brand", "uomId", "pricePaise"];
 const sourceInput = { estimateId: { ...id, maxLength: 500 }, estimateVersion: version, sourceLineItemKey: { ...id, maxLength: 500 } };
@@ -26,7 +26,7 @@ export const PROJECT_PROCUREMENT_SCHEMAS = {
   ProjectProcurementPage: page("ProjectProcurementItem"),
   ProjectProcurementCreate: object({ ...input, ...sourceInput }, [...inputRequired, ...Object.keys(sourceInput)]),
   ProjectProcurementUpdate: { ...object({ ...input, ...sourceInput, expectedVersion: { ...version, maximum: Number.MAX_SAFE_INTEGER - 1 } }, [...inputRequired, "expectedVersion"]), description: "Source fields are optional but must be supplied together. Legacy rows may be assigned once; linked identities cannot move and must match the current approved estimate. Omission preserves existing source." },
-  ProcurementVendorOption: object({ ...option, status: { type: "string", enum: ["active"] } }),
+  ProcurementVendorOption: object({ ...option, status: { type: "string", enum: ["active", "under_review"] } }),
   ProcurementVendorPage: page("ProcurementVendorOption"),
   ProcurementVendorCreate: object({ name: { ...label, description: "Name also must fit the Configuration master's 240-character normalized identity limit. Existing active names are reused; inactive names return 409." } })
 };

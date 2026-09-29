@@ -43,7 +43,10 @@ const saved: KnowledgeJsonObject = { modeConfigurations: [{
 }] };
 
 describe("Sub-Vendor Inclusions and Exclusions", () => {
-  it.each<KnowledgeJsonObject>([{}, { modeConfigurations: [{ id: "empty", modeKind: "pmc", fields: [], inclusions: [], exclusions: [] }] }])("renders missing or empty backend lists without writing starter entries", async (initial) => {
+  it.each<KnowledgeJsonObject>([
+    { modeConfigurations: [{ id: "empty", modeKind: "pmc", fields: [], inclusions: [], exclusions: [] }] },
+    { modeConfigurations: [{ id: "missing", modeKind: "pmc", fields: [] }] }
+  ])("keeps saved empty and omitted backend lists empty", async (initial) => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness initial={initial} onChange={onChange} />);
@@ -58,6 +61,42 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     expect(config.inclusions).toEqual([{ id: expect.any(String), name: "Permit coordination", selected: false }]);
     expect(config.exclusions ?? []).toEqual([]);
     expect(screen.getByText("No exclusions added.")).toBeVisible();
+  });
+
+  it("shows six unchecked starter options on a new scope without changing the payload until first edit", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness initial={{}} onChange={onChange} />);
+    await showSubVendor(user);
+    const inclusions = within(screen.getByRole("group", { name: "Inclusions" }));
+    const exclusions = within(screen.getByRole("group", { name: "Exclusions" }));
+    for (const list of [inclusions, exclusions]) {
+      expect(list.getAllByRole("checkbox")).toHaveLength(6);
+      for (const name of ["Transport", "Shifting", "Unloading", "ESIC/ PF", "Mathadi", "Damage during"]) {
+        expect(list.getByRole("checkbox", { name })).not.toBeChecked();
+      }
+    }
+    expect(onChange).not.toHaveBeenCalled();
+    inclusions.getByRole("checkbox", { name: "Transport" }).focus();
+    await user.keyboard(" ");
+    const config = (onChange.mock.calls.at(-1)![0].modeConfigurations as KnowledgeJsonObject[])[0]!;
+    expect(config.inclusions).toHaveLength(6);
+    expect(config.exclusions).toHaveLength(6);
+    expect((config.inclusions as { id: string }[]).map(({ id }) => id))
+      .not.toEqual((config.exclusions as { id: string }[]).map(({ id }) => id));
+    expect(config.inclusions).toEqual(expect.arrayContaining([expect.objectContaining({ name: "Transport", selected: true })]));
+    expect(exclusions.getByRole("checkbox", { name: "Transport" })).toBeDisabled();
+    expect(exclusions.getByRole("checkbox", { name: "Transport" })).toHaveAccessibleDescription("Selected in Inclusions.");
+  });
+
+  it("does not show presentation-only starter rows on a read-only revision with no scope", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness initial={{}} readOnly onChange={onChange} />);
+    await showSubVendor(user);
+    expect(screen.getByText("No inclusions added.")).toBeVisible();
+    expect(screen.getByText("No exclusions added.")).toBeVisible();
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it.each(["Inclusions", "Exclusions"])("prevents normalized counterpart selection from %s and restores it on uncheck or delete", async (chosen) => {

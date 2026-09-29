@@ -9,7 +9,7 @@ import { modeSelectionForPayload } from "../../../../shared/knowledge/knowledgeM
 import { MODE_CALCULATION_SCOPES, MODE_CALCULATION_LABELS, modeCalculationsForPayload, modeCalculationsIssues, parseModeCalculationDraft, parseModeQuantity, type ModeCalculationScope } from "../../../../shared/knowledge/knowledgeModeCalculation";
 import { pmcMarginRange, pmcMarginRangeIssues, subVendorMarginRange, subVendorMarginRangeIssues, withPmcMargin, withSubVendorMargin } from "../../../../shared/knowledge/knowledgePmcMargin";
 import { formatPaiseForRupeeInput } from "../../../../shared/knowledge/knowledgePresentation";
-import { inHouseScopeStarterItems, MAX_PMC_SCOPE_ITEMS, normalizePmcScopeName, PMC_SCOPE_LISTS, type KnowledgePmcScopeList } from "../../../../shared/knowledge/knowledgePmcScope";
+import { inHouseScopeStarterItems, subVendorScopeStarterItems, MAX_PMC_SCOPE_ITEMS, normalizePmcScopeName, PMC_SCOPE_LISTS, type KnowledgePmcScopeList } from "../../../../shared/knowledge/knowledgePmcScope";
 import { parseKnowledgeSpecifications, validateKnowledgeBrands } from "../../../../shared/knowledge/knowledgeSpecificationConfiguration";
 import type { KnowledgeModeEditorProps } from "./knowledgeEditorContracts";
 import { KnowledgeCard, KnowledgeChoice, KnowledgeModal, KnowledgeText, knowledgeStyles } from "./knowledgeDetailUi";
@@ -51,7 +51,14 @@ export function KnowledgeModeEditor({ item, payload, onChange, pricingPayload, o
   function updateScope(source: "sub_vendor" | "in_house", list: KnowledgePmcScopeList, rows: readonly KnowledgeJsonValue[]) {
     const configuration = source === "sub_vendor" ? partition.primary.pmc : partition.primary.execution.in_house;
     const original = rawRows.find(row => isKnowledgeObject(row) && row.id === configuration?.id);
-    const next: Record<string, KnowledgeJsonValue> = isKnowledgeObject(original) ? { ...original, [list]: [...rows] } : { id: knowledgeRowId(), modeKind: source === "sub_vendor" ? "pmc" : "execution", ...(source === "in_house" ? { executionSource: "in_house" } : {}), fields: [], [list]: [...rows] };
+    const next: Record<string, KnowledgeJsonValue> = isKnowledgeObject(original) ? { ...original, [list]: [...rows] } : {
+      id: knowledgeRowId(),
+      modeKind: source === "sub_vendor" ? "pmc" : "execution",
+      ...(source === "in_house" ? { executionSource: "in_house" } : {}),
+      fields: [],
+      ...(source === "sub_vendor" ? Object.fromEntries(PMC_SCOPE_LISTS.map(scopeList => [scopeList, subVendorScopeStarterItems(scopeList).map(row => ({ ...row }))])) : {}),
+      [list]: [...rows]
+    };
     if (source === "in_house") for (const other of PMC_SCOPE_LISTS) if (!Object.hasOwn(next, other)) next[other] = inHouseScopeStarterItems(other).map(row => ({ ...row }));
     updateRows(original ? rawRows.map(row => row === original ? next : row) : [...rawRows, next]);
   }
@@ -83,7 +90,14 @@ export function KnowledgeModeEditor({ item, payload, onChange, pricingPayload, o
   function scopeLists(source: "sub_vendor" | "in_house") {
     const configuration = source === "sub_vendor" ? partition.primary.pmc : partition.primary.execution.in_house;
     const raw = rawRows.find(row => isKnowledgeObject(row) && row.id === configuration?.id);
-    return <View style={knowledgeStyles.stack}>{PMC_SCOPE_LISTS.map(list => <NativeScopeList key={list} sourceLabel={source === "sub_vendor" ? "Sub-Vendor" : "In-house"} list={list} value={isKnowledgeObject(raw) && Object.hasOwn(raw, list) ? raw[list] : source === "in_house" ? inHouseScopeStarterItems(list).map(row => ({ ...row })) : []} readOnly={readOnly} onChange={rows => updateScope(source, list, rows)} />)}</View>;
+    const values = Object.fromEntries(PMC_SCOPE_LISTS.map(list => [list,
+      isKnowledgeObject(raw) ? raw[list] : source === "in_house" ? inHouseScopeStarterItems(list).map(row => ({ ...row })) : readOnly ? [] : subVendorScopeStarterItems(list).map(row => ({ ...row }))
+    ])) as Record<KnowledgePmcScopeList, KnowledgeJsonValue | undefined>;
+    const selectedNamesFor = (list: KnowledgePmcScopeList): ReadonlySet<string> => new Set(
+      (Array.isArray(values[list]) ? values[list] : []).filter(isKnowledgeObject).filter(row => row.selected === true).map(row => normalizePmcScopeName(knowledgeText(row.name)))
+    );
+    const selectedNames = { inclusions: selectedNamesFor("inclusions"), exclusions: selectedNamesFor("exclusions") };
+    return <View style={knowledgeStyles.stack}>{PMC_SCOPE_LISTS.map(list => <NativeScopeList key={list} sourceLabel={source === "sub_vendor" ? "Sub-Vendor" : "In-house"} list={list} value={values[list]} oppositeSelectedNames={selectedNames[list === "inclusions" ? "exclusions" : "inclusions"]} readOnly={readOnly} onChange={rows => updateScope(source, list, rows)} />)}</View>;
   }
   const section = (key: keyof typeof expanded, title: string, children: ReactNode) => <ModeSection title={title} kind={key === "pmc" || key === "execution" ? key : "source"} expanded={expanded[key]} onToggle={() => setExpanded(previous => ({ ...previous, [key]: !previous[key] }))}>{children}</ModeSection>;
   const recoveries = rawRows.flatMap((row, index) => {
@@ -132,7 +146,7 @@ export function KnowledgeModeEditor({ item, payload, onChange, pricingPayload, o
 
 function LegacyFields({ configuration }: { readonly configuration: KnowledgeModeConfiguration }) { return <>{!configuration.fields.length ? <KnowledgeText>No saved components.</KnowledgeText> : configuration.fields.map(field => <KnowledgeText key={field.id}>{field.label || "Unnamed component"} ({field.type}): {field.value === null ? "Not configured" : String(field.value)}{field.options.length ? `; options: ${field.options.join(", ")}` : ""}</KnowledgeText>)}</>; }
 
-function NativeScopeList({ sourceLabel, list, value, readOnly, onChange }: { readonly sourceLabel: string; readonly list: KnowledgePmcScopeList; readonly value: KnowledgeJsonValue | undefined; readonly readOnly: boolean; readonly onChange: (rows: readonly KnowledgeJsonValue[]) => void }) {
+function NativeScopeList({ sourceLabel, list, value, oppositeSelectedNames, readOnly, onChange }: { readonly sourceLabel: string; readonly list: KnowledgePmcScopeList; readonly value: KnowledgeJsonValue | undefined; readonly oppositeSelectedNames: ReadonlySet<string>; readonly readOnly: boolean; readonly onChange: (rows: readonly KnowledgeJsonValue[]) => void }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const rows = Array.isArray(value) ? value : [];
@@ -147,10 +161,16 @@ function NativeScopeList({ sourceLabel, list, value, readOnly, onChange }: { rea
       {!readOnly ? <Pressable accessibilityRole="button" accessibilityLabel={`Add ${sourceLabel} ${singular}`} accessibilityState={{ disabled: cannotAdd }} disabled={cannotAdd} onPress={() => setAdding(true)} style={[modeStyles.scopeAdd, cannotAdd && knowledgeStyles.disabled]}><DetailIcon name="add" size={16} /><Text style={modeStyles.scopeAddLabel}>Add</Text></Pressable> : null}
     </View>
     {!rows.length ? <KnowledgeText>No {list} added.</KnowledgeText> : null}
-    {rows.map((row, index) => isKnowledgeObject(row) ? <View key={`${knowledgeText(row.id)}:${index}`} style={[modeStyles.scopeRow, row.selected === true && modeStyles.scopeRowSelected]}>
-      <View style={modeStyles.scopeChoice}><KnowledgeChoice label={knowledgeText(row.name)} accessibilityLabel={`${sourceLabel} ${singular}: ${knowledgeText(row.name)}`} variant="row" multiple selected={row.selected === true} disabled={readOnly} onPress={() => onChange(rows.map((entry, rowIndex) => rowIndex === index ? { ...row, selected: row.selected !== true } : entry))} /></View>
-      {!readOnly ? <View style={modeStyles.scopeRemove}><IconButton label={`Remove ${sourceLabel} ${singular} ${index + 1}`} icon="close" variant="quiet" onPress={() => onChange(rows.filter((_, rowIndex) => rowIndex !== index))} /></View> : null}
-    </View> : <KnowledgeText key={index} error>Unsupported saved {singular.toLowerCase()} retained.</KnowledgeText>)}
+    {rows.map((row, index) => {
+      if (!isKnowledgeObject(row)) return <KnowledgeText key={index} error>Unsupported saved {singular.toLowerCase()} retained.</KnowledgeText>;
+      const selectedOpposite = oppositeSelectedNames.has(normalizePmcScopeName(knowledgeText(row.name)));
+      const unavailable = selectedOpposite && row.selected !== true;
+      const explanation = row.selected === true ? "Selected in both lists. Uncheck one before saving." : `Selected in ${list === "inclusions" ? "Exclusions" : "Inclusions"}.`;
+      return <View key={`${knowledgeText(row.id)}:${index}`} style={[modeStyles.scopeRow, row.selected === true && modeStyles.scopeRowSelected]}>
+        <View style={modeStyles.scopeChoice}><KnowledgeChoice label={knowledgeText(row.name)} accessibilityLabel={`${sourceLabel} ${singular}: ${knowledgeText(row.name)}${selectedOpposite ? `. ${explanation}` : ""}`} variant="row" multiple selected={row.selected === true} disabled={readOnly || unavailable} onPress={() => { if (readOnly || unavailable) return; onChange(rows.map((entry, rowIndex) => rowIndex === index ? { ...row, selected: row.selected !== true } : entry)); }} />{selectedOpposite ? <KnowledgeText>{explanation}</KnowledgeText> : null}</View>
+        {!readOnly ? <View style={modeStyles.scopeRemove}><IconButton label={`Remove ${sourceLabel} ${singular} ${index + 1}`} icon="close" variant="quiet" onPress={() => onChange(rows.filter((_, rowIndex) => rowIndex !== index))} /></View> : null}
+      </View>;
+    })}
     {adding ? <><Field label={`${sourceLabel} ${singular} name`} value={name} maxLength={240} onChangeText={setName} error={duplicate ? "Names must be unique within each list." : undefined} /><View style={knowledgeStyles.row}><Button label={`Cancel new ${singular}`} variant="quiet" onPress={() => { setAdding(false); setName(""); }} /><Button label={`Add ${singular}`} disabled={readOnly || !name.trim() || duplicate || rows.length >= MAX_PMC_SCOPE_ITEMS} onPress={() => { if (readOnly || !name.trim() || duplicate) return; onChange([...rows, { id: knowledgeRowId(), name: name.trim(), selected: false }]); setAdding(false); setName(""); }} /></View></> : null}
   </View>;
 }

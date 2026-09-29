@@ -89,7 +89,7 @@ export function KnowledgeBudgetBuilder({
   const lastValidationAttempt = useRef(0);
   const builderId = useId();
 
-  const activeVendors = useMemo(() => selectableMasters(vendors), [vendors]);
+  const activeVendors = useMemo(() => selectableBudgetMasters("vendors", vendors), [vendors]);
   const activeUoms = useMemo(() => selectableMasters(uoms), [uoms]);
   const catalogsReady = vendorCatalogState.status === "ready"
     && uomCatalogState.status === "ready";
@@ -484,10 +484,11 @@ function BudgetMasterField({
   readonly onChange: (value: string) => void;
   readonly onQuickAdd?: (select: (master: KnowledgeMaster) => void) => void;
 }) {
-  const active = selectableMasters(masters);
+  const [quickAddNotice, setQuickAddNotice] = useState("");
+  const active = selectableBudgetMasters(type, masters);
   const selected = masters.find(({ id: masterId }) => masterId === value);
   const missing = Boolean(value) && !selected;
-  const selectedUnavailable = Boolean(selected && selected.status !== "active");
+  const selectedUnavailable = Boolean(selected && !isSelectableBudgetMaster(type, selected));
   const unavailable = catalogState.status !== "ready";
   const placeholder = unavailable
     ? `${label} options unavailable`
@@ -518,11 +519,19 @@ function BudgetMasterField({
           size="compact"
           variant="quiet"
           disabled={disabled}
-          onClick={() => onQuickAdd((master) => onChange(master.id))}
+          onClick={() => onQuickAdd((master) => {
+            if (isSelectableBudgetMaster(type, master)) {
+              setQuickAddNotice("");
+              onChange(master.id);
+            } else if (type === "vendors") {
+              setQuickAddNotice(`${master.name} was added as Under Review. Complete induction, both KPIs, and verification in Procurement > Vendors before setting a new budget.`);
+            }
+          })}
         >
           Add {type === "vendors" ? "vendor" : "Unit"}
         </Button>
       ) : null}
+      {quickAddNotice ? <p role="status">{quickAddNotice}</p> : null}
     </div>
   );
 }
@@ -708,7 +717,7 @@ function BudgetCatalogMessages({ catalogStates, activeCounts, canQuickAdd, onQui
         >
           {label === "Unit of measure"
             ? "No active Unit of measure is available. Add a Unit before setting a budget."
-            : "No active Vendor is available. Add a Vendor before setting a budget."}
+            : "No active Vendor is available. Complete vendor induction, both KPIs, and verification in Procurement > Vendors before setting a budget."}
         </InlineMessage>
       ))}
     </div>
@@ -807,6 +816,14 @@ function selectableMasters(masters: readonly KnowledgeMaster[]): readonly Knowle
   return masters
     .filter(({ status }) => status === "active")
     .sort((left, right) => left.displayOrder - right.displayOrder || left.name.localeCompare(right.name));
+}
+
+function isSelectableBudgetMaster(type: "vendors" | "uoms", master: KnowledgeMaster): boolean {
+  return master.status === "active" && (type !== "vendors" || master.vendorActivation?.effectiveStatus === "active");
+}
+
+function selectableBudgetMasters(type: "vendors" | "uoms", masters: readonly KnowledgeMaster[]): readonly KnowledgeMaster[] {
+  return selectableMasters(masters).filter((master) => isSelectableBudgetMaster(type, master));
 }
 
 function masterLabel(value: KnowledgeJsonValue | undefined, masters: readonly KnowledgeMaster[], fallback: string): string {

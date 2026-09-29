@@ -264,6 +264,12 @@ const PROTECTED_OPERATION_PERMISSIONS = [
   {"operation":"GET /procurement/vendor-kpis/:vendorId","permission":"procurement.vendor_kpi.read"},
   {"operation":"PUT /procurement/vendor-kpis/:vendorId/procurement","permission":"procurement.vendor_kpi.rate"},
   {"operation":"POST /procurement/vendor-kpis/:vendorId/requests","permission":"procurement.vendor_kpi.request"},
+  {"operation":"GET /procurement/vendor-inductions/:vendorId","permission":"procurement.vendor_induction.read"},
+  {"operation":"PUT /procurement/vendor-inductions/:vendorId/draft","permission":"procurement.vendor_induction.manage"},
+  {"operation":"POST /procurement/vendor-inductions/:vendorId/publish","permission":"procurement.vendor_induction.manage"},
+  {"operation":"POST /procurement/vendor-inductions/:vendorId/requests","permission":"procurement.vendor_induction.request"},
+  {"operation":"POST /procurement/vendor-inductions/:vendorId/reviews","permission":"procurement.vendor_induction.review"},
+  {"operation":"POST /procurement/vendor-inductions/:vendorId/reopen","permission":"procurement.vendor_induction.review"},
 ] as const satisfies readonly ProtectedOperationPermission[];
 
 // This ordered mirror is intentionally separate from permission data so the
@@ -302,6 +308,7 @@ const SUPER_ADMIN_BEHAVIORS = [
   "global_read", "self", "self", "global_read", "global_read", "global_read", "global_read", "global_read",
   "admin_override", "admin_override", "admin_override", "admin_override", "global_read", "admin_override", "admin_override", "global_read",
   "self", "admin_override", "self", "self", "global_read", "global_read", "admin_override", "admin_override",
+  "global_read", "admin_override", "admin_override", "admin_override", "admin_override", "admin_override",
 ] as const satisfies readonly SuperAdminBehavior[];
 
 function behaviorAt(index: number): SuperAdminBehavior {
@@ -326,5 +333,7 @@ export const PUBLIC_API_OPERATIONS = [
   "POST /auth/user-invitations/inspect",
   "POST /auth/user-invitations/accept",
   "POST /vendor-kpi/inspect",
-  "POST /vendor-kpi/submit"
+  "POST /vendor-kpi/submit",
+  "POST /vendor-induction/inspect",
+  "POST /vendor-induction/submit"
 ] as const;

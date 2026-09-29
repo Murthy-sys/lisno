@@ -187,17 +187,27 @@ describe("vendor procurement", () => {
   it("denies a manager missing the read permission", () => { permissions = []; const fetch = vi.spyOn(globalThis, "fetch"); start(); expect(screen.getByText(/do not have permission/)).toBeVisible(); expect(fetch).not.toHaveBeenCalled(); });
   it("only selects active current suggestions and isolates different project results", async () => {
     role = "procurement";
-    suggestions = [saved, { ...saved, id: "withdrawn", vendor: { ...vendor, id: "vendor-two", name: "Withdrawn vendor" }, status: "withdrawn" }, { ...saved, id: "inactive", vendor: { ...vendor, id: "vendor-three", name: "Inactive vendor", status: "inactive" } }];
+    suggestions = [saved, { ...saved, id: "withdrawn", vendor: { ...vendor, id: "vendor-two", name: "Withdrawn vendor" }, status: "withdrawn" }, { ...saved, id: "inactive", vendor: { ...vendor, id: "vendor-three", name: "Inactive vendor", status: "inactive" } }, { ...saved, id: "under-review", vendor: { ...vendor, id: "vendor-five", name: "Review vendor", status: "under_review" } }];
     const other = { ...project, projectId: "project-two", estimateId: "estimate-two" };
     server.use(http.get("/api/v1/procurement/projects/project-two/vendor-suggestions", () => suggestionPage([{ ...saved, ...other, vendor: { ...vendor, id: "vendor-four", name: "Stone Studio" } }], other)));
     function Picker({ projectId }: { projectId: string }) { const [value, setValue] = useState<ProcurementVendorReference | null>(null); return <ProcurementVendorField projectId={projectId} value={value} onChange={setValue} onBusyChange={() => {}} onUnresolvedChange={() => {}} />; }
     const view = renderWithQuery(<Picker projectId="project-one" />); const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Use Timber House" }));
     expect(screen.getByRole("combobox", { name: "Vendor" })).toHaveValue("Timber House");
-    expect(screen.queryByRole("button", { name: /Use (Withdrawn|Inactive)/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Review vendor")).toBeVisible();
+    expect(screen.getByText("Under Review · unavailable for new selection")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Use (Withdrawn|Inactive|Review)/ })).not.toBeInTheDocument();
     view.unmount(); renderWithQuery(<Picker projectId="project-two" />);
     expect(await screen.findByRole("button", { name: "Use Stone Studio" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Use Timber House" })).not.toBeInTheDocument();
+  });
+  it("keeps an Under Review suggestion visible to staff without treating it as an active option", async () => {
+    suggestions = [{ ...saved, vendor: { ...vendor, status: "under_review" } }];
+    start(); const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Suggest vendors for Aurora Villa" }));
+    const savedSuggestions = await screen.findByRole("region", { name: "Saved vendor suggestions" });
+    expect(within(savedSuggestions).getByText("Vendor Under Review · unavailable for new selection")).toBeVisible();
+    expect(within(savedSuggestions).queryByText("Vendor Active")).not.toBeInTheDocument();
   });
   it("rejects mismatched project response identities", async () => {
     server.use(http.get("/api/v1/procurement/projects/project-one/vendor-suggestions", () => suggestionPage([{ ...saved, projectId: "project-two" }])));

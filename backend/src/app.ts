@@ -85,6 +85,10 @@ import { createProcurementRouter } from "./routes/procurement.js";
 import { createVendorKpiRouter } from "./routes/vendor-kpi.js";
 import { createVendorKpiService } from "./services/vendor-kpi.service.js";
 import type { VendorKpiMailer } from "./services/vendor-kpi-mailer.js";
+import { createVendorInductionRouter } from "./routes/vendor-induction.js";
+import { createVendorInductionService } from "./services/vendor-induction.service.js";
+import type { VendorInductionMailer } from "./services/vendor-induction-mailer.js";
+import { vendorActivation } from "./services/vendor-readiness.service.js";
 import { createTasksRouter } from "./routes/tasks.js";
 import { createUserInvitationsRouter } from "./routes/user-invitations.js";
 import { createAuditService } from "./services/audit.service.js";
@@ -165,6 +169,7 @@ export interface AppDependencies {
   };
   invitationMailer?: InvitationMailer;
   vendorKpiMailer?: VendorKpiMailer;
+  vendorInductionMailer?: VendorInductionMailer;
   allowDemoAccountExternalEmail?: boolean;
   invitationPublicRateLimit?: InvitationRateLimitOptions;
   invitationDeliveryRateLimit?: InvitationRateLimitOptions;
@@ -252,6 +257,8 @@ export function createApp(dependencies: AppDependencies) {
   });
   const vendorKpiPublicRateLimit = createInvitationPublicRateLimit({ maxAttempts: 30, clock: () => clock().getTime() });
   const vendorKpiDeliveryRateLimit = createInvitationDeliveryRateLimit({ maxAttempts: 10, clock: () => clock().getTime() });
+  const vendorInductionPublicRateLimit = createInvitationPublicRateLimit({ maxAttempts: 30, clock: () => clock().getTime() });
+  const vendorInductionDeliveryRateLimit = createInvitationDeliveryRateLimit({ maxAttempts: 10, clock: () => clock().getTime() });
   const passwordResetRateLimit = createPasswordResetRateLimit({
     ...dependencies.passwordResetRateLimit,
     clock:
@@ -348,6 +355,8 @@ export function createApp(dependencies: AppDependencies) {
   });
   const projectVendorSuggestionService = createProjectVendorSuggestionService({ audit: auditService, now: clock });
   const vendorKpiService = createVendorKpiService({ audit: auditService, mailer: dependencies.vendorKpiMailer ?? { deliveryKind: "disabled" }, now: clock });
+  const vendorInductionService = createVendorInductionService({ audit: auditService,
+    mailer: dependencies.vendorInductionMailer ?? { deliveryKind: "disabled" }, activationForVendor: vendorActivation, now: clock });
   const projectProcurementService = createProjectProcurementService({ audit: auditService, now: clock });
   const procurementVendorBaselineService = createProcurementVendorBaselineService({ audit: auditService, now: clock });
   const procurementVendorCertificateService = createProcurementVendorCertificateService({ storage, maxUploadBytes, now: clock });
@@ -523,6 +532,7 @@ export function createApp(dependencies: AppDependencies) {
   );
   app.use("/api/v1", createProjectVendorSuggestionRouter(authService, projectVendorSuggestionService));
   app.use("/api/v1", createVendorKpiRouter(authService, vendorKpiService, vendorKpiPublicRateLimit, vendorKpiDeliveryRateLimit));
+  app.use("/api/v1", createVendorInductionRouter(authService, vendorInductionService, vendorInductionPublicRateLimit, vendorInductionDeliveryRateLimit));
   app.use("/api/v1", createProcurementVendorBaselineRouter(authService, procurementVendorBaselineService));
   app.use("/api/v1", createProcurementVendorPhotoRouter({ authService, photoService: procurementVendorPhotoService, maxUploadBytes }));
   app.use(

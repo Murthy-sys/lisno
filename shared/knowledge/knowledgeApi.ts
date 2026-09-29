@@ -34,6 +34,7 @@ import type {
   KnowledgeSurface,
   KnowledgeSurfaceListResponse
 } from "./knowledgeTypes";
+import type { VendorEffectiveStatus } from "./vendorInduction";
 
 const ADMIN_PREFIX = "/admin/ai-estimator-knowledge";
 const CONTEXT_PATH = "/ai-estimator-knowledge/context";
@@ -94,6 +95,7 @@ export interface KnowledgePageParams {
 export interface KnowledgeReferenceListParams {
   readonly search?: string;
   readonly status?: KnowledgeMasterStatus;
+  readonly effectiveStatus?: VendorEffectiveStatus;
   readonly limit?: number;
   readonly offset?: number;
   readonly includeArchived?: boolean;

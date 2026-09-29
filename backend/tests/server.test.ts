@@ -4,6 +4,10 @@ import { ProjectProcurementItemModel } from "../src/models/ProjectProcurementIte
 import { ChatNotificationModel } from "../src/models/ChatNotification.js";
 import { ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel } from "../src/models/ProjectChat.js";
 import { ProjectChatAttachmentModel } from "../src/models/ProjectChatAttachment.js";
+import { VendorKpiAssessmentModel } from "../src/models/VendorKpiAssessment.js";
+import { VendorKpiRequestModel } from "../src/models/VendorKpiRequest.js";
+import { VendorInductionDraftModel, VendorInductionQuestionnaireModel, VendorInductionRequestModel,
+  VendorInductionSubmissionModel, VendorInductionReviewModel } from "../src/models/VendorInduction.js";
 import { EventEmitter } from "node:events";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -513,6 +517,11 @@ describe("production server bootstrap", () => {
       events.push("ai-estimator-knowledge-vendor-index");
       return AiEstimatorKnowledgeVendorModel as never;
     });
+    const vendorOnboardingModels = [VendorKpiAssessmentModel, VendorKpiRequestModel, VendorInductionDraftModel,
+      VendorInductionQuestionnaireModel, VendorInductionRequestModel, VendorInductionSubmissionModel, VendorInductionReviewModel];
+    for (const model of vendorOnboardingModels) vi.spyOn(model, "init").mockImplementation(async () => {
+      events.push(model.modelName + "-index"); return model as never;
+    });
     for (const model of [ProcurementVendorCertificateUploadModel, ProcurementVendorCertificateCleanupModel, ProcurementVendorSaveCommandModel]) {
       vi.spyOn(model, "init").mockImplementation(async () => { events.push(model.modelName + "-index"); return model as never; });
     }
@@ -589,6 +598,7 @@ describe("production server bootstrap", () => {
       "ai-estimator-knowledge-price-version-index",
       "ai-estimator-knowledge-uom-index",
       "ai-estimator-knowledge-vendor-index",
+      ...vendorOnboardingModels.map(model => model.modelName + "-index"),
       "ProcurementVendorCertificateUpload-index",
       "ProcurementVendorCertificateCleanup-index",
       "ProcurementVendorSaveCommand-index",

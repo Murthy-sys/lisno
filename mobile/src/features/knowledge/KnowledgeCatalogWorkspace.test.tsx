@@ -11,7 +11,7 @@ import { KnowledgeBasketEditor, KnowledgeCatalogManagement } from "./KnowledgeCa
 import { KnowledgeReusableEditor } from "./KnowledgeReusableValues";
 import { useKnowledgeContext, type KnowledgeMobileContext } from "./knowledgeRuntime";
 
-jest.mock("../../navigation/useScreenBack", () => ({ useScreenBack: () => ({ onBack: jest.fn(), visible: true, disabled: false }) }));
+jest.mock("../../navigation/useScreenBack", () => ({ useScreenBack: () => ({ onBack: jest.fn(), visible: true, disabled: false }), useBackInterceptor: jest.fn() }));
 jest.mock("react-native-safe-area-context", () => ({ SafeAreaView: require("react-native").View, useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 jest.mock("../../runtime/RuntimeProvider", () => ({ useConfiguredRuntime: jest.fn() }));
 jest.mock("./KnowledgeVendorEditor", () => ({ KnowledgeVendorEditor: () => null }));

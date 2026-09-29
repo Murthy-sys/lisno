@@ -103,7 +103,7 @@ describe("KnowledgeBudgetBuilder", () => {
 
     const action = screen.getByRole("button", { name: "Set budget" });
     expect(action).toBeEnabled();
-    expect(screen.getByText("No active Vendor is available. Add a Vendor before setting a budget.")).toBeVisible();
+    expect(screen.getByText("No active Vendor is available. Complete vendor induction, both KPIs, and verification in Procurement > Vendors before setting a budget.")).toBeVisible();
     expect(screen.getByText("No active Unit of measure is available. Add a Unit before setting a budget.")).toBeVisible();
     expect(screen.queryByText(/Tax options|No active Tax|Add a Tax/iu)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add Unit" })).toBeEnabled();
@@ -140,6 +140,30 @@ describe("KnowledgeBudgetBuilder", () => {
     expect(screen.getByRole("button", { name: "Set budget" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it("keeps saved vendor history visible while excluding an Under Review vendor from new budgets", async () => {
+    const user = userEvent.setup();
+    const underReview = { ...vendors[0], vendorActivation: { ...vendors[0].vendorActivation!, effectiveStatus: "under_review" as const } };
+    render(<BuilderHarness initialValue={[savedOne]} availableVendors={[underReview]} />);
+
+    expect(screen.getByText(/No active Vendor is available/)).toBeVisible();
+    const saved = screen.getByRole("button", { name: /₹\s?120\.00 per Square foot/iu });
+    expect(saved).toHaveTextContent("Acme Vendor");
+    await user.click(screen.getByRole("button", { name: "Set budget" }));
+    expect(screen.getByRole("combobox", { name: "Vendor" })).toBeDisabled();
+  });
+
+  it("does not select an Under Review vendor returned by quick-add", async () => {
+    const user = userEvent.setup();
+    const underReview = { ...vendors[0], vendorActivation: { ...vendors[0].vendorActivation!, effectiveStatus: "under_review" as const } };
+    render(<BuilderHarness onQuickAdd={(_type, select) => select(underReview)} />);
+
+    await user.click(screen.getByRole("button", { name: "Set budget" }));
+    await user.click(screen.getByRole("button", { name: "Add vendor" }));
+    expect(screen.getByText(/was added as Under Review/)).toHaveAttribute("role", "status");
+    expect(screen.getByRole("combobox", { name: "Vendor" })).toHaveValue("");
+    expect(screen.getByTestId("budgets-value")).not.toHaveTextContent('"vendorId"');
   });
 
   it("allows only one saved budget disclosure to remain open", async () => {
@@ -331,6 +355,7 @@ function master(
     description: null,
     displayOrder: 0,
     status: "active",
+    ...(masterType === "vendors" ? { vendorActivation: { lifecycleStatus: "active", effectiveStatus: "active", gates: { inductionApproved: true, vendorSelfKpiComplete: true, procurementKpiComplete: true, profileComplete: true, physicalAddressVerified: true } } as const } : {}),
     ...metadata
   };
 }

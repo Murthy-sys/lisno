@@ -22,6 +22,25 @@ export interface KnowledgeCoreIdentityInput {
   uomId: string | null;
 }
 
+/** Keep this mapping aligned with the first-level Configuration tab registry in shared/. */
+export const AI_ESTIMATOR_KNOWLEDGE_WORKSPACE_BACKEND_SECTIONS = {
+  overview: ["overview"],
+  mode: ["advanced", "pricing"],
+  recommendations: ["recommendations"],
+  quality: ["quality"]
+} as const satisfies Readonly<Record<string, readonly KnowledgeSectionKey[]>>;
+
+export function countConfiguredKnowledgeWorkspaceTabs(
+  sections: readonly KnowledgeCompletenessSummary["sections"][number][],
+  registry: Readonly<Record<string, readonly KnowledgeSectionKey[]>> = AI_ESTIMATOR_KNOWLEDGE_WORKSPACE_BACKEND_SECTIONS
+): { configured: number; total: number; percentage: number } {
+  const states = new Map(sections.map(({ sectionKey, state }) => [sectionKey, state]));
+  const tabs = Object.values(registry);
+  const configured = tabs.filter((backing) => backing.some((sectionKey) => states.get(sectionKey) === "complete")).length;
+  const total = tabs.length;
+  return { configured, total, percentage: total ? Math.round(configured * 100 / total) : 100 };
+}
+
 /*
  * Sections the configuration tool has no editor for. An author cannot fill them
  * in from any screen, so counting them would hold completeness below 100% for
@@ -31,11 +50,14 @@ export interface KnowledgeCoreIdentityInput {
 const AI_ESTIMATOR_KNOWLEDGE_UNCONFIGURABLE_SECTION_KEYS: ReadonlySet<KnowledgeSectionKey> =
   new Set<KnowledgeSectionKey>(["scope", "execution"]);
 
-function hasConfiguredContent(payload: unknown): boolean {
-  return payload !== null &&
-    typeof payload === "object" &&
-    !Array.isArray(payload) &&
-    Object.keys(payload as Record<string, unknown>).length > 0;
+function hasConfiguredContent(sectionKey: KnowledgeSectionKey, payload: unknown): boolean {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const record = payload as Record<string, unknown>;
+  if (sectionKey === "recommendations") {
+    return ["recommendations", "exclusions", "budgetAlterations"]
+      .some((key) => Array.isArray(record[key]) && record[key].length > 0);
+  }
+  return Object.keys(record).length > 0;
 }
 
 export function deriveKnowledgeCompleteness(input: {
@@ -69,7 +91,7 @@ export function deriveKnowledgeCompleteness(input: {
     /* Content decides, not the stored flag. A section that holds real data is
        configured even if an older write left its applicability behind, so the
        percentage always reflects what the author can actually see saved. */
-    if (!section || !hasConfiguredContent(section.payload)) {
+    if (!section || !hasConfiguredContent(sectionKey, section.payload)) {
       const optional = ["pricing", "recommendations", "quality", "execution"].includes(sectionKey);
       findings.push({
         code: "SECTION_NOT_CONFIGURED",
@@ -84,11 +106,9 @@ export function deriveKnowledgeCompleteness(input: {
     }
     return { sectionKey, state: "complete" as const, findings };
   });
-  const applicable = sectionResults.filter((section) => section.state !== "not_applicable");
-  const complete = applicable.filter((section) => section.state === "complete").length;
   const findings = sectionResults.flatMap((section) => section.findings);
   return {
-    percentage: applicable.length === 0 ? 100 : Math.round((complete * 100) / applicable.length),
+    percentage: countConfiguredKnowledgeWorkspaceTabs(sectionResults).percentage,
     sections: sectionResults,
     blockers: findings.filter((finding) => finding.blocking),
     warnings: findings.filter((finding) => !finding.blocking)

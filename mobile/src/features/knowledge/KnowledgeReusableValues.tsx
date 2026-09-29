@@ -23,11 +23,15 @@ export function KnowledgeReusableValues({ context, onClose }: { readonly context
   const [editor, setEditor] = useState<KnowledgeMaster | "new" | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<KnowledgeMaster | null>(null);
   const values = useQuery({ queryKey: context.key("masters", type, "management"), queryFn: () => allKnowledgePages(page => context.api.listKnowledgeMasters(type, { ...page, includeArchived: true })), enabled: context.ready && context.canRead });
-  const visible = (values.data ?? []).filter(value => (!status ? value.status !== "archived" : value.status === status) && `${value.name} ${value.code}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
+  const visible = (values.data ?? []).filter(value => {
+    const effectiveStatus = vendorDisplayStatus(value);
+    const selectedStatus = type === "vendors" ? ({ Active: "active", "Under Review": "under_review", Inactive: "inactive", Archived: "archived" } as const)[effectiveStatus] : value.status;
+    return (!status ? selectedStatus !== "archived" : selectedStatus === status) && `${value.name} ${value.code}`.toLocaleLowerCase().includes(search.toLocaleLowerCase());
+  });
   return <KnowledgeModal title="Reusable values" onClose={onClose}>
     <KnowledgeSelect label="Reusable value category" value={type} options={TYPES} allowEmpty={false} onChange={value => { setType(value as KnowledgeMasterType); setSearch(""); setStatus(""); setEditor(null); setArchiveTarget(null); }} />
     <Field label={`Search ${SINGULAR[type]}`} value={search} onChangeText={setSearch} />
-    <KnowledgeSelect label="Status" value={status} options={[{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }, { value: "archived", label: "Archived" }]} placeholder="All current" onChange={setStatus} />
+    <KnowledgeSelect label="Status" value={status} options={[{ value: "active", label: "Active" }, ...(type === "vendors" ? [{ value: "under_review", label: "Under Review" }] : []), { value: "inactive", label: "Inactive" }, { value: "archived", label: "Archived" }]} placeholder="All current" onChange={setStatus} />
     {context.canCreate ? <Button label={`Add ${SINGULAR[type]}`} onPress={() => setEditor("new")} /> : null}
     {values.isPending ? <KnowledgeText>Loading reusable values…</KnowledgeText> : null}
     {values.isError ? <StateView title="Reusable values unavailable" message={catalogError(values.error)} actionLabel="Retry reusable values" onAction={() => void values.refetch()} /> : null}

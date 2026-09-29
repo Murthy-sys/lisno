@@ -56,8 +56,11 @@ import { AiEstimatorKnowledgeTaxVersionModel } from "../models/AiEstimatorKnowle
 import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
 import { AiEstimatorKnowledgeVendorModel } from "../models/AiEstimatorKnowledgeVendor.js";
 import { VendorKpiRequestModel } from "../models/VendorKpiRequest.js";
+import { VendorInductionRequestModel, VendorInductionReviewModel } from "../models/VendorInduction.js";
 import { vendorKpiDirectorySummaries } from "./vendor-kpi.service.js";
+import { vendorActivation, vendorActivations } from "./vendor-readiness.service.js";
 import type { VendorKpiDirectorySummary } from "../contracts/vendor-kpi.js";
+import type { VendorActivation, VendorEffectiveStatus } from "../contracts/vendor-induction.js";
 import { AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_MANIFEST } from "../operations/ai-estimator-knowledge-bootstrap.manifest.js";
 import type { PageResult, PaginationInput } from "../repositories/types.js";
 import type { AuditService } from "./audit.service.js";
@@ -103,6 +106,7 @@ export interface AiEstimatorKnowledgeListFilters {
   readonly vendorType?: "execution" | "supplier";
   readonly mainBasketId?: string;
   readonly subBasketId?: string;
+  readonly effectiveStatus?: VendorEffectiveStatus;
   readonly includeDirectoryOverview?: boolean;
 }
 
@@ -164,6 +168,7 @@ export interface AiEstimatorKnowledgePermanentDeleteSubBasketResult {
 export interface AiEstimatorKnowledgeMasterDto {
   readonly procurementSummary?: ProcurementVendorSummary;
   readonly vendorKpi?: VendorKpiDirectorySummary;
+  readonly vendorActivation?: VendorActivation;
   readonly id: string;
   readonly masterType: AiEstimatorKnowledgeMasterType;
   readonly code: string;
@@ -903,7 +908,8 @@ export function createAiEstimatorKnowledgeReferenceService(
       if (!row) notFound();
       const summaries = await procurementVendorSummaries([row]);
       const kpis = await vendorKpiDirectorySummaries([row]);
-      return { ...masterDto("vendors", row), procurementSummary: summaries.get(id)!, vendorKpi: kpis.get(id)!, procurementProfile: storedProcurementVendorProfile(row.procurementProfile), geoTaggedPicture: procurementVendorPhotoDescriptor(id, row.geoTaggedPicture), msmeCertificate: procurementVendorCertificateDescriptor(id, row.msmeCertificate) };
+      const activation = await vendorActivation(row);
+      return { ...masterDto("vendors", row), procurementSummary: summaries.get(id)!, vendorKpi: kpis.get(id)!, vendorActivation: activation, procurementProfile: storedProcurementVendorProfile(row.procurementProfile), geoTaggedPicture: procurementVendorPhotoDescriptor(id, row.geoTaggedPicture), msmeCertificate: procurementVendorCertificateDescriptor(id, row.msmeCertificate) };
     },
 
     async listMasters(actor, masterType, filters, pagination) {
@@ -914,7 +920,11 @@ export function createAiEstimatorKnowledgeReferenceService(
       if (filters.includeDirectoryOverview !== undefined && (masterType !== "vendors" || typeof filters.includeDirectoryOverview !== "boolean")) {
         throw new ApiError(400, "VALIDATION_ERROR", "Directory overview is a boolean option for vendor lists only.");
       }
-      const query = listFilter(filters, ["codeNormalized", "nameNormalized"]);
+      if (filters.effectiveStatus !== undefined && masterType !== "vendors") {
+        throw new ApiError(400, "VALIDATION_ERROR", "Effective Status is a vendor filter only.");
+      }
+      const query = listFilter(masterType === "vendors" && filters.effectiveStatus === "archived"
+        ? { ...filters, includeArchived: true } : filters, ["codeNormalized", "nameNormalized"]);
       if (masterType === "vendors") {
         if (filters.vendorType) query["procurementProfile.vendorType"] = filters.vendorType;
         const classificationFilters: Record<string, unknown>[] = [];
@@ -930,23 +940,37 @@ export function createAiEstimatorKnowledgeReferenceService(
           if (!child || String(child.basketId) !== filters.mainBasketId) query._id = { $in: [] };
         }
       }
-      const [rows, total, directoryOverview] = await Promise.all([
-        model.find(query).sort({ displayOrder: 1, nameNormalized: 1, _id: 1 }).skip(pagination.offset).limit(pagination.limit).lean().exec(),
-        model.countDocuments(query).exec(),
-        filters.includeDirectoryOverview === true ? procurementVendorDirectoryOverview() : undefined
-      ]);
+      let rows: Row[];
+      let total: number;
+      let precomputedActivations: Map<string, VendorActivation> | null = null;
+      if (masterType === "vendors" && filters.effectiveStatus) {
+        const candidates = await model.find(query).sort({ displayOrder: 1, nameNormalized: 1, _id: 1 }).lean().exec() as Row[];
+        precomputedActivations = await vendorActivations(candidates);
+        const matching = candidates.filter(row => precomputedActivations!.get(String(row._id))?.effectiveStatus === filters.effectiveStatus);
+        total = matching.length;
+        rows = matching.slice(pagination.offset, pagination.offset + pagination.limit);
+      } else {
+        const result = await Promise.all([
+          model.find(query).sort({ displayOrder: 1, nameNormalized: 1, _id: 1 }).skip(pagination.offset).limit(pagination.limit).lean().exec(),
+          model.countDocuments(query).exec()
+        ]);
+        rows = result[0] as Row[];
+        total = result[1];
+      }
+      const directoryOverview = filters.includeDirectoryOverview === true ? await procurementVendorDirectoryOverview() : undefined;
       const typedRows = rows as Row[];
       const taxVersions = masterType === "taxes"
         ? await taxVersionsByRuleIds(typedRows.map((row) => String(row._id)))
         : new Map<string, readonly KnowledgeTaxVersion[]>();
       const summaries = masterType === "vendors" ? await procurementVendorSummaries(typedRows) : new Map<string, ProcurementVendorSummary>();
       const kpis = masterType === "vendors" ? await vendorKpiDirectorySummaries(typedRows) : new Map();
+      const activations = masterType === "vendors" ? precomputedActivations ?? await vendorActivations(typedRows) : new Map<string, VendorActivation>();
       return {
         items: typedRows.map((row) => ({ ...masterDto(
           masterType,
           row,
           taxVersions.get(String(row._id))
-        ), ...(masterType === "vendors" ? { procurementSummary: summaries.get(String(row._id))!, vendorKpi: kpis.get(String(row._id))! } : {}) })),
+        ), ...(masterType === "vendors" ? { procurementSummary: summaries.get(String(row._id))!, vendorKpi: kpis.get(String(row._id))!, vendorActivation: activations.get(String(row._id))! } : {}) })),
         total,
         ...(directoryOverview ? { directoryOverview } : {})
       };
@@ -1075,6 +1099,7 @@ export function createAiEstimatorKnowledgeReferenceService(
           set.displayOrder = input.displayOrder;
         }
         if (input.status !== undefined) set.status = input.status;
+        let vendorTypeChanged = false;
         if (masterType === "vendors" && input.procurementProfile !== undefined) {
           const profile = await prepareProcurementVendorProfile(input.procurementProfile, current.procurementProfile, authorized.id, timestamp, input.confirmPhysicalAddressVerification, session);
           set.procurementProfile = profile;
@@ -1083,9 +1108,13 @@ export function createAiEstimatorKnowledgeReferenceService(
             previous: current.msmeCertificate, now: timestamp, session });
           const previousProfile = current.procurementProfile as Row | undefined;
           const changedType = previousProfile?.vendorType !== profile.vendorType;
+          vendorTypeChanged = changedType;
           const changedEmail = String(previousProfile?.email ?? "").trim().toLowerCase() !== profile.email.trim().toLowerCase();
           if (changedType) set.kpiRubricGeneration = Number(current.kpiRubricGeneration ?? 0) + 1;
-          if (changedType || changedEmail) await VendorKpiRequestModel.updateMany({ vendorId: id, status: { $in: ["pending", "sent"] } }, { $set: { status: "superseded" } }, { session });
+          if (changedType || changedEmail) {
+            await VendorKpiRequestModel.updateMany({ vendorId: id, status: { $in: ["pending", "sent"] } }, { $set: { status: "superseded" } }, { session });
+            await VendorInductionRequestModel.updateMany({ vendorId: id, status: { $in: ["pending", "sent"] } }, { $set: { status: "superseded" } }, { session });
+          }
         }
         let dependencyEpochFilter: Record<string, unknown> = {};
         if (masterType === "uoms" && input.decimalScale !== undefined) {
@@ -1115,6 +1144,24 @@ export function createAiEstimatorKnowledgeReferenceService(
           { returnDocument: "after", runValidators: true, session }
         ).lean().exec() as Row | null;
         if (!updated) versionConflict();
+        if (vendorTypeChanged) {
+          const previousReview = await VendorInductionReviewModel.findOne({ vendorId: id }).sort({ version: -1 }).session(session).lean().exec() as Row | null;
+          if (previousReview?.decision === "approved") {
+            const reason = "Vendor type changed; induction requires a new review.";
+            const reviewId = `vendor-induction-review-${randomUUID()}`;
+            const reviewVersion = Number(previousReview.version) + 1;
+            await VendorInductionReviewModel.create([{ _id: reviewId, vendorId: id, version: reviewVersion,
+              submissionId: String(previousReview.submissionId), vendorType: previousReview.vendorType,
+              decision: "reopened", reason, actorId: authorized.id, reviewedAt: timestamp,
+              idempotencyKey: `vendor-type-change-${input.expectedVersion}`,
+              payloadHash: createHash("sha256").update(JSON.stringify({ vendorId: id, expectedVersion: input.expectedVersion, reason })).digest("hex")
+            }], { session });
+            await dependencies.audit.appendInMongoTransaction({ actorId: authorized.id, action: "vendor_induction.reopened",
+              entityType: "vendor_induction", entityId: id, occurredAt: timestamp.toISOString(),
+              oldValues: { reviewId: String(previousReview._id), version: Number(previousReview.version) },
+              newValues: { reviewId, version: reviewVersion, reason } }, session);
+          }
+        }
         if (masterType === "taxes" && input.taxVersion) {
           if (input.taxVersion.rolloverFromVersionId) {
             await rolloverTaxVersion(
@@ -1211,7 +1258,10 @@ export function createAiEstimatorKnowledgeReferenceService(
           { returnDocument: "after", runValidators: true, session }
         ).lean().exec() as Row | null;
         if (!updated) versionConflict();
-        if (masterType === "vendors") await VendorKpiRequestModel.updateMany({ vendorId: id, status: { $in: ["pending", "sent"] } }, { $set: { status: "superseded" } }, { session });
+        if (masterType === "vendors") {
+          await VendorKpiRequestModel.updateMany({ vendorId: id, status: { $in: ["pending", "sent"] } }, { $set: { status: "superseded" } }, { session });
+          await VendorInductionRequestModel.updateMany({ vendorId: id, status: { $in: ["pending", "sent"] } }, { $set: { status: "superseded" } }, { session });
+        }
         await dependencies.audit.appendInMongoTransaction({
           actorId: authorized.id,
           action: "ai_estimator_knowledge_master_archived",
@@ -1447,29 +1497,22 @@ function validatePagination(pagination: PaginationInput): void {
 }
 
 async function procurementVendorDirectoryOverview(): Promise<ProcurementVendorDirectoryOverview> {
-  // This aggregation deliberately has no list filters or pagination: the tiles describe the directory.
-  const [overview] = await AiEstimatorKnowledgeVendorModel.aggregate<ProcurementVendorDirectoryOverview>([
-    { $match: { status: { $ne: "archived" } } },
-    { $lookup: { from: "vendorKpiAssessments", let: { vendorId: "$_id", vendorType: "$procurementProfile.vendorType", generation: { $ifNull: ["$kpiRubricGeneration", 0] } },
-      pipeline: [
-        { $match: { source: "procurement", rubricVersion: 1, $expr: { $and: [
-          { $eq: ["$vendorId", "$$vendorId"] }, { $eq: ["$vendorType", "$$vendorType"] }, { $eq: ["$rubricGeneration", "$$generation"] }
-        ] } } },
-        { $sort: { revision: -1 } }, { $limit: 1 }, { $project: { averageScoreBps: 1 } }
-      ], as: "officialKpi" } },
-    { $set: { officialScoreBps: { $arrayElemAt: ["$officialKpi.averageScoreBps", 0] } } },
-    { $group: {
-      _id: null,
-      totalVendors: { $sum: 1 },
-      activeVendors: { $sum: { $cond: [{ $eq: ["$status", "active"] }, 1, 0] } },
-      underReviewVendors: { $sum: { $cond: [{ $eq: [{ $ifNull: ["$procurementProfile.currentAddressVerifiedPhysically", false] }, false] }, 1, 0] } },
-      ratedVendors: { $sum: { $cond: [{ $ne: [{ $ifNull: ["$officialScoreBps", null] }, null] }, 1, 0] } },
-      averageKpiScoreBps: { $avg: "$officialScoreBps" }
-    } },
-    { $project: { _id: 0, totalVendors: 1, activeVendors: 1, underReviewVendors: 1, ratedVendors: 1,
-      averageKpiScoreBps: { $cond: [{ $eq: ["$ratedVendors", 0] }, null, { $round: ["$averageKpiScoreBps", 0] }] } } }
-  ]).exec();
-  return overview ?? { totalVendors: 0, activeVendors: 0, underReviewVendors: 0, ratedVendors: 0, averageKpiScoreBps: null };
+  // Tiles describe the whole non-archived directory, independently of list filters and pagination.
+  const vendors = await AiEstimatorKnowledgeVendorModel.find({ status: { $ne: "archived" } })
+    .select({ _id: 1, status: 1, procurementProfile: 1, msmeCertificate: 1, kpiRubricGeneration: 1 }).lean().exec() as Row[];
+  const activations = await vendorActivations(vendors);
+  const kpis = await vendorKpiDirectorySummaries(vendors);
+  const scores = vendors.flatMap(vendor => {
+    const summary = kpis.get(String(vendor._id));
+    return summary?.status === "rated" && summary.officialScoreBps != null ? [summary.officialScoreBps] : [];
+  });
+  return {
+    totalVendors: vendors.length,
+    activeVendors: vendors.filter(vendor => activations.get(String(vendor._id))?.effectiveStatus === "active").length,
+    underReviewVendors: vendors.filter(vendor => activations.get(String(vendor._id))?.effectiveStatus === "under_review").length,
+    ratedVendors: scores.length,
+    averageKpiScoreBps: scores.length ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length) : null
+  };
 }
 
 function validateListFilters(filters: AiEstimatorKnowledgeListFilters): void {
@@ -1480,6 +1523,9 @@ function validateListFilters(filters: AiEstimatorKnowledgeListFilters): void {
   }
   if (filters.status !== undefined && !["active", "inactive", "archived"].includes(filters.status)) {
     throw new ApiError(400, "VALIDATION_ERROR", "Status filter is invalid.");
+  }
+  if (filters.effectiveStatus !== undefined && !["active", "under_review", "inactive", "archived"].includes(filters.effectiveStatus)) {
+    throw new ApiError(400, "VALIDATION_ERROR", "Effective Status filter is invalid.");
   }
 }
 

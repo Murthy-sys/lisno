@@ -9,9 +9,11 @@ import { authorizationFor } from "../../test/authFixtures";
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
 import type { VendorKpiAssessment, VendorKpiPublicInspection, VendorKpiStaffDetail } from "../../../../shared/knowledge/vendorKpi";
+import type { VendorInductionStaffDetail } from "../../../../shared/knowledge/vendorInduction";
 import { VendorKpiStaffPage } from "./VendorKpiStaffPage";
 import { VendorKpiPublicPage } from "./VendorKpiPublicPage";
 import { vendorKpiKeys } from "./vendorKpiApi";
+import { projectProcurementKeys } from "./projectProcurementApi";
 import { captureVendorKpiTokenBeforeRouterMount } from "./vendorKpiTokenVault";
 
 const token = "abcdefghijklmnopqrstuvwxyzABCDEFGH123456789";
@@ -35,6 +37,11 @@ const publicVendor: VendorKpiPublicInspection["vendor"] = {
   name: "Sample Supplier", vendorType: "supplier", workProfile: "Supply",
   representativeName: "Asha Demo", representativePosition: "Owner"
 };
+const inductionBase: VendorInductionStaffDetail = {
+  vendor: { id: "vendor-one", name: "Timber House", vendorType: "execution", emailAvailable: true },
+  activation: { lifecycleStatus: "active", effectiveStatus: "under_review", gates: { inductionApproved: false, vendorSelfKpiComplete: false, procurementKpiComplete: false, profileComplete: true, physicalAddressVerified: true } },
+  draft: null, published: null, request: null, requestEligibility: "no_published_questionnaire", submission: null, review: null, history: { submissions: [], reviews: [] }
+};
 
 function staff() {
   let client!: QueryClient;
@@ -54,6 +61,7 @@ beforeEach(() => {
   window.history.replaceState(null, "", "/");
   captureVendorKpiTokenBeforeRouterMount();
   server.use(http.get("/api/v1/procurement/vendor-kpis/vendor-one", () => data(base)));
+  server.use(http.get("/api/v1/procurement/vendor-inductions/vendor-one", () => data(inductionBase)));
 });
 
 describe("staff vendor KPI", () => {
@@ -64,7 +72,8 @@ describe("staff vendor KPI", () => {
       writes.push(await request.json());
       return data({ ...base, procurementAssessment: assessment, officialScoreBps: 9000 });
     }));
-    staff(); const user = userEvent.setup();
+    const view = staff(); const user = userEvent.setup();
+    view.client.setQueryData(projectProcurementKeys.vendorSearch(""), { pages: [], pageParams: [] });
     expect(await screen.findByRole("heading", { name: "Timber House" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Back to vendors" })).toHaveAttribute("href", actor === "super_admin" ? "/admin/procurement/vendors" : "/procurement/vendors");
     expect(screen.getByText("Not rated")).toBeVisible();
@@ -74,6 +83,7 @@ describe("staff vendor KPI", () => {
     for (const [label, score] of [["Timeline", "90"], ["Quality", "95"], ["Budget", "85"], ["Site discipline (reports and people on time)", "90"]] as const) await user.type(screen.getByRole("spinbutton", { name: label }), score);
     await user.click(screen.getByRole("button", { name: "Save Procurement KPI" }));
     expect(await screen.findByText("Procurement KPI saved.")).toBeVisible();
+    expect(view.client.getQueryState(projectProcurementKeys.vendorSearch(""))?.isInvalidated).toBe(true);
     expect(screen.getByText("90/100")).toBeVisible();
     expect(writes).toHaveLength(1);
     expect(writes[0]).toMatchObject({ expectedRevision: null, rubricVersion: 1, scores: assessment.scores });

@@ -8,6 +8,7 @@ import { vendorSuggestionCreateSchema, vendorSuggestionQuerySchema, vendorSugges
 import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeVendorModel } from "../models/AiEstimatorKnowledgeVendor.js";
 import { vendorKpiDirectorySummaries } from "./vendor-kpi.service.js";
+import { vendorActivation, vendorActivations } from "./vendor-readiness.service.js";
 import { AuthorizationCoordinationModel } from "../models/AuthorizationCoordination.js";
 import { EstimateModel } from "../models/Estimate.js";
 import { ProjectAccessGrantModel } from "../models/ProjectAccessGrant.js";
@@ -120,7 +121,7 @@ export function createProjectVendorSuggestionService(input: { audit: AuditServic
         if (!current) notFound();
         requireStoredSource(source, current);
         if (current.version !== fields.expectedVersion) versionConflict();
-        if (fields.status === "suggested") await activeVendor(String(current.vendorId), session);
+        if (fields.status === "suggested" && current.status !== "suggested") await activeVendor(String(current.vendorId), session);
         const timestamp = now();
         const updated = await ProjectVendorSuggestionModel.findOneAndUpdate({ _id: id, projectId, version: fields.expectedVersion }, {
           $set: { note: fields.note, status: fields.status, updatedById: actor.id, updatedByName: currentActor.name, updatedAt: timestamp }, $inc: { version: 1 }
@@ -149,10 +150,12 @@ function requireStoredSource(source: Source, row: Row) {
 async function activeVendor(id: string, session: ClientSession): Promise<Row> {
   const row = await AiEstimatorKnowledgeVendorModel.findOneAndUpdate({ _id: id, status: "active" }, { $inc: { dependencyEpoch: 1 } }, { session, returnDocument: "after", timestamps: false, runValidators: true }).lean();
   if (!row) throw new ApiError(409, "VENDOR_SUGGESTION_VENDOR_UNAVAILABLE", "This vendor is no longer available. Choose an active vendor.");
+  if ((await vendorActivation(row, session)).effectiveStatus !== "active") throw new ApiError(409, "VENDOR_SUGGESTION_VENDOR_UNAVAILABLE", "This vendor has not completed onboarding. Choose an active vendor.");
   return row;
 }
 async function dtos(rows: Row[], session: ClientSession, actor: PublicUser): Promise<ProjectVendorSuggestion[]> {
-  const vendors = await AiEstimatorKnowledgeVendorModel.find({ _id: { $in: rows.map((row) => row.vendorId) } }).select({ code: 1, name: 1, status: 1, procurementProfile: 1, kpiRubricGeneration: 1 }).session(session).lean();
+  const vendors = await AiEstimatorKnowledgeVendorModel.find({ _id: { $in: rows.map((row) => row.vendorId) } }).select({ code: 1, name: 1, status: 1, procurementProfile: 1, msmeCertificate: 1, kpiRubricGeneration: 1 }).session(session).lean();
+  const activations = await vendorActivations(vendors, session);
   const kpis = actor.role === "procurement" || actor.role === "super_admin" ? await vendorKpiDirectorySummaries(vendors, session) : null;
   const people = await UserModel.find({ _id: { $in: rows.flatMap((row) => [row.createdById, row.updatedById]) } }).select({ name: 1 }).session(session).lean();
   const byVendor = new Map(vendors.map((row) => [String(row._id), row]));
@@ -160,7 +163,8 @@ async function dtos(rows: Row[], session: ClientSession, actor: PublicUser): Pro
   return rows.map((row) => {
     const vendor = byVendor.get(String(row.vendorId));
     return { id: String(row._id), projectId: row.projectId, estimateId: row.estimateId, estimateVersion: row.estimateVersion, estimateReviewRoundId: row.estimateReviewRoundId ?? null, designPlanVersion: row.designPlanVersion,
-      vendor: { id: row.vendorId, code: vendor?.code ?? row.vendorCodeSnapshot, name: vendor?.name ?? row.vendorNameSnapshot, status: vendor?.status ?? "unavailable" },
+      vendor: { id: row.vendorId, code: vendor?.code ?? row.vendorCodeSnapshot, name: vendor?.name ?? row.vendorNameSnapshot,
+        status: vendor ? activations.get(String(row.vendorId))!.effectiveStatus : "unavailable" },
       note: row.note, status: row.status, version: row.version,
       suggestedBy: { id: row.createdById, name: byPerson.get(String(row.createdById))?.name ?? row.createdByName },
       updatedBy: { id: row.updatedById, name: byPerson.get(String(row.updatedById))?.name ?? row.updatedByName },

@@ -49,11 +49,13 @@ function SavedGroup({ group }: { readonly group: SavedSummaryGroup }) {
   const [expanded, setExpanded] = useState(false);
   const toggleRef = useVisibleSummaryToggle(expanded);
   const id = useId();
-  const preview = group.preview.slice(0, 3);
+  const mode = group.key === "mode";
+  const preview = mode ? group.preview : group.preview.slice(0, 3);
+  const moreModeRows = mode ? Math.max(0, group.details.length - preview.length) : 0;
   const hasDetails = group.details.length > 0 && (JSON.stringify(preview) !== JSON.stringify(group.details)
-    || preview.some((row) => row.value.length > 120));
+    || (!mode && preview.some((row) => row.value.length > 120)));
   const rows = expanded ? group.details : preview;
-  return <section className="knowledge-saved-summary__group" aria-label={`${group.label} saved summary`}>
+  return <section className={`knowledge-saved-summary__group${mode ? " knowledge-saved-summary__group--mode" : ""}`} aria-label={`${group.label} saved summary`}>
     <h3>{group.label}</h3>
     {group.key === "quality" ? <p className="knowledge-saved-summary__shared">Shared checklist</p> : null}
     {group.notices.map((notice) => <div key={notice.key} className={`knowledge-saved-summary__notice knowledge-saved-summary__notice--${notice.tone}`}
@@ -67,13 +69,17 @@ function SavedGroup({ group }: { readonly group: SavedSummaryGroup }) {
         {rows.map((row) => <div key={row.key}>
           <dt>{row.label}</dt>
           <dd>{expanded ? <FullValue key={row.value} row={row} groupLabel={group.label} />
+            : mode ? row.value
             : row.value.length > 120 ? `${row.value.slice(0, 120)}…` : row.value}</dd>
         </div>)}
       </dl> : group.emptyMessage ? <p className="knowledge-saved-summary__empty">{group.emptyMessage}</p> : null}
     </div>
     {hasDetails ? <Button ref={toggleRef} variant="quiet" size="compact" className="knowledge-saved-summary__toggle"
       aria-label={`${expanded ? "Hide" : "Show"} ${group.label} details`} aria-expanded={expanded}
-      aria-controls={id} onClick={() => setExpanded((value) => !value)}>{expanded ? "Show less" : "Show details"}</Button> : null}
+      aria-describedby={mode && !expanded && moreModeRows ? `${id}-count` : undefined}
+      aria-controls={id} onClick={() => setExpanded((value) => !value)}>{expanded ? "Show less" : "Show details"}
+      {mode && !expanded && moreModeRows ? <span id={`${id}-count`}> ({moreModeRows} more saved {moreModeRows === 1 ? "detail" : "details"})</span> : null}
+    </Button> : null}
   </section>;
 }
 

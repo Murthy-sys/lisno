@@ -69,7 +69,7 @@ function ItemCard({ item, onOpen, onMenu, uoms, priorities, catalogState }: {
   const temporary = item.itemType === "temporary";
   const state = [item.status, item.subBasketName].filter(Boolean).join(" · ");
   const percentage = item.completeness.percentage;
-  const details = [temporary ? `Temporary item${item.completionRequired ? ", must be completed" : ""}` : null, state, `${percentage}% complete`, sections ? `${sections.complete}/${sections.applicable} sections` : null, unit, priority].filter(Boolean).join(". ");
+  const details = [temporary ? `Temporary item${item.completionRequired ? ", must be completed" : ""}` : null, state, `${percentage}% complete`, sections ? `${sections.complete} of ${sections.applicable} tabs configured` : null, unit, priority].filter(Boolean).join(". ");
   return <View style={s.card}>
     <Pressable accessibilityRole="button" accessibilityLabel={`Open ${item.mainLineName}`} accessibilityHint={details} onPress={() => onOpen(item.mainLineId)} style={s.cardContent}>
       <Image source={DECORATIVE_ROOM} accessible={false} accessibilityIgnoresInvertColors resizeMode="cover" style={s.thumbnail} />

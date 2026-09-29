@@ -108,3 +108,17 @@
 .knowledge-page[data-workspace-section="mode"] .knowledge-hierarchy-summary .knowledge-saved-summary__rows dt::after {
   content: none;
 }
+
+.knowledge-page .knowledge-hierarchy-summary .knowledge-saved-summary__group--mode .knowledge-saved-summary__rows > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+}
+
+.knowledge-page .knowledge-hierarchy-summary .knowledge-saved-summary__group--mode .knowledge-saved-summary__rows dt::after {
+  content: none;
+}
+
+.knowledge-page .knowledge-hierarchy-summary .knowledge-saved-summary__group--mode .knowledge-saved-summary__rows :is(dt, dd) {
+  overflow-wrap: anywhere;
+}

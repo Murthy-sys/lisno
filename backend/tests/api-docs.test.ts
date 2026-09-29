@@ -138,6 +138,40 @@ describe("OpenAPI and Swagger UI", () => {
     expect(schemas.VendorKpiCategoryScore!.properties.score).toMatchObject({ type: "integer", minimum: 0, maximum: 100 });
     expect(schemas.KnowledgeVendor!.properties.vendorKpi).toEqual({ $ref: "#/components/schemas/VendorKpiDirectorySummary" });
   });
+  it("documents vendor induction authoring, public submission, and the derived status filter", () => {
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const schemas = componentSchemas();
+    for (const [key, method, permission, requestSchema] of [
+      ["/procurement/vendor-inductions/{vendorId}", "get", "procurement.vendor_induction.read", null],
+      ["/procurement/vendor-inductions/{vendorId}/draft", "put", "procurement.vendor_induction.manage", "VendorInductionDraftSaveInput"],
+      ["/procurement/vendor-inductions/{vendorId}/publish", "post", "procurement.vendor_induction.manage", "VendorInductionPublishInput"],
+      ["/procurement/vendor-inductions/{vendorId}/requests", "post", "procurement.vendor_induction.request", "VendorInductionRequestInput"],
+      ["/procurement/vendor-inductions/{vendorId}/reviews", "post", "procurement.vendor_induction.review", "VendorInductionReviewInput"],
+      ["/procurement/vendor-inductions/{vendorId}/reopen", "post", "procurement.vendor_induction.review", "VendorInductionReopenInput"]
+    ] as const) {
+      const operation = paths[key]![method]!;
+      expect(operation.security).toEqual([{ bearerAuth: [] }]);
+      expect(operation.tags).toEqual(["Vendor induction"]);
+      expect(operation["x-lisno-permission"]).toBe(permission);
+      expect(operation.responses).toHaveProperty("2XX.content.application/json.schema.properties.data.$ref", "#/components/schemas/VendorInductionStaffDetail");
+      if (requestSchema) expect(operation.requestBody).toHaveProperty("content.application/json.schema.$ref", `#/components/schemas/${requestSchema}`);
+    }
+    for (const [key, responseSchema, requestSchema] of [
+      ["/vendor-induction/inspect", "VendorInductionPublicInspection", "VendorInductionPublicInspectInput"],
+      ["/vendor-induction/submit", "VendorInductionSubmissionReceipt", "VendorInductionPublicSubmitInput"]
+    ] as const) {
+      const operation = paths[key]!.post!;
+      expect(operation.security).toEqual([]);
+      expect(operation.requestBody).toHaveProperty("content.application/json.schema.$ref", `#/components/schemas/${requestSchema}`);
+      expect(operation.responses).toHaveProperty("200.content.application/json.schema.properties.data.$ref", `#/components/schemas/${responseSchema}`);
+    }
+    expect(schemas.VendorInductionQuestion!.properties.enabled).toEqual({ type: "boolean" });
+    expect(schemas.VendorInductionSubmission!.properties.questionnaire).toEqual({ $ref: "#/components/schemas/VendorInductionQuestionnaire" });
+    expect(schemas.VendorInductionPublicInspection!.properties.vendor).toEqual({ $ref: "#/components/schemas/VendorKpiPublicVendor" });
+    expect(JSON.stringify(schemas.VendorInductionPublicInspection)).not.toMatch(/mainBasket|subBasket|bankAccount|aadhar/u);
+    const params = paths["/admin/ai-estimator-knowledge/vendors"]!.get!.parameters as OpenApiObject[];
+    expect(params.find(param => param.name === "effectiveStatus")?.schema).toEqual({ type: "string", enum: ["active", "under_review", "inactive", "archived"] });
+  });
   it("keeps vendor mutation responses compatible with the shared master DTO", () => {
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
     const schemas = componentSchemas();
@@ -684,7 +718,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 263 routes without versioning paths twice", () => {
+  it("contains all 271 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -692,8 +726,8 @@ describe("OpenAPI and Swagger UI", () => {
       0
     );
 
-    expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 15);
-    expect(operationCount).toBe(263);
+    expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 17);
+    expect(operationCount).toBe(271);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -701,7 +735,7 @@ describe("OpenAPI and Swagger UI", () => {
 
   it("documents all AI Estimator Knowledge operations with exact schemas and 422", () => {
     const knowledgeOperations = HUMAN_JWT_OPERATION_LIST.filter(
-      ({ availability, key }) => availability === "ai_estimator_knowledge" && !key.startsWith("/procurement/vendor-kpis") && !key.includes(" /procurement/vendor-kpis")
+      ({ availability, key }) => availability === "ai_estimator_knowledge" && !key.includes("/procurement/vendor-kpis") && !key.includes("/procurement/vendor-inductions")
     );
     expect(knowledgeOperations).toHaveLength(63);
 

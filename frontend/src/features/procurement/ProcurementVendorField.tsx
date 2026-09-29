@@ -60,15 +60,21 @@ export function ProcurementVendorField({ value, onChange, error, onBusyChange, o
   const optionsUnavailable = lookupLoading || vendors.isError;
   // Keyboard navigation must never use results for an earlier search, even while
   // the combobox's loading state hides its popup options.
-  const options = optionsUnavailable ? [] : vendors.data?.pages.flatMap((page) => page.items) ?? [];
+  const options = optionsUnavailable ? [] : vendors.data?.pages.flatMap((page) => page.items.filter((vendor) => vendor.status === "active")) ?? [];
   const create = useMutation({
     mutationFn: createProcurementVendor,
     onSuccess: async (vendor) => {
-      onChange(vendor);
-      setQuery(vendor.name);
+      if (vendor.status === "active") {
+        onChange(vendor);
+        setQuery(vendor.name);
+        setNotice(`${vendor.name} is selected and saved for future projects.`);
+      } else {
+        // Candidate vendors are saved for onboarding, but cannot be assigned to this item.
+        setQuery(value?.name ?? "");
+        setNotice(`${vendor.name} was added as Under Review. Complete induction, both KPIs, and verification in Procurement > Vendors before assigning new work.`);
+      }
       setAdding(false);
       setVendorName("");
-      setNotice(`${vendor.name} is selected and saved for future projects.`);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: projectProcurementKeys.vendors }),
         syncKnowledgeMasterMutation(queryClient, "vendors")
@@ -122,7 +128,7 @@ export function ProcurementVendorField({ value, onChange, error, onBusyChange, o
       <Field id={`${id}-name`} label="New vendor name" error={nameError}>
         {(props) => <Input {...props} ref={newVendorRef} value={vendorName} maxLength={200} onChange={(event) => { setVendorName(event.target.value); setNameError(""); create.reset(); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); saveVendor(); } }} />}
       </Field>
-      <p className="ui-field__hint">Saving adds this vendor for future projects, even if you cancel this item.</p>
+      <p className="ui-field__hint">Saving adds a candidate to the vendor directory. It can be assigned only after induction, both KPIs, and verification are complete.</p>
       {create.isError ? <InlineMessage tone="error">{procurementError(create.error, "The vendor could not be saved. Try again.")}</InlineMessage> : null}
       <div className="project-procurement-vendor__actions">
         <Button variant="secondary" size="compact" busy={create.isPending} busyLabel="Saving vendor…" onClick={saveVendor}>Save vendor</Button>

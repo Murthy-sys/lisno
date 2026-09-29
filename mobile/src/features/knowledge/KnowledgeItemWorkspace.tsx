@@ -10,7 +10,7 @@ import { StateView } from "../../ui/primitives";
 import { colors, fonts } from "../../ui/tokens";
 import { KNOWLEDGE_MASTER_TYPES, type KnowledgeItemDetail, type KnowledgeJsonObject, type KnowledgeMaster, type KnowledgeMasterType, type KnowledgeSectionEnvelope } from "../../../../shared/knowledge/knowledgeTypes";
 import { KNOWLEDGE_WORKSPACE_SECTION_LABELS, formatKnowledgeDateTime } from "../../../../shared/knowledge/knowledgePresentation";
-import { KNOWLEDGE_WORKSPACE_SECTION_KEYS, type KnowledgeWorkspaceSectionKey } from "../../../../shared/knowledge/knowledgeWorkspaceSections";
+import { KNOWLEDGE_WORKSPACE_SECTION_KEYS, countConfiguredWorkspaceTabs, type KnowledgeWorkspaceSectionKey } from "../../../../shared/knowledge/knowledgeWorkspaceSections";
 import { validateKnowledgeSection } from "../../../../shared/knowledge/knowledgeSectionValidation";
 import { modeCalculationsIssues } from "../../../../shared/knowledge/knowledgeModeCalculation";
 import { modeDescriptionIssues } from "../../../../shared/knowledge/knowledgeModeDescription";
@@ -89,7 +89,12 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readon
   const relatedQuery = useQuery({ queryKey: context.key("items", "all"), queryFn: () => allKnowledgePages(page => context.api.listKnowledgeItems(page)), enabled });
   const qualityQuery = useQuery({ queryKey: context.key("basket-quality", item?.basketId), queryFn: () => context.api.getKnowledgeBasketQuality(item!.basketId), enabled: enabled && Boolean(item?.basketId) });
   const subBasketsQuery = useQuery({ queryKey: context.key("sub-baskets", item?.basketId), queryFn: () => allKnowledgePages(page => context.api.listKnowledgeSubBaskets(item!.basketId, page)), enabled: enabled && Boolean(item?.basketId) });
-  const saved = Object.fromEntries(MOBILE_SECTION_KEYS.map((key, index) => [key, sectionQueries[index]?.data])) as Partial<Record<MobileSectionKey, KnowledgeSectionEnvelope>>;
+  const saved = Object.fromEntries(MOBILE_SECTION_KEYS.map((key, index) => {
+    const query = sectionQueries[index];
+    const denied = query?.error instanceof ApiError && [401, 403].includes(query.error.status);
+    const envelope = denied ? undefined : query?.data;
+    return [key, envelope?.mainLineId === mainLineId && envelope.revisionId === revisionId && envelope.sectionKey === key ? envelope : undefined];
+  })) as Partial<Record<MobileSectionKey, KnowledgeSectionEnvelope>>;
   const editable = Boolean(item && revision?.status === "draft" && item.status !== "archived" && context.canUpdate && item.allowedActions.includes("update_section"));
   const dirty = Object.keys(drafts).length > 0 || qualityDirty;
   const locked = busy || qualityBusy || editorBusy;
@@ -205,9 +210,22 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readon
   const recommendationsQuery = sectionQueries[MOBILE_SECTION_KEYS.indexOf("recommendations")];
   const editorProps = { item, context, masters, catalogsReady, readOnly: !editable || locked, onValidityChange: setEditorValid, onBusyChange: setEditorBusy };
   const summary = projectKnowledgeSavedSummary({ sections: Object.fromEntries(MOBILE_SECTION_KEYS.filter(key => saved[key]).map(key => [key, saved[key]!.payload])), ...(qualityQuery.data ? { quality: qualityQuery.data } : {}), masters, baskets: basketQuery.data ?? [], items: relatedQuery.data ?? [], subBaskets: subBasketsQuery.data ?? [] });
+  const modeSections = [["advanced", "Mode"], ["pricing", "Specifications"]] as const;
+  const modeUnavailable = modeSections.some(([section]) => {
+    const query = sectionQueries[MOBILE_SECTION_KEYS.indexOf(section)];
+    return !saved[section] && (query?.isPending || query?.isError || query?.isSuccess);
+  });
+  const additionalModeValues = Math.max(0, summary.mode.details.length - summary.mode.preview.length);
+  const modeHasFullerDetails = additionalModeValues > 0 || summary.mode.details.some((detail, index) => {
+    const preview = summary.mode.preview[index];
+    return !preview || detail.key !== preview.key || detail.label !== preview.label || detail.value !== preview.value;
+  });
+  const modeDetailDescription = additionalModeValues > 0 ? `Mode details, ${additionalModeValues} more saved values` : "full Mode details";
+  const modeDetailText = additionalModeValues > 0 ? `Mode details · ${additionalModeValues} more saved values` : "full Mode details";
   const canSave = active === "quality" ? context.canUpdate && item.status !== "archived" : editable;
   const hasActions = context.canCreate && item.allowedActions.some(action => ["create_revision", "duplicate"].includes(action)) || context.canLifecycle && item.allowedActions.some(action => ["review_and_activate", "deactivate", "archive"].includes(action));
   const findings = [...item.blockers, ...item.warnings];
+  const tabProgress = countConfiguredWorkspaceTabs(item.completeness.sections);
   return <View style={detail.root}>
     <ScrollView ref={scroll} style={detail.scroll} contentContainerStyle={styles.screen} stickyHeaderIndices={[1]} onScroll={event => { scrollOffset.current = event.nativeEvent.contentOffset.y; }} scrollEventThrottle={32} keyboardShouldPersistTaps="handled">
     <View style={detail.header} onLayout={event => { headerEnd.current = event.nativeEvent.layout.y + event.nativeEvent.layout.height + 10; }}>
@@ -232,6 +250,7 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readon
         <View accessible accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: item.completeness.percentage }} accessibilityLabel="Configuration completeness" style={detail.track}><View style={[detail.fill, { width: `${Math.max(0, Math.min(100, item.completeness.percentage))}%` }]} /></View>
         {findings.length ? <Pressable accessibilityRole="button" accessibilityLabel="Configuration checks" accessibilityHint={item.blockers.length ? `${item.blockers.length} required before activation` : `${item.warnings.length} configuration notes`} accessibilityState={{ expanded: showChecks }} onPress={() => setShowChecks(value => !value)} style={detail.checksToggle}><Text style={detail.checksLabel}>{item.blockers.length ? `${item.blockers.length} to finish` : "Details"}</Text><DetailIcon name={showChecks ? "down" : "right"} size={14} /></Pressable> : null}
       </View>
+      <Text style={detail.tabProgress}>{tabProgress.configured} of {tabProgress.total} tabs configured</Text>
       {showChecks ? <View style={detail.findings}>{item.blockers.map((finding, index) => <KnowledgeText key={`blocker-${index}`} error>{friendlyFinding(finding.message)}</KnowledgeText>)}{item.warnings.map((finding, index) => <KnowledgeText key={`warning-${index}`}>{friendlyFinding(finding.message)}</KnowledgeText>)}<KnowledgeText>Knowledge-base changes do not modify current estimates or the existing Sales estimate builder.</KnowledgeText></View> : null}
     </View>
     {detailQuery.isError ? <KnowledgeCard><KnowledgeText error>The latest item could not be refreshed. Cached content and your edits are retained.</KnowledgeText><Button label="Retry item refresh" variant="secondary" onPress={() => void detailQuery.refetch()} /></KnowledgeCard> : null}
@@ -254,14 +273,34 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readon
       {KNOWLEDGE_WORKSPACE_SECTION_KEYS.map(key => {
         const available = key !== "recommendations" || Boolean(revisionId && saved.recommendations);
         const rows = available ? expandedSummary === key ? summary[key].details : summary[key].preview : [];
-        const emptyMessage = key === "recommendations"
+        const emptyMessage = key === "mode"
+          ? !revisionId ? "No revision available." : modeUnavailable ? null : "Not configured"
+          : key === "recommendations"
           ? !revisionId ? "No revision available." : recommendationsQuery?.isPending && !saved.recommendations ? "Loading saved recommendations…" : recommendationsQuery?.isError && !saved.recommendations ? "Saved recommendations could not be loaded." : "Not configured"
           : key === "quality" && qualityQuery.isPending ? "Loading saved checklist…" : "No saved details available.";
         return <View key={key} testID={`saved-summary-${key}`} style={styles.stack}><Text style={styles.subtitle}>{KNOWLEDGE_WORKSPACE_SECTION_LABELS[key]}</Text>
-          {rows.map(row => <View key={row.key} style={styles.summaryRow}><Text style={[styles.text, { flex: 1 }]}>{row.label}</Text><Text style={[styles.text, { flex: 1 }]}>{row.value}</Text></View>)}
-          {!rows.length ? <KnowledgeText error={key === "recommendations" && Boolean(recommendationsQuery?.isError)}>{emptyMessage}</KnowledgeText> : null}
+          {rows.map(row => <View key={row.key} style={[styles.summaryRow, key === "mode" && detail.modeSummaryRow]}><Text style={[styles.text, key === "mode" ? detail.modeSummaryLabel : detail.summaryCell]}>{row.label}</Text><Text style={[styles.text, key === "mode" ? detail.modeSummaryValue : detail.summaryCell]}>{row.value}</Text></View>)}
+          {!rows.length && emptyMessage ? <KnowledgeText error={key === "recommendations" && Boolean(recommendationsQuery?.isError)}>{emptyMessage}</KnowledgeText> : null}
+          {key === "mode" && revisionId ? modeSections.map(([section, label]) => {
+            const query = sectionQueries[MOBILE_SECTION_KEYS.indexOf(section)];
+            const confirmed = saved[section];
+            const unverified = Boolean(query?.isSuccess && query.data && !confirmed);
+            if (query?.isPending && !confirmed) return <KnowledgeText key={section}>Loading saved {label}…</KnowledgeText>;
+            if (query?.isError || unverified) {
+              const denied = query?.error instanceof ApiError && [401, 403].includes(query.error.status);
+              const message = unverified ? `Saved ${label} could not be verified for this revision.`
+                : denied ? `Saved ${label} is unavailable with your current access.`
+                  : confirmed ? `The latest saved ${label} could not be loaded. Last saved details are shown.`
+                    : `Saved ${label} could not be loaded.`;
+              return <View key={section} accessibilityLiveRegion="polite" style={styles.stack}><KnowledgeText error>{message}</KnowledgeText><Button label={`Retry saved ${label}`} variant="quiet" onPress={() => void query?.refetch()} /></View>;
+            }
+            if (query?.isFetching && confirmed) return <KnowledgeText key={section}>Refreshing saved {label}… Last saved details are shown.</KnowledgeText>;
+            return null;
+          }) : null}
           {key === "recommendations" && recommendationsQuery?.isError && revisionId ? <View style={styles.stack}>{saved.recommendations ? <KnowledgeText error>The latest saved recommendations could not be loaded. Last saved details are shown.</KnowledgeText> : null}<Button label="Retry saved recommendations" variant="quiet" onPress={() => void recommendationsQuery.refetch()} /></View> : null}
-          {available && summary[key].details.length > summary[key].preview.length ? <Button label={`${expandedSummary === key ? "Hide" : "Show"} ${KNOWLEDGE_WORKSPACE_SECTION_LABELS[key]} details`} variant="quiet" onPress={() => setExpandedSummary(expandedSummary === key ? null : key)} /> : null}
+          {available && (key === "mode" ? modeHasFullerDetails : summary[key].details.length > summary[key].preview.length) ? key === "mode"
+            ? <Pressable accessibilityRole="button" accessibilityLabel={`${expandedSummary === key ? "Hide" : "Show"} ${modeDetailDescription}`} accessibilityState={{ expanded: expandedSummary === key }} onPress={() => setExpandedSummary(expandedSummary === key ? null : key)} style={detail.modeDetailsToggle}><Text style={detail.modeDetailsText}>{expandedSummary === key ? "Hide" : "Show"} {modeDetailText}</Text><DetailIcon name={expandedSummary === key ? "down" : "right"} size={14} /></Pressable>
+            : <Button label={`${expandedSummary === key ? "Hide" : "Show"} ${KNOWLEDGE_WORKSPACE_SECTION_LABELS[key]} details`} variant="quiet" onPress={() => setExpandedSummary(expandedSummary === key ? null : key)} /> : null}
         </View>;
       })}
     </KnowledgeDisclosure>
@@ -316,6 +355,13 @@ const detail = StyleSheet.create({
   completeness: { gap: 4 },
   progressRow: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 10 },
   completeLabel: { fontFamily: fonts.regular, fontSize: 11, color: colors.inkMuted },
+  tabProgress: { fontFamily: fonts.regular, fontSize: 11, color: colors.inkMuted },
+  summaryCell: { flex: 1 },
+  modeSummaryRow: { flexDirection: "column", alignItems: "stretch", gap: 2 },
+  modeSummaryLabel: { fontFamily: fonts.semibold },
+  modeSummaryValue: { width: "100%", lineHeight: 19 },
+  modeDetailsToggle: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, paddingHorizontal: 2, paddingVertical: 8 },
+  modeDetailsText: { flex: 1, fontFamily: fonts.medium, fontSize: 12, lineHeight: 19, color: colors.primary },
   checksLabel: { fontFamily: fonts.medium, fontSize: 11, color: colors.primary },
   findings: { gap: 8, backgroundColor: colors.surfaceMuted, padding: 10, borderRadius: 4 },
   percent: { fontFamily: fonts.semibold, fontSize: 14, color: colors.primary },

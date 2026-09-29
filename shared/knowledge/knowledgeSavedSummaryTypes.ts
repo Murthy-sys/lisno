@@ -9,8 +9,8 @@ import type {
 } from "./knowledgeTypes";
 import type { QualityControlOptionCatalog } from "./knowledgeQuality";
 
-export const SAVED_SUMMARY_SECTION_KEYS = ["overview", "advanced", "recommendations"] as const;
-export type SavedSummarySectionKey = (typeof SAVED_SUMMARY_SECTION_KEYS)[number] | "pricing";
+export const SAVED_SUMMARY_SECTION_KEYS = ["overview", "advanced", "pricing", "recommendations"] as const;
+export type SavedSummarySectionKey = (typeof SAVED_SUMMARY_SECTION_KEYS)[number];
 export type SavedSummaryGroupKey = "overview" | "mode" | "recommendations" | "quality";
 
 export interface SavedSummaryRow {
@@ -20,7 +20,7 @@ export interface SavedSummaryRow {
 }
 
 export interface SavedSummaryContent {
-  /** At most three concise rows; details retain complete user-facing saved values. */
+  /** Concise saved rows; Mode shows all four calculation scopes. */
   readonly preview: readonly SavedSummaryRow[];
   readonly details: readonly SavedSummaryRow[];
 }

@@ -17,7 +17,7 @@ const actorMetadata = {
 } as const;
 
 const masters = {
-  vendors: [{ id: "vendor-1", masterType: "vendors", code: "ACME", name: "Acme Vendor", description: null, displayOrder: 0, status: "active", ...actorMetadata }],
+  vendors: [{ id: "vendor-1", masterType: "vendors", code: "ACME", name: "Acme Vendor", description: null, displayOrder: 0, status: "active", vendorActivation: { lifecycleStatus: "active", effectiveStatus: "active", gates: { inductionApproved: true, vendorSelfKpiComplete: true, procurementKpiComplete: true, profileComplete: true, physicalAddressVerified: true } }, ...actorMetadata }],
   uoms: [{ id: "uom-1", masterType: "uoms", code: "SQFT", name: "Square foot", description: null, displayOrder: 0, status: "active", ...actorMetadata }],
   taxes: [{
     id: "tax-1",

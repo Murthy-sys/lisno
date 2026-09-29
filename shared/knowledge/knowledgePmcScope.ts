@@ -10,6 +10,7 @@ export const PMC_SCOPE_LISTS = ["inclusions", "exclusions"] as const;
 export type KnowledgePmcScopeList = (typeof PMC_SCOPE_LISTS)[number];
 export const MAX_PMC_SCOPE_ITEMS = 200;
 export const IN_HOUSE_SCOPE_NAMES = ["Supplier", "Execution", "Labour"] as const;
+export const SUB_VENDOR_SCOPE_NAMES = ["Transport", "Shifting", "Unloading", "ESIC/ PF", "Mathadi", "Damage during"] as const;
 
 let fallbackIdSequence = 0;
 
@@ -23,6 +24,15 @@ export function createPmcScopeItem(list: KnowledgePmcScopeList, name: string): K
 export function inHouseScopeStarterItems(list: KnowledgePmcScopeList): readonly KnowledgePmcScopeItem[] {
   return IN_HOUSE_SCOPE_NAMES.map((name) => ({
     id: `in-house-${list}-${normalizePmcScopeName(name).replace(/\s+/gu, "-")}`,
+    name,
+    selected: false
+  }));
+}
+
+/** Presentation-only options for a new Sub-Vendor scope. Saved lists take precedence. */
+export function subVendorScopeStarterItems(list: KnowledgePmcScopeList): readonly KnowledgePmcScopeItem[] {
+  return SUB_VENDOR_SCOPE_NAMES.map((name, index) => ({
+    id: `sub-vendor-${list}-${index + 1}`,
     name,
     selected: false
   }));

@@ -20,6 +20,7 @@ const get = jest.fn();
 const del = jest.fn();
 const invalidate = jest.fn(async () => undefined);
 const vendor = { id: "vendor-one", masterType: "vendors", name: "Carpentry Co", code: "V001", status: "active", version: 7, procurementSummary: { vendorType: "supplier", mainBaskets: [{ id: "basket-one", name: "Carpentry", status: "active" }] } };
+const activation = (effectiveStatus: "active" | "under_review" | "inactive" | "archived") => ({ lifecycleStatus: effectiveStatus === "under_review" ? "active" : effectiveStatus, effectiveStatus, gates: { inductionApproved: effectiveStatus === "active", vendorSelfKpiComplete: effectiveStatus === "active", procurementKpiComplete: effectiveStatus === "active", profileComplete: true, physicalAddressVerified: true } });
 const second = { ...vendor, id: "vendor-two", name: "Masonry Co", code: "V002", version: 3 };
 const page = (items: readonly unknown[], total = items.length, offset = 0, hasMore = false) => ({ items, pagination: { total, limit: 10, offset, hasMore } });
 const allPermissions = ["procurement.vendor_directory.read", "procurement.vendor_directory.create", "procurement.vendor_directory.update", "procurement.vendor_directory.lifecycle", "procurement.vendor_classification.create", "procurement.vendor_allocation_baseline.correct"] as const;
@@ -70,10 +71,10 @@ describe("Procurement Vendors workspace", () => {
   it("shows one review-aware status and omits vendor codes while keeping ID-based navigation", async () => {
     const { renderWorkspace } = setup();
     const items = [
-      { ...vendor, id: "under-review", name: "Review Co", code: "PV-REVIEW", procurementSummary: { ...vendor.procurementSummary, currentAddressVerifiedPhysically: false } },
-      { ...vendor, id: "verified", name: "Verified Co", code: "PV-VERIFIED", procurementSummary: { ...vendor.procurementSummary, currentAddressVerifiedPhysically: true } },
-      { ...vendor, id: "inactive", name: "Inactive Co", code: "PV-INACTIVE", status: "inactive", procurementSummary: { ...vendor.procurementSummary, currentAddressVerifiedPhysically: false } },
-      { ...vendor, id: "archived", name: "Archived Co", code: "PV-ARCHIVED", status: "archived", procurementSummary: { ...vendor.procurementSummary, currentAddressVerifiedPhysically: false } }
+      { ...vendor, id: "under-review", name: "Review Co", code: "PV-REVIEW", vendorActivation: activation("under_review"), procurementSummary: { ...vendor.procurementSummary, currentAddressVerifiedPhysically: true } },
+      { ...vendor, id: "verified", name: "Verified Co", code: "PV-VERIFIED", vendorActivation: activation("active"), procurementSummary: { ...vendor.procurementSummary, currentAddressVerifiedPhysically: true } },
+      { ...vendor, id: "inactive", name: "Inactive Co", code: "PV-INACTIVE", status: "inactive", vendorActivation: activation("inactive"), procurementSummary: { ...vendor.procurementSummary, currentAddressVerifiedPhysically: false } },
+      { ...vendor, id: "archived", name: "Archived Co", code: "PV-ARCHIVED", status: "archived", vendorActivation: activation("archived"), procurementSummary: { ...vendor.procurementSummary, currentAddressVerifiedPhysically: false } }
     ];
     get.mockImplementation(async (path: string) => {
       if (path.includes("includeDirectoryOverview")) return { ...page([]), directoryOverview: { totalVendors: 4, activeVendors: 1, underReviewVendors: 1 } };
@@ -90,6 +91,15 @@ describe("Procurement Vendors workspace", () => {
     for (const item of items) expect(view.queryByText(new RegExp(item.code))).toBeNull();
     await fireEvent.press(view.getByRole("link", { name: "Open Review Co KPI" }));
     expect(router.push).toHaveBeenCalledWith({ pathname: "/vendor/[vendorId]", params: { vendorId: "under-review", from: "procurement-vendors" } });
+  });
+
+  it("filters the directory by effective Under Review status", async () => {
+    const { renderWorkspace } = setup();
+    const view = await renderWorkspace();
+    await view.findByText("Carpentry Co");
+    await fireEvent.press(view.getByRole("combobox", { name: "Status" }));
+    await fireEvent.press(view.getByRole("radio", { name: "Under Review" }));
+    await waitFor(() => expect(get).toHaveBeenCalledWith(expect.stringContaining("effectiveStatus=under_review")));
   });
 
   it("applies search and basket filters to the shared vendor endpoint", async () => {

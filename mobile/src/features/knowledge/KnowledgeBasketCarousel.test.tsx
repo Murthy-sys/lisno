@@ -15,7 +15,7 @@ jest.mock("react-native", () => {
 const actor = { id: "record-a", version: 1, createdById: "actor", updatedById: "actor", createdAt: "2026-09-25T10:00:00Z", updatedAt: "2026-09-25T10:00:00Z" };
 const item: KnowledgeItemListItem = {
   ...actor, mainLineId: "line-a", mainLineName: "Plain False Ceiling", basketId: "basket-a", basketName: "POP / Gypsum", subBasketId: "sub-a", subBasketName: "sub1", itemType: "main_line", description: null, completionRequired: false, status: "draft", activeRevisionId: null, draftRevisionId: "revision-a", revisionNumber: 1, uomId: null, priorityId: "priority-a", modeIds: [], surfaceIds: [], vendorIds: [], allowedActions: [],
-  completeness: { percentage: 33, sections: ["overview", "pricing", "quantity-margin", "scope", "recommendations", "quality"].map((sectionKey, index) => ({ sectionKey, state: index < 2 ? "complete" : "not_configured", findings: [] })) as KnowledgeItemListItem["completeness"]["sections"], blockers: [], warnings: [] }
+  completeness: { percentage: 50, sections: ["overview", "pricing", "quantity-margin", "scope", "recommendations", "quality"].map((sectionKey, index) => ({ sectionKey, state: index < 2 ? "complete" : "not_configured", findings: [] })) as KnowledgeItemListItem["completeness"]["sections"], blockers: [], warnings: [] }
 };
 const priority: KnowledgeMaster = { ...actor, id: "priority-a", masterType: "priorities", code: "HIGH", name: "High priority", description: null, displayOrder: 0, status: "active", semanticTier: "high" };
 const props = { basketId: "basket-a", name: "POP / Gypsum", items: [item], expanded: true, onToggle: jest.fn(), onOpenItem: jest.fn(), onItemMenu: jest.fn(), onBasketMenu: jest.fn(), uoms: [], priorities: [priority], catalogState: "ready" as const };
@@ -33,12 +33,14 @@ it("uses a controlled accordion and keeps item identity distinct from its displa
   expect(view.getByText("1 item")).toBeTruthy();
 });
 
-it("shows server completeness, applicable section counts and catalog values without inventing metadata", async () => {
+it("shows server completeness, configured tab counts and catalog values without inventing metadata", async () => {
   const view = await render(<KnowledgeBasketCarousel {...props} />);
-  expect(view.getByText("33%")).toBeTruthy();
-  expect(view.getByText("2/6 · No unit")).toBeTruthy();
+  expect(view.getByText("50%")).toBeTruthy();
+  expect(view.getByText("2/4 · No unit")).toBeTruthy();
   expect(view.getByText("draft · sub1")).toBeTruthy();
-  expect(view.getByRole("button", { name: "Open Plain False Ceiling" }).props.accessibilityHint).toContain("High priority");
+  const hint = view.getByRole("button", { name: "Open Plain False Ceiling" }).props.accessibilityHint;
+  expect(hint).toContain("2 of 4 tabs configured");
+  expect(hint).toContain("High priority");
   expect(view.getByRole("button", { name: "Collapse POP / Gypsum" }).props.accessibilityHint).toBe("1 item on this page");
 });
 
@@ -55,7 +57,7 @@ it("opens measured item and basket menus independently from opening or collapsin
 it("represents temporary items and unavailable catalogs truthfully", async () => {
   const view = await render(<KnowledgeBasketCarousel {...props} catalogState="error" priorities={[]} items={[{ ...item, itemType: "temporary", completionRequired: true, uomId: "missing-uom" }]} />);
   expect(view.getByText("Temporary")).toBeTruthy();
-  expect(view.getByText("2/6 · Unit unavailable")).toBeTruthy();
+  expect(view.getByText("2/4 · Unit unavailable")).toBeTruthy();
   const hint = view.getByRole("button", { name: "Open Plain False Ceiling" }).props.accessibilityHint;
   expect(hint).toContain("Temporary item, must be completed");
   expect(hint).toContain("Priority unavailable");

@@ -23,6 +23,8 @@ import { createSmtpDesignPlanMailer } from "./services/smtp-design-plan-mailer.j
 import { createSmtpInvitationMailer } from "./services/smtp-invitation-mailer.js";
 import { createSmtpVendorKpiMailer } from "./services/smtp-vendor-kpi-mailer.js";
 import { createSendGridVendorKpiMailer } from "./services/sendgrid-vendor-kpi-mailer.js";
+import { createSmtpVendorInductionMailer } from "./services/smtp-vendor-induction-mailer.js";
+import { createSendGridVendorInductionMailer } from "./services/sendgrid-vendor-induction-mailer.js";
 import { createSmtpPasswordResetMailer } from "./services/smtp-password-reset-mailer.js";
 import {
   runProcurementReceiptCleanupJobs,
@@ -110,6 +112,11 @@ export async function startServer(
       : mailDelivery.kind === "sendgrid_web_api"
         ? createSendGridVendorKpiMailer(mailDelivery)
         : { deliveryKind: "disabled" as const };
+    const vendorInductionMailer = mailDelivery.kind === "smtp"
+      ? createSmtpVendorInductionMailer(mailDelivery)
+      : mailDelivery.kind === "sendgrid_web_api"
+        ? createSendGridVendorInductionMailer(mailDelivery)
+        : { deliveryKind: "disabled" as const };
     const passwordResetMailer = mailDelivery.kind === "smtp"
       ? createSmtpPasswordResetMailer(mailDelivery)
       : mailDelivery.kind === "sendgrid_web_api"
@@ -138,6 +145,7 @@ export async function startServer(
       },
       corsOrigins: env.CORS_ORIGIN,
       vendorKpiMailer,
+      vendorInductionMailer,
       storage,
       maxUploadBytes: Math.floor(env.MAX_UPLOAD_MB * 1024 * 1024),
       chatAttachmentPolicy: createProjectChatAttachmentPolicy({

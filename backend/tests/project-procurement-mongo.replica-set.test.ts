@@ -3,6 +3,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { MAX_FINANCE_AMOUNT_PAISE } from "../src/domain/project-finance.js";
 import { AiEstimatorKnowledgeUomModel } from "../src/models/AiEstimatorKnowledgeUom.js";
 import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowledgeVendor.js";
+import { VendorKpiAssessmentModel } from "../src/models/VendorKpiAssessment.js";
+import { VendorInductionReviewModel } from "../src/models/VendorInduction.js";
 import { AiEstimatorKnowledgeDisplayOrderSequenceModel } from "../src/models/AiEstimatorKnowledgeDisplayOrderSequence.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { ProjectModel } from "../src/models/Project.js";
@@ -32,7 +34,8 @@ beforeAll(async () => {
   replica = await startMongoReplicaSet("project-procurement-tests");
   await Promise.all([UserModel, ProjectModel, EstimateModel, EstimateClientReviewRoundModel, ProjectWorkflowTaskModel,
     AiEstimatorKnowledgeUomModel, AiEstimatorKnowledgeVendorModel, AiEstimatorKnowledgeDisplayOrderSequenceModel,
-    AuditEventModel, ProjectProcurementItemModel, FinanceLedgerEntryModel, ProjectFinanceBucketModel].map((model) => model.syncIndexes()));
+    AuditEventModel, ProjectProcurementItemModel, FinanceLedgerEntryModel, ProjectFinanceBucketModel,
+    VendorKpiAssessmentModel, VendorInductionReviewModel].map((model) => model.syncIndexes()));
 }, 120_000);
 beforeEach(async () => {
   vi.restoreAllMocks();
@@ -79,6 +82,26 @@ async function createProject(projectId: string, assigneeId: string, subtotal: nu
     _id: `task-${projectId}`, dedupeKey: `${estimateId}:procurement`, projectId, estimateId, designPlanVersion: 1, kind: "procurement",
     title: "Prepare procurement", assigneeRole: "procurement", assigneeUserId: assigneeId, status: "open", progress: 0, version: 1, openedAt: now
   });
+}
+
+async function completeVendorOnboarding(vendorId: string): Promise<void> {
+  await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: vendorId }, { $set: { procurementProfile: {
+    organizationType: null, bankAccount: null, vendorType: "supplier", executionType: null, supplier: true,
+    nameOfRepresentative: "Fixture Representative", position: "Owner", gstRegistered: false, gstNumber: null,
+    msmeRegistered: false, turnoverSelfDeclaredPaise: 0, turnoverVerifiedPaise: null, reference: null,
+    workProfile: "Commercial interiors supply", email: `vendor-${vendorId}@example.test`, phoneNumber: "9000000000",
+    address: "Bengaluru", aadhar: "123456789012", pan: "ABCDE1234F", currentAddress: "Bengaluru",
+    currentAddressVerifiedPhysically: true, physicalAddressVerifiedAt: now.toISOString(), physicalAddressVerifiedById: actor.id,
+    mainBasketIds: ["basket-fixture"], subBasketIds: ["sub-fixture"], mainBasketId: "basket-fixture", subBasketId: "sub-fixture"
+  } } });
+  await VendorKpiAssessmentModel.insertMany(["vendor_self", "procurement"].map(source => ({
+    _id: `${vendorId}-${source}`, vendorId, source, vendorType: "supplier", rubricVersion: 1, rubricGeneration: 0,
+    scores: [], averageScoreBps: 0, revision: 1, comment: null, submittedAt: now, actorId: source === "procurement" ? actor.id : null,
+    requestId: null, idempotencyKey: `${vendorId}-${source}`, payloadHash: "fixture"
+  })));
+  await VendorInductionReviewModel.create({ _id: `${vendorId}-approved`, vendorId, version: 1,
+    submissionId: `${vendorId}-submission`, vendorType: "supplier", decision: "approved", reason: null,
+    actorId: actor.id, reviewedAt: now, idempotencyKey: `${vendorId}-approval`, payloadHash: "fixture" });
 }
 
 describe("project procurement item Mongo transactions", () => {
@@ -322,15 +345,19 @@ describe("project procurement item Mongo transactions", () => {
 describe("saved Configuration vendors for project procurement", () => {
   it("creates a shared master independently of item drafts and reuses it across projects", async () => {
     const created = await service.createVendor(actor, { name: "  Ｗood\nSupply " });
-    expect(created).toMatchObject({ created: true, vendor: { name: "Wood Supply", status: "active", code: expect.stringMatching(/^PV-/) } });
+    expect(created).toMatchObject({ created: true, vendor: { name: "Wood Supply", status: "under_review", code: expect.stringMatching(/^PV-/) } });
     const reused = await service.createVendor(other, { name: "wood   supply" });
     expect(reused).toEqual({ ...created, created: false });
     expect(await ProjectProcurementItemModel.countDocuments()).toBe(0);
+    expect((await service.listVendors(actor, { q: "SUPPLY", limit: 20, offset: 0 })).items).toEqual([]);
+    await expect(service.create(actor, "project-a", { ...fields, vendorId: created.vendor.id, allocatedWorkPaise: 500_000 })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    await completeVendorOnboarding(created.vendor.id);
     const first = await service.create(actor, "project-a", { ...fields, vendorId: created.vendor.id, allocatedWorkPaise: 500_000 });
     const second = await service.create(other, "project-b", { ...fields, estimateId: "estimate-project-b", vendorId: created.vendor.id, allocatedWorkPaise: 500_000, pricePaise: 30001 });
-    expect(first.vendor).toEqual(created.vendor);
-    expect(second.vendor).toEqual(created.vendor);
-    expect((await service.listVendors(other, { q: "SUPPLY", limit: 20, offset: 0 })).items).toEqual([created.vendor]);
+    const available = { ...created.vendor, status: "active" };
+    expect(first.vendor).toEqual(available);
+    expect(second.vendor).toEqual(available);
+    expect((await service.listVendors(other, { q: "SUPPLY", limit: 20, offset: 0 })).items).toEqual([available]);
     expect((await service.list(actor, "project-a", { q: "supply", limit: 20, offset: 0 })).items).toEqual([first]);
     expect(await AiEstimatorKnowledgeVendorModel.countDocuments()).toBe(1);
     expect(await AuditEventModel.countDocuments({ action: "ai_estimator_knowledge_master_created" })).toBe(1);
@@ -383,6 +410,7 @@ describe("saved Configuration vendors for project procurement", () => {
       _id: `vendor-${i}`, code: `V${i}`, name: `Vendor ${String(i).padStart(2, "0")}${i === 24 ? " [.*]" : ""}`,
       status: "active", displayOrder: i, version: 1, createdById: actor.id, updatedById: actor.id
     })));
+    await Promise.all(Array.from({ length: 25 }, (_, i) => completeVendorOnboarding(`vendor-${i}`)));
     const first = await service.listVendors(actor, { q: "", limit: 20, offset: 0 });
     const second = await service.listVendors(other, { q: "", limit: 20, offset: 20 });
     expect(first.items).toHaveLength(20);
@@ -394,6 +422,8 @@ describe("saved Configuration vendors for project procurement", () => {
   it("scopes duplicate products by nullable vendor identity and allows clearing the vendor", async () => {
     const firstVendor = (await service.createVendor(actor, { name: "One" })).vendor;
     const secondVendor = (await service.createVendor(actor, { name: "Two" })).vendor;
+    await completeVendorOnboarding(firstVendor.id);
+    await completeVendorOnboarding(secondVendor.id);
     const unassigned = await service.create(actor, "project-a", fields);
     const first = await service.create(actor, "project-a", { ...fields, vendorId: firstVendor.id, allocatedWorkPaise: 500_000 });
     const second = await service.create(actor, "project-a", { ...fields, vendorId: secondVendor.id, allocatedWorkPaise: 500_000 });
@@ -405,6 +435,7 @@ describe("saved Configuration vendors for project procurement", () => {
   });
   it.each(["inactive", "archived", "unavailable"] as const)("keeps a vendor snapshot after it becomes %s, while rejecting new selections", async (status) => {
     const saved = (await service.createVendor(actor, { name: "Historical Vendor" })).vendor;
+    await completeVendorOnboarding(saved.id);
     const item = await service.create(actor, "project-a", { ...fields, vendorId: saved.id, allocatedWorkPaise: 500_000 });
     if (status === "unavailable") await AiEstimatorKnowledgeVendorModel.deleteOne({ _id: saved.id });
     else await AiEstimatorKnowledgeVendorModel.updateOne({ _id: saved.id }, { $set: { status, name: "Renamed Vendor", code: "RENAMED", ...(status === "archived" ? { archivedAt: now, archivedById: actor.id } : {}) } });
@@ -416,6 +447,7 @@ describe("saved Configuration vendors for project procurement", () => {
   });
   it("serializes vendor selection with lifecycle writes without blocking later archival", async () => {
     const saved = (await service.createVendor(actor, { name: "Lifecycle Vendor" })).vendor;
+    await completeVendorOnboarding(saved.id);
     let selected!: () => void;
     let release!: () => void;
     const selection = new Promise<void>((resolve) => { selected = resolve; });
