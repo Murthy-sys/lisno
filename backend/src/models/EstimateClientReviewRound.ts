@@ -17,6 +17,15 @@ const safeIntegerValidator = {
   message: "{PATH} must be a safe integer."
 };
 
+const optionalSafeIntegerValidator = {
+  validator: (value: unknown) => value == null || Number.isSafeInteger(value),
+  message: "{PATH} must be a safe integer when present."
+};
+
+function exactNonnegativePaise(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
 const decisionStatePaths = [
   "status",
   "decision",
@@ -31,17 +40,68 @@ const estimateClientReviewLineItemSchema = new Schema(
     // Older immutable snapshots predate stable line-item ids. Procurement
     // derives a deterministic, version-and-position-scoped identity for them.
     id: { type: String, default: null, immutable: true },
+    source: { type: String, enum: ["legacy", "configuration"], default: undefined, immutable: true },
     catalogueId: { type: String, required: true, immutable: true },
+    roomId: { type: String, default: undefined, immutable: true },
     roomName: { type: String, required: true, immutable: true },
-    specification: { type: String, required: true, immutable: true },
+    specification: { type: String, default: null, immutable: true },
     unit: { type: String, required: true, immutable: true },
-    rate: { type: Number, required: true, immutable: true },
+    rate: { type: Number, default: null, immutable: true },
+    ratePaise: { type: Number, default: undefined, immutable: true, validate: optionalSafeIntegerValidator },
     quantity: { type: Number, required: true, immutable: true },
     included: { type: Boolean, required: true, immutable: true },
-    amount: { type: Number, required: true, immutable: true }
+    amount: { type: Number, default: null, immutable: true },
+    amountPaise: { type: Number, default: undefined, immutable: true, validate: optionalSafeIntegerValidator },
+    mainBasketId: { type: String, default: undefined, immutable: true },
+    subBasketId: { type: String, default: undefined, immutable: true },
+    mainLineId: { type: String, default: undefined, immutable: true },
+    revisionId: { type: String, default: undefined, immutable: true },
+    uomId: { type: String, default: undefined, immutable: true },
+    uomCode: { type: String, default: undefined, immutable: true },
+    uomDecimalScale: { type: Number, default: undefined, immutable: true, min: 0, validate: optionalSafeIntegerValidator },
+    mainBasketName: { type: String, default: undefined, immutable: true },
+    subBasketName: { type: String, default: undefined, immutable: true },
+    mainLineName: { type: String, default: undefined, immutable: true },
+    uomName: { type: String, default: undefined, immutable: true }
   },
   { _id: false, strict: "throw" }
 );
+
+estimateClientReviewLineItemSchema.pre("validate", function validateFrozenLine() {
+  const configured = this.get("source") === "configuration";
+  const required = configured
+    ? ["roomId", "mainBasketId", "subBasketId", "mainLineId", "revisionId", "uomId", "mainBasketName", "subBasketName", "mainLineName", "uomName"]
+    : ["specification"];
+  for (const field of required) {
+    const value = this.get(field);
+    if (typeof value !== "string" || !value.trim()) this.invalidate(field, "Published estimate line snapshot is incomplete.");
+  }
+  if (configured && (this.get("catalogueId") !== this.get("mainLineId") || this.get("specification") !== null)) {
+    this.invalidate("catalogueId", "Configured line identity or specification is inconsistent.");
+  }
+  for (const field of ["rate", "amount"] as const) {
+    const value = this.get(field);
+    if (value === null && configured && this.get("included") !== true) continue;
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      this.invalidate(field, "Published estimate amount is invalid.");
+    }
+  }
+  if (configured) {
+    for (const field of ["ratePaise", "amountPaise"] as const) {
+      const value = this.get(field);
+      if (value === null && this.get("included") !== true) continue;
+      if (!exactNonnegativePaise(value)) {
+        this.invalidate(field, "Published configured estimate paise must be exact.");
+      }
+    }
+    const ratePaise = this.get("ratePaise");
+    const amountPaise = this.get("amountPaise");
+    if (exactNonnegativePaise(ratePaise) && this.get("rate") !== ratePaise / 100 ||
+      exactNonnegativePaise(amountPaise) && this.get("amount") !== amountPaise / 100) {
+      this.invalidate("amountPaise", "Published configured line rupees and paise disagree.");
+    }
+  }
+});
 
 const estimateClientReviewSnapshotSchema = new Schema(
   {
@@ -56,10 +116,29 @@ const estimateClientReviewSnapshotSchema = new Schema(
     },
     subtotal: { type: Number, required: true, immutable: true },
     gst: { type: Number, required: true, immutable: true },
-    total: { type: Number, required: true, immutable: true }
+    total: { type: Number, required: true, immutable: true },
+    subtotalPaise: { type: Number, default: undefined, immutable: true, validate: safeIntegerValidator },
+    gstPaise: { type: Number, default: undefined, immutable: true, validate: safeIntegerValidator },
+    totalPaise: { type: Number, default: undefined, immutable: true, validate: safeIntegerValidator },
+    selectedMainBasketIds: { type: [String], default: undefined, immutable: true }
   },
   { _id: false, strict: "throw" }
 );
+
+estimateClientReviewSnapshotSchema.pre("validate", function validateFrozenTotals() {
+  const lines = this.get("lineItems") as Array<{ source?: string }> | undefined;
+  if (!lines?.some((line) => line.source === "configuration")) return;
+  const subtotalPaise = this.get("subtotalPaise");
+  const gstPaise = this.get("gstPaise");
+  const totalPaise = this.get("totalPaise");
+  if (!exactNonnegativePaise(subtotalPaise) || !exactNonnegativePaise(gstPaise) || !exactNonnegativePaise(totalPaise) ||
+    subtotalPaise + gstPaise !== totalPaise ||
+    this.get("subtotal") !== subtotalPaise / 100 ||
+    this.get("gst") !== gstPaise / 100 ||
+    this.get("total") !== totalPaise / 100) {
+    this.invalidate("totalPaise", "Published configured estimate totals must reconcile in paise.");
+  }
+});
 
 const estimateClientReviewRoundSchema = new Schema(
   {

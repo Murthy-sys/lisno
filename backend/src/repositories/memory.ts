@@ -1,7 +1,7 @@
 import { workflowSpacePlanningSource } from "../domain/workflow-space-planning.js";
 import { furnitureUomOption } from "../domain/workflow-uoms.js";
 import { normalizeKnowledgeIdentity } from "../domain/ai-estimator-knowledge.js";
-import { workflowApprovedLines, workflowEstimateRooms, WorkflowEstimateSourceError } from "../domain/workflow-estimate-items.js";
+import { workflowApprovedLines, workflowEstimateRoomDimensions, workflowEstimateRooms, WorkflowEstimateSourceError } from "../domain/workflow-estimate-items.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { timingSafeEqual } from "node:crypto";
 
@@ -11,6 +11,7 @@ import {
   USER_INVITATION_DELIVERY_FAILURE_CODE_PATTERN,
   USER_INVITATION_TOKEN_HASH_PATTERN,
   USER_INVITATION_TTL_MS,
+  VENDOR_ID_PATTERN,
   invitationEmailSchema,
   invitationNameSchema,
   normalizeInvitationEmail,
@@ -225,6 +226,9 @@ function legacyApprovedEstimateBaseline(
     subtotal: Number(estimate.subtotal ?? estimate.total),
     gst: Number(estimate.gst ?? 0),
     total: Number(estimate.total),
+    ...(estimate.subtotalPaise == null ? {} : { subtotalPaise: estimate.subtotalPaise }),
+    ...(estimate.gstPaise == null ? {} : { gstPaise: estimate.gstPaise }),
+    ...(estimate.totalPaise == null ? {} : { totalPaise: estimate.totalPaise }),
     decisionAt: estimate.clientDecisionAt ?? null,
     decisionSource: estimate.clientDecisionSource ?? null
   };
@@ -263,14 +267,26 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
   };
 
   const implementation: AppRepository = {
+    async findVendorInvitationTarget(vendorId) {
+      return clone(state.vendorInvitationTargets?.find((vendor) => vendor.id === vendorId) ?? null);
+    },
+    async findProjectStatusEstimateEvidence(projectId) {
+      return clone(state.projectStatusEstimateEvidence?.find(row => row.projectId === projectId) ?? {
+        projectId,
+        estimates: (state.estimateSummaries ?? []).filter(row => row.projectId === projectId || state.leads.some(lead => lead.id === row.leadId && lead.projectId === projectId))
+          .map(row => ({ id: row.id, leadId: row.leadId, projectId: row.projectId, version: row.version, status: row.status, clientDecisionAt: row.clientDecisionAt })),
+        rounds: [],
+        financeSource: null
+      });
+    },
     async findDesignWorkflowSpacePlanningSource(projectId) {
       const context = await implementation.findDesignWorkflowRoomContext(projectId);
       const sources = (state.designPlanReviewSources ?? []).filter(row => context ? row.estimateId === context.estimateId : row.projectId === projectId);
       if (sources.length > 1 || sources.some(row => row.projectId !== projectId || row.estimateId !== context?.estimateId)) throw new RepositoryConflictError("The Design plan source is ambiguous or unavailable.");
-      if (sources[0]) return workflowSpacePlanningSource(clone(sources[0]));
-      if (!context && state.estimateSummaries?.some(row => row.projectId === projectId && (row.designPlanStatus || row.designPlanVersion))) throw new RepositoryConflictError("The Design plan approved estimate is unavailable.");
       const estimate = state.estimateSummaries?.find(row => row.id === context?.estimateId);
-      return estimate ? workflowSpacePlanningSource({ estimateId: estimate.id, projectId, designPlanStatus: estimate.designPlanStatus ?? null, designPlanVersion: estimate.designPlanVersion ?? 0, approvedAt: null, approvedById: null, approvalSource: null, frozenAt: null, rounds: [], drawings: [], openFeedback: 0 }) : null;
+      if (sources[0]) return workflowSpacePlanningSource({ ...clone(sources[0]), commercialApprovedAt: estimate?.clientDecisionAt ?? null });
+      if (!context && state.estimateSummaries?.some(row => row.projectId === projectId && (row.designPlanStatus || row.designPlanVersion))) throw new RepositoryConflictError("The Design plan approved estimate is unavailable.");
+      return estimate ? workflowSpacePlanningSource({ estimateId: estimate.id, projectId, designPlanStatus: estimate.designPlanStatus ?? null, designPlanVersion: estimate.designPlanVersion ?? 0, commercialApprovedAt: estimate.clientDecisionAt ?? null, approvedAt: null, approvedById: null, approvalSource: null, frozenAt: null, rounds: [], drawings: [], openFeedback: 0 }) : null;
     },
     async listActiveWorkflowUoms() {
       return (state.knowledgeUoms ?? []).filter(row => row.status === "active").sort((a, b) => a.displayOrder - b.displayOrder || a.id.localeCompare(b.id)).map(furnitureUomOption);
@@ -296,17 +312,17 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         return [furnitureUomOption(row)];
       });
     },
-    async findDesignWorkflowRoomContext(projectId, includeEstimateItems = false) {
+    async findDesignWorkflowRoomContext(projectId, includeEstimateItems = false, includeZeroValueItems = false) {
       const estimates = (state.estimateSummaries ?? []).filter((row) => row.projectId === projectId && row.status === "client_approved");
       if (estimates.length > 1) throw new RepositoryConflictError("The project's approved estimate source is ambiguous.");
       const estimate = estimates[0];
       if (!estimate) return null;
       const estimateVersion = estimate.approvedBaseline?.estimateVersion ?? Math.max(1, estimate.version - 1);
       if (!Number.isSafeInteger(estimate.version) || estimate.version < 1 || estimateVersion !== Math.max(1, estimate.version - 1)) throw new RepositoryConflictError("The approved estimate version does not match its finance source.");
-      if (!includeEstimateItems) return { estimateId: estimate.id, estimateVersion, rooms: (estimate.rooms ?? []).map((room) => ({ id: room.id, name: room.label, estimateItems: [] })) };
+      if (!includeEstimateItems) return { estimateId: estimate.id, estimateVersion, rooms: (estimate.rooms ?? []).map((room) => ({ id: room.id, name: room.label, ...workflowEstimateRoomDimensions(room), estimateItems: [] })) };
       try {
         const lines = workflowApprovedLines({ projectId, estimateId: estimate.id, estimateVersion, reviewRoundId: estimate.approvedBaseline?.reviewRoundId, rounds: (state.estimateReviewRounds ?? []).filter((round) => round.estimateId === estimate.id), legacyLines: estimate.lineItems ?? [] });
-        return { estimateId: estimate.id, estimateVersion, rooms: workflowEstimateRooms(estimate.id, estimateVersion, estimate.rooms ?? [], lines) };
+        return { estimateId: estimate.id, estimateVersion, rooms: workflowEstimateRooms(estimate.id, estimateVersion, estimate.rooms ?? [], lines, { includeZeroValueItems }) };
       } catch (error) {
         if (error instanceof WorkflowEstimateSourceError) throw new RepositoryConflictError(error.message);
         throw error;
@@ -1028,6 +1044,9 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
     },
 
     async createUser(input: NewUser) {
+      if ((input.role === "vendor") !== (typeof input.vendorId === "string" && VENDOR_ID_PATTERN.test(input.vendorId))) {
+        throw new RepositoryConflictError("Vendor membership is required only for Vendor users.");
+      }
       const emailNormalized = normalizeEmail(input.email);
       if (state.users.some((user) => user.emailNormalized === emailNormalized)) {
         throw new RepositoryConflictError(`User email ${emailNormalized} already exists.`);
@@ -1048,6 +1067,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         address: input.address ?? null,
         passwordHash: input.passwordHash,
         role: input.role,
+        ...(input.role === "vendor" ? { vendorId: input.vendorId } : {}),
         active: input.active ?? true,
         accountKind: input.accountKind ?? "standard",
         version: 1,
@@ -1153,6 +1173,9 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       const current = state.users[index]!;
       if (current.version !== expectedVersion) {
         throw new RepositoryConflictError(`User ${userId} changed concurrently.`);
+      }
+      if (change.role !== undefined && change.role !== current.role && (change.role === "vendor" || current.role === "vendor")) {
+        throw new RepositoryConflictError("Vendor membership cannot be changed through role administration.");
       }
       if (
         change.role === "super_admin" &&
@@ -2477,6 +2500,7 @@ function normalizeNewMemoryInvitation(
     email: invitationEmailSchema.parse(input.email),
     emailNormalized: normalizeInvitationEmail(input.email),
     role: input.role,
+    ...(input.role === "vendor" ? { vendorId: input.vendorId } : {}),
     mobile: normalizeInvitationMobile(input.mobile),
     tokenHash: input.tokenHash,
     tokenGeneration: input.tokenGeneration,
@@ -2592,6 +2616,9 @@ function assertUserInvitationState(invitation: UserInvitationRecord) {
   }
   if (!INVITABLE_ROLE_CODES.includes(invitation.role)) {
     conflict("has a non-invitable role.");
+  }
+  if (invitation.role === "vendor" ? typeof invitation.vendorId !== "string" || !VENDOR_ID_PATTERN.test(invitation.vendorId) : invitation.vendorId != null) {
+    conflict("has invalid vendor identity.");
   }
   if (
     !Number.isInteger(invitation.tokenGeneration) ||
@@ -2728,6 +2755,7 @@ function presentMemoryInvitation(
     name: invitation.name,
     email: invitation.email,
     role: invitation.role,
+    ...(invitation.role === "vendor" ? { vendorId: invitation.vendorId } : {}),
     mobile: invitation.mobile,
     tokenValidity,
     presentationStatus,
@@ -2913,6 +2941,11 @@ function compareAccessRequestChronology(
 function assertAuthorizationUniqueness(seed: SeedData) {
   if (seed.users.filter(({ role }) => role === "super_admin").length > 1) {
     throw new RepositoryConflictError("Only one Super Admin account is allowed.");
+  }
+  for (const user of seed.users) {
+    if (user.role === "vendor" ? typeof user.vendorId !== "string" || !VENDOR_ID_PATTERN.test(user.vendorId) : user.vendorId != null) {
+      throw new RepositoryConflictError(`User ${user.id} has invalid vendor membership.`);
+    }
   }
   assertUserInvitationUniqueness(seed.userInvitations);
   assertPasswordResetUniqueness(seed.passwordResetRequests ?? []);

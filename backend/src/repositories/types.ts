@@ -1,4 +1,5 @@
 import type { WorkflowDesignPlanData, WorkflowSpacePlanningSource } from "../domain/workflow-space-planning.js";
+import type { ProjectStatusEstimateEvidence } from "./project-status.js";
 import type { FurnitureUomOption, FurnitureUomRecord, NewFurnitureUom } from "../domain/workflow-uoms.js";
 import type { WorkflowEstimateApproval, WorkflowEstimateLine, WorkflowEstimateRoom, WorkflowEstimateRoomContext } from "../domain/workflow-estimate-items.js";
 import type { DesignWorkflowState } from "../domain/design-workflow-state.js";
@@ -82,6 +83,8 @@ export interface UserRecord {
   address: string | null;
   passwordHash: string;
   role: Role;
+  /** Stable vendor directory identity; only Vendor users may have one. */
+  vendorId?: string | null;
   active: boolean;
   accountKind: AccountKind;
   version: number;
@@ -162,6 +165,7 @@ export interface UserInvitationRecord {
   email: string;
   emailNormalized: string;
   role: InvitableRole;
+  vendorId?: string | null;
   mobile: string;
   tokenHash: string | null;
   tokenGeneration: number;
@@ -198,6 +202,7 @@ export interface UserInvitationAdminRecord {
   name: string;
   email: string;
   role: InvitableRole;
+  vendorId?: string | null;
   mobile: string;
   tokenValidity: UserInvitationTokenValidity;
   presentationStatus: UserInvitationPresentationStatus;
@@ -285,6 +290,10 @@ export interface UserResponsibilityCounts {
 
 export interface ProjectRecord {
   designWorkflowStages?: ProjectDesignWorkflowStage[];
+  /** Missing on historical projects until the audited execution cutover. */
+  completionAuthority?: "legacy_staff" | "vendor_client";
+  completionAuthorityVersion?: number;
+  completionDecisionId?: string | null;
   id: string;
   name: string;
   nameVersion?: number;
@@ -378,7 +387,7 @@ export interface EstimatorOption {
 
 export interface EstimateSummaryRecord {
   lineItems?: WorkflowEstimateLine[];
-  rooms?: Array<{id: string; label: string}>;
+  rooms?: Array<{ id: string; label: string; length?: unknown; width?: unknown }>;
   id: string;
   leadId: string;
   projectId: string | null;
@@ -387,6 +396,9 @@ export interface EstimateSummaryRecord {
   subtotal: number;
   gst: number;
   total: number;
+  subtotalPaise?: number;
+  gstPaise?: number;
+  totalPaise?: number;
   clientDecisionAt: string | null;
   clientDecisionSource: EstimateClientDecisionSource | null;
   approvedBaseline: AdminProjectApprovedEstimateBaseline | null;
@@ -405,6 +417,9 @@ export interface AdminProjectApprovedEstimateBaseline {
   subtotal: number;
   gst: number;
   total: number;
+  subtotalPaise?: number;
+  gstPaise?: number;
+  totalPaise?: number;
   decisionAt: string | null;
   decisionSource: EstimateClientDecisionSource | null;
 }
@@ -910,8 +925,10 @@ export interface GrantRevocation {
 }
 
 export interface SeedData {
+  projectStatusEstimateEvidence?: ProjectStatusEstimateEvidence[];
   designWorkflowStates?: DesignWorkflowState[];
   users: UserRecord[];
+  vendorInvitationTargets?: { id: string; status: "active" | "inactive" | "archived" }[];
   userInvitations: UserInvitationRecord[];
   passwordResetRequests?: PasswordResetRequestRecord[];
   leads: LeadRecord[];
@@ -951,6 +968,7 @@ export type NewUser = Pick<UserRecord, "name" | "email" | "passwordHash" | "role
       | "sessionVersion"
       | "managerId"
       | "authorizedClientIds"
+      | "vendorId"
       | "avatar"
       | "title"
       | "createdAt"
@@ -962,6 +980,8 @@ export type NewDesignStage = DesignStageRecord;
 export type NewTask = TaskRecord;
 
 export interface AppRepository {
+  findVendorInvitationTarget(vendorId: string): Promise<{ id: string; status: "active" | "inactive" | "archived" } | null>;
+  findProjectStatusEstimateEvidence(projectId: string): Promise<ProjectStatusEstimateEvidence>;
   findDesignWorkflowSpacePlanningSource(projectId: string, lock?: boolean): Promise<WorkflowSpacePlanningSource | null>;
   listActiveWorkflowUoms(): Promise<FurnitureUomOption[]>;
   findWorkflowUomsByIdentity(codeNormalized: string, nameNormalized: string): Promise<Array<FurnitureUomOption & { status: "active" | "inactive" }>>;
@@ -970,7 +990,7 @@ export interface AppRepository {
   findDesignWorkflowState(projectId: string): Promise<DesignWorkflowState | null>;
   saveDesignWorkflowState(projectId: string, expectedVersion: number, state: DesignWorkflowState): Promise<DesignWorkflowState>;
   listDesignWorkflowPaymentProjects(): Promise<ProjectRecord[]>;
-  findDesignWorkflowRoomContext(projectId: string, includeEstimateItems?: boolean): Promise<WorkflowEstimateRoomContext | null>;
+  findDesignWorkflowRoomContext(projectId: string, includeEstimateItems?: boolean, includeZeroValueItems?: boolean): Promise<WorkflowEstimateRoomContext | null>;
   findDesignWorkflowRoomOptions(projectId: string): Promise<WorkflowEstimateRoom[]>;
   runInTransaction<T>(
     operation: (repository: AppRepository) => Promise<T>

@@ -3,6 +3,7 @@ import { Link, useLocation } from "react-router-dom";
 import { MessageCircle } from "lucide-react";
 import { useChatProjectRegistration, useOptionalProjectChat } from "./ProjectChatProvider";
 import { useChatSummary } from "./projectChatQueries";
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import "./projectChat.css";
 
 export const projectMessagesPath = (projectId: string) => `/projects/${encodeURIComponent(projectId)}/messages`;
@@ -15,7 +16,7 @@ export function ProjectChatNavigation({ projectId, overviewTo, overviewLabel = "
   const remember = chat?.rememberOverview;
   useEffect(() => { if (overviewTo) remember?.(projectId, overviewTo, overviewLabel); }, [overviewTo, overviewLabel, projectId, remember]);
   const target = overviewTo ? { to: overviewTo, label: overviewLabel } : chat?.overview[projectId];
-  if (!chat?.enabled || chat.denied.has(projectId)) return null;
+  if (!chat?.enabled || chat.denied.has(projectId)) return <ProjectStatusButton projectId={projectId} />;
   const path = projectMessagesPath(projectId);
   return <div className="project-chat-navigation">
     <nav aria-label="Project sections">
@@ -25,6 +26,7 @@ export function ProjectChatNavigation({ projectId, overviewTo, overviewLabel = "
         {summary.data && summary.data.counts.unreadMentions > 0 ? <span aria-label={`${summary.data.counts.unreadMentions} unread mentions`}>@ {summary.data.counts.unreadMentions}</span> : null}
       </Link>
     </nav>
+    <ProjectStatusButton projectId={projectId} participant={summary.data && !summary.isError ? true : undefined} />
     {summary.data ? <div className="project-chat-navigation__summary">
       <Link className="project-chat-priority project-chat-priority--critical" to={`${path}?filter=critical`}>Critical {summary.data.counts.openCritical}</Link>
       {summary.isError ? <span role="status">Counts may be out of date</span> : null}

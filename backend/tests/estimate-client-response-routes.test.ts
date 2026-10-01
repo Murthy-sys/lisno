@@ -522,6 +522,8 @@ function createHarness() {
     authorization: authorizationSnapshotFor
   } as unknown as AuthService;
   const reviews = {
+    listClientEstimates: vi.fn(),
+    currentClientFeedbackForEstimate: vi.fn(),
     resolveReviewAssignee: vi.fn(),
     currentSummaryForEstimate: vi.fn(),
     currentRoundForClientEstimate: vi.fn(),

@@ -1,0 +1,795 @@
+/* The Lead workspace has its own compact visual language within the common shell. */
+.ui-app-shell[data-role] .ui-workspace:has(.lead-workspace) {
+  background: #f6f6f0;
+}
+
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace {
+  --lead-ink: #233027;
+  --lead-muted: #5d6a60;
+  --lead-forest: #294d32;
+  --lead-line: #d9dfd4;
+  --lead-surface: #fcfcf8;
+  --lead-canvas: #f6f6f0;
+  min-inline-size: 0;
+  --lead-table-columns: minmax(13.5rem, 1.45fr) minmax(10.25rem, 1.05fr) minmax(6.5rem, 0.7fr) minmax(8.25rem, 0.85fr) minmax(7.25rem, 0.75fr) minmax(10rem, 1fr) minmax(12.5rem, 1.15fr);
+  --lead-table-min: 74rem;
+  gap: clamp(0.75rem, 1.25vw, 1rem);
+  background: transparent;
+  color: var(--lead-ink);
+  font-family: var(--font-interface);
+}
+
+.ui-app-shell[data-role] .lead-workspace .workspace-header.lead-workspace__hero {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+  min-block-size: 8.25rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.5rem;
+  background: #eee9df;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__hero-copy {
+  position: relative;
+  z-index: 1;
+  min-inline-size: 0;
+  max-inline-size: 42rem;
+  padding: 0.9rem clamp(1rem, 1.7vw, 1.5rem);
+}
+
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .workspace-header.lead-workspace__hero .eyebrow {
+  margin: 0 0 0.2rem;
+  color: var(--lead-forest);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .workspace-header.lead-workspace__hero h1 {
+  margin: 0;
+  color: #1d3023;
+  font-family: var(--font-interface);
+  font-size: clamp(1.65rem, 2vw, 2rem);
+  font-weight: 650;
+  letter-spacing: -0.045em;
+  line-height: 1.12;
+}
+
+.ui-app-shell[data-role] .lead-workspace .workspace-header.lead-workspace__hero .lead-workspace__hero-copy > p:last-child {
+  max-inline-size: 40rem;
+  margin: 0.35rem 0 0;
+  color: #526356;
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__hero-image {
+  position: absolute;
+  z-index: 0;
+  inset-block: 0;
+  inset-inline-end: 0;
+  inline-size: 59%;
+  block-size: 100%;
+  object-fit: cover;
+  object-position: 52% center;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgb(0 0 0 / 30%) 16%, #000 46%);
+  mask-image: linear-gradient(90deg, transparent 0%, rgb(0 0 0 / 30%) 16%, #000 46%);
+  pointer-events: none;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__initiate {
+  position: relative;
+  z-index: 1;
+  justify-self: end;
+  min-block-size: 2.6rem;
+  margin-inline-end: clamp(1rem, 1.7vw, 1.5rem);
+  padding-inline: 0.9rem;
+  border: 1px solid #274a30;
+  border-radius: 0.45rem;
+  background: var(--lead-forest);
+  color: #f9f8ef;
+  box-shadow: none;
+  font-size: 0.77rem;
+  white-space: nowrap;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__initiate:is(:hover, :active) {
+  border-color: #1f4028;
+  background: #1f4028;
+  box-shadow: none;
+  transform: none;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__initiate:focus-visible,
+.ui-app-shell[data-role] .lead-workspace :is(a, button, input):focus-visible {
+  outline: 3px solid #799c73;
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__overview dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__overview dl > .lead-workspace__metric {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-inline-size: 0;
+  min-block-size: 6.9rem;
+  gap: 0;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--lead-line);
+  border-radius: 0.65rem;
+  background-image: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .estimator-dashboard__overview dl > .lead-workspace__metric--leads { background: #eef2e9; }
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .estimator-dashboard__overview dl > .lead-workspace__metric--saved { background: #edf1f4; }
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .estimator-dashboard__overview dl > .lead-workspace__metric--drafts { background: #f5eee6; }
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .estimator-dashboard__overview dl > .lead-workspace__metric--value:last-child { background: #eaf1e8; }
+
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .estimator-dashboard__overview dt,
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .estimator-dashboard__overview dl > .lead-workspace__metric:last-child dt {
+  color: #45564a;
+  font-family: var(--font-interface);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .estimator-dashboard__overview dd,
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .estimator-dashboard__overview dl > .lead-workspace__metric:last-child dd {
+  max-inline-size: 100%;
+  margin: 0.18rem 0 0;
+  color: #1f2b24;
+  font-family: var(--font-interface);
+  font-size: clamp(1.5rem, 2vw, 1.85rem);
+  font-weight: 650;
+  line-height: 1.08;
+  letter-spacing: -0.045em;
+  overflow-wrap: anywhere;
+}
+
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .estimator-dashboard__overview dl > .lead-workspace__metric > dd.lead-workspace__metric-note {
+  max-inline-size: 100%;
+  margin: auto 0 0;
+  padding-block-start: 0.3rem;
+  color: #58675d;
+  font-family: var(--font-interface);
+  font-size: 0.67rem;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__estimate-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.75rem 0 0;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid #d7aaa0;
+  border-radius: 0.3rem;
+  background: #f8eae6;
+  color: #6d352b;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__estimate-error button {
+  min-block-size: 2.5rem;
+  padding-inline: 0.4rem;
+  border: 0;
+  background: none;
+  color: #254b30;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-controls.lead-workspace__controls {
+  display: block;
+  min-inline-size: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  background-image: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__controls .ui-field {
+  display: grid;
+  gap: 0.25rem;
+  min-inline-size: 0;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__controls .ui-field__label {
+  color: #324939;
+  font-family: var(--font-interface);
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__controls input,
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__controls input:hover {
+  inline-size: 100%;
+  min-block-size: 2.65rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #cdd7ca;
+  border-radius: 0.45rem;
+  background: var(--lead-surface);
+  color: var(--lead-ink);
+  box-shadow: none;
+  font-size: 0.8rem;
+}
+
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .lead-controls.lead-workspace__controls input::placeholder {
+  color: #68756a;
+  font-family: var(--font-interface);
+  font-size: 0.78rem;
+  font-weight: 400;
+  opacity: 1;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__stage-bar {
+  min-inline-size: 0;
+  border-block-end: 1px solid #d5ded2;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__stage-scroll {
+  display: flex;
+  align-items: stretch;
+  gap: 0.25rem;
+  max-inline-size: 100%;
+  overflow-x: auto;
+  padding-block-end: 0.3rem;
+  scrollbar-width: auto;
+  scrollbar-color: #b7c5b5 transparent;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__stage-scroll::-webkit-scrollbar {
+  block-size: 7px;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__stage-scroll::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: #b7c5b5;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__stage-hint {
+  display: none;
+  margin: 0 0 0.45rem;
+  color: #627060;
+  font-size: 0.69rem;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__stage-option {
+  flex: 0 0 auto;
+  min-block-size: 2.65rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid transparent;
+  border-bottom: 3px solid transparent;
+  border-radius: 0.35rem 0.35rem 0 0;
+  background: transparent;
+  color: #4c5c50;
+  font: 500 0.78rem/1.3 var(--font-interface);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__stage-option[aria-pressed="true"] {
+  border-color: #d5ded2;
+  border-bottom-color: var(--lead-forest);
+  background: #e5eee1;
+  color: #24442b;
+  font-weight: 700;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__list-section {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+  min-block-size: 0;
+  gap: 0.55rem;
+  container: lead-workspace-table / inline-size;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__section-heading {
+  display: flex;
+  flex-direction: row;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0;
+  border: 0;
+}
+
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .estimator-dashboard__section-heading.lead-workspace__section-heading .eyebrow {
+  margin: 0 0 0.1rem;
+  color: #5d6c5f;
+  font-size: 0.62rem;
+  font-weight: 650;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .estimator-dashboard__section-heading.lead-workspace__section-heading h2 {
+  margin: 0;
+  color: var(--lead-ink);
+  font-family: var(--font-interface);
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .estimator-dashboard__section-heading.lead-workspace__section-heading > span {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--lead-muted);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__refresh {
+  margin: 0;
+  color: var(--lead-muted);
+  font-size: 0.78rem;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__table-hint {
+  display: none;
+  margin: 0;
+  color: var(--lead-muted);
+  font-size: 0.7rem;
+  line-height: 1.35;
+}
+
+@container lead-workspace-table (max-width: 73.99rem) {
+  .ui-app-shell[data-role] .lead-workspace .lead-workspace__table-hint {
+    display: block;
+  }
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-list.lead-workspace__list {
+  display: block;
+  min-inline-size: 0;
+  max-block-size: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  border: 1px solid var(--lead-line);
+  border-radius: 0.5rem;
+  background: var(--lead-surface);
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-list__header,
+.ui-app-shell[data-role] .lead-workspace .lead-row {
+  grid-template-columns: var(--lead-table-columns);
+  column-gap: clamp(0.45rem, 0.75vw, 0.7rem);
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-list__header {
+  position: static;
+  display: grid;
+  min-inline-size: var(--lead-table-min);
+  gap: clamp(0.45rem, 0.75vw, 0.7rem);
+  padding: 0.55rem 0.7rem;
+  border-block-end: 1px solid var(--lead-line);
+  border-radius: 0.45rem 0.45rem 0 0;
+  background: #e9efe6;
+  color: #3b4a3c;
+  font-family: var(--font-interface);
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__rows {
+  display: block;
+  min-inline-size: var(--lead-table-min);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__rows > li + li {
+  border-block-start: 1px solid #e4e8e0;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row,
+.ui-app-shell[data-role] .lead-workspace .lead-row:hover,
+.ui-app-shell[data-role] .lead-workspace .lead-row:focus-visible {
+  display: grid;
+  align-items: center;
+  min-inline-size: 0;
+  min-block-size: 4.7rem;
+  gap: clamp(0.45rem, 0.75vw, 0.7rem);
+  padding: 0.55rem 0.7rem;
+  border: 0;
+  border-radius: 0;
+  background: var(--lead-surface);
+  background-image: none;
+  color: var(--lead-ink);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  transform: none;
+  transition: none;
+  overflow: visible;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row::before {
+  content: none;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row > [data-label] {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row > [data-label]::before {
+  content: none;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__field-label {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__client {
+  display: grid;
+  grid-template-columns: 2.15rem minmax(0, 1fr);
+  align-items: start;
+  gap: 0.45rem;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__avatar {
+  display: grid;
+  inline-size: 2.15rem;
+  block-size: 2.15rem;
+  place-items: center;
+  border-radius: 50%;
+  background: #dce9d9;
+  color: #2d5936;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__client-details,
+.ui-app-shell[data-role] .lead-workspace .lead-row__project,
+.ui-app-shell[data-role] .lead-workspace .lead-row__estimate,
+.ui-app-shell[data-role] .lead-workspace .lead-row__next {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-inline-size: 0;
+  gap: 0.1rem;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__name,
+.ui-app-shell[data-role] .lead-workspace .lead-row__project h3,
+.ui-app-shell[data-role] .lead-workspace .lead-row__next strong {
+  margin: 0;
+  color: #243127;
+  font-family: var(--font-interface);
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1.35;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__name:hover {
+  color: #244c2c;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row small,
+.ui-app-shell[data-role] .lead-workspace .lead-row__created time,
+.ui-app-shell[data-role] .lead-workspace .lead-row__next time {
+  color: #647064;
+  font-family: var(--font-interface);
+  font-size: 0.66rem;
+  font-weight: 400;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__stage {
+  display: flex;
+  align-items: center;
+}
+
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .lead-stage-badge,
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .estimate-status {
+  display: inline-flex;
+  max-inline-size: 100%;
+  padding: 0.22rem 0.4rem;
+  border: 1px solid #c4d9c4;
+  border-radius: 0.35rem;
+  background: #eaf4e9;
+  color: #28552f;
+  font-family: var(--font-interface);
+  font-size: 0.63rem;
+  font-weight: 650;
+  line-height: 1.25;
+  text-transform: none;
+  white-space: normal;
+}
+
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .lead-stage-badge--lost { border-color: #e4cdca; background: #f7eae7; color: #7d3d32; }
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .lead-stage-badge--estimate_in_progress,
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .lead-stage-badge--negotiation { border-color: #e2d4b9; background: #f7f0e3; color: #765722; }
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .lead-stage-badge--new_lead,
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .lead-stage-badge--contacted { border-color: #d4ddce; background: #f0f2e9; color: #425c42; }
+.ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .estimate-status { border-color: #d0ded0; background: #eef3ec; color: #34583a; text-transform: capitalize; }
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__estimate {
+  align-items: flex-start;
+  gap: 0.2rem;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__estimate strong {
+  color: #233027;
+  font-family: var(--font-interface);
+  font-size: 0.83rem;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+  white-space: nowrap;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__next > span:not(.lead-row__field-label) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.45rem;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__timing {
+  color: #4a684b;
+  font-size: 0.66rem;
+  font-weight: 650;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__timing--overdue { color: #a04438; }
+.ui-app-shell[data-role] .lead-workspace .lead-row__timing--due-today { color: #83561a; }
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.35rem;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__actions > div {
+  min-inline-size: 0;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__open,
+.ui-app-shell[data-role] .lead-workspace .lead-row__export,
+.ui-app-shell[data-role] .lead-workspace .lead-row__review {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: 2.5rem;
+  max-inline-size: 100%;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #a9baa8;
+  border-radius: 0.3rem;
+  background: var(--lead-surface);
+  color: #294b32;
+  box-shadow: none;
+  font: 600 0.65rem/1.3 var(--font-interface);
+  text-align: center;
+  text-decoration: none;
+  white-space: normal;
+  cursor: pointer;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__review {
+  border-color: transparent;
+  background: transparent;
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__export {
+  inline-size: auto;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__export svg {
+  display: none;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-row__open:is(:hover, :active),
+.ui-app-shell[data-role] .lead-workspace .lead-row__export:is(:hover, :active),
+.ui-app-shell[data-role] .lead-workspace .lead-row__review:is(:hover, :active) {
+  border-color: #718d72;
+  background: #edf3ea;
+  color: #24452c;
+  box-shadow: none;
+  transform: none;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__empty {
+  padding: 2rem;
+  border: 1px solid var(--lead-line);
+  border-radius: 0.45rem;
+  background: #eef2e9;
+  color: var(--lead-ink);
+  box-shadow: none;
+}
+
+.ui-app-shell[data-role] .lead-workspace .lead-workspace__empty :is(h2, p) {
+  color: var(--lead-ink);
+}
+
+@media (max-width: 1050px) {
+  .ui-app-shell[data-role] .lead-workspace .lead-workspace__overview dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-workspace__stage-hint { display: block; }
+}
+
+@media (max-width: 780px) {
+  .ui-app-shell[data-role] .lead-workspace .lead-workspace__table-hint { display: none; }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-workspace__hero-image {
+    inline-size: 65%;
+    opacity: 0.55;
+  }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-list__header { display: none; }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-list.lead-workspace__list {
+    border: 0;
+    background: transparent;
+    overflow: visible;
+  }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-workspace__rows {
+    display: grid;
+    min-inline-size: 0;
+    gap: 0.55rem;
+  }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-workspace__rows > li + li { border: 0; }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-row,
+  .ui-app-shell[data-role] .lead-workspace .lead-row:hover,
+  .ui-app-shell[data-role] .lead-workspace .lead-row:focus-visible {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.55rem 0.8rem;
+    padding: 0.75rem;
+    border: 1px solid var(--lead-line);
+    border-radius: 0.45rem;
+  }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-row > [data-label] {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.18rem;
+  }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-row__client {
+    display: grid !important;
+    grid-template-columns: 2.15rem minmax(0, 1fr);
+  }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-row__client .lead-row__field-label {
+    grid-column: 1 / -1;
+  }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-row__field-label {
+    position: static;
+    inline-size: auto;
+    block-size: auto;
+    clip: auto;
+    color: #6a7568;
+    font-size: 0.6rem;
+    font-weight: 700;
+    line-height: 1.2;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-row > .lead-row__actions {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem 0.45rem;
+  }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-row__actions > .lead-row__field-label {
+    flex: 0 0 100%;
+  }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-row__actions > :is(.lead-row__open, .lead-row__review, .lead-row__export) {
+    min-block-size: 2.5rem;
+  }
+}
+
+@media (max-width: 660px) {
+  .ui-app-shell[data-role] .lead-workspace .workspace-header.lead-workspace__hero {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-workspace__hero-copy {
+    padding: 0.8rem 1rem 0.15rem;
+  }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-workspace__hero-image {
+    inline-size: 100%;
+    opacity: 0.25;
+    object-position: center 53%;
+  }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-workspace__initiate {
+    grid-column: 1;
+    grid-row: 2;
+    justify-self: start;
+    margin: 0.5rem 1rem 0.8rem;
+  }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-workspace__overview dl > .lead-workspace__metric {
+    min-block-size: 7rem;
+  }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-workspace__section-heading { align-items: end; flex-direction: row; }
+}
+
+@media (max-width: 490px) {
+  .ui-app-shell[data-role] .lead-workspace .lead-workspace__overview dl {
+    gap: 0.55rem;
+  }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-workspace__overview dl > .lead-workspace__metric {
+    min-block-size: 7rem;
+    padding: 0.6rem;
+  }
+
+  .ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .estimator-dashboard__overview dd:not(.lead-workspace__metric-note),
+  .ui-app-shell[data-role] .lead-page.estimator-dashboard.lead-workspace .estimator-dashboard__overview dl > .lead-workspace__metric:last-child dd:not(.lead-workspace__metric-note) {
+    font-size: clamp(1.3rem, 5vw, 1.5rem);
+  }
+
+  .ui-app-shell[data-role] .lead-workspace .lead-row__client,
+  .ui-app-shell[data-role] .lead-workspace .lead-row__project,
+  .ui-app-shell[data-role] .lead-workspace .lead-row__actions { grid-column: 1 / -1; }
+}

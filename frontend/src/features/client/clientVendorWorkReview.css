@@ -1,0 +1,39 @@
+.client-work-review { margin-block: 1.5rem; border: 1px solid var(--ui-border, #d7d9de); background: #f9f9f6; padding: clamp(1rem, 2vw, 1.6rem); color: #202631; }
+.client-work-review__heading, .client-work-review__item-head, .client-work-review__actions, .client-work-review__lightbox-head, .client-work-review__lightbox-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.client-work-review__heading { align-items: flex-start; border-bottom: 1px solid #d7d9de; padding-bottom: 1rem; }
+.client-work-review__heading h2 { margin: .15rem 0; font-size: clamp(1.25rem, 2vw, 1.65rem); }
+.client-work-review__heading p { margin: .25rem 0; color: #596274; }
+.client-work-review__eyebrow { font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.client-work-review__heading > span { white-space: nowrap; font-size: .85rem; padding: .35rem .65rem; border: 1px solid #bfc7be; background: #edf1e9; }
+.client-work-review__list { display: grid; gap: 1px; background: #d7d9de; margin-top: 1rem; border: 1px solid #d7d9de; }
+.client-work-review__item { min-width: 0; background: #fff; padding: 1.1rem; }
+.client-work-review__item-head { align-items: flex-start; }
+.client-work-review__item-head p { margin: 0; font-size: .82rem; color: #596274; }
+.client-work-review__item-head h3 { margin: .2rem 0 .75rem; font-size: 1.15rem; }
+.client-work-review__status { font-size: .78rem; font-weight: 700; padding: .28rem .55rem; border: 1px solid #bfc7be; white-space: nowrap; }
+.client-work-review__status--pending { color: #594116; background: #f5f0df; }
+.client-work-review__status--approved { color: #1c5844; background: #e9f0e9; }
+.client-work-review__status--changes_requested { color: #773c32; background: #f5e9e5; }
+.client-work-review__item > p { margin: .25rem 0 .85rem; line-height: 1.5; }
+.client-work-review__item dl { display: flex; gap: clamp(1rem, 3vw, 2.25rem); margin: 0 0 .85rem; }
+.client-work-review__item dl div { display: grid; gap: .12rem; }
+.client-work-review__item dt { font-size: .72rem; color: #687182; }
+.client-work-review__item dd { margin: 0; font-weight: 650; }
+.client-work-review__item blockquote { margin: 0 0 1rem; padding: .7rem 1rem; border-inline-start: 2px solid #687c68; background: #f3f5f0; }
+.client-work-review__actions { justify-content: flex-start; flex-wrap: wrap; border-top: 1px solid #e1e3e5; padding-top: .8rem; }
+.client-work-review__actions button, .client-work-review__change button, .client-work-review__lightbox button, .client-work-review > button { border: 1px solid #516452; color: #293c2b; background: transparent; padding: .5rem .75rem; font: inherit; font-weight: 650; cursor: pointer; }
+.client-work-review__actions button:last-child, .client-work-review__change button:last-child { background: #344936; color: #fff; }
+.client-work-review__actions span { color: #687182; font-size: .85rem; }
+.client-work-review__actions button:disabled, .client-work-review__change button:disabled, .client-work-review__lightbox button:disabled { opacity: .5; cursor: not-allowed; }
+.client-work-review button:focus-visible, .client-work-review textarea:focus-visible { outline: 2px solid #1d5c4a; outline-offset: 2px; }
+.client-work-review__change { display: grid; gap: .5rem; padding-top: 1rem; }
+.client-work-review__change label { font-weight: 700; }
+.client-work-review__change textarea { width: 100%; box-sizing: border-box; border: 1px solid #aeb7bd; padding: .7rem; font: inherit; resize: vertical; }
+.client-work-review__change > div { display: flex; gap: .5rem; justify-content: flex-end; }
+.client-work-review__prior { color: #596274; font-size: .85rem; }
+.client-work-review__feedback { padding: .65rem .8rem; background: #e9f0e9; color: #205d44; }
+.client-work-review__lightbox { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 1rem; background: rgba(12, 21, 18, .9); }
+.client-work-review__lightbox > div { display: grid; gap: 1rem; width: min(92vw, 1100px); max-height: 92vh; padding: 1rem; background: #f9f9f6; }
+.client-work-review__lightbox img { max-width: 100%; max-height: 70vh; margin: auto; object-fit: contain; }
+.client-work-review__lightbox-actions { justify-content: flex-end; }
+@media (max-width: 640px) { .client-work-review__heading, .client-work-review__item-head { display: grid; justify-content: stretch; } .client-work-review__heading > span, .client-work-review__status { width: fit-content; } .client-work-review__item dl { flex-wrap: wrap; } .client-work-review__actions button { flex: 1 1 auto; } }

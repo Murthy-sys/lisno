@@ -103,7 +103,10 @@ describe("project-owned Excel design workflow", () => {
       state: timing, startsAt: null, endsAt: complete ? completedAt[1] : null, targetAt: null, originalTargetAt: null,
       slaAllowanceMs: null, remainingMs: null, band: null, clockOwner: null, designerElapsedMs: 0, clientElapsedMs: 0
     } });
-    expect(result.operational!.blockingReasons).toEqual(blocked ? ["The Client has blocked site access. Restore access to resume the workflow."] : []);
+    expect(result.operational!.blockingReasons).toEqual(blocked ? [
+      "Site access is unavailable. All workflow clocks are paused.",
+      "The Client has blocked site access. Restore access to resume the workflow."
+    ] : []);
     expect(await repository.getProjectHierarchy(project.id)).toEqual(before);
     expect(await repository.findDesignWorkflowState(project.id)).toEqual(beforeState);
   });

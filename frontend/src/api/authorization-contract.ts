@@ -14,7 +14,8 @@ export const ROLE_CODES = [
   "worker_other",
   "design_manager",
   "design_head",
-  "client"
+  "client",
+  "vendor"
 ] as const;
 
 export type Role = (typeof ROLE_CODES)[number];
@@ -35,7 +36,8 @@ export const ROLE_LABELS = {
   worker_other: "Other Worker",
   design_manager: "Design Manager",
   design_head: "Design Head",
-  client: "Client"
+  client: "Client",
+  vendor: "Vendor"
 } as const satisfies Readonly<Record<Role, string>>;
 
 export const WORKER_ROLES = [
@@ -97,6 +99,7 @@ export const REQUESTABLE_MODULES_BY_ROLE = {
   worker_other: [],
   design_manager: [],
   design_head: [],
+  vendor: [],
   client: []
 } as const satisfies Record<Role, readonly RequestableProjectModule[]>;
 
@@ -107,6 +110,7 @@ export const PERMISSION_CODES = [
   "projects.client_summary.read",
   "projects.create",
   "projects.read",
+  "projects.status.read",
   "projects.design_workflow.read",
   "projects.design_workflow.act",
   "projects.design_workflow.payments.read",
@@ -181,6 +185,7 @@ export const PERMISSION_CODES = [
   "estimation.lead_activity.read",
   "estimation.lead_activity.create",
   "estimation.estimate.read",
+  "estimation.catalogue.read",
   "estimation.estimate.list",
   "estimation.estimate.save",
   "estimation.estimate.submit",
@@ -234,6 +239,18 @@ export const PERMISSION_CODES = [
   "chat.project_name.manage",
   "procurement.items.read",
   "procurement.items.manage",
+  "procurement.purchase_orders.read",
+  "procurement.purchase_orders.manage",
+  "procurement.purchase_orders.approve",
+  "procurement.vendor_work.read",
+  "procurement.vendor_work.update",
+  "procurement.vendor_work.media.read",
+  "procurement.vendor_work.media.upload",
+  "procurement.client_work.read",
+  "procurement.client_work.decide",
+  "procurement.progress.read",
+  "procurement.site_completion.manage",
+  "procurement.project_completion.decide",
   "procurement.vendors.read",
   "procurement.vendors.create",
   "procurement.vendor_suggestions.read",
@@ -257,7 +274,7 @@ export const PERMISSION_CODES = [
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-09-28.vendor-induction.v1" as const;
+  "2026-10-01.vendor-procurement.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

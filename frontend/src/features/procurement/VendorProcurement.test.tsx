@@ -213,4 +213,20 @@ describe("vendor procurement", () => {
     server.use(http.get("/api/v1/procurement/projects/project-one/vendor-suggestions", () => suggestionPage([{ ...saved, projectId: "project-two" }])));
     await expect(getVendorSuggestions("project-one")).rejects.toThrow(/do not match/);
   });
+  it("links the active-vendor dropdown to the directory only for permitted roles", async () => {
+    permissions = ["procurement.vendors.read", "procurement.vendor_directory.read"];
+    function Picker() { return <ProcurementVendorField variant="active-select" value={null} onChange={() => {}} onBusyChange={() => {}} onUnresolvedChange={() => {}} />; }
+    role = "super_admin";
+    const adminView = renderWithQuery(<Picker />);
+    expect(await screen.findByRole("link", { name: "Manage vendors (opens in new tab)" })).toHaveAttribute("href", "/admin/procurement/vendors");
+    expect(screen.getByRole("link", { name: "Manage vendors (opens in new tab)" })).toHaveAttribute("target", "_blank");
+    adminView.unmount();
+    role = "procurement";
+    const procurementView = renderWithQuery(<Picker />);
+    expect(await screen.findByRole("link", { name: "Manage vendors (opens in new tab)" })).toHaveAttribute("href", "/procurement/vendors");
+    procurementView.unmount();
+    role = "admin";
+    renderWithQuery(<Picker />);
+    expect(screen.queryByRole("link", { name: /Manage vendors/ })).not.toBeInTheDocument();
+  });
 });

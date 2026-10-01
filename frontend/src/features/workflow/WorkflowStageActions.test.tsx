@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "../../api/client";
 import { WorkflowStageActions } from "./WorkflowStageActions";
+import { openFurnitureItem } from "./furnitureDisclosureTestUtils";
 import { performDesignWorkflowAction, projectWorkflowKeys, type DesignWorkflowAction, type DesignWorkflowStage, type DesignWorkflowView } from "./projectWorkflowApi";
 
 const acknowledgementLabel = "I acknowledge that the design flow has been handed over to me after initial payment.";
@@ -176,9 +177,10 @@ describe("WorkflowStageActions", () => {
     setup({ id: "furniture_scope", label: "Set furniture requirement", actor: "designer", requiresProof: false });
     await user.click(screen.getByRole("button", { name: "Set furniture requirement" }));
     await user.click(screen.getByRole("checkbox", { name: "Bedroom" }));
+    await openFurnitureItem(user, "Bedroom", "Wardrobe");
     await user.type(screen.getByRole("spinbutton", { name: "Length" }), "2100");
     await user.type(screen.getByRole("spinbutton", { name: "Width" }), "900");
-    await user.type(screen.getByRole("spinbutton", { name: "Height" }), "850");
+    expect(screen.queryByRole("spinbutton", { name: "Height" })).not.toBeInTheDocument();
     await user.selectOptions(screen.getByRole("combobox", { name: "UOM" }), "uom-mm");
     const proof = new File(["dimensions"], "furniture.pdf", { type: "application/pdf" });
     await user.upload(screen.getByLabelText(/Furniture dimensions document/), proof);
@@ -186,7 +188,7 @@ describe("WorkflowStageActions", () => {
     await waitFor(() => expect(post).toHaveBeenCalled());
     expect(JSON.parse(post.mock.calls[0]![1].get("data") as string)).toEqual({
       rooms: [{ id: "room-bedroom", required: true }, { id: "room-living", required: false }], notApplicable: false,
-      dimensions: [{ roomId: "room-bedroom", items: [{ estimateItemId: "estimate-bedroom", length: 2100, width: 900, height: 850, uomId: "uom-mm" }] }]
+      dimensions: [{ roomId: "room-bedroom", items: [{ estimateItemId: "estimate-bedroom", length: 2100, width: 900, uomId: "uom-mm" }] }]
     });
   });
 

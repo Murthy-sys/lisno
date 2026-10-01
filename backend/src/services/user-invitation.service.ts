@@ -6,6 +6,7 @@ import {
   INVITABLE_ROLE_CODES,
   USER_INVITATION_RECIPIENT_COOLDOWN_MS,
   USER_INVITATION_TOKEN_PATTERN,
+  VENDOR_ID_PATTERN,
   expiresAtForInvitation,
   hashUserInvitationToken,
   invitationEmailSchema,
@@ -43,6 +44,7 @@ export interface UserInvitationDto {
   name: string;
   email: string;
   role: InvitableRole;
+  vendorId?: string;
   mobile: string;
   status: UserInvitationPresentationStatus;
   currentLinkAvailable: boolean;
@@ -68,6 +70,7 @@ export interface CreateUserInvitationInput {
   name: string;
   email: string;
   role: InvitableRole;
+  vendorId?: string;
   mobile: string;
 }
 
@@ -132,6 +135,7 @@ interface NormalizedCreateInput {
   email: string;
   emailNormalized: string;
   role: InvitableRole;
+  vendorId: string | null;
   mobile: string;
 }
 
@@ -165,7 +169,12 @@ export function createUserInvitationService(
         clock().toISOString()
       );
       return {
-        items: page.items.map(toDto),
+        items: await Promise.all(page.items.map(async (invitation) => {
+          const dto = toDto(invitation);
+          if (dto.role !== "vendor") return dto;
+          const target = await repository.findVendorInvitationTarget(dto.vendorId ?? "");
+          return target && target.status !== "archived" ? dto : { ...dto, currentLinkAvailable: false, availableActions: dto.status === "pending" ? ["revoke"] as const : [] as const };
+        })),
         total: page.total,
         invitableRoles: INVITABLE_ROLE_CODES
       };
@@ -182,6 +191,7 @@ export function createUserInvitationService(
         await transaction.coordinateAuthorizationMutation();
         const storedActor = await requireSoleSuperAdmin(transaction, actor);
         if (isReservedDemoEmail(createInput.emailNormalized)) emailNotAllowed();
+        if (createInput.vendorId) await assertVendorInvitationTarget(transaction, createInput.vendorId);
 
         await transaction.coordinateClientEmail(createInput.emailNormalized);
         const issuedAt = clock().toISOString();
@@ -224,6 +234,7 @@ export function createUserInvitationService(
             email: createInput.email,
             emailNormalized: createInput.emailNormalized,
             role: createInput.role,
+            vendorId: createInput.vendorId,
             mobile: createInput.mobile,
             tokenHash,
             tokenGeneration: 1,
@@ -289,6 +300,7 @@ export function createUserInvitationService(
         if (!current) notFound();
         if (current.emailNormalized !== discovered!.emailNormalized) versionConflict();
         requirePendingVersion(current, versionInput.version);
+        if (current.role === "vendor") await assertVendorInvitationTarget(transaction, current.vendorId);
         const issuedAt = clock().toISOString();
         const expiresAt = expiresAtForInvitation(issuedAt);
         await enforceRecipientCooldown(
@@ -433,6 +445,7 @@ export function createUserInvitationService(
             discovered.tokenHash,
             acceptedAt
           );
+          if (current!.role === "vendor") await assertVendorInvitationTarget(transaction, current!.vendorId);
 
           const createdUser = await transaction.createUser({
             name: current!.name,
@@ -440,6 +453,7 @@ export function createUserInvitationService(
             mobile: current!.mobile,
             passwordHash,
             role: current!.role,
+            ...(current!.role === "vendor" ? { vendorId: current!.vendorId } : {}),
             active: true,
             accountKind: "standard",
             address: null,
@@ -474,7 +488,8 @@ export function createUserInvitationService(
                 invitationId: current!.id,
                 userId: createdUser.id,
                 emailNormalized: current!.emailNormalized,
-                role: current!.role
+                role: current!.role,
+                ...(current!.role === "vendor" ? { vendorId: current!.vendorId } : {})
               }
             },
             transaction
@@ -559,6 +574,10 @@ async function assertPublicInvitationAvailable(
   ) {
     invitationUnavailable();
   }
+  if (invitation.role === "vendor") {
+    const target = await repository.findVendorInvitationTarget(invitation.vendorId ?? "");
+    if (!target || target.status === "archived") invitationUnavailable();
+  }
 }
 
 function assertSamePublicInvitation(
@@ -573,6 +592,7 @@ function assertSamePublicInvitation(
     current.tokenGeneration !== discovered.invitation.tokenGeneration ||
     current.version !== discovered.invitation.version ||
     current.emailNormalized !== discovered.invitation.emailNormalized ||
+    current.vendorId !== discovered.invitation.vendorId ||
     current.tokenIssuedById !== discovered.invitation.tokenIssuedById ||
     current.tokenIssuerVersion !== discovered.invitation.tokenIssuerVersion
   ) {
@@ -595,12 +615,14 @@ function parseCreateInput(input: CreateUserInvitationInput): NormalizedCreateInp
   try {
     const keys = Object.keys(input).sort();
     if (
-      keys.length !== CREATE_KEYS.length ||
-      !CREATE_KEYS.every((key) => keys.includes(key))
+      keys.length !== CREATE_KEYS.length + (input.role === "vendor" ? 1 : 0) ||
+      !CREATE_KEYS.every((key) => keys.includes(key)) ||
+      (input.role === "vendor" ? !keys.includes("vendorId") : keys.includes("vendorId"))
     ) {
       invalidInvitationInput();
     }
     if (!INVITABLE_ROLE_CODES.includes(input.role)) invalidInvitationInput();
+    if (input.role === "vendor" && (typeof input.vendorId !== "string" || !VENDOR_ID_PATTERN.test(input.vendorId))) invalidInvitationInput();
     const name = invitationNameSchema.parse(input.name);
     const email = invitationEmailSchema.parse(input.email);
     return {
@@ -608,6 +630,7 @@ function parseCreateInput(input: CreateUserInvitationInput): NormalizedCreateInp
       email,
       emailNormalized: normalizeInvitationEmail(email),
       role: input.role,
+      vendorId: input.role === "vendor" ? input.vendorId! : null,
       mobile: normalizeInvitationMobile(invitationMobileSchema.parse(input.mobile))
     };
   } catch (error) {
@@ -650,6 +673,16 @@ async function assertResendEmailActionable(
     (await repository.hasUnclaimedClientProjectByEmail(emailNormalized))
   ) {
     notActionable();
+  }
+}
+
+async function assertVendorInvitationTarget(repository: AppRepository, vendorId: string | null | undefined): Promise<void> {
+  if (!vendorId || !VENDOR_ID_PATTERN.test(vendorId)) {
+    throw new ApiError(400, "VENDOR_ID_REQUIRED", "Select a valid vendor.");
+  }
+  const target = await repository.findVendorInvitationTarget(vendorId);
+  if (!target || target.status === "archived") {
+    throw new ApiError(409, "VENDOR_UNAVAILABLE", "This vendor is unavailable for invitation.");
   }
 }
 
@@ -705,6 +738,7 @@ async function appendAdministrativeAudit(
         invitationId: invitation.id,
         emailNormalized: invitation.emailNormalized,
         role: invitation.role,
+        ...(invitation.role === "vendor" ? { vendorId: invitation.vendorId } : {}),
         tokenGeneration: invitation.tokenGeneration,
         expiresAt: invitation.expiresAt,
         ...(additional ? { deliveryState: additional.deliveryState } : {})
@@ -868,6 +902,10 @@ async function presentRecord(
   const reserved = await repository.hasUnclaimedClientProjectByEmail(
     invitation.emailNormalized
   );
+  const vendorTarget = invitation.role === "vendor"
+    ? await repository.findVendorInvitationTarget(invitation.vendorId ?? "")
+    : null;
+  const vendorAvailable = invitation.role !== "vendor" || (vendorTarget !== null && vendorTarget.status !== "archived");
   const tokenValidity = tokenValidityForInvitation({
     storedStatus: invitation.status,
     expiresAt: invitation.expiresAt,
@@ -892,11 +930,12 @@ async function presentRecord(
     name: invitation.name,
     email: invitation.email,
     role: invitation.role,
+    ...(invitation.role === "vendor" ? { vendorId: invitation.vendorId ?? undefined } : {}),
     mobile: invitation.mobile,
     status,
     currentLinkAvailable:
-      tokenValidity === "current" && !claimed && !reserved,
-    availableActions,
+      tokenValidity === "current" && !claimed && !reserved && vendorAvailable,
+    availableActions: vendorAvailable ? availableActions : invitation.status === "pending" ? ["revoke"] : [],
     invitedBy: {
       id: inviter.id,
       name: inviter.name,
@@ -920,6 +959,7 @@ function toDto(invitation: UserInvitationAdminRecord): UserInvitationDto {
     name: invitation.name,
     email: invitation.email,
     role: invitation.role,
+    ...(invitation.role === "vendor" ? { vendorId: invitation.vendorId ?? undefined } : {}),
     mobile: invitation.mobile,
     status: invitation.presentationStatus,
     currentLinkAvailable: invitation.currentLinkAvailable,

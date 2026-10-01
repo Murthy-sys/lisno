@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import { PageHeader } from "../../components/ui/PageHeader";
+import { EstimateReviewPanel } from "../estimates/EstimateReviewPanel";
 import type { ClientDesignVersion } from "../../api/types";
 import { FilePreview } from "../../components/ui/FilePreview";
 import { AsyncState } from "../../components/ui/AsyncState";
@@ -10,6 +12,8 @@ import { ProgressBar } from "../../components/ui/ProgressBar";
 import { clientKeys, getClientProject, getClientVersions } from "./clientApi";
 import { DesignSectionReview } from "./DesignSectionReview";
 import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
+import { ClientVendorWorkReview } from "./ClientVendorWorkReview";
+import { ClientSiteCompletionReview } from "./ClientSiteCompletionReview";
 import "./clientWorkflow.css";
 
 export function ClientProject() {
@@ -18,19 +22,17 @@ export function ClientProject() {
   const projectQuery = useQuery({ queryKey: clientKeys.project(projectId), queryFn: () => getClientProject(projectId), enabled: Boolean(projectId) });
   const versionsQuery = useQuery({ queryKey: clientKeys.versions(projectId), queryFn: () => getClientVersions(projectId), enabled: Boolean(projectId) });
   if (projectQuery.isPending) return <AsyncState state="loading" message="Loading your project…" />;
-  if (projectQuery.isError && !projectQuery.data) return <AsyncState state="error" message="We couldn't load this project." actionLabel="Try again" onAction={() => void projectQuery.refetch()} />;
+  if (projectQuery.isError) return <AsyncState state="error" message="We couldn't load this project." actionLabel="Try again" onAction={() => void projectQuery.refetch()} />;
   const project = projectQuery.data;
   const versions = (versionsQuery.data ?? []).filter((version) => version.approvalStatus === "approved" && version.clientVisible);
   return <section className="client-page client-page--project" data-theme="sidebar" aria-labelledby="client-project-title">
-    <Link className="back-link" to="/client">Back to projects</Link>
-    <header className="client-project-identity">
-      <h1 id="client-project-title">{project.name}</h1>
-      <p>{project.location}</p>
-    </header>
+    <PageHeader id="client-project-title" title={project.name} eyebrow="Your project" description={project.location} breadcrumb={<Link className="client-project-back" to="/client">Back to projects</Link>} metadata={<span className="client-project-status">{project.status.replaceAll("_", " ")}</span>} />
     <ProjectChatNavigation projectId={projectId} overviewTo={`/client/projects/${projectId}`} />
-    {projectQuery.isError ? <AsyncState state="error" message="The project overview could not be refreshed. Previously saved information is shown." actionLabel="Refresh overview" onAction={() => void projectQuery.refetch()} /> : null}
+    <EstimateReviewPanel key={`estimate-${projectId}`} projectId={projectId} />
     <div className="client-project-workflow" ref={setTimelineContainer} />
     <ProjectWorkflowPanel key={projectId} projectId={projectId} timelineContainer={timelineContainer} presentation="client" />
+    <ClientSiteCompletionReview key={`site-completion-${projectId}`} projectId={projectId} />
+    <ClientVendorWorkReview key={`vendor-work-${projectId}`} projectId={projectId} />
     {project.floors.length ? <details key={`floors-${projectId}`} className="client-project-disclosure">
       <summary>Floor progress <span>{project.floors.length} {project.floors.length === 1 ? "floor" : "floors"}</span></summary>
       <section className="client-floor-progress" aria-label="Floor progress">

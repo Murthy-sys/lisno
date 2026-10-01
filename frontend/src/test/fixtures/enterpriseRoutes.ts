@@ -1,6 +1,7 @@
 import { ROLE_CODES, OPERATIONAL_ROLES, type Role } from "../../api/authorization-contract";
 import type { Lead, ProjectWorkflowTask, UserInvitationItem, ProjectFinanceBucket } from "../../api/types";
 import { superAdminDashboardOverviewFixture, superAdminDashboardProjectsPageFixture, superAdminDashboardWorkforcePageFixture } from "../../features/admin/dashboard/dashboardFixtures";
+import type { ProjectPurchaseOrderRequest, PurchaseOrder } from "../../features/procurement/purchaseOrderApi";
 import type { EnterpriseScenario } from "./enterpriseTransport";
 import * as admin from "./enterpriseAdminData";
 import * as users from "./enterpriseUsersData";
@@ -17,6 +18,54 @@ import type { KnowledgeSectionKey } from "../../features/ai-estimator-knowledge/
 
 const lead: Lead = { id: "lead-1", projectId: "project-1", ownerId: "estimator_sales-1", clientName: "Asha Shah", clientEmail: "asha@example.com", clientMobile: "+91 90000 00000", projectName: "Asha home — complete residence and terrace refurbishment", location: "Pune", propertyType: "3BHK", budgetMin: 800000, budgetMax: 1200000, source: "Referral", stage: "estimate_in_progress", nextAction: "Review updated living room measurements", nextActionAt: "2026-09-15T10:00:00.000Z", builder: null, areaSqft: 1400, targetHandoverAt: null, notes: "Synthetic project record for visual review.", latestActivityAt: null, createdAt: "2026-08-23T10:00:00.000Z", updatedAt: "2026-09-10T10:00:00.000Z" };
 const estimate = { id: "estimate-1", leadId: lead.id, projectId: lead.projectId, propertyType: "3BHK", rooms: [{ id: "living-room", label: "Living Room", type: "living", length: 16, width: 12, height: 10 }], scopes: ["FC"], lineItems: responses.pendingDetail.estimateSnapshot.lineItems, subtotal: 1200, gst: 216, total: 1416, status: "draft", approvalRequired: false, updatedAt: lead.updatedAt, lead };
+const qaRequestTotals = { netPaise: 60000000, gstPaise: 10800000, totalPaise: 70800000 };
+const qaRequestSectionTotals = [{ sectionId: "LIVING", label: "Living room and dining", totals: qaRequestTotals }];
+const qaRequestVendorTotals = [{ vendorId: "vendor-qa", code: "VEN-QA", name: "Synthetic Interior Works", terms: "Deliver and install at the project site.", totals: qaRequestTotals }];
+const qaPendingPurchaseRequest: ProjectPurchaseOrderRequest = {
+  id: "request-qa-one", projectId: "project-qa-one", projectName: "North Residence — upper floor and garden apartment renovation",
+  requestNumber: "POR-QA-001", status: "pending_approval", version: 3, revision: 2, submittedRevisionId: "request-revision-qa-two",
+  preparationDigest: "a".repeat(64), estimateSource: { estimateId: "estimate-qa-one", estimateVersion: 2, estimateReviewRoundId: "review-qa-one" },
+  approvedEstimatePaise: 90000000, committedPaise: 40000000, committedGstPaise: 0, committedTotalPaise: 40000000, remainingPaise: 50000000,
+  totals: qaRequestTotals, sectionTotals: qaRequestSectionTotals, vendorTotals: qaRequestVendorTotals,
+  approvedOrderIds: [], decisions: [], revisions: [{
+    id: "request-revision-qa-two", revision: 2, submittedAt: "2026-10-01T00:00:00.000Z", submittedById: "buyer-qa",
+    preparationDigest: "a".repeat(64), approvedEstimatePaise: 90000000, committedPaise: 40000000,
+    committedGstPaise: 0, committedTotalPaise: 40000000, remainingPaise: 50000000,
+    totals: qaRequestTotals, sectionTotals: qaRequestSectionTotals, vendorTotals: qaRequestVendorTotals,
+    lines: [{
+      id: "line-qa-one", procurementItemId: "item-qa-one", procurementItemVersion: 2,
+      quantityMilliUnits: 2000, unitPricePaise: 30000000, gstBasisPoints: 1800, scopeType: "execution",
+      description: "Custom cabinetry and wall panelling for the living and dining spaces",
+      targetDate: "2026-11-15", deliveryLocation: "North Residence", netPaise: 60000000, gstPaise: 10800000, totalPaise: 70800000,
+      vendorId: "vendor-qa", vendorCode: "VEN-QA", vendorName: "Synthetic Interior Works", allocatedWorkPaise: 60000000,
+      sectionLabel: "Living room and dining", sourceSectionId: "LIVING", sourceLineItemKey: "estimate-line-qa-one",
+      roomName: "Living and dining", itemName: "Custom cabinetry and wall panelling", brand: "Synthetic", uomCode: "set"
+    }]
+  }],
+  createdAt: "2026-09-30T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z"
+};
+const qaIndividualOrderTotals = { netPaise: 350000, gstPaise: 63000, totalPaise: 413000 };
+const qaPendingIndividualOrder: PurchaseOrder = {
+  id: "order-qa-one", orderNumber: "PO-QA-001", projectId: "project-qa-individual",
+  vendor: { id: "vendor-qa-individual", code: "VEN-QA-2", name: "Synthetic Workshop and Installations" },
+  status: "pending_approval", version: 3, revision: 1,
+  estimateSource: { estimateId: "estimate-qa-individual", estimateVersion: 1, estimateReviewRoundId: "review-qa-individual" },
+  terms: "Deliver and install at the project site.", draftLines: [], draftTotals: qaIndividualOrderTotals,
+  submittedRevisionId: "order-revision-qa-one", approvedRevisionId: null, approvedNetPaise: null,
+  approvedGstPaise: null, approvedTotalPaise: null, decisions: [], revisions: [{
+    id: "order-revision-qa-one", revision: 1, submittedAt: "2026-10-01T00:00:00.000Z", submittedById: "buyer-qa",
+    terms: "Deliver and install at the project site after measurements are confirmed.", totals: qaIndividualOrderTotals,
+    lines: [{
+      id: "order-line-qa-one", procurementItemId: "item-qa-individual", procurementItemVersion: 1,
+      quantityMilliUnits: 1000, unitPricePaise: 350000, gstBasisPoints: 1800, scopeType: "supply_and_execution",
+      description: "Supply and install measured living room shelving and joinery",
+      targetDate: "2026-11-20", deliveryLocation: "Synthetic project site",
+      netPaise: 350000, gstPaise: 63000, totalPaise: 413000,
+      itemName: "Living room shelving and joinery", roomName: "Living room", uomCode: "set"
+    }]
+  }],
+  createdAt: "2026-09-30T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z"
+};
 const team = [
   { user: { id: "designer-1", name: "Ananya Rao", email: "ananya@lisno.example" }, activeProjectCount: 2, workload: 24, overdueCount: 1, yellowRiskCount: 2, pendingEvaluation: true, kpi: { score: 84, components: designer.components }, projects: designer.projects.map((p) => ({ ...p, progress: 45 })), tasks: designer.kpiTasks },
   { user: { id: "designer-2", name: "Kabir Shah", email: "kabir@lisno.example" }, activeProjectCount: 1, workload: 12, overdueCount: 0, yellowRiskCount: 1, pendingEvaluation: false, kpi: { score: 79, components: designer.components }, projects: [], tasks: [] }
@@ -38,6 +87,11 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
     return { items: filtered.slice(offset, offset + limit), pagination: { limit, offset, total: filtered.length, hasMore: offset + limit < filtered.length } };
   };
   if (path === "/admin/dashboard/overview") return empty ? { ...superAdminDashboardOverviewFixture, projects: zeroAggregates(superAdminDashboardOverviewFixture.projects), estimation: zeroAggregates(superAdminDashboardOverviewFixture.estimation), design: zeroAggregates(superAdminDashboardOverviewFixture.design), finance: zeroAggregates(superAdminDashboardOverviewFixture.finance), workforce: zeroAggregates(superAdminDashboardOverviewFixture.workforce), execution: zeroAggregates(superAdminDashboardOverviewFixture.execution), procurement: zeroAggregates(superAdminDashboardOverviewFixture.procurement), governance: zeroAggregates(superAdminDashboardOverviewFixture.governance), risk: zeroAggregates(superAdminDashboardOverviewFixture.risk), trends: [] } : superAdminDashboardOverviewFixture;
+  if (path === "/daily-critical-tasks") return { timezone: "Asia/Kolkata", localDate: "2026-10-01", scheduledAt: "2026-10-01T11:30:00.000Z", acknowledgedAt: "2026-10-01T11:35:00.000Z", items: [] };
+  if (path === "/chat/availability") return { available: false, reason: "Synthetic QA" };
+  if (path === "/admin/purchase-order-requests/pending") return { items: empty ? [] : [qaPendingPurchaseRequest], total: empty ? 0 : 1, limit: 50, offset: 0 };
+  if (path === "/admin/purchase-orders/pending") return { items: empty ? [] : [qaPendingIndividualOrder], total: empty ? 0 : 1, limit: 50, offset: 0 };
+  if (path === "/admin/project-completion-tasks") return { items: [], total: 0, limit: 100, offset: 0 };
   if (path === "/admin/dashboard/projects") return { ...superAdminDashboardProjectsPageFixture, ...page(superAdminDashboardProjectsPageFixture.items) };
   if (path === "/admin/dashboard/workforce") return { ...superAdminDashboardWorkforcePageFixture, ...page(superAdminDashboardWorkforcePageFixture.items) };
   if (path === "/admin/projects") return page([admin.project, { ...admin.approvedPendingProject, name: "North Residence — upper floor and garden apartment renovation" }]);
@@ -68,7 +122,13 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (path === "/admin/design-plan-response-tasks") return [];
   if (path === "/projects") return page(designer.projects);
   if (/^\/projects\/[^/]+$/.test(path)) return { ...project.project, id: decodeURIComponent(path.split("/").at(-1)!), progress: 45, ...(empty ? { floors: [] } : {}) };
-  if (/^\/projects\/[^/]+\/design-workflow$/.test(path)) return empty ? { projectId: path.split("/")[2], projectName: "Aurora Villa", serverNow: "2026-09-13T10:00:00.000Z", floors: [] } : drawing.drawingWorkflow(path.split("/")[2], scenario.role === "designer");
+  if (/^\/projects\/[^/]+\/status$/.test(path)) {
+    const projectId = decodeURIComponent(path.split("/")[2]);
+    return { projectId, projectName: project.project.name, projectStatus: "active", serverNow: "2026-10-01T10:00:00.000Z", state: "no_pending", currentStage: null, pendingActions: [], issue: null };
+  }
+  if (/^\/projects\/[^/]+\/vendor-work-progress$/.test(path)) return { projectId: decodeURIComponent(path.split("/")[2]), assignments: [], pendingOwner: "none" };
+  if (path === "/vendor/work") return { items: [], total: 0, limit: Number(params.get("limit") ?? 50), offset: Number(params.get("offset") ?? 0) };
+  if (/^\/projects\/[^/]+\/design-workflow$/.test(path)) return empty ? { projectId: path.split("/")[2], projectName: "Aurora Villa", estimateApprovalStatus: "approved", serverNow: "2026-09-13T10:00:00.000Z", floors: [] } : { ...drawing.drawingWorkflow(path.split("/")[2], scenario.role === "designer"), estimateApprovalStatus: "approved" };
   if (path === "/design-workflow/payment-confirmations") return [];
   if (/^\/projects\/[^/]+\/design-versions$/.test(path)) return page([{ ...drawing.approvedDocument, projectId: path.split("/")[2] }]);
   if (path === "/design-versions/qa-approved-document/sections") return empty ? { ...drawing.approvedExtraction, pages: [], sections: [] } : drawing.approvedExtraction;
@@ -89,12 +149,14 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (path === "/client/estimates/estimate-1/design-drawings") return empty ? { uploads: [], pages: [], drawings: [], revisions: [], readiness: { ready: false, total: 0, approved: 0, awaitingReview: 0, changesRequested: 0 } } : drawing.clientDrawingWorkspace("estimate-1");
   if (path === "/client/estimates/estimate-1/plan-review") return empty ? { uploads: [], pages: [], openRequests: [] } : drawing.clientPlanWorkspace("estimate-1");
   if (/^\/client\/projects\/[^/]+\/design-sections$/.test(path)) return empty ? { projectId: path.split("/")[3], sections: [], progress: { total: 0, approved: 0, awaitingReview: 0, rejected: 0 } } : { ...drawing.review, projectId: path.split("/")[3] };
+  if (/^\/clients\/projects\/[^/]+\/vendor-work-reviews$/.test(path)) return { items: [], total: 0, pendingTotal: 0, limit: Number(params.get("limit") ?? 50), offset: Number(params.get("offset") ?? 0) };
   if (path === "/leads") return page([lead]);
   if (path === "/leads/lead-1") return lead;
   if (path === "/leads/lead-1/activities") return page([{ id: "activity-1", leadId: lead.id, actorId: lead.ownerId, type: "meeting", note: "Reviewed kitchen and living room measurements with the client.", occurredAt: lead.updatedAt, createdAt: lead.updatedAt }]);
   if (path === "/leads/lead-1/estimate") return empty ? null : estimate;
   if (path === "/estimates") return list([estimate]);
   if (/^\/estimates\/(estimate-1|estimate-aurora-villa|estimate-aurora-studio)\/design-uploads$/.test(path)) return empty ? { uploads: [], pages: [], drawings: [], revisions: [] } : drawing.extractedWorkspace(path.split("/")[2]);
+  if (/^\/estimates\/(estimate-1|estimate-aurora-villa|estimate-aurora-studio)\/design-plan-documents$/.test(path)) return { manifestHash: `synthetic-${path.split("/")[2]}`, readyForSubmission: false, documents: [], reviewRoundId: null };
   if (path === "/estimates/pending-review" || path === "/estimates/review-queue") return [];
   if (path === "/estimates/designers") return team.map((t) => t.user);
   if (path === "/finance/projects") return { ...page(buckets), summary: empty ? zeroAggregates(finance.portfolioSummary) : finance.portfolioSummary };
@@ -106,7 +168,18 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   }
   if (path === "/procurement/projects") return list([procurement.procurementProject]);
   if (/^\/procurement\/projects\/[^/]+\/items$/.test(path)) return { items: [], total: 0, limit: Number(params.get("limit") ?? 20), offset: Number(params.get("offset") ?? 0) };
-  if (path === "/procurement/uoms") return [];
+  if (/^\/procurement\/projects\/[^/]+\/purchase-orders$/.test(path)) return { items: [], total: 0, limit: Number(params.get("limit") ?? 50), offset: Number(params.get("offset") ?? 0) };
+  if (/^\/procurement\/projects\/[^/]+\/purchase-order-commitments$/.test(path)) return { approvedEstimatePaise: 375_000, committedPaise: 0, committedGstPaise: 0, committedTotalPaise: 0, remainingPaise: 375_000 };
+  if (path === "/procurement/vendors") {
+    const vendorDemo = scenario.route.includes("qaVendor=ready") && !empty;
+    const items = vendorDemo && params.get("effectiveStatus") === "active"
+      ? [{ id: "qa-vendor-active", code: "QA-V1", name: "Timber House", status: "active", assignable: true,
+        readiness: { inductionApproved: false, vendorSelfKpiComplete: true, procurementKpiComplete: true, profileComplete: false, physicalAddressVerified: false } }]
+      : [];
+    return { items, total: items.length, limit: Number(params.get("limit") ?? 20), offset: Number(params.get("offset") ?? 0) };
+  }
+  if (path === "/procurement/uoms") return scenario.route.includes("qaVendor=ready") && !empty
+    ? [{ id: "qa-uom-sheet", code: "SHT", name: "Sheet" }] : [];
   if (path === "/workflow-tasks") return list([workflowTask(scenario.role)]);
   if (/^\/design-section-revisions\/(revision-1|revision-2|revision-3)\/image$/.test(path)) return drawing.syntheticDrawingResponse(drawing.revision.crop);
   if (/^\/design-source-pages\/(page-1|page-2)\/image$/.test(path)) return drawing.syntheticDrawingResponse();

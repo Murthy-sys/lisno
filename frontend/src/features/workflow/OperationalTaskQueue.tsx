@@ -1,4 +1,8 @@
+import { projectStatusKeys } from "../project-status/projectStatusApi";
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ProjectChatLink } from "../messages";
+import { VendorWorkProgressPanel } from "./VendorWorkProgressPanel";
+import { SiteCompletionPanel } from "./SiteCompletionPanel";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -56,6 +60,7 @@ export function OperationalTaskQueue({ role }: { role: Role }) {
           queryKey: projectWorkflowKeys.projectTasks(updated.projectId)
         }),
         queryClient.invalidateQueries({ queryKey: adminProjectKeys.all }),
+        queryClient.invalidateQueries({ queryKey: projectStatusKeys.project(updated.projectId) }),
         queryClient.invalidateQueries({ queryKey: projectFinanceKeys.projects }),
         queryClient.invalidateQueries({
           queryKey: projectFinanceKeys.bucket(updated.projectId)
@@ -80,6 +85,8 @@ export function OperationalTaskQueue({ role }: { role: Role }) {
   const coordinationTasks = siteManagerView
     ? allTasks.filter((task) => task.kind === "site_execution")
     : allTasks;
+  const legacySiteTasks = siteManagerView ? coordinationTasks.filter(task => task.completionAuthority !== "vendor_client") : [];
+  const vendorSiteTasks = siteManagerView ? coordinationTasks.filter(task => task.completionAuthority === "vendor_client") : [];
   const tradeTasks = siteManagerView
     ? allTasks.filter((task) => task.kind === "trade_execution")
     : [];
@@ -99,7 +106,7 @@ export function OperationalTaskQueue({ role }: { role: Role }) {
             {siteManagerView ? "Site execution overview" : "Your project tasks"}
           </h2>
         </div>
-        {tasks.data ? (
+        {tasks.data && !siteManagerView ? (
           <span>
             {openCount}{" "}
             {siteManagerView
@@ -128,10 +135,10 @@ export function OperationalTaskQueue({ role }: { role: Role }) {
         </p>
       ) : null}
 
-      {coordinationTasks.length ? (
+      {(siteManagerView ? legacySiteTasks.length : coordinationTasks.length) ? (
         <TaskSection
           title={siteManagerView ? "Your coordination tasks" : undefined}
-          tasks={coordinationTasks}
+          tasks={siteManagerView ? legacySiteTasks : coordinationTasks}
           canUpdate={canUpdateOwnTasks}
           onUpdate={(task) => {
             update.reset();
@@ -140,9 +147,11 @@ export function OperationalTaskQueue({ role }: { role: Role }) {
         />
       ) : null}
 
-      {siteManagerView && tradeTasks.length ? (
-        <WorkerProgressByProject tasks={tradeTasks} />
-      ) : null}
+      {siteManagerView ? groupByProject(vendorSiteTasks).map(({ projectId, projectName }) => <div key={`site-${projectId}`}>
+        <ProjectStatusButton projectId={projectId} projectName={projectName} />
+        <SiteCompletionPanel projectId={projectId} projectName={projectName} />
+        <VendorWorkProgressPanel projectId={projectId} projectName={projectName} />
+      </div>) : null}
 
       {editingTask ? (
         <ProgressUpdateDialog
@@ -173,7 +182,11 @@ function TaskSection({
 }) {
   const content = (
     <>
-    <nav aria-label="Project conversations">{groupByProject(tasks).map(({projectId,projectName}) => <ProjectChatLink key={projectId} projectId={projectId}>{projectName} messages</ProjectChatLink>)}</nav>
+    <div className="workflow-task-project-actions" aria-label="Project actions">{groupByProject(tasks).map(({projectId,projectName}) => <div className="workflow-task-project-actions__row" key={projectId}>
+      <strong>{projectName}</strong>
+      <ProjectChatLink projectId={projectId}>Messages</ProjectChatLink>
+      <ProjectStatusButton projectId={projectId} projectName={projectName} />
+    </div>)}</div>
     <div className="workflow-task-grid">
       {tasks.map((task) => (
         <WorkflowTaskCard
@@ -195,46 +208,6 @@ function TaskSection({
         <span>{tasks.length}</span>
       </div>
       {content}
-    </section>
-  );
-}
-
-function WorkerProgressByProject({ tasks }: { tasks: ProjectWorkflowTask[] }) {
-  const groups = groupByProject(tasks);
-  return (
-    <section className="workflow-worker-progress" aria-labelledby="worker-progress-title">
-      <div className="workflow-task-section__heading">
-        <div>
-          <p className="eyebrow">Trade execution</p>
-          <h3 id="worker-progress-title">Worker progress</h3>
-        </div>
-        <span>{tasks.length} tasks</span>
-      </div>
-      <div className="workflow-project-groups">
-        {groups.map(({ projectId, projectName, tasks: projectTasks }) => (
-          <section
-            className="workflow-project-group"
-            aria-labelledby={`workflow-project-${projectId}`}
-            key={projectId}
-          >
-            <div className="workflow-project-group__heading">
-              <h4 id={`workflow-project-${projectId}`}>{projectName}</h4>
-              <ProjectChatLink projectId={projectId}>Messages</ProjectChatLink>
-              <span>{completedLabel(projectTasks)}</span>
-            </div>
-            <div className="workflow-task-grid">
-              {projectTasks.map((task) => (
-                <WorkflowTaskCard
-                  task={task}
-                  canUpdate={false}
-                  key={task.id}
-                  onUpdate={() => {}}
-                />
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
     </section>
   );
 }
@@ -384,10 +357,6 @@ function groupByProject(tasks: ProjectWorkflowTask[]) {
   return [...groups].map(([projectId, group]) => ({ projectId, ...group }));
 }
 
-function completedLabel(tasks: ProjectWorkflowTask[]) {
-  const completed = tasks.filter((task) => task.status === "completed").length;
-  return `${completed} of ${tasks.length} complete`;
-}
 
 function updateErrorMessage(error: Error) {
   if (error instanceof ApiError) return error.message;

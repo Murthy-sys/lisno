@@ -1,0 +1,35 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - link "Skip to main content" [ref=e4] [cursor=pointer]:
+        - /url: "#main-content"
+      - complementary "Application sidebar" [ref=e5]:
+        - generic [ref=e6]:
+          - generic [ref=e7]:
+            - img "Lisno" [ref=e8]
+            - generic [ref=e9]: INTERIOR WORKSPACE
+          - navigation "Primary navigation" [ref=e10]:
+            - link "My work" [ref=e11] [cursor=pointer]:
+              - /url: /vendor
+      - banner "Workspace tools" [ref=e15]:
+        - generic [ref=e16]:
+          - button "View daily critical tasks" [ref=e17] [cursor=pointer]:
+            - generic [ref=e18]: Critical tasks
+          - button "Notifications" [ref=e21] [cursor=pointer]
+          - button "Synthetic workspace reviewer" [ref=e26] [cursor=pointer]:
+            - generic [aria-hidden] [ref=e27]: SW
+            - generic [ref=e28]:
+              - generic [ref=e29]: Synthetic workspace reviewer
+              - generic [ref=e30]: Vendor
+      - main [ref=e33]:
+        - region [ref=e34]:
+          - generic [ref=e36]:
+            - generic [ref=e37]: Vendor workspace
+            - heading "Assigned work" [level=1] [ref=e39]
+            - paragraph [ref=e40]: Update each approved order section, add site evidence when useful, and submit completed work to the client.
+          - alert [ref=e42]:
+            - generic [ref=e45]: No synthetic response registered for /vendor/work.
+            - button "Try again" [ref=e48] [cursor=pointer]
+    - status "Application announcements" [ref=e52]
+    - region "Notifications"
+  - alert [ref=e53]: "Synthetic QA blocked unexpected request: GET /vendor/work"

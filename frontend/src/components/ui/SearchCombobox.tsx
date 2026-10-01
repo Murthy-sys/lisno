@@ -19,6 +19,7 @@ export function SearchCombobox<T>({
   itemKey,
   itemLabel,
   renderItem,
+  itemDisabled,
   loading = false,
   error,
   onRetry,
@@ -38,6 +39,7 @@ export function SearchCombobox<T>({
   itemKey: (item: T) => string;
   itemLabel: (item: T) => string;
   renderItem: (item: T) => ReactNode;
+  itemDisabled?: (item: T) => boolean;
   loading?: boolean;
   error?: string;
   onRetry?: () => void;
@@ -53,10 +55,11 @@ export function SearchCombobox<T>({
   const [open, setOpen] = useState(false);
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const selectedKey = value ? itemKey(value) : undefined;
+  const enabledItems = itemDisabled ? items.filter((item) => !itemDisabled(item)) : items;
   const activeIndex = activeKey
-    ? items.findIndex((item) => itemKey(item) === activeKey)
+    ? enabledItems.findIndex((item) => itemKey(item) === activeKey)
     : -1;
-  const activeItem = activeIndex >= 0 ? items[activeIndex] : null;
+  const activeItem = activeIndex >= 0 ? enabledItems[activeIndex] : null;
   const showListbox = open && !loading && !error && items.length > 0;
 
   useEffect(() => {
@@ -69,13 +72,14 @@ export function SearchCombobox<T>({
 
   useEffect(() => {
     setActiveKey((current) =>
-      current && items.some((item) => itemKey(item) === current)
+      current && enabledItems.some((item) => itemKey(item) === current)
         ? current
         : null
     );
-  }, [items, itemKey]);
+  }, [items, itemKey, itemDisabled]);
 
   const select = (item: T) => {
+    if (itemDisabled?.(item)) return;
     onChange(item);
     onQueryChange(itemLabel(item));
     setOpen(false);
@@ -85,27 +89,27 @@ export function SearchCombobox<T>({
   const openList = () => {
     setOpen(true);
     setActiveKey((current) => {
-      if (current && items.some((item) => itemKey(item) === current)) {
+      if (current && enabledItems.some((item) => itemKey(item) === current)) {
         return current;
       }
-      return selectedKey && items.some((item) => itemKey(item) === selectedKey)
+      return selectedKey && enabledItems.some((item) => itemKey(item) === selectedKey)
         ? selectedKey
         : null;
     });
   };
 
   const moveActive = (direction: 1 | -1) => {
-    if (items.length === 0) {
+    if (enabledItems.length === 0) {
       setActiveKey(null);
       return;
     }
     const nextIndex =
       direction === 1
-        ? Math.min(Math.max(activeIndex + 1, 0), items.length - 1)
+        ? Math.min(Math.max(activeIndex + 1, 0), enabledItems.length - 1)
         : activeIndex < 0
-          ? items.length - 1
+          ? enabledItems.length - 1
           : Math.max(activeIndex - 1, 0);
-    setActiveKey(itemKey(items[nextIndex]!));
+    setActiveKey(itemKey(enabledItems[nextIndex]!));
   };
 
   return (
@@ -183,6 +187,9 @@ export function SearchCombobox<T>({
                     type="button"
                     role="option"
                     tabIndex={-1}
+                    disabled={itemDisabled?.(item)}
+                    aria-disabled={itemDisabled?.(item) || undefined}
+                    aria-label={itemDisabled?.(item) ? undefined : itemLabel(item)}
                     aria-selected={key === selectedKey}
                     className={key === activeKey ? "is-active" : undefined}
                     onMouseDown={(event) => event.preventDefault()}

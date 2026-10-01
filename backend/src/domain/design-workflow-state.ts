@@ -6,7 +6,7 @@ export const DESIGN_WORKFLOW_ACTIONS = ["confirm_initial_payment", "internal_kic
 export type DesignWorkflowAction = (typeof DESIGN_WORKFLOW_ACTIONS)[number];
 interface FurnitureItemSnapshot { id: string; estimateItemId?: string; name: string; unit: string; uomId?: string; uomName?: string }
 export type FurnitureDimensionItem = FurnitureItemSnapshot & (
-  | { measurementType?: "dimensions"; length: number; width: number; height: number; quantity?: never }
+  | { measurementType?: "dimensions"; length: number; width: number; height?: number; quantity?: never }
   | { measurementType: "count"; quantity: number; length?: never; width?: never; height?: never }
 );
 export interface FurnitureDimensions { submissionEventId: string; revision: number; status: "pending" | "changes_requested" | "approved"; items: FurnitureDimensionItem[]; submittedAt: string; reviewedAt?: string; returnReason?: string }

@@ -23,16 +23,21 @@
 :is(.ui-app-shell[data-role], body) .project-procurement-items__summary,
 :is(.ui-app-shell[data-role], body) .project-procurement-items__pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; line-height: 1.5; color: var(--color-text-muted); }
 :is(.ui-app-shell[data-role], body) .project-procurement-items__table-region { min-width: 0; max-width: 100%; overflow-x: auto; border: 1px solid var(--color-border); border-radius: 6px; }
-:is(.ui-app-shell[data-role], body) .project-procurement-items__table { width: 100%; min-width: 0; table-layout: fixed; border-collapse: collapse; margin: 0; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table { width: 100%; min-width: 1450px; table-layout: fixed; border-collapse: collapse; margin: 0; }
 :is(.ui-app-shell[data-role], body) .project-procurement-items__table th,
 :is(.ui-app-shell[data-role], body) .project-procurement-items__table td { padding: 12px 14px; border: 0; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: middle; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 :is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th { background: var(--color-table-header); font-size: 11px; font-weight: 600; color: var(--color-text-muted); letter-spacing: normal; text-transform: none; }
-:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:first-child { width: 26%; }
-:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(2) { width: 17%; }
-:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(3) { width: 21%; }
-:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(4) { width: 10%; }
-:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(5) { width: 18%; text-align: right; }
-:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(6) { width: 66px; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:first-child { width: 12%; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(2) { width: 8%; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(3) { width: 12%; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(4) { width: 6%; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(5) { width: 10%; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(6) { width: 8%; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(7) { width: 9%; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(8) { width: 12%; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(9) { width: 8%; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(10) { width: 10%; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table thead th:nth-child(11) { width: 5%; }
 :is(.ui-app-shell[data-role], body) .project-procurement-items__table tbody tr:last-child > * { border-bottom: 0; }
 :is(.ui-app-shell[data-role], body) .project-procurement-items__name { color: var(--color-text-strong); font-weight: 600; }
 :is(.ui-app-shell[data-role], body) .project-procurement-items__chip {
@@ -62,6 +67,8 @@
 :is(.ui-app-shell[data-role], body) .project-procurement-items__chip--neutral { --procurement-chip-tint: var(--color-text-muted); --procurement-chip-ink: var(--color-text-muted); }
 :is(.ui-app-shell[data-role], body) .project-procurement-items__table small { display: block; margin-top: 3px; color: var(--color-text-muted); font-size: 10px; line-height: 1.4; }
 :is(.ui-app-shell[data-role], body) .project-procurement-items__table .project-procurement-items__price { font-variant-numeric: tabular-nums; text-align: right; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table .project-procurement-items__quantity,
+:is(.ui-app-shell[data-role], body) .project-procurement-items__table .project-procurement-items__amount { font-variant-numeric: tabular-nums; }
 :is(.ui-app-shell[data-role], body) .project-procurement-items__actions .ui-icon-button { padding: 6px; inline-size: 32px; block-size: 32px; min-inline-size: 32px; min-block-size: 32px; border-radius: 4px; }
 :is(.ui-app-shell[data-role], body) .project-procurement-items__actions .ui-icon-button svg { width: 15px; height: 15px; }
 :is(.ui-app-shell[data-role], body) .project-procurement-items__muted { color: var(--color-text-muted); }
@@ -74,22 +81,30 @@
 .project-procurement-vendor { display: grid; gap: 8px; min-width: 0; }
 .project-procurement-vendor .ui-field__hint { margin: 0; }
 .project-procurement-vendor__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.project-procurement-vendor__directory-link { color: var(--color-primary); font-size: 12px; font-weight: 600; text-underline-offset: 3px; }
+.project-procurement-vendor__directory-link:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }
 .project-procurement-vendor__create { display: grid; gap: 10px; padding: 14px; background: var(--color-surface-subtle); border: 1px solid var(--color-border); border-radius: 6px; }
 .project-procurement-vendor .search-combobox { min-width: 0; }
 .project-procurement-vendor .search-combobox input { width: 100%; min-width: 0; }
 .project-procurement-vendor .search-combobox__popup [role="listbox"] { max-height: 230px; overflow-y: auto; }
 .project-procurement-vendor .search-combobox__popup [role="option"] { overflow-wrap: anywhere; }
+.project-procurement-vendor .search-combobox__popup [role="option"][aria-disabled="true"] { color: #646b78; cursor: default; }
+.project-procurement-vendor .search-combobox__popup [role="option"][aria-disabled="true"]:hover { background: white; }
+.project-procurement-vendor__option { display: grid; gap: 0.2rem; }
+.project-procurement-vendor__option small { font-size: 0.78rem; line-height: 1.35; }
+.project-procurement-items__remove-actions { display: flex; justify-content: flex-end; gap: 0.6rem; margin-top: 1rem; }
 .procurement-project .procurement-project__purchases-title { margin: 0 0 16px; font-size: 18px; font-weight: 600; line-height: 1.4; }
 @container (max-width: 620px) {
   :is(.ui-app-shell[data-role], body) .project-procurement-items__table,
   :is(.ui-app-shell[data-role], body) .project-procurement-items__table tbody { display: block; }
+  :is(.ui-app-shell[data-role], body) .project-procurement-items__table { min-width: 0; }
   :is(.ui-app-shell[data-role], body) .project-procurement-items__table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   :is(.ui-app-shell[data-role], body) .project-procurement-items__table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 14px; padding: 14px; border-bottom: 1px solid var(--color-border); }
   :is(.ui-app-shell[data-role], body) .project-procurement-items__table tbody tr:last-child { border-bottom: 0; }
   :is(.ui-app-shell[data-role], body) .project-procurement-items__table tbody th,
   :is(.ui-app-shell[data-role], body) .project-procurement-items__table tbody td { display: block; border: 0; padding: 0; }
   :is(.ui-app-shell[data-role], body) .project-procurement-items__name { grid-row: 1; grid-column: 1; align-self: center; font-size: 13px; }
-  :is(.ui-app-shell[data-role], body) .project-procurement-items__table tbody td[data-label] { grid-column: 1 / -1; display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 8px; }
+  :is(.ui-app-shell[data-role], body) .project-procurement-items__table tbody td[data-label] { grid-column: 1 / -1; display: grid; grid-template-columns: 116px minmax(0, 1fr); gap: 8px; }
   :is(.ui-app-shell[data-role], body) .project-procurement-items__table td[data-label]::before { content: attr(data-label); color: var(--color-text-muted); font-size: 11px; font-weight: 500; }
   :is(.ui-app-shell[data-role], body) .project-procurement-items__table td small { grid-column: 2; margin: 0; }
   :is(.ui-app-shell[data-role], body) .project-procurement-items__actions { grid-row: 1; grid-column: 2; }
@@ -143,6 +158,11 @@
 :is(.ui-app-shell[data-role], body) .project-procurement-items__body .ui-state__empty p { margin: 0; font-size: 12px; }
 :is(.ui-app-shell[data-role], body) .project-procurement-items--unassigned { padding: 18px 0 0; border: 0; border-top: 1px solid var(--color-border); border-radius: 0; box-shadow: none; }
 :is(.ui-app-shell[data-role], body) .estimate-procurement__notice { margin: 0; font-size: 12px; color: var(--color-text-strong); }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__amount-preview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0; padding: 14px 0; border-block: 1px solid var(--color-border); }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__amount-preview div { min-width: 0; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__amount-preview dt { color: var(--color-text-muted); font-size: 12px; }
+:is(.ui-app-shell[data-role], body) .project-procurement-items__amount-preview dd { margin: 5px 0 0; color: var(--color-text-strong); font-weight: 600; font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) { :is(.ui-app-shell[data-role], body) .project-procurement-items__amount-preview { grid-template-columns: 1fr; } }
 @container (max-width: 700px) {
   :is(.ui-app-shell[data-role], body) .project-procurement-items--estimate > .project-procurement-items__heading { grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; }
   :is(.ui-app-shell[data-role], body) .project-procurement-items--estimate > .project-procurement-items__heading > div:first-child { grid-column: 1 / -1; }

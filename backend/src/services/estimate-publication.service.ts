@@ -58,6 +58,10 @@ interface PublicationEstimate {
   subtotal: number;
   gst: number;
   total: number;
+  subtotalPaise?: number;
+  gstPaise?: number;
+  totalPaise?: number;
+  selectedMainBasketIds?: string[];
   approvalRequired: boolean;
   reviews: Record<string, unknown>[];
   notifications: Record<string, unknown>[];
@@ -109,6 +113,7 @@ export function createEstimatePublicationService(input: {
     ): Promise<PublishEstimateToClientResult> {
       const preflightEstimate = await findEstimateForPublication(publication);
       if (!preflightEstimate) publicationConflict();
+      assertPublishableConfiguredLines(preflightEstimate);
       if (
         publication.expectedStatus === "draft" &&
         preflightEstimate.total > APPROVAL_THRESHOLD
@@ -179,6 +184,7 @@ export function createEstimatePublicationService(input: {
             session
           );
           if (!currentEstimate) publicationConflict();
+          assertPublishableConfiguredLines(currentEstimate);
           if (
             publication.expectedStatus === "draft" &&
             currentEstimate.total > APPROVAL_THRESHOLD
@@ -437,6 +443,9 @@ function toPostTransitionPdfInput(
     subtotal: estimate.subtotal,
     gst: estimate.gst,
     total: estimate.total,
+    subtotalPaise: estimate.subtotalPaise,
+    gstPaise: estimate.gstPaise,
+    totalPaise: estimate.totalPaise,
     lineItems: estimate.lineItems.map((line) => ({ ...line })),
     lead: {
       clientName: lead.clientName,
@@ -467,8 +476,37 @@ function toEstimateSnapshot(
     })),
     subtotal: estimate.subtotal,
     gst: estimate.gst,
-    total: estimate.total
+    total: estimate.total,
+    ...(estimate.subtotalPaise === undefined ? {} : { subtotalPaise: estimate.subtotalPaise }),
+    ...(estimate.gstPaise === undefined ? {} : { gstPaise: estimate.gstPaise }),
+    ...(estimate.totalPaise === undefined ? {} : { totalPaise: estimate.totalPaise }),
+    ...(estimate.selectedMainBasketIds === undefined ? {} : { selectedMainBasketIds: [...estimate.selectedMainBasketIds] })
   };
+}
+
+function assertPublishableConfiguredLines(estimate: PublicationEstimate): void {
+  const configured = estimate.lineItems.filter((line) => line.source === "configuration" && line.included);
+  if (configured.length === 0) return;
+  if (configured.some((line) =>
+    !Number.isSafeInteger(line.ratePaise) ||
+    !Number.isSafeInteger(line.amountPaise) ||
+    Number(line.ratePaise) < 0 || Number(line.amountPaise) < 0 ||
+    !line.mainBasketId || !line.subBasketId || !line.mainLineId ||
+    !line.revisionId || !line.uomId || !line.roomId ||
+    !line.mainBasketName || !line.subBasketName || !line.mainLineName ||
+    !line.uomName || line.catalogueId !== line.mainLineId ||
+    line.specification !== null ||
+    line.rate !== Number(line.ratePaise) / 100 ||
+    line.amount !== Number(line.amountPaise) / 100
+  ) || ![estimate.subtotalPaise, estimate.gstPaise, estimate.totalPaise].every(Number.isSafeInteger) ||
+    estimate.subtotalPaise !== estimate.lineItems.reduce((sum, line) =>
+      sum + (line.included ? Number(line.amountPaise ?? Number(line.amount) * 100) : 0), 0) ||
+    estimate.subtotalPaise! + estimate.gstPaise! !== estimate.totalPaise ||
+    estimate.subtotal !== estimate.subtotalPaise! / 100 ||
+    estimate.gst !== estimate.gstPaise! / 100 ||
+    estimate.total !== estimate.totalPaise! / 100) {
+    throw new ApiError(409, "ESTIMATE_INCOMPLETE", "Complete every included configured line before sending the estimate.");
+  }
 }
 
 function mapPublishedEstimate(input: {

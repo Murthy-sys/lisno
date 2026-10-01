@@ -46,7 +46,9 @@ const projectWorkflowTaskSchema = new Schema(
      */
     dueAt: { type: Date, default: null },
     plannedEffort: { type: Number, default: null, min: 0 },
-    completedAt: { type: Date, default: null }
+    completedAt: { type: Date, default: null },
+    supersededAt: { type: Date, default: null },
+    supersededReason: { type: String, default: null, enum: [null, "vendor_client_cutover"] }
   },
   { timestamps: true, versionKey: false }
 );

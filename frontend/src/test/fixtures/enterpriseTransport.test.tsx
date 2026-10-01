@@ -38,7 +38,7 @@ const routes: [string, Role][] = [
   ["/head", "design_head"], ["/client", "client"], ["/client/projects/project-villa", "client"],
   ["/estimator-sales", "estimator_sales"], ["/estimator-sales/leads/lead-1", "estimator_sales"], ["/estimator-sales/leads/lead-1/estimate", "estimator_sales"],
   ["/finance", "finance_head"], ["/finance/projects/project-one", "finance_head"], ["/finance/projects/project%2Ftwo", "finance_head"],
-  ["/home", "procurement"], ["/procurement/projects/project-one", "procurement"], ["/home", "worker_electrician"], ["/home", "site_manager"],
+  ["/home", "procurement"], ["/procurement/projects/project-one", "procurement"], ["/vendor", "vendor"], ["/home", "worker_electrician"], ["/home", "site_manager"],
   ["/admin/configuration/estimation", "super_admin"], ["/admin/configuration/estimation/items/line-1", "super_admin"], ["/admin/configuration/estimation/reusable-values", "super_admin"]
 ];
 describe("synthetic enterprise route harness", () => {
@@ -46,7 +46,7 @@ describe("synthetic enterprise route harness", () => {
     const { client } = mount(route, role);
     await screen.findByRole("navigation", { name: "Primary navigation" });
     await waitFor(() => expect(client.isFetching()).toBe(0));
-    expect(transport?.requests.filter((r) => r.unexpected)).toEqual([]);
+    expect(transport?.requests.filter((r) => r.unexpected), JSON.stringify(transport?.requests.filter((r) => r.unexpected))).toEqual([]);
     expect(document.body.textContent).not.toMatch(/Unexpected Application Error|Synthetic QA render failed|Cannot read properties/);
     expect(document.querySelector("main")).toBeTruthy();
   });
@@ -123,7 +123,7 @@ describe("synthetic enterprise route harness", () => {
     await waitFor(() => expect(client.isFetching()).toBe(0));
     expect(transport?.requests.filter((r) => r.unexpected)).toEqual([]);
     expect(document.body.textContent).not.toMatch(/Unexpected Application Error|Cannot read properties/);
-    if (state === "denied") expect(transport?.requests.every((r) => r.path.startsWith("/auth/"))).toBe(true);
+    if (state === "denied") expect(transport?.requests.every((r) => ["/auth/me", "/auth/authorization", "/daily-critical-tasks", "/chat/availability"].includes(r.path)), JSON.stringify(transport?.requests)).toBe(true);
   });
   it("keeps stored session data untouched and rejects mutations locally", async () => {
     window.localStorage.setItem("lisno.auth.token", "existing-test-session");

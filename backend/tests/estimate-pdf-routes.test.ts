@@ -52,6 +52,24 @@ const lead = {
   location: "Bengaluru"
 };
 
+
+function publishedRow(status = "sent_to_client") {
+  return {
+    ...estimate, _id: "estimate-client-visible", status,
+    version: status === "sent_to_client" ? 2 : 3,
+    clientLead: lead,
+    publishedRounds: [{
+      _id: "round-current", estimateId: "estimate-client-visible", leadId: lead._id,
+      projectId: null, estimateVersion: 2, version: 4, sendGeneration: 2,
+      recipientEmailNormalized: "client@lisno.example",
+      createdAt: new Date("2026-08-24T10:00:00Z"),
+      status: status === "sent_to_client" ? "pending" : status === "client_approved" ? "approved" : "changes_requested",
+      decision: status === "sent_to_client" ? null : status === "client_approved" ? "approve" : "request_changes",
+      estimateSnapshot: { ...estimate, clientName: lead.clientName, projectName: lead.projectName, location: lead.location }
+    }]
+  };
+}
+
 function lean(value: unknown) {
   return { lean: vi.fn().mockResolvedValue(value) };
 }
@@ -94,33 +112,15 @@ afterEach(() => {
 });
 
 describe("estimate PDF download routes", () => {
-  it("allows Super Admin global owner and legacy client-visible PDF reads without project grants", async () => {
+  it("keeps Super Admin owner PDF access while missing published Client snapshots fail closed", async () => {
     const { app, generate, projectGrantSpies } = setup();
-    const readyEstimate = { ...estimate, status: "ready_for_client" };
-    const clientEstimate = { ...estimate, _id: "estimate-client-visible", status: "sent_to_client" };
-    const findEstimate = vi.spyOn(EstimateModel, "findOne")
-      .mockReturnValueOnce(lean(readyEstimate) as never)
-      .mockReturnValueOnce(lean(clientEstimate) as never);
+    vi.spyOn(EstimateModel, "findOne").mockReturnValue(lean(estimate) as never);
     vi.spyOn(LeadModel, "findById").mockReturnValue(lean(lead) as never);
-    const findClientLead = vi.spyOn(LeadModel, "findOne").mockReturnValue(lean(lead) as never);
-    vi.spyOn(EstimateModel, "aggregate").mockReturnValue(
-      aggregate([{ _id: "estimate-client-visible" }]) as never
-    );
-    vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockReturnValue(
-      aggregate([]) as never
-    );
+    vi.spyOn(EstimateModel, "aggregate").mockReturnValue(aggregate([{ ...publishedRow(), publishedRounds: [] }]) as never);
     const authorization = auth("user-super-admin", "super_admin");
-
     await request(app).get("/api/v1/estimates/estimate-draft/pdf").set("Authorization", authorization).expect(200);
-    await request(app).get("/api/v1/client/estimates/estimate-client-visible/pdf").set("Authorization", authorization).expect(200);
-
-    expect(findEstimate).toHaveBeenNthCalledWith(1, { _id: "estimate-draft" });
-    expect(findEstimate).toHaveBeenNthCalledWith(2, {
-      _id: "estimate-client-visible",
-      status: { $in: ["sent_to_client", "client_changes_requested", "client_approved"] }
-    });
-    expect(findClientLead).toHaveBeenCalledWith({ _id: "lead-aurora" });
-    expect(generate).toHaveBeenCalledTimes(2);
+    await request(app).get("/api/v1/client/estimates/estimate-client-visible/pdf?roundId=round-current").set("Authorization", authorization).expect(409);
+    expect(generate).toHaveBeenCalledOnce();
     for (const spy of projectGrantSpies) expect(spy).not.toHaveBeenCalled();
   });
 
@@ -203,71 +203,14 @@ describe("estimate PDF download routes", () => {
   });
 
   it.each(["sent_to_client", "client_changes_requested", "client_approved"])(
-    "row 83 exports a %s client-visible PDF exactly and without writes",
-    async (status) => {
-    const { app, generate } = setup();
-    vi.spyOn(EstimateModel, "aggregate").mockReturnValue(
-      aggregate([{ _id: "estimate-client-visible" }]) as never
-    );
-    vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockReturnValue(
-      aggregate([]) as never
-    );
-    const clientEstimate = {
-      ...estimate,
-      _id: "estimate-client-visible",
-      status
-    };
-    const findEstimate = vi
-      .spyOn(EstimateModel, "findOne")
-      .mockReturnValue(lean(clientEstimate) as never);
-    const findLead = vi
-      .spyOn(LeadModel, "findOne")
-      .mockReturnValue(lean(lead) as never);
-    const updateEstimate = vi.spyOn(EstimateModel, "updateOne");
-    const updateLead = vi.spyOn(LeadModel, "updateOne");
-
-    const response = await request(app)
-      .get("/api/v1/client/estimates/estimate-client-visible/pdf")
-      .set("Authorization", auth("user-client-aurora", "client"))
-      .expect(200);
-
-    expect(findEstimate).toHaveBeenCalledWith({
-      _id: "estimate-client-visible",
-      status: {
-        $in: ["sent_to_client", "client_changes_requested", "client_approved"]
-      }
-    });
-    expect(findLead).toHaveBeenCalledWith({
-      _id: "lead-aurora",
-      clientEmail: {
-        $regex: "^client@lisno\\.example$",
-        $options: "i"
-      }
-    });
-    expect(response.headers["content-type"]).toBe("application/pdf");
-    expect(response.headers["content-disposition"]).toBe(
-      'attachment; filename="lisno-aurora-villa-estimate-v1.pdf"'
-    );
-    expect(response.body.subarray(0, 5).toString()).toBe("%PDF-");
-    expect(generate).toHaveBeenCalledWith({
-      id: "estimate-client-visible",
-      status,
-      version: 2,
-      propertyType: "residential_apartment",
-      subtotal: 9_500,
-      gst: 1_710,
-      total: 11_210,
-      lineItems: estimate.lineItems,
-      lead: {
-        clientName: "Aurora Homes",
-        clientEmail: "client@lisno.example",
-        projectName: "Aurora Villa",
-        location: "Bengaluru"
-      }
-    });
-    expect(generate).toHaveBeenCalledOnce();
-    expect(updateEstimate).not.toHaveBeenCalled();
-    expect(updateLead).not.toHaveBeenCalled();
+    "requires the displayed round and rejects a different PDF for %s", async (status) => {
+      const { app, generate } = setup();
+      vi.spyOn(EstimateModel, "aggregate").mockReturnValue(aggregate([publishedRow(status)]) as never);
+      await request(app).get("/api/v1/client/estimates/estimate-client-visible/pdf")
+        .set("Authorization", auth("user-client-aurora", "client")).expect(400);
+      await request(app).get("/api/v1/client/estimates/estimate-client-visible/pdf?roundId=older-round")
+        .set("Authorization", auth("user-client-aurora", "client")).expect(409);
+      expect(generate).not.toHaveBeenCalled();
     }
   );
 
@@ -289,14 +232,9 @@ describe("estimate PDF download routes", () => {
     );
     vi.spyOn(LeadModel, "findOne").mockReturnValue(lean(lead) as never);
     vi.spyOn(EstimateModel, "aggregate").mockReturnValue(
-      aggregate([{ _id: "estimate-client-visible" }]) as never
+      aggregate([publishedRow()]) as never
     );
     vi.spyOn(EstimateClientReviewRoundModel, "aggregate")
-      .mockReturnValueOnce(aggregate([{
-        id: "round-current",
-        version: 4,
-        scopeMatches: true
-      }]) as never)
       .mockReturnValueOnce(aggregate([{
         storageReference: "estimate-client-pdfs/round-current.pdf",
         filename: "lisno-estimate-sent-v3.pdf",
@@ -304,7 +242,7 @@ describe("estimate PDF download routes", () => {
       }]) as never);
 
     const response = await request(app)
-      .get("/api/v1/client/estimates/estimate-client-visible/pdf")
+      .get("/api/v1/client/estimates/estimate-client-visible/pdf?roundId=round-current")
       .set("Authorization", auth("user-client-aurora", "client"))
       .expect(200);
 
@@ -335,19 +273,9 @@ describe("estimate PDF download routes", () => {
     );
     vi.spyOn(LeadModel, "findOne").mockReturnValue(lean(lead) as never);
     vi.spyOn(EstimateModel, "aggregate").mockReturnValue(
-      aggregate([{ _id: "estimate-client-visible" }]) as never
+      aggregate([publishedRow()]) as never
     );
     vi.spyOn(EstimateClientReviewRoundModel, "aggregate")
-      .mockReturnValueOnce(aggregate([{
-        id: "round-current",
-        sendGeneration: 2,
-        estimateVersion: 2,
-        version: 4,
-        deliveryStatus: "sent",
-        deliveryAttemptCount: 1,
-        deliveredAt: "2026-08-24T10:00:02.000Z",
-        status: "pending"
-      }]) as never)
       .mockReturnValueOnce(aggregate([{
         storageReference: "estimate-client-pdfs/round-current.pdf",
         filename: "lisno-estimate-sent-v2.pdf",
@@ -355,7 +283,7 @@ describe("estimate PDF download routes", () => {
       }]) as never);
 
     const response = await request(app)
-      .get("/api/v1/client/estimates/estimate-client-visible/pdf")
+      .get("/api/v1/client/estimates/estimate-client-visible/pdf?roundId=round-current")
       .set("Authorization", auth("user-super-admin", "super_admin"))
       .expect(200);
 
@@ -371,24 +299,18 @@ describe("estimate PDF download routes", () => {
 
   it("hides draft, foreign-email, and missing client exports behind the same not-found response", async () => {
     const { app, generate } = setup();
-    const findEstimate = vi.spyOn(EstimateModel, "findOne");
-    const findLead = vi.spyOn(LeadModel, "findOne");
-    findEstimate
-      .mockReturnValueOnce(lean(null) as never)
-      .mockReturnValueOnce(lean({ ...estimate, _id: "foreign-email", status: "sent_to_client" }) as never)
-      .mockReturnValueOnce(lean(null) as never);
-    findLead.mockReturnValueOnce(lean(null) as never);
+    vi.spyOn(EstimateModel, "aggregate").mockReturnValue(aggregate([]) as never);
 
     const draft = await request(app)
-      .get("/api/v1/client/estimates/draft/pdf")
+      .get("/api/v1/client/estimates/draft/pdf?roundId=round-current")
       .set("Authorization", auth("user-client-aurora", "client"))
       .expect(404);
     const foreign = await request(app)
-      .get("/api/v1/client/estimates/foreign-email/pdf")
+      .get("/api/v1/client/estimates/foreign-email/pdf?roundId=round-current")
       .set("Authorization", auth("user-client-aurora", "client"))
       .expect(404);
     const missing = await request(app)
-      .get("/api/v1/client/estimates/missing/pdf")
+      .get("/api/v1/client/estimates/missing/pdf?roundId=round-current")
       .set("Authorization", auth("user-client-aurora", "client"))
       .expect(404);
 
@@ -410,7 +332,7 @@ describe("estimate PDF download routes", () => {
       .set("Authorization", auth("user-client-aurora", "client"))
       .expect(403);
     await request(app)
-      .get("/api/v1/client/estimates/estimate-client-visible/pdf")
+      .get("/api/v1/client/estimates/estimate-client-visible/pdf?roundId=round-current")
       .set("Authorization", auth("user-estimator-sales", "estimator_sales"))
       .expect(403);
 

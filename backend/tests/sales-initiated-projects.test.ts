@@ -26,7 +26,8 @@ function setup() {
   const manager = seed.users.find(({ id }) => id === "user-admin")!;
   seed.users.push(
     { ...manager, id: "selected-manager", name: "A Selected Manager", email: "selected@example.com", emailNormalized: "selected@example.com", title: "Sales Manager" },
-    { ...manager, id: "inactive-manager", name: "Inactive Manager", email: "inactive@example.com", emailNormalized: "inactive@example.com", active: false }
+    { ...manager, id: "inactive-manager", name: "Inactive Manager", email: "inactive@example.com", emailNormalized: "inactive@example.com", active: false },
+    { ...manager, id: "vendor-sales-access-fixture", name: "Vendor access fixture", email: "vendor-sales-access@example.com", emailNormalized: "vendor-sales-access@example.com", role: "vendor", vendorId: "vendor-sales-access-fixture", accountKind: "standard" }
   );
   seed.projects = [];
   seed.leads = [];

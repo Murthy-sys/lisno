@@ -1,47 +1,93 @@
 /* Projects collection. All treatments are scoped to this page. */
 .admin-projects.access-administration {
-  --admin-projects-ink: #252d20;
-  --admin-projects-olive: #3d4a32;
-  --admin-projects-muted: #62685b;
-  --admin-projects-hairline: #dcded3;
-  --admin-projects-bone: #e5e6dd;
-  --admin-projects-card: #fcfbf8;
+  --admin-projects-ink: #233027;
+  --admin-projects-olive: #294d32;
+  --admin-projects-muted: #5d6a60;
+  --admin-projects-hairline: #d9dfd4;
+  --admin-projects-bone: #e5e8de;
+  --admin-projects-card: #fcfcf8;
+  --admin-projects-canvas: #f6f6f0;
   inline-size: 100%;
-  gap: 14px;
+  gap: 12px;
+  color: var(--admin-projects-ink);
+}
+
+.ui-app-shell[data-role] .ui-workspace:has(.admin-projects) {
+  background: var(--admin-projects-canvas, #f6f6f0);
 }
 
 .admin-projects__hero {
-  display: grid;
-  gap: 26px;
+  position: relative;
+  isolation: isolate;
   min-inline-size: 0;
-  padding: 20px 0 12px;
-  background-color: #f5f4ee;
-  background-image:
-    linear-gradient(180deg, transparent 45%, rgb(245 244 238 / 12%) 70%, rgb(245 244 238 / 72%) 100%),
-    linear-gradient(90deg, #f5f4ee 0%, rgb(245 244 238 / 98%) 25%, rgb(245 244 238 / 82%) 43%, rgb(245 244 238 / 20%) 68%, rgb(245 244 238 / 6%) 100%),
-    url("../../assets/projects-living-room.webp");
-  background-repeat: no-repeat;
-  background-position: center, center, right bottom;
-  background-size: cover, cover, 75% auto;
+  min-block-size: 8.25rem;
+  overflow: hidden;
+  border-radius: 0.5rem;
+  background: #eee9df;
+}
+
+.admin-projects__hero-image {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  inline-size: 60%;
+  block-size: 100%;
+  object-fit: cover;
+  object-position: 52% center;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgb(0 0 0 / 28%) 18%, #000 48%);
+  mask-image: linear-gradient(90deg, transparent 0%, rgb(0 0 0 / 28%) 18%, #000 48%);
+  pointer-events: none;
 }
 
 .admin-projects .admin-projects__hero .ui-page-header {
+  position: relative;
+  z-index: 1;
   margin: 0;
-  min-block-size: 116px;
+  min-block-size: 8.25rem;
   align-items: center;
+  padding: 0.9rem clamp(1rem, 1.7vw, 1.5rem);
+  gap: 1rem;
+}
+
+.admin-projects__hero .ui-page-header__content {
+  max-inline-size: 41rem;
+  gap: 0.2rem;
+}
+
+.ui-app-shell .admin-projects .admin-projects__hero .ui-page-header__eyebrow {
+  color: var(--admin-projects-olive);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.13em;
 }
 
 .ui-app-shell .admin-projects .admin-projects__hero .ui-page-header__title {
   font-family: var(--font-interface, "Poppins", sans-serif);
-  font-size: 2rem;
-  font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: -0.025em;
+  font-size: clamp(1.65rem, 2vw, 1.9rem);
+  font-weight: 650;
+  line-height: 1.12;
+  letter-spacing: -0.045em;
   color: var(--admin-projects-ink);
 }
 
-.admin-projects__hero .ui-page-header__description { color: #535b4d; }
-.ui-app-shell .admin-projects .admin-projects__hero .ui-page-header__actions .ui-button { border-radius: 3px; box-shadow: none !important; transform: none; transition: none; }
+.ui-app-shell .admin-projects .admin-projects__hero .ui-page-header__description {
+  color: #526356;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+.ui-app-shell .admin-projects .admin-projects__hero .ui-page-header__actions .ui-button {
+  min-block-size: 2.6rem;
+  padding-inline: 0.9rem;
+  border-radius: 0.4rem;
+  box-shadow: none !important;
+  font-size: 0.77rem;
+  transform: none;
+  transition: none;
+}
+.ui-app-shell .admin-projects .admin-projects__hero .ui-page-header__actions .ui-button:is(:hover, :focus-visible) {
+  box-shadow: none !important;
+  transform: none;
+}
 .admin-projects__hero .ui-button:focus-visible { outline: 2px solid var(--admin-projects-olive); outline-offset: 3px; }
 .admin-projects__toolbar,
 .admin-projects__tools,
@@ -53,8 +99,8 @@
 }
 .admin-projects__toolbar {
   justify-content: space-between;
-  gap: 10px 16px;
-  padding-block: 4px;
+  gap: 6px 12px;
+  padding-block: 2px;
 }
 .admin-projects__statuses { gap: 2px; }
 .admin-projects__tools { gap: 8px; margin-inline-start: auto; }
@@ -131,9 +177,9 @@
 .admin-projects__filters {
   display: grid;
   gap: 6px;
-  padding: 12px;
+  padding: 10px 12px;
   border: 1px solid var(--admin-projects-hairline);
-  background: #f5f4ee;
+  background: #f0f2e9;
 }
 .admin-projects__filters > label { font-size: 0.8125rem; font-weight: 600; }
 .admin-projects__search-row { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -156,7 +202,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: start;
-  gap: 12px;
+  gap: 10px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -178,7 +224,7 @@
 .admin-project-tile__image { position: relative; }
 .admin-project-tile__media {
   display: block;
-  aspect-ratio: 2 / 1;
+  aspect-ratio: 2.4 / 1;
   inline-size: 100%;
   block-size: auto;
   object-fit: cover;
@@ -204,17 +250,19 @@
 .admin-project-tile__status[data-tone="success"],
 .admin-project-tile__status[data-tone="complete"] { background: #e9eedf; color: #374823; }
 .admin-project-tile__status[data-tone="danger"] { background: #f2e9e1; color: #754326; }
-.admin-project-tile__body { display: grid; gap: 10px; padding: 12px; min-inline-size: 0; }
-.admin-project-tile__link { display: grid; gap: 9px; min-inline-size: 0; color: inherit; text-decoration: none; }
+.admin-project-tile__body { display: grid; gap: 7px; padding: 10px; min-inline-size: 0; }
+.admin-project-tile__link { display: grid; gap: 7px; min-inline-size: 0; color: inherit; text-decoration: none; }
 .admin-project-tile__title {
   margin: 0;
   min-inline-size: 0;
   overflow: hidden;
-  font-size: 1rem;
-  font-weight: 700;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 0.9rem;
+  font-weight: 650;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 .admin-project-tile__meta,
 .admin-project-tile__details { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin: 0; }
@@ -222,16 +270,26 @@
 .admin-project-tile__meta > div,
 .admin-project-tile__details > div { min-inline-size: 0; }
 .admin-project-tile__meta dd,
-.admin-project-tile__details dd { display: flex; align-items: center; gap: 5px; margin: 0; min-inline-size: 0; color: var(--admin-projects-muted); font-size: 0.75rem; line-height: 1.45; }
+.admin-project-tile__details dd { display: flex; align-items: center; gap: 5px; margin: 0; min-inline-size: 0; color: var(--admin-projects-muted); font-size: 0.71rem; line-height: 1.4; }
 .admin-project-tile__meta dd span,
 .admin-project-tile__details dd span { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .admin-project-tile__meta > div:last-child dd { justify-content: flex-end; }
 .admin-project-tile__meta svg,
 .admin-project-tile__details svg { flex: none; inline-size: 13px; block-size: 13px; }
+.admin-project-tile__amount-label {
+  display: block;
+  margin-block-end: 0.15rem;
+  color: var(--admin-projects-muted);
+  font-size: 0.7rem;
+  font-weight: 650;
+  line-height: 1.25;
+  text-align: end;
+  overflow-wrap: anywhere;
+}
 .admin-project-tile__details .admin-project-tile__amount dd {
   display: block;
   text-align: end;
-  font-size: 0.8125rem;
+  font-size: 0.78rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--admin-projects-ink);
@@ -239,31 +297,268 @@
 }
 .admin-project-tile__actions { display: flex; }
 .admin-project-tile__actions .button { min-block-size: 44px; inline-size: 100%; justify-content: center; border-radius: 3px; font-size: 0.8125rem; box-shadow: none; transform: none; }
-.admin-projects .ui-page-state--loading:has(.admin-project-grid--skeleton) { display: block; }
-.admin-projects .ui-page-state--loading .ui-state__skeleton:has(.admin-project-grid--skeleton) { inline-size: 100%; }
-.admin-project-tile__bone { display: block; min-block-size: 12px; inline-size: 75%; background: var(--admin-projects-bone); }
-.admin-project-tile__bone--chip { inline-size: 64px; }
-.admin-project-tile__bone--title { min-block-size: 18px; inline-size: 85%; }
-.admin-project-tile__bone--amount { inline-size: 50%; margin-inline-start: auto; }
+.admin-projects .ui-page-state {
+  min-block-size: 8rem;
+  border: 1px solid var(--admin-projects-hairline);
+  background: var(--admin-projects-card);
+}
+.admin-projects .ui-page-state--loading .lisno-loading-message {
+  color: var(--admin-projects-muted);
+  font-size: 0.8rem;
+}
+
+/* The same nested tracks are used by the header and each project row. */
+:is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-projects__workspace {
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--admin-projects-hairline);
+  border-radius: 0.45rem;
+  background: var(--admin-projects-card);
+  box-shadow: none;
+}
+
+:is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-projects__list {
+  padding: 0;
+}
+
+:is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-projects__header-row {
+  position: static;
+  margin: 0;
+  padding: 0.65rem 0.8rem;
+  border-block-end: 1px solid var(--admin-projects-hairline);
+  border-radius: 0;
+  background: #e8efe5;
+}
+
+:is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-projects__header-row .admin-project-card__meta > div,
+:is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-projects__header-cell {
+  color: #425648;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: normal;
+}
+
+:is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card {
+  padding: 0.75rem 0.8rem;
+  background: transparent;
+  transition: none;
+}
+
+.admin-projects .admin-project-card__identity { gap: 0.15rem; }
+.admin-projects .admin-project-card__identity h2 {
+  color: var(--admin-projects-ink);
+  font-size: 0.82rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+.admin-projects .admin-project-card__identity p {
+  color: var(--admin-projects-muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.admin-projects .admin-project-card__identity .ui-status {
+  margin-block-start: 0.15rem;
+  font-size: 0.66rem;
+}
+.admin-projects .admin-project-card__meta { gap: 0.6rem; }
+.admin-projects .admin-project-card__meta > div { gap: 0.15rem; }
+.admin-projects .admin-project-card__estimate-label {
+  display: block;
+  color: var(--admin-projects-muted);
+  font-size: 0.7rem;
+  font-weight: 650;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.admin-projects .admin-project-card__meta dd {
+  color: var(--admin-projects-ink);
+  font-size: 0.73rem;
+  line-height: 1.4;
+}
+.admin-projects .admin-project-card__meta > div:nth-child(5) dd {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+:is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card__view {
+  min-block-size: 2.4rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #bacbbb;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--admin-projects-olive);
+  font-size: 0.71rem;
+  font-weight: 650;
+}
+.admin-projects .admin-project-card__actions { gap: 0.3rem; }
+.admin-projects .admin-project-card__actions .ui-button,
+.admin-projects .admin-project-card__actions .button {
+  padding-inline: 0.45rem;
+  font-size: 0.71rem;
+  box-shadow: none !important;
+  transform: none;
+  transition: none;
+}
+.admin-projects .admin-project-card__actions :is(.ui-button, .button):hover {
+  box-shadow: none !important;
+  transform: none;
+}
+
+@media (min-width: 1181px) {
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card {
+    grid-template-columns: minmax(0, 1fr) 10rem;
+    --admin-project-action-space: calc(2.4rem + 0.3rem);
+  }
+
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card:has(.admin-project-card__actions a) {
+    --admin-project-action-space: calc(2.4rem + 44px + 0.6rem);
+  }
+
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects :is(.admin-project-card__link, .admin-projects__header-row) {
+    grid-template-columns: 12.5rem minmax(0, 1fr) 10rem;
+    gap: 0.7rem;
+  }
+
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects :is(.admin-project-card__meta, .admin-projects__header-row .admin-project-card__meta) {
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.82fr) minmax(0, 0.9fr) minmax(0, 1.4fr) minmax(0, 1.25fr);
+    gap: 0.6rem;
+  }
+
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card__meta > div {
+    padding-inline-start: 0.45rem;
+  }
+}
+
+/* Inside the sidebar, seven desktop columns need a real content threshold. */
+@container (max-width: 1030px) {
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-projects__header-row {
+    display: none;
+  }
+
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 9rem;
+    gap: 0;
+    --admin-project-action-space: calc(44px + 0.35rem);
+  }
+
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card:has(.admin-project-card__actions a) {
+    --admin-project-action-space: calc(2 * 44px + 0.6rem);
+  }
+
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card > .admin-project-card__link {
+    grid-column: 1 / -1;
+    grid-row: 1 / 3;
+    grid-template-columns: minmax(10rem, 0.65fr) minmax(0, 1.65fr) 9rem;
+    gap: 0.7rem;
+  }
+
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card__meta {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card__meta dt {
+    position: static;
+    inline-size: auto;
+    block-size: auto;
+    overflow: visible;
+    clip: auto;
+    clip-path: none;
+    white-space: normal;
+    display: block;
+    margin: 0;
+    color: var(--admin-projects-muted);
+    font-size: 0.63rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card__view {
+    grid-column: 3;
+    justify-self: stretch;
+    align-self: start;
+    margin-block-end: var(--admin-project-action-space);
+  }
+
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card__actions {
+    grid-column: 2;
+    grid-row: 2;
+    z-index: 1;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: stretch;
+    margin: 0;
+  }
+}
+
+@container (max-width: 690px) {
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card > .admin-project-card__link {
+    grid-column: 1;
+    grid-row: auto;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card__meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card__view {
+    grid-column: 1;
+    justify-self: stretch;
+    margin: 0;
+  }
+
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card__actions {
+    grid-column: 1;
+    grid-row: auto;
+    z-index: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: stretch;
+  }
+
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card__actions :is(.ui-button, .button) {
+    flex: 1 1 8rem;
+    inline-size: auto;
+    text-align: center;
+  }
+}
+
+@container (max-width: 320px) {
+  :is(.ui-app-shell[data-role="admin"], .ui-app-shell[data-role="super_admin"]) .admin-projects .admin-project-card__meta {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .admin-projects :is(.admin-projects__status-button, .admin-projects__view-button, .admin-projects__filter-button, .admin-projects__sort select, .admin-projects__search-row input, .admin-project-tile__link):focus-visible {
   outline: 2px solid var(--admin-projects-olive);
   outline-offset: 2px;
 }
 /* Keep the existing shared list, but make every page control touch-sized. */
 .ui-app-shell .admin-projects :is(.ui-button, .button) { min-block-size: 44px !important; }
-@media (max-width: 900px) {
-  .admin-projects__hero { background-size: cover, cover, auto 100%; }
-}
 @media (max-width: 540px) {
   .admin-projects__hero {
-    padding-block: 16px 8px;
-    gap: 18px;
-    background-image:
-      linear-gradient(180deg, rgb(245 244 238 / 76%) 0%, rgb(245 244 238 / 90%) 62%, #f5f4ee 100%),
-      url("../../assets/projects-living-room.webp");
-    background-position: center, 65% center;
+    min-block-size: 0;
   }
-  .ui-app-shell .admin-projects .admin-projects__hero .ui-page-header__title { font-size: 1.75rem; }
+  .admin-projects__hero-image {
+    inline-size: 100%;
+    opacity: 0.36;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 75%);
+    mask-image: linear-gradient(90deg, transparent 0%, #000 75%);
+  }
+  .admin-projects .admin-projects__hero .ui-page-header {
+    min-block-size: 0;
+    padding-block: 0.85rem;
+  }
+  .ui-app-shell .admin-projects .admin-projects__hero .ui-page-header__title { font-size: 1.55rem; }
   .admin-projects__tools { margin-inline-start: 0; inline-size: 100%; gap: 6px; }
   .admin-projects__sort { flex: 1 1 auto; }
   .admin-projects__status-button { padding-inline: 8px; }

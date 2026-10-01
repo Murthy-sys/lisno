@@ -58,6 +58,23 @@ describe("project workflow state catalogues", () => {
 });
 
 describe("project workflow trade-role mapping", () => {
+  it("routes configured lines to generic workers with exact basket identity and snapshot labels", () => {
+    const lines: EstimateWorkflowLine[] = [
+      { ...line("main-line-a", "Living Room"), source: "configuration", specification: null,
+        mainBasketId: "basket-a", mainBasketName: "Joinery at approval",
+        subBasketName: "Custom units", mainLineName: "Console at approval" },
+      { ...line("main-line-b", "Bedroom"), source: "configuration", specification: null,
+        mainBasketId: "basket-b", mainBasketName: "Electrical at approval",
+        subBasketName: "Devices", mainLineName: "Outlet at approval" }
+    ];
+    const blueprints = projectWorkflowBlueprints({ estimateId: "configured", estimateVersion: 2, lineItems: lines });
+    expect(blueprints.filter(({ kind }) => kind === "trade_execution")).toMatchObject([
+      { sourceSectionId: "basket-a", assigneeRole: "worker_other", title: "Joinery at approval · Living Room", description: "Custom units · Console at approval · 2 nos" },
+      { sourceSectionId: "basket-b", assigneeRole: "worker_other", title: "Electrical at approval · Bedroom", description: "Devices · Outlet at approval · 2 nos" }
+    ]);
+    expect(blueprints[0]?.description).toContain("Joinery at approval");
+    expect(blueprints[0]?.description).toContain("Electrical at approval");
+  });
   it.each([
     ["FC01", "worker_civil"],
     ["FC02", "worker_civil"],
@@ -276,6 +293,19 @@ describe("project workflow task blueprints", () => {
 });
 
 describe("project workflow section assignment aggregation", () => {
+  it("keeps two configured basket IDs separate and reads their frozen approval labels", () => {
+    const labels = new Map([
+      ["basket-a", "Joinery at approval"], ["basket-b", "Electrical at approval"]
+    ]);
+    const groups = projectWorkflowSectionAssignments([
+      sectionTask({ id: "task-a", sourceSectionId: "basket-a", sourceLineItemKey: "line-a", assigneeRole: "worker_other" }),
+      sectionTask({ id: "task-b", sourceSectionId: "basket-b", sourceLineItemKey: "line-b", assigneeRole: "worker_other" })
+    ], labels);
+    expect(groups.map(({ sourceSectionId, sectionLabel }) => ({ sourceSectionId, sectionLabel }))).toEqual([
+      { sourceSectionId: "basket-b", sectionLabel: "Electrical at approval" },
+      { sourceSectionId: "basket-a", sectionLabel: "Joinery at approval" }
+    ]);
+  });
   it("uses unfinished assignment state and weighted progress while preserving completed history", () => {
     const assignments = projectWorkflowSectionAssignments([
       sectionTask({

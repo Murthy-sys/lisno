@@ -9,6 +9,7 @@ import type {
   EstimateClientResponseTaskDetail
 } from "../../api/types";
 import { renderWithQuery } from "../../test/render";
+import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import { ClientResponseDecisionDialog } from "./ClientResponseDecisionDialog";
 
 class FakeXMLHttpRequest {
@@ -290,11 +291,32 @@ describe("ClientResponseDecisionDialog", () => {
       expect(invalidate).toHaveBeenCalledWith({
         queryKey: ["project-finance", "bucket", "project-1"]
       });
+      expect(invalidate).not.toHaveBeenCalledWith({ queryKey: projectWorkflowKeys.all });
       expect(onSaved).toHaveBeenCalledOnce();
       expect(onClose).toHaveBeenCalledOnce();
       expect(returnFocusRef.current).toHaveFocus();
     });
     expect(FakeXMLHttpRequest.instances).toHaveLength(1);
+  });
+
+  it("refreshes project workflows only after a successful proof-backed approval", async () => {
+    vi.stubGlobal("XMLHttpRequest", FakeXMLHttpRequest);
+    const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+    const user = userEvent.setup();
+    const { onSaved } = renderDialog("approve");
+    const dialog = screen.getByRole("dialog", { name: "Approve Client response" });
+    await user.upload(
+      within(dialog).getByLabelText("Decision proof"),
+      new File(["proof"], "proof.webp", { type: "image/webp" })
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Approve" }));
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: projectWorkflowKeys.all });
+
+    FakeXMLHttpRequest.instances[0]!.respond(200, { data: approvedResult });
+    await waitFor(() => {
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: projectWorkflowKeys.all });
+      expect(onSaved).toHaveBeenCalledOnce();
+    });
   });
 
   it("keeps a 409 open, invalidates and refetches without replay", async () => {

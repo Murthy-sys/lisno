@@ -22,6 +22,7 @@ import type { EstimateClientReviewService } from "./estimate-client-review.servi
 import type { EstimateDesignService } from "./estimate-design.service.js";
 import type { EnsurePendingFinanceBucketInput } from "./project-finance.service.js";
 import { resolveApprovalProject } from "./estimate-project-handoff.js";
+import { presentClientEstimate } from "./estimate-client-presentation.js";
 
 export type EstimateDecisionRoundTarget =
   | { id: string; expectedVersion: number }
@@ -138,6 +139,14 @@ export function createEstimateDecisionService(input: {
             }).session(session).lean())
           : null;
         if (round && !reviewRound) estimateNotReviewable();
+        if (context.source === "client_portal") {
+          const latestRound = asRecord(await EstimateClientReviewRoundModel.findOne({ estimateId })
+            .sort({ sendGeneration: -1, _id: 1 }).session(session).lean());
+          if (!latestRound || String(latestRound._id) !== round?.id ||
+            !presentClientEstimate(context.actor, estimate, lead, reviewRound)?.publishedReview?.canDecide) {
+            estimateNotReviewable();
+          }
+        }
         if (!round) {
           const existingRound = await EstimateClientReviewRoundModel.findOne({ estimateId })
             .sort({ sendGeneration: -1, _id: 1 })
@@ -345,17 +354,11 @@ function validateDecisionInput(
     if (!(["admin", "super_admin"] as string[]).includes(input.context.actor.role)) {
       estimateNotReviewable();
     }
-    if (
-      input.decision === "request_changes" &&
-      input.note.trim().length === 0
-    ) {
-      throw new ApiError(
-        400,
-        "ESTIMATE_CLIENT_NOTE_REQUIRED",
-        "Explain the Client's requested changes."
-      );
-    }
   }
+  if (input.decision === "request_changes" && input.note.trim().length === 0) {
+    throw new ApiError(400, "ESTIMATE_CLIENT_NOTE_REQUIRED", "Explain the Client's requested changes.");
+  }
+  if (input.context.source === "client_portal" && !input.round) estimateNotReviewable();
   if (input.note.trim().length > ESTIMATE_CLIENT_DECISION_NOTE_MAX) {
     throw new ApiError(
       400,
@@ -547,6 +550,9 @@ async function approve(input: {
       approvedSubtotalRupees: Number(snapshot.subtotal),
       approvedGstRupees: Number(snapshot.gst),
       approvedContractTotalRupees: Number(snapshot.total),
+      approvedSubtotalPaise: snapshot.subtotalPaise === undefined ? undefined : Number(snapshot.subtotalPaise),
+      approvedGstPaise: snapshot.gstPaise === undefined ? undefined : Number(snapshot.gstPaise),
+      approvedContractTotalPaise: snapshot.totalPaise === undefined ? undefined : Number(snapshot.totalPaise),
       createdById: context.actor.id,
       occurredAt
     }, session);

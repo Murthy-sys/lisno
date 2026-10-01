@@ -1,4 +1,5 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,7 +9,10 @@ import { tokenStorage } from "../../api/client";
 import { authorizationFor } from "../../test/authFixtures";
 import { EstimateDesignUploads } from "../leads/EstimateDesignUploads";
 import { renderApp, renderWithQuery } from "../../test/render";
+import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 
+
+import { withPublishedReview } from "./clientEstimateReviewTestUtils";
 
 const stylesheet = readFileSync("src/styles/index.css", "utf8");
 const rooms = [
@@ -252,7 +256,7 @@ function upload(extractionStatus: string) {
 }
 
 function estimate(status: "sent_to_client" | "client_approved") {
-  return {
+  return withPublishedReview({
     id: "estimate-journey",
     leadId: "lead-journey",
     propertyType: "Apartment",
@@ -291,7 +295,7 @@ function estimate(status: "sent_to_client" | "client_approved") {
       projectName: "Estimate Drawing Journey",
       location: "Bengaluru",
     },
-  };
+  });
 }
 
 function json(data: unknown, status = 200) {
@@ -843,6 +847,8 @@ describe("estimate drawing review journey", () => {
         expect(JSON.parse(String(init.body))).toEqual({
           decision: "approve",
           note: "",
+          reviewRoundId: "round-estimate-journey",
+          reviewRoundVersion: 1,
         });
         clientPhase = "estimate_approved";
         return json(estimate("client_approved"));
@@ -855,6 +861,7 @@ describe("estimate drawing review journey", () => {
       }
       throw new Error(`Unhandled approved request: ${url}`);
     });
+    const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
     renderApp(["/client"]);
     const approvedCard = (await screen.findByRole("heading", {
       name: "Estimate Drawing Journey",
@@ -892,7 +899,9 @@ describe("estimate drawing review journey", () => {
     expect(within(approvedCard).getByText(
       "3 of 3 drawings approved.",
     )).toBeVisible();
+    invalidate.mockClear();
     await user.click(estimateApproval);
+    await user.click(screen.getByRole("button", { name: "Confirm approval" }));
     expect(await within(approvedCard).findByText(
       "Estimate approved",
     )).toBeVisible();
@@ -914,6 +923,7 @@ describe("estimate drawing review journey", () => {
       url.endsWith("/api/v1/client/estimates/estimate-journey/decision") &&
       init?.method === "POST"
     )).toBe(true);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: projectWorkflowKeys.all });
     await user.click(within(approvedBedroom).getByRole("button", {
       name: "Preview Bedroom Flooring",
     }));

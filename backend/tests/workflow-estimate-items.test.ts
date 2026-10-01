@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { workflowApprovedLines, workflowEstimateRooms, WorkflowEstimateSourceError, type WorkflowEstimateApproval, type WorkflowEstimateLine } from "../src/domain/workflow-estimate-items.js";
+import { approvedEstimateAmountPaiseIsActionable, approvedEstimateLineIsActionable, workflowApprovedLines, workflowEstimateRooms, WorkflowEstimateSourceError, type WorkflowEstimateApproval, type WorkflowEstimateLine } from "../src/domain/workflow-estimate-items.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
 
@@ -9,6 +9,61 @@ const round: WorkflowEstimateApproval = { id: "round-a", estimateId: "estimate-a
 const source = { projectId: "project-a", estimateId: "estimate-a", estimateVersion: 3, rounds: [round], legacyLines: [{ ...line, id: "unapproved-live-item" }] };
 
 describe("selected approved estimate furniture items", () => {
+  it("uses configured line snapshots and exact paise with room IDs, including duplicate room labels", () => {
+    const configured: WorkflowEstimateLine = {
+      id: "configured-a", source: "configuration", catalogueId: "main-line-lower",
+      roomId: "room-b", roomName: "Shared room", specification: null, unit: "sqft",
+      quantity: 2, included: true, amount: 12.35, amountPaise: 1_235,
+      mainBasketId: "basket-a", subBasketId: "sub-a", mainLineId: "main-line-lower",
+      mainBasketName: "Storage", subBasketName: "Wardrobes", mainLineName: "Sliding wardrobe"
+    };
+    const selected = workflowEstimateRooms("estimate-a", 3, [
+      { id: "room-a", label: "Shared room" }, { id: "room-b", label: "Shared room" }
+    ], [configured]);
+    expect(selected[0]?.estimateItems).toEqual([]);
+    expect(selected[1]?.estimateItems[0]).toMatchObject({
+      id: "configured-a", catalogueId: "main-line-lower",
+      name: "Wardrobes · Sliding wardrobe", specification: ""
+    });
+    expect(() => workflowEstimateRooms("estimate-a", 3, [{ id: "room-b", label: "Shared room" }],
+      [{ ...configured, amountPaise: null }])).toThrow(WorkflowEstimateSourceError);
+  });
+  it("excludes exact zero-value lines, retains positive-value zero-quantity lines and stable original indexes", () => {
+    const approved = [
+      { ...line, id: null, amount: 0, quantity: 400 },
+      { ...line, id: null, roomName: "Bedroom", amount: 0, quantity: 1 },
+      { ...line, id: null, amount: 12, quantity: 0 },
+      { ...line, id: "legacy-missing-amount" }
+    ];
+    const actionable = workflowEstimateRooms("estimate-a", 3, rooms, approved);
+    expect(actionable.map(room => room.estimateItems.map(item => item.id))).toEqual([
+      ["legacy-estimate-line:estimate-a:3:2", "legacy-missing-amount"], []
+    ]);
+    expect(workflowEstimateRooms("estimate-a", 3, rooms, approved, { includeZeroValueItems: true })[1]!.estimateItems).toMatchObject([{ id: "legacy-estimate-line:estimate-a:3:1" }]);
+    expect(approvedEstimateLineIsActionable({ amount: undefined })).toBe(true);
+    expect(approvedEstimateAmountPaiseIsActionable(0)).toBe(false);
+    expect(approvedEstimateAmountPaiseIsActionable(1200)).toBe(true);
+  });
+  it.each([null, -1, 1.2, Number.NaN, Number.POSITIVE_INFINITY, "0"])("rejects a present invalid approved amount %j", amount => {
+    expect(() => workflowEstimateRooms("estimate-a", 3, rooms, [{ ...line, amount }])).toThrow(WorkflowEstimateSourceError);
+  });
+  it("projects positive finite approved room dimensions in feet once per room, including rooms without selected items", () => {
+    const estimateRooms = [{ id: "room-a", label: "Living room", length: 10.5, width: 12 }, { id: "room-b", label: "Bedroom", length: 8, width: 9.25 }];
+    expect(workflowEstimateRooms("estimate-a", 3, estimateRooms, [line])).toEqual([
+      { id: "room-a", name: "Living room", estimateDimensions: { lengthFt: 10.5, widthFt: 12 }, estimateItems: [{ id: "item-a", name: "CUSTOM — Existing sofa", catalogueId: "CUSTOM", specification: "Existing sofa", quantity: 2, uom: "nos", measurementType: "dimensions" }] },
+      { id: "room-b", name: "Bedroom", estimateDimensions: { lengthFt: 8, widthFt: 9.25 }, estimateItems: [] }
+    ]);
+    expect(workflowEstimateRooms("estimate-a", 3, estimateRooms, []).map(room => room.estimateDimensions)).toEqual([{ lengthFt: 10.5, widthFt: 12 }, { lengthFt: 8, widthFt: 9.25 }]);
+  });
+  it.each([
+    { length: null, width: 12 }, { length: 10, width: undefined }, { length: 0, width: 12 },
+    { length: -1, width: 12 }, { length: 10, width: -2 }, { length: "10", width: 12 },
+    { length: 10, width: "12" }, { length: NaN, width: 12 }, { length: 10, width: Infinity }
+  ])("omits the room reference without losing selected items when its size is invalid: %j", (size) => {
+    const result = workflowEstimateRooms("estimate-a", 3, [{ ...rooms[0]!, ...size }], [line]);
+    expect(result[0]).not.toHaveProperty("estimateDimensions");
+    expect(result[0]!.estimateItems).toHaveLength(1);
+  });
   it("maps every included line, including zero quantities, to exact room IDs without prices or catalogue filtering", () => {
     const result = workflowEstimateRooms("estimate-a", 3, rooms, [
       { ...line, rate: 99, amount: 198 } as WorkflowEstimateLine,
@@ -72,6 +127,29 @@ describe("selected approved estimate furniture items", () => {
     expect(await repository.runInTransaction((tx) => tx.findDesignWorkflowRoomContext("project-a", true))).toEqual(expected);
     expect(await repository.findDesignWorkflowRoomOptions("project-a")).toEqual(expected.rooms);
     expect(await repository.findDesignWorkflowRoomContext("project-b")).toBeNull();
+  });
+  it("keeps equal room IDs scoped to each project's own approved estimate and selected lines", async () => {
+    const seed = structuredClone(demoSeedData);
+    const base = seed.estimateSummaries![0]!;
+    const roomA = { id: "shared-room", label: "Living room A", length: 10, width: 12 };
+    const roomB = { id: "shared-room", label: "Living room B", length: 7, width: 8 };
+    const lineA = { ...line, roomName: roomA.label };
+    const lineB = { ...line, id: "item-b", roomName: roomB.label, quantity: 5 };
+    seed.estimateSummaries = [
+      { ...base, id: "estimate-a", projectId: "project-a", version: 4, status: "client_approved", approvedBaseline: null, rooms: [roomA], lineItems: [{ ...lineA, id: "live-a" }] },
+      { ...base, id: "estimate-b", projectId: "project-b", version: 4, status: "client_approved", approvedBaseline: null, rooms: [roomB], lineItems: [{ ...lineB, id: "live-b" }] }
+    ];
+    seed.estimateReviewRounds = [
+      { ...round, lineItems: [lineA, { ...lineA, id: "excluded-a", included: false }] },
+      { ...round, id: "round-b", estimateId: "estimate-b", projectId: "project-b", lineItems: [lineB, { ...lineB, id: "excluded-b", included: false }] }
+    ];
+    const repository = createMemoryRepository(seed);
+    const expectedA = { estimateId: "estimate-a", estimateVersion: 3, rooms: workflowEstimateRooms("estimate-a", 3, [roomA], [lineA]) };
+    const expectedB = { estimateId: "estimate-b", estimateVersion: 3, rooms: workflowEstimateRooms("estimate-b", 3, [roomB], [lineB]) };
+    expect(await repository.findDesignWorkflowRoomContext("project-a", true)).toEqual(expectedA);
+    expect(await repository.findDesignWorkflowRoomContext("project-b", true)).toEqual(expectedB);
+    expect(await repository.findDesignWorkflowRoomContext("project-a")).toEqual({ ...expectedA, rooms: workflowEstimateRooms("estimate-a", 3, [roomA], []) });
+    expect(await repository.findDesignWorkflowRoomOptions("project-b")).toEqual(expectedB.rooms);
   });
   it("projects zero-only Master Bedroom and Kitchen selections from the immutable memory snapshot", async () => {
     const selectedRooms = [{ id: "living", label: "Living & Dining" }, { id: "bedroom", label: "Master Bedroom" }, { id: "kitchen", label: "Kitchen" }];

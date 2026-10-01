@@ -6,14 +6,29 @@ import sharp from "sharp";
 import { estimatePdfCatalogue } from "../domain/estimate-pdf-catalogue.js";
 
 export interface EstimatePdfLine {
+  source?: "legacy" | "configuration";
   catalogueId: string;
+  roomId?: string;
   roomName: string;
-  specification: string;
+  specification: string | null;
   unit: string;
-  rate: number;
+  rate: number | null;
+  ratePaise?: number | null;
   quantity: number;
   included: boolean;
-  amount: number;
+  amount: number | null;
+  amountPaise?: number | null;
+  mainBasketId?: string;
+  subBasketId?: string;
+  mainLineId?: string;
+  revisionId?: string;
+  uomId?: string;
+  uomCode?: string;
+  uomDecimalScale?: number;
+  mainBasketName?: string;
+  subBasketName?: string;
+  mainLineName?: string;
+  uomName?: string;
 }
 
 export interface EstimatePdfInput {
@@ -24,6 +39,9 @@ export interface EstimatePdfInput {
   subtotal: number;
   gst: number;
   total: number;
+  subtotalPaise?: number;
+  gstPaise?: number;
+  totalPaise?: number;
   lineItems: EstimatePdfLine[];
   lead: {
     clientName: string;
@@ -217,19 +235,30 @@ function drawTableHeader(doc: PDFKit.PDFDocument, profile: EstimatePdfProfile): 
 }
 
 function lineDescription(line: EstimatePdfLine): string {
+  if (line.source === "configuration") return line.mainLineName ?? line.mainLineId ?? line.catalogueId;
   return estimatePdfCatalogue.get(line.catalogueId)?.description ?? line.catalogueId;
 }
 
 function lineCellText(line: EstimatePdfLine) {
+  const description = line.source === "configuration"
+    ? [lineDescription(line), line.subBasketName].filter(Boolean).join("\n")
+    : [lineDescription(line), line.specification].filter(Boolean).join("\n");
   return {
-    description: `${lineDescription(line)}\n${line.specification}`,
+    description,
     room: line.roomName,
     quantity: `${new Intl.NumberFormat("en-IN", {
       maximumFractionDigits: 2
     }).format(line.quantity)} ${line.unit}`,
-    rate: formatInr(line.rate),
-    total: formatInr(line.amount)
+    rate: formatInr(line.ratePaise == null ? requiredPdfMoney(line.rate) : line.ratePaise / 100),
+    total: formatInr(line.amountPaise == null ? requiredPdfMoney(line.amount) : line.amountPaise / 100)
   };
+}
+
+function requiredPdfMoney(value: number | null): number {
+  if (value === null || !Number.isFinite(value) || value < 0) {
+    throw new TypeError("An included estimate line has an incomplete amount and cannot be rendered as final.");
+  }
+  return value;
 }
 
 type LineCellText = ReturnType<typeof lineCellText>;
@@ -522,10 +551,14 @@ function groupedIncludedLines(input: EstimatePdfInput) {
   const groups = new Map<string, { label: string; lines: EstimatePdfLine[] }>();
 
   for (const line of input.lineItems.filter((item) => item.included)) {
-    const entry = estimatePdfCatalogue.get(line.catalogueId);
-    const key = entry?.sectionId ?? "legacy";
+    if (line.source === "configuration" &&
+      (!Number.isSafeInteger(line.ratePaise) || !Number.isSafeInteger(line.amountPaise))) {
+      throw new TypeError("An included configured estimate line needs an entered rate before PDF generation.");
+    }
+    const entry = line.source === "configuration" ? undefined : estimatePdfCatalogue.get(line.catalogueId);
+    const key = line.source === "configuration" ? line.mainBasketId ?? "" : entry?.sectionId ?? "legacy";
     const group = groups.get(key) ?? {
-      label: entry?.sectionLabel ?? "Additional items",
+      label: line.source === "configuration" ? line.mainBasketName ?? "Configured basket" : entry?.sectionLabel ?? "Additional items",
       lines: []
     };
     group.lines.push(line);
@@ -725,15 +758,15 @@ function drawTotals(
     doc.y = y + (bold ? 24 : 20);
   };
 
-  row("Subtotal", input.subtotal);
-  row("GST @ 18%", input.gst);
+  row("Subtotal", input.subtotalPaise === undefined ? input.subtotal : input.subtotalPaise / 100);
+  row("GST @ 18%", input.gstPaise === undefined ? input.gst : input.gstPaise / 100);
   doc
     .strokeColor(colors.red)
     .lineWidth(1)
     .moveTo(labelX, doc.y - 5)
     .lineTo(amountX + amountWidth, doc.y - 5)
     .stroke();
-  row("Final total", input.total, true);
+  row("Final total", input.totalPaise === undefined ? input.total : input.totalPaise / 100, true);
 
   const terms = [
     "Valid for 30 days.",

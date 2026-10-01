@@ -2,6 +2,7 @@ import { apiClient, type PaginatedData } from "../../api/client";
 import type {
   DesignPlanStatus,
   EstimateClientReviewSummary,
+  EstimateClientFeedback,
   Lead,
   LeadActivity,
   LeadActivityType,
@@ -21,9 +22,86 @@ export const createLead = (input: Omit<Lead, "id" | "projectId" | "ownerId" | "s
 export const updateLead = (id: string, input: Partial<Lead>) => apiClient.patch<Lead>(`/leads/${encodeURIComponent(id)}`, input);
 export const getLeadActivities = (id: string) => apiClient.get<PaginatedData<LeadActivity>>(`/leads/${encodeURIComponent(id)}/activities?limit=50&offset=0`);
 export const addLeadActivity = (id: string, input: { type: LeadActivityType; note: string; occurredAt: string }) => apiClient.post<LeadActivity>(`/leads/${encodeURIComponent(id)}/activities`, input);
-export interface EstimateDraftInput { propertyType: string; rooms: Array<Record<string, unknown>>; scopes: string[]; lineItems: Array<{ catalogueId: string; roomName: string; specification: string; unit: string; rate: number; quantity: number; included: boolean }>; }
+export interface LegacyEstimateLineInput {
+  source?: "legacy";
+  catalogueId: string;
+  roomName: string;
+  specification: string;
+  unit: string;
+  rate: number;
+  quantity: number;
+  included: boolean;
+}
+
+export interface ConfiguredEstimateLineInput {
+  source: "configuration";
+  id?: string;
+  catalogueId: string;
+  roomId: string;
+  roomName: string;
+  mainBasketId: string;
+  subBasketId: string;
+  mainLineId: string;
+  revisionId: string;
+  uomId: string;
+  quantity: number;
+  ratePaise: number | null;
+  included: boolean;
+}
+
+export type EstimateLineInput = LegacyEstimateLineInput | ConfiguredEstimateLineInput;
+
+export interface ConfiguredEstimateLine extends ConfiguredEstimateLineInput {
+  id: string;
+  mainBasketName: string;
+  subBasketName: string;
+  mainLineName: string;
+  uomName: string;
+  uomCode: string;
+  uomDecimalScale: number;
+  unit: string;
+  specification: null;
+  rate: number | null;
+  amount: number | null;
+  amountPaise: number | null;
+}
+
+export interface LegacyEstimateLine extends LegacyEstimateLineInput {
+  id?: string;
+  amount?: number;
+  amountPaise?: number;
+}
+
+export type EstimateLine = LegacyEstimateLine | ConfiguredEstimateLine;
+
+export interface EstimateDraftInput {
+  propertyType: string;
+  rooms: Array<Record<string, unknown>>;
+  scopes: string[];
+  selectedMainBasketIds?: string[];
+  expectedVersion?: number;
+  lineItems: EstimateLineInput[];
+}
 export type EstimateStatus = "draft" | "pending_manager_assignment" | "pending_designer_approval" | "designer_changes_requested" | "ready_for_client" | "sent_to_client" | "client_changes_requested" | "client_approved";
-export interface EstimateDraft extends EstimateDraftInput { id: string; subtotal: number; gst: number; total: number; status: EstimateStatus; approvalRequired: boolean; assignedDesignerId?: string | null; projectId?: string | null; clientReview?: EstimateClientReviewSummary | null; designPlanStatus?: DesignPlanStatus | null; designPlanVersion?: number; }
+export interface EstimateDraft extends Omit<EstimateDraftInput, "lineItems"> {
+  id: string;
+  version?: number;
+  lineItems: EstimateLine[];
+  subtotal: number;
+  gst: number;
+  total: number;
+  subtotalPaise?: number;
+  gstPaise?: number;
+  totalPaise?: number;
+  status: EstimateStatus;
+  approvalRequired: boolean;
+  assignedDesignerId?: string | null;
+  projectId?: string | null;
+  clientReview?: EstimateClientReviewSummary | null;
+  clientFeedback?: EstimateClientFeedback | null;
+  designPlanStatus?: DesignPlanStatus | null;
+  designPlanVersion?: number;
+}
 export interface SavedEstimate extends EstimateDraft {
   leadId: string;
   updatedAt: string;

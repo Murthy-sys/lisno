@@ -31,7 +31,8 @@ const expectedRoles = [
   "worker_other",
   "design_manager",
   "design_head",
-  "client"
+  "client",
+  "vendor"
 ] as const;
 
 const invitationPermissions = [
@@ -87,16 +88,17 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-09-28.vendor-induction.v1"
+      "2026-10-01.vendor-procurement.v1"
     );
   });
 
-  it("publishes all 151 unique permissions in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(151);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(151);
+  it("publishes all 165 unique permissions in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(165);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(165);
     expect(PERMISSION_CODES).toContain("chat.action_types.manage");
     expect(PERMISSION_CODES).toContain("chat.project_name.manage");
     expect(PERMISSION_CODES).toContain("estimation.design_upload.delete");
+    expect(PERMISSION_CODES).toContain("estimation.catalogue.read");
     expect(PERMISSION_CODES).toContain("projects.initiate");
     expect(PERMISSION_CODES).toContain("organization.estimators.read");
     const identityMutationIndex = PERMISSION_CODES.indexOf(
@@ -109,7 +111,7 @@ describe("frontend authorization contract", () => {
       ...invitationPermissions,
       "access_request.create"
     ]);
-    expect(PERMISSION_CODES.slice(-45)).toEqual([
+    expect(PERMISSION_CODES.slice(-57)).toEqual([
       "access_request.review.read",
       "access_request.review.decide",
       "project_access_grant.revoke",
@@ -127,6 +129,9 @@ describe("frontend authorization contract", () => {
       "chat.read", "chat.send", "chat.issue", "chat.read_state", "chat.participants.manage",
       "chat.action_types.manage", "chat.project_name.manage",
       "procurement.items.read", "procurement.items.manage",
+      "procurement.purchase_orders.read", "procurement.purchase_orders.manage", "procurement.purchase_orders.approve",
+      "procurement.vendor_work.read", "procurement.vendor_work.update", "procurement.vendor_work.media.read", "procurement.vendor_work.media.upload",
+      "procurement.client_work.read", "procurement.client_work.decide", "procurement.progress.read", "procurement.site_completion.manage", "procurement.project_completion.decide",
       "procurement.vendors.read", "procurement.vendors.create",
       "procurement.vendor_suggestions.read",
       "procurement.vendor_suggestions.manage",
@@ -170,8 +175,8 @@ describe("frontend authorization contract", () => {
     ).toEqual(projectFinancePermissions);
   });
 
-  it("keeps the protected frontend registry at exactly 39 routes", () => {
-    expect(ROUTE_REGISTRY).toHaveLength(39);
+  it("keeps the protected frontend registry at exactly 42 routes", () => {
+    expect(ROUTE_REGISTRY).toHaveLength(42);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).toEqual(
       expect.arrayContaining([
         "/project-messages", "/projects/:projectId/messages",
@@ -186,6 +191,7 @@ describe("frontend authorization contract", () => {
         "/procurement/vendors",
         "/procurement/vendors/:vendorId",
         "/procurement/projects/:projectId",
+        "/vendor", "/admin/purchase-orders", "/admin/project-completion",
         "/finance",
         "/finance/projects/:projectId"
       ])
@@ -237,7 +243,8 @@ describe("frontend authorization contract", () => {
       worker_other: "Other Worker",
       design_manager: "Design Manager",
       design_head: "Design Head",
-      client: "Client"
+      client: "Client",
+      vendor: "Vendor"
     });
   });
 

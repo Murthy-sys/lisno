@@ -10,7 +10,8 @@ import {
   invitationEmailSchema,
   invitationMobileSchema,
   invitationNameSchema,
-  normalizeInvitationEmail
+  normalizeInvitationEmail,
+  VENDOR_ID_PATTERN
 } from "../domain/user-invitations.js";
 import { model, models, Schema } from "./mongoose.js";
 
@@ -35,6 +36,7 @@ const userInvitationSchema = new Schema(
       required: true,
       immutable: true
     },
+    vendorId: { type: String, ref: "AiEstimatorKnowledgeVendor", default: null, immutable: true, match: VENDOR_ID_PATTERN },
     mobile: { type: String, required: true, maxlength: USER_INVITATION_MOBILE_MAX },
     tokenHash: {
       type: String,
@@ -109,6 +111,13 @@ userInvitationSchema.pre("validate", function normalizeIdentityFields() {
     if (typeof rawValue === "string" && CONTROL_CHARACTERS.test(rawValue)) {
       this.invalidate(path, `Invitation ${path} cannot contain control characters.`);
     }
+  }
+});
+
+userInvitationSchema.pre("validate", function validateVendorIdentity() {
+  const vendorId = this.get("vendorId");
+  if (this.get("role") === "vendor" ? typeof vendorId !== "string" || !VENDOR_ID_PATTERN.test(vendorId) : vendorId != null) {
+    this.invalidate("vendorId", "Vendor ID is required only for Vendor invitations.");
   }
 });
 

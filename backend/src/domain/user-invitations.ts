@@ -31,6 +31,8 @@ export const USER_INVITATION_TOKEN_HASH_PATTERN = /^[0-9a-f]{64}$/;
 export const USER_INVITATION_NAME_MAX = 120;
 export const USER_INVITATION_EMAIL_MAX = 254;
 export const USER_INVITATION_MOBILE_MAX = 30;
+export const VENDOR_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+export const vendorInvitationIdSchema = z.string().regex(VENDOR_ID_PATTERN, "Select a valid vendor.");
 export const USER_INVITATION_DELIVERY_FAILURE_CODE_PATTERN =
   /^[A-Z0-9_]{1,64}$/;
 export const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/u;

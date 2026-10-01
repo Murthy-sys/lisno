@@ -2,6 +2,18 @@ import type { AnnotationElement, AnnotationPoint, CropRect } from "../../api/typ
 
 export interface PageGeometry { width: number; height: number }
 
+/** The visible content inside a proportionally fitted replacement's original slot. */
+export function containedDrawingCrop(slot: CropRect, source: PageGeometry): CropRect {
+  if (![slot.x, slot.y, slot.width, slot.height, source.width, source.height].every(Number.isFinite) ||
+      slot.width <= 0 || slot.height <= 0 || source.width <= 0 || source.height <= 0) {
+    throw new Error("Drawing dimensions must be finite positive values.");
+  }
+  const scale = Math.min(slot.width / source.width, slot.height / source.height);
+  const width = Math.min(slot.width, source.width * scale);
+  const height = Math.min(slot.height, source.height * scale);
+  return { x: slot.x + (slot.width - width) / 2, y: slot.y + (slot.height - height) / 2, width, height };
+}
+
 function round(value: number) {
   return Math.round(value * 1_000_000_000) / 1_000_000_000;
 }

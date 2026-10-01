@@ -298,7 +298,7 @@ describe("protected user invitation administration", () => {
     expect(seed.userInvitations).toEqual([]);
   });
 
-  it.each(ROLE_CODES.filter((role) => role !== "super_admin"))(
+  it.each(ROLE_CODES.filter((role) => role !== "super_admin" && role !== "vendor"))(
     "denies a stored %s before creating invitation state",
     async (role) => {
       const { seed, operator } = standardSeed();
@@ -317,6 +317,60 @@ describe("protected user invitation administration", () => {
       expect(operator.role).toBe("super_admin");
     }
   );
+
+  it("binds an invited Vendor account to the selected stable vendor ID", async () => {
+    const { seed, operator } = standardSeed();
+    seed.vendorInvitationTargets = [
+      { id: "vendor-alpha", status: "active" },
+      { id: "vendor-beta", status: "active" }
+    ];
+    const { repository, service } = setup(seed, {
+      passwordHasher: async () => ACCEPTED_PASSWORD_HASH
+    });
+    const input = {
+      name: "Vendor Representative",
+      email: "representative@example.test",
+      mobile: "+91 90000 00000",
+      role: "vendor" as const,
+      vendorId: "vendor-alpha"
+    };
+
+    const created = await service.create(publicUser(operator), input);
+    expect(created).toMatchObject({ role: "vendor", vendorId: "vendor-alpha" });
+    const rawToken = Buffer.alloc(32, 1).toString("base64url");
+    await expect(service.inspect(rawToken)).resolves.toMatchObject({ role: "vendor" });
+    await expect(service.accept({ rawToken, password: ACCEPTED_PASSWORD })).resolves.toEqual({ accepted: true });
+
+    const user = await repository.findUserByEmail("representative@example.test");
+    expect(user).toMatchObject({ role: "vendor", vendorId: "vendor-alpha", active: true });
+    expect(await repository.findUserInvitationById(created.id)).toMatchObject({
+      status: "accepted",
+      role: "vendor",
+      vendorId: "vendor-alpha",
+      acceptedUserId: user?.id
+    });
+    await expect(repository.updateUser(user!.id, user!.version, { role: "designer", updatedAt: NOW })).rejects.toBeInstanceOf(RepositoryConflictError);
+  });
+
+  it("requires a current vendor directory record and blocks archived vendors", async () => {
+    const { seed, operator } = standardSeed();
+    seed.vendorInvitationTargets = [{ id: "vendor-archived", status: "archived" }];
+    const { repository, service, sendInvitation } = setup(seed);
+    const input = {
+      name: "Vendor Representative",
+      email: "representative@example.test",
+      mobile: "+91 90000 00000",
+      role: "vendor" as const,
+      vendorId: "vendor-archived"
+    };
+    await expect(service.create(publicUser(operator), input)).rejects.toMatchObject({ code: "VENDOR_UNAVAILABLE", status: 409 });
+    await expect(service.create(publicUser(operator), { ...input, vendorId: "vendor-missing" })).rejects.toMatchObject({ code: "VENDOR_UNAVAILABLE", status: 409 });
+    await expect(service.create(publicUser(operator), { ...input, vendorId: "" })).rejects.toMatchObject({ code: "VALIDATION_ERROR", status: 400 });
+    await expect(service.create(publicUser(operator), { ...input, vendorId: undefined })).rejects.toMatchObject({ code: "VALIDATION_ERROR", status: 400 });
+    expect((await repository.pageUserInvitations({}, { limit: 20, offset: 0 }, NOW)).total).toBe(0);
+    expect(await invitationAudits(repository)).toEqual([]);
+    expect(sendInvitation).not.toHaveBeenCalled();
+  });
 
   it("rejects inactive and stale-role actors before persistence", async () => {
     for (const kind of ["inactive", "stale"] as const) {

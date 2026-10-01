@@ -7,11 +7,14 @@ import { Button } from "../../components/ui/Button";
 import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Field, Input, Select } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
+import { formatPaise } from "../finance/ProjectFinancePanel";
 import { dashboardKeys } from "../admin/dashboard/superAdminDashboardApi";
+import { projectStatusKeys } from "../project-status/projectStatusApi";
 import {
   createProjectProcurementItem,
   getProjectProcurementItem,
   getProcurementUomOptions,
+  MAX_PROCUREMENT_ORDER_QUANTITY_MILLIUNITS,
   MAX_PROCUREMENT_ITEM_PRICE_PAISE,
   projectProcurementKeys,
   updateProjectProcurementItem,
@@ -34,6 +37,7 @@ interface Props {
   fallbackFocusRef: RefObject<HTMLElement | null>;
   source?: ProcurementParentSource;
   assignmentOptions?: ProcurementParentOption[];
+  currentEstimate?: Pick<ProcurementParentSource, "estimateId" | "estimateVersion">;
   parentLabel?: string;
   sourceStale?: boolean;
 }
@@ -43,12 +47,22 @@ function draftFor(item: ProjectProcurementItem | null) {
     itemName: item?.itemName ?? "",
     brand: item?.brand ?? "",
     uomId: item?.uom.id ?? "",
+    quantity: item?.plannedOrderQuantityMilliUnits == null ? "" : String(item.plannedOrderQuantityMilliUnits / 1000),
     allocation: item?.allocatedWorkPaise == null ? "" : `${Math.floor(item.allocatedWorkPaise / 100)}.${String(item.allocatedWorkPaise % 100).padStart(2, "0")}`,
     price: item ? `${Math.floor(item.pricePaise / 100)}.${String(item.pricePaise % 100).padStart(2, "0")}` : ""
   };
 }
 
-export function ProjectProcurementItemEditor({ projectId, projectName, item, onClose, onSaved, returnFocusRef, fallbackFocusRef, source, assignmentOptions, parentLabel, sourceStale = false }: Props) {
+export function parsePlannedOrderQuantity(value: string, decimalScale: number): number | null {
+  const match = /^(\d+)(?:\.(\d+))?$/u.exec(value.trim());
+  if (!match || !Number.isInteger(decimalScale) || decimalScale < 0 || decimalScale > 3) return null;
+  const fraction = match[2] ?? "";
+  if (fraction.length > decimalScale) return null;
+  const milliUnits = Number(match[1]) * 1000 + Number(fraction.padEnd(3, "0"));
+  return Number.isSafeInteger(milliUnits) && milliUnits > 0 && milliUnits <= MAX_PROCUREMENT_ORDER_QUANTITY_MILLIUNITS ? milliUnits : null;
+}
+
+export function ProjectProcurementItemEditor({ projectId, projectName, item, onClose, onSaved, returnFocusRef, fallbackFocusRef, source, assignmentOptions, currentEstimate, parentLabel, sourceStale = false }: Props) {
   const queryClient = useQueryClient();
   const [baseItem, setBaseItem] = useState(item);
   const [draft, setDraft] = useState(() => draftFor(item));
@@ -58,6 +72,9 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
   const [vendorUnresolved, setVendorUnresolved] = useState(false);
   const [vendorFieldRevision, setVendorFieldRevision] = useState(0);
   const [assignment, setAssignment] = useState<ProcurementParentSource | null>(null);
+  const zeroValueSource = Boolean(baseItem?.estimateSource && currentEstimate && baseItem.estimateSource.estimateId === currentEstimate.estimateId
+    && baseItem.estimateSource.estimateVersion === currentEstimate.estimateVersion
+    && assignmentOptions && !assignmentOptions.some((option) => sameProcurementParent(baseItem.estimateSource, option)));
   const firstField = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const initialDraft = draftFor(baseItem);
@@ -75,13 +92,16 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
     onSuccess: async (saved) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: projectProcurementKeys.lists(projectId) }),
+        queryClient.invalidateQueries({ queryKey: ["procurement", "purchase-order-preparation", projectId] }),
+        queryClient.invalidateQueries({ queryKey: ["procurement", "purchase-order-requests", projectId] }),
+        queryClient.invalidateQueries({ queryKey: projectStatusKeys.project(projectId) }),
         queryClient.invalidateQueries({ queryKey: procurementKeys.projects }),
         queryClient.invalidateQueries({ queryKey: dashboardKeys.all })
       ]);
       onSaved(saved);
     },
     onError: (error) => {
-      if (error instanceof ApiError && ["PROCUREMENT_ITEM_SOURCE_CONFLICT", "PROCUREMENT_APPROVAL_SOURCE_CONFLICT"].includes(error.code)) {
+      if (error instanceof ApiError && ["PROCUREMENT_ITEM_SOURCE_CONFLICT", "PROCUREMENT_ITEM_ZERO_ESTIMATE_VALUE", "PROCUREMENT_APPROVAL_SOURCE_CONFLICT"].includes(error.code)) {
         void queryClient.invalidateQueries({ queryKey: procurementKeys.projects });
         void queryClient.invalidateQueries({ queryKey: projectProcurementKeys.lists(projectId) });
       }
@@ -110,15 +130,24 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
   });
   const busy = save.isPending || reload.isPending || vendorBusy;
   const conflict = save.error instanceof ApiError && save.error.code === "PROCUREMENT_ITEM_VERSION_CONFLICT";
-  const sourceConflict = sourceStale || Boolean(assignment && !assignmentOptions?.some((option) => sameProcurementParent(assignment, option))) || (save.error instanceof ApiError && ["PROCUREMENT_ITEM_SOURCE_CONFLICT", "PROCUREMENT_APPROVAL_SOURCE_CONFLICT"].includes(save.error.code));
+  const sourceConflict = sourceStale || Boolean(assignment && !assignmentOptions?.some((option) => sameProcurementParent(assignment, option))) || (save.error instanceof ApiError && ["PROCUREMENT_ITEM_SOURCE_CONFLICT", "PROCUREMENT_ITEM_ZERO_ESTIMATE_VALUE", "PROCUREMENT_APPROVAL_SOURCE_CONFLICT"].includes(save.error.code));
   const unchangedUom = Boolean(baseItem && draft.uomId === baseItem.uom.id);
   const hasSelectedActiveUom = Boolean(uoms.data?.some((uom) => uom.id === draft.uomId));
   const historicalUom = baseItem && !uoms.data?.some((uom) => uom.id === baseItem.uom.id)
     ? baseItem.uom : null;
+  const selectedUom = uoms.data?.find((uom) => uom.id === draft.uomId) ?? (baseItem?.uom.id === draft.uomId ? baseItem.uom : null);
+  const previewPricePaise = rupeesToPaise(draft.price);
+  const previewQuantity = parsePlannedOrderQuantity(draft.quantity, selectedUom?.decimalScale ?? 3);
+  const previewNetBig = previewPricePaise !== null && previewQuantity !== null
+    ? (BigInt(previewPricePaise) * BigInt(previewQuantity) + 500n) / 1000n : null;
+  const previewNetPaise = previewNetBig !== null && previewNetBig > 0n && previewNetBig <= BigInt(Number.MAX_SAFE_INTEGER)
+    ? Number(previewNetBig) : null;
+  const previewGstPaise = previewNetPaise === null ? null : Number((BigInt(previewNetPaise) * 1800n + 5000n) / 10000n);
 
   function change(key: keyof typeof draft, value: string) {
     setDraft((previous) => ({ ...previous, [key]: value }));
-    setErrors((previous) => ({ ...previous, [key]: "", ...(key === "price" ? { pricePaise: "" } : {}) }));
+    setErrors((previous) => ({ ...previous, [key]: "", ...(key === "price" ? { pricePaise: "" } : {}),
+      ...(key === "quantity" ? { plannedOrderQuantityMilliUnits: "" } : {}) }));
     // A version conflict must be resolved explicitly before another write.
     if (!conflict && !sourceConflict) save.reset();
   }
@@ -129,16 +158,18 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
     const itemName = draft.itemName.normalize("NFKC").trim().replace(/\s+/gu, " ");
     const brand = draft.brand.normalize("NFKC").trim().replace(/\s+/gu, " ");
     const pricePaise = rupeesToPaise(draft.price);
+    const plannedOrderQuantityMilliUnits = parsePlannedOrderQuantity(draft.quantity, selectedUom?.decimalScale ?? 3);
     const allocatedWorkPaise = rupeesToPaise(draft.allocation);
     const allocationUnchanged = Boolean(baseItem && vendor?.id === baseItem.vendor?.id && draft.allocation === initialDraft.allocation);
     const nextErrors: Record<string, string> = {};
     if (vendor && !allocationUnchanged && (allocatedWorkPaise === null || allocatedWorkPaise > MAX_PROCUREMENT_ITEM_PRICE_PAISE)) nextErrors.allocatedWorkPaise = "Enter a positive allocated work amount with up to two decimal places.";
-    const selectedSource = source ?? baseItem?.estimateSource ?? assignment;
-    if ((!baseItem || assignment) && !selectedSource) nextErrors.estimateSource = "Choose a current approved estimate item.";
+    const selectedSource = source ?? assignment ?? (zeroValueSource ? null : baseItem?.estimateSource);
+    if ((!baseItem || zeroValueSource || assignment) && !selectedSource) nextErrors.estimateSource = "Choose an approved estimate item with a positive value.";
     if (!itemName || itemName.length > 200) nextErrors.itemName = "Enter an item name of up to 200 characters.";
     if (!brand || brand.length > 200) nextErrors.brand = "Enter a brand of up to 200 characters.";
     if (!draft.uomId || (!unchangedUom && !hasSelectedActiveUom)) nextErrors.uomId = "Choose an available unit of measure.";
-    if (vendorUnresolved) nextErrors.vendorId = "Select a saved vendor, save the new vendor, or clear the vendor entry.";
+    if (plannedOrderQuantityMilliUnits === null) nextErrors.plannedOrderQuantityMilliUnits = `Enter a positive order quantity with at most ${selectedUom?.decimalScale ?? 3} decimal places.`;
+    if (vendorUnresolved) nextErrors.vendorId = "Choose an active vendor or clear the vendor selection.";
     if (pricePaise === null || pricePaise > MAX_PROCUREMENT_ITEM_PRICE_PAISE) {
       nextErrors.pricePaise = "Enter a positive price up to ₹90,00,00,00,000.00 with at most two decimal places.";
     }
@@ -147,7 +178,7 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
       requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
       return;
     }
-    save.mutate({ itemName, brand, uomId: draft.uomId, vendorId: vendor?.id ?? null, pricePaise: pricePaise!,
+    save.mutate({ itemName, brand, uomId: draft.uomId, vendorId: vendor?.id ?? null, pricePaise: pricePaise!, plannedOrderQuantityMilliUnits: plannedOrderQuantityMilliUnits!,
       ...(!vendor || allocationUnchanged ? {} : { allocatedWorkPaise: allocatedWorkPaise! }),
       ...(selectedSource ? { estimateId: selectedSource.estimateId, estimateVersion: selectedSource.estimateVersion, sourceLineItemKey: selectedSource.sourceLineItemKey } : {}) });
   }
@@ -189,10 +220,10 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
         ) : null}
         {reload.isError ? <InlineMessage tone="error">{procurementError(reload.error, "The latest item could not be loaded. Your entries are still available.")}</InlineMessage> : null}
         <fieldset disabled={busy}>
-          {baseItem && !baseItem.estimateSource && !source && assignmentOptions ? <Field id="procurement-item-assignment" label="Estimate item" error={errors.estimateSource}
-            hint="Select an approved estimate item to assign this saved item. Its assignment cannot be changed after saving.">
+          {baseItem && (!baseItem.estimateSource || zeroValueSource) && !source && assignmentOptions ? <Field id="procurement-item-assignment" label="Estimate item" error={errors.estimateSource}
+            hint={zeroValueSource ? "The previous estimate item has no eligible value. Select a positive-value item to reassign this saved item." : "Select an approved estimate item to assign this saved item. Its assignment cannot be changed after saving."}>
             {(props) => <Select {...props} value={assignment?.sourceLineItemKey ?? ""} onChange={(event) => setAssignment(assignmentOptions.find((option) => option.sourceLineItemKey === event.target.value) ?? null)}>
-              <option value="">Keep unassigned</option>
+              <option value="">{zeroValueSource ? "Choose an eligible estimate item" : "Keep unassigned"}</option>
               {assignmentOptions.map((option) => <option key={option.sourceLineItemKey} value={option.sourceLineItemKey}>{option.label}</option>)}
             </Select>}
           </Field> : null}
@@ -202,7 +233,7 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
           <Field id="procurement-item-brand" label="Brand" required error={errors.brand}>
             {(props) => <Input {...props} value={draft.brand} maxLength={200} onChange={(event) => change("brand", event.target.value)} autoComplete="off" />}
           </Field>
-          <ProcurementVendorField key={vendorFieldRevision} projectId={projectId} suggestionsDisabled={sourceStale || sourceConflict} value={vendor} error={errors.vendorId}
+          <ProcurementVendorField key={vendorFieldRevision} variant="active-select" value={vendor} error={errors.vendorId}
             onChange={(selected) => {
               if (selected?.id !== vendor?.id) setDraft((previous) => ({ ...previous, allocation: "" }));
               setVendor(selected);
@@ -227,10 +258,23 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
             hint="Unit price in rupees per selected UOM. Up to 2 decimal places.">
             {(props) => <Input {...props} type="text" inputMode="decimal" value={draft.price} maxLength={20} onChange={(event) => change("price", event.target.value)} placeholder="0.00" />}
           </Field>
+          <Field id="procurement-item-quantity" label={`Planned order quantity${selectedUom ? ` (${selectedUom.code})` : ""}`} required error={errors.plannedOrderQuantityMilliUnits}
+            hint={`Enter up to ${selectedUom?.decimalScale ?? 3} decimal places.`}>
+            {(props) => <Input {...props} type="text" inputMode="decimal" value={draft.quantity} maxLength={16} onChange={(event) => change("quantity", event.target.value)} placeholder="0" />}
+          </Field>
+          <dl className="project-procurement-items__amount-preview" aria-label="Planned order amount at 18 percent GST">
+            <div><dt>Planned amount, before GST</dt><dd>{previewNetPaise === null ? "Enter price and quantity" : formatPaise(previewNetPaise)}</dd></div>
+            <div><dt>GST (18%)</dt><dd>{previewGstPaise === null ? "—" : formatPaise(previewGstPaise)}</dd></div>
+            <div><dt>Planned amount, with GST</dt><dd>{previewNetPaise === null || previewGstPaise === null ? "—" : formatPaise(previewNetPaise + previewGstPaise)}</dd></div>
+          </dl>
           {vendor ? <Field id="procurement-item-allocation" label="Allocated work (INR)" required={!baseItem || vendor.id !== baseItem.vendor?.id || baseItem.allocatedWorkPaise != null} error={errors.allocatedWorkPaise}
-            hint={baseItem?.allocatedWorkPaise == null && vendor.id === baseItem?.vendor?.id ? "Not recorded. Leave unchanged for unrelated edits. Missing historical values must be corrected by Super Admin before new unverified work is allocated." : "Total committed work including applicable tax, separate from unit price. The vendor limit applies across all projects."}>
+            hint={baseItem?.allocatedWorkPaise == null && vendor.id === baseItem?.vendor?.id ? "Not recorded. Leave unchanged for unrelated edits. Missing historical values must be corrected by Super Admin before new unverified work is allocated." : "This item's allowed vendor work must cover order quantity × unit price plus GST. The vendor limit applies across all projects."}>
             {(props) => <Input {...props} inputMode="decimal" value={draft.allocation} maxLength={20} onChange={(event) => change("allocation", event.target.value)} placeholder={baseItem?.allocatedWorkPaise == null && vendor.id === baseItem?.vendor?.id ? "Not recorded" : "0.00"} />}
           </Field> : null}
+          {vendor && previewNetPaise !== null && previewGstPaise !== null ? <Button type="button" variant="quiet" onClick={() => {
+            const totalPaise = previewNetPaise + previewGstPaise;
+            change("allocation", `${Math.floor(totalPaise / 100)}.${String(totalPaise % 100).padStart(2, "0")}`);
+          }}>Use planned amount with GST for allocated work</Button> : null}
         </fieldset>
       </form>
     </ContextPanel>

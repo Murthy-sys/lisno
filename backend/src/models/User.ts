@@ -1,6 +1,7 @@
 import { model, models, Schema } from "./mongoose.js";
 import { ROLE_CODES } from "../domain/roles.js";
 import { ACCOUNT_KINDS } from "../domain/demo-identities.js";
+import { VENDOR_ID_PATTERN } from "../domain/user-invitations.js";
 
 const profilePhotoSchema = new Schema(
   {
@@ -25,6 +26,7 @@ const userSchema = new Schema(
       enum: ROLE_CODES,
       required: true
     },
+    vendorId: { type: String, ref: "AiEstimatorKnowledgeVendor", default: null, immutable: true, match: VENDOR_ID_PATTERN },
     active: { type: Boolean, required: true, default: true },
     accountKind: {
       type: String,
@@ -54,6 +56,14 @@ userSchema.index(
   }
 );
 userSchema.index({ role: 1, active: 1 });
+userSchema.index({ vendorId: 1, active: 1 }, { partialFilterExpression: { vendorId: { $type: "string" } } });
 userSchema.index({ managerId: 1, role: 1 });
+
+userSchema.pre("validate", function validateVendorMembership() {
+  const vendorId = this.get("vendorId");
+  if (this.get("role") === "vendor" ? typeof vendorId !== "string" || vendorId.length === 0 : vendorId != null) {
+    this.invalidate("vendorId", "Vendor membership is required only for Vendor users.");
+  }
+});
 
 export const UserModel = models.User ?? model("User", userSchema);

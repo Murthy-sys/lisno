@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { hashPasswordResetToken } from "../src/domain/password-resets.js";
 import { hashUserInvitationToken } from "../src/domain/user-invitations.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
+import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowledgeVendor.js";
 import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoordination.js";
 import { EmailCoordinationModel } from "../src/models/EmailCoordination.js";
 import { PasswordResetRequestModel } from "../src/models/PasswordResetRequest.js";
@@ -603,6 +604,38 @@ describe("password reset Mongo replica-set transactions", () => {
     await expect(invitations.inspect(rawInvitationToken)).resolves.toMatchObject({
       email: "post-reset-invitee@example.test"
     });
+  });
+
+  it("transactionally binds an accepted Vendor invitation to its directory identity", async () => {
+    await insertSuperAdmin();
+    await AiEstimatorKnowledgeVendorModel.create({
+      _id: "mongo-vendor-alpha",
+      code: "MONGO-VENDOR-ALPHA",
+      codeNormalized: "mongo-vendor-alpha",
+      name: "Mongo Vendor Alpha",
+      nameNormalized: "mongo vendor alpha",
+      displayOrder: 0,
+      status: "active",
+      createdById: "mongo-reset-super-admin",
+      updatedById: "mongo-reset-super-admin"
+    });
+    const invitations = invitationService({ mailer: immediateInvitationMailer() });
+    const created = await invitations.create(superAdminActor(), {
+      name: "Vendor Member",
+      email: "mongo-vendor-member@example.test",
+      role: "vendor",
+      vendorId: "mongo-vendor-alpha",
+      mobile: "+91 90000 00000"
+    });
+    expect(created).toMatchObject({ role: "vendor", vendorId: "mongo-vendor-alpha" });
+    await expect(invitations.accept({
+      rawToken: Buffer.alloc(32, 81).toString("base64url"),
+      password: "VendorMemberPassword!2026"
+    })).resolves.toEqual({ accepted: true });
+    expect(await createMongoRepository().findUserByEmail("mongo-vendor-member@example.test"))
+      .toMatchObject({ role: "vendor", vendorId: "mongo-vendor-alpha", active: true });
+    expect(await UserInvitationModel.findById(created.id).lean().exec())
+      .toMatchObject({ role: "vendor", vendorId: "mongo-vendor-alpha", status: "accepted" });
   });
 
   it("records bounded invitation delivery failure when reset wins during SMTP", async () => {

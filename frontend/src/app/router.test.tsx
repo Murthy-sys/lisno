@@ -77,6 +77,14 @@ const estimatorSales = {
   role: "estimator_sales" as const
 };
 
+const estimatorCatalogue = {
+  items: [{ id: "basket-joinery", name: "Joinery", displayOrder: 1, subBaskets: [{
+    id: "sub-wardrobes", basketId: "basket-joinery", name: "Wardrobes", displayOrder: 1,
+    mainLines: [{ id: "line-carcass", mainLineId: "line-carcass", basketId: "basket-joinery", subBasketId: "sub-wardrobes", name: "Wardrobe carcass", displayOrder: 1, revisionId: "revision-1", uom: { id: "uom-sqft", code: "SQFT", name: "sq ft", decimalScale: 2 } }]
+  }] }],
+  pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0
+};
+
 const neutralHomeRoles = [
   "procurement",
   "finance_head",
@@ -603,7 +611,7 @@ describe("role landing staging contract", () => {
 
 describe("public invitation route", () => {
   it("mounts directly while staying outside the protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(39);
+    expect(ROUTE_REGISTRY).toHaveLength(42);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -710,12 +718,13 @@ describe("registered permission routes", () => {
       (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
     );
 
-    expect(paths).toHaveLength(historicalProtectedPaths.length + 18);
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 21);
     expect(additions).toEqual([
       "/project-messages", "/projects/:projectId/messages",
       "/designer/design-plans",
+      "/vendor",
       knowledgeConfigurationPaths[0],
-      "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/procurement", "/procurement/vendors", "/procurement/vendors/:vendorId",
+      "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/admin/purchase-orders", "/admin/project-completion", "/procurement", "/procurement/vendors", "/procurement/vendors/:vendorId",
       ...knowledgeConfigurationPaths.slice(1),
       ...clientResponsePaths,
       "/admin/design-approvals",
@@ -726,8 +735,9 @@ describe("registered permission routes", () => {
       (path) => ![
         "/project-messages", "/projects/:projectId/messages",
         "/designer/design-plans",
+        "/vendor",
         ...knowledgeConfigurationPaths,
-        "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/procurement", "/procurement/vendors", "/procurement/vendors/:vendorId",
+        "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/admin/purchase-orders", "/admin/project-completion", "/procurement", "/procurement/vendors", "/procurement/vendors/:vendorId",
         ...clientResponsePaths,
         "/admin/design-approvals",
         ...procurementPaths,
@@ -932,7 +942,7 @@ describe("registered permission routes", () => {
       const { router } = renderApp([path]);
 
       expect(await screen.findByRole("heading", { name: title })).toBeVisible();
-      expect(await screen.findByText(emptyState)).toBeVisible();
+      expect((await screen.findAllByText(emptyState))[0]).toBeVisible();
       expect(screen.queryByRole("heading", { name: "Page not found" })).not.toBeInTheDocument();
       expect(router.state.location.pathname).toBe(path);
     }
@@ -1181,9 +1191,6 @@ describe("protected role routing", () => {
     fireEvent.change(screen.getByLabelText("Mobile number"), {
       target: { value: "+91 98765 43210" }
     });
-    fireEvent.change(screen.getByLabelText("Address"), {
-      target: { value: "42 Garden Lane, Bengaluru" }
-    });
     fireEvent.change(screen.getByLabelText("Password", { exact: true }), {
       target: { value: "StrongPassword!23" }
     });
@@ -1198,7 +1205,6 @@ describe("protected role routing", () => {
       ["Full name", "Priya Shah"],
       ["Email address", "priya@example.com"],
       ["Mobile number", "+91 98765 43210"],
-      ["Address", "42 Garden Lane, Bengaluru"],
       ["Password", "StrongPassword!23"],
       ["Confirm password", "StrongPassword!23"]
     ] as const) {
@@ -1343,6 +1349,8 @@ describe("protected role routing", () => {
       if (url === "/api/v1/auth/me") return Response.json({ data: estimatorSales });
       if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(estimatorSales.role) });
       if (url === "/api/v1/leads/lead-1") return Response.json({ data: { id: "lead-1", ownerId: "user-estimator-sales", clientName: "Test User", clientEmail: "test@example.com", clientMobile: "8500098088", projectName: "Test project", location: "Bangalore", propertyType: "2BHK", budgetMin: 1000000, budgetMax: 1500000, source: "Walk-in", stage: "estimate_in_progress", nextAction: "estimate", nextActionAt: "2026-07-29T10:00:00.000Z", builder: null, areaSqft: null, targetHandoverAt: null, notes: null, latestActivityAt: null, createdAt: "2026-07-29T10:00:00.000Z", updatedAt: "2026-07-29T10:00:00.000Z" } });
+      if (url === "/api/v1/leads/lead-1/estimate") return Response.json({ data: null });
+      if (url.startsWith("/api/v1/estimation/catalogue?")) return Response.json({ data: estimatorCatalogue });
       throw new Error(`Unhandled request: ${url}`);
     });
 
@@ -1359,6 +1367,8 @@ describe("protected role routing", () => {
       if (url === "/api/v1/auth/me") return Response.json({ data: estimatorSales });
       if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(estimatorSales.role) });
       if (url === "/api/v1/leads/lead-1") return Response.json({ data: { id: "lead-1", ownerId: "user-estimator-sales", clientName: "Test User", clientEmail: "test@example.com", clientMobile: "8500098088", projectName: "Test project", location: "Bangalore", propertyType: "2BHK", budgetMin: 1000000, budgetMax: 1500000, source: "Walk-in", stage: "estimate_in_progress", nextAction: "estimate", nextActionAt: "2026-07-29T10:00:00.000Z", builder: null, areaSqft: null, targetHandoverAt: null, notes: null, latestActivityAt: null, createdAt: "2026-07-29T10:00:00.000Z", updatedAt: "2026-07-29T10:00:00.000Z" } });
+      if (url === "/api/v1/leads/lead-1/estimate") return Response.json({ data: null });
+      if (url.startsWith("/api/v1/estimation/catalogue?")) return Response.json({ data: estimatorCatalogue });
       throw new Error(`Unhandled request: ${url}`);
     });
     const user = userEvent.setup();
@@ -1366,8 +1376,10 @@ describe("protected role routing", () => {
     await user.click(await screen.findByRole("button", { name: "Select rooms" }));
     await user.click(screen.getByRole("option", { name: "Master Bedroom" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(await screen.findByRole("checkbox", { name: /Joinery/ }));
     await user.click(screen.getByRole("button", { name: /continue to item selection/i }));
     expect(await screen.findByRole("heading", { name: /select estimate items/i })).toBeVisible();
+    expect(screen.getByText("Wardrobe carcass")).toBeVisible();
   });
 
   it("restores saved rooms and selected estimate items when an estimator reopens an estimate", async () => {

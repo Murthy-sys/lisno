@@ -35,6 +35,19 @@ describe("Combined furniture requirements and dimensions review", () => {
     expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
   });
 
+  it("shows length and width for new submissions while retaining Height only for historical snapshots", () => {
+    const { operational } = fixture();
+    const savedDimensions = operational.rooms![0]!.dimensions!.items[0]! as { height?: number };
+    delete savedDimensions.height;
+    const { rerender } = render(<FurnitureRequirementsReview projectId="project-a" operational={operational} />);
+    const measurements = within(screen.getByRole("table", { name: "Furniture measurements for Bedroom" }));
+    expect(measurements.getByRole("row", { name: "Wardrobe 2100.125 600 mm" })).toBeVisible();
+    expect(measurements.queryByRole("columnheader", { name: "Height" })).not.toBeInTheDocument();
+    savedDimensions.height = 2400;
+    rerender(<FurnitureRequirementsReview projectId="project-a" operational={operational} />);
+    expect(measurements.getByRole("columnheader", { name: "Height" })).toBeVisible();
+  });
+
   it.each([
     ["awaiting_client_acceptance", "Awaiting dimensions approval", "Await Client approval of furniture dimensions"],
     ["requirements_changes_requested", "Dimensions sent back", "Correct and resubmit furniture dimensions"]

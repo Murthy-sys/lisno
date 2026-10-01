@@ -53,6 +53,29 @@ describe("Client space-planning completion", () => {
     expect(screen.getByRole("link", { name: "Review design images" })).toHaveAttribute("href", "/client?estimate=estimate-a");
   });
 
+  it("describes final requirements for an unsubmitted v0 plan without offering Client completion", () => {
+    const data = fixture();
+    data.stage.operational!.availableActions = [];
+    data.stage.operational!.spacePlanning = {
+      estimateId: "estimate-a", designPlanVersion: 0, reviewRoundId: null,
+      totalImages: 0, approvedImages: 0, readyForCompletion: false, completedAt: null,
+      completionBlockingReasons: ["Upload and submit the design plan for Client review.", "Approve every current design image."]
+    };
+    setup(data);
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting design plan upload");
+    const requirements = screen.getByRole("group", { name: "Client completion requirements" });
+    expect(within(requirements).getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: label })).not.toBeInTheDocument();
+  });
+
+  it("keeps Client completion closed when the backend returns completion requirements", () => {
+    const data = fixture();
+    data.stage.operational!.spacePlanning!.completionBlockingReasons = ["The current image review is incomplete."];
+    setup(data);
+    expect(screen.queryByRole("button", { name: label })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Client completion requirements" })).toHaveTextContent("The current image review is incomplete.");
+  });
+
   it("requires the backend Client action even when every count is approved", () => {
     const data = fixture();
     data.stage.operational!.availableActions = [];

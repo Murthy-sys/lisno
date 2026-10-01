@@ -274,11 +274,11 @@ export function ClientResponseTaskDetailPage() {
               {task.estimateSnapshot.lineItems.map((item, index) => (
                 <tr key={`${item.catalogueId}-${item.roomName}-${index}`}>
                   <td>{item.roomName}</td>
-                  <td>{item.catalogueId}</td>
-                  <td>{item.specification}</td>
-                  <td>{item.quantity} {item.unit}</td>
-                  <td>{money.format(item.rate)}</td>
-                  <td>{money.format(item.amount)}</td>
+                  <td>{item.source === "configuration" ? item.mainLineName ?? "Configured Main Line" : item.catalogueId}</td>
+                  <td>{item.source === "configuration" ? `${item.mainBasketName ?? "Main Basket"} / ${item.subBasketName ?? "Sub Basket"}` : item.specification}</td>
+                  <td>{item.quantity} {item.source === "configuration" ? item.uomName ?? item.unit : item.unit}</td>
+                  <td>{item.rate === null ? "Rate unavailable" : money.format(item.ratePaise === undefined || item.ratePaise === null ? item.rate : item.ratePaise / 100)}</td>
+                  <td>{item.amount === null ? "Amount unavailable" : money.format(item.amountPaise === undefined || item.amountPaise === null ? item.amount : item.amountPaise / 100)}</td>
                   <td>{item.included ? "Included" : "Not included"}</td>
                 </tr>
               ))}

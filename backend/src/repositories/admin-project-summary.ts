@@ -1,4 +1,5 @@
 import { ApiError } from "../middleware/errors.js";
+import { projectFinanceBaseline } from "../domain/project-finance.js";
 import type {
   AdminProjectEstimateLinkSource,
   AdminProjectSummary,
@@ -180,15 +181,19 @@ function nonEmptyIdentifier(value: string | null): string | null {
 function assertApprovedBaseline(estimate: EstimateSummaryRecord): void {
   const baseline = estimate.approvedBaseline;
   if (estimate.status !== "client_approved") return;
-  if (
-    baseline === null ||
-    !Number.isSafeInteger(baseline.estimateVersion) ||
-    baseline.estimateVersion < 1 ||
-    ![baseline.subtotal, baseline.gst, baseline.total].every(
-      (amount) => Number.isSafeInteger(amount) && amount >= 0
-    ) ||
-    baseline.subtotal + baseline.gst !== baseline.total
-  ) {
+  try {
+    if (baseline === null || !Number.isSafeInteger(baseline.estimateVersion) || baseline.estimateVersion < 1) {
+      throw new TypeError("Approved Estimate version is invalid.");
+    }
+    projectFinanceBaseline({
+      subtotalRupees: baseline.subtotal,
+      gstRupees: baseline.gst,
+      totalRupees: baseline.total,
+      ...(baseline.subtotalPaise === undefined ? {} : { subtotalPaise: baseline.subtotalPaise }),
+      ...(baseline.gstPaise === undefined ? {} : { gstPaise: baseline.gstPaise }),
+      ...(baseline.totalPaise === undefined ? {} : { totalPaise: baseline.totalPaise })
+    });
+  } catch {
     throw new ApiError(
       409,
       "ESTIMATE_APPROVAL_BASELINE_INVALID",

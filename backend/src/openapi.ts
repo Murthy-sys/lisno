@@ -3,6 +3,11 @@ import { VENDOR_KPI_SCHEMAS, VENDOR_KPI_REQUESTS, VENDOR_KPI_RESPONSES } from ".
 import { VENDOR_INDUCTION_SCHEMAS, VENDOR_INDUCTION_REQUESTS, VENDOR_INDUCTION_RESPONSES } from "./openapi/vendor-induction.js";
 import { VENDOR_SUGGESTION_SCHEMAS, VENDOR_SUGGESTION_REQUESTS, VENDOR_SUGGESTION_RESPONSES } from "./openapi/project-vendor-suggestions.js";
 import { PROJECT_PROCUREMENT_SCHEMAS, PROJECT_PROCUREMENT_REQUESTS, PROJECT_PROCUREMENT_RESPONSES, PROJECT_PROCUREMENT_ITEM_QUERY_PARAMETERS } from "./openapi/project-procurement.js";
+import { PROJECT_PURCHASE_ORDER_SCHEMAS, PROJECT_PURCHASE_ORDER_REQUESTS, PROJECT_PURCHASE_ORDER_RESPONSES, PROJECT_PURCHASE_ORDER_QUERY_PARAMETERS } from "./openapi/project-purchase-orders.js";
+import { PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS, PROJECT_PURCHASE_ORDER_REQUEST_REQUESTS, PROJECT_PURCHASE_ORDER_REQUEST_RESPONSES, PROJECT_PURCHASE_ORDER_REQUEST_QUERY_PARAMETERS } from "./openapi/project-purchase-order-requests.js";
+import { VENDOR_WORK_SCHEMAS, VENDOR_WORK_REQUESTS, VENDOR_WORK_RESPONSES, VENDOR_WORK_QUERY_PARAMETERS } from "./openapi/vendor-work.js";
+import { PROJECT_COMPLETION_SCHEMAS, PROJECT_COMPLETION_REQUESTS, PROJECT_COMPLETION_RESPONSES, PROJECT_COMPLETION_QUERY_PARAMETERS } from "./openapi/project-completion.js";
+import { SITE_COMPLETION_SCHEMAS, SITE_COMPLETION_REQUESTS, SITE_COMPLETION_RESPONSES } from "./openapi/site-completion.js";
 import { DESIGN_WORKFLOW_ACTIONS } from "./domain/design-workflow-state.js";
 import { CHAT_COMPONENT_SCHEMAS, CHAT_REQUEST_BODIES, CHAT_RESPONSE_SCHEMAS, CHAT_QUERY_PARAMETERS } from "./openapi/project-chat.js";
 import {
@@ -117,8 +122,14 @@ const genericJsonRequestBody: OpenApiRequestBody = {
 };
 
 const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
+  "POST /estimates/:estimateId/design-plan-documents/prepare": jsonRequest("PlanDocumentPrepare"),
   ...CHAT_REQUEST_BODIES,
   ...PROJECT_PROCUREMENT_REQUESTS,
+  ...PROJECT_PURCHASE_ORDER_REQUESTS,
+  ...PROJECT_PURCHASE_ORDER_REQUEST_REQUESTS,
+  ...VENDOR_WORK_REQUESTS,
+  ...PROJECT_COMPLETION_REQUESTS,
+  ...SITE_COMPLETION_REQUESTS,
   ...VENDOR_SUGGESTION_REQUESTS,
   ...VENDOR_KPI_REQUESTS,
   ...VENDOR_INDUCTION_REQUESTS,
@@ -142,7 +153,7 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
     "EstimateDecisionRequest"
   ),
   "POST /client/estimates/:estimateId/decision": jsonRequest(
-    "EstimateDecisionRequest"
+    "ClientEstimateDecisionRequest"
   ),
   "PUT /leads/:leadId/estimate": jsonRequest("EstimateInput"),
   "PUT /auth/me/profile-photo": multipartRequest("ProfilePhotoUploadRequest"),
@@ -208,8 +219,16 @@ const operationsWithoutBodies = new Set<string>([
 ]);
 
 const responseSchemaByOperation: Readonly<Record<string, string>> = {
+  "GET /estimation/catalogue": "EstimatorCataloguePage",
+  "GET /client/estimates": "ClientEstimateReviewList",
+  "POST /client/estimates/:estimateId/decision": "ClientEstimateReviewItem",
   ...CHAT_RESPONSE_SCHEMAS,
   ...PROJECT_PROCUREMENT_RESPONSES,
+  ...PROJECT_PURCHASE_ORDER_RESPONSES,
+  ...PROJECT_PURCHASE_ORDER_REQUEST_RESPONSES,
+  ...VENDOR_WORK_RESPONSES,
+  ...PROJECT_COMPLETION_RESPONSES,
+  ...SITE_COMPLETION_RESPONSES,
   ...VENDOR_SUGGESTION_RESPONSES,
   ...VENDOR_KPI_RESPONSES,
   ...VENDOR_INDUCTION_RESPONSES,
@@ -226,6 +245,9 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "POST /estimate-plan-change-requests/:requestId/replacement-upload": "EstimateDesignUpload",
   "POST /estimate-design-uploads/:uploadId/retry": "EstimateDesignUpload",
   "GET /estimates/:estimateId/design-uploads": "EstimateDesignWorkspace",
+  "GET /estimates/:estimateId/design-plan-documents": "PlanDocumentWorkspace",
+  "POST /estimates/:estimateId/design-plan-documents/prepare": "PlanDocumentWorkspace",
+  "GET /client/estimates/:estimateId/design-plan-documents": "PlanDocumentWorkspace",
   "GET /auth/authorization": "AuthorizationSnapshot",
   "GET /admin/sales-managers": "SalesManagerOptionPage",
   "GET /admin/users": "UserDirectoryPage",
@@ -234,6 +256,7 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "POST /admin/projects/:projectId/design-assignment": "DesignPlanTask",
   "GET /designer/design-plan-tasks": "DesignPlanTaskList",
   "GET /projects/:projectId/design-workflow": "DesignWorkflow",
+  "GET /projects/:projectId/status": "ProjectStatusSummary",
   "GET /projects/:projectId/design-workflow/furniture-uoms": "FurnitureUomOptions",
   "POST /projects/:projectId/design-workflow/furniture-uoms": "FurnitureUomCreateResult",
   "POST /projects/:projectId/design-workflow/actions": "DesignWorkflowActionResult",
@@ -282,6 +305,8 @@ const imageOperations = new Set<string>([
 ]);
 
 const attachmentOperations = new Set<string>([
+  "GET /estimates/:estimateId/design-plan-documents/:documentId/pdf",
+  "GET /client/estimates/:estimateId/design-plan-documents/:documentId/pdf",
   "GET /design-versions/:versionId/download",
   "GET /admin/estimate-client-response-tasks/:roundId/proof",
   "GET /admin/design-plan-response-tasks/:roundId/attachments/:attachmentIndex",
@@ -319,6 +344,7 @@ const storedAttachmentContentTypes = [
 ] as const;
 
 const operationSummaries: Readonly<Record<string, string>> = {
+  "GET /estimation/catalogue": "Read the active estimator Main Basket catalogue",
   "GET /health": "Check API health",
   "GET /procurement/vendor-kpis/:vendorId": "Read vendor profile and KPI assessments",
   "PUT /procurement/vendor-kpis/:vendorId/procurement": "Save Procurement's official vendor assessment",
@@ -374,7 +400,7 @@ const operationSummaries: Readonly<Record<string, string>> = {
   "POST /finance/projects/:projectId/entries": "Record project spending or overhead",
   "GET /procurement/projects/:projectId/items": "List project procurement items",
   "GET /procurement/uoms": "List active procurement UOM options",
-  "GET /procurement/vendors": "List active saved Configuration vendors",
+  "GET /procurement/vendors": "List current saved Configuration vendors and readiness",
   "GET /procurement/suggestion-projects": "List authorized Design-approved vendor suggestion projects",
   "GET /procurement/projects/:projectId/vendor-suggestions": "List current-source vendor suggestions",
   "POST /procurement/projects/:projectId/vendor-suggestions": "Suggest a vendor as the assigned Sales Manager",
@@ -383,6 +409,44 @@ const operationSummaries: Readonly<Record<string, string>> = {
   "GET /procurement/projects/:projectId/items/:itemId": "Read a project procurement item",
   "POST /procurement/projects/:projectId/items": "Create a project procurement item",
   "PATCH /procurement/projects/:projectId/items/:itemId": "Update a project procurement item with version checking",
+  "DELETE /procurement/projects/:projectId/items/:itemId": "Remove an uncommitted project procurement item with an audit reason",
+  "GET /procurement/projects/:projectId/purchase-order-preparation": "Review current procurement item quantities and backend-derived section totals before GST",
+  "GET /procurement/projects/:projectId/purchase-order-requests": "List project-wide purchase order approval requests",
+  "GET /procurement/projects/:projectId/purchase-order-requests/:requestId": "Read immutable project-wide purchase order request history",
+  "POST /procurement/projects/:projectId/purchase-order-requests/quote": "Calculate a read-only section, vendor, and project quote before submission",
+  "POST /procurement/projects/:projectId/purchase-order-requests": "Submit all eligible project procurement items for one Super Admin decision",
+  "GET /admin/purchase-order-requests/pending": "List pending project-wide purchase order requests",
+  "POST /admin/purchase-order-requests/:requestId/decision": "Approve all vendor orders atomically, request changes, or reject a project purchase order request",
+  "GET /procurement/projects/:projectId/purchase-orders": "List project purchase orders",
+  "GET /procurement/projects/:projectId/purchase-orders/:orderId": "Read a project purchase order and revisions",
+  "POST /procurement/projects/:projectId/purchase-orders": "Create a purchase order draft",
+  "PATCH /procurement/projects/:projectId/purchase-orders/:orderId": "Revise a purchase order draft",
+  "POST /procurement/projects/:projectId/purchase-orders/:orderId/submit": "Submit a purchase order revision to Super Admin",
+  "POST /procurement/projects/:projectId/purchase-orders/:orderId/decision": "Decide a submitted purchase order as Super Admin",
+  "POST /procurement/projects/:projectId/purchase-orders/:orderId/amend": "Start a new purchase order amendment",
+  "POST /procurement/projects/:projectId/purchase-orders/:orderId/cancel": "Cancel an unapproved purchase order with reason",
+  "GET /procurement/projects/:projectId/purchase-order-commitments": "Read approved purchase order commitments separately from actual spend",
+  "GET /admin/purchase-orders/pending": "List pending purchase orders for Super Admin approval",
+  "GET /vendor/purchase-orders/:orderId": "Read the vendor's own approved purchase order",
+  "GET /vendor/work": "List the vendor's own assigned work",
+  "GET /vendor/work/:assignmentId": "Read one vendor work assignment",
+  "PATCH /vendor/work/:assignmentId/progress": "Update vendor work progress",
+  "POST /vendor/work/:assignmentId/images": "Attach a validated work image to the current round",
+  "POST /vendor/work/:assignmentId/submit": "Submit a vendor work section to the Client",
+  "GET /clients/projects/:projectId/vendor-work-reviews": "List Client review tasks for submitted vendor work",
+  "POST /clients/projects/:projectId/vendor-work-reviews/:reviewId/decision": "Approve vendor work or request section changes",
+  "GET /projects/:projectId/vendor-work-progress": "Read project vendor work progress",
+  "GET /projects/:projectId/vendor-work/:assignmentId/images/:imageId": "View an authorized vendor work image",
+  "GET /admin/project-completion-tasks": "List final project completion tasks",
+  "GET /admin/projects/:projectId/completion": "Read project scope and completion blockers",
+  "POST /admin/projects/:projectId/scope-exceptions": "Record a reasoned approved-scope exception",
+  "POST /admin/projects/:projectId/complete": "Mark a fully accepted project completed",
+  "GET /projects/:projectId/site-completion": "Read the assigned Site Manager's project completion state",
+  "GET /admin/projects/:projectId/site-completion": "Read project completion evidence as Super Admin",
+  "PATCH /projects/:projectId/site-completion/progress": "Record Site Manager project execution progress",
+  "POST /projects/:projectId/site-completion/submit": "Send Site Manager completion to the Client",
+  "GET /clients/projects/:projectId/site-completion": "Read the Client's project completion review",
+  "POST /clients/projects/:projectId/site-completion/decision": "Accept project completion or request changes",
   "GET /procurement/projects": "List approved Estimate items for Procurement",
   "POST /procurement/projects/:projectId/expenses":
     "Record Procurement spending with a supporting receipt",
@@ -414,6 +478,7 @@ const operationSummaries: Readonly<Record<string, string>> = {
 };
 
 const paginationOperationKeys = new Set<string>([
+  "GET /estimation/catalogue",
   "GET /procurement/suggestion-projects",
   "GET /procurement/projects/:projectId/vendor-suggestions",
   "GET /procurement/vendors",
@@ -516,6 +581,18 @@ const queryParametersByOperation: Readonly<
   Record<string, readonly OpenApiParameter[]>
 > = {
   ...CHAT_QUERY_PARAMETERS,
+  "GET /client/estimates/:estimateId/design-plan-documents": [{
+    name: "roundId", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 200 },
+    description: "A submitted Design review round; defaults to the latest visible round."
+  }],
+  "GET /client/estimates/:estimateId/design-plan-documents/:documentId/pdf": [{
+    name: "roundId", in: "query", required: true, schema: { type: "string", minLength: 1, maxLength: 200 },
+    description: "The exact submitted review round containing this PDF."
+  }],
+  "GET /client/estimates/:estimateId/pdf": [{
+    name: "roundId", in: "query", required: true, schema: { type: "string", minLength: 1 },
+    description: "The submitted review round displayed by the Client. A superseded round returns a conflict; the server never substitutes a newer proposal."
+  }],
   "GET /admin/projects": [
     {
       name: "status", in: "query", required: false,
@@ -536,8 +613,18 @@ const queryParametersByOperation: Readonly<
   "GET /users/:userId/profile-photo": [{ name: "v", in: "query", required: false, schema: { type: "string", pattern: "^[1-9][0-9]{0,15}$" }, description: "Optional profilePhotoVersion used only to vary the client cache key." }],
   "GET /procurement/suggestion-projects": [{ name: "q", in: "query", required: false, schema: { type: "string", maxLength: 100 } }],
   "GET /procurement/projects/:projectId/vendor-suggestions": [{ name: "q", in: "query", required: false, schema: { type: "string", maxLength: 100 } }],
-  "GET /procurement/vendors": [{ name: "q", in: "query", required: false, schema: { type: "string", maxLength: 100 }, description: "Literal normalized search across active Configuration vendor codes and names." }],
+  "GET /procurement/vendors": [
+    { name: "q", in: "query", required: false, schema: { type: "string", maxLength: 100 }, description: "Literal normalized search across current Configuration vendor codes and names, including onboarding candidates when no effectiveStatus filter is supplied." },
+    { name: "effectiveStatus", in: "query", required: false, schema: { type: "string", enum: ["active"] }, description: "When active, return only vendors eligible for new procurement assignment, filtering before total and pagination." }
+  ],
   "GET /procurement/projects/:projectId/items": PROJECT_PROCUREMENT_ITEM_QUERY_PARAMETERS,
+  "GET /procurement/projects/:projectId/purchase-orders": PROJECT_PURCHASE_ORDER_QUERY_PARAMETERS,
+  "GET /procurement/projects/:projectId/purchase-order-requests": PROJECT_PURCHASE_ORDER_REQUEST_QUERY_PARAMETERS,
+  "GET /admin/purchase-orders/pending": PROJECT_PURCHASE_ORDER_QUERY_PARAMETERS,
+  "GET /admin/purchase-order-requests/pending": PROJECT_PURCHASE_ORDER_REQUEST_QUERY_PARAMETERS,
+  "GET /admin/project-completion-tasks": PROJECT_COMPLETION_QUERY_PARAMETERS,
+  "GET /vendor/work": VENDOR_WORK_QUERY_PARAMETERS,
+  "GET /clients/projects/:projectId/vendor-work-reviews": VENDOR_WORK_QUERY_PARAMETERS,
   "GET /admin/dashboard/overview": [dashboardPeriodParameter()],
   "GET /admin/dashboard/projects": [
     dashboardPeriodParameter(),
@@ -1110,6 +1197,9 @@ function requestBodyFor(
 }
 
 function responsesFor(key: HumanJwtOperationKeyShape): Readonly<Record<string, OpenApiResponse>> {
+  if (key === "GET /projects/:projectId/vendor-work/:assignmentId/images/:imageId") {
+    return binaryResponses(["image/jpeg", "image/png", "image/webp"], "Authorized vendor work image from the requested assignment and round. Private, no-store and nosniff.");
+  }
   if (key === "POST /procurement/projects/:projectId/vendor-suggestions") return { "200": dataResponse("ProjectVendorSuggestion", "Same request replayed without another write."), "201": dataResponse("ProjectVendorSuggestion", "Vendor suggestion created."), ...standardProtectedErrors };
   if (key === "POST /projects/:projectId/design-workflow/furniture-uoms") {
     return { "200": dataResponse("FurnitureUomCreateResult", "Existing active UOM reused; its settings are unchanged."), "201": dataResponse("FurnitureUomCreateResult", "Reusable Configuration UOM created."), ...standardProtectedErrors };
@@ -1419,6 +1509,11 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     ...VENDOR_INDUCTION_SCHEMAS,
     ...CHAT_COMPONENT_SCHEMAS,
     ...PROJECT_PROCUREMENT_SCHEMAS,
+    ...PROJECT_PURCHASE_ORDER_SCHEMAS,
+    ...PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS,
+    ...VENDOR_WORK_SCHEMAS,
+    ...PROJECT_COMPLETION_SCHEMAS,
+    ...SITE_COMPLETION_SCHEMAS,
     ...VENDOR_SUGGESTION_SCHEMAS,
     DashboardRatio: {
       type: "object",
@@ -2019,11 +2114,136 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         note: { type: "string", maxLength: 1000, default: "" }
       }
     },
-    EstimateLineInput: {
+    ClientEstimateDecisionRequest: {
+      type: "object", additionalProperties: false,
+      required: ["decision", "reviewRoundId", "reviewRoundVersion"],
+      description: "Decides only the submitted round displayed by the Client. Missing or stale review identity cannot approve a newer submission. Requesting changes requires a nonblank trimmed note.",
+      properties: {
+        decision: { type: "string", enum: ["approve", "request_changes"] },
+        note: { type: "string", maxLength: 1000, default: "" },
+        reviewRoundId: { type: "string", minLength: 1 },
+        reviewRoundVersion: { type: "integer", minimum: 1 }
+      }
+    },
+    ClientEstimateSnapshot: {
+      type: "object", additionalProperties: false,
+      description: "Immutable submitted commercial proposal. Configured lines retain exact integer-paise rates and amounts alongside rupee display values; historical lines retain their whole-rupee boundary.",
+      required: ["clientName", "projectName", "location", "propertyType", "lineItems", "subtotal", "gst", "total"],
+      properties: {
+        clientName: { type: "string" }, projectName: { type: "string" }, location: { type: "string" }, propertyType: { type: "string" },
+        lineItems: { type: "array", items: {
+          type: "object", additionalProperties: false,
+          required: ["catalogueId", "roomName", "specification", "unit", "rate", "quantity", "included", "amount"],
+          properties: {
+            id: { type: "string", nullable: true }, source: { type: "string", enum: ["legacy", "configuration"] },
+            catalogueId: { type: "string" }, roomId: { type: "string" }, roomName: { type: "string" },
+            specification: { type: "string", nullable: true }, unit: { type: "string" },
+            rate: { type: "number", minimum: 0, nullable: true }, ratePaise: { type: "integer", minimum: 0, nullable: true },
+            quantity: { type: "number", minimum: 0 }, included: { type: "boolean" },
+            amount: { type: "number", minimum: 0, nullable: true }, amountPaise: { type: "integer", minimum: 0, nullable: true },
+            mainBasketId: { type: "string" }, subBasketId: { type: "string" }, mainLineId: { type: "string" },
+            revisionId: { type: "string" }, uomId: { type: "string" }, mainBasketName: { type: "string" },
+            subBasketName: { type: "string" }, mainLineName: { type: "string" }, uomName: { type: "string" }
+          }
+        } },
+        subtotal: { type: "number", minimum: 0 }, gst: { type: "number", minimum: 0 }, total: { type: "number", minimum: 0 },
+        subtotalPaise: { type: "integer", minimum: 0 }, gstPaise: { type: "integer", minimum: 0 },
+        totalPaise: { type: "integer", minimum: 0 }, selectedMainBasketIds: { type: "array", items: { type: "string" } }
+      }
+    },
+    ClientPublishedEstimateReview: {
+      type: "object", additionalProperties: false,
+      required: ["id", "version", "estimateVersion", "sendGeneration", "status", "submittedAt", "snapshot", "decisionNote", "decidedAt", "canDecide"],
+      properties: {
+        id, version: { type: "integer", minimum: 1 }, estimateVersion: { type: "integer", minimum: 1 },
+        sendGeneration: { type: "integer", minimum: 1 }, status: { type: "string", enum: ["pending", "approved", "changes_requested"] },
+        submittedAt: dateTime, snapshot: { $ref: "#/components/schemas/ClientEstimateSnapshot" },
+        decisionNote: { type: "string", nullable: true }, decidedAt: { type: "string", format: "date-time", nullable: true },
+        canDecide: { type: "boolean", description: "True only for the current pending round with a consistent, still-submitted estimate. Backend authorization and version checks remain authoritative." }
+      }
+    },
+    ClientEstimateReviewItem: {
+      type: "object", additionalProperties: true,
+      required: ["id", "projectId", "status", "publishedReview", "reviewSourceIssue"],
+      description: "Authorized Client proposal. Commercial fields are projected from the published snapshot; live Sales drafts are never exposed. Room and scope context is empty while Sales revises.",
+      properties: {
+        id, projectId: { type: "string", nullable: true }, status: { type: "string" }, version: { type: "integer", minimum: 1 },
+        publishedReview: { allOf: [{ $ref: "#/components/schemas/ClientPublishedEstimateReview" }], nullable: true },
+        reviewSourceIssue: { type: "string", nullable: true, enum: ["missing_snapshot", "source_conflict", null] }
+      }
+    },
+    ProjectStatusSummary: {
+      type: "object", additionalProperties: false,
+      required: ["projectId", "projectName", "projectStatus", "serverNow", "state", "currentStage", "pendingActions", "issue"],
+      description: "Read-only status for current project participants. Contains no commercial values, proof files, or internal notes.",
+      properties: {
+        projectId: id, projectName: { type: "string" }, projectStatus: { type: "string" }, serverNow: dateTime,
+        state: { type: "string", enum: ["active", "scheduled", "paused", "completed", "no_pending", "unavailable"] },
+        currentStage: { type: "object", nullable: true, additionalProperties: false, required: ["key", "label"], properties: { key: id, label: { type: "string" } } },
+        issue: { type: "string", nullable: true },
+        pendingActions: { type: "array", items: { $ref: "#/components/schemas/ProjectPendingAction" } }
+      }
+    },
+    ProjectPendingAction: {
+      type: "object", additionalProperties: false,
+      required: ["id", "stageKey", "stageLabel", "action", "state", "responsibleRole", "people", "scheduledAt", "deadlineAt", "blocker"],
+      properties: {
+        id, stageKey: id, stageLabel: { type: "string" }, action: { type: "string" },
+        state: { type: "string", enum: ["pending", "scheduled", "blocked", "unassigned"] },
+        responsibleRole: { type: "string", enum: [...ROLE_CODES] },
+        people: { type: "array", items: { type: "object", additionalProperties: false, required: ["id", "name", "role"], properties: { id, name: { type: "string" }, role: { type: "string", enum: [...ROLE_CODES] } } } },
+        scheduledAt: { type: "string", format: "date-time", nullable: true }, deadlineAt: { type: "string", format: "date-time", nullable: true }, blocker: { type: "string", nullable: true }
+      }
+    },
+    ClientEstimateReviewList: {
+      type: "array", items: { $ref: "#/components/schemas/ClientEstimateReviewItem" }
+    },
+    EstimatorCatalogueUom: {
+      type: "object", additionalProperties: false, required: ["id", "code", "name", "decimalScale"],
+      properties: { id: { type: "string" }, code: { type: "string" }, name: { type: "string" },
+        decimalScale: { type: "integer", minimum: 0, maximum: 3 } }
+    },
+    EstimatorCatalogueLine: {
+      type: "object", additionalProperties: false,
+      required: ["id", "mainLineId", "basketId", "subBasketId", "name", "displayOrder", "revisionId", "uom"],
+      properties: {
+        id: { type: "string" }, mainLineId: { type: "string" }, basketId: { type: "string" },
+        subBasketId: { type: "string" }, name: { type: "string" },
+        displayOrder: { type: "integer" }, revisionId: { type: "string" },
+        uom: { $ref: "#/components/schemas/EstimatorCatalogueUom" }
+      }
+    },
+    EstimatorCatalogueSubBasket: {
+      type: "object", additionalProperties: false,
+      required: ["id", "basketId", "name", "displayOrder", "mainLines"],
+      properties: {
+        id: { type: "string" }, basketId: { type: "string" }, name: { type: "string" },
+        displayOrder: { type: "integer" }, mainLines: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueLine" } }
+      }
+    },
+    EstimatorCatalogueBasket: {
+      type: "object", additionalProperties: false,
+      required: ["id", "name", "displayOrder", "subBaskets"],
+      properties: {
+        id: { type: "string" }, name: { type: "string" }, displayOrder: { type: "integer" },
+        subBaskets: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueSubBasket" } }
+      }
+    },
+    EstimatorCataloguePage: {
+      type: "object", additionalProperties: false,
+      required: ["items", "pagination", "ineligibleLineCount"],
+      properties: {
+        items: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueBasket" } },
+        pagination: { $ref: "#/components/schemas/Pagination" },
+        ineligibleLineCount: { type: "integer", minimum: 0, description: "Active lines omitted from this page because they lack the required eligible hierarchy, revision, or UOM." }
+      }
+    },
+    LegacyEstimateLineInput: {
       type: "object",
       additionalProperties: false,
       required: ["catalogueId", "roomName", "specification", "unit", "rate", "quantity", "included"],
       properties: {
+        source: { type: "string", enum: ["legacy"] },
         catalogueId: { type: "string", minLength: 1 },
         roomName: { type: "string", minLength: 1 },
         specification: { type: "string", minLength: 1 },
@@ -2033,6 +2253,25 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         included: { type: "boolean" }
       }
     },
+    ConfiguredEstimateLineInput: {
+      type: "object", additionalProperties: false,
+      required: ["source", "catalogueId", "roomId", "roomName", "mainBasketId", "subBasketId", "mainLineId", "revisionId", "uomId", "quantity", "included", "ratePaise"],
+      properties: {
+        source: { type: "string", enum: ["configuration"] }, id: { type: "string" },
+        catalogueId: { type: "string" }, roomId: { type: "string" }, roomName: { type: "string" },
+        mainBasketId: { type: "string" }, subBasketId: { type: "string" }, mainLineId: { type: "string" },
+        revisionId: { type: "string" }, uomId: { type: "string" },
+        quantity: { type: "number", minimum: 0 }, included: { type: "boolean" },
+        ratePaise: { type: "integer", minimum: 0, nullable: true,
+          description: "Entered customer rate in integer paise. Null keeps an included draft line incomplete." }
+      }
+    },
+    EstimateLineInput: {
+      oneOf: [
+        { $ref: "#/components/schemas/LegacyEstimateLineInput" },
+        { $ref: "#/components/schemas/ConfiguredEstimateLineInput" }
+      ]
+    },
     EstimateInput: {
       type: "object",
       additionalProperties: false,
@@ -2041,6 +2280,8 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         propertyType: { type: "string", minLength: 1 },
         rooms: { type: "array", items: { type: "object", additionalProperties: true } },
         scopes: { type: "array", items: { type: "string" } },
+        selectedMainBasketIds: { type: "array", uniqueItems: true, items: { type: "string" } },
+        expectedVersion: { type: "integer", minimum: 1, description: "Required when updating an existing configured estimate or selected Main Baskets. Rejects stale draft saves." },
         lineItems: { type: "array", items: { $ref: "#/components/schemas/EstimateLineInput" } }
       }
     },
@@ -2273,6 +2514,15 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         deleteBlockedReason: { type: "string", description: "Human-readable explanation when deletion is unavailable." }
       }
     },
+    PlanDocumentPrepare: { type: "object", additionalProperties: false, required: ["expectedManifestHash"], properties: { expectedManifestHash: { type: "string", pattern: "^[a-f0-9]{64}$" } } },
+    PlanDocumentWorkspace: { type: "object", additionalProperties: false, required: ["manifestHash", "readyForSubmission", "documents", "reviewRoundId"], properties: {
+      manifestHash: { type: "string" }, readyForSubmission: { type: "boolean" }, reviewRoundId: { type: "string", nullable: true },
+      documents: { type: "array", items: { type: "object", required: ["sourceUploadId", "originalFilename", "documentId", "manifestHash", "status", "pageCount", "pdfUrl", "failureCode", "failureMessage"], properties: {
+        sourceUploadId: id, originalFilename: { type: "string" }, documentId: { type: "string", nullable: true }, manifestHash: { type: "string" },
+        status: { type: "string", enum: ["not_prepared", "preparing", "ready", "failed", "blocked"] }, pageCount: { type: "integer", minimum: 0 },
+        pdfUrl: { type: "string", nullable: true }, failureCode: { type: "string", nullable: true }, failureMessage: { type: "string", nullable: true }
+      } } }
+    } },
     EstimateDesignWorkspace: {
       type: "object", required: ["uploads", "pages", "drawings", "revisions"],
       properties: {
@@ -2285,13 +2535,13 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     DesignWorkflowActionRequest: {
       type: "object", additionalProperties: false, required: ["expectedVersion", "action", "idempotencyKey"],
       description: "space_planning_complete requires the actual project Client (no representatives), exact data {estimateId, designPlanVersion, reviewRoundId}, expectedVersion and an idempotency key. Every current image must match the immutable approved review round and its approval evidence, with no open feedback and completed prerequisites. This separately records stage completion; existing per-image Design finalization, finance and task generation are unchanged. operational.spacePlanning exposes estimateId, designPlanVersion, nullable reviewRoundId, totalImages, approvedImages, readyForCompletion and nullable completedAt. For internal_kickoff_complete, data must contain designHandoverAcknowledged: true and meetingAt. The assigned Designer acknowledges receiving the design flow after initial-payment confirmation. A signed checklist is required. The server records the acknowledging Designer and receipt time; manager handover and supplied acknowledgement identities are not accepted. After Internal Kick off is completed, its submitted document is available to the linked Client through the authenticated workflow proof endpoint. For client_kickoff_complete, data must contain reviewedDocumentEventId matching Client Kick off operational.submittedDocument.eventId to acknowledge reviewing that document, close Client Kick off and open Key Collection. Missing or mismatched document acknowledgements are rejected. An authorized Sales Manager or Super Admin acting on behalf of the Client must also attach representation proof. The existing Client Kick off countdown starts at Internal Kick off completion.",
-      properties: { expectedVersion: { type: "integer", minimum: 0 }, action: { type: "string", enum: DESIGN_WORKFLOW_ACTIONS }, stageId: id, idempotencyKey: { type: "string", minLength: 8, maxLength: 120 }, note: { type: "string", maxLength: 2000 }, data: { description: "furniture_scope accepts rooms: [{id, required}], optional notApplicable, and dimensions: [{roomId, items: [{estimateItemId, length, width, height, uomId}]}]. For both furniture_scope and furniture_upload, an approved estimate item with measurementType count instead requires {estimateItemId, measurementType: count, quantity, uomId}: quantity is a positive safe integer, without length/width/height. Dimensional rows may include measurementType: dimensions. The server derives the required mode solely from the frozen estimate unit (pt/pts/point/points after normalization), not the selected Configuration UOM or item name. Mixed-mode fields are rejected. Legacy pending points with dimensions must be sent back and corrected before approval; completed history remains unchanged. Combined scope submissions require every required room and its selected items plus a supporting proof; they create pending dimensions without approval. Their safe projection exposes requirementsSubmissionEventId. Combined furniture_accept and furniture_scope_return require {submissionEventId} matching that current token; Client approval atomically accepts scope and approves all its dimensions, while return retains values with a mandatory reason. Scope edits replace the token and preserve history; combined required-room submissions cannot be replaced by scope-only input. Legacy scope-only flows remain supported. furniture_upload requires rooms: [{roomId, items: [{estimateItemId, length, width, height, uomId}]}] and a proof file; positive finite dimensions require an active Configuration UOM ID. Its code/name are snapshotted in the submission; quantity decimalScale does not round measurements. Existing submitted unit snapshots remain valid after catalog changes. Every selected approved-estimate item in each submitted room is required; names and saved IDs are canonicalized by the server. Upload creates pending revisions, never approval. Pending legacy rows without estimateItemId must be returned and resubmitted before approval. furniture_dimensions_approve and furniture_dimensions_return require submissions: [{roomId, submissionEventId}] matching current pending revisions. Legacy scope-only furniture_accept and furniture_scope_return take empty data. Both return actions require a note. Assigned Designers and Clients may upload; only Client-capable actors may review, with proof for representatives. furniture_proceed is retired and rejected. Draft design preparation is unchanged; final submissions require approved current dimensions, except valid already-completed legacy stages.", oneOf: [{ type: "object", additionalProperties: true }, { type: "string", description: "JSON encoded action fields for multipart requests." }] }, file: { type: "string", format: "binary", description: "Required checklist, dimensions evidence or Client representation proof, depending on the action. The measurement sketch is optional." }, mediaFiles: { type: "array", items: { type: "string", format: "binary" }, description: "Repeated multipart parts; one or more site photos/videos required for measurement_complete, with no application media count or size cap. The optional sketch retains the configured document upload limit (25 MiB by default). New measurement data is an empty object; folder URLs are not accepted." } }
+      properties: { expectedVersion: { type: "integer", minimum: 0 }, action: { type: "string", enum: DESIGN_WORKFLOW_ACTIONS }, stageId: id, idempotencyKey: { type: "string", minLength: 8, maxLength: 120 }, note: { type: "string", maxLength: 2000 }, data: { description: "furniture_scope accepts rooms: [{id, required}], optional notApplicable, and dimensions: [{roomId, items: [{estimateItemId, length, width, uomId}]}]. For both furniture_scope and furniture_upload, an approved estimate item with measurementType count instead requires {estimateItemId, measurementType: count, quantity, uomId}: quantity is a positive safe integer, without length/width/height. Dimensional rows may include measurementType: dimensions. The server derives the required mode solely from the frozen estimate unit (pt/pts/point/points after normalization), not the selected Configuration UOM or item name. Mixed-mode fields are rejected. Legacy pending points with dimensions must be sent back and corrected before approval; completed history remains unchanged. Combined scope submissions require every required room and its selected items plus a supporting proof; they create pending dimensions without approval. Their safe projection exposes requirementsSubmissionEventId. Combined furniture_accept and furniture_scope_return require {submissionEventId} matching that current token; Client approval atomically accepts scope and approves all its dimensions, while return retains values with a mandatory reason. Scope edits replace the token and preserve history; combined required-room submissions cannot be replaced by scope-only input. Legacy scope-only flows remain supported. furniture_upload requires rooms: [{roomId, items: [{estimateItemId, length, width, uomId}]}] and a proof file; positive finite dimensions require an active Configuration UOM ID. A Designer may instead resolve accepted, returned, zero-value-only legacy rooms with {resolveReturnedZeroValueRoomIds: [roomId]} and no file; the server validates the pinned approved source and original returned submission, retains its evidence, marks only those rooms optional, and audits the change. Its code/name are snapshotted in the submission; quantity decimalScale does not round measurements. Existing submitted unit snapshots remain valid after catalog changes. Every positive-value approved-estimate item in each submitted room is required; exact zero-value items are excluded from new submissions, while historical pending reviews retain their original item set. Names and saved IDs are canonicalized by the server. Upload creates pending revisions, never approval. Pending legacy rows without estimateItemId must be returned and resubmitted before approval. furniture_dimensions_approve and furniture_dimensions_return require submissions: [{roomId, submissionEventId}] matching current pending revisions. Legacy scope-only furniture_accept and furniture_scope_return take empty data. Both return actions require a note. Assigned Designers and Clients may upload; only Client-capable actors may review, with proof for representatives. furniture_proceed is retired and rejected. Draft design preparation is unchanged; final submissions require approved current dimensions, except valid already-completed legacy stages.", oneOf: [{ type: "object", additionalProperties: true }, { type: "string", description: "JSON encoded action fields for multipart requests." }] }, file: { type: "string", format: "binary", description: "Required checklist, dimensions evidence or Client representation proof, depending on the action. The measurement sketch is optional." }, mediaFiles: { type: "array", items: { type: "string", format: "binary" }, description: "Repeated multipart parts; one or more site photos/videos required for measurement_complete, with no application media count or size cap. The optional sketch retains the configured document upload limit (25 MiB by default). New measurement data is an empty object; folder URLs are not accepted." } }
     },
     FurnitureUomOption: { type: "object", additionalProperties: false, required: ["id", "code", "name", "decimalScale"], properties: { id, code: { type: "string", minLength: 1, maxLength: 64 }, name: { type: "string", minLength: 1, maxLength: 240 }, decimalScale: { type: "integer", minimum: 0, maximum: 3, description: "Estimate quantity precision; does not round furniture measurements." } } },
     FurnitureUomOptions: { type: "array", items: { $ref: "#/components/schemas/FurnitureUomOption" }, description: "Active reusable Configuration UOMs, in display order. Requires current project furniture-uploader capability." },
     FurnitureUomCreate: { type: "object", additionalProperties: false, required: ["code", "name"], properties: { code: { type: "string", minLength: 1, maxLength: 64 }, name: { type: "string", minLength: 1, maxLength: 240 }, decimalScale: { type: "integer", minimum: 0, maximum: 3, default: 3 } }, description: "Create a reusable Configuration UOM during an available furniture upload action, or an eligible Designer furniture scope declaration/edit action. An exact normalized active code/name match is reused without changing its settings. Partial conflicts and inactive identities are rejected. Saving persists independently of the furniture draft; no general Configuration mutation access is granted." },
     FurnitureUomCreateResult: { type: "object", additionalProperties: false, required: ["uom", "reused"], properties: { uom: { $ref: "#/components/schemas/FurnitureUomOption" }, reused: { type: "boolean" } } },
-    FurniturePhysicalDimensionItem: { type: "object", additionalProperties: false, required: ["id", "name", "length", "width", "height", "unit"], properties: { measurementType: { type: "string", enum: ["dimensions"] }, id: { type: "string", minLength: 1, maxLength: 500 }, estimateItemId: { type: "string", minLength: 1, maxLength: 500 }, name: { type: "string", minLength: 1 }, length: { type: "number", minimum: 0, exclusiveMinimum: true }, width: { type: "number", minimum: 0, exclusiveMinimum: true }, height: { type: "number", minimum: 0, exclusiveMinimum: true }, unit: { type: "string", description: "Unit code captured at submission; historic values are preserved." }, uomId: id, uomName: { type: "string", description: "UOM name captured at submission; absent on legacy rows." } } },
+    FurniturePhysicalDimensionItem: { type: "object", additionalProperties: false, required: ["id", "name", "length", "width", "unit"], properties: { measurementType: { type: "string", enum: ["dimensions"] }, id: { type: "string", minLength: 1, maxLength: 500 }, estimateItemId: { type: "string", minLength: 1, maxLength: 500 }, name: { type: "string", minLength: 1 }, length: { type: "number", minimum: 0, exclusiveMinimum: true }, width: { type: "number", minimum: 0, exclusiveMinimum: true }, height: { type: "number", minimum: 0, exclusiveMinimum: true, description: "Optional historical measurement; new entries need only length and width." }, unit: { type: "string", description: "Unit code captured at submission; historic values are preserved." }, uomId: id, uomName: { type: "string", description: "UOM name captured at submission; absent on legacy rows." } } },
     FurnitureCountItem: { type: "object", additionalProperties: false, required: ["id", "name", "measurementType", "quantity", "unit"], properties: { id: { type: "string", minLength: 1, maxLength: 500 }, estimateItemId: { type: "string", minLength: 1, maxLength: 500 }, name: { type: "string", minLength: 1 }, measurementType: { type: "string", enum: ["count"] }, quantity: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER, description: "Actual measured number of points, independent of estimate quantity and prices." }, unit: { type: "string", description: "Unit code captured at submission." }, uomId: id, uomName: { type: "string" } } },
     FurnitureDimensionItem: { oneOf: [{ $ref: "#/components/schemas/FurniturePhysicalDimensionItem" }, { $ref: "#/components/schemas/FurnitureCountItem" }], description: "Immutable dimensional or point-count measurements; historic dimensions may omit measurementType." },
     FurnitureDimensions: { type: "object", additionalProperties: false, required: ["submissionEventId", "revision", "status", "items", "submittedAt"], properties: { submissionEventId: id, revision: { type: "integer", minimum: 1 }, status: { type: "string", enum: ["pending", "changes_requested", "approved"] }, items: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/FurnitureDimensionItem" } }, submittedAt: dateTime, reviewedAt: dateTime, returnReason: { type: "string" } } },
@@ -2316,6 +2566,11 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     "serverNow": {
       "type": "string",
       "format": "date-time"
+    },
+    "estimateApprovalStatus": {
+      "type": "string",
+      "enum": ["approved", "awaiting_approval", "source_issue"],
+      "description": "Visibility status from the project-linked approved Estimate source. A source issue must not reveal the design workflow."
     },
     "floors": {
       "type": "array",
@@ -2402,8 +2657,10 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     },
     "furnitureRooms": {
       type: "array", items: { type: "object", required: ["id", "name", "estimateItems"], properties: {
-        id, name: { type: "string" }, estimateItems: { type: "array", items: { type: "object", additionalProperties: false, required: ["id", "name", "catalogueId", "specification", "quantity", "uom", "measurementType"], properties: {
-          id: { type: "string", minLength: 1, maxLength: 500 }, name: { type: "string" }, catalogueId: { type: "string" }, specification: { type: "string" }, quantity: { type: "number", minimum: 0, description: "Approved estimate reference quantity. Selected items remain available for measurements when this quantity is zero." }, uom: { type: "string" }, measurementType: { type: "string", enum: ["count", "dimensions"], description: "Derived only from the approved estimate unit: pt/pts/point/points use count; all other units use dimensions." }
+        id, name: { type: "string" }, estimateDimensions: { type: "object", additionalProperties: false, required: ["lengthFt", "widthFt"], description: "Read-only room dimensions in feet from the linked Client-approved Estimate. Omitted when either dimension is missing or invalid.", properties: {
+          lengthFt: { type: "number", minimum: 0, exclusiveMinimum: true }, widthFt: { type: "number", minimum: 0, exclusiveMinimum: true }
+        } }, estimateItems: { type: "array", items: { type: "object", additionalProperties: false, required: ["id", "name", "catalogueId", "specification", "quantity", "uom", "measurementType"], properties: {
+          id: { type: "string", minLength: 1, maxLength: 500 }, name: { type: "string" }, catalogueId: { type: "string" }, specification: { type: "string" }, quantity: { type: "number", minimum: 0, description: "Approved estimate reference quantity. Positive-value items remain available for measurements when this quantity is zero; exact zero-value items are excluded." }, uom: { type: "string" }, measurementType: { type: "string", enum: ["count", "dimensions"], description: "Derived only from the approved estimate unit: pt/pts/point/points use count; all other units use dimensions." }
         } } }
       } }
     },

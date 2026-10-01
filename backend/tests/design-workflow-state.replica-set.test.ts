@@ -213,6 +213,25 @@ describe("Mongo operational workflow state", () => {
 });
 
 describe("Mongo approved room source", () => {
+  it("projects only the pinned approved Estimate's room size and omits invalid sizes without changing selected items", async () => {
+    const { repository } = await setup(false);
+    await approvedSource();
+    await EstimateModel.collection.updateOne({ _id: "canonical-estimate" }, { $set: { rooms: [{ id: "canonical-room", label: "Room canonical-estimate", length: 10, width: 12 }] } });
+    await EstimateModel.collection.updateOne({ _id: "independent-estimate" }, { $set: { rooms: [{ id: "independent-room", label: "Room independent-estimate", length: 99, width: 88 }] } });
+    const approved = await repository.findDesignWorkflowRoomContext(PROJECT_ID, true);
+    expect(approved).toMatchObject({ estimateId: "canonical-estimate", estimateVersion: 3, rooms: [{ id: "canonical-room", estimateDimensions: { lengthFt: 10, widthFt: 12 }, estimateItems: [{ id: "canonical-item", quantity: 2 }] }] });
+    expect(await repository.findDesignWorkflowRoomContext(PROJECT_ID)).toMatchObject({ estimateId: "canonical-estimate", rooms: [{ id: "canonical-room", estimateDimensions: { lengthFt: 10, widthFt: 12 }, estimateItems: [] }] });
+    expect(await repository.runInTransaction(tx => tx.findDesignWorkflowRoomContext(PROJECT_ID, true))).toEqual(approved);
+    for (const size of [{ length: 0, width: 12 }, { length: -1, width: 12 }, { length: "10", width: 12 }, { length: 10, width: null }, { length: Number.NaN, width: 12 }, { length: 10, width: Number.POSITIVE_INFINITY }]) {
+      await EstimateModel.collection.updateOne({ _id: "canonical-estimate" }, { $set: { rooms: [{ id: "canonical-room", label: "Room canonical-estimate", ...size }] } });
+      const context = await repository.findDesignWorkflowRoomContext(PROJECT_ID, true);
+      expect(context!.rooms[0]).not.toHaveProperty("estimateDimensions");
+      expect(context!.rooms[0]!.estimateItems).toEqual(approved!.rooms[0]!.estimateItems);
+      expect((await repository.findDesignWorkflowRoomContext(PROJECT_ID))!.rooms[0]).not.toHaveProperty("estimateDimensions");
+    }
+    expect(await repository.findDesignWorkflowState(PROJECT_ID)).toBeNull();
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+  });
   it("pins furniture to approved version N when the live estimate is N+1 and another estimate has a higher version", async () => {
     const { repository, audit, finance, designer, client, payment, kickoff, stages } = await setup(false);
     await approvedSource();
@@ -666,13 +685,14 @@ describe("Mongo all selected items including zero estimate quantities", () => {
   async function ready() {
     const f = await setup(false); await approvedSource();
     const rooms = [{ id: "living", label: "Living & Dining" }, { id: "bedroom", label: "Master Bedroom" }, { id: "kitchen", label: "Kitchen" }];
-    const base = { catalogueId: "CUSTOM", specification: "Selected item", unit: "nos", included: true, rate: 100, amount: 0 };
+    const base = { catalogueId: "CUSTOM", specification: "Selected item", unit: "nos", included: true, rate: 100, amount: 100 };
     const lines = [
       { ...base, id: "living-positive", roomName: "Living & Dining", quantity: 2, amount: 200 },
       { ...base, id: "living-zero", roomName: "Living & Dining", quantity: 0 },
       { ...base, id: "excluded-bedroom", roomName: "Master Bedroom", quantity: 4, included: false },
       { ...base, id: null, roomName: "Master Bedroom", quantity: 0 },
-      { ...base, id: "kitchen-points", roomName: "Kitchen", quantity: 0, unit: "pts" }
+      { ...base, id: "kitchen-points", roomName: "Kitchen", quantity: 0, unit: "pts" },
+      { ...base, id: "living-unpaid", roomName: "Living & Dining", quantity: 400, amount: 0 }
     ];
     await EstimateModel.collection.updateOne({ _id: "canonical-estimate" }, { $set: { rooms, lineItems: lines.map((line, index) => ({ ...line, id: `mutable-${index}`, included: false, quantity: 99 })) } });
     await EstimateClientReviewRoundModel.collection.updateOne({ _id: "canonical-round" }, { $set: { "estimateSnapshot.lineItems": lines } });
@@ -714,6 +734,8 @@ describe("Mongo all selected items including zero estimate quantities", () => {
       { id: "kitchen", name: "Kitchen", estimateItems: [{ id: "kitchen-points", quantity: 0, measurementType: "count" }] }
     ] });
     expect(source!.rooms.map(room => room.estimateItems.length)).toEqual([2, 1, 1]);
+    const full = await f.repository.findDesignWorkflowRoomContext(PROJECT_ID, true, true);
+    expect(full!.rooms[0]!.estimateItems.map(item => item.id)).toEqual(["living-positive", "living-zero", "living-unpaid"]);
     expect(await f.repository.runInTransaction(tx => tx.findDesignWorkflowRoomContext(PROJECT_ID, true))).toEqual(source);
     const before = await f.repository.findDesignWorkflowState(PROJECT_ID); const audits = await AuditEventModel.countDocuments();
     const incomplete = structuredClone(f.input); (incomplete.data.dimensions as Array<{ items: unknown[] }>)[0]!.items.pop();
@@ -752,5 +774,33 @@ describe("Mongo all selected items including zero estimate quantities", () => {
     expect(view.furnitureRooms!.map(room => room.estimateItems.length)).toEqual([2, 1, 1]);
     expect(view.projectStages!.find(stage => stage.type === "existing_furniture_dimensions")!.operational!.status).toBe("completed");
     expect(await f.repository.findDesignWorkflowState(PROJECT_ID)).toEqual(before);
+  });
+  it("audits Designer recovery of an already returned accepted zero-only room without changing its earlier proof", async () => {
+    const f = await ready();
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "canonical-round" }, { $set: { "estimateSnapshot.lineItems.4.amount": 0 } });
+    const stageId = f.stages.find(stage => stage.type === "existing_furniture_dimensions")!.id;
+    const at = DAY_TWO.toISOString();
+    const item = { id: "kitchen-points", estimateItemId: "kitchen-points", name: "CUSTOM — Selected item", measurementType: "count" as const, quantity: 6, unit: "cm", uomId: "uom-cm", uomName: "Centimetre" };
+    const state = (await f.repository.findDesignWorkflowState(PROJECT_ID))!;
+    state.stages.existing_furniture_dimensions = { scopeEstimateId: "canonical-estimate", scopeEstimateVersion: 3, acceptedAt: at,
+      rooms: [{ id: "living", name: "Living & Dining", required: false, uploadedAt: null, proceed: false }, { id: "bedroom", name: "Master Bedroom", required: false, uploadedAt: null, proceed: false }, { id: "kitchen", name: "Kitchen", required: true, uploadedAt: at, proceed: false, dimensions: { submissionEventId: "prior-kitchen-upload", revision: 1, status: "changes_requested", items: [item], submittedAt: at, reviewedAt: at, returnReason: "Recheck" } }] };
+    state.history.push({ id: "prior-kitchen-upload", idempotencyKey: "prior-kitchen-upload-key", requestHash: "prior-upload", action: "furniture_upload", stageId, actorId: f.designer.id, actorName: f.designer.name, actorRole: "designer", onBehalfOfClient: false, at, note: "Measured", data: { rooms: [{ roomId: "kitchen", items: [item] }] }, proof: PROOF });
+    state.history.push({ id: "prior-kitchen-return", idempotencyKey: "prior-kitchen-return-key", requestHash: "prior-return", action: "furniture_dimensions_return", stageId, actorId: f.client.id, actorName: f.client.name, actorRole: "client", onBehalfOfClient: false, at, note: "Recheck", data: { submissions: [{ roomId: "kitchen", submissionEventId: "prior-kitchen-upload" }] }, proof: null });
+    await f.repository.saveDesignWorkflowState(PROJECT_ID, state.version, state);
+    const before = (await f.repository.findDesignWorkflowState(PROJECT_ID))!;
+    expect((await f.repository.findDesignWorkflowRoomContext(PROJECT_ID, true))!.rooms[2]!.estimateItems).toEqual([]);
+    expect((await f.repository.findDesignWorkflowRoomContext(PROJECT_ID, true, true))!.rooms[2]!.estimateItems).toMatchObject([{ id: "kitchen-points" }]);
+    const request: WorkflowActionInput = { action: "furniture_upload", expectedVersion: before.version, stageId, idempotencyKey: "resolve-prior-kitchen-zero", data: { resolveReturnedZeroValueRoomIds: ["kitchen"] }, note: "No paid kitchen work" };
+    await expect(f.service.act(f.designer, PROJECT_ID, { ...request, data: { rooms: [{ roomId: "kitchen", items: [item] }] } }, null)).rejects.toMatchObject({ code: "WORKFLOW_PROOF_REQUIRED" });
+    await expect(f.service.act(f.designer, PROJECT_ID, { ...request, data: { resolveReturnedZeroValueRoomIds: ["living"] } }, null)).rejects.toMatchObject({ code: "DESIGN_WORKFLOW_BLOCKED" });
+    expect(await f.repository.findDesignWorkflowState(PROJECT_ID)).toEqual(before);
+    await f.service.act(f.designer, PROJECT_ID, request, null);
+    expect(await f.service.act(f.designer, PROJECT_ID, request, null)).toMatchObject({ replayed: true });
+    const after = (await f.repository.findDesignWorkflowState(PROJECT_ID))!;
+    expect(after.stages.existing_furniture_dimensions).toMatchObject({ acceptedAt: at, completedAt: at, rooms: [{ required: false }, { required: false }, { required: false }] });
+    expect(after.stages.existing_furniture_dimensions!.rooms![2]!.dimensions).toMatchObject({ status: "changes_requested", items: [item], submissionEventId: "prior-kitchen-upload" });
+    expect(after.history.slice(0, -1)).toEqual(before.history);
+    expect(after.history.at(-1)).toMatchObject({ action: "furniture_upload", data: { resolveReturnedZeroValueRoomIds: ["kitchen"] }, proof: null });
+    expect(await AuditEventModel.findOne({ "newValues.resolvedZeroValueRoomIds": ["kitchen"] }).lean()).toBeTruthy();
   });
 });

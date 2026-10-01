@@ -26,7 +26,7 @@ import { vendorProfileFixture } from "./procurement-vendor-profile.fixture.js";
 const actor: PublicUser = { id: "buyer", name: "Buyer", email: "buyer@example.test", role: "procurement" };
 const other: PublicUser = { ...actor, id: "other-buyer", email: "other@example.test" };
 const admin: PublicUser = { id: "super", name: "Synthetic Super", email: "super@example.test", role: "super_admin" };
-const fields = { estimateId: "estimate-project-a", estimateVersion: 1, sourceLineItemKey: "line-first", itemName: "Plywood Sheet", brand: "Timber Brand", uomId: "sheet", vendorId: null, pricePaise: 12345 };
+const fields = { estimateId: "estimate-project-a", estimateVersion: 1, sourceLineItemKey: "line-first", itemName: "Plywood Sheet", brand: "Timber Brand", uomId: "sheet", vendorId: null, pricePaise: 12345, plannedOrderQuantityMilliUnits: 1_000 };
 const now = new Date("2026-09-17T10:00:00.000Z");
 const audit = createAuditService(createMemoryRepository());
 const service = createProjectProcurementService({ audit, now: () => now });
@@ -115,11 +115,25 @@ async function historical(vendorId: string, id = "historical", projectId = "proj
 const correction = { expectedVersion: 1, allocatedWorkPaise: 6_000_000, reason: "Record work committed before allocation tracking", idempotencyKey: "baseline-request" };
 
 describe("vendor allocation transactions", () => {
-  it("rejects new work for an Under Review vendor even with approved induction and both KPI assessments", async () => {
+  it("allows a KPI-complete vendor without physical verification within the cap and rejects excess work", async () => {
     const saved = await vendor("Awaiting verification", false);
-    expect((await service.listVendors(actor, { q: "Awaiting", limit: 20, offset: 0 })).total).toBe(0);
-    await expect(allocate(saved.id, 100)).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
-    expect(await ProjectProcurementItemModel.countDocuments()).toBe(0);
+    expect((await service.listVendors(actor, { q: "Awaiting", limit: 20, offset: 0 })).items).toMatchObject([
+      { id: saved.id, status: "active", assignable: true, readiness: { physicalAddressVerified: false } }
+    ]);
+    expect((await allocate(saved.id, 100)).allocatedWorkPaise).toBe(100);
+    await expect(allocate(saved.id, 5_000_000, "project-b")).rejects.toMatchObject({ code: "PROCUREMENT_VENDOR_ALLOCATION_CAP_EXCEEDED" });
+    expect(await ProjectProcurementItemModel.countDocuments()).toBe(1);
+  });
+  it("keeps the cap when a legacy physical-verification flag lacks audit proof", async () => {
+    const saved = await vendor("Incomplete physical proof");
+    await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: saved.id } as any,
+      { $unset: { "procurementProfile.physicalAddressVerifiedById": "" } });
+    expect((await service.listVendors(actor, { q: "Incomplete physical proof", limit: 20, offset: 0 })).items).toMatchObject([
+      { id: saved.id, status: "active", readiness: { physicalAddressVerified: false } }
+    ]);
+    expect((await allocate(saved.id, 5_000_000)).allocatedWorkPaise).toBe(5_000_000);
+    await expect(allocate(saved.id, 1, "project-b")).rejects.toMatchObject({ code: "PROCUREMENT_VENDOR_ALLOCATION_CAP_EXCEEDED" });
+    expect(await ProjectProcurementItemModel.countDocuments()).toBe(1);
   });
   it("aggregates allocations across unequal projects for a fully active vendor", async () => {
     const saved = await vendor();
@@ -173,8 +187,8 @@ describe("vendor allocation transactions", () => {
     const item = await allocate(saved.id, 9_000_000);
     await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: saved.id } as any, { $set: { "procurementProfile.currentAddressVerifiedPhysically": false } });
     await service.update(actor, "project-a", item.id, { ...fields, vendorId: saved.id, allocatedWorkPaise: 8_000_000, expectedVersion: 1 });
-    expect((await service.get(actor, "project-a", item.id)).vendor).toMatchObject({ id: saved.id, status: "under_review" });
-    await expect(allocate(saved.id, 1, "project-b")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect((await service.get(actor, "project-a", item.id)).vendor).toMatchObject({ id: saved.id, status: "active" });
+    await expect(allocate(saved.id, 1, "project-b")).rejects.toMatchObject({ code: "PROCUREMENT_VENDOR_ALLOCATION_CAP_EXCEEDED" });
     expect((await service.update(actor, "project-a", item.id, { ...fields, vendorId: saved.id, pricePaise: 999, expectedVersion: 2 })).allocatedWorkPaise).toBe(8_000_000);
   });
   it("retries a snapshot after a concurrent verification downgrade on the shared vendor document", async () => {
@@ -201,7 +215,7 @@ describe("vendor allocation transactions", () => {
     await reachedLock;
     release();
     await downgrade;
-    await expect(allocation).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    await expect(allocation).rejects.toMatchObject({ code: "PROCUREMENT_VENDOR_ALLOCATION_CAP_EXCEEDED" });
     expect(await ProjectProcurementItemModel.countDocuments()).toBe(1);
   });
   it("rolls back allocation and vendor coordination when audit fails", async () => {
@@ -225,6 +239,17 @@ describe("vendor allocation transactions", () => {
 });
 
 describe("restricted historical allocation completion", () => {
+  it("omits tombstoned legacy rows from the correction queue and rejects correction by ID", async () => {
+    const saved = await vendor();
+    const itemId = await historical(saved.id, "removed-historical");
+    await ProjectProcurementItemModel.collection.updateOne({ _id: itemId } as any, { $set: {
+      removedAt: now, removedById: actor.id, removalReason: "Duplicate historical item"
+    } });
+    expect((await baselineService.list(admin, saved.id, { limit: 20, offset: 0 })).total).toBe(0);
+    await expect(baselineService.complete(admin, saved.id, itemId, correction)).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_NOT_FOUND" });
+    const totals = await mongoose.connection.transaction((session) => procurementVendorAllocationTotals(saved.id, session));
+    expect(totals.unknownItemCount).toBe(0);
+  });
   it("keeps unknown historical work visible while allowing metadata-only legacy editing", async () => {
     const saved = await vendor();
     const itemId = await historical(saved.id);

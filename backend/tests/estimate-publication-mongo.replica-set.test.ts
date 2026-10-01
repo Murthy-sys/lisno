@@ -683,6 +683,15 @@ describe("Estimate publication and delivery on a Mongo replica set", () => {
       }
     );
 
+    const duringRevision = await harness.reviews.listClientEstimates(CLIENT, fixture.estimateId);
+    expect(duringRevision).toHaveLength(1);
+    expect(duringRevision[0]).toMatchObject({
+      status: "draft", total: firstRound!.estimateSnapshot.total, rooms: [], scopes: [],
+      publishedReview: { id: first.clientReview.id, status: "changes_requested", canDecide: false, decisionNote: "Please revise." }
+    });
+    await expect(harness.reviews.currentClientFeedbackForEstimate(ESTIMATOR, fixture.estimateId))
+      .resolves.toMatchObject({ note: "Please revise.", reviewRoundId: first.clientReview.id });
+
     const second = await harness.publication.publishEstimateToClient({
       ...publicationInput(fixture),
       expectedEstimateVersion: 5
@@ -718,6 +727,21 @@ describe("Estimate publication and delivery on a Mongo replica set", () => {
     expect(await EstimateClientReviewRoundModel.countDocuments()).toBe(2);
     expect(mail.calls).toHaveLength(2);
     expect(mail.attachments).toEqual([firstBytes, expectedSecondBytes]);
+    const submittedAgain = await harness.reviews.listClientEstimates(CLIENT, fixture.estimateId);
+    expect(submittedAgain[0]).toMatchObject({ total: 1_475_000, publishedReview: { id: second.clientReview.id, canDecide: true, estimateVersion: 5 } });
+    await expect(harness.reviews.currentClientFeedbackForEstimate(ESTIMATOR, fixture.estimateId)).resolves.toBeNull();
+    await expect(decision.decide({
+      estimateId: fixture.estimateId,
+      round: { id: first.clientReview.id, expectedVersion: first.clientReview.version },
+      decision: "approve", note: "", context: { source: "client_portal", actor: CLIENT, proof: null }
+    })).rejects.toMatchObject({ code: "ESTIMATE_NOT_REVIEWABLE", status: 409 });
+    await decision.decide({
+      estimateId: fixture.estimateId,
+      round: { id: second.clientReview.id, expectedVersion: second.clientReview.version },
+      decision: "approve", note: "", context: { source: "client_portal", actor: CLIENT, proof: null }
+    });
+    expect((await harness.reviews.listClientEstimates(CLIENT, fixture.estimateId))[0])
+      .toMatchObject({ status: "client_approved", total: 1_475_000, publishedReview: { id: second.clientReview.id, canDecide: false } });
   });
 
   it("rolls back publication and deletes the saved snapshot when a transactional audit fails", async () => {

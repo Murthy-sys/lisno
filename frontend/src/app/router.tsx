@@ -60,6 +60,8 @@ import { ProcurementWorkspace } from "../features/procurement/ProcurementWorkspa
 import { ProcurementManagementPage } from "../features/procurement/ProcurementManagementPage";
 import { ProcurementDashboardPage } from "../features/procurement/ProcurementDashboardPage";
 import { ProcurementVendorDirectory } from "../features/procurement/ProcurementVendorDirectory";
+import { SuperAdminPurchaseOrdersPage } from "../features/procurement/SuperAdminPurchaseOrdersPage";
+import { VendorWorkPage } from "../features/vendor/VendorWorkPage";
 import { VendorKpiStaffPage } from "../features/procurement/VendorKpiStaffPage";
 import { VendorKpiPublicPage } from "../features/procurement/VendorKpiPublicPage";
 import { VendorInductionPublicPage } from "../features/procurement/VendorInductionPublicPage";
@@ -67,6 +69,7 @@ import { KnowledgeBaseIndexPage } from "../features/ai-estimator-knowledge/Knowl
 import { KnowledgeItemWorkspacePage } from "../features/ai-estimator-knowledge/KnowledgeItemWorkspacePage";
 import { KnowledgeReusableValuesPage } from "../features/ai-estimator-knowledge/KnowledgeReusableValuesPage";
 import { SuperAdminDashboardPage } from "../features/admin/dashboard/SuperAdminDashboardPage";
+import { ProjectCompletionPage } from "../features/admin/ProjectCompletionPage";
 
 interface RoleHomeContent {
   heading: string;
@@ -115,6 +118,12 @@ const roleHomeContent: Record<Role, RoleHomeContent> = {
     eyebrow: "Project procurement",
     description: "Your authorized procurement work will appear here.",
     status: "Ready for staged access"
+  },
+  vendor: {
+    heading: "Vendor workspace",
+    eyebrow: "Assigned orders and work",
+    description: "Review approved orders and update your assigned work.",
+    status: "Ready for assigned work"
   },
   finance_head: {
     heading: "Finance Manager workspace",
@@ -381,6 +390,9 @@ export function AppRoutes() {
         <Route path="/admin/procurement" element={registeredElement("/admin/procurement", <AdminProcurementLanding />)} />
         <Route path="/admin/procurement/vendors" element={registeredElement("/admin/procurement/vendors", <VendorDirectoryRoute />)} />
         <Route path="/admin/procurement/vendors/:vendorId" element={registeredElement("/admin/procurement/vendors/:vendorId", <VendorKpiStaffPage />)} />
+        <Route path="/admin/purchase-orders" element={registeredElement("/admin/purchase-orders", <SuperAdminPurchaseOrdersPage />)} />
+        <Route path="/admin/project-completion" element={registeredElement("/admin/project-completion", <ProjectCompletionPage />)} />
+        <Route path="/vendor" element={registeredElement("/vendor", <VendorWorkPage />)} />
         <Route path="/procurement" element={registeredElement("/procurement", <ProcurementWorkspace />)} />
         <Route path="/procurement/vendors" element={registeredElement("/procurement/vendors", <VendorDirectoryRoute />)} />
         <Route path="/procurement/vendors/:vendorId" element={registeredElement("/procurement/vendors/:vendorId", <VendorKpiStaffPage />)} />

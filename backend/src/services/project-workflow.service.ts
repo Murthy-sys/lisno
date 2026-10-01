@@ -1,3 +1,5 @@
+import type { PreparedPlanDocuments } from "../contracts/estimate-plan-document.js";
+import { createEstimatePlanDocumentService } from "./estimate-plan-document.service.js";
 import { randomUUID } from "node:crypto";
 
 import mongoose from "mongoose";
@@ -31,6 +33,7 @@ import { EstimateDesignDrawingModel } from "../models/EstimateDesignDrawing.js";
 import { EstimateDesignRevisionModel } from "../models/EstimateDesignRevision.js";
 import { EstimateDesignUploadModel } from "../models/EstimateDesignUpload.js";
 import { EstimateModel } from "../models/Estimate.js";
+import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
 import { EstimatePlanChangeRequestModel } from "../models/EstimatePlanChangeRequest.js";
 import { LeadModel } from "../models/Lead.js";
 import { ProjectAccessGrantModel } from "../models/ProjectAccessGrant.js";
@@ -48,7 +51,7 @@ import type { OpenFinanceBucketInput } from "./project-finance.service.js";
 import { assertDesignWorkflowSubmissionAllowed } from "./design-workflow-state.service.js";
 
 type Row = Record<string, any>;
-type AssignableExecutionRole = WorkerRole | "procurement";
+type AssignableExecutionRole = WorkerRole | "procurement" | "site_manager";
 
 const DOWNSTREAM_EXECUTION_TASK_KINDS = [
   "procurement",
@@ -67,6 +70,7 @@ export interface DesignPlanTaskDto {
   designPlanVersion: number;
   rooms: Array<Record<string, unknown>>;
   scopes: string[];
+  selectedMainBasketIds: string[];
   lineItems: Array<Record<string, unknown>>;
 }
 
@@ -100,6 +104,7 @@ export interface ProjectWorkflowTaskDto {
   id: string;
   projectId: string;
   projectName: string;
+  completionAuthority?: "legacy_staff" | "vendor_client";
   estimateId: string;
   kind: string;
   title: string;
@@ -169,7 +174,8 @@ export interface ProjectWorkflowService {
     submittedRevisionIds: string[],
     attachmentUploadIds: string[],
     submittedAt: Date,
-    session: mongoose.ClientSession
+    session: mongoose.ClientSession,
+    preparedDocuments?: PreparedPlanDocuments
   ): Promise<{ roundId: string; designPlanVersion: number }>;
   deliverDesignReview(
     roundId: string,
@@ -256,6 +262,7 @@ export function createProjectWorkflowService(input: {
   now?: () => Date;
 }): ProjectWorkflowService {
   const now = input.now ?? (() => new Date());
+  const planDocuments = createEstimatePlanDocumentService({ storage: input.storage, now });
 
   const service: ProjectWorkflowService = {
     async listAssignableDesigners(actor) {
@@ -493,7 +500,8 @@ export function createProjectWorkflowService(input: {
       submittedRevisionIds,
       attachmentUploadIds,
       submittedAt,
-      session
+      session,
+      preparedDocuments
     ) {
       const estimate = await EstimateModel.findOne({
         _id: estimateId,
@@ -548,54 +556,18 @@ export function createProjectWorkflowService(input: {
           "The submitted Design plan attachments changed before Client review could be prepared."
         );
       }
-      const uploadAttachmentSnapshots = await Promise.all(uploads.map(async (upload) => {
-        const bytes = await input.storage.read(String(upload.storedFileReference));
-        if (bytes.byteLength !== Number(upload.sizeBytes)) {
-          throw new ApiError(
-            409,
-            "DESIGN_PLAN_ATTACHMENT_CONFLICT",
-            "A submitted Design plan attachment no longer matches its stored upload."
-          );
-        }
-        return {
-          uploadId: String(upload._id),
-          filename: String(upload.originalFilename),
-          mimeType: String(upload.mimeType),
-          byteSize: bytes.byteLength,
-          sha256: sha256Hex(bytes),
-          storageReference: String(upload.storedFileReference)
-        };
+      if (!preparedDocuments) {
+        throw new ApiError(409, "DESIGN_PLAN_DOCUMENT_NOT_READY", "Prepare the updated full PDF before submitting for Client review.");
+      }
+      await planDocuments.validateForSubmission(estimateId, preparedDocuments, submittedRevisionIds, session);
+      const attachmentSnapshots = preparedDocuments.documents.map((document) => ({
+        uploadId: document.sourceUploadId,
+        filename: document.filename,
+        mimeType: document.mimeType,
+        byteSize: document.byteSize,
+        sha256: document.sha256,
+        storageReference: document.storageReference
       }));
-      const replacementAttachmentSnapshots = await Promise.all(
-        currentRevisions
-          .filter(({ revision }) => Boolean(revision.replacesRevisionId))
-          .map(async ({ drawing, revision }) => {
-            const storageReference = String(revision.croppedFileReference);
-            const bytes = await input.storage.read(storageReference);
-            if (bytes.byteLength === 0) {
-              throw new ApiError(
-                409,
-                "DESIGN_PLAN_ATTACHMENT_CONFLICT",
-                "A revised Design drawing is no longer available."
-              );
-            }
-            const title = safeAttachmentStem(
-              String(drawing.displayTitle ?? revision.label ?? "drawing")
-            );
-            return {
-              uploadId: `revision:${String(revision._id)}`,
-              filename: `revised-${title}-v${Number(revision.revisionNumber)}.png`,
-              mimeType: "image/png",
-              byteSize: bytes.byteLength,
-              sha256: sha256Hex(bytes),
-              storageReference
-            };
-          })
-      );
-      const attachmentSnapshots = [
-        ...uploadAttachmentSnapshots,
-        ...replacementAttachmentSnapshots
-      ];
       const previousDesignPlanVersion = Number(estimate.designPlanVersion ?? 0);
       const designPlanVersion = previousDesignPlanVersion + 1;
       const assignedAdminId = await resolveDesignReviewAdmin(project._id, session);
@@ -611,6 +583,12 @@ export function createProjectWorkflowService(input: {
         projectName: String(lead.projectName),
         submittedRevisionIds,
         attachments: attachmentSnapshots,
+        planManifestHash: preparedDocuments.manifestHash,
+        planDocuments: preparedDocuments.documents.map((document) => ({
+          documentId: document.documentId,
+          sourceUploadId: document.sourceUploadId,
+          manifestHash: document.manifestHash
+        })),
         submittedById: actor.id,
         submittedAt,
         assignedAdminId,
@@ -1185,7 +1163,7 @@ export function createProjectWorkflowService(input: {
     async listAssignableWorkers(actor) {
       if (actor.role !== "super_admin") forbidden();
       const workers = await UserModel.find({
-        role: { $in: ["procurement", ...WORKER_ROLES] },
+        role: { $in: ["procurement", "site_manager", ...WORKER_ROLES] },
         active: true
       })
         .select({ _id: 1, name: 1, email: 1, role: 1 })
@@ -1355,7 +1333,7 @@ export function createProjectWorkflowService(input: {
         !estimateId.trim() || estimateId !== estimateId.trim() ||
         !Number.isSafeInteger(designPlanVersion) || designPlanVersion < 1 ||
         !sourceSectionId.trim() ||
-        sourceSectionId !== sourceSectionId.trim().toUpperCase() ||
+        sourceSectionId !== sourceSectionId.trim() ||
         !/^[a-f0-9]{64}$/u.test(expectedRevision) ||
         (workerId !== null && (!workerId.trim() || workerId !== workerId.trim()))
       ) sectionAssignmentConflict();
@@ -1486,13 +1464,14 @@ export function createProjectWorkflowService(input: {
 
     async listOperationalTasks(actor) {
       if (!isOperationalTaskRole(actor.role)) forbidden();
+      const siteProjects = actor.role === "site_manager"
+        ? await ProjectWorkflowTaskModel.find({ kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: actor.id }).select({ projectId: 1 }).lean()
+        : [];
       const filter: Row = actor.role === "site_manager"
-        ? {
-            $or: [
-              { assigneeRole: "site_manager" },
-              { kind: "trade_execution" }
-            ]
-          }
+        ? { projectId: { $in: siteProjects.map((task) => task.projectId) }, $or: [
+            { kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: actor.id },
+            { kind: "trade_execution", supersededAt: null }
+          ] }
         : actor.role === "procurement" || isWorkerRole(actor.role)
           ? { assigneeRole: actor.role, assigneeUserId: actor.id }
           : { assigneeRole: actor.role };
@@ -1501,18 +1480,23 @@ export function createProjectWorkflowService(input: {
         .lean();
       const projects = await ProjectModel.find({
         _id: { $in: tasks.map((task) => task.projectId) }
-      }).select({ _id: 1, name: 1 }).lean();
+      }).select({ _id: 1, name: 1, completionAuthority: 1 }).lean();
+      const legacyProjectIds = new Set(projects.filter((project) => project.completionAuthority === "legacy_staff").map((project) => String(project._id)));
+      const visibleTasks = tasks.filter((task) => task.kind !== "trade_execution" || (legacyProjectIds.has(String(task.projectId)) && !task.supersededAt));
       const projectNames = new Map(
         projects.map((project) => [String(project._id), String(project.name)])
       );
-      return hydrateOperationalTaskDtos(tasks, projectNames);
+      const projectAuthorities = new Map(projects.map(project => [String(project._id), project.completionAuthority]));
+      return (await hydrateOperationalTaskDtos(visibleTasks, projectNames)).map(task => ({
+        ...task, completionAuthority: projectAuthorities.get(task.projectId) ?? "legacy_staff"
+      }));
     },
 
     async updateOperationalTask(actor, taskId, expectedVersion, progress) {
       if (!isOperationalTaskRole(actor.role)) forbidden();
       const occurredAt = now();
       return withMongoTransaction(async (session) => {
-        const ownershipFilter = actor.role === "procurement" || isWorkerRole(actor.role)
+        const ownershipFilter = actor.role === "procurement" || actor.role === "site_manager" || isWorkerRole(actor.role)
           ? { assigneeUserId: actor.id }
           : {};
         const task = await ProjectWorkflowTaskModel.findOne({
@@ -1544,12 +1528,24 @@ export function createProjectWorkflowService(input: {
             _id: 1,
             name: 1,
             status: 1,
+            completionAuthority: 1,
             actualEndAt: 1,
             updatedAt: 1
           })
           .session(session)
           .lean();
         if (!project) notFound();
+
+        if (project.status === "completed" && project.completionAuthority === "vendor_client") {
+          throw new ApiError(409, "PROJECT_COMPLETED", "Completed projects do not accept further task updates.");
+        }
+        if (task.kind === "site_execution" && project.completionAuthority === "vendor_client") {
+          throw new ApiError(409, "WORKFLOW_TASK_SUPERSEDED", "Use Site completion to update progress and send work to the Client.");
+        }
+
+        if (task.kind === "trade_execution" && (project.completionAuthority !== "legacy_staff" || task.supersededAt)) {
+          throw new ApiError(409, "WORKFLOW_TASK_SUPERSEDED", "Vendor-owned work now controls this section. Open the vendor progress view.");
+        }
 
         const projectStatusBefore = String(project.status);
         const projectActualEndAtBefore = nullableDateIso(project.actualEndAt);
@@ -1623,7 +1619,8 @@ export function createProjectWorkflowService(input: {
         if (
           progress === 100 &&
           project.status !== "completed" &&
-          completionFenceAt
+          completionFenceAt &&
+          project.completionAuthority === "legacy_staff"
         ) {
           const remainingExecutionTask = await ProjectWorkflowTaskModel.exists({
             projectId: task.projectId,
@@ -1915,7 +1912,10 @@ async function finalizeDesignApproval(input: {
         estimateReviewRoundId: null,
         approvedSubtotalRupees: Number(input.estimate.subtotal),
         approvedGstRupees: Number(input.estimate.gst),
-        approvedContractTotalRupees: Number(input.estimate.total)
+        approvedContractTotalRupees: Number(input.estimate.total),
+        ...(input.estimate.subtotalPaise == null ? {} : { approvedSubtotalPaise: Number(input.estimate.subtotalPaise) }),
+        ...(input.estimate.gstPaise == null ? {} : { approvedGstPaise: Number(input.estimate.gstPaise) }),
+        ...(input.estimate.totalPaise == null ? {} : { approvedContractTotalPaise: Number(input.estimate.totalPaise) })
       }
     }, input.session);
   }
@@ -1957,7 +1957,7 @@ async function generateDownstreamTasks(
 ) {
   const estimateId = String(estimate._id);
   const estimateVersion = approvedWorkflowEstimateVersion(estimate.version);
-  const lineItems = (estimate.lineItems ?? []) as Row[];
+  const lineItems = await approvedWorkflowLineSnapshots(estimate, session);
   const blueprints = projectWorkflowBlueprints({
     estimateId,
     estimateVersion,
@@ -1967,6 +1967,7 @@ async function generateDownstreamTasks(
   const claimedLegacyDedupeKeys = new Set<string>();
   lineItems.forEach((line, index) => {
     if (line.included !== true) return;
+    if (line.source === "configuration") return;
     const catalogueId = String(line.catalogueId ?? "").trim().toUpperCase();
     const roomName = String(line.roomName ?? "").trim();
     const stableKey = approvedEstimateLineItemKey({
@@ -2100,6 +2101,28 @@ interface CanonicalApprovedTradeSource {
   projectId: string;
   estimateId: string;
   designPlanVersion: number;
+  configuredSectionLabels: ReadonlyMap<string, string>;
+}
+
+async function approvedWorkflowLineSnapshots(
+  estimate: Row,
+  session: mongoose.ClientSession
+): Promise<Row[]> {
+  const estimateId = String(estimate._id);
+  const approvedVersion = approvedWorkflowEstimateVersion(estimate.version);
+  const liveLines = Array.isArray(estimate.lineItems) ? estimate.lineItems as Row[] : [];
+  if (!liveLines.some((line) => line.source === "configuration")) return liveLines;
+  const approvedRounds = await EstimateClientReviewRoundModel.find({
+    estimateId, status: "approved", decision: "approve"
+  }).select({ estimateVersion: 1, projectId: 1, estimateSnapshot: 1 }).session(session).lean();
+  if (approvedRounds.length === 0) {
+    sectionAssignmentConflict();
+  }
+  const matching = approvedRounds.filter((round) => Number(round.estimateVersion) === approvedVersion);
+  if (matching.length !== 1 || matching[0]?.projectId != null &&
+    String(matching[0]?.projectId) !== String(estimate.projectId) ||
+    !Array.isArray(matching[0]?.estimateSnapshot?.lineItems)) sectionAssignmentConflict();
+  return matching[0]!.estimateSnapshot.lineItems as Row[];
 }
 
 async function canonicalApprovedTradeSource(
@@ -2111,7 +2134,7 @@ async function canonicalApprovedTradeSource(
     status: "client_approved",
     designPlanStatus: "approved"
   })
-    .select({ _id: 1, projectId: 1, designPlanVersion: 1 })
+    .select({ _id: 1, projectId: 1, version: 1, designPlanVersion: 1, lineItems: 1 })
     .limit(2)
     .session(session)
     .lean();
@@ -2127,7 +2150,18 @@ async function canonicalApprovedTradeSource(
     !Number.isSafeInteger(designPlanVersion) ||
     designPlanVersion < 1
   ) sectionAssignmentConflict();
-  return { projectId, estimateId, designPlanVersion };
+  const sourceLines = await approvedWorkflowLineSnapshots(estimate, session);
+  const configuredSectionLabels = new Map<string, string>();
+  for (const line of sourceLines) {
+    if (line.source !== "configuration" || line.included !== true) continue;
+    const id = nonEmptyWorkflowId(line.mainBasketId);
+    const label = nonEmptyWorkflowId(line.mainBasketName);
+    if (!id || !label || configuredSectionLabels.has(id) && configuredSectionLabels.get(id) !== label) {
+      sectionAssignmentConflict();
+    }
+    configuredSectionLabels.set(id, label);
+  }
+  return { projectId, estimateId, designPlanVersion, configuredSectionLabels };
 }
 
 async function canonicalSectionAggregates(
@@ -2160,7 +2194,7 @@ async function canonicalSectionAggregates(
       version: task.version,
       plannedEffort: task.plannedEffort,
       updatedAt: task.updatedAt
-    } as ProjectWorkflowSectionTask)));
+    } as ProjectWorkflowSectionTask)), source.configuredSectionLabels);
   } catch (error) {
     if (error instanceof ProjectWorkflowSectionAssignmentConflict) {
       sectionAssignmentConflict();
@@ -2227,6 +2261,8 @@ function isAssignableExecutionTask(task: Row): boolean {
   return (
     task.kind === "procurement" && task.assigneeRole === "procurement"
   ) || (
+    task.kind === "site_execution" && task.assigneeRole === "site_manager"
+  ) || (
     task.kind === "trade_execution" && isWorkerRole(task.assigneeRole)
   );
 }
@@ -2235,6 +2271,7 @@ function assignableExecutionTaskFilter(): Row {
   return {
     $or: [
       { kind: "procurement", assigneeRole: "procurement" },
+      { kind: "site_execution", assigneeRole: "site_manager" },
       { kind: "trade_execution", assigneeRole: { $in: WORKER_ROLES } }
     ]
   };
@@ -2308,6 +2345,7 @@ function taskDto(estimate: Row, project: Row, lead: Row): DesignPlanTaskDto {
     designPlanVersion: Number(estimate.designPlanVersion ?? 0),
     rooms: (estimate.rooms ?? []) as Array<Record<string, unknown>>,
     scopes: (estimate.scopes ?? []).map(String),
+    selectedMainBasketIds: (estimate.selectedMainBasketIds ?? []).map(String),
     lineItems: (estimate.lineItems ?? []) as Array<Record<string, unknown>>
   };
 }

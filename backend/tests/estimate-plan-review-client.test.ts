@@ -1,17 +1,25 @@
+import sharp from "sharp";
+import mongoose from "mongoose";
+import { hashPlanDocumentManifest } from "../src/domain/estimate-plan-document.js";
+import { projectAnnotationToPage } from "../src/domain/estimate-plan-review.js";
+import { EstimateDesignPlanDocumentModel } from "../src/models/EstimateDesignPlanDocument.js";
 import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
 import { EstimateDesignAnnotationDraftModel } from "../src/models/EstimateDesignAnnotationDraft.js";
+import { DesignPlanReviewRoundModel } from "../src/models/DesignPlanReviewRound.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
 import { EstimateDesignSourcePageModel } from "../src/models/EstimateDesignSourcePage.js";
 import { EstimateDesignUploadModel } from "../src/models/EstimateDesignUpload.js";
 import { EstimatePlanChangeRequestModel } from "../src/models/EstimatePlanChangeRequest.js";
 import { EstimatePlanPageRevisionModel } from "../src/models/EstimatePlanPageRevision.js";
+import { EstimatePlanAnnotationDraftModel } from "../src/models/EstimatePlanAnnotationDraft.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { UserModel } from "../src/models/User.js";
 import { createEstimatePlanReviewService } from "../src/services/estimate-plan-review.service.js";
 import { createEstimateDesignService } from "../src/services/estimate-design.service.js";
+import { loadEstimatePlanDocumentManifest } from "../src/services/estimate-plan-document-manifest.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
@@ -31,6 +39,16 @@ function service(audit = vi.fn(async () => ({}))) {
     audit: { appendInMongoTransaction: audit },
     now: () => new Date("2026-08-03T10:00:00.000Z")
   } as never);
+}
+
+async function publishTestRound(id: string, version: number, submittedRevisionIds = ["revision-a", "revision-b"]) {
+  await DesignPlanReviewRoundModel.create({
+    _id: id, estimateId: "estimate-1", projectId: "project-1", leadId: "lead-1", designPlanVersion: version,
+    recipientEmail: client.email, clientName: "Client", projectName: "Plan Review", submittedRevisionIds,
+    attachments: [{ uploadId: "upload-1", filename: "plan.pdf", mimeType: "application/pdf", byteSize: 100, sha256: "a".repeat(64), storageReference: "source.pdf" }],
+    submittedById: "designer-1", submittedAt: new Date(), assignedAdminId: "admin-1", status: "pending"
+  });
+  await EstimateModel.updateOne({ _id: "estimate-1" }, { $set: { status: "client_approved", designPlanStatus: "ready_for_client", designPlanVersion: version } });
 }
 
 beforeAll(async () => { replica = await startMongoReplicaSet(); });
@@ -61,6 +79,100 @@ beforeEach(async () => {
 });
 
 describe("client estimate plan review service", () => {
+  it.each([
+    { shape: "portrait", width: 80, height: 160, slotWidth: 160, slotHeight: 100, content: { x: 105, y: 60, width: 50, height: 100 }, mark: { x: .115, y: .18, width: .02, height: .04 }, updatedMark: { x: .12, y: .2, width: .01, height: .02 }, padding: { x: .06, y: .18, width: .02, height: .04 } },
+    { shape: "landscape", width: 160, height: 80, slotWidth: 100, slotHeight: 160, content: { x: 50, y: 115, width: 100, height: 50 }, mark: { x: .07, y: .26, width: .04, height: .02 }, updatedMark: { x: .08, y: .27, width: .02, height: .01 }, padding: { x: .07, y: .14, width: .02, height: .02 } }
+  ])("keeps $shape fitted drawing annotations aligned through submission, update, and staff fallback", async ({ width, height, slotWidth, slotHeight, content, mark, updatedMark, padding }) => {
+    const api = service();
+    const slot = { x: 50, y: 60, width: slotWidth, height: slotHeight };
+    await EstimateDesignRevisionModel.create({
+      _id: "revision-a-crop", drawingId: "drawing-a", revisionNumber: 2, sourcePageId: "page-1",
+      crop: slot, croppedFileReference: "a-crop.png", label: "A", mappingStatus: "misc",
+      reviewStatus: "submitted", replacesRevisionId: "revision-a"
+    });
+    await EstimateDesignSourcePageModel.create({ _id: "fit-page", uploadId: "upload-1", pageNumber: 2, sourceKind: "replacement", normalizedFileReference: "fit.png", width, height });
+    await EstimateDesignRevisionModel.create({
+      _id: "revision-a-fit", drawingId: "drawing-a", revisionNumber: 3, sourcePageId: "fit-page",
+      crop: { x: 0, y: 0, width, height }, croppedFileReference: "fit.png", label: "A", mappingStatus: "misc",
+      reviewStatus: "submitted", replacesRevisionId: "revision-a-crop"
+    });
+    await EstimateDesignDrawingModel.updateOne({ _id: "drawing-a" }, { $set: { sourcePageId: "fit-page" } });
+    await api.advanceForDrawingRevision("revision-a-fit", "designer-1");
+    await publishTestRound("fit-round", 1, ["revision-a-fit", "revision-b"]);
+    const paddingAnnotations = { ...annotations, elements: [{ ...annotations.elements[0]!, ...padding }] };
+    expect((await api.previewTargets(client, "page-1", { annotations: paddingAnnotations, reviewRoundId: "fit-round" })).targets).toEqual([]);
+    const pageAnnotations = { ...annotations, elements: [{ ...annotations.elements[0]!, ...mark }] };
+    const preview = await api.previewTargets(client, "page-1", { annotations: pageAnnotations, reviewRoundId: "fit-round" });
+    expect(preview.targets.map((target) => target.drawingId)).toEqual(["drawing-a"]);
+    const created = await api.submitRequest(client, "page-1", {
+      version: preview.pageRevisionNumber, summary: "Move the fitted detail", annotations: pageAnnotations,
+      targetDrawingIds: ["drawing-a"], snapshotToken: preview.snapshotToken, idempotencyKey: "fitted-request", reviewRoundId: "fit-round"
+    });
+    expect(created.annotations).toEqual(pageAnnotations);
+    const submitted = await EstimateDesignRevisionModel.findById("revision-a-fit").lean();
+    const localMark = { ...annotations.elements[0]!, x: .2, y: .3, width: .4, height: .2 };
+    expect(submitted!.annotations).toEqual({ schemaVersion: 1, imageWidth: width, imageHeight: height, elements: [localMark] });
+    expect(projectAnnotationToPage(localMark, content, { width: 1000, height: 500 })).toEqual(pageAnnotations.elements[0]);
+    const updatedAnnotations = { ...annotations, elements: [{ ...annotations.elements[0]!, ...updatedMark }] };
+    await api.updateClientRequest(client, created.id, { version: created.version, summary: "Move it again", annotations: updatedAnnotations });
+    const updatedLocalMark = { ...annotations.elements[0]!, x: .3, y: .4, width: .2, height: .1 };
+    const expectedDrawingAnnotations = { schemaVersion: 1, imageWidth: width, imageHeight: height, elements: [updatedLocalMark] };
+    expect((await EstimateDesignRevisionModel.findById("revision-a-fit").lean())!.annotations).toEqual(expectedDrawingAnnotations);
+    expect(projectAnnotationToPage(updatedLocalMark, content, { width: 1000, height: 500 })).toEqual(updatedAnnotations.elements[0]);
+    await EstimateDesignRevisionModel.updateOne({ _id: "revision-a-fit" }, { $set: { annotations: null, annotationLayerId: null } });
+    const staff = await createEstimateDesignService({
+      storage: { open: vi.fn(), read: vi.fn(), save: vi.fn(), saveGenerated: vi.fn(), delete: vi.fn() },
+      audit: { append: vi.fn(), appendInMongoTransaction: vi.fn(async () => ({})) }, maxUploadBytes: 10_000_000
+    } as never).listEstimator({ id: "owner-1", name: "Owner", email: "owner@example.com", role: "estimator_sales" }, "estimate-1");
+    expect(staff.revisions.find((revision) => revision.id === "revision-a-fit")).toMatchObject({ annotationLayerId: created.id, annotations: expectedDrawingAnnotations });
+    const pageRevision = await EstimatePlanPageRevisionModel.findOne({ sourcePageId: "page-1" }).sort({ revisionNumber: -1 }).lean();
+    expect(pageRevision!.patches.find((patch) => patch.drawingId === "drawing-a")!.crop).toEqual(slot);
+    expect((await EstimateDesignRevisionModel.findById("revision-b").lean())!.reviewStatus).toBe("submitted");
+  });
+
+  it("advances three replacements and a second item on the canonical original page", async () => {
+    const api = service();
+    let previousId = "revision-a";
+    for (let index = 2; index <= 4; index += 1) {
+      const pageId = `legacy-replacement-page-${index}`;
+      const revisionId = `replacement-a-${index}`;
+      await EstimateDesignSourcePageModel.create({
+        _id: pageId, uploadId: "upload-1", pageNumber: index,
+        normalizedFileReference: `${pageId}.png`, width: 450, height: 500
+      });
+      await EstimateDesignRevisionModel.create({
+        _id: revisionId, drawingId: "drawing-a", revisionNumber: index, sourcePageId: pageId,
+        crop: { x: 0, y: 0, width: 450, height: 500 }, croppedFileReference: `${pageId}.png`,
+        label: "A", mappingStatus: "misc", reviewStatus: "submitted", replacesRevisionId: previousId
+      });
+      await api.advanceForDrawingRevision(revisionId, "designer-1");
+      await EstimateDesignDrawingModel.updateOne({ _id: "drawing-a" }, { $set: { sourcePageId: pageId } });
+      previousId = revisionId;
+    }
+    await EstimateDesignSourcePageModel.create({
+      _id: "other-replacement-page", uploadId: "upload-1", pageNumber: 5, sourceKind: "replacement",
+      normalizedFileReference: "other-replacement.png", width: 900, height: 1000
+    });
+    await EstimateDesignRevisionModel.create({
+      _id: "replacement-b-2", drawingId: "drawing-b", revisionNumber: 2, sourcePageId: "other-replacement-page",
+      crop: { x: 0, y: 0, width: 900, height: 1000 }, croppedFileReference: "other-replacement.png",
+      label: "B", mappingStatus: "misc", reviewStatus: "submitted", replacesRevisionId: "revision-b"
+    });
+    await api.advanceForDrawingRevision("replacement-b-2", "designer-1");
+    const latest = await EstimatePlanPageRevisionModel.findOne({ sourcePageId: "page-1" }).sort({ revisionNumber: -1 }).lean();
+    expect(latest!.patches).toEqual([
+      expect.objectContaining({ drawingId: "drawing-a", drawingRevisionId: "replacement-a-4", crop: { x: 0, y: 0, width: 450, height: 500 } }),
+      expect.objectContaining({ drawingId: "drawing-b", drawingRevisionId: "replacement-b-2", crop: { x: 550, y: 0, width: 450, height: 500 } })
+    ]);
+    expect(await EstimatePlanPageRevisionModel.countDocuments({ sourcePageId: { $ne: "page-1" } })).toBe(0);
+    expect((await api.listClient(client, "estimate-1")).pages.map((page) => page.id)).toEqual(["page-1"]);
+    const manifest = await loadEstimatePlanDocumentManifest("estimate-1");
+    expect(manifest.documents[0]!.pages).toHaveLength(1);
+    expect(manifest.documents[0]!.pages[0]!.patches.map((patch) => patch.revisionId)).toEqual(["replacement-a-4", "replacement-b-2"]);
+    const targets = await api.previewTargets(client, "page-1", { annotations });
+    expect(targets.targets.map((target) => target.drawingId)).toEqual(["drawing-a"]);
+  });
+
   it("hides a commercially approved full plan until ready, then keeps the approved plan read-only", async () => {
     const api = service();
     await EstimateModel.updateOne(
@@ -79,7 +191,7 @@ describe("client estimate plan review service", () => {
       code: "DESIGN_PLAN_NOT_REVIEWABLE"
     });
     await expect(
-      api.saveDraft(client, "page-1", { version: 0, annotations })
+      api.saveDraft(client, "page-1", { version: 0, annotations, reviewRoundId: "round-1" })
     ).rejects.toMatchObject({
       status: 409,
       code: "DESIGN_PLAN_NOT_REVIEWABLE"
@@ -90,11 +202,18 @@ describe("client estimate plan review service", () => {
       { _id: "estimate-1" },
       { $set: { designPlanStatus: "ready_for_client" } }
     );
+    await DesignPlanReviewRoundModel.create({
+      _id: "round-1", estimateId: "estimate-1", projectId: "project-1", leadId: "lead-1", designPlanVersion: 1,
+      recipientEmail: client.email, clientName: "Client", projectName: "Plan Review",
+      submittedRevisionIds: ["revision-a", "revision-b"],
+      attachments: [{ uploadId: "upload-1", filename: "plan.pdf", mimeType: "application/pdf", byteSize: 100, sha256: "a".repeat(64), storageReference: "source.pdf" }],
+      submittedById: "designer-1", submittedAt: new Date(), assignedAdminId: "admin-1"
+    });
     await expect(api.listClient(client, "estimate-1")).resolves.toMatchObject({
       pages: [expect.objectContaining({ id: "page-1" })]
     });
     await expect(
-      api.saveDraft(client, "page-1", { version: 0, annotations })
+      api.saveDraft(client, "page-1", { version: 0, annotations, reviewRoundId: "round-1" })
     ).resolves.toMatchObject({ version: 1, annotations });
 
     await EstimateModel.updateOne(
@@ -110,6 +229,114 @@ describe("client estimate plan review service", () => {
       status: 409,
       code: "DESIGN_PLAN_NOT_REVIEWABLE"
     });
+  });
+
+  it.each([false, true])("keeps published page and item reads pinned while a new draft exists (artifact=%s)", async (artifact) => {
+    const manifest = await loadEstimatePlanDocumentManifest("estimate-1");
+    const document = manifest.documents[0]!;
+    const documentHash = hashPlanDocumentManifest(document);
+    if (artifact) await EstimateDesignPlanDocumentModel.create({
+      _id: "document-1", estimateId: "estimate-1", sourceUploadId: "upload-1", manifestHash: documentHash,
+      rendererVersion: 1, manifest: document, status: "ready", filename: "submitted.pdf", pageCount: 1,
+      storageReference: "submitted.pdf", sha256: "a".repeat(64), byteSize: 100, createdById: "designer-1"
+    });
+    await DesignPlanReviewRoundModel.create({
+      _id: "round-pinned", estimateId: "estimate-1", projectId: "project-1", leadId: "lead-1", designPlanVersion: 1,
+      recipientEmail: client.email, clientName: "Client", projectName: "Plan Review",
+      submittedRevisionIds: ["revision-a", "revision-b"],
+      ...(artifact ? { planManifestHash: manifest.manifestHash, planDocuments: [{ documentId: "document-1", sourceUploadId: "upload-1", manifestHash: documentHash }] } : {}),
+      attachments: [{ uploadId: "upload-1", filename: "submitted.pdf", mimeType: "application/pdf", byteSize: 100, sha256: "a".repeat(64), storageReference: "submitted.pdf" }],
+      submittedById: "designer-1", submittedAt: new Date(), assignedAdminId: "admin-1"
+    });
+    await EstimateModel.updateOne({ _id: "estimate-1" }, { $set: { status: "client_approved", designPlanStatus: "ready_for_client", designPlanVersion: 1 } });
+    await EstimateDesignSourcePageModel.create({ _id: "draft-page", uploadId: "upload-1", pageNumber: 2, sourceKind: "replacement", normalizedFileReference: "draft.png", width: 450, height: 500 });
+    await EstimateDesignRevisionModel.create({ _id: "draft-a", drawingId: "drawing-a", revisionNumber: 2, sourcePageId: "draft-page", crop: { x: 0, y: 0, width: 450, height: 500 }, croppedFileReference: "draft.png", label: "A revised", mappingStatus: "misc", reviewStatus: "draft", replacesRevisionId: "revision-a" });
+    await EstimateDesignDrawingModel.updateOne({ _id: "drawing-a" }, { $set: { sourcePageId: "draft-page" } });
+    const original = await sharp({ create: { width: 1000, height: 500, channels: 3, background: "#123456" } }).png().toBuffer();
+    const read = vi.fn(async (reference: string) => { if (reference !== "base.png") throw new Error("Draft source leaked"); return original; });
+    const storage = { read, open: vi.fn(), save: vi.fn(), saveGenerated: vi.fn(), delete: vi.fn() };
+    const designs = createEstimateDesignService({ storage, audit: { appendInMongoTransaction: vi.fn() } } as never);
+    const api = createEstimatePlanReviewService({ estimateDesigns: designs, storage, audit: { appendInMongoTransaction: vi.fn() } } as never);
+    const workspace = await designs.listClient(client, "estimate-1");
+    expect(workspace.revisions.map((revision) => revision.id)).toEqual(["revision-a", "revision-b"]);
+    const pages = await api.listClient(client, "estimate-1");
+    expect(pages.pages).toHaveLength(1);
+    expect(pages.pages[0]!.currentImageUrl).toContain("roundId=round-pinned");
+    const image = await api.pageImage(client, "page-1", false, "round-pinned");
+    const chunks: Buffer[] = [];
+    for await (const chunk of image) chunks.push(Buffer.from(chunk));
+    expect(await sharp(Buffer.concat(chunks)).raw().toBuffer()).toEqual(await sharp(original).raw().toBuffer());
+    expect(read).not.toHaveBeenCalledWith("draft.png");
+    await expect(api.previewTargets(client, "page-1", { annotations, reviewRoundId: "round-pinned" })).rejects.toMatchObject({ code: "DESIGN_PLAN_REVISION_CONFLICT" });
+  });
+
+  it.each([undefined, "other-round"])("rejects missing or stale review round %s before feedback writes", async (reviewRoundId) => {
+    await publishTestRound("round-current", 1);
+    const api = service();
+    await expect(api.saveDraft(client, "page-1", { version: 0, annotations, reviewRoundId })).rejects.toMatchObject({ code: "DESIGN_PLAN_REVISION_CONFLICT" });
+    await expect(api.previewTargets(client, "page-1", { annotations, reviewRoundId })).rejects.toMatchObject({ code: "DESIGN_PLAN_REVISION_CONFLICT" });
+    await expect(api.submitRequest(client, "page-1", { version: 1, summary: "Change A", annotations, targetDrawingIds: ["drawing-a"], snapshotToken: "a".repeat(64), idempotencyKey: "round-bound-request", reviewRoundId })).rejects.toMatchObject({ code: "DESIGN_PLAN_REVISION_CONFLICT" });
+    expect(await EstimatePlanAnnotationDraftModel.countDocuments()).toBe(0);
+    expect(await EstimatePlanChangeRequestModel.countDocuments()).toBe(0);
+    expect((await EstimateDesignRevisionModel.findById("revision-a").lean())!.reviewStatus).toBe("submitted");
+  });
+
+  it("includes the review round in its snapshot even when drawing IDs and page pixels are unchanged", async () => {
+    const api = service();
+    await publishTestRound("round-first", 1);
+    const first = await api.previewTargets(client, "page-1", { annotations, reviewRoundId: "round-first" });
+    await publishTestRound("round-second", 2);
+    const second = await api.previewTargets(client, "page-1", { annotations, reviewRoundId: "round-second" });
+    expect(first.pageRevisionNumber).toBe(second.pageRevisionNumber);
+    expect(first.targets).toEqual(second.targets);
+    expect(first.snapshotToken).not.toBe(second.snapshotToken);
+    await expect(api.submitRequest(client, "page-1", { version: first.pageRevisionNumber, summary: "Change A", annotations, targetDrawingIds: ["drawing-a"], snapshotToken: first.snapshotToken, idempotencyKey: "old-pixels-new-round", reviewRoundId: "round-second" })).rejects.toMatchObject({ code: "PLAN_REVIEW_CONFLICT" });
+    expect(await EstimatePlanChangeRequestModel.countDocuments()).toBe(0);
+  });
+
+  it("rechecks the round inside the transaction after a newer submission replaces the previewed round", async () => {
+    const api = service();
+    await publishTestRound("round-first", 1);
+    const preview = await api.previewTargets(client, "page-1", { annotations, reviewRoundId: "round-first" });
+    const transaction = mongoose.connection.transaction.bind(mongoose.connection);
+    const transactionSpy = vi.spyOn(mongoose.connection, "transaction").mockImplementationOnce((async (work: any, options: any) => {
+      await publishTestRound("round-second", 2);
+      return transaction(work, options);
+    }) as never);
+    try {
+      await expect(api.submitRequest(client, "page-1", { version: preview.pageRevisionNumber, summary: "Change A", annotations, targetDrawingIds: ["drawing-a"], snapshotToken: preview.snapshotToken, idempotencyKey: "concurrent-new-round", reviewRoundId: "round-first" })).rejects.toMatchObject({ code: "DESIGN_PLAN_REVISION_CONFLICT" });
+    } finally { transactionSpy.mockRestore(); }
+    expect(await EstimatePlanChangeRequestModel.countDocuments()).toBe(0);
+    expect((await EstimateDesignRevisionModel.findById("revision-a").lean())!.reviewStatus).toBe("submitted");
+  });
+
+  it("preserves an already submitted idempotent retry after the current round changes", async () => {
+    const api = service();
+    await publishTestRound("round-first", 1);
+    const preview = await api.previewTargets(client, "page-1", { annotations, reviewRoundId: "round-first" });
+    const request = { version: preview.pageRevisionNumber, summary: "Change A", annotations, targetDrawingIds: ["drawing-a"], snapshotToken: preview.snapshotToken, idempotencyKey: "round-idempotent-request", reviewRoundId: "round-first" };
+    const created = await api.submitRequest(client, "page-1", request);
+    await publishTestRound("round-second", 2);
+    expect((await api.submitRequest(client, "page-1", request)).id).toBe(created.id);
+    expect(await EstimatePlanChangeRequestModel.countDocuments()).toBe(1);
+    await expect(api.submitRequest(client, "page-1", { ...request, idempotencyKey: "different-stale-request" })).rejects.toMatchObject({ code: "DESIGN_PLAN_REVISION_CONFLICT" });
+  });
+
+  it("hides previous-round drafts and reuses the draft row safely for a new round", async () => {
+    const api = service();
+    await publishTestRound("round-first", 1);
+    const first = await api.saveDraft(client, "page-1", { version: 0, annotations, reviewRoundId: "round-first" });
+    expect((await api.listClient(client, "estimate-1")).pages[0]!.annotationDraft).toMatchObject({ id: first.id });
+    await publishTestRound("round-second", 2);
+    expect((await api.listClient(client, "estimate-1")).pages[0]!.annotationDraft).toBeNull();
+    const changed = { ...annotations, elements: [{ ...annotations.elements[0]!, x: .2 }] };
+    const second = await api.saveDraft(client, "page-1", { version: 0, annotations: changed, reviewRoundId: "round-second" });
+    expect(second.id).toBe(first.id);
+    expect(second.version).toBe(first.version + 1);
+    expect(await EstimatePlanAnnotationDraftModel.countDocuments()).toBe(1);
+    expect(await EstimatePlanAnnotationDraftModel.findById(second.id).lean()).toMatchObject({ reviewRoundId: "round-second", annotations: changed });
+    expect((await api.listClient(client, "estimate-1")).pages[0]!.annotationDraft).toMatchObject({ annotations: changed });
+    await expect(api.saveDraft(client, "page-1", { version: first.version, annotations, reviewRoundId: "round-first" })).rejects.toMatchObject({ code: "DESIGN_PLAN_REVISION_CONFLICT" });
   });
 
   it("runs Super Admin Plan Review through the real related-Client Estimate Design reader", async () => {

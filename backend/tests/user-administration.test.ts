@@ -56,6 +56,7 @@ function addUser(
     version: 1,
     managerId: null,
     authorizedClientIds: [],
+    vendorId: role === "vendor" ? "vendor-directory-fixture" : null,
     ...overrides
   };
   seed.users.push(user);
@@ -67,7 +68,8 @@ function publicUser(user: UserRecord): PublicUser {
     id: user.id,
     name: user.name,
     email: user.email,
-    role: user.role
+    role: user.role,
+    ...(user.role === "vendor" ? { vendorId: user.vendorId! } : {})
   };
 }
 
@@ -159,7 +161,7 @@ describe("user administration service", () => {
     expect(new Set(superPage.items.map(({ role }) => role))).toEqual(new Set(ROLE_CODES));
     expect(superPage.filterRoles).toEqual(ROLE_CODES);
     expect(superPage.manageableRoles).toEqual(
-      ROLE_CODES.filter((role) => role !== "super_admin")
+      ROLE_CODES.filter((role) => role !== "super_admin" && role !== "vendor")
     );
 
     expect(JSON.stringify(superPage)).not.toMatch(/password|hash|token|secret/i);
@@ -612,7 +614,7 @@ describe("user administration routes", () => {
         // request above is filtered down to a single designer.
         summary: { total: 4, active: 4, inactive: 0, roleCount: 4 },
         filterRoles: ROLE_CODES,
-        manageableRoles: ROLE_CODES.filter((role) => role !== "super_admin")
+        manageableRoles: ROLE_CODES.filter((role) => role !== "super_admin" && role !== "vendor")
       }
     });
     expect(JSON.stringify(directory.body)).not.toMatch(/password|hash|token|secret/i);

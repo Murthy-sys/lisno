@@ -1,0 +1,47 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - link "Skip to main content" [ref=e4] [cursor=pointer]:
+        - /url: "#main-content"
+      - complementary "Application sidebar" [ref=e5]:
+        - generic [ref=e6]:
+          - generic [ref=e7]:
+            - img "Lisno" [ref=e8]
+            - generic [ref=e9]: INTERIOR WORKSPACE
+          - navigation "Primary navigation" [ref=e10]:
+            - link "Dashboard" [ref=e11] [cursor=pointer]:
+              - /url: /admin/dashboard
+            - link "All Projects" [ref=e18] [cursor=pointer]:
+              - /url: /admin/projects
+            - link "Users" [ref=e23] [cursor=pointer]:
+              - /url: /admin/users
+            - link "Configuration" [ref=e28] [cursor=pointer]:
+              - /url: /admin/configuration/estimation
+            - button "Procurement" [ref=e35] [cursor=pointer]
+            - link "Client responses" [ref=e43] [cursor=pointer]:
+              - /url: /admin/client-responses
+            - link "Design approvals" [ref=e48] [cursor=pointer]:
+              - /url: /admin/design-approvals
+            - link "Access requests" [ref=e56] [cursor=pointer]:
+              - /url: /admin/access-requests
+            - link "Finance" [ref=e61] [cursor=pointer]:
+              - /url: /finance
+          - paragraph [ref=e67]: Build Better Spaces
+      - banner "Workspace tools" [ref=e68]:
+        - generic [ref=e69]:
+          - button "Retry critical tasks" [ref=e70] [cursor=pointer]
+          - button "Notifications" [ref=e74] [cursor=pointer]
+          - button "Synthetic workspace reviewer" [ref=e79] [cursor=pointer]:
+            - generic [aria-hidden] [ref=e80]: SW
+            - generic [ref=e81]:
+              - generic [ref=e82]: Synthetic workspace reviewer
+              - generic [ref=e83]: Super Admin
+      - main [ref=e86]:
+        - region [ref=e87]:
+          - generic [ref=e89]:
+            - paragraph [ref=e90]: Authorization required
+            - heading "Access denied" [level=1] [ref=e91]
+            - paragraph [ref=e92]: You do not have access to this page.
+    - status "Application announcements" [ref=e93]
+    - region "Notifications"
+  - alert [ref=e94]: "Synthetic QA blocked unexpected request: GET /chat/availability"

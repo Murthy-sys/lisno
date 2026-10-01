@@ -131,7 +131,7 @@ interface FurnitureMeasurementItemBase {
 }
 
 export type FurnitureDimensionItem = FurnitureMeasurementItemBase & (
-  | { measurementType?: "dimensions"; length: number; width: number; height: number }
+  | { measurementType?: "dimensions"; length: number; width: number; /** Legacy submissions may include height. */ height?: number }
   | { measurementType: "count"; quantity: number }
 );
 
@@ -162,7 +162,9 @@ export interface FurnitureEstimateItem {
 export interface FurnitureEstimateRoom {
   id: string;
   name: string;
-  /** Older responses may omit items; the editor must block rather than invent them. */
+  /** Valid room length and width from the linked approved estimate, in feet. */
+  estimateDimensions?: { lengthFt: number; widthFt: number };
+  /** Only actionable approved-value items. Zero-only rooms are present with an empty list; older responses may omit it. */
   estimateItems?: FurnitureEstimateItem[];
 }
 
@@ -196,6 +198,8 @@ export interface DesignStageOperational {
     approvedImages: number;
     readyForCompletion: boolean;
     completedAt: string | null;
+    /** Requirements for final Client completion, separate from stage entry/upload blockers. */
+    completionBlockingReasons?: string[];
   };
   furniture?: {
     phase: "requirements_pending" | "awaiting_client_acceptance" | "awaiting_dimensions" | "completed"
@@ -260,6 +264,8 @@ export interface DesignWorkflowView {
   projectId: string;
   projectName: string;
   serverNow: string;
+  /** Canonical project-linked Client Estimate approval; older responses may omit this field. */
+  estimateApprovalStatus?: "approved" | "awaiting_approval" | "source_issue";
   /** Client receipt time preserves the server clock when cached data remounts. */
   receivedAt?: number;
   projectStages?: DesignWorkflowStage[];

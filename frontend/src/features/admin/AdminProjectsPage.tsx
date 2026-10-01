@@ -1,15 +1,11 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   Building2,
-  CalendarClock,
   Eye,
-  IndianRupee,
   LayoutGrid,
   List,
   MapPin,
   Settings2,
-  Tag,
-  TrendingUp,
   User
 } from "lucide-react";
 import { useState } from "react";
@@ -46,7 +42,6 @@ const money = new Intl.NumberFormat("en-IN", {
 });
 
 const VIEW_STORAGE_KEY = "lisno.adminProjects.view";
-const SKELETON_CARD_COUNT = 8;
 
 type AdminProjectsView = "grid" | "list";
 const PROJECT_STATUSES: ReadonlyArray<{ value: ProjectStatus | "all"; label: string }> = [
@@ -83,6 +78,7 @@ function adminProjectEstimateDisplay(project: AdminProjectSummary) {
     : estimate?.total ?? null;
 
   return {
+    approved: estimateApproved,
     label: estimateApproved ? "Client-approved value (incl. GST)" : "Estimate",
     text: estimateApproved
       ? estimateValue === null
@@ -103,15 +99,15 @@ function requestErrorMessage(error: unknown) {
 function AdminProjectsHeaderRow() {
   return (
     <div className="admin-project-card__link admin-projects__header-row" aria-hidden="true">
-      <span className="admin-projects__header-cell"><Tag aria-hidden="true" /><span>Project</span></span>
+      <span className="admin-projects__header-cell">Project</span>
       <div className="admin-project-card__meta">
-        <div><Building2 aria-hidden="true" /><span>Location</span></div>
-        <div><User aria-hidden="true" /><span>Sales</span></div>
-        <div><TrendingUp aria-hidden="true" /><span>Lead progress</span></div>
-        <div><CalendarClock aria-hidden="true" /><span>Next action</span></div>
-        <div><IndianRupee aria-hidden="true" /><span>Estimate</span></div>
+        <div>Location</div>
+        <div>Sales</div>
+        <div>Lead progress</div>
+        <div>Next action</div>
+        <div>Estimate</div>
       </div>
-      <span className="admin-projects__header-cell admin-projects__header-action"><Settings2 aria-hidden="true" /><span>Action</span></span>
+      <span className="admin-projects__header-cell admin-projects__header-action">Actions</span>
     </div>
   );
 }
@@ -159,7 +155,7 @@ function AdminProjectCard({
             <div><dt className="sr-only">Lead progress</dt><dd>{project.lead ? formatWorkflowLabel(project.lead.stage) : "Unassigned handoff"}</dd></div>
             <div><dt className="sr-only">Next action</dt><dd>{nextAction ?? "No action pending"}</dd></div>
             <div>
-              <dt className="sr-only">{estimateDisplay.label}</dt>
+              <dt className={estimateDisplay.approved ? "admin-project-card__estimate-label" : "sr-only"}>{estimateDisplay.label}</dt>
               <dd>{estimateDisplay.text}</dd>
             </div>
           </dl>
@@ -236,7 +232,7 @@ function AdminProjectGridCard({
                 <dd title={project.propertyType ?? "Property not captured"}><Building2 aria-hidden="true" /><span>{project.propertyType ?? "Property not captured"}</span></dd>
               </div>
               <div className="admin-project-tile__amount">
-                <dt className="sr-only">{estimateDisplay.label}</dt>
+                <dt className={estimateDisplay.approved ? "admin-project-tile__amount-label" : "sr-only"}>{estimateDisplay.label}</dt>
                 <dd>{estimateDisplay.text}</dd>
               </div>
             </dl>
@@ -254,26 +250,6 @@ function AdminProjectGridCard({
         </div>
       </article>
     </li>
-  );
-}
-
-function AdminProjectGridSkeleton() {
-  return (
-    <ul className="admin-project-grid admin-project-grid--skeleton" aria-hidden="true">
-      {Array.from({ length: SKELETON_CARD_COUNT }, (_, index) => (
-        <li key={index} className="admin-project-grid__item">
-          <div className="admin-project-tile admin-project-tile--skeleton">
-            <div className="admin-project-tile__media" />
-            <div className="admin-project-tile__body">
-              <span className="admin-project-tile__bone admin-project-tile__bone--chip" />
-              <span className="admin-project-tile__bone admin-project-tile__bone--title" />
-              <span className="admin-project-tile__bone" />
-              <span className="admin-project-tile__bone admin-project-tile__bone--amount" />
-            </div>
-          </div>
-        </li>
-      ))}
-    </ul>
   );
 }
 
@@ -349,6 +325,7 @@ export function AdminProjectsPage() {
   return (
     <section className="access-administration admin-projects" aria-labelledby="admin-projects-title">
       <div className="admin-projects__hero">
+        <img className="admin-projects__hero-image" src={projectCardImage} alt="" aria-hidden="true" />
         <PageHeader
           id="admin-projects-title"
           eyebrow="Project administration"
@@ -359,6 +336,7 @@ export function AdminProjectsPage() {
           metadata={page && !page.statusCounts && !stalePage && !projectsQuery.isError ? <StatusBadge tone="info" label={`${page.pagination.total} project${page.pagination.total === 1 ? "" : "s"}`} /> : undefined}
           actions={hasFrontendPermission(auth.authorization, "projects.initiate") ? <Button aria-label="Initiate project" onClick={() => setDialogOpen(true)}>Initiate project</Button> : undefined}
         />
+      </div>
       <div className="admin-projects__toolbar">
         <div className="admin-projects__statuses" role="group" aria-label="Project status">
           {PROJECT_STATUSES.map(status => <button
@@ -387,7 +365,6 @@ export function AdminProjectsPage() {
           </button>
         </div>
       </div>
-      </div>
       {filtersOpen ? <form id="admin-projects-filters" className="admin-projects__filters" aria-label="Filter projects" onSubmit={event => {
         event.preventDefault();
         setInput(current => ({ ...current, search: searchDraft.trim() || undefined, offset: 0 }));
@@ -409,7 +386,6 @@ export function AdminProjectsPage() {
         <PageState
           state="loading"
           message="Loading projects…"
-          skeleton={view === "grid" ? <AdminProjectGridSkeleton /> : undefined}
         />
       ) : projectsQuery.isError ? (
         <PageState

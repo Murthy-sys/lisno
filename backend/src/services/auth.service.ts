@@ -57,6 +57,7 @@ export interface PublicUser {
   name: string;
   email: string;
   role: Role;
+  vendorId?: string;
   avatar?: string;
   /** Present only while a profile photo exists; omitted (never null) otherwise. */
   profilePhotoVersion?: number;
@@ -68,7 +69,7 @@ export interface AuthPayload {
 }
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-09-28.vendor-induction.v1" as const;
+  "2026-10-01.vendor-procurement.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;
@@ -366,11 +367,15 @@ function isIssuedDevelopmentDemoAuthorization(
 }
 
 export function toPublicUser(user: UserRecord): PublicUser {
+  if (user.role === "vendor" && !user.vendorId) {
+    throw new InvalidTokenError();
+  }
   return {
     id: user.id,
     name: user.name,
     email: user.email,
     role: user.role,
+    ...(user.role === "vendor" ? { vendorId: user.vendorId! } : {}),
     ...(user.avatar ? { avatar: user.avatar } : {}),
     ...(user.profilePhoto ? { profilePhotoVersion: user.profilePhoto.version } : {})
   };

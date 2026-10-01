@@ -236,7 +236,8 @@ const workers: WorkerAssignmentOption[] = [
   { id: "electrician-1", name: "Dev Electrician", email: "dev@example.com", role: "worker_electrician" },
   { id: "painter-1", name: "Mina Painter", email: "mina@example.com", role: "worker_painter" },
   { id: "plumber-1", name: "Pavan Plumber", email: "pavan@example.com", role: "worker_plumber" },
-  { id: "procurement-1", name: "Priya Procurement", email: "priya@example.com", role: "procurement" }
+  { id: "procurement-1", name: "Priya Procurement", email: "priya@example.com", role: "procurement" },
+  { id: "site-manager-1", name: "Sana Site Manager", email: "sana@example.com", role: "site_manager" }
 ];
 
 const allTasks = [
@@ -330,7 +331,11 @@ describe("WorkerAssignmentPanel", () => {
 
     expect(screen.getByRole("heading", { name: "Project coordination" })).toBeVisible();
     expect(screen.getByRole("article", { name: "Open approved project budget progress" })).toHaveTextContent("45% complete");
-    expect(screen.getByRole("article", { name: "Coordinate site execution progress" })).toHaveTextContent("30% complete");
+    const site = screen.getByRole("article", { name: "Coordinate site execution assignment" });
+    expect(site).toHaveTextContent("30% complete");
+    const siteSelect = within(site).getByRole("combobox", { name: "Assigned Site Manager" });
+    expect(within(siteSelect).getByRole("option", { name: /Sana Site Manager/ })).toBeVisible();
+    expect(within(siteSelect).queryByRole("option", { name: /Priya Procurement/ })).not.toBeInTheDocument();
     const procurement = screen.getByRole("article", { name: "Coordinate approved procurement assignment" });
     const procurementSelect = within(procurement).getByRole("combobox", { name: "Assigned procurement coordinator" });
     expect(within(procurementSelect).getByRole("option", { name: /Priya Procurement/ })).toBeVisible();

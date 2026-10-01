@@ -20,6 +20,20 @@ const estimate = {
 };
 
 describe("estimate design mapping", () => {
+  it("maps configured Main Lines by saved room and basket IDs without a legacy catalogue prefix", () => {
+    const configured = mappingContextForEstimate({
+      rooms: [{ id: "room-a", label: "Shared room" }, { id: "room-b", label: "Shared room" }],
+      scopes: [], selectedMainBasketIds: ["basket-lower"],
+      lineItems: [{ source: "configuration", roomId: "room-b", roomName: "Shared room",
+        catalogueId: "main-line-lower", mainLineId: "main-line-lower", mainLineName: "Custom console",
+        mainBasketId: "basket-lower", included: true }]
+    });
+    expect(configured.invalidIncludedItems).toEqual([]);
+    expect(assignEstimateItem({ roomId: "room-b", catalogueId: "main-line-lower" }, configured))
+      .toMatchObject({ scopeSectionId: "basket-lower", mappingStatus: "estimator_assigned" });
+    expect(autoMapDrawingTitle("Custom console", configured).mapping)
+      .toMatchObject({ roomId: "room-b", scopeSectionId: "basket-lower" });
+  });
   it("maps TV UNIT - BEDROOM 1 to the one included exact item", () => {
     expect(autoMapDrawingTitle("TV UNIT - BEDROOM 1", mappingContextForEstimate(estimate))).toEqual({
       mapping: { roomId: "room-bedroom-1", catalogueId: "CA01", scopeSectionId: "CA", mappingStatus: "auto_mapped" },

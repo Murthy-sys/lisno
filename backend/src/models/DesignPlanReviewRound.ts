@@ -31,6 +31,13 @@ const designPlanReviewRoundSchema = new Schema(
     projectId: { type: String, ref: "Project", required: true, immutable: true },
     leadId: { type: String, ref: "Lead", required: true, immutable: true },
     designPlanVersion: { type: Number, required: true, min: 1, immutable: true },
+    planManifestHash: { type: String, default: null, immutable: true },
+    planDocuments: { type: [{
+      _id: false,
+      documentId: { type: String, required: true, immutable: true },
+      sourceUploadId: { type: String, required: true, immutable: true },
+      manifestHash: { type: String, required: true, immutable: true }
+    }], default: undefined, immutable: true },
     recipientEmail: { type: String, required: true, immutable: true },
     clientName: { type: String, required: true, immutable: true },
     projectName: { type: String, required: true, immutable: true },

@@ -16,7 +16,8 @@ export const ROLE_CODES = [
   "worker_other",
   "design_manager",
   "design_head",
-  "client"
+  "client",
+  "vendor"
 ] as const;
 
 export type Role = (typeof ROLE_CODES)[number];
@@ -38,7 +39,8 @@ export const ROLE_LABELS = {
   worker_other: "Other Worker",
   design_manager: "Design Manager",
   design_head: "Design Head",
-  client: "Client"
+  client: "Client",
+  vendor: "Vendor"
 } as const satisfies Readonly<Record<Role, string>>;
 
 export const WORKER_ROLES = [

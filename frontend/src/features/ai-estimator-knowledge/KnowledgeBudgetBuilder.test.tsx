@@ -103,7 +103,7 @@ describe("KnowledgeBudgetBuilder", () => {
 
     const action = screen.getByRole("button", { name: "Set budget" });
     expect(action).toBeEnabled();
-    expect(screen.getByText("No active Vendor is available. Complete vendor induction, both KPIs, and verification in Procurement > Vendors before setting a budget.")).toBeVisible();
+    expect(screen.getByText("No active Vendor is available. Submit a Vendor KPI and rate a Procurement KPI in Procurement > Vendors before setting a budget. Induction and verification are separate; unverified allocations remain capped at ₹50,000.")).toBeVisible();
     expect(screen.getByText("No active Unit of measure is available. Add a Unit before setting a budget.")).toBeVisible();
     expect(screen.queryByText(/Tax options|No active Tax|Add a Tax/iu)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add Unit" })).toBeEnabled();

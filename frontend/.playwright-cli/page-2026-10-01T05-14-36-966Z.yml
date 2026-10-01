@@ -1,0 +1,31 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - link "Skip to main content" [ref=e4] [cursor=pointer]:
+        - /url: "#main-content"
+      - complementary "Application sidebar" [ref=e5]:
+        - generic [ref=e6]:
+          - generic [ref=e7]:
+            - img "Lisno" [ref=e8]
+            - generic [ref=e9]: INTERIOR WORKSPACE
+          - navigation "Primary navigation" [ref=e10]:
+            - link "My work" [ref=e11] [cursor=pointer]:
+              - /url: /vendor
+      - banner "Workspace tools" [ref=e15]:
+        - generic [ref=e16]:
+          - button "Notifications" [ref=e17] [cursor=pointer]
+          - button "Synthetic workspace reviewer" [ref=e22] [cursor=pointer]:
+            - generic [aria-hidden] [ref=e23]: SW
+            - generic [ref=e24]:
+              - generic [ref=e25]: Synthetic workspace reviewer
+              - generic [ref=e26]: Vendor
+      - main [ref=e29]:
+        - region [ref=e30]:
+          - generic [ref=e32]:
+            - generic [ref=e33]: Vendor workspace
+            - heading "Assigned work" [level=1] [ref=e35]
+            - paragraph [ref=e36]: Update each approved order section, add site evidence when useful, and submit completed work to the client.
+    - status "Application announcements" [ref=e40]
+    - region "Notifications"
+  - status "Content status":
+    - generic: Loading assigned work…

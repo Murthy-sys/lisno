@@ -1,3 +1,4 @@
+import { projectStatusKeys } from "../project-status/projectStatusApi";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -61,9 +62,8 @@ function WorkerAssignmentPanelForProject({ project }: { project: AdminProjectSum
   const trustedTasks = taskIntegrityError ? [] : tasks.data ?? [];
   const trustedSections = sectionIntegrityError ? [] : sections.data ?? [];
   const procurementTasks = trustedTasks.filter((task) => task.kind === "procurement");
-  const coordinationTasks = trustedTasks.filter(
-    (task) => task.kind === "finance" || task.kind === "site_execution"
-  );
+  const siteTasks = trustedTasks.filter((task) => task.kind === "site_execution");
+  const coordinationTasks = trustedTasks.filter((task) => task.kind === "finance");
   const assignedSections = trustedSections.filter(
     (section) => section.assignmentState === "assigned"
   ).length;
@@ -134,7 +134,7 @@ function WorkerAssignmentPanelForProject({ project }: { project: AdminProjectSum
             <>
               <ProjectCoordination
                 projectId={project.id}
-                procurementTasks={procurementTasks}
+                assignmentTasks={[...procurementTasks, ...siteTasks]}
                 progressTasks={coordinationTasks}
                 workers={workers.data ?? []}
                 onStale={() => void tasks.refetch()}
@@ -167,13 +167,13 @@ function WorkerAssignmentPanelForProject({ project }: { project: AdminProjectSum
 
 function ProjectCoordination({
   projectId,
-  procurementTasks,
+  assignmentTasks,
   progressTasks,
   workers,
   onStale
 }: {
   projectId: string;
-  procurementTasks: ProjectWorkflowTask[];
+  assignmentTasks: ProjectWorkflowTask[];
   progressTasks: ProjectWorkflowTask[];
   workers: WorkerAssignmentOption[];
   onStale: () => void;
@@ -183,14 +183,14 @@ function ProjectCoordination({
       <div className="section-heading">
         <div>
           <h3 id={`task-assignment-${projectId}-coordination-title`}>Project coordination</h3>
-          <p>Procurement assignment and live Finance and Site Management progress.</p>
+          <p>Assign Procurement and Site Management, then follow their progress.</p>
         </div>
       </div>
-      {procurementTasks.length === 0 && progressTasks.length === 0 ? (
+      {assignmentTasks.length === 0 && progressTasks.length === 0 ? (
         <p className="inline-empty">No project coordination tasks are available.</p>
       ) : (
         <div className="worker-assignment__coordination-grid">
-          {procurementTasks.map((task) => (
+          {assignmentTasks.map((task) => (
             <WorkerAssignmentRow key={task.id} projectId={projectId} task={task} workers={workers} onStale={onStale} />
           ))}
           {progressTasks.map((task) => <CoordinationProgressCard key={task.id} task={task} />)}
@@ -251,6 +251,7 @@ function SectionAssignmentDisclosure({ section, workers }: {
         client.invalidateQueries({ queryKey: projectWorkflowKeys.sectionAssignments(section.projectId) }),
         client.invalidateQueries({ queryKey: projectWorkflowKeys.projectTasks(section.projectId) }),
         client.invalidateQueries({ queryKey: projectWorkflowKeys.operational }),
+        client.invalidateQueries({ queryKey: projectStatusKeys.all }),
         client.invalidateQueries({ queryKey: adminProjectKeys.all }),
         client.invalidateQueries({ queryKey: adminProjectKeys.detail(section.projectId) }),
         client.invalidateQueries({ queryKey: dashboardKeys.all })
@@ -383,6 +384,7 @@ function WorkerAssignmentRow({ projectId, task, workers, onStale }: {
   const client = useQueryClient();
   const [workerId, setWorkerId] = useState(task.assignedWorker?.id ?? "");
   useEffect(() => setWorkerId(task.assignedWorker?.id ?? ""), [task.assignedWorker?.id]);
+  const assigneeLabel = task.kind === "site_execution" ? "Site Manager" : "procurement coordinator";
   const candidates = workers.filter((worker) => worker.role === task.assigneeRole);
   const assignment = useMutation({
     mutationFn: () => overrideWorkerAssignment({ projectId, taskId: task.id, expectedVersion: task.version, workerId: workerId || null }),
@@ -393,6 +395,7 @@ function WorkerAssignmentRow({ projectId, task, workers, onStale }: {
       );
       void Promise.all([
         client.invalidateQueries({ queryKey: projectWorkflowKeys.operational }),
+        client.invalidateQueries({ queryKey: projectStatusKeys.all }),
         client.invalidateQueries({ queryKey: adminProjectKeys.all }),
         client.invalidateQueries({ queryKey: adminProjectKeys.detail(projectId) }),
         client.invalidateQueries({ queryKey: dashboardKeys.all })
@@ -415,7 +418,7 @@ function WorkerAssignmentRow({ projectId, task, workers, onStale }: {
         <span>{task.progress}% complete</span>
       </div>
       <label>
-        Assigned procurement coordinator
+        Assigned {assigneeLabel}
         <Select
           value={workerId}
           disabled={task.status === "completed" || assignment.isPending}
@@ -429,10 +432,10 @@ function WorkerAssignmentRow({ projectId, task, workers, onStale }: {
         </Select>
       </label>
       <Button type="button" busy={assignment.isPending} busyLabel="Saving…" disabled={task.status === "completed" || unchanged} onClick={() => assignment.mutate()}>
-        {!workerId ? "Unassign coordinator" : task.assignedWorker ? "Reassign coordinator" : "Assign coordinator"}
+        {!workerId ? `Unassign ${assigneeLabel}` : task.assignedWorker ? `Reassign ${assigneeLabel}` : `Assign ${assigneeLabel}`}
       </Button>
-      {assignment.isError ? <p role="alert">{assignment.error instanceof ApiError ? assignment.error.message : "The procurement assignment could not be saved."}</p> : null}
-      {assignment.isSuccess ? <p role="status">Procurement assignment saved.</p> : null}
+      {assignment.isError ? <p role="alert">{assignment.error instanceof ApiError ? assignment.error.message : "The assignment could not be saved."}</p> : null}
+      {assignment.isSuccess ? <p role="status">{ROLE_LABELS[task.assigneeRole]} assignment saved.</p> : null}
     </article>
   );
 }

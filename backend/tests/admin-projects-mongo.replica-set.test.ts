@@ -215,6 +215,51 @@ describe("Admin project collection Mongo selection", () => {
 });
 
 describe("Admin project Mongo transactions", () => {
+  it("shows the immutable configured fractional-paise baseline in project detail", async () => {
+    await Promise.all([
+      insertUser("mongo-super-admin", "super_admin"),
+      insertUser("mongo-estimator", "estimator_sales")
+    ]);
+    await insertAdminProject("configured-admin-project", "Configured residence");
+    await insertAdminLead("configured-admin-lead", "configured-admin-project");
+    await insertApprovedEstimate({ id: "configured-admin-estimate", leadId: "configured-admin-lead",
+      projectId: "configured-admin-project", version: 2, subtotal: 162, gst: 29,
+      total: 191, clientDecisionAt: NOW });
+    await insertApprovedReviewRound({ id: "configured-admin-round", estimateId: "configured-admin-estimate",
+      leadId: "configured-admin-lead", projectId: "configured-admin-project", estimateVersion: 1,
+      decisionSource: "client_portal", subtotal: 162, gst: 29, total: 191 });
+    const approvedLine = { id: "configured-admin-line", source: "configuration",
+      catalogueId: "line-lower", roomId: "room-lower", roomName: "Living room",
+      mainBasketId: "basket-lower", mainBasketName: "Approved basket",
+      subBasketId: "child-lower", subBasketName: "Approved child",
+      mainLineId: "line-lower", mainLineName: "Approved console",
+      revisionId: "revision-lower", uomId: "square-foot", uomName: "Square foot",
+      specification: null, unit: "sqft", quantity: 1, included: true,
+      ratePaise: 16_249, amountPaise: 16_249, rate: 162.49, amount: 162.49 };
+    await Promise.all([
+      EstimateClientReviewRoundModel.collection.updateOne({ _id: "configured-admin-round" }, { $set: {
+        "estimateSnapshot.lineItems": [approvedLine],
+        "estimateSnapshot.subtotal": 162.49, "estimateSnapshot.gst": 29.25, "estimateSnapshot.total": 191.74,
+        "estimateSnapshot.subtotalPaise": 16_249, "estimateSnapshot.gstPaise": 2_925,
+        "estimateSnapshot.totalPaise": 19_174
+      } }),
+      EstimateModel.collection.updateOne({ _id: "configured-admin-estimate" }, { $set: {
+        lineItems: [{ ...approvedLine, mainBasketName: "Later basket name" }],
+        subtotal: 999, gst: 180, total: 1_179,
+        subtotalPaise: 99_900, gstPaise: 18_000, totalPaise: 117_900
+      } })
+    ]);
+    const app = createApp({ repository: createMongoRepository(), auth, clock });
+    const response = await request(app).get("/api/v1/admin/projects/configured-admin-project")
+      .set("Authorization", bearer("mongo-super-admin", "super_admin")).expect(200);
+    expect(response.body.data.estimate).toMatchObject({
+      id: "configured-admin-estimate", subtotal: 999,
+      approvedBaseline: { estimateVersion: 1, reviewRoundId: "configured-admin-round",
+        subtotal: 162.49, gst: 29.25, total: 191.74,
+        subtotalPaise: 16_249, gstPaise: 2_925, totalPaise: 19_174 }
+    });
+  });
+
   it("coordinates authorization before reading the Admin or estimator", async () => {
     await Promise.all([
       insertUser("mongo-admin", "admin"),

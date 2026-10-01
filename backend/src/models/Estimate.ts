@@ -10,8 +10,20 @@ const estimateLineSchema = new Schema({
     immutable: true,
     default: () => `estimate-line-${randomUUID()}`
   },
-  catalogueId: { type: String, required: true }, roomName: { type: String, required: true }, specification: { type: String, required: true },
-  unit: { type: String, required: true }, rate: { type: Number, required: true }, quantity: { type: Number, required: true }, included: { type: Boolean, required: true }, amount: { type: Number, required: true }
+  source: { type: String, enum: ["legacy", "configuration"] },
+  catalogueId: { type: String, required: true },
+  roomId: { type: String, default: null }, roomName: { type: String, required: true },
+  mainBasketId: { type: String, default: null }, subBasketId: { type: String, default: null },
+  mainLineId: { type: String, default: null }, revisionId: { type: String, default: null },
+  uomId: { type: String, default: null }, uomCode: { type: String, default: null },
+  uomDecimalScale: { type: Number, default: null },
+  mainBasketName: { type: String, default: null }, subBasketName: { type: String, default: null },
+  mainLineName: { type: String, default: null }, uomName: { type: String, default: null },
+  specification: { type: String, default: null },
+  unit: { type: String, required: true }, rate: { type: Number, default: null },
+  ratePaise: { type: Number, default: null },
+  quantity: { type: Number, required: true }, included: { type: Boolean, required: true },
+  amount: { type: Number, default: null }, amountPaise: { type: Number, default: null }
 }, { _id: false });
 
 const estimateReviewSchema = new Schema({
@@ -45,8 +57,12 @@ const estimateSchema = new Schema({
     default: "draft"
   },
   propertyType: { type: String, required: true },
-  rooms: { type: [Schema.Types.Mixed], required: true, default: [] }, scopes: { type: [String], required: true, default: [] }, lineItems: { type: [estimateLineSchema], required: true, default: [] },
+  rooms: { type: [Schema.Types.Mixed], required: true, default: [] }, scopes: { type: [String], required: true, default: [] },
+  selectedMainBasketIds: { type: [String], required: true, default: [] },
+  lineItems: { type: [estimateLineSchema], required: true, default: [] },
   subtotal: { type: Number, required: true, default: 0 }, gst: { type: Number, required: true, default: 0 }, total: { type: Number, required: true, default: 0 },
+  subtotalPaise: { type: Number }, gstPaise: { type: Number }, totalPaise: { type: Number },
+  isIncomplete: { type: Boolean, default: false },
   approvalRequired: { type: Boolean, required: true, default: false },
   assignedManagerId: { type: String, ref: "User", default: null },
   assignedDesignerId: { type: String, ref: "User", default: null },

@@ -73,8 +73,8 @@ const responsibilityRole: Readonly<
 };
 
 const FILTER_ROLES: readonly Role[] = [...ROLE_CODES];
-const MANAGEABLE_ROLES: readonly Exclude<Role, "super_admin">[] = ROLE_CODES.filter(
-  (role): role is Exclude<Role, "super_admin"> => role !== "super_admin"
+const MANAGEABLE_ROLES: readonly Exclude<Role, "super_admin" | "vendor">[] = ROLE_CODES.filter(
+  (role): role is Exclude<Role, "super_admin" | "vendor"> => role !== "super_admin" && role !== "vendor"
 );
 
 export function createUserAdministrationService(

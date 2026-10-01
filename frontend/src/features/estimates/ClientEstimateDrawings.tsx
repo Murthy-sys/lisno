@@ -15,7 +15,7 @@ import {
   type SharedChangeRequestComment
 } from "../../components/design/EstimateDrawingPreviewDialog";
 import { ProtectedImage } from "../../components/design/ProtectedImage";
-import { projectAnnotationToCrop, projectAnnotationToPage } from "../../components/design/planGeometry";
+import { containedDrawingCrop, projectAnnotationToCrop, projectAnnotationToPage } from "../../components/design/planGeometry";
 import {
   decideClientDrawing,
   estimateDesignKeys,
@@ -78,7 +78,7 @@ function canonicalPlacement(
   while (current && !visited.has(current.id)) {
     visited.add(current.id);
     const page = planWorkspace?.pages.find((item) => item.id === current!.sourcePageId);
-    if (page) return { page, crop: current.crop };
+    if (page) return { page, crop: containedDrawingCrop(current.crop, revision.crop) };
     current = current.replacesRevisionId
       ? revisions.find((item) => item.id === current!.replacesRevisionId)
       : undefined;
@@ -387,11 +387,12 @@ function ClientDrawingRow({
           projectAnnotationToPage(element, projectionCrop, planPage)
         )
       };
-      const preview = await previewClientPlanTargets(planPage.id, pageAnnotations);
+      const preview = await previewClientPlanTargets(planPage.id, pageAnnotations, planPage.reviewRoundId);
       if (!preview.targets.some((target) => target.drawingId === drawing.id)) {
         throw new Error("The annotation no longer overlaps this drawing. Refresh and try again.");
       }
       return submitClientPlanChangeRequest(planPage.id, {
+        reviewRoundId: planPage.reviewRoundId ?? undefined,
         version: preview.pageRevisionNumber,
         summary,
         annotations: pageAnnotations,

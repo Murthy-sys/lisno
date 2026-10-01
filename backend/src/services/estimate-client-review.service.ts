@@ -6,6 +6,7 @@ import {
   type EstimateClientReviewSnapshot,
   type EstimateClientReviewStatus,
   type EstimateClientReviewSummary,
+  type EstimateClientFeedback,
   type ReviewAssignee,
   type StoredDownload
 } from "../domain/estimate-client-review.js";
@@ -21,11 +22,14 @@ import { UserModel } from "../models/User.js";
 import type { PageResult, PaginationInput } from "../repositories/types.js";
 import type { PublicUser } from "./auth.service.js";
 import type { EstimateClientReviewStorage } from "./estimate-client-review-storage.js";
+import { presentClientEstimate } from "./estimate-client-presentation.js";
 
 type Pipeline = Record<string, unknown>[];
 type Row = Record<string, unknown>;
 
 export interface EstimateClientReviewService {
+  listClientEstimates(actor: PublicUser, estimateId?: string): Promise<Record<string, any>[]>;
+  currentClientFeedbackForEstimate(actor: PublicUser, estimateId: string, authorizedEstimate?: Row): Promise<EstimateClientFeedback | null>;
   resolveReviewAssignee(
     projectId: string | null,
     session: mongoose.ClientSession
@@ -62,6 +66,57 @@ export interface EstimateClientReviewService {
 export function createEstimateClientReviewService(input: {
   storage: EstimateClientReviewStorage;
 }): EstimateClientReviewService {
+  async function listClientEstimates(actor: PublicUser, estimateId?: string): Promise<Record<string, any>[]> {
+    if (!["client", "super_admin"].includes(actor.role)) notFound();
+    const rows = await aggregateRows(EstimateModel, [
+      ...(estimateId ? [{ $match: { _id: estimateId } }] : []),
+      ...activeActorStages(actor, "activeActor", actor.role === "client"
+        ? { emailNormalized: normalizeEmail(actor.email) } : {}),
+      { $lookup: {
+        from: LeadModel.collection.name, localField: "leadId", foreignField: "_id", as: "leadRows"
+      } },
+      { $set: { clientLead: { $arrayElemAt: ["$leadRows", 0] } } },
+      { $match: { "clientLead._id": { $exists: true } } },
+      ...(actor.role === "client" ? [{ $match: { $expr: { $eq: [
+        { $toLower: { $trim: { input: "$clientLead.clientEmail" } } }, normalizeEmail(actor.email)
+      ] } } }] : []),
+      { $lookup: {
+        from: EstimateClientReviewRoundModel.collection.name,
+        let: { currentEstimateId: "$_id" },
+        pipeline: [
+          { $match: { $expr: { $eq: ["$estimateId", "$$currentEstimateId"] } } },
+          { $sort: { sendGeneration: -1, _id: 1 } }, { $limit: 1 }
+        ], as: "publishedRounds"
+      } },
+      { $sort: { updatedAt: -1, _id: 1 } }
+    ]);
+    return rows.flatMap((row) => {
+      const value = presentClientEstimate(actor, row, recordField(row, "clientLead"), arrayField(row, "publishedRounds")[0] ?? null);
+      return value ? [value] : [];
+    });
+  }
+
+  async function currentClientFeedbackForEstimate(actor: PublicUser, estimateId: string, authorizedEstimate?: Row): Promise<EstimateClientFeedback | null> {
+    await requireEstimateReader(actor, estimateId);
+    const rounds = await aggregateRows(EstimateClientReviewRoundModel, [
+      { $match: { estimateId } }, { $sort: { sendGeneration: -1, _id: 1 } }, { $limit: 1 },
+      { $project: { _id: 1, leadId: 1, projectId: 1, status: 1, decision: 1, decisionNote: 1, decidedAt: 1 } }
+    ]);
+    if (rounds[0]) {
+      const round = rounds[0];
+      if (round.status !== "changes_requested" || round.decision !== "request_changes") return null;
+      const estimate = authorizedEstimate ?? await EstimateModel.findById(estimateId).lean();
+      if (!estimate || String(estimate.leadId) !== String(round.leadId) ||
+        (estimate.projectId != null && round.projectId != null && estimate.projectId !== round.projectId)) return null;
+      return { note: typeof round.decisionNote === "string" ? round.decisionNote : "",
+        occurredAt: isoField(round, "decidedAt"), reviewRoundId: stringField(round, "_id") };
+    }
+    const estimate = authorizedEstimate ?? await EstimateModel.findById(estimateId).lean() as Record<string, any> | null;
+    if (!estimate || !["client_changes_requested", "draft", "pending_manager_assignment", "pending_designer_approval", "designer_changes_requested", "ready_for_client"].includes(estimate.status)) return null;
+    const review = [...(estimate.reviews ?? [])].reverse().find((item: Record<string, unknown>) => item.action === "client_changes_requested");
+    return review ? { note: String(review.note ?? ""), occurredAt: isoField(review, "occurredAt"), reviewRoundId: null } : null;
+  }
+
   async function resolveReviewAssignee(
     projectId: string | null,
     session: mongoose.ClientSession
@@ -487,6 +542,8 @@ export function createEstimateClientReviewService(input: {
   }
 
   return {
+    listClientEstimates,
+    currentClientFeedbackForEstimate,
     resolveReviewAssignee,
     currentSummaryForEstimate,
     currentRoundForClientEstimate,
@@ -879,19 +936,50 @@ function mapSnapshot(row: Row): EstimateClientReviewSnapshot {
     projectName: stringField(row, "projectName"),
     location: stringField(row, "location"),
     propertyType: stringField(row, "propertyType"),
-    lineItems: arrayField(row, "lineItems").map((lineItem) => ({
-      catalogueId: stringField(lineItem, "catalogueId"),
-      roomName: stringField(lineItem, "roomName"),
-      specification: stringField(lineItem, "specification"),
-      unit: stringField(lineItem, "unit"),
-      rate: numberField(lineItem, "rate"),
-      quantity: numberField(lineItem, "quantity"),
-      included: booleanField(lineItem, "included"),
-      amount: numberField(lineItem, "amount")
-    })),
+    lineItems: arrayField(row, "lineItems").map((lineItem) => {
+      const common = {
+        ...(lineItem.id === undefined ? {} : { id: nullableStringField(lineItem, "id") }),
+        catalogueId: stringField(lineItem, "catalogueId"),
+        roomName: stringField(lineItem, "roomName"),
+        unit: stringField(lineItem, "unit"),
+        quantity: numberField(lineItem, "quantity"),
+        included: booleanField(lineItem, "included"),
+      };
+      return lineItem.source === "configuration" ? {
+        ...common,
+        source: "configuration" as const,
+        specification: null,
+        rate: lineItem.rate === null ? null : numberField(lineItem, "rate"),
+        amount: lineItem.amount === null ? null : numberField(lineItem, "amount"),
+        roomId: stringField(lineItem, "roomId"),
+        mainBasketId: stringField(lineItem, "mainBasketId"),
+        subBasketId: stringField(lineItem, "subBasketId"),
+        mainLineId: stringField(lineItem, "mainLineId"),
+        revisionId: stringField(lineItem, "revisionId"),
+        uomId: stringField(lineItem, "uomId"),
+        ...(lineItem.uomCode === undefined ? {} : { uomCode: stringField(lineItem, "uomCode") }),
+        ...(lineItem.uomDecimalScale === undefined ? {} : { uomDecimalScale: numberField(lineItem, "uomDecimalScale") }),
+        mainBasketName: stringField(lineItem, "mainBasketName"),
+        subBasketName: stringField(lineItem, "subBasketName"),
+        mainLineName: stringField(lineItem, "mainLineName"),
+        uomName: stringField(lineItem, "uomName"),
+        ratePaise: lineItem.ratePaise === null ? null : numberField(lineItem, "ratePaise"),
+        amountPaise: lineItem.amountPaise === null ? null : numberField(lineItem, "amountPaise")
+      } : {
+        ...common,
+        ...(lineItem.source === "legacy" ? { source: "legacy" as const } : {}),
+        specification: stringField(lineItem, "specification"),
+        rate: numberField(lineItem, "rate"),
+        amount: numberField(lineItem, "amount")
+      };
+    }),
     subtotal: numberField(row, "subtotal"),
     gst: numberField(row, "gst"),
-    total: numberField(row, "total")
+    total: numberField(row, "total"),
+    ...(row.subtotalPaise === undefined ? {} : { subtotalPaise: numberField(row, "subtotalPaise") }),
+    ...(row.gstPaise === undefined ? {} : { gstPaise: numberField(row, "gstPaise") }),
+    ...(row.totalPaise === undefined ? {} : { totalPaise: numberField(row, "totalPaise") }),
+    ...(Array.isArray(row.selectedMainBasketIds) ? { selectedMainBasketIds: row.selectedMainBasketIds.map(String) } : {})
   };
 }
 

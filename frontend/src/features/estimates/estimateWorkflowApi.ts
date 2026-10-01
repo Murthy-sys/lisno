@@ -1,13 +1,19 @@
 import { apiClient } from "../../api/client";
+import type { ClientPublishedEstimateReview } from "../../api/types";
 import type { EstimateDraft } from "../leads/leadsApi";
 
 export interface EstimateQueueItem extends EstimateDraft {
+  version?: number;
+  publishedReview?: ClientPublishedEstimateReview | null;
+  reviewSourceIssue?: "missing_snapshot" | "source_conflict" | null;
   lead: {
     _id: string;
+    id?: string;
+    projectId?: string | null;
     clientName: string;
     projectName: string;
     location: string;
-    clientEmail: string;
+    clientEmail?: string;
   };
 }
 
@@ -43,10 +49,11 @@ export const getClientEstimates = () =>
 export const decideEstimateAsClient = (
   estimateId: string,
   decision: "approve" | "request_changes",
-  note: string
-) => apiClient.post<EstimateDraft>(
+  note: string,
+  review: Pick<ClientPublishedEstimateReview, "id" | "version">
+) => apiClient.post<EstimateQueueItem>(
   `/client/estimates/${encodeURIComponent(estimateId)}/decision`,
-  { decision, note }
+  { decision, note, reviewRoundId: review.id, reviewRoundVersion: review.version }
 );
-export const downloadClientEstimatePdf = (estimateId: string) =>
-  apiClient.getBlob(`/client/estimates/${encodeURIComponent(estimateId)}/pdf`);
+export const downloadClientEstimatePdf = (estimateId: string, roundId: string) =>
+  apiClient.getBlob(`/client/estimates/${encodeURIComponent(estimateId)}/pdf?roundId=${encodeURIComponent(roundId)}`);

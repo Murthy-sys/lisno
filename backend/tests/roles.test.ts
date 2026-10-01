@@ -10,7 +10,7 @@ import {
 } from "../src/domain/roles.js";
 
 describe("canonical role catalog", () => {
-  it("exposes the exact sixteen canonical role codes", () => {
+  it("exposes the exact seventeen canonical role codes", () => {
     expect(ROLE_CODES).toEqual([
       "super_admin",
       "admin",
@@ -27,7 +27,8 @@ describe("canonical role catalog", () => {
       "worker_other",
       "design_manager",
       "design_head",
-      "client"
+      "client",
+      "vendor"
     ]);
   });
 
@@ -48,7 +49,8 @@ describe("canonical role catalog", () => {
       worker_other: "Other Worker",
       design_manager: "Design Manager",
       design_head: "Design Head",
-      client: "Client"
+      client: "Client",
+      vendor: "Vendor"
     });
   });
 

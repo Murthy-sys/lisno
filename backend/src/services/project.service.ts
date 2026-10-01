@@ -116,6 +116,7 @@ export interface DesignWorkflowStageDto {
 
 export interface DesignWorkflowDto {
   notices?: Array<{ id: string; stageId: string; message: string }>;
+  estimateApprovalStatus: "approved" | "awaiting_approval" | "source_issue";
   initialPayment?: Awaited<ReturnType<typeof projectInitialPayment>>;
   measurementDesigners?: Array<{ id: string; name: string }>;
   furnitureRooms?: WorkflowEstimateRoom[];
@@ -253,6 +254,13 @@ export function createProjectService(
       };
       const savedStages = hierarchy.designWorkflowStages;
       const operationalState = savedStages ? await repository.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId) : null;
+      let estimateApprovalStatus: DesignWorkflowDto["estimateApprovalStatus"];
+      try {
+        estimateApprovalStatus = await repository.findDesignWorkflowRoomContext(projectId) ? "approved" : "awaiting_approval";
+      } catch (error) {
+        if (!(error instanceof RepositoryConflictError)) throw error;
+        estimateApprovalStatus = "source_issue";
+      }
       const initialPayment = operationalState ? await projectInitialPayment(repository, projectId, operationalState, capabilities.finance) : undefined;
       const measurementDesigners = savedStages && capabilities.designer ? (await Promise.all(hierarchy.assignedDesignerIds.map((id) => repository.findUserById(id)))).flatMap((user) => user?.active && user.role === "designer" ? [{ id: user.id, name: user.name }] : []) : undefined;
       const measurementAssigneeId = operationalState?.stages.site_measurement?.assignedDesignerId;
@@ -273,7 +281,7 @@ export function createProjectService(
         try { spacePlanning = await repository.findDesignWorkflowSpacePlanningSource(projectId); }
         catch (error) {
           if (!(error instanceof RepositoryConflictError)) throw error;
-          spacePlanningIssue = "The approved Design plan source is ambiguous or unavailable. Reconcile it before completing this stage.";
+          spacePlanningIssue = "The approved Design plan source is ambiguous or unavailable. Reconcile it before continuing with this stage.";
         }
       }
       const notices: Array<{ id: string; stageId: string; message: string }> = [];
@@ -302,6 +310,7 @@ export function createProjectService(
         projectId: hierarchy.id,
         projectName: hierarchy.name,
         serverNow: now.toISOString(),
+        estimateApprovalStatus,
         ...(savedStages === undefined ? {} : {
           ...(capabilities.client ? { notices } : {}),
           initialPayment: initialPayment!,

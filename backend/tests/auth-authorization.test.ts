@@ -20,6 +20,7 @@ function appFor(role: Role, active = true) {
     email: `${role}@authorization.lisno.example`,
     emailNormalized: `${role}@authorization.lisno.example`,
     role,
+    vendorId: role === "vendor" ? "vendor-authorization-fixture" : null,
     active,
     accountKind: "standard" as const
   };

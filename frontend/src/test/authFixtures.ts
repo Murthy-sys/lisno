@@ -6,6 +6,7 @@ import {
 } from "../api/authorization-contract";
 
 const BASE_SESSION_PERMISSIONS = [
+  "projects.status.read",
   "identity.self.read",
   "identity.authorization.read"
 ] as const satisfies readonly PermissionCode[];
@@ -142,6 +143,7 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "organization.designer_summary.read",
     "projects.read"
   ],
+  vendor: [...BASE_SESSION_PERMISSIONS, "procurement.vendor_work.read"],
   client: [
     ...BASE_SESSION_PERMISSIONS,
     "projects.client_summary.read",

@@ -2,6 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { withPublishedReview } from "../estimates/clientEstimateReviewTestUtils";
 import { tokenStorage } from "../../api/client";
 import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
@@ -103,7 +104,7 @@ describe("ClientDashboard", () => {
       if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
       if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
       if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
-      if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: [{
+      if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: [withPublishedReview({
         id: "estimate-approved",
         leadId: "lead-1",
         propertyType: "2BHK",
@@ -117,7 +118,7 @@ describe("ClientDashboard", () => {
         approvalRequired: false,
         projectId: "project-1",
         lead: { _id: "lead-1", clientName: "Aurora Homes", clientEmail: "client@lisno.example", projectName: "Aurora Villa", location: "Bengaluru" }
-      }] });
+      })] });
       if (url.endsWith("/design-workflow")) return Response.json({ data: { projectId: url.split("/").at(-2), projectName: "Shared project", serverNow: new Date().toISOString(), floors: [] } });
       throw new Error(`Unhandled request: ${url}`);
     });
@@ -151,7 +152,11 @@ describe("ClientDashboard", () => {
     renderApp(["/client"]);
 
     expect(await screen.findByRole("heading", { name: "Your design plans" })).toBeVisible();
+    const hero = document.querySelector(".client-dashboard__hero");
+    expect(hero?.querySelector(".client-dashboard__hero-image")).toHaveAttribute("alt", "");
+    expect(hero).not.toHaveTextContent("projects shared");
     const overview = screen.getByRole("region", { name: "Client overview" });
+    expect(overview.querySelectorAll("dl > div")).toHaveLength(3);
     expect(within(overview).getByText("Shared projects")).toBeVisible();
     expect(within(overview).getByText("2", { selector: "dd" })).toBeVisible();
     expect(within(overview).getByText("Average progress")).toBeVisible();

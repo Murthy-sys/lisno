@@ -921,7 +921,8 @@ describe("Mongo repository contracts", () => {
       1,
       {
         _id: "user-versioned",
-        $or: [{ version: 1 }, { version: { $exists: false } }]
+        $or: [{ version: 1 }, { version: { $exists: false } }],
+        role: { $ne: "vendor" }
       },
       {
         $set: {
@@ -1524,8 +1525,11 @@ describe("Mongo repository contracts", () => {
       version: 1,
       status: 1,
       subtotal: 1,
+      subtotalPaise: 1,
       gst: 1,
+      gstPaise: 1,
       total: 1,
+      totalPaise: 1,
       clientDecisionAt: 1,
       designPlanStatus: 1,
       designPlanVersion: 1,

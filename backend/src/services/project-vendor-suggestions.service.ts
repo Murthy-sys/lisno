@@ -150,7 +150,7 @@ function requireStoredSource(source: Source, row: Row) {
 async function activeVendor(id: string, session: ClientSession): Promise<Row> {
   const row = await AiEstimatorKnowledgeVendorModel.findOneAndUpdate({ _id: id, status: "active" }, { $inc: { dependencyEpoch: 1 } }, { session, returnDocument: "after", timestamps: false, runValidators: true }).lean();
   if (!row) throw new ApiError(409, "VENDOR_SUGGESTION_VENDOR_UNAVAILABLE", "This vendor is no longer available. Choose an active vendor.");
-  if ((await vendorActivation(row, session)).effectiveStatus !== "active") throw new ApiError(409, "VENDOR_SUGGESTION_VENDOR_UNAVAILABLE", "This vendor has not completed onboarding. Choose an active vendor.");
+  if ((await vendorActivation(row, session)).effectiveStatus !== "active") throw new ApiError(409, "VENDOR_SUGGESTION_VENDOR_UNAVAILABLE", "This vendor is inactive or missing a completed KPI. Choose an active vendor.");
   return row;
 }
 async function dtos(rows: Row[], session: ClientSession, actor: PublicUser): Promise<ProjectVendorSuggestion[]> {

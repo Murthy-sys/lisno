@@ -35,7 +35,7 @@ beforeEach(async () => {
     procurementProfile: verifiedProfile(), createdById: buyer.id, updatedById: buyer.id
   })));
   await VendorKpiAssessmentModel.collection.insertMany(["ready", "review", "inactive", "archived"].flatMap(vendorId =>
-    ["vendor_self", "procurement"].map(source => ({ _id: `${vendorId}-${source}`, vendorId, source,
+    (vendorId === "review" ? ["vendor_self"] : ["vendor_self", "procurement"]).map(source => ({ _id: `${vendorId}-${source}`, vendorId, source,
       vendorType: "execution", rubricVersion: 1, rubricGeneration: 0, revision: 1, averageScoreBps: 0 }))));
   await VendorInductionReviewModel.collection.insertMany(["ready", "inactive", "archived"].map(vendorId => ({
     _id: `${vendorId}-approval`, vendorId, version: 1, vendorType: "execution", decision: "approved"
@@ -44,25 +44,33 @@ beforeEach(async () => {
 afterAll(async () => { await replica?.stop(); });
 
 describe("vendor activation", () => {
-  it("applies lifecycle precedence and requires every gate", () => {
+  it("applies lifecycle precedence and requires both KPI gates while retaining other readiness details", () => {
     expect(deriveVendorActivation("active", gates).effectiveStatus).toBe("active");
-    for (const key of Object.keys(gates) as (keyof typeof gates)[]) {
+    for (const key of ["vendorSelfKpiComplete", "procurementKpiComplete"] as const) {
       expect(deriveVendorActivation("active", { ...gates, [key]: false }).effectiveStatus).toBe("under_review");
+    }
+    for (const key of ["inductionApproved", "profileComplete", "physicalAddressVerified"] as const) {
+      const activation = deriveVendorActivation("active", { ...gates, [key]: false });
+      expect(activation.effectiveStatus).toBe("active");
+      expect(activation.gates[key]).toBe(false);
     }
     expect(deriveVendorActivation("inactive", gates).effectiveStatus).toBe("inactive");
     expect(deriveVendorActivation("archived", { ...gates, profileComplete: false }).effectiveStatus).toBe("archived");
   });
 
-  it("treats zero-score current KPI assessments as complete and invalidates stale generations or verification metadata", async () => {
+  it("treats zero-score current KPI assessments as complete, invalidates stale generations, and keeps missing induction and profile details visible", async () => {
     const ready = (await AiEstimatorKnowledgeVendorModel.findById("ready").lean())!;
     expect(await vendorActivation(ready)).toMatchObject({ effectiveStatus: "active", gates: { inductionApproved: true,
       vendorSelfKpiComplete: true, procurementKpiComplete: true, profileComplete: true, physicalAddressVerified: true } });
     await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: "ready" }, { $set: { kpiRubricGeneration: 1 } });
-    expect((await vendorActivation((await AiEstimatorKnowledgeVendorModel.findById("ready").lean())!)).gates)
-      .toMatchObject({ vendorSelfKpiComplete: false, procurementKpiComplete: false });
+    expect(await vendorActivation((await AiEstimatorKnowledgeVendorModel.findById("ready").lean())!))
+      .toMatchObject({ effectiveStatus: "under_review", gates: { vendorSelfKpiComplete: false, procurementKpiComplete: false } });
     await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: "ready" }, { $set: { kpiRubricGeneration: 0 },
-      $unset: { "procurementProfile.physicalAddressVerifiedById": "" } });
-    expect((await vendorActivation((await AiEstimatorKnowledgeVendorModel.findById("ready").lean())!)).gates.physicalAddressVerified).toBe(false);
+      $unset: { "procurementProfile.physicalAddressVerifiedById": "", "procurementProfile.nameOfRepresentative": "" } });
+    await VendorInductionReviewModel.deleteMany({ vendorId: "ready" });
+    expect(await vendorActivation((await AiEstimatorKnowledgeVendorModel.findById("ready").lean())!))
+      .toMatchObject({ effectiveStatus: "active", gates: { inductionApproved: false, vendorSelfKpiComplete: true,
+        procurementKpiComplete: true, profileComplete: false, physicalAddressVerified: false } });
   });
 
   it("returns exclusive statuses and paginates after the effective filter", async () => {
@@ -76,7 +84,7 @@ describe("vendor activation", () => {
     expect(active.items[0]?.vendorActivation?.effectiveStatus).toBe("active");
     expect(active.total).toBe(1);
     expect(active.directoryOverview).toMatchObject({ totalVendors: 3, activeVendors: 1, underReviewVendors: 1,
-      ratedVendors: 3, averageKpiScoreBps: 0 });
+      ratedVendors: 2, averageKpiScoreBps: 0 });
     const review = await reference.listMasters(buyer, "vendors", { effectiveStatus: "under_review" }, { limit: 1, offset: 0 });
     expect(review.items.map(item => item.id)).toEqual(["review"]);
     const archived = await reference.listMasters(buyer, "vendors", { effectiveStatus: "archived" }, { limit: 1, offset: 0 });

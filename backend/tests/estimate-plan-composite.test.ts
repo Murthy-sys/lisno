@@ -44,10 +44,11 @@ function createService(storage: Storage) {
 
 beforeAll(async () => {
   replica = await startMongoReplicaSet();
-  base = await sharp({ create: { width: 100, height: 50, channels: 3, background: "white" } }).png().toBuffer();
   red = await sharp({ create: { width: 40, height: 50, channels: 3, background: "red" } }).png().toBuffer();
   blue = await sharp({ create: { width: 40, height: 50, channels: 3, background: "blue" } }).png().toBuffer();
   green = await sharp({ create: { width: 40, height: 50, channels: 3, background: "green" } }).png().toBuffer();
+  base = await sharp({ create: { width: 100, height: 50, channels: 3, background: "white" } })
+    .composite([{ input: red, left: 0, top: 0 }, { input: blue, left: 60, top: 0 }]).png().toBuffer();
 });
 afterAll(async () => { await replica.stop(); });
 
@@ -73,7 +74,7 @@ beforeEach(async () => {
 });
 
 describe("estimate plan selective composition", () => {
-  it("patches the current drawing revisions while preserving uncovered base pixels", async () => {
+  it("preserves unchanged drawings and uncovered pixels from the original full plan", async () => {
     const storage = new Storage();
     storage.values.set("base.png", base); storage.values.set("a1.png", red); storage.values.set("b1.png", blue);
     const api = createService(storage);
@@ -100,7 +101,8 @@ describe("estimate plan selective composition", () => {
       targets: [{ drawingId: "drawing-a", requestedRevisionId: "revision-a1", status: "open", resolvedByRevisionId: null }],
       unassigned: false, unassignedResolved: false, status: "open"
     });
-    await EstimateDesignRevisionModel.create({ _id: "revision-a2", drawingId: "drawing-a", revisionNumber: 2, sourcePageId: "replacement-page", crop: { x: 0, y: 0, width: 80, height: 100 }, croppedFileReference: "a2.png", roomId: null, scopeSectionId: null, catalogueId: null, mappingStatus: "misc", label: "A", reviewStatus: "submitted", replacesRevisionId: "revision-a1" });
+    await EstimateDesignSourcePageModel.create({ _id: "replacement-page", uploadId: "upload-1", pageNumber: 2, sourceKind: "replacement", normalizedFileReference: "a2.png", width: 40, height: 50 });
+    await EstimateDesignRevisionModel.create({ _id: "revision-a2", drawingId: "drawing-a", revisionNumber: 2, sourcePageId: "replacement-page", crop: { x: 0, y: 0, width: 40, height: 50 }, croppedFileReference: "a2.png", roomId: null, scopeSectionId: null, catalogueId: null, mappingStatus: "misc", label: "A", reviewStatus: "submitted", replacesRevisionId: "revision-a1" });
     await api.advanceForDrawingRevision("revision-a2");
     const manifests = await EstimatePlanPageRevisionModel.find({ sourcePageId: "page-1" }).sort({ revisionNumber: 1 }).lean();
     expect(manifests).toHaveLength(2);
@@ -128,6 +130,7 @@ describe("estimate plan selective composition", () => {
     const oversized = await sharp({ create: { width: 110, height: 60, channels: 3, background: "green" } }).png().toBuffer();
     storage.values.set("base.png", base);
     storage.values.set("oversized.png", oversized);
+    await EstimateDesignSourcePageModel.create({ _id: "replacement-page", uploadId: "upload-1", pageNumber: 2, sourceKind: "replacement", normalizedFileReference: "oversized.png", width: 110, height: 60 });
     await EstimateDesignRevisionModel.create({
       _id: "revision-a2", drawingId: "drawing-a", revisionNumber: 2,
       sourcePageId: "replacement-page", crop: { x: 0, y: 0, width: 110, height: 60 },
@@ -144,7 +147,9 @@ describe("estimate plan selective composition", () => {
 
     const rendered = await pixels(await streamBytes(await createService(storage).pageImage(client, "page-1")));
     expect(rendered.info).toMatchObject({ width: 100, height: 50 });
-    expect([...rendered.data.subarray(0, 3)]).toEqual([0, 128, 0]);
+    expect([...rendered.data.subarray(0, 3)]).toEqual([255, 255, 255]);
+    const center = (25 * rendered.info.width + 20) * rendered.info.channels;
+    expect([...rendered.data.subarray(center, center + 3)]).toEqual([0, 128, 0]);
   });
 });
 

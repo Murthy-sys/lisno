@@ -105,6 +105,32 @@ describe("EstimateClientReviewRound persistence model", () => {
     vi.restoreAllMocks();
   });
 
+  it("freezes configured basket identity, labels and exact paise in a published snapshot", async () => {
+    const configured = {
+      ...snapshot(),
+      lineItems: [{
+        id: "line-configured", source: "configuration", catalogueId: "ml-lower-case",
+        roomId: "room-a", roomName: "Living Room", specification: null,
+        unit: "sqft", rate: 48.5, ratePaise: 4_850, quantity: 2.5,
+        included: true, amount: 121.25, amountPaise: 12_125,
+        mainBasketId: "basket-a", subBasketId: "sub-a", mainLineId: "ml-lower-case",
+        revisionId: "rev-a", uomId: "uom-sqft", mainBasketName: "Original basket",
+        subBasketName: "Original child", mainLineName: "Original line", uomName: "Square feet"
+      }],
+      subtotal: 121.25, gst: 21.83, total: 143.08,
+      subtotalPaise: 12_125, gstPaise: 2_183, totalPaise: 14_308,
+      selectedMainBasketIds: ["basket-a"]
+    };
+    const document = round({ estimateSnapshot: configured });
+    await expect(document.validate()).resolves.toBeUndefined();
+    expect(document.toObject().estimateSnapshot).toMatchObject(configured);
+    await expect(round({ estimateSnapshot: {
+      ...configured,
+      lineItems: [{ ...configured.lineItems[0], rate: null, ratePaise: null }]
+    } }).validate()).rejects.toThrow();
+    await expect(round({ estimateSnapshot: { ...configured, totalPaise: 14_309 } }).validate()).rejects.toThrow();
+  });
+
   it("normalizes the persisted recipient and validates a complete pending round", async () => {
     const document = round();
 

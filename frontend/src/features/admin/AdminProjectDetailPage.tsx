@@ -1,4 +1,5 @@
 import { ProjectChatNavigation } from "../messages";
+import { VendorWorkProgressPanel } from "../workflow/VendorWorkProgressPanel";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, FileEdit, MessageSquare, User } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
@@ -187,6 +188,7 @@ export function AdminProjectDetailPage() {
         </div>
       </Surface>
       <ProjectWorkflowPanel projectId={project.id} />
+      {auth.user?.role === "super_admin" ? <VendorWorkProgressPanel projectId={project.id} projectName={project.name} /> : null}
       {canReadFinance ? (
         <ProjectFinancePanel
           projectId={project.id}

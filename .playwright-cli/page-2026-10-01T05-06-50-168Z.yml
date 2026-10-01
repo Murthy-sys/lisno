@@ -1,0 +1,54 @@
+- generic [ref=f3e2]:
+  - generic [ref=f3e3]:
+    - link "Skip to main content" [ref=f3e4] [cursor=pointer]:
+      - /url: "#main-content"
+    - complementary "Application sidebar" [ref=f3e5]:
+      - generic [ref=f3e6]:
+        - generic [ref=f3e7]:
+          - img "Lisno" [ref=f3e8]
+          - generic [ref=f3e9]: INTERIOR WORKSPACE
+        - navigation "Primary navigation" [ref=f3e10]:
+          - link "Dashboard" [ref=f3e11] [cursor=pointer]:
+            - /url: /admin/dashboard
+          - link "All Projects" [ref=f3e18] [cursor=pointer]:
+            - /url: /admin/projects
+          - link "Users" [ref=f3e23] [cursor=pointer]:
+            - /url: /admin/users
+          - link "Configuration" [ref=f3e28] [cursor=pointer]:
+            - /url: /admin/configuration/estimation
+          - button "Procurement" [ref=f3e35] [cursor=pointer]
+          - link "Purchase orders" [ref=f3e43] [cursor=pointer]:
+            - /url: /admin/purchase-orders
+          - link "Project completion" [ref=f3e47] [cursor=pointer]:
+            - /url: /admin/project-completion
+          - link "Client responses" [ref=f3e51] [cursor=pointer]:
+            - /url: /admin/client-responses
+          - link "Design approvals" [ref=f3e56] [cursor=pointer]:
+            - /url: /admin/design-approvals
+          - link "Access requests" [ref=f3e64] [cursor=pointer]:
+            - /url: /admin/access-requests
+          - link "Finance" [ref=f3e69] [cursor=pointer]:
+            - /url: /finance
+        - paragraph [ref=f3e75]: Build Better Spaces
+    - banner "Workspace tools" [ref=f3e76]:
+      - generic [ref=f3e77]:
+        - button "View daily critical tasks" [ref=f3e78] [cursor=pointer]:
+          - generic [ref=f3e79]: Critical tasks
+        - button "Notifications" [ref=f3e82] [cursor=pointer]
+        - button "Synthetic workspace reviewer" [ref=f3e87] [cursor=pointer]:
+          - generic [aria-hidden] [ref=f3e88]: SW
+          - generic [ref=f3e89]:
+            - generic [ref=f3e90]: Synthetic workspace reviewer
+            - generic [ref=f3e91]: Super Admin
+    - main [ref=f3e94]:
+      - region [ref=f3e109]:
+        - generic [ref=f3e110]:
+          - link "Back to projects" [ref=f3e112] [cursor=pointer]:
+            - /url: /admin/projects
+          - generic [ref=f3e113]:
+            - generic [ref=f3e114]: Final approval
+            - heading "Project completion" [active] [level=1] [ref=f3e116]
+            - paragraph [ref=f3e117]: Close a project after every approved scope line is resolved and the Client has accepted the vendor work.
+        - paragraph [ref=f3e118]: No projects are awaiting final completion review.
+  - status "Application announcements" [ref=f3e108]
+  - region "Notifications"

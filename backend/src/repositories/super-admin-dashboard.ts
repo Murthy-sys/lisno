@@ -111,7 +111,10 @@ export function memorySuperAdminDashboardOverview(
       ? [projectFinanceBaseline({
           subtotalRupees: estimate.approvedBaseline.subtotal,
           gstRupees: estimate.approvedBaseline.gst,
-          totalRupees: estimate.approvedBaseline.total
+          totalRupees: estimate.approvedBaseline.total,
+          ...(estimate.approvedBaseline.subtotalPaise === undefined ? {} : { subtotalPaise: estimate.approvedBaseline.subtotalPaise }),
+          ...(estimate.approvedBaseline.gstPaise === undefined ? {} : { gstPaise: estimate.approvedBaseline.gstPaise }),
+          ...(estimate.approvedBaseline.totalPaise === undefined ? {} : { totalPaise: estimate.approvedBaseline.totalPaise })
         })]
       : []
   );
@@ -752,7 +755,11 @@ function mongoDashboardExecutionLineageStages(): PipelineStage[] {
                       in: {
                         $and: [
                           { $eq: ["$$line.included", true] },
-                          { $eq: ["$sourceSectionId", { $substrCP: ["$$catalogueId", 0, 2] }] },
+                          { $eq: ["$sourceSectionId", { $cond: [
+                            { $eq: ["$$line.source", "configuration"] },
+                            "$$line.mainBasketId",
+                            { $substrCP: ["$$catalogueId", 0, 2] }
+                          ] }] },
                           {
                             $eq: [
                               "$sourceLineItemKey",
@@ -936,7 +943,11 @@ async function mongoDashboardComparisonSide(input: {
                         in: {
                           $and: [
                             { $eq: ["$$line.included", true] },
-                            { $eq: ["$sourceSectionId", { $substrCP: ["$$catalogueId", 0, 2] }] },
+                            { $eq: ["$sourceSectionId", { $cond: [
+                              { $eq: ["$$line.source", "configuration"] },
+                              "$$line.mainBasketId",
+                              { $substrCP: ["$$catalogueId", 0, 2] }
+                            ] }] },
                             {
                               $eq: [
                                 "$sourceLineItemKey",
@@ -3722,7 +3733,11 @@ async function mongoDashboardLineageDataQuality(
                         in: {
                           $and: [
                             { $eq: ["$$line.included", true] },
-                            { $eq: ["$sourceSectionId", { $substrCP: ["$$catalogueId", 0, 2] }] },
+                            { $eq: ["$sourceSectionId", { $cond: [
+                              { $eq: ["$$line.source", "configuration"] },
+                              "$$line.mainBasketId",
+                              { $substrCP: ["$$catalogueId", 0, 2] }
+                            ] }] },
                             {
                               $eq: [
                                 "$sourceLineItemKey",
@@ -5466,9 +5481,9 @@ function mongoProjectDerivedFilterStages(
     },
     {
       $set: {
-        _dashboardApprovedSubtotalPaise: { $multiply: ["$_dashboardFinanceSnapshot.subtotal", 100] },
-        _dashboardApprovedGstPaise: { $multiply: ["$_dashboardFinanceSnapshot.gst", 100] },
-        _dashboardApprovedContractTotalPaise: { $multiply: ["$_dashboardFinanceSnapshot.total", 100] }
+        _dashboardApprovedSubtotalPaise: { $ifNull: ["$_dashboardFinanceSnapshot.subtotalPaise", { $multiply: ["$_dashboardFinanceSnapshot.subtotal", 100] }] },
+        _dashboardApprovedGstPaise: { $ifNull: ["$_dashboardFinanceSnapshot.gstPaise", { $multiply: ["$_dashboardFinanceSnapshot.gst", 100] }] },
+        _dashboardApprovedContractTotalPaise: { $ifNull: ["$_dashboardFinanceSnapshot.totalPaise", { $multiply: ["$_dashboardFinanceSnapshot.total", 100] }] }
       }
     },
     {

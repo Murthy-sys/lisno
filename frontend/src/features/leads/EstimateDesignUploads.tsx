@@ -18,6 +18,7 @@ import { Dialog } from "../../components/ui/Dialog";
 import { ProgressBar } from "../../components/ui/ProgressBar";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import { EstimateDrawingRow } from "./EstimateDrawingRow";
+import { PlanDocuments, usePlanDocuments } from "./PlanDocuments";
 import {
   createManualEstimateDrawing,
   assignEstimateDrawingItem,
@@ -26,6 +27,7 @@ import {
   estimateDesignRevisionImageUrl,
   estimateDesignSourcePageImageUrl,
   getEstimateDesignWorkspace,
+  planDocumentKeys,
   replaceEstimateDrawing,
   removeEstimateDrawing,
   removeEstimateDesignUpload,
@@ -53,6 +55,7 @@ interface EstimateDesignUploadsProps {
   items: EstimateDesignItemOption[];
   variant?: "estimator" | "designer";
   readOnly?: boolean;
+  allowDeletion?: boolean;
   title?: string;
   designPlanVersion?: number;
   planChangeRequestState?: "loading" | "open" | "none" | "error";
@@ -125,6 +128,7 @@ export function EstimateDesignUploads({
   items,
   variant = "estimator",
   readOnly = false,
+  allowDeletion = true,
   title,
   designPlanVersion,
   planChangeRequestState,
@@ -135,6 +139,9 @@ export function EstimateDesignUploads({
   const titleId = useId();
   const fileInputId = useId();
   const extractedImagesTitleId = useId();
+  const readinessTitleId = useId();
+  const readinessDescriptionId = useId();
+  const submitStatusId = useId();
   const [file, setFile] = useState<File>();
   const [newPageUploadOpen, setNewPageUploadOpen] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number>();
@@ -158,12 +165,22 @@ export function EstimateDesignUploads({
       upload.extractionStatus === "queued" || upload.extractionStatus === "processing"
     ) ? 1_000 : false
   });
+  const refreshSubmissionReadiness = (targetEstimateId = estimateId) => Promise.all([
+    client.invalidateQueries({ queryKey: planDocumentKeys.staff(targetEstimateId) }),
+    client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(targetEstimateId) }),
+    client.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
+    client.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(targetEstimateId) }),
+    client.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(targetEstimateId) }),
+    client.invalidateQueries({ queryKey: ["estimate-plan-change-requests"] }),
+    client.invalidateQueries({ queryKey: ["estimate-plan-change-request"] })
+  ]);
   const upload = useMutation({
     mutationFn: (nextFile: File) => uploadEstimateDesign(estimateId, nextFile, setUploadProgress),
     onSuccess: () => {
       setFile(undefined);
       setNewPageUploadOpen(false);
       void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) });
+      void client.invalidateQueries({ queryKey: projectWorkflowKeys.all });
       onUploaded?.();
     },
     onSettled: () => setUploadProgress(undefined)
@@ -213,9 +230,10 @@ export function EstimateDesignUploads({
     }
   });
   const replace = useMutation({
-    mutationFn: ({ drawing, revision, file: nextFile }: DrawingSelection & { file: File }) =>
+    mutationFn: ({ drawing, revision, file: nextFile }: DrawingSelection & { file: File; estimateId: string }) =>
       replaceEstimateDrawing(drawing.id, revision.revisionNumber, nextFile),
     onSuccess: async (result, input) => {
+      if (input.estimateId !== estimateId) { await refreshSubmissionReadiness(input.estimateId); return; }
       closeDialog();
       if ("queued" in result) {
         setActionNotice("Replacement queued for extraction.");
@@ -226,7 +244,7 @@ export function EstimateDesignUploads({
         });
         setActionNotice(`Replacement drawing created. Revision ${result.revision.revisionNumber} awaits verification.`);
       }
-      await client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) });
+      await refreshSubmissionReadiness(input.estimateId);
     }
   });
   const retry = useMutation({ mutationFn: retryEstimateDesignUpload, onSuccess: () => void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) }) });
@@ -269,15 +287,33 @@ export function EstimateDesignUploads({
         setActionNotice("Drawings submitted.");
       }
       void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) });
+      void client.invalidateQueries({ queryKey: projectWorkflowKeys.all });
+      void client.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimateId) });
+      void client.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimateId) });
+      void client.invalidateQueries({ queryKey: ["estimate-plan-change-requests"] });
       onSubmitted?.();
+    },
+    onError: async (error) => {
+      if (variant === "designer" && error instanceof ApiError && error.status === 409) {
+        await refreshSubmissionReadiness();
+      }
     }
   });
 
   const latest = useMemo(() => latestRevisions(workspace.data?.revisions ?? []), [workspace.data?.revisions]);
   const activeDrawings = uniqueActiveDrawings(workspace.data?.drawings ?? [], latest);
+  // Submission validates drawing IDs, so visually identical source crops must
+  // still be listed separately when their current revisions need replacement.
+  const returnedDrawings = [...new Map((workspace.data?.drawings ?? [])
+    .filter((drawing) => drawing.active && latest.get(drawing.id)?.reviewStatus === "changes_requested")
+    .map((drawing) => [drawing.id, drawing])).values()];
   const extractionPending = (workspace.data?.uploads ?? []).some((item) =>
     item.extractionStatus === "queued" || item.extractionStatus === "processing"
   );
+  const planDocuments = usePlanDocuments(estimateId,
+    variant === "designer" && Boolean(workspace.data?.drawings.some((drawing) => drawing.active)),
+    !readOnly && !extractionPending,
+    (workspace.data?.revisions ?? []).map((revision) => revision.id).join(":"));
   const roomIds = new Set(rooms.map((room) => room.id));
   const scopeIds = new Set(scopes.map((scope) => scope.id));
   const miscDrawings = activeDrawings.filter((drawing) => drawing.mappingStatus === "misc");
@@ -338,6 +374,7 @@ export function EstimateDesignUploads({
     />;
   };
   const designerExperience = variant === "designer";
+  const returnedDrawingsPending = designerExperience && !readOnly && returnedDrawings.length > 0;
   const hasOpenPlanRequest = designerExperience && planChangeRequestState === "open";
   const requestStatePending = designerExperience && planChangeRequestState === "loading";
   const requestStateFailed = designerExperience && planChangeRequestState === "error";
@@ -452,16 +489,49 @@ export function EstimateDesignUploads({
       {formError ? <p role="alert" className="estimate-design-uploads__error">{formError}</p> : null}
       {actionNotice ? <p role="status" className="estimate-notice">{actionNotice}</p> : null}
       {workspace.isPending ? <p role="status">Loading design plans…</p> : null}
-      {workspace.isError ? <p role="alert">We couldn't load design plans. <button type="button" className="secondary-button" onClick={() => void workspace.refetch()}>Try again</button></p> : null}
+      {designerExperience && !readOnly && workspace.isFetching && !workspace.isPending ? <p role="status">Refreshing design plans…</p> : null}
+      {workspace.isError ? <p role="alert">{workspace.data ? "We couldn't refresh design plans. The displayed drawings may be out of date." : "We couldn't load design plans."} <button type="button" className="secondary-button" disabled={workspace.isFetching} onClick={() => void refreshSubmissionReadiness()}>Try again</button></p> : null}
       {workspace.data ? (
         <>
+          {returnedDrawingsPending ? (
+            <section className="estimate-design-uploads__readiness" aria-labelledby={readinessTitleId}>
+              <header>
+                <h3 id={readinessTitleId}>Resolve returned drawings before submitting</h3>
+                <Button variant="secondary" size="compact" busy={workspace.isFetching} busyLabel="Refreshing…" onClick={() => void refreshSubmissionReadiness()}>
+                  Refresh design plans
+                </Button>
+              </header>
+              <p id={readinessDescriptionId}>
+                Upload the revised file for each requested item. It replaces that item in its original position in the full plan PDF.
+              </p>
+              <ul aria-label="Returned drawings awaiting replacement">
+                {returnedDrawings.map((drawing) => {
+                  const sourceUpload = workspace.data?.uploads.find((item) => item.id === drawing.uploadId);
+                  return (
+                    <li key={drawing.id}>
+                      <div>
+                        <strong>{drawing.displayTitle}</strong>
+                        {sourceUpload ? <small>{sourceUpload.originalFilename}</small> : null}
+                        <small>Revision {latest.get(drawing.id)?.revisionNumber}</small>
+                        {latest.get(drawing.id)?.changeSummary ? <p>{latest.get(drawing.id)?.changeSummary}</p> : null}
+                      </div>
+                      <Button size="compact" aria-label={`Upload revised item: ${drawing.displayTitle}`} onClick={() => open({ drawing, revision: latest.get(drawing.id)! }, "replace")}>
+                        Upload revised item
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ) : null}
+          {designerExperience && activeDrawings.length > 0 ? <PlanDocuments state={planDocuments} /> : null}
           {workspace.data.uploads.length ? (
             <ul className="estimate-design-uploads__status-list" aria-label="Design upload status">
               {workspace.data.uploads.map((item) => (
                 <li key={item.id}>
                   <span>{item.originalFilename}</span>
                   <strong>{statusLabel(item.extractionStatus)}</strong>
-                  {designerExperience && item.canDelete ? (
+                  {designerExperience && allowDeletion && item.canDelete ? (
                     <Button
                       variant="destructive-outline"
                       size="compact"
@@ -569,11 +639,17 @@ export function EstimateDesignUploads({
           ) : null}
           {activeDrawings.length ? (
             <footer className="estimate-design-uploads__footer">
-              <span>
+              <span id={submitStatusId}>
                 {readOnly
                   ? "The submitted design and extracted images are read-only."
+                  : returnedDrawingsPending
+                    ? `${returnedDrawings.length} returned drawing${returnedDrawings.length === 1 ? "" : "s"} must be resolved before submission.`
+                  : designerExperience && workspace.isError
+                    ? "Refresh design plans before submitting."
                   : extractionPending
                     ? "Wait for every uploaded plan to finish extracting before submission."
+                    : designerExperience && !planDocuments.ready
+                      ? planDocuments.blocker
                     : unverifiedDrawings.length
                       ? `${unverifiedDrawings.length} drawing${unverifiedDrawings.length === 1 ? "" : "s"} can be submitted now. Verification is optional for this milestone.`
                       : miscDrawings.length
@@ -584,7 +660,8 @@ export function EstimateDesignUploads({
                 <button
                   type="button"
                   className="button button--primary"
-                  disabled={extractionPending || submit.isPending}
+                  disabled={extractionPending || submit.isPending || returnedDrawingsPending || (designerExperience && (workspace.isFetching || workspace.isError || !planDocuments.ready))}
+                  aria-describedby={[submitStatusId, returnedDrawingsPending ? readinessDescriptionId : null].filter(Boolean).join(" ")}
                   onClick={() => submit.mutate()}
                 >
                   {submit.isPending ? "Submitting…" : "Submit drawings to client"}
@@ -594,7 +671,8 @@ export function EstimateDesignUploads({
           ) : null}
           {!readOnly && submit.isError ? (
             <p role="alert" className="estimate-design-uploads__error">
-              The drawings could not be submitted. Try again.
+              {submit.error instanceof ApiError ? submit.error.message : "The drawings could not be submitted. Try again."}
+              {designerExperience && !returnedDrawingsPending ? <> <Button variant="secondary" size="compact" busy={workspace.isFetching} busyLabel="Refreshing…" onClick={() => void refreshSubmissionReadiness()}>Refresh design plans</Button></> : null}
             </p>
           ) : null}
         </>
@@ -621,9 +699,9 @@ export function EstimateDesignUploads({
                   : "The design upload could not be deleted. Try again."}
               </p>
             ) : null}
-            {!currentUploadToDelete?.canDelete && !deleteUpload.isPending ? (
+            {(!allowDeletion || !currentUploadToDelete?.canDelete) && !deleteUpload.isPending ? (
               <p role="status">
-                {currentUploadToDelete?.deleteBlockedReason ?? "This upload is no longer available to delete."}
+                {!allowDeletion ? "Refresh the project workflow before changing this upload." : currentUploadToDelete?.deleteBlockedReason ?? "This upload is no longer available to delete."}
               </p>
             ) : null}
             <div className="estimate-design-uploads__delete-actions">
@@ -634,9 +712,9 @@ export function EstimateDesignUploads({
                 variant="destructive"
                 busy={deleteUpload.isPending}
                 busyLabel="Deleting…"
-                disabled={!currentUploadToDelete?.canDelete}
+                disabled={!allowDeletion || !currentUploadToDelete?.canDelete}
                 onClick={() => {
-                  if (currentUploadToDelete?.canDelete && !deleteUpload.isPending) {
+                  if (allowDeletion && currentUploadToDelete?.canDelete && !deleteUpload.isPending) {
                     deleteUpload.mutate(uploadToDelete.id);
                   }
                 }}
@@ -651,7 +729,7 @@ export function EstimateDesignUploads({
       {!readOnly && selection && mode === "correct" ? <CorrectionDialog key={`${selection.drawing.id}:${selection.revision.id}`} selection={selection} defaultVerified={verifyOnOpen} page={workspace.data?.pages.find((page) => page.id === selection.revision.sourcePageId) ?? workspace.data?.pages.find((page) => page.id === selection.drawing.sourcePageId)} busy={correct.isPending} error={correct.isError ? "The correction was not saved." : ""} onSubmit={(input) => correct.mutate({ ...selection, input })} onClose={closeDialog} /> : null}
       {!readOnly && selection && mode === "assign" ? <EstimateItemAssignmentDialog key={`${selection.drawing.id}:${selection.revision.id}`} selection={selection} rooms={rooms} items={items} busy={assign.isPending} error={assign.isError ? "The estimate item was not assigned." : ""} onSubmit={(input) => assign.mutate({ ...selection, input })} onClose={closeDialog} /> : null}
       {selection && mode === "history" ? <HistoryDialog key={selection.drawing.id} revisions={(workspace.data?.revisions ?? []).filter((revision) => revision.drawingId === selection.drawing.id)} onClose={closeDialog} /> : null}
-      {!readOnly && selection && mode === "replace" ? <ReplacementDialog key={selection.drawing.id} file={replacement} busy={replace.isPending} error={replace.isError ? "The replacement was not uploaded." : ""} onChange={setReplacement} onSubmit={() => replacement && replace.mutate({ ...selection, file: replacement })} onClose={closeDialog} /> : null}
+      {!readOnly && selection && mode === "replace" ? <ReplacementDialog key={selection.drawing.id} title={selection.drawing.displayTitle} file={replacement} busy={replace.isPending} error={replace.isError ? replace.error instanceof ApiError ? replace.error.message : "The replacement was not uploaded." : ""} onChange={setReplacement} onSubmit={() => replacement && replace.mutate({ ...selection, file: replacement, estimateId })} onClose={closeDialog} /> : null}
       {!readOnly && manualOpen && workspace.data?.pages.length ? <ManualDrawingDialog
         pages={workspace.data.pages}
         rooms={rooms}
@@ -733,12 +811,14 @@ function HistoryDialog({ revisions, onClose }: { revisions: EstimateDesignRevisi
   </ContextPanel>;
 }
 
-function ReplacementDialog({ file, busy, error, onChange, onSubmit, onClose }: { file?: File; busy: boolean; error: string; onChange: (file: File | undefined) => void; onSubmit: () => void; onClose: () => void }) {
+function ReplacementDialog({ title, file, busy, error, onChange, onSubmit, onClose }: { title: string; file?: File; busy: boolean; error: string; onChange: (file: File | undefined) => void; onSubmit: () => void; onClose: () => void }) {
   const formId = useId();
   return <ContextPanel title="Upload replacement" eyebrow="Client-requested change" onClose={onClose} busy={busy} dirty={Boolean(file)}
     footer={({ requestClose }) => <><Button variant="destructive-outline" disabled={busy} onClick={requestClose}>Cancel</Button><Button type="submit" form={formId} disabled={!file || busy}>{busy ? "Uploading…" : "Upload replacement"}</Button></>}
   >
     <form id={formId} className="estimate-drawing-replacement" onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
+      <p><strong>{title}</strong></p>
+      <p>The revised item keeps its original position in the full plan PDF. Use a file containing this drawing.</p>
       <label>Replacement drawing file<FileInput aria-label="Replacement drawing file" disabled={busy} accept="application/pdf,image/png,image/jpeg,image/webp,image/tiff,image/heic,image/heif,.heif" onChange={(event) => onChange(event.target.files?.[0])} /></label>
       {error ? <p role="alert">{error}</p> : null}
     </form>

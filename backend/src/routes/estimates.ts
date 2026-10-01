@@ -10,8 +10,10 @@ import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
 import { validateBody } from "../middleware/validate.js";
 import { EstimateModel } from "../models/Estimate.js";
+import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
 import { LeadModel } from "../models/Lead.js";
 import { UserModel } from "../models/User.js";
+import { resolveEstimatorCatalogueLines, type EstimatorCatalogueLine } from "../services/estimator-catalogue.service.js";
 import type { AuditService } from "../services/audit.service.js";
 import type { AuthService } from "../services/auth.service.js";
 import type { EstimateDesignService } from "../services/estimate-design.service.js";
@@ -25,15 +27,78 @@ import type { EstimateDecisionService } from "../services/estimate-decision.serv
 import type { EstimatePublicationService } from "../services/estimate-publication.service.js";
 import { sendDownload } from "./estimate-client-responses.js";
 
-const estimateLineSchema = z.object({ catalogueId: z.string().min(1), roomName: z.string().min(1), specification: z.string().min(1), unit: z.string().min(1), rate: z.number().nonnegative(), quantity: z.number().nonnegative(), included: z.boolean() }).strict();
-const estimateSchema = z.object({ propertyType: z.string().min(1), rooms: z.array(z.record(z.unknown())), scopes: z.array(z.string()), lineItems: z.array(estimateLineSchema) }).strict();
+const stableIdSchema = z.string().trim().min(1).max(128);
+const legacyEstimateLineSchema = z.object({
+  source: z.literal("legacy").optional(), catalogueId: stableIdSchema,
+  roomName: z.string().trim().min(1), specification: z.string().trim().min(1),
+  unit: z.string().trim().min(1), rate: z.number().finite().nonnegative(),
+  quantity: z.number().finite().nonnegative(), included: z.boolean()
+}).strict();
+const configuredEstimateLineSchema = z.object({
+  source: z.literal("configuration"), id: stableIdSchema.optional(),
+  catalogueId: stableIdSchema, roomId: stableIdSchema, roomName: z.string().trim().min(1),
+  mainBasketId: stableIdSchema, subBasketId: stableIdSchema,
+  mainLineId: stableIdSchema, revisionId: stableIdSchema, uomId: stableIdSchema,
+  quantity: z.number().finite().nonnegative(), included: z.boolean(),
+  ratePaise: z.number().int().nonnegative().safe().nullable()
+}).strict().superRefine((line, context) => {
+  if (line.catalogueId !== line.mainLineId) context.addIssue({
+    code: z.ZodIssueCode.custom, path: ["catalogueId"], message: "Catalogue identity must match the Main Line."
+  });
+});
+const estimateLineSchema = z.union([configuredEstimateLineSchema, legacyEstimateLineSchema]);
+const estimateSchema = z.object({
+  propertyType: z.string().trim().min(1), rooms: z.array(z.record(z.unknown())),
+  scopes: z.array(z.string()), selectedMainBasketIds: z.array(stableIdSchema).optional(),
+  expectedVersion: z.number().int().positive().optional(),
+  lineItems: z.array(estimateLineSchema)
+}).strict().superRefine((value, context) => {
+  const selected = value.selectedMainBasketIds ?? [];
+  if (new Set(selected).size !== selected.length) context.addIssue({
+    code: z.ZodIssueCode.custom, path: ["selectedMainBasketIds"], message: "Select each Main Basket only once."
+  });
+  const identities = new Set<string>();
+  const configuredInput = value.lineItems.some((line) => line.source === "configuration");
+  const roomIds = new Set<string>();
+  const roomLabels = new Map<string, string>();
+  if (configuredInput) value.rooms.forEach((room, index) => {
+    const id = room.id;
+    const label = room.label;
+    if (typeof id !== "string" || !id.trim() || typeof label !== "string" || !label.trim()) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["rooms", index], message: "Configured estimate rooms need an ID and label." });
+      return;
+    }
+    if (roomIds.has(id)) context.addIssue({
+      code: z.ZodIssueCode.custom, path: ["rooms", index, "id"], message: "Room IDs must be unique."
+    });
+    roomIds.add(id);
+    roomLabels.set(id, label);
+  });
+  for (const [index, line] of value.lineItems.entries()) {
+    if (line.source !== "configuration") continue;
+    if (!roomIds.has(line.roomId)) context.addIssue({
+      code: z.ZodIssueCode.custom, path: ["lineItems", index, "roomId"], message: "Select an existing room for this Main Line."
+    });
+    if (roomLabels.has(line.roomId) && roomLabels.get(line.roomId) !== line.roomName) context.addIssue({
+      code: z.ZodIssueCode.custom, path: ["lineItems", index, "roomName"], message: "The Main Line room name must match the selected room."
+    });
+    const identity = `${line.roomId}\u0000${line.mainLineId}`;
+    if (identities.has(identity)) context.addIssue({
+      code: z.ZodIssueCode.custom, path: ["lineItems", index], message: "A room cannot contain the same Main Line twice."
+    });
+    identities.add(identity);
+  }
+});
 const assignmentSchema = z.object({ designerId: z.string().trim().min(1) }).strict();
 const decisionSchema = z.object({ decision: z.enum(["approve", "request_changes"]), note: z.string().trim().max(1000).default("") }).strict();
-const clientVisibleEstimateStatuses = [
-  "sent_to_client",
-  "client_changes_requested",
-  "client_approved"
-] as const;
+const clientDecisionSchema = decisionSchema.extend({
+  reviewRoundId: z.string().trim().min(1),
+  reviewRoundVersion: z.number().int().positive()
+}).superRefine((value, context) => {
+  if (value.decision === "request_changes" && !value.note) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["note"], message: "Explain the changes you need." });
+  }
+});
 
 export function createEstimatesRouter(
   auth: AuthService,
@@ -51,12 +116,12 @@ export function createEstimatesRouter(
     value: Record<string, unknown> | null
   ) => {
     const estimate = mapEstimate(value);
-    if (!estimate || actor.role !== "estimator_sales") return estimate;
-    const clientReview = await reviews.currentSummaryForEstimate(
-      actor,
-      String(estimate.id)
-    );
-    return clientReview ? { ...estimate, clientReview } : estimate;
+    if (!estimate || !["estimator_sales", "super_admin"].includes(actor.role)) return estimate;
+    const [clientReview, clientFeedback] = await Promise.all([
+      reviews.currentSummaryForEstimate(actor, String(estimate.id)),
+      reviews.currentClientFeedbackForEstimate(actor, String(estimate.id), estimate)
+    ]);
+    return { ...estimate, ...(clientReview ? { clientReview } : {}), ...(clientFeedback ? { clientFeedback } : {}) };
   };
   router.get("/leads/:leadId/estimate", protectedRoute, requireOperation("GET /leads/:leadId/estimate"), async (req, res, next) => { try { const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string); const estimateFilter = req.authenticatedUser!.role === "super_admin" ? { leadId: lead.id } : { leadId: lead.id, ownerId: req.authenticatedUser!.id }; const estimate = await EstimateModel.findOne(estimateFilter).lean(); res.json({ data: await estimatorEstimate(req.authenticatedUser!, estimate) }); } catch (error) { next(error); } });
   router.get("/estimates", protectedRoute, requireOperation("GET /estimates"), async (req, res, next) => { try {
@@ -74,18 +139,100 @@ export function createEstimatesRouter(
   } catch (error) { next(error); } });
   router.put("/leads/:leadId/estimate", protectedRoute, requireOperation("PUT /leads/:leadId/estimate"), validateBody(estimateSchema), async (req, res, next) => { try {
     const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string);
-    const savedEstimate = await withMongoTransaction(async (session) => {
+    let savedEstimate: Record<string, unknown>;
+    try { savedEstimate = await withMongoTransaction(async (session) => {
       let estimate = await EstimateModel.findOne({ leadId: lead.id, ownerId: req.authenticatedUser!.id }).session(session);
-      const previousLines = estimate?.lineItems ?? [];
-      const lineItems = req.body.lineItems.map((line: z.infer<typeof estimateLineSchema>, index: number) => ({
-        id: typeof previousLines[index]?.id === "string"
-          ? previousLines[index].id
-          : `estimate-line-${randomUUID()}`,
-        ...line,
-        amount: line.included ? Math.round(line.quantity * line.rate) : 0
-      }));
-      const subtotal = lineItems.reduce((sum: number, line: { amount: number }) => sum + line.amount, 0);
-      const gst = Math.round(subtotal * .18);
+      const configuredDraft = (req.body.lineItems as z.infer<typeof estimateLineSchema>[])
+        .some((line) => line.source === "configuration") ||
+        estimate?.lineItems.some((line: { source?: string }) => line.source === "configuration") === true ||
+        Boolean((req.body.selectedMainBasketIds as string[] | undefined)?.length) ||
+        Boolean(estimate?.selectedMainBasketIds?.length);
+      const updatingExistingEstimate = Boolean(estimate);
+      if (configuredDraft && estimate && req.body.expectedVersion !== estimate.version) {
+        throw new ApiError(409, "ESTIMATE_VERSION_CONFLICT", "This estimate changed. Refresh it before saving again.");
+      }
+      if (configuredDraft && !estimate && req.body.expectedVersion !== undefined) {
+        throw new ApiError(409, "ESTIMATE_VERSION_CONFLICT", "This estimate changed. Refresh it before saving again.");
+      }
+      const previousLines = (estimate?.toObject().lineItems ?? []) as Record<string, unknown>[];
+      const previousConfigured = new Map(previousLines.filter((line) => line.source === "configuration")
+        .map((line) => [`${String(line.roomId)}\u0000${String(line.mainLineId)}`, line]));
+      const selectedMainBasketIds: string[] = req.body.selectedMainBasketIds ?? estimate?.selectedMainBasketIds ?? [];
+      const previousSelected = new Set<string>(estimate?.selectedMainBasketIds ?? []);
+      const newlySelected = selectedMainBasketIds.filter((id) => !previousSelected.has(id));
+      if (newlySelected.length > 0 && await AiEstimatorKnowledgeBasketModel.countDocuments({
+        _id: { $in: newlySelected }, status: "active"
+      }).session(session) !== newlySelected.length) {
+        throw new ApiError(409, "ESTIMATE_CATALOGUE_CHANGED", "Configuration changed. Refresh the catalogue before saving this basket.");
+      }
+      const newMainLineIds = (req.body.lineItems as z.infer<typeof estimateLineSchema>[])
+        .filter((line): line is z.infer<typeof configuredEstimateLineSchema> => line.source === "configuration")
+        .filter((line) => !previousConfigured.has(`${line.roomId}\u0000${line.mainLineId}`))
+        .map((line) => line.mainLineId);
+      const configured = await resolveEstimatorCatalogueLines(newMainLineIds, session);
+      const lineItems = (req.body.lineItems as z.infer<typeof estimateLineSchema>[]).map((line, index) => {
+        if (line.source !== "configuration") {
+          const previous = previousLines[index];
+          const amount = line.included ? Math.round(line.quantity * line.rate) : 0;
+          if (!Number.isSafeInteger(amount) || !Number.isSafeInteger(amount * 100)) {
+            throw new ApiError(400, "ESTIMATE_AMOUNT_INVALID", "An estimate amount is too large.");
+          }
+          return {
+            id: previous?.source !== "configuration" && typeof previous?.id === "string"
+              ? previous.id : `estimate-line-${randomUUID()}`,
+            ...line, source: "legacy" as const, amount, amountPaise: amount * 100
+          };
+        }
+        const prior = previousConfigured.get(`${line.roomId}\u0000${line.mainLineId}`);
+        if (prior && line.id && line.id !== prior.id) {
+          throw new ApiError(409, "ESTIMATE_LINE_CHANGED", "Refresh the saved estimate line before editing it.");
+        }
+        const firstSave = configured.get(line.mainLineId);
+        if (!prior && !selectedMainBasketIds.includes(line.mainBasketId)) {
+          throw new ApiError(400, "ESTIMATE_BASKET_NOT_SELECTED", "Select the Main Basket before adding its Main Line.");
+        }
+        if (!prior && (!firstSave || firstSave.line.basketId !== line.mainBasketId ||
+          firstSave.line.subBasketId !== line.subBasketId ||
+          firstSave.line.revisionId !== line.revisionId || firstSave.line.uom.id !== line.uomId)) {
+          throw new ApiError(409, "ESTIMATE_CATALOGUE_CHANGED", "Configuration changed. Refresh the catalogue before saving this line.");
+        }
+        const snapshot = prior ? savedConfiguredSnapshot(prior) : firstSave!;
+        const quantityScale = snapshot.line.uom.decimalScale;
+        const quantityUnits = scaledQuantity(line.quantity, quantityScale, line.included);
+        const amountPaise = line.included && line.ratePaise === null
+          ? null : line.included
+            ? calculateAmountPaise(line.ratePaise!, quantityUnits, quantityScale)
+            : 0;
+        return {
+          id: typeof prior?.id === "string" ? prior.id : `estimate-line-${randomUUID()}`,
+          source: "configuration" as const, catalogueId: line.mainLineId,
+          roomId: line.roomId, roomName: line.roomName,
+          mainBasketId: snapshot.line.basketId, subBasketId: snapshot.line.subBasketId,
+          mainLineId: line.mainLineId, revisionId: snapshot.line.revisionId,
+          uomId: snapshot.line.uom.id, uomCode: snapshot.line.uom.code,
+          uomDecimalScale: quantityScale,
+          mainBasketName: snapshot.mainBasketName, subBasketName: snapshot.subBasketName,
+          mainLineName: snapshot.line.name, uomName: snapshot.line.uom.name,
+          specification: null, unit: snapshot.line.uom.name,
+          ratePaise: line.ratePaise, rate: line.ratePaise === null ? null : line.ratePaise / 100,
+          quantity: line.quantity, included: line.included,
+          amountPaise, amount: amountPaise === null ? null : amountPaise / 100
+        };
+      });
+      const subtotalPaise = lineItems.reduce((sum, line) => {
+        const next = sum + (line.amountPaise ?? 0);
+        if (!Number.isSafeInteger(next)) throw new ApiError(400, "ESTIMATE_AMOUNT_INVALID", "The estimate total is too large.");
+        return next;
+      }, 0);
+      const hasConfigured = lineItems.some((line) => line.source === "configuration");
+      const gstPaise = hasConfigured
+        ? Number((BigInt(subtotalPaise) * 18n + 50n) / 100n)
+        : Math.round(subtotalPaise / 100 * .18) * 100;
+      const totalPaise = subtotalPaise + gstPaise;
+      if (!Number.isSafeInteger(gstPaise) || !Number.isSafeInteger(totalPaise)) {
+        throw new ApiError(400, "ESTIMATE_AMOUNT_INVALID", "The estimate total is too large.");
+      }
+      const isIncomplete = lineItems.some((line) => line.source === "configuration" && line.included && line.ratePaise === null);
       const leadProjectId = lead.projectId ?? null;
       const estimateProjectId = estimate?.projectId ?? null;
       if (
@@ -110,23 +257,34 @@ export function createEstimatesRouter(
       estimate.propertyType = req.body.propertyType;
       estimate.rooms = req.body.rooms;
       estimate.scopes = req.body.scopes;
+      estimate.selectedMainBasketIds = selectedMainBasketIds;
       estimate.lineItems = lineItems;
-      estimate.subtotal = subtotal;
-      estimate.gst = gst;
-      estimate.total = subtotal + gst;
+      estimate.subtotalPaise = subtotalPaise;
+      estimate.gstPaise = gstPaise;
+      estimate.totalPaise = totalPaise;
+      estimate.subtotal = subtotalPaise / 100;
+      estimate.gst = gstPaise / 100;
+      estimate.total = totalPaise / 100;
+      estimate.isIncomplete = isIncomplete;
       if (estimate.status !== "draft") {
         estimate.status = "draft";
+        estimate.version += 1;
+      } else if (configuredDraft && updatingExistingEstimate) {
         estimate.version += 1;
       }
       await estimate.save({ session });
       return estimate.toObject();
-    });
+    }); } catch (error) {
+      if (isEstimateWriteConflict(error)) throw new ApiError(409, "ESTIMATE_VERSION_CONFLICT", "This estimate changed. Refresh it before saving again.");
+      throw error;
+    }
     res.json({ data: await estimatorEstimate(req.authenticatedUser!, savedEstimate) });
   } catch (error) { next(error); } });
   router.post("/leads/:leadId/estimate/submit", protectedRoute, requireOperation("POST /leads/:leadId/estimate/submit"), async (req, res, next) => { try {
     const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string);
     const estimate = await EstimateModel.findOne({ leadId: lead.id, ownerId: req.authenticatedUser!.id });
     if (!estimate || estimate.lineItems.every((line: { included: boolean }) => !line.included)) throw new ApiError(409, "ESTIMATE_EMPTY", "Select at least one estimate item before submitting.");
+    assertEstimateReadyToSubmit(estimate.lineItems);
     const approvalRequired = estimate.total > 1_500_000;
     const submittedAt = new Date();
     if (!approvalRequired) {
@@ -149,6 +307,7 @@ export function createEstimatesRouter(
         version: estimate.version, status: "draft", total: { $gt: 1_500_000 }
       }).session(session);
       if (!current) throw new ApiError(409, "ESTIMATE_LOCKED", "The estimate changed before it could be submitted.");
+      assertEstimateReadyToSubmit(current.lineItems);
       current.approvalRequired = true;
       current.status = "pending_manager_assignment";
       current.submittedAt = submittedAt;
@@ -165,6 +324,10 @@ export function createEstimatesRouter(
       : { _id: req.params.estimateId, ownerId: req.authenticatedUser!.id };
     const estimate = await EstimateModel.findOne(filter).lean();
     if (!estimate) throw estimateNotFound();
+    if (estimate.lineItems.some((line: { source?: string; included?: boolean; ratePaise?: number | null }) =>
+      line.source === "configuration" && line.included && line.ratePaise == null)) {
+      throw new ApiError(409, "ESTIMATE_INCOMPLETE", "Enter all selected selling rates before downloading a proposal PDF.");
+    }
     const lead = await LeadModel.findById(estimate.leadId).lean();
     if (!lead) throw estimateNotFound();
     const pdf = await estimatePdf.generate(toEstimatePdfInput(estimate, lead));
@@ -247,6 +410,7 @@ export function createEstimatesRouter(
   router.post("/estimates/:estimateId/send-client", protectedRoute, requireOperation("POST /estimates/:estimateId/send-client"), async (req, res, next) => { try {
     const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, ownerId: req.authenticatedUser!.id, status: "ready_for_client" });
     if (!estimate) throw new ApiError(409, "ESTIMATE_NOT_READY", "Complete required approvals before sending this estimate.");
+    assertEstimateReadyToSubmit(estimate.lineItems);
     const published = await publication.publishEstimateToClient({
       estimateId: String(estimate._id),
       leadId: String(estimate.leadId),
@@ -260,46 +424,25 @@ export function createEstimatesRouter(
   } catch (error) { next(error); } });
 
   router.get("/client/estimates", protectedRoute, requireOperation("GET /client/estimates"), async (req, res, next) => { try {
-    const globalReader = req.authenticatedUser!.role === "super_admin";
-    const estimates = globalReader
-      ? await EstimateModel.find({ status: { $in: clientVisibleEstimateStatuses } }).lean()
-      : [];
-    const leadsForClient = globalReader
-      ? await LeadModel.find({ _id: { $in: estimates.map((estimate) => estimate.leadId) } }).lean()
-      : await LeadModel.find({ clientEmail: { $regex: `^${escapeRegex(req.authenticatedUser!.email)}$`, $options: "i" } }).lean();
-    const visibleEstimates = globalReader
-      ? estimates
-      : await EstimateModel.find({ leadId: { $in: leadsForClient.map((lead) => lead._id) }, status: { $in: clientVisibleEstimateStatuses } }).lean();
-    const byId = new Map(leadsForClient.map((lead) => [lead._id, lead]));
-    res.json({ data: visibleEstimates.map((estimate) => ({ ...mapEstimate(estimate), lead: byId.get(estimate.leadId) ?? null })) });
+    res.json({ data: await reviews.listClientEstimates(req.authenticatedUser!) });
   } catch (error) { next(error); } });
 
   router.get("/client/estimates/:estimateId/pdf", protectedRoute, requireOperation("GET /client/estimates/:estimateId/pdf"), async (req, res, next) => { try {
-    const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, status: { $in: clientVisibleEstimateStatuses } }).lean();
-    if (!estimate) throw estimateNotFound();
-    const leadFilter = req.authenticatedUser!.role === "super_admin"
-      ? { _id: estimate.leadId }
-      : { _id: estimate.leadId, clientEmail: { $regex: `^${escapeRegex(req.authenticatedUser!.email)}$`, $options: "i" } };
-    const lead = await LeadModel.findOne(leadFilter).lean();
-    if (!lead) throw estimateNotFound();
+    const roundId = z.string().trim().min(1).safeParse(req.query.roundId);
+    if (!roundId.success) throw new ApiError(400, "ESTIMATE_REVIEW_ROUND_REQUIRED", "Refresh the estimate before downloading its PDF.");
     const actor = req.authenticatedUser!;
-    if (actor.role === "client" || actor.role === "super_admin") {
-      const currentRound = actor.role === "client"
-        ? await reviews.currentRoundForClientEstimate(actor, String(estimate._id))
-        : await reviews.currentSummaryForEstimate(actor, String(estimate._id));
-      if (currentRound) {
-        const download = actor.role === "client"
-          ? await reviews.readClientPdf(actor, currentRound.id)
-          : await reviews.readPdf(actor, currentRound.id);
-        sendDownload(res, download);
-        return;
-      }
+    const [estimate] = await reviews.listClientEstimates(actor, String(req.params.estimateId));
+    if (!estimate) throw estimateNotFound();
+    if (!estimate.publishedReview || estimate.publishedReview.id !== roundId.data) {
+      throw new ApiError(409, "ESTIMATE_NOT_REVIEWABLE", "The submitted estimate changed. Refresh before downloading its PDF.");
     }
-    const pdf = await estimatePdf.generate(toEstimatePdfInput(estimate, lead));
-    sendDownload(res, { ...pdf, mimeType: "application/pdf" });
+    const download = actor.role === "client"
+      ? await reviews.readClientPdf(actor, roundId.data)
+      : await reviews.readPdf(actor, roundId.data);
+    sendDownload(res, download);
   } catch (error) { next(error); } });
 
-  router.post("/client/estimates/:estimateId/decision", protectedRoute, requireOperation("POST /client/estimates/:estimateId/decision"), validateBody(decisionSchema), async (req, res, next) => { try {
+  router.post("/client/estimates/:estimateId/decision", protectedRoute, requireOperation("POST /client/estimates/:estimateId/decision"), validateBody(clientDecisionSchema), async (req, res, next) => { try {
     const actor = req.authenticatedUser!;
     const estimateId = String(req.params.estimateId);
     const estimate = await EstimateModel.findOne({ _id: estimateId }).lean();
@@ -311,20 +454,16 @@ export function createEstimatesRouter(
     ) {
       throw estimateNotFound();
     }
-    const currentRound = await reviews.currentRoundForClientEstimate(
-      actor,
-      estimateId
-    );
-    const result = await decisions.decide({
+    await decisions.decide({
       estimateId,
-      round: currentRound
-        ? { id: currentRound.id, expectedVersion: currentRound.version }
-        : null,
+      round: { id: req.body.reviewRoundId, expectedVersion: req.body.reviewRoundVersion },
       decision: req.body.decision,
       note: req.body.note,
       context: { source: "client_portal", actor, proof: null }
     });
-    res.json({ data: mapEstimate(result.estimate) });
+    const [published] = await reviews.listClientEstimates(actor, estimateId);
+    if (!published) throw estimateNotFound();
+    res.json({ data: published });
   } catch (error) { next(error); } });
   return router;
 }
@@ -334,8 +473,73 @@ function mapEstimate(value: Record<string, unknown> | null) {
   const { _id, ...estimate } = value;
   return { ...estimate, id: _id ?? value.id };
 }
-function escapeRegex(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 function estimateNotFound() { return new ApiError(404, "ESTIMATE_NOT_FOUND", "Estimate not found."); }
+
+function savedConfiguredSnapshot(prior: Record<string, unknown>): {
+  line: EstimatorCatalogueLine; mainBasketName: string; subBasketName: string;
+} {
+  const strings = ["mainBasketId", "subBasketId", "mainLineId", "revisionId", "uomId",
+    "uomCode", "mainBasketName", "subBasketName", "mainLineName", "uomName"] as const;
+  if (strings.some((field) => typeof prior[field] !== "string" || !prior[field]) ||
+    !Number.isInteger(prior.uomDecimalScale) || Number(prior.uomDecimalScale) < 0 || Number(prior.uomDecimalScale) > 3) {
+    throw new ApiError(409, "ESTIMATE_LINE_SNAPSHOT_INVALID", "This saved line needs review before it can be edited.");
+  }
+  return {
+    mainBasketName: String(prior.mainBasketName), subBasketName: String(prior.subBasketName),
+    line: {
+      id: String(prior.mainLineId), mainLineId: String(prior.mainLineId),
+      basketId: String(prior.mainBasketId), subBasketId: String(prior.subBasketId),
+      name: String(prior.mainLineName), displayOrder: 0, revisionId: String(prior.revisionId),
+      uom: { id: String(prior.uomId), code: String(prior.uomCode), name: String(prior.uomName),
+        decimalScale: Number(prior.uomDecimalScale) }
+    }
+  };
+}
+
+function scaledQuantity(quantity: number, decimalScale: number, included: boolean): number {
+  if (!Number.isFinite(quantity) || quantity < 0 || (included && quantity === 0)) {
+    throw new ApiError(400, "ESTIMATE_QUANTITY_INVALID", "Enter a positive quantity for each selected line.");
+  }
+  const decimal = String(quantity);
+  if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(decimal)) {
+    throw new ApiError(400, "ESTIMATE_QUANTITY_INVALID", "Enter a quantity using the configured UOM precision.");
+  }
+  const [whole, fraction = ""] = decimal.split(".");
+  if (fraction.length > decimalScale) {
+    throw new ApiError(400, "ESTIMATE_QUANTITY_INVALID", "Quantity exceeds the configured UOM precision.");
+  }
+  const units = Number(whole) * 10 ** decimalScale + Number(fraction.padEnd(decimalScale, "0"));
+  if (!Number.isSafeInteger(units)) {
+    throw new ApiError(400, "ESTIMATE_QUANTITY_INVALID", "Quantity is too large.");
+  }
+  return units;
+}
+
+function calculateAmountPaise(ratePaise: number, quantityUnits: number, decimalScale: number): number {
+  const divisor = BigInt(10 ** decimalScale);
+  const amount = (BigInt(ratePaise) * BigInt(quantityUnits) + divisor / 2n) / divisor;
+  if (amount > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new ApiError(400, "ESTIMATE_AMOUNT_INVALID", "An estimate amount is too large.");
+  }
+  return Number(amount);
+}
+
+function assertEstimateReadyToSubmit(lines: readonly {
+  source?: string; included?: boolean; ratePaise?: number | null; amountPaise?: number | null;
+}[]): void {
+  if (lines.some((line) => line.source === "configuration" && line.included &&
+    (!Number.isSafeInteger(line.ratePaise) || !Number.isSafeInteger(line.amountPaise)))) {
+    throw new ApiError(409, "ESTIMATE_INCOMPLETE", "Enter a valid selling rate for every selected Main Line before submitting.");
+  }
+}
+
+function isEstimateWriteConflict(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; hasErrorLabel?: (label: string) => boolean };
+  return candidate.code === 11000 || candidate.code === 112 ||
+    candidate.hasErrorLabel?.("TransientTransactionError") === true;
+}
+
 async function withMongoTransaction<T>(
   operation: (session: mongoose.ClientSession) => Promise<T>
 ) {
@@ -360,6 +564,9 @@ function toEstimatePdfInput(
     subtotal: number;
     gst: number;
     total: number;
+    subtotalPaise?: number;
+    gstPaise?: number;
+    totalPaise?: number;
     lineItems: EstimatePdfInput["lineItems"];
   },
   lead: {
@@ -377,6 +584,9 @@ function toEstimatePdfInput(
     subtotal: estimate.subtotal,
     gst: estimate.gst,
     total: estimate.total,
+    ...(estimate.subtotalPaise !== undefined ? { subtotalPaise: estimate.subtotalPaise } : {}),
+    ...(estimate.gstPaise !== undefined ? { gstPaise: estimate.gstPaise } : {}),
+    ...(estimate.totalPaise !== undefined ? { totalPaise: estimate.totalPaise } : {}),
     lineItems: estimate.lineItems,
     lead: {
       clientName: lead.clientName,

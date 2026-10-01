@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Pencil, Plus, Search } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 
@@ -7,14 +7,16 @@ import type { ProcurementEstimateItem, ProjectProcurementItem } from "../../api/
 import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { Button } from "../../components/ui/Button";
-import { Input } from "../../components/ui/Field";
+import { Dialog } from "../../components/ui/Dialog";
+import { Field, Input, Textarea } from "../../components/ui/Field";
 import { IconButton } from "../../components/ui/IconButton";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { PageState } from "../../components/ui/PageState";
 import { Surface } from "../../components/ui/Surface";
 import { formatPaise } from "../finance/ProjectFinancePanel";
+import { projectStatusKeys } from "../project-status/projectStatusApi";
 import { ProjectProcurementItemEditor } from "./ProjectProcurementItemEditor";
-import { PROCUREMENT_ITEMS_PAGE_SIZE, getProjectProcurementItems, projectProcurementKeys, type ProcurementParentSource, type ProcurementParentOption } from "./projectProcurementApi";
+import { PROCUREMENT_ITEMS_PAGE_SIZE, getProjectProcurementItems, projectProcurementKeys, removeProjectProcurementItem, type ProcurementParentSource, type ProcurementParentOption } from "./projectProcurementApi";
 import { procurementError } from "./procurementPresentation";
 import { procurementKeys } from "./procurementApi";
 import "./projectProcurementItems.css";
@@ -45,6 +47,8 @@ function ProjectProcurementItemsTable({ projectId, projectName, source, estimate
   const [q, setQ] = useState("");
   const [offset, setOffset] = useState(0);
   const [editor, setEditor] = useState<{ item: ProjectProcurementItem | null } | null>(null);
+  const [removing, setRemoving] = useState<ProjectProcurementItem | null>(null);
+  const [removeReason, setRemoveReason] = useState("");
   const [notice, setNotice] = useState("");
   const returnFocusRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -54,6 +58,24 @@ function ProjectProcurementItemsTable({ projectId, projectName, source, estimate
     queryFn: ({ signal }) => getProjectProcurementItems(projectId, q, offset, signal, scope),
     enabled: canRead && expanded,
     staleTime: 30_000
+  });
+  const remove = useMutation({
+    mutationFn: ({ item, reason }: { item: ProjectProcurementItem; reason: string }) => removeProjectProcurementItem(projectId, item.id, item.version, reason),
+    onSuccess: async (_, { item }) => {
+      setRemoving(null);
+      setRemoveReason("");
+      setNotice(`${item.itemName} removed from active procurement items.`);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: projectProcurementKeys.lists(projectId) }),
+        queryClient.invalidateQueries({ queryKey: ["procurement", "purchase-order-preparation", projectId] }),
+        queryClient.invalidateQueries({ queryKey: ["procurement", "purchase-order-requests", projectId] }),
+        queryClient.invalidateQueries({ queryKey: projectStatusKeys.project(projectId) }),
+        queryClient.invalidateQueries({ queryKey: procurementKeys.projects })
+      ]);
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 409) void query.refetch();
+    }
   });
   const page = query.data;
   // Revoked access must not keep previously cached project items visible.
@@ -92,7 +114,7 @@ function ProjectProcurementItemsTable({ projectId, projectName, source, estimate
         <div>
           {estimateItem ? <p className="project-procurement-items__eyebrow">{estimateItem.roomName}</p> : null}
           <Heading id={`${id}-title`} ref={headingRef} tabIndex={-1}>{title}</Heading>
-          <p>{estimateItem ? `${estimateItem.quantity} ${estimateItem.unit} · ${estimateItem.catalogueId}` : unassigned ? "Saved items without a matching current estimate item. Edit an unlinked item to assign it." : "Manage item, brand, vendor and unit prices for this project."}</p>
+          <p>{estimateItem ? `${estimateItem.quantity} ${estimateItem.unit}${estimateItem.source === "configuration" ? "" : ` · ${estimateItem.catalogueId}`}` : unassigned ? "Saved items without a current eligible estimate item. Review their assignment before ordering." : "Manage item, brand, vendor and unit prices for this project."}</p>
         </div>
         {estimateItem ? <div className="project-procurement-items__budget"><span>Estimated budget</span><strong>{formatPaise(estimateItem.estimatedAmountPaise)}</strong></div> : null}
         {canManage && source && !accessDenied && !projectUnavailable ? <Button size="compact" leadingIcon={<Plus />} aria-label={parentLabel ? `Add item under ${parentLabel}` : undefined} onClick={(event) => {
@@ -131,21 +153,25 @@ function ProjectProcurementItemsTable({ projectId, projectName, source, estimate
           </div>
           {page.items.length ? <div className="project-procurement-items__table-region" role="region" aria-label={`Procurement items table${parentLabel ? ` for ${parentLabel}` : unassigned ? " needing assignment" : ""}`} tabIndex={0} aria-busy={query.isFetching || undefined}>
             <table className="project-procurement-items__table">
-              <caption className="sr-only">Procurement items and prices per unit of measure</caption>
-              <thead><tr><th scope="col">Item name</th><th scope="col">Brand</th><th scope="col">Vendor</th><th scope="col">UOM</th><th scope="col">Allocated work (INR)</th><th scope="col">Price (INR)</th>{canManage ? <th scope="col">Actions</th> : null}</tr></thead>
+              <caption className="sr-only">Procurement items, planned quantities, and amounts before GST</caption>
+              <thead><tr><th scope="col">Item name</th><th scope="col">Brand</th><th scope="col">Vendor</th><th scope="col">UOM</th><th scope="col">Allocated work (INR)</th><th scope="col">Price (INR)</th><th scope="col">Order quantity</th><th scope="col">Planned amount, before GST</th><th scope="col">GST (18%)</th><th scope="col">Planned amount, with GST</th>{canManage ? <th scope="col">Actions</th> : null}</tr></thead>
               <tbody>{page.items.map((item) => <tr key={item.id}>
-                <th scope="row" className="project-procurement-items__name"><span className="project-procurement-items__chip">{item.itemName}</span>{unassigned && item.estimateSource ? <small>From a previous estimate item</small> : null}</th>
+                <th scope="row" className="project-procurement-items__name"><span className="project-procurement-items__chip">{item.itemName}</span>{unassigned && item.estimateSource ? <small>Linked estimate item is not eligible for new procurement</small> : null}</th>
                 <td data-label="Brand"><span className="project-procurement-items__chip project-procurement-items__chip--brand">{item.brand}</span></td>
                 <td data-label="Vendor">{item.vendor ? <><span className="project-procurement-items__chip project-procurement-items__chip--vendor">{item.vendor.name}</span>{item.vendor.status !== "active" ? <small>Unavailable for new items</small> : null}</> : <span className="project-procurement-items__chip project-procurement-items__chip--neutral">Not selected</span>}</td>
                 <td data-label="UOM"><span className="project-procurement-items__chip project-procurement-items__chip--uom" title={item.uom.name}>{item.uom.code}</span>{item.uom.status !== "active" ? <small>Unavailable for new items</small> : null}</td>
                 <td data-label="Allocated work (INR)">{item.allocatedWorkPaise == null ? "Not recorded" : formatPaise(item.allocatedWorkPaise)}</td>
                 <td data-label="Price (INR)" className="project-procurement-items__price"><span className="project-procurement-items__chip project-procurement-items__chip--price">{formatPaise(item.pricePaise)}</span></td>
-                {canManage ? <td className="project-procurement-items__actions">{unassigned && item.estimateSource ? <span className="project-procurement-items__muted">Review assignment</span> : <IconButton variant="quiet" icon={<Pencil aria-hidden="true" />} label={`Edit ${item.itemName}, ${item.brand}`} title={`Edit ${item.itemName}`} onClick={(event) => {
+                <td data-label="Order quantity" className="project-procurement-items__quantity">{item.plannedOrderQuantityMilliUnits == null ? <span className="project-procurement-items__muted">Quantity needed</span> : `${item.plannedOrderQuantityMilliUnits / 1000} ${item.uom.code}`}</td>
+                <td data-label="Planned amount, before GST" className="project-procurement-items__amount">{item.plannedLineNetPaise == null ? <span className="project-procurement-items__muted">Incomplete</span> : formatPaise(item.plannedLineNetPaise)}</td>
+                <td data-label="GST (18%)" className="project-procurement-items__amount">{item.plannedLineNetPaise == null ? "—" : formatPaise(Number((BigInt(item.plannedLineNetPaise) * 1800n + 5000n) / 10000n))}</td>
+                <td data-label="Planned amount, with GST" className="project-procurement-items__amount">{item.plannedLineNetPaise == null ? "—" : formatPaise(item.plannedLineNetPaise + Number((BigInt(item.plannedLineNetPaise) * 1800n + 5000n) / 10000n))}</td>
+                {canManage ? <td className="project-procurement-items__actions">{unassigned && item.estimateSource && !assignmentOptions?.some((option) => option.estimateId === item.estimateSource?.estimateId && option.estimateVersion === item.estimateSource.estimateVersion) ? <span className="project-procurement-items__muted">Review assignment</span> : <IconButton variant="quiet" icon={<Pencil aria-hidden="true" />} label={`Edit ${item.itemName}, ${item.brand}`} title={`Edit ${item.itemName}`} onClick={(event) => {
                   returnFocusRef.current = event.currentTarget;
                   setNotice("");
                   if (onEditorRequested) onEditorRequested(item, event.currentTarget);
                   else setEditor({ item });
-                }} />}</td> : null}
+                }} />}{!query.isError ? <Button variant="quiet" size="compact" aria-label={`Remove ${item.itemName}, ${item.brand}`} onClick={(event) => { returnFocusRef.current = event.currentTarget; setRemoving(item); setRemoveReason(""); remove.reset(); }}>Remove</Button> : null}</td> : null}
               </tr>)}</tbody>
             </table>
           </div> : <PageState state="empty" message={q ? "No items match your search." : page.total > 0 ? "This page is empty. Return to the previous page." : source ? "Add the first procurement item under this estimate item." : "No items need assignment."}
@@ -162,6 +188,11 @@ function ProjectProcurementItemsTable({ projectId, projectName, source, estimate
         source={source} assignmentOptions={assignmentOptions} parentLabel={parentLabel}
         onClose={() => setEditor(null)} returnFocusRef={returnFocusRef} fallbackFocusRef={headingRef}
         onSaved={(saved) => { setEditor(null); setNotice(`${saved.itemName} ${editor.item ? "updated" : "added"} in this project.`); }} /> : null}
+      {removing && canManage && !accessDenied && !projectUnavailable ? <Dialog title={`Remove ${removing.itemName}?`} eyebrow="Procurement item" description="This removes the item from active procurement and releases its uncommitted vendor allocation. Submitted purchase orders retain their history and prevent removal." role="alertdialog" busy={remove.isPending} onClose={() => setRemoving(null)} returnFocusRef={returnFocusRef} fallbackFocusRef={headingRef}>
+        <Field id={`${id}-remove-reason`} label="Reason" required>{(field) => <Textarea {...field} maxLength={1000} value={removeReason} disabled={remove.isPending} onChange={(event) => setRemoveReason(event.target.value)} />}</Field>
+        {remove.isError ? <InlineMessage tone="error">{procurementError(remove.error, "The item could not be removed. Refresh and try again.")}</InlineMessage> : null}
+        <div className="project-procurement-items__remove-actions"><Button variant="quiet" disabled={remove.isPending} onClick={() => setRemoving(null)}>Cancel</Button><Button variant="destructive" busy={remove.isPending} disabled={!removeReason.trim()} onClick={() => remove.mutate({ item: removing, reason: removeReason.trim() })}>Remove item</Button></div>
+      </Dialog> : null}
     </Surface>
   );
 }

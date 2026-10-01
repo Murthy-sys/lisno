@@ -5,7 +5,9 @@ import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
+import { VendorWorkProgressPanel } from "../workflow/VendorWorkProgressPanel";
 import { EstimateProcurementItems } from "./EstimateProcurementItems";
+import { PurchaseOrdersPanel } from "./PurchaseOrdersPanel";
 import {
   procurementError,
   useProcurementProjects
@@ -64,6 +66,12 @@ export function ProcurementProjectPage() {
       ) : null}
       {canRead ? <EstimateProcurementItems key={projectId}
         project={!query.isError && !integrityError && !query.isPending ? project : null} /> : null}
+      {canRead && !query.isError && !integrityError && !query.isPending && project ? (
+        <>
+          <PurchaseOrdersPanel key={`purchase-orders-${projectId}`} projectId={projectId} projectName={project.projectName} />
+          <VendorWorkProgressPanel projectId={projectId} projectName={project.projectName} />
+        </>
+      ) : null}
     </section>
   );
 }

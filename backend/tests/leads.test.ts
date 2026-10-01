@@ -206,6 +206,8 @@ function setupEstimateRouteCollaborators(actorOverride: Record<string, unknown> 
     publishEstimateToClient: vi.fn()
   };
   const reviews = {
+    listClientEstimates: vi.fn(async () => []),
+    currentClientFeedbackForEstimate: vi.fn(async () => null),
     currentSummaryForEstimate: vi.fn(async () => null),
     currentRoundForClientEstimate: vi.fn(async () => null),
     readClientPdf: vi.fn()
@@ -366,19 +368,33 @@ describe("lead and owner-estimate route characterizations", () => {
   });
 
   it.each([
+    { decision: "approve", note: "" },
+    { decision: "approve", note: "", reviewRoundId: "round", reviewRoundVersion: 0 },
+    { decision: "request_changes", note: "   ", reviewRoundId: "round", reviewRoundVersion: 1 },
+    { decision: "request_changes", note: "x".repeat(1001), reviewRoundId: "round", reviewRoundVersion: 1 }
+  ])("rejects invalid Client review input before any decision write", async (body) => {
+    const { app, decisions } = setupEstimateRouteCollaborators({ role: "client", id: "client-a" });
+    await request(app).post("/api/v1/client/estimates/estimate-client-visible/decision")
+      .set("Authorization", "Bearer route-test").send(body).expect(400);
+    expect(decisions.decide).not.toHaveBeenCalled();
+  });
+
+  it.each([
     {
       label: "current immutable round",
       currentRound: { id: "estimate-client-review-round-1", version: 4 }
-    },
-    { label: "legacy Estimate", currentRound: null }
-  ])("adapts an unchanged Client decision for a $label", async ({ currentRound }) => {
+    }
+  ])("binds the Client decision to the displayed $label", async ({ currentRound }) => {
     const { app, decisions, reviews } = setupEstimateRouteCollaborators({
       id: "user-client-aurora",
       name: "Aurora Client",
       email: "client@aurora.example",
       role: "client"
     });
-    reviews.currentRoundForClientEstimate.mockResolvedValue(currentRound);
+    reviews.listClientEstimates.mockResolvedValue([{
+      id: "estimate-client-visible", status: "client_changes_requested", version: 2,
+      publishedReview: { id: currentRound.id, canDecide: false }
+    }] as never);
     decisions.decide.mockResolvedValue({
       estimate: {
         ...estimateFixture({
@@ -412,12 +428,12 @@ describe("lead and owner-estimate route characterizations", () => {
     const response = await request(app)
       .post("/api/v1/client/estimates/estimate-client-visible/decision")
       .set("Authorization", "Bearer route-test")
-      .send({ decision: "request_changes", note: "Move the island." })
+      .send({ reviewRoundId: "estimate-client-review-round-1", reviewRoundVersion: 4, decision: "request_changes", note: "Move the island." })
       .expect(200);
 
-    expect(reviews.currentRoundForClientEstimate).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "user-client-aurora" }),
-      "estimate-client-visible"
+    expect(reviews.currentRoundForClientEstimate).not.toHaveBeenCalled();
+    expect(reviews.listClientEstimates).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "user-client-aurora" }), "estimate-client-visible"
     );
     expect(decisions.decide).toHaveBeenCalledWith({
       estimateId: "estimate-client-visible",
@@ -480,7 +496,7 @@ describe("lead and owner-estimate route characterizations", () => {
     const response = await request(app)
       .post("/api/v1/client/estimates/estimate-client-visible/decision")
       .set("Authorization", "Bearer route-test")
-      .send({ decision: "approve", note: "Approved." })
+      .send({ reviewRoundId: "estimate-client-review-round-1", reviewRoundVersion: 4, decision: "approve", note: "Approved." })
       .expect(404);
 
     expect(response.body).toEqual({
@@ -522,7 +538,7 @@ describe("lead and owner-estimate route characterizations", () => {
     const response = await request(app)
       .post("/api/v1/client/estimates/estimate-client-visible/decision")
       .set("Authorization", "Bearer route-test")
-      .send({ decision: "approve", note: "Approved." })
+      .send({ reviewRoundId: "estimate-client-review-round-1", reviewRoundVersion: 4, decision: "approve", note: "Approved." })
       .expect(409);
 
     expect(response.body).toEqual({
@@ -920,6 +936,13 @@ describe("lead and owner-estimate route characterizations", () => {
       _id: "designer-1", name: "Designer", email: "designer@example.com", title: "Designer"
     }]) as never);
 
+    vi.spyOn(EstimateModel, "aggregate").mockImplementation((pipeline) =>
+      aggregateQuery(JSON.stringify(pipeline).includes("publishedRounds")
+        ? [{ ...clientVisible, clientLead: mongoLead, publishedRounds: [] }]
+        : [{ _id: draft._id }]) as never
+    );
+    vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockReturnValue(aggregateQuery([]) as never);
+
     await request(app).get("/api/v1/leads/lead-aurora/estimate").set("Authorization", superAdminAuthorization).expect(200);
     await request(app).get("/api/v1/estimates").set("Authorization", superAdminAuthorization).expect(200);
     const queue = await request(app).get("/api/v1/estimates/review-queue").set("Authorization", superAdminAuthorization).expect(200);
@@ -929,7 +952,6 @@ describe("lead and owner-estimate route characterizations", () => {
     expect(findOne).toHaveBeenCalledWith({ leadId: "lead-aurora" });
     expect(findEstimates).toHaveBeenCalledWith({});
     expect(findEstimates).toHaveBeenCalledWith({ status: { $in: ["pending_manager_assignment", "pending_designer_approval"] } });
-    expect(findEstimates).toHaveBeenCalledWith({ status: { $in: ["sent_to_client", "client_changes_requested", "client_approved"] } });
     expect(findDesigners).toHaveBeenCalledWith({ role: "designer", active: true });
     expect(findLeads).toHaveBeenCalledWith({ _id: { $in: ["lead-aurora"] } });
     expect(queue.body.data).toHaveLength(1);
@@ -1085,11 +1107,18 @@ describe("lead and owner-estimate route characterizations", () => {
       lineItems: [{
         id: savedLineItemId,
         ...CHARACTERIZATION_ESTIMATE_BODY.lineItems[0],
-        amount: 1000
+        source: "legacy",
+        amount: 1000,
+        amountPaise: 100000
       }],
+      selectedMainBasketIds: [],
       subtotal: 1000,
+      subtotalPaise: 100000,
       gst: 180,
-      total: 1180
+      gstPaise: 18000,
+      total: 1180,
+      totalPaise: 118000,
+      isIncomplete: false
     };
 
     expect(response.body).toEqual({ data: estimateDto(expected) });
@@ -1200,16 +1229,38 @@ function mockNoClientReviewSummary() {
   );
 }
 
-function mockLegacyClientDecisionLookup() {
-  vi.spyOn(EstimateModel, "aggregate").mockReturnValue(
-    aggregateQuery([{ _id: "authorized-client-estimate" }]) as never
+function reviewRoundFixture(estimate: Record<string, any>, lead: Record<string, any>) {
+  return {
+    _id: "estimate-client-review-round-1", estimateId: estimate._id, leadId: lead._id,
+    projectId: estimate.projectId ?? null, estimateVersion: estimate.version ?? 1,
+    version: 4, sendGeneration: 1, dedupeKey: "a".repeat(64),
+    recipientEmail: lead.clientEmail, recipientEmailNormalized: String(lead.clientEmail).trim().toLowerCase(),
+    assignedAdminId: "user-admin", status: "pending", decision: null,
+    createdAt: new Date(CHARACTERIZATION_NOW),
+    estimateSnapshot: {
+      clientName: lead.clientName ?? "Client", projectName: lead.projectName ?? "Project", location: lead.location ?? "Pune", propertyType: estimate.propertyType ?? "villa",
+      lineItems: [{ catalogueId: "item-a", roomName: "Living", specification: "Finish", unit: "sqft", rate: 100, quantity: 1, included: true, amount: 100 }],
+      subtotal: 100, gst: 18, total: 118
+    },
+    pdfFilename: "estimate.pdf", pdfMimeType: "application/pdf", pdfByteSize: 20,
+    pdfSha256: "b".repeat(64), pdfStorageReference: "estimate-client-pdfs/test.pdf",
+    deliveryStatus: "disabled", deliveryAttemptCount: 0, deliveryAttemptGeneration: 1
+  };
+}
+
+function mockPublishedClientDecisionLookup(estimate: Record<string, any>, lead: Record<string, any>) {
+  const round = reviewRoundFixture(estimate, lead);
+  vi.spyOn(UserModel, "findOne").mockReturnValue(query(null) as never);
+  vi.spyOn(EstimateModel, "aggregate").mockImplementation(() =>
+    aggregateQuery([{ ...estimate, clientLead: lead, publishedRounds: [round] }]) as never
   );
-  vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockReturnValue(
-    aggregateQuery([]) as never
-  );
-  vi.spyOn(EstimateClientReviewRoundModel, "findOne").mockReturnValue(
-    query(null) as never
-  );
+  vi.spyOn(EstimateClientReviewRoundModel, "findOne").mockReturnValue(query(round) as never);
+  vi.spyOn(EstimateClientReviewRoundModel, "updateOne").mockImplementation(async (_filter, update) => {
+    const operation = update as Record<string, any>;
+    Object.assign(round, operation.$set);
+    round.version += operation.$inc?.version ?? 0;
+    return { matchedCount: 1, modifiedCount: 1 } as never;
+  });
 }
 
 function clientToken() {
@@ -1350,13 +1401,14 @@ describe("linked estimate approval route Mongo transaction", () => {
       await ProjectModel.create(baseProject());
       await LeadModel.create(baseLead());
       await EstimateModel.create(baseEstimate());
+      await EstimateClientReviewRoundModel.create(reviewRoundFixture(baseEstimate(), baseLead()));
       await seedGrantAndAudit();
       const projectCountBefore = await ProjectModel.countDocuments();
 
       const response = await request(app)
         .post(`/api/v1/client/estimates/${estimateId}/decision`)
         .set("Authorization", `Bearer ${clientToken()}`)
-        .send({ decision: "approve", note: "Approved" })
+        .send({ reviewRoundId: "estimate-client-review-round-1", reviewRoundVersion: 4, decision: "approve", note: "Approved" })
         .expect(200);
 
       expect(response.body.data).toMatchObject({
@@ -1440,16 +1492,17 @@ describe("linked estimate approval route Mongo transaction", () => {
         if (!scenario.omitProject) await ProjectModel.create(project);
         await LeadModel.create(lead);
         await EstimateModel.create(estimate);
+        await EstimateClientReviewRoundModel.create(reviewRoundFixture(estimate, lead));
         await seedGrantAndAudit();
         const before = await approvalRows();
 
         const response = await request(app)
           .post(`/api/v1/client/estimates/${estimateId}/decision`)
           .set("Authorization", `Bearer ${clientToken()}`)
-          .send({ decision: "approve", note: "Approved" });
+          .send({ reviewRoundId: "estimate-client-review-round-1", reviewRoundVersion: 4, decision: "approve", note: "Approved" });
 
         expect(response.status, scenario.name).toBe(409);
-        expect(response.body.error.code, scenario.name).toBe("PROJECT_LINK_CONFLICT");
+        expect(response.body.error.code, scenario.name).toBe(scenario.name === "different non-null Lead and Estimate links" ? "ESTIMATE_NOT_REVIEWABLE" : "PROJECT_LINK_CONFLICT");
         expect(await approvalRows(), scenario.name).toEqual(before);
       }
     } finally {
@@ -1460,7 +1513,6 @@ describe("linked estimate approval route Mongo transaction", () => {
 
 describe("commercial estimate approval handoff", () => {
   it("approves without reading drawing state and opens pending design assignment", async () => {
-    mockLegacyClientDecisionLookup();
     const estimate = {
       _id: "estimate-gated",
       leadId: "lead-gated",
@@ -1534,10 +1586,11 @@ describe("commercial estimate approval handoff", () => {
       })) as never
     );
 
+    mockPublishedClientDecisionLookup(estimate, lead);
     const response = await request(app)
       .post("/api/v1/client/estimates/estimate-gated/decision")
       .set("Authorization", `Bearer ${clientToken()}`)
-      .send({ decision: "approve", note: "" });
+      .send({ reviewRoundId: "estimate-client-review-round-1", reviewRoundVersion: 4, decision: "approve", note: "" });
 
     expect(response.status).toBe(200);
     expect(response.body.data).toMatchObject({
@@ -1574,7 +1627,6 @@ describe("commercial estimate approval handoff", () => {
   });
 
   it("keeps estimates with no prior drawings approvable", async () => {
-    mockLegacyClientDecisionLookup();
     const estimate = {
       _id: "estimate-no-drawings",
       leadId: "lead-no-drawings",
@@ -1624,8 +1676,10 @@ describe("commercial estimate approval handoff", () => {
     );
     const projectCreate = vi.spyOn(ProjectModel, "create").mockResolvedValue({} as never);
     vi.spyOn(LeadModel, "updateOne").mockResolvedValue({ matchedCount: 1, modifiedCount: 1 } as never);
-    vi.spyOn(EstimateModel, "updateOne").mockImplementation(async () => {
-      estimate.status = "client_approved";
+    vi.spyOn(EstimateModel, "updateOne").mockImplementation(async (_filter, update) => {
+      const operation = update as Record<string, any>;
+      Object.assign(estimate, operation.$set);
+      estimate.version += operation.$inc?.version ?? 0;
       return { matchedCount: 1, modifiedCount: 1 } as never;
     });
     const auditCreate = vi.spyOn(AuditEventModel, "create")
@@ -1635,10 +1689,11 @@ describe("commercial estimate approval handoff", () => {
         })) as never
       );
 
+    mockPublishedClientDecisionLookup(estimate, lead);
     const response = await request(app)
       .post("/api/v1/client/estimates/estimate-no-drawings/decision")
       .set("Authorization", `Bearer ${clientToken()}`)
-      .send({ decision: "approve", note: "" });
+      .send({ reviewRoundId: "estimate-client-review-round-1", reviewRoundVersion: 4, decision: "approve", note: "" });
 
     expect(response.status).toBe(200);
     expect(response.body.data).toMatchObject({
@@ -1694,7 +1749,6 @@ describe("commercial estimate approval handoff", () => {
   });
 
   it("returns the same not-found response for a foreign locked estimate", async () => {
-    mockLegacyClientDecisionLookup();
     const estimate = {
       _id: "estimate-foreign-locked",
       leadId: "lead-foreign",
@@ -1716,10 +1770,11 @@ describe("commercial estimate approval handoff", () => {
     vi.spyOn(EstimateModel, "findOne").mockReturnValue(query(estimate) as never);
     vi.spyOn(LeadModel, "findById").mockReturnValue(query(lead) as never);
 
+    mockPublishedClientDecisionLookup(estimate, lead);
     const response = await request(app)
       .post("/api/v1/client/estimates/estimate-foreign-locked/decision")
       .set("Authorization", `Bearer ${clientToken()}`)
-      .send({ decision: "approve", note: "" });
+      .send({ reviewRoundId: "estimate-client-review-round-1", reviewRoundVersion: 4, decision: "approve", note: "" });
 
     expect(response.status).toBe(404);
     expect(response.body.error.code).toBe("ESTIMATE_NOT_FOUND");

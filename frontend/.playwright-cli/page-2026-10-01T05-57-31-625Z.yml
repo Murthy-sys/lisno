@@ -1,0 +1,204 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - link "Skip to main content" [ref=e4] [cursor=pointer]:
+        - /url: "#main-content"
+      - complementary "Application sidebar" [ref=e5]:
+        - generic [ref=e6]:
+          - generic [ref=e7]:
+            - img "Lisno" [ref=e8]
+            - generic [ref=e9]: INTERIOR WORKSPACE
+          - navigation "Primary navigation" [ref=e10]:
+            - generic [ref=e11]:
+              - button "Procurement" [expanded] [ref=e12] [cursor=pointer]
+              - group "Procurement sections" [ref=e20]:
+                - link "Dashboard" [ref=e21] [cursor=pointer]:
+                  - /url: /procurement
+                - link "Vendors" [ref=e25] [cursor=pointer]:
+                  - /url: /procurement/vendors
+            - link "My access requests" [ref=e30] [cursor=pointer]:
+              - /url: /access-requests/mine
+            - link "Home" [ref=e36] [cursor=pointer]:
+              - /url: /home
+      - banner "Workspace tools" [ref=e40]:
+        - generic [ref=e41]:
+          - button "View daily critical tasks" [ref=e68] [cursor=pointer]:
+            - generic [ref=e69]: Critical tasks
+          - button "Notifications" [ref=e42] [cursor=pointer]
+          - button "Synthetic workspace reviewer" [ref=e47] [cursor=pointer]:
+            - generic [aria-hidden] [ref=e48]: SW
+            - generic [ref=e49]:
+              - generic [ref=e50]: Synthetic workspace reviewer
+              - generic [ref=e51]: Procurement
+      - main [ref=e54]:
+        - region [ref=e72]:
+          - generic [ref=e73]:
+            - link "Back to approved projects" [ref=e58] [cursor=pointer]:
+              - /url: /home
+            - generic [ref=e59]:
+              - generic [ref=e60]: Project procurement
+              - heading "Aurora Villa" [level=1] [ref=e74]
+              - paragraph [ref=e63]: View approved estimate budgets and add procurement items under each estimate item.
+          - button "Project status" [ref=e75] [cursor=pointer]
+          - region [ref=e79]:
+            - generic [ref=e80]:
+              - generic [ref=e87]:
+                - heading "Procurement items" [level=2] [ref=e88]
+                - paragraph [ref=e89]: Add and manage materials under each estimate item.
+              - generic [ref=e90]: Approved estimate v4
+            - search "Search estimate items" [ref=e94]:
+              - generic [ref=e95]: Search estimate item, room or section
+              - searchbox "Search estimate item, room or section" [ref=e96]
+              - button "Search" [ref=e97] [cursor=pointer]
+              - generic [ref=e105]: 5 estimate items
+            - generic [ref=e106]:
+              - generic [ref=e107]:
+                - heading "Carpentry" [level=3] [ref=e108]
+                - generic [ref=e113]: 3 items
+              - group "Wardrobe plywood and laminate — Living Room" [ref=e114]:
+                - generic [ref=e115]:
+                  - generic [ref=e116]:
+                    - paragraph [ref=e117]: Living Room
+                    - heading "Wardrobe plywood and laminate" [level=4] [ref=e118]
+                    - paragraph [ref=e119]: 80 sq ft · CA01
+                  - generic [ref=e120]:
+                    - generic [ref=e121]: Estimated budget
+                    - strong [ref=e122]: ₹2,500.00
+                  - button "Add item under Wardrobe plywood and laminate — Living Room" [ref=e123] [cursor=pointer]:
+                    - generic [ref=e124]: Add item
+                  - button "Hide procurement items for Wardrobe plywood and laminate — Living Room" [expanded] [ref=e266] [cursor=pointer]:
+                    - generic [ref=e130]: Hide items
+                - generic [ref=e267]:
+                  - search "Search procurement items for Wardrobe plywood and laminate — Living Room" [ref=e268]:
+                    - generic [ref=e269]: Search by item, brand, vendor or unit
+                    - searchbox "Search by item, brand, vendor or unit" [ref=e270]
+                    - button "Search" [ref=e271] [cursor=pointer]
+                  - status [ref=e279]:
+                    - generic [ref=e280]: 0 items under this estimate item
+                  - paragraph [ref=e286]: Add the first procurement item under this estimate item.
+              - group "Bedside table — Bedroom" [ref=e136]:
+                - generic [ref=e137]:
+                  - generic [ref=e138]:
+                    - paragraph [ref=e139]: Bedroom
+                    - heading "Bedside table" [level=4] [ref=e140]
+                    - paragraph [ref=e141]: 2 nos · CA02
+                  - generic [ref=e142]:
+                    - generic [ref=e143]: Estimated budget
+                    - strong [ref=e144]: ₹500.00
+                  - button "Add item under Bedside table — Bedroom" [ref=e145] [cursor=pointer]:
+                    - generic [ref=e146]: Add item
+                  - button "View procurement items for Bedside table — Bedroom" [ref=e151] [cursor=pointer]:
+                    - generic [ref=e152]: View items
+              - group "Zero-value provisional allowance — Living Room" [ref=e158]:
+                - generic [ref=e159]:
+                  - generic [ref=e160]:
+                    - paragraph [ref=e161]: Living Room
+                    - heading "Zero-value provisional allowance" [level=4] [ref=e162]
+                    - paragraph [ref=e163]: 1 lot · CA00
+                  - generic [ref=e164]:
+                    - generic [ref=e165]: Estimated budget
+                    - strong [ref=e166]: ₹0.00
+                  - button "Add item under Zero-value provisional allowance — Living Room" [ref=e167] [cursor=pointer]:
+                    - generic [ref=e168]: Add item
+                  - button "View procurement items for Zero-value provisional allowance — Living Room" [ref=e173] [cursor=pointer]:
+                    - generic [ref=e174]: View items
+            - generic [ref=e180]:
+              - generic [ref=e181]:
+                - heading "Electrical" [level=3] [ref=e182]
+                - generic [ref=e187]: 1 item
+              - group "Modular switch set — Living Room" [ref=e188]:
+                - generic [ref=e189]:
+                  - generic [ref=e190]:
+                    - paragraph [ref=e191]: Living Room
+                    - heading "Modular switch set" [level=4] [ref=e192]
+                    - paragraph [ref=e193]: 3 set · EL01
+                  - generic [ref=e194]:
+                    - generic [ref=e195]: Estimated budget
+                    - strong [ref=e196]: ₹750.00
+                  - button "Add item under Modular switch set — Living Room" [ref=e197] [cursor=pointer]:
+                    - generic [ref=e198]: Add item
+                  - button "View procurement items for Modular switch set — Living Room" [ref=e203] [cursor=pointer]:
+                    - generic [ref=e204]: View items
+            - generic [ref=e210]:
+              - generic [ref=e211]:
+                - heading "Painting" [level=3] [ref=e212]
+                - generic [ref=e217]: 1 item
+              - group "Zero-value paint allowance — Bedroom" [ref=e218]:
+                - generic [ref=e219]:
+                  - generic [ref=e220]:
+                    - paragraph [ref=e221]: Bedroom
+                    - heading "Zero-value paint allowance" [level=4] [ref=e222]
+                    - paragraph [ref=e223]: 1 lot · PA01
+                  - generic [ref=e224]:
+                    - generic [ref=e225]: Estimated budget
+                    - strong [ref=e226]: ₹0.00
+                  - button "Add item under Zero-value paint allowance — Bedroom" [ref=e227] [cursor=pointer]:
+                    - generic [ref=e228]: Add item
+                  - button "View procurement items for Zero-value paint allowance — Bedroom" [ref=e233] [cursor=pointer]:
+                    - generic [ref=e234]: View items
+          - region [ref=e240]:
+            - generic [ref=e241]:
+              - generic [ref=e242]:
+                - paragraph [ref=e243]: Ordering
+                - heading "Purchase orders" [level=2] [ref=e244]
+                - paragraph [ref=e245]: Prepare a vendor order from assigned procurement items, then send it for approval.
+              - button "New purchase order" [ref=e246] [cursor=pointer]
+            - generic "Approved budget and commitments" [ref=e250]:
+              - generic [ref=e251]:
+                - term [ref=e252]: Approved estimate, before GST
+                - definition [ref=e253]: ₹3,750.00
+              - generic [ref=e254]:
+                - term [ref=e255]: Approved PO commitments, before GST
+                - definition [ref=e256]: ₹0.00
+              - generic [ref=e257]:
+                - term [ref=e258]: Remaining, before GST
+                - definition [ref=e259]: ₹3,750.00
+            - paragraph [ref=e265]: No purchase orders yet. Assign active vendors to procurement items, then create the first order.
+    - status "Application announcements" [ref=e67]
+    - region "Notifications"
+  - generic [ref=e287]:
+    - button "Close add procurement item" [ref=e288] [cursor=pointer]
+    - dialog [ref=e289]:
+      - generic [ref=e290]:
+        - generic [ref=e291]:
+          - paragraph [ref=e292]: Aurora Villa
+          - heading "Add procurement item" [level=2] [ref=e293]
+          - paragraph [ref=e294]: For Wardrobe plywood and laminate — Living Room. Enter the price per unit.
+        - button "Close add procurement item" [ref=e295] [cursor=pointer]
+      - group [ref=e301]:
+        - generic [ref=e302]:
+          - generic [ref=e303]: Item name*
+          - textbox "Item name" [active] [ref=e304]
+        - generic [ref=e305]:
+          - generic [ref=e306]: Brand*
+          - textbox "Brand" [ref=e307]
+        - generic [ref=e308]:
+          - generic [ref=e309]:
+            - generic [ref=e310]: Vendor
+            - combobox "Vendor" [ref=e311] [cursor=pointer]:
+              - option "Select an active vendor"
+              - option "Timber House" [selected]
+            - paragraph [ref=e312]: Optional. Only active vendors are available for new selection.
+          - generic [ref=e313]:
+            - button "Clear vendor" [ref=e333] [cursor=pointer]
+            - link "Manage vendors (opens in new tab)" [ref=e314] [cursor=pointer]:
+              - /url: /procurement/vendors
+        - generic [ref=e315]:
+          - generic [ref=e316]: UOM*
+          - combobox "UOM" [ref=e317] [cursor=pointer]:
+            - option "Select a unit" [selected]
+            - option "SHT — Sheet"
+          - paragraph [ref=e318]: Active units from Configuration.
+        - generic [ref=e319]:
+          - generic [ref=e320]: Price (INR)*
+          - textbox "Price (INR)" [ref=e321]:
+            - /placeholder: "0.00"
+          - paragraph [ref=e322]: Unit price in rupees per selected UOM. Up to 2 decimal places.
+        - generic [ref=e337]:
+          - generic [ref=e338]: Allocated work (INR)*
+          - textbox "Allocated work (INR)" [ref=e339]:
+            - /placeholder: "0.00"
+          - paragraph [ref=e340]: Total committed work including applicable tax, separate from unit price. The vendor limit applies across all projects.
+      - generic [ref=e324]:
+        - button "Cancel" [ref=e325] [cursor=pointer]
+        - button "Add item" [ref=e329] [cursor=pointer]

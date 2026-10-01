@@ -674,6 +674,9 @@ describe("AdminProjectsPage", () => {
         amountTextIn(within(gridList).getByRole("article", { name }), label)
       );
       expect(gridAmounts).toEqual(amountCases.map(([, text]) => text));
+      expect(within(within(gridList).getByRole("article", { name: approvedProject.name }))
+        .getByText("Client-approved value (incl. GST)", { selector: "dt" }))
+        .toHaveClass("admin-project-tile__amount-label");
       expect(within(gridList).queryByText(/3,00,000/)).not.toBeInTheDocument();
 
       await user.click(screen.getByRole("button", { name: "List view" }));
@@ -683,6 +686,9 @@ describe("AdminProjectsPage", () => {
         amountTextIn(within(rowList).getByRole("article", { name }), label)
       );
       expect(listAmounts).toEqual(gridAmounts);
+      expect(within(within(rowList).getByRole("article", { name: approvedProject.name }))
+        .getByText("Client-approved value (incl. GST)", { selector: "dt" }))
+        .toHaveClass("admin-project-card__estimate-label");
     });
 
     it("shows Assign Designer on a pending card only when the permission is granted", async () => {
@@ -717,16 +723,17 @@ describe("AdminProjectsPage", () => {
       );
     });
 
-    it("renders a hidden skeleton grid while the first page loads", async () => {
+    it("keeps a labelled loading state without placeholder project cards", async () => {
       installSession();
       server.use(http.get("/api/v1/admin/projects", () => new Promise<never>(() => undefined)));
       renderApp(["/admin/projects"]);
       await screen.findByRole("heading", { name: "My Projects" });
       expect(screen.getByRole("status", { name: "Content status" })).toHaveTextContent("Loading projects");
-      const skeleton = document.querySelector(".admin-project-grid--skeleton");
-      expect(skeleton).not.toBeNull();
-      expect(skeleton).toHaveAttribute("aria-hidden", "true");
-      expect(skeleton?.querySelectorAll("li")).toHaveLength(8);
+      const heroImage = document.querySelector(".admin-projects__hero-image");
+      expect(heroImage).toHaveAttribute("alt", "");
+      expect(heroImage).toHaveAttribute("aria-hidden", "true");
+      expect(heroImage?.getAttribute("src")).toMatch(/projects-living-room/);
+      expect(document.querySelector(".admin-project-grid--skeleton")).not.toBeInTheDocument();
       expect(screen.queryByRole("list", { name: "My Projects" })).not.toBeInTheDocument();
     });
   });

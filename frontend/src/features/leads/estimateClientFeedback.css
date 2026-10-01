@@ -1,0 +1,41 @@
+.estimate-client-feedback {
+  min-inline-size: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-subtle);
+}
+
+.estimate-client-feedback__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.estimate-client-feedback__header h2 {
+  margin: var(--space-1) 0 0;
+  font: var(--type-section-title);
+}
+
+.estimate-client-feedback__header time,
+.estimate-client-feedback__next-step {
+  color: var(--color-text-muted);
+  font: var(--type-metadata);
+}
+
+.estimate-client-feedback__note {
+  margin-block: var(--space-4);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.estimate-client-feedback__next-step {
+  margin: 0;
+}
+
+.estimate-client-feedback__recovery {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+}
