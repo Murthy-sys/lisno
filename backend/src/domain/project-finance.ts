@@ -4,10 +4,9 @@ export const PROJECT_FINANCE_TARGET_MARGIN_BPS = 2_000 as const;
 export const FINANCE_BASIS_POINTS = 10_000 as const;
 
 /*
- * The approved Estimate currently stores whole rupees. New finance records use
- * paise so later invoice and expense integrations do not have to round away
- * fractional rupees. The cap keeps every stored and derived amount inside the
- * JavaScript safe-integer range.
+ * Legacy approved Estimates store whole rupees; configured lines carry exact
+ * paise. Finance persists paise for both sources. The cap keeps every stored
+ * and derived amount inside the JavaScript safe-integer range.
  */
 export const MAX_FINANCE_AMOUNT_PAISE = 9_000_000_000_000 as const;
 
@@ -62,6 +61,9 @@ export interface ApprovedEstimateMoney {
   subtotalRupees: number;
   gstRupees: number;
   totalRupees: number;
+  subtotalPaise?: number;
+  gstPaise?: number;
+  totalPaise?: number;
 }
 
 export interface ProjectFinanceBaseline {
@@ -100,9 +102,21 @@ export function rupeesToPaise(rupees: number): number {
 export function projectFinanceBaseline(
   approved: ApprovedEstimateMoney
 ): ProjectFinanceBaseline {
-  const approvedSubtotalPaise = rupeesToPaise(approved.subtotalRupees);
-  const approvedGstPaise = rupeesToPaise(approved.gstRupees);
-  const approvedContractTotalPaise = rupeesToPaise(approved.totalRupees);
+  const exactPaise = [approved.subtotalPaise, approved.gstPaise, approved.totalPaise];
+  if (exactPaise.some((value) => value !== undefined) && exactPaise.some((value) => value === undefined)) {
+    throw new TypeError("Approved Estimate exact money fields must be complete.");
+  }
+  const approvedSubtotalPaise = approved.subtotalPaise ?? rupeesToPaise(approved.subtotalRupees);
+  const approvedGstPaise = approved.gstPaise ?? rupeesToPaise(approved.gstRupees);
+  const approvedContractTotalPaise = approved.totalPaise ?? rupeesToPaise(approved.totalRupees);
+  assertFinanceAmount(approvedSubtotalPaise, "Approved subtotal");
+  assertFinanceAmount(approvedGstPaise, "Approved GST");
+  assertFinanceAmount(approvedContractTotalPaise, "Approved contract total");
+  if (approved.subtotalPaise !== undefined && (
+    approved.subtotalRupees !== approvedSubtotalPaise / 100 ||
+    approved.gstRupees !== approvedGstPaise / 100 ||
+    approved.totalRupees !== approvedContractTotalPaise / 100
+  )) throw new TypeError("Approved Estimate rupee and paise fields disagree.");
   if (
     approvedSubtotalPaise + approvedGstPaise !==
     approvedContractTotalPaise

@@ -38,26 +38,43 @@ export function ClientPublishedEstimate({ estimate, decisionBlocked = false }: {
 function PublishedEstimateDetails({ snapshot }: { snapshot: EstimateClientReviewSnapshot }) {
   const included = snapshot.lineItems.filter((item) => item.included);
   const catalogue = new Map<string, { description: string; sectionId: string }>(estimateBuilderSections.flatMap((section) => section.rows.map((row) => [row.id, { description: row.description, sectionId: section.id }] as const)));
-  const groups: Array<{ id: string; label: string; items: typeof included }> = estimateBuilderSections.map((section) => ({ id: section.id, label: section.label, items: included.filter((item) => catalogue.get(item.catalogueId)?.sectionId === section.id) }));
-  groups.push({ id: "other", label: "Other items", items: included.filter((item) => !catalogue.has(item.catalogueId)) });
+  const groups: Array<{ id: string; label: string; items: typeof included }> = [];
+  for (const item of included) {
+    const legacySection = item.source === "configuration" ? undefined : catalogue.get(item.catalogueId)?.sectionId;
+    const id = item.source === "configuration" ? `configured:${item.mainBasketId}` : legacySection ?? "other";
+    let group = groups.find((entry) => entry.id === id);
+    if (!group) {
+      group = {
+        id,
+        label: item.source === "configuration"
+          ? item.mainBasketName ?? "Configured items"
+          : estimateBuilderSections.find((section) => section.id === legacySection)?.label ?? "Other items",
+        items: []
+      };
+      groups.push(group);
+    }
+    group.items.push(item);
+  }
+  const amount = (value: typeof included[number]) => value.amountPaise === undefined
+    ? value.amount : value.amountPaise === null ? null : value.amountPaise / 100;
   return <details className="client-commercial-details" open>
     <summary>Review section-wise estimate</summary>
     <div className="client-commercial-details__sections">
-      {groups.filter((group) => group.items.length).map((group) => <details className="client-commercial-section" key={group.id} open>
-        <summary><span>{group.label}</span><strong>{clientEstimateMoney(group.items.reduce((total, item) => total + item.amount, 0))}</strong></summary>
+      {groups.map((group) => <details className="client-commercial-section" key={group.id} open>
+        <summary><span>{group.label}</span><strong>{clientEstimateMoney(group.items.reduce((total, item) => total + (amount(item) ?? 0), 0))}</strong></summary>
         <div className="client-commercial-lines">
           {group.items.map((item, index) => <div className="client-commercial-line" key={`${item.catalogueId}:${item.roomName}:${index}`}>
-            <div><strong>{catalogue.get(item.catalogueId)?.description ?? item.catalogueId}</strong><span>{item.roomName}</span><span>{item.specification}</span></div>
-            <div className="client-commercial-line__quantity"><span>Quantity / rate</span><span>{item.quantity} {item.unit} × {clientEstimateMoney(item.rate)}</span></div>
-            <strong className="client-commercial-line__amount">{clientEstimateMoney(item.amount)}</strong>
+            <div><strong>{item.source === "configuration" ? item.mainLineName ?? "Main Line" : catalogue.get(item.catalogueId)?.description ?? item.catalogueId}</strong><span>{item.source === "configuration" ? `${item.subBasketName ?? "Sub Basket"} · ${item.roomName}` : item.roomName}</span>{item.specification ? <span>{item.specification}</span> : null}</div>
+            <div className="client-commercial-line__quantity"><span>Quantity / rate</span><span>{item.quantity} {item.source === "configuration" ? item.uomName ?? item.unit : item.unit} × {item.rate === null ? "Rate unavailable" : clientEstimateMoney(item.ratePaise === undefined || item.ratePaise === null ? item.rate : item.ratePaise / 100)}</span></div>
+            <strong className="client-commercial-line__amount">{amount(item) === null ? "Amount unavailable" : clientEstimateMoney(amount(item)!)}</strong>
           </div>)}
         </div>
       </details>)}
       {!included.length ? <p>No item breakdown is available in this submitted estimate.</p> : null}
       <dl className="client-commercial-totals">
-        <div><dt>Subtotal</dt><dd>{clientEstimateMoney(snapshot.subtotal)}</dd></div>
-        <div><dt>GST</dt><dd>{clientEstimateMoney(snapshot.gst)}</dd></div>
-        <div><dt>Total including GST</dt><dd>{clientEstimateMoney(snapshot.total)}</dd></div>
+        <div><dt>Subtotal</dt><dd>{clientEstimateMoney(snapshot.subtotalPaise === undefined ? snapshot.subtotal : snapshot.subtotalPaise / 100)}</dd></div>
+        <div><dt>GST</dt><dd>{clientEstimateMoney(snapshot.gstPaise === undefined ? snapshot.gst : snapshot.gstPaise / 100)}</dd></div>
+        <div><dt>Total including GST</dt><dd>{clientEstimateMoney(snapshot.totalPaise === undefined ? snapshot.total : snapshot.totalPaise / 100)}</dd></div>
       </dl>
     </div>
   </details>;

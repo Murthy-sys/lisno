@@ -1078,6 +1078,54 @@ describe("Super Admin dashboard Mongo pre-pagination filters", () => {
     );
   });
 
+  it("reconciles configured execution IDs and exact paise from the approved round", async () => {
+    const id = "configured-dashboard";
+    const estimateId = `${id}:estimate`;
+    const roundId = `${id}:round`;
+    await approvedProcurementProject({ id, lineAmountRupees: 1_000, postedSpendPaise: 0, taskProgress: 0 });
+    const configuredLine = {
+      id: `${id}:line`, source: "configuration", catalogueId: "main-line-lower",
+      mainBasketId: "basket-lower", mainBasketName: "Original basket",
+      subBasketId: "sub-lower", subBasketName: "Original child",
+      mainLineId: "main-line-lower", mainLineName: "Original line",
+      roomId: "room-a", roomName: "Kitchen", specification: null,
+      unit: "sqft", quantity: 1, included: true,
+      rate: 1_000.25, amount: 1_000.25,
+      ratePaise: 100_025, amountPaise: 100_025
+    };
+    await EstimateModel.collection.updateOne({ _id: estimateId }, { $set: {
+      lineItems: [configuredLine], selectedMainBasketIds: ["basket-lower"],
+      subtotal: 1_000.25, gst: 180.05, total: 1_180.30,
+      subtotalPaise: 100_025, gstPaise: 18_005, totalPaise: 118_030
+    } });
+    await EstimateClientReviewRoundModel.collection.insertOne({
+      ...reviewRound({ id: roundId, projectId: id, estimateVersion: 1, sendGeneration: 1,
+        status: "approved", decision: "approve" }),
+      estimateSnapshot: {
+        clientName: "Dashboard Client", projectName: id, location: "Pune", propertyType: "apartment",
+        lineItems: [configuredLine], subtotal: 1_000.25, gst: 180.05, total: 1_180.30,
+        subtotalPaise: 100_025, gstPaise: 18_005, totalPaise: 118_030
+      }
+    });
+    await ProjectFinanceBucketModel.collection.updateOne({ projectId: id }, { $set: {
+      estimateReviewRoundId: roundId,
+      approvedSubtotalPaise: 100_025, approvedGstPaise: 18_005,
+      approvedContractTotalPaise: 118_030, targetProfitPaise: 20_005, costBudgetPaise: 80_020
+    } });
+    await ProjectWorkflowTaskModel.create({
+      ...executionTask(`${id}:trade`, id, null),
+      estimateId, sourceSectionId: "basket-lower", sourceLineItemKey: `${id}:line`,
+      title: "Original basket · Kitchen", assigneeRole: "worker_other"
+    });
+    const overview = await mongoSuperAdminDashboardOverview({
+      observedAt: OBSERVED_AT, startAt: PERIOD_START_AT, endAt: PERIOD_END_AT, periodDays: 7
+    });
+    expect(overview.execution.total).toBe(1);
+    expect(overview.finance.approvedSubtotalPaise).toBe(100_025);
+    expect(overview.procurement.plannedAmountPaise).toBe(100_025);
+    expect(overview.dataQuality.unavailableMetricKeys).not.toContain("execution.total");
+  });
+
   it("uses scalar lookup summaries before the project facet and produces execution stats", async () => {
     await Promise.all([
       LeadModel.createIndexes(),

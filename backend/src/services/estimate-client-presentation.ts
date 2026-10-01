@@ -6,15 +6,38 @@ import type { PublicUser } from "./auth.service.js";
 
 type Row = Record<string, any>;
 const money = z.number().finite().nonnegative();
+const paise = z.number().int().safe().nonnegative();
+const commonLine = {
+  id: z.string().nullable().optional(), catalogueId: z.string().min(1),
+  roomName: z.string().min(1), unit: z.string().min(1),
+  rate: money, quantity: money, included: z.boolean(), amount: money
+};
+const legacyLine = z.object({ ...commonLine, source: z.literal("legacy").optional(), specification: z.string().min(1) });
+const configuredLine = z.object({
+  ...commonLine, rate: money.nullable(), amount: money.nullable(),
+  source: z.literal("configuration"), specification: z.null(),
+  roomId: z.string().min(1), mainBasketId: z.string().min(1),
+  subBasketId: z.string().min(1), mainLineId: z.string().min(1),
+  revisionId: z.string().min(1), uomId: z.string().min(1),
+  uomCode: z.string().min(1).optional(), uomDecimalScale: z.number().int().nonnegative().optional(),
+  mainBasketName: z.string().min(1), subBasketName: z.string().min(1),
+  mainLineName: z.string().min(1), uomName: z.string().min(1),
+  ratePaise: paise.nullable(), amountPaise: paise.nullable()
+}).refine((line) => line.catalogueId === line.mainLineId &&
+  (!line.included || line.ratePaise !== null && line.amountPaise !== null));
 const snapshotSchema = z.object({
   clientName: z.string().min(1), projectName: z.string().min(1),
   location: z.string(), propertyType: z.string().min(1),
-  lineItems: z.array(z.object({
-    id: z.string().nullable().optional(), catalogueId: z.string().min(1),
-    roomName: z.string().min(1), specification: z.string().min(1), unit: z.string().min(1),
-    rate: money, quantity: money, included: z.boolean(), amount: money
-  })).min(1),
-  subtotal: money, gst: money, total: money
+  lineItems: z.array(z.union([configuredLine, legacyLine])).min(1),
+  subtotal: money, gst: money, total: money,
+  subtotalPaise: paise.optional(), gstPaise: paise.optional(), totalPaise: paise.optional(),
+  selectedMainBasketIds: z.array(z.string().min(1)).optional()
+}).superRefine((snapshot, ctx) => {
+  if (!snapshot.lineItems.some((line) => line.source === "configuration")) return;
+  if (snapshot.subtotalPaise === undefined || snapshot.gstPaise === undefined || snapshot.totalPaise === undefined ||
+    snapshot.subtotalPaise + snapshot.gstPaise !== snapshot.totalPaise) {
+    ctx.addIssue({ code: "custom", message: "Configured review totals require exact paise." });
+  }
 });
 
 function timestamp(value: unknown): string | null {
@@ -90,6 +113,10 @@ export function presentClientEstimate(
     ownerId: estimate.ownerId, version, status: estimate.status,
     propertyType: snapshot?.propertyType ?? "", lineItems: snapshot?.lineItems ?? [],
     subtotal: snapshot?.subtotal ?? 0, gst: snapshot?.gst ?? 0, total: snapshot?.total ?? 0,
+    subtotalPaise: snapshot?.subtotalPaise ?? null,
+    gstPaise: snapshot?.gstPaise ?? null,
+    totalPaise: snapshot?.totalPaise ?? null,
+    selectedMainBasketIds: stableDrawingMetadata ? snapshot?.selectedMainBasketIds ?? [] : [],
     rooms: stableDrawingMetadata ? estimate.rooms ?? [] : [],
     scopes: stableDrawingMetadata ? estimate.scopes ?? [] : [],
     approvalRequired: estimate.approvalRequired ?? false,

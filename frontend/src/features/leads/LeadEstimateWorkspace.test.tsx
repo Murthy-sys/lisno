@@ -210,6 +210,159 @@ function renderWorkspace() {
 }
 
 describe("LeadEstimateWorkspace", () => {
+  it("blocks editing when the saved estimate read fails", async () => {
+    const requests: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.endsWith("/leads/lead-1")) return response(leadFixture);
+      if (url.endsWith("/leads/lead-1/estimate")) return Response.json({ error: { code: "UNAVAILABLE", message: "Read failed." } }, { status: 503 });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    renderWorkspace();
+    expect(await screen.findByText("We couldn't load the saved estimate. Retry before making changes.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry estimate" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
+    expect(requests.some((url) => url.includes("/estimation/catalogue?"))).toBe(false);
+  });
+
+  it("clears rooms and configured line state when the mounted route changes leads", async () => {
+    const savedA = {
+      id: "estimate-a", version: 2, propertyType: "2BHK", rooms: [{ id: "room-a", label: "Master Bedroom", icon: "", typeId: "master", sqft: 200, length: null, width: null }],
+      scopes: [], selectedMainBasketIds: ["basket-a"], status: "draft", approvalRequired: false,
+      lineItems: [{ id: "saved-line-a", source: "configuration", catalogueId: "line-a", roomId: "room-a", roomName: "Master Bedroom", mainBasketId: "basket-a", mainBasketName: "Joinery", subBasketId: "sub-a", subBasketName: "Wardrobes", mainLineId: "line-a", mainLineName: "Wardrobe carcass", revisionId: "revision-a", uomId: "uom-a", uomCode: "SQFT", uomName: "sq ft", uomDecimalScale: 2, unit: "sq ft", specification: null, rate: 80, ratePaise: 8000, amount: 80, amountPaise: 8000, quantity: 1, included: true }],
+      subtotal: 80, gst: 14.4, total: 94.4
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/leads/lead-a/estimate")) return response(savedA);
+      if (url.endsWith("/leads/lead-b/estimate")) return response(null);
+      if (url.endsWith("/leads/lead-a") || url.endsWith("/leads/lead-b")) return response({ ...leadFixture, clientName: url.endsWith("lead-a") ? "Asha Shah" : "Rhea Kapoor" });
+      if (url.includes("/estimation/catalogue?")) return response({ items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false }, ineligibleLineCount: 0 });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const user = userEvent.setup();
+    renderWithQuery(<MemoryRouter initialEntries={["/estimator-sales/leads/lead-a/estimate"]}>
+      <Link to="/estimator-sales/leads/lead-b/estimate">Next lead</Link>
+      <Routes><Route path="/estimator-sales/leads/:leadId/estimate" element={<LeadEstimateWorkspace />} /></Routes>
+    </MemoryRouter>);
+    expect(await screen.findByText("Wardrobe carcass")).toBeVisible();
+    await user.click(screen.getByRole("link", { name: "Next lead" }));
+    expect(await screen.findByRole("heading", { name: "Configure estimate" })).toBeVisible();
+    expect(screen.queryByText("Wardrobe carcass")).not.toBeInTheDocument();
+    expect(screen.queryByText("Master Bedroom")).not.toBeInTheDocument();
+  });
+
+  it("builds a new estimate from configured baskets, keeps blank rates incomplete, and saves exact paise", async () => {
+    const catalogue = {
+      items: [{ id: "basket-joinery", name: "Joinery", displayOrder: 1, subBaskets: [{
+        id: "sub-wardrobes", basketId: "basket-joinery", name: "Wardrobes", displayOrder: 1,
+        mainLines: [{ id: "line-carcass", mainLineId: "line-carcass", basketId: "basket-joinery", subBasketId: "sub-wardrobes", name: "Wardrobe carcass", displayOrder: 1, revisionId: "revision-3", uom: { id: "uom-sqft", code: "SQFT", name: "sq ft", decimalScale: 2 } }]
+      }] }],
+      pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0
+    };
+    const saves: Array<Record<string, unknown>> = [];
+    let savedEstimate: Record<string, unknown> | null = null;
+    let savedVersion = 0;
+    let estimateGets = 0;
+    let conflictOnNextSave = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/leads/lead-1") && method === "GET") return response(leadFixture);
+      if (url.endsWith("/leads/lead-1/estimate") && method === "GET") {
+        estimateGets += 1;
+        return response(savedEstimate);
+      }
+      if (url.includes("/estimation/catalogue?") && method === "GET") return response(catalogue);
+      if (url.endsWith("/leads/lead-1/estimate") && method === "PUT") {
+        const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        saves.push(payload);
+        if (conflictOnNextSave) return Response.json({ error: {
+          code: "ESTIMATE_VERSION_CONFLICT", message: "This estimate changed. Refresh it before saving again."
+        } }, { status: 409 });
+        savedVersion += 1;
+        const line = (payload.lineItems as Array<Record<string, unknown>>)[0]!;
+        const ratePaise = line.ratePaise as number | null;
+        const amountPaise = ratePaise === null ? null : Math.round(ratePaise * (line.quantity as number));
+        const subtotalPaise = amountPaise ?? 0;
+        savedEstimate = {
+          id: "estimate-configured", version: savedVersion, ...payload,
+          lineItems: [{ ...line, id: "estimate-line-stable", mainBasketName: "Joinery", subBasketName: "Wardrobes", mainLineName: "Wardrobe carcass", uomName: "sq ft", uomCode: "SQFT", uomDecimalScale: 2, unit: "sq ft", specification: null, rate: ratePaise === null ? null : ratePaise / 100, amount: amountPaise === null ? null : amountPaise / 100, amountPaise }],
+          subtotalPaise, gstPaise: Math.round(subtotalPaise * .18), totalPaise: subtotalPaise + Math.round(subtotalPaise * .18),
+          subtotal: subtotalPaise / 100, gst: Math.round(subtotalPaise * .18) / 100, total: (subtotalPaise + Math.round(subtotalPaise * .18)) / 100,
+          status: "draft", approvalRequired: false
+        };
+        return response(savedEstimate);
+      }
+      if (url.endsWith("/leads/lead-1/estimate/submit") && method === "POST") {
+        return Response.json({ error: { code: "ESTIMATE_LOCKED", message: "Submission failed." } }, { status: 409 });
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    expect(await screen.findByRole("heading", { name: "Main Baskets" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("checkbox", { name: /Joinery/ }));
+    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+
+    expect(screen.getByRole("region", { name: "Joinery" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Wardrobes" })).toBeVisible();
+    expect(screen.getByText("sq ft")).toBeVisible();
+    expect(screen.queryByText("False ceiling")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: /Wardrobe carcass/ }));
+    expect(screen.getByText("Rate required")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Submit estimate" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(saves).toHaveLength(1));
+    expect((saves[0]!.lineItems as Array<Record<string, unknown>>)[0]).toMatchObject({
+      source: "configuration", catalogueId: "line-carcass", mainBasketId: "basket-joinery",
+      subBasketId: "sub-wardrobes", mainLineId: "line-carcass", revisionId: "revision-3",
+      uomId: "uom-sqft", ratePaise: null, quantity: 1, included: true
+    });
+    expect(saves[0]!.selectedMainBasketIds).toEqual(["basket-joinery"]);
+    expect(await screen.findByText("Estimate draft saved.")).toBeVisible();
+    expect(estimateGets).toBe(1);
+
+    const quantity = await screen.findByRole("spinbutton", { name: /Quantity.*Wardrobe carcass/ });
+    await user.clear(quantity);
+    await user.type(quantity, "1.25");
+    const rate = screen.getByRole("textbox", { name: /Selling rate.*Wardrobe carcass/ });
+    await user.type(rate, "80.05");
+    expect(screen.getByRole("button", { name: "Submit estimate" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(saves).toHaveLength(2));
+    expect((saves[1]!.lineItems as Array<Record<string, unknown>>)[0]).toMatchObject({
+      id: "estimate-line-stable", quantity: 1.25, ratePaise: 8005
+    });
+    expect(saves[1]!.expectedVersion).toBe(1);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    conflictOnNextSave = true;
+    await user.clear(rate);
+    await user.type(rate, "90");
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    expect(await screen.findByText("This estimate changed elsewhere. Reload the latest saved estimate before editing it again.")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Wardrobe carcass/ })).toHaveValue("90");
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Reload saved estimate (discard edits)" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: /Selling rate.*Wardrobe carcass/ })).toHaveValue("80.05"));
+    expect(estimateGets).toBe(2);
+
+    conflictOnNextSave = false;
+    await user.click(screen.getByRole("button", { name: "Submit estimate" }));
+    expect(await screen.findByText("The estimate action could not be completed. Check the current workflow state and try again.")).toBeVisible();
+    expect(saves[3]!.expectedVersion).toBe(2);
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(saves).toHaveLength(5));
+    expect(saves[4]!.expectedVersion).toBe(3);
+    await waitFor(() => expect(screen.queryByText("The estimate action could not be completed. Check the current workflow state and try again.")).not.toBeInTheDocument());
+  });
+
   const clientFeedback = {
     note: "Reduce the false ceiling to 120 sqft. Keep the current finish.",
     occurredAt: "2026-09-30T10:15:00.000Z",
@@ -246,7 +399,7 @@ describe("LeadEstimateWorkspace", () => {
     await user.type(quantity, "120");
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await screen.findByText("Estimate draft saved.");
-    await waitFor(() => expect(harness.counts.estimateGets).toBe(2));
+    expect(harness.counts.estimateGets).toBe(1);
     expect(screen.getByText(clientFeedback.note)).toBeVisible();
     expect(screen.getByRole("spinbutton", { name: /false ceiling.*quantity/i })).toHaveValue(120);
     const saveRequest = harness.requests.find((request) => request.method === "PUT");

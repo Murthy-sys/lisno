@@ -42,18 +42,37 @@ export interface EstimateClientReviewSnapshot {
   propertyType: string;
   lineItems: readonly {
     id?: string | null;
+    source?: "legacy" | "configuration";
     catalogueId: string;
+    roomId?: string;
     roomName: string;
-    specification: string;
+    specification: string | null;
     unit: string;
-    rate: number;
+    rate: number | null;
+    ratePaise?: number | null;
     quantity: number;
     included: boolean;
-    amount: number;
+    amount: number | null;
+    amountPaise?: number | null;
+    mainBasketId?: string;
+    subBasketId?: string;
+    mainLineId?: string;
+    revisionId?: string;
+    uomId?: string;
+    uomCode?: string;
+    uomDecimalScale?: number;
+    mainBasketName?: string;
+    subBasketName?: string;
+    mainLineName?: string;
+    uomName?: string;
   }[];
   subtotal: number;
   gst: number;
   total: number;
+  subtotalPaise?: number;
+  gstPaise?: number;
+  totalPaise?: number;
+  selectedMainBasketIds?: readonly string[];
 }
 
 /** Client-facing projection of the immutable proposal submitted for review. */

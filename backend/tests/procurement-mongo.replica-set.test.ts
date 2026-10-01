@@ -65,6 +65,56 @@ afterAll(async () => {
 });
 
 describe("Procurement approved-item workspace and receipt ledger", () => {
+  it("uses the immutable fractional-paise baseline for existing and late-opened finance buckets", async () => {
+    const configuredLine = {
+      id: "configured-line", source: "configuration", catalogueId: "line-lower",
+      roomId: "living-room", roomName: "Living Room",
+      mainBasketId: "basket-lower", mainBasketName: "Approved basket",
+      subBasketId: "child-lower", subBasketName: "Approved child",
+      mainLineId: "line-lower", mainLineName: "Approved console",
+      revisionId: "revision-lower", uomId: "square-foot", uomName: "Square foot",
+      specification: null, unit: "sqft", quantity: 1, included: true,
+      ratePaise: 16_249, amountPaise: 16_249, rate: 162.49, amount: 162.49
+    };
+    const approvedMoney = {
+      subtotal: 162.49, gst: 29.25, total: 191.74,
+      subtotalPaise: 16_249, gstPaise: 2_925, totalPaise: 19_174
+    };
+    await Promise.all([
+      EstimateClientReviewRoundModel.collection.updateOne({ _id: ROUND_ID }, {
+        $set: { "estimateSnapshot.lineItems": [configuredLine],
+          ...Object.fromEntries(Object.entries(approvedMoney).map(([key, value]) => [`estimateSnapshot.${key}`, value])) }
+      }),
+      EstimateModel.collection.updateOne({ _id: ESTIMATE_ID }, {
+        $set: { lineItems: [{ ...configuredLine, mainBasketName: "Later renamed basket" }], ...approvedMoney }
+      }),
+      ProjectFinanceBucketModel.collection.updateOne({ projectId: PROJECT_ID }, {
+        $set: { approvedSubtotalPaise: 16_249, approvedGstPaise: 2_925,
+          approvedContractTotalPaise: 19_174, targetProfitPaise: 3_250, costBudgetPaise: 12_999 }
+      })
+    ]);
+    const storage = new MemoryStorage();
+    const service = procurementService(storage);
+    const [project] = await service.listProjects(procurementActor());
+    expect(project?.sections).toEqual([expect.objectContaining({
+      id: "basket-lower", label: "Approved basket", estimatedAmountPaise: 16_249,
+      items: [expect.objectContaining({ key: "configured-line", mainBasketName: "Approved basket" })]
+    })]);
+
+    await ProjectFinanceBucketModel.deleteOne({ projectId: PROJECT_ID });
+    const posted = await service.postExpense(procurementActor(), PROJECT_ID,
+      expenseInput({ sourceLineItemKey: "configured-line", amountPaise: 1_000,
+        idempotencyKey: "fractional-approved-expense" }), receiptUpload());
+    expect(posted).toMatchObject({ replayed: false,
+      entry: { sourceSectionId: "basket-lower", sourceLineItemKey: "configured-line", amountPaise: 1_000 },
+      bucket: { approvedSubtotalPaise: 16_249, approvedGstPaise: 2_925,
+        approvedContractTotalPaise: 19_174, costBudgetPaise: 12_999, directSpendPaise: 1_000 }
+    });
+    await expect(ProjectFinanceBucketModel.findOne({ projectId: PROJECT_ID }).lean())
+      .resolves.toMatchObject({ approvedSubtotalPaise: 16_249, approvedGstPaise: 2_925,
+        approvedContractTotalPaise: 19_174, costBudgetPaise: 12_999 });
+  });
+
   it("groups only included immutable approved-snapshot items by section", async () => {
     const storage = new MemoryStorage();
     const service = procurementService(storage);

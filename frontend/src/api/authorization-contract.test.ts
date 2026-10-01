@@ -92,12 +92,13 @@ describe("frontend authorization contract", () => {
     );
   });
 
-  it("publishes all 163 unique permissions in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(163);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(163);
+  it("publishes all 165 unique permissions in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(165);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(165);
     expect(PERMISSION_CODES).toContain("chat.action_types.manage");
     expect(PERMISSION_CODES).toContain("chat.project_name.manage");
     expect(PERMISSION_CODES).toContain("estimation.design_upload.delete");
+    expect(PERMISSION_CODES).toContain("estimation.catalogue.read");
     expect(PERMISSION_CODES).toContain("projects.initiate");
     expect(PERMISSION_CODES).toContain("organization.estimators.read");
     const identityMutationIndex = PERMISSION_CODES.indexOf(
@@ -110,7 +111,7 @@ describe("frontend authorization contract", () => {
       ...invitationPermissions,
       "access_request.create"
     ]);
-    expect(PERMISSION_CODES.slice(-56)).toEqual([
+    expect(PERMISSION_CODES.slice(-57)).toEqual([
       "access_request.review.read",
       "access_request.review.decide",
       "project_access_grant.revoke",
@@ -130,7 +131,7 @@ describe("frontend authorization contract", () => {
       "procurement.items.read", "procurement.items.manage",
       "procurement.purchase_orders.read", "procurement.purchase_orders.manage", "procurement.purchase_orders.approve",
       "procurement.vendor_work.read", "procurement.vendor_work.update", "procurement.vendor_work.media.read", "procurement.vendor_work.media.upload",
-      "procurement.client_work.read", "procurement.client_work.decide", "procurement.progress.read", "procurement.project_completion.decide",
+      "procurement.client_work.read", "procurement.client_work.decide", "procurement.progress.read", "procurement.site_completion.manage", "procurement.project_completion.decide",
       "procurement.vendors.read", "procurement.vendors.create",
       "procurement.vendor_suggestions.read",
       "procurement.vendor_suggestions.manage",

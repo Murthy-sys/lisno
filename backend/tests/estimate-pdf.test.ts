@@ -161,6 +161,28 @@ describe("estimate PDF catalogue", () => {
 });
 
 describe("estimate PDF service", () => {
+  it("renders configured basket and line snapshots and rejects an incomplete selected rate", async () => {
+    const service = createEstimatePdfService({ logoSvg: backendLogo });
+    const configured: EstimatePdfInput = {
+      ...fixture, subtotal: 121.25, gst: 21.83, total: 143.08,
+      subtotalPaise: 12_125, gstPaise: 2_183, totalPaise: 14_308,
+      lineItems: [{
+        source: "configuration", catalogueId: "main-line-lower", roomName: "Living room",
+        specification: null, unit: "sqft", rate: 48.5, ratePaise: 4_850,
+        quantity: 2.5, included: true, amount: 121.25, amountPaise: 12_125,
+        mainBasketId: "basket-lower", mainBasketName: "Original basket",
+        subBasketName: "Original child", mainLineName: "Original console"
+      }]
+    };
+    const result = await readPdf((await service.generate(configured)).bytes);
+    expect(result.text).toContain("Original basket");
+    expect(result.text).toContain("Original child");
+    expect(result.text).toContain("Original console");
+    expect(result.text).toContain("INR 143.08");
+    await expect(service.generate({ ...configured, lineItems: [{
+      ...configured.lineItems[0]!, rate: null, ratePaise: null, amount: null, amountPaise: null
+    }] })).rejects.toThrow(/entered rate/u);
+  });
   it("generates compact client-delivery PDFs with scaled typography only", async () => {
     expect(scaleEstimateTextSize(12, "standard")).toBe(12);
     expect(scaleEstimateTextSize(12, "compact_client_delivery")).toBe(10);

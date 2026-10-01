@@ -219,6 +219,7 @@ const operationsWithoutBodies = new Set<string>([
 ]);
 
 const responseSchemaByOperation: Readonly<Record<string, string>> = {
+  "GET /estimation/catalogue": "EstimatorCataloguePage",
   "GET /client/estimates": "ClientEstimateReviewList",
   "POST /client/estimates/:estimateId/decision": "ClientEstimateReviewItem",
   ...CHAT_RESPONSE_SCHEMAS,
@@ -343,6 +344,7 @@ const storedAttachmentContentTypes = [
 ] as const;
 
 const operationSummaries: Readonly<Record<string, string>> = {
+  "GET /estimation/catalogue": "Read the active estimator Main Basket catalogue",
   "GET /health": "Check API health",
   "GET /procurement/vendor-kpis/:vendorId": "Read vendor profile and KPI assessments",
   "PUT /procurement/vendor-kpis/:vendorId/procurement": "Save Procurement's official vendor assessment",
@@ -476,6 +478,7 @@ const operationSummaries: Readonly<Record<string, string>> = {
 };
 
 const paginationOperationKeys = new Set<string>([
+  "GET /estimation/catalogue",
   "GET /procurement/suggestion-projects",
   "GET /procurement/projects/:projectId/vendor-suggestions",
   "GET /procurement/vendors",
@@ -2124,7 +2127,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     },
     ClientEstimateSnapshot: {
       type: "object", additionalProperties: false,
-      description: "Immutable submitted commercial proposal. Monetary values use the existing whole-rupee estimate boundary, not finance ledger paise.",
+      description: "Immutable submitted commercial proposal. Configured lines retain exact integer-paise rates and amounts alongside rupee display values; historical lines retain their whole-rupee boundary.",
       required: ["clientName", "projectName", "location", "propertyType", "lineItems", "subtotal", "gst", "total"],
       properties: {
         clientName: { type: "string" }, projectName: { type: "string" }, location: { type: "string" }, propertyType: { type: "string" },
@@ -2132,12 +2135,20 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
           type: "object", additionalProperties: false,
           required: ["catalogueId", "roomName", "specification", "unit", "rate", "quantity", "included", "amount"],
           properties: {
-            id: { type: "string", nullable: true }, catalogueId: { type: "string" }, roomName: { type: "string" },
-            specification: { type: "string" }, unit: { type: "string" }, rate: { type: "number", minimum: 0 },
-            quantity: { type: "number", minimum: 0 }, included: { type: "boolean" }, amount: { type: "number", minimum: 0 }
+            id: { type: "string", nullable: true }, source: { type: "string", enum: ["legacy", "configuration"] },
+            catalogueId: { type: "string" }, roomId: { type: "string" }, roomName: { type: "string" },
+            specification: { type: "string", nullable: true }, unit: { type: "string" },
+            rate: { type: "number", minimum: 0, nullable: true }, ratePaise: { type: "integer", minimum: 0, nullable: true },
+            quantity: { type: "number", minimum: 0 }, included: { type: "boolean" },
+            amount: { type: "number", minimum: 0, nullable: true }, amountPaise: { type: "integer", minimum: 0, nullable: true },
+            mainBasketId: { type: "string" }, subBasketId: { type: "string" }, mainLineId: { type: "string" },
+            revisionId: { type: "string" }, uomId: { type: "string" }, mainBasketName: { type: "string" },
+            subBasketName: { type: "string" }, mainLineName: { type: "string" }, uomName: { type: "string" }
           }
         } },
-        subtotal: { type: "number", minimum: 0 }, gst: { type: "number", minimum: 0 }, total: { type: "number", minimum: 0 }
+        subtotal: { type: "number", minimum: 0 }, gst: { type: "number", minimum: 0 }, total: { type: "number", minimum: 0 },
+        subtotalPaise: { type: "integer", minimum: 0 }, gstPaise: { type: "integer", minimum: 0 },
+        totalPaise: { type: "integer", minimum: 0 }, selectedMainBasketIds: { type: "array", items: { type: "string" } }
       }
     },
     ClientPublishedEstimateReview: {
@@ -2187,11 +2198,52 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     ClientEstimateReviewList: {
       type: "array", items: { $ref: "#/components/schemas/ClientEstimateReviewItem" }
     },
-    EstimateLineInput: {
+    EstimatorCatalogueUom: {
+      type: "object", additionalProperties: false, required: ["id", "code", "name", "decimalScale"],
+      properties: { id: { type: "string" }, code: { type: "string" }, name: { type: "string" },
+        decimalScale: { type: "integer", minimum: 0, maximum: 3 } }
+    },
+    EstimatorCatalogueLine: {
+      type: "object", additionalProperties: false,
+      required: ["id", "mainLineId", "basketId", "subBasketId", "name", "displayOrder", "revisionId", "uom"],
+      properties: {
+        id: { type: "string" }, mainLineId: { type: "string" }, basketId: { type: "string" },
+        subBasketId: { type: "string" }, name: { type: "string" },
+        displayOrder: { type: "integer" }, revisionId: { type: "string" },
+        uom: { $ref: "#/components/schemas/EstimatorCatalogueUom" }
+      }
+    },
+    EstimatorCatalogueSubBasket: {
+      type: "object", additionalProperties: false,
+      required: ["id", "basketId", "name", "displayOrder", "mainLines"],
+      properties: {
+        id: { type: "string" }, basketId: { type: "string" }, name: { type: "string" },
+        displayOrder: { type: "integer" }, mainLines: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueLine" } }
+      }
+    },
+    EstimatorCatalogueBasket: {
+      type: "object", additionalProperties: false,
+      required: ["id", "name", "displayOrder", "subBaskets"],
+      properties: {
+        id: { type: "string" }, name: { type: "string" }, displayOrder: { type: "integer" },
+        subBaskets: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueSubBasket" } }
+      }
+    },
+    EstimatorCataloguePage: {
+      type: "object", additionalProperties: false,
+      required: ["items", "pagination", "ineligibleLineCount"],
+      properties: {
+        items: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueBasket" } },
+        pagination: { $ref: "#/components/schemas/Pagination" },
+        ineligibleLineCount: { type: "integer", minimum: 0, description: "Active lines omitted from this page because they lack the required eligible hierarchy, revision, or UOM." }
+      }
+    },
+    LegacyEstimateLineInput: {
       type: "object",
       additionalProperties: false,
       required: ["catalogueId", "roomName", "specification", "unit", "rate", "quantity", "included"],
       properties: {
+        source: { type: "string", enum: ["legacy"] },
         catalogueId: { type: "string", minLength: 1 },
         roomName: { type: "string", minLength: 1 },
         specification: { type: "string", minLength: 1 },
@@ -2201,6 +2253,25 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         included: { type: "boolean" }
       }
     },
+    ConfiguredEstimateLineInput: {
+      type: "object", additionalProperties: false,
+      required: ["source", "catalogueId", "roomId", "roomName", "mainBasketId", "subBasketId", "mainLineId", "revisionId", "uomId", "quantity", "included", "ratePaise"],
+      properties: {
+        source: { type: "string", enum: ["configuration"] }, id: { type: "string" },
+        catalogueId: { type: "string" }, roomId: { type: "string" }, roomName: { type: "string" },
+        mainBasketId: { type: "string" }, subBasketId: { type: "string" }, mainLineId: { type: "string" },
+        revisionId: { type: "string" }, uomId: { type: "string" },
+        quantity: { type: "number", minimum: 0 }, included: { type: "boolean" },
+        ratePaise: { type: "integer", minimum: 0, nullable: true,
+          description: "Entered customer rate in integer paise. Null keeps an included draft line incomplete." }
+      }
+    },
+    EstimateLineInput: {
+      oneOf: [
+        { $ref: "#/components/schemas/LegacyEstimateLineInput" },
+        { $ref: "#/components/schemas/ConfiguredEstimateLineInput" }
+      ]
+    },
     EstimateInput: {
       type: "object",
       additionalProperties: false,
@@ -2209,6 +2280,8 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         propertyType: { type: "string", minLength: 1 },
         rooms: { type: "array", items: { type: "object", additionalProperties: true } },
         scopes: { type: "array", items: { type: "string" } },
+        selectedMainBasketIds: { type: "array", uniqueItems: true, items: { type: "string" } },
+        expectedVersion: { type: "integer", minimum: 1, description: "Required when updating an existing configured estimate or selected Main Baskets. Rejects stale draft saves." },
         lineItems: { type: "array", items: { $ref: "#/components/schemas/EstimateLineInput" } }
       }
     },

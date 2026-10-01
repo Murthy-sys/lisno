@@ -57,7 +57,14 @@ export interface ProcurementExpenseInput {
 
 export interface ProcurementItemDto {
   key: string;
+  source?: "legacy" | "configuration";
   catalogueId: string;
+  mainBasketId?: string;
+  mainBasketName?: string;
+  subBasketId?: string;
+  mainLineId?: string;
+  mainLineName?: string;
+  subBasketName?: string;
   roomName: string;
   specification: string;
   unit: string;
@@ -337,9 +344,9 @@ export async function readProcurementDashboardPortfolioReport(): Promise<Procure
       },
       {
         $set: {
-          approvedSubtotalPaise: { $multiply: ["$approvalSnapshot.subtotal", 100] },
-          approvedGstPaise: { $multiply: ["$approvalSnapshot.gst", 100] },
-          approvedContractTotalPaise: { $multiply: ["$approvalSnapshot.total", 100] },
+          approvedSubtotalPaise: { $ifNull: ["$approvalSnapshot.subtotalPaise", { $multiply: ["$approvalSnapshot.subtotal", 100] }] },
+          approvedGstPaise: { $ifNull: ["$approvalSnapshot.gstPaise", { $multiply: ["$approvalSnapshot.gst", 100] }] },
+          approvedContractTotalPaise: { $ifNull: ["$approvalSnapshot.totalPaise", { $multiply: ["$approvalSnapshot.total", 100] }] },
           includedLines: {
             $filter: { input: { $ifNull: ["$approvalSnapshot.lineItems", []] }, as: "line", cond: { $eq: ["$$line.included", true] } }
           }
@@ -373,8 +380,16 @@ export async function readProcurementDashboardPortfolioReport(): Promise<Procure
                     { $concat: ["legacy-estimate-line:", "$_id", ":", { $toString: "$approvedVersion" }, ":", { $toString: "$lineIndex" }] }
                   ]
                 },
-                sourceSectionId: { $substrCP: [{ $toUpper: { $ifNull: ["$includedLines.catalogueId", ""] } }, 0, 2] },
-                lineAmountPaise: { $cond: [{ $ne: ["$includedLines", null] }, { $multiply: ["$includedLines.amount", 100] }, 0] }
+                sourceSectionId: { $cond: [
+                  { $eq: ["$includedLines.source", "configuration"] },
+                  "$includedLines.mainBasketId",
+                  { $substrCP: [{ $toUpper: { $ifNull: ["$includedLines.catalogueId", ""] } }, 0, 2] }
+                ] },
+                lineAmountPaise: { $cond: [
+                  { $ne: ["$includedLines", null] },
+                  { $cond: [{ $eq: ["$includedLines.source", "configuration"] }, "$includedLines.amountPaise", { $multiply: ["$includedLines.amount", 100] }] },
+                  0
+                ] }
               }
             },
             {
@@ -666,13 +681,24 @@ interface ApprovedProcurementSnapshot {
   subtotalRupees: number;
   gstRupees: number;
   totalRupees: number;
+  subtotalPaise: number;
+  gstPaise: number;
+  totalPaise: number;
   lineItems: ApprovedProcurementLine[];
 }
 
 interface ApprovedProcurementLine {
   key: string;
   sectionId: string;
+  sectionLabel: string;
+  source?: "legacy" | "configuration";
   catalogueId: string;
+  mainBasketId?: string;
+  mainBasketName?: string;
+  subBasketId?: string;
+  mainLineId?: string;
+  mainLineName?: string;
+  subBasketName?: string;
   roomName: string;
   specification: string;
   unit: string;
@@ -1246,7 +1272,7 @@ async function procurementProjectDto(
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([sectionId, lines]) => ({
       id: sectionId,
-      label: projectWorkflowSectionLabel(sectionId),
+      label: lines[0]?.sectionLabel ?? projectWorkflowSectionLabel(sectionId),
       estimatedAmountPaise: lines.reduce(
         (total, line) => safeAddFinanceAmounts(
           total,
@@ -1260,6 +1286,15 @@ async function procurementProjectDto(
         const expenses = expensesByLineItemKey.get(line.key) ?? [];
         return {
           key: line.key,
+          ...(line.source === "configuration" ? {
+            source: "configuration" as const,
+            mainBasketId: line.mainBasketId,
+            mainBasketName: line.mainBasketName,
+            subBasketId: line.subBasketId,
+            mainLineId: line.mainLineId,
+            mainLineName: line.mainLineName,
+            subBasketName: line.subBasketName
+          } : {}),
           catalogueId: line.catalogueId,
           roomName: line.roomName,
           specification: line.specification,
@@ -1399,6 +1434,9 @@ function approvedProcurementSnapshotFromRows(
     subtotalRupees: approval.baseline.approvedSubtotalPaise / 100,
     gstRupees: approval.baseline.approvedGstPaise / 100,
     totalRupees: approval.baseline.approvedContractTotalPaise / 100,
+    subtotalPaise: approval.baseline.approvedSubtotalPaise,
+    gstPaise: approval.baseline.approvedGstPaise,
+    totalPaise: approval.baseline.approvedContractTotalPaise,
     lineItems
   };
 }
@@ -1430,7 +1468,8 @@ function approvedSnapshotLines(
   const lines = value.map((line: Row, index: number) => ({ line, index }))
     .filter(({ line }) => line?.included === true)
     .map(({ line, index }) => {
-    const catalogueId = requiredStoredText(line.catalogueId).toUpperCase();
+    const configured = line.source === "configuration";
+    const catalogueId = configured ? requiredStoredText(line.catalogueId) : requiredStoredText(line.catalogueId).toUpperCase();
     const roomName = requiredStoredText(line.roomName);
     let key: string;
     try {
@@ -1445,15 +1484,31 @@ function approvedSnapshotLines(
     }
     const quantity = Number(line.quantity);
     if (!Number.isFinite(quantity) || quantity < 0) procurementLineageConflict();
+    const sectionId = configured ? requiredStoredText(line.mainBasketId) : catalogueId.slice(0, 2) || "OTHER";
+    const sectionLabel = configured ? requiredStoredText(line.mainBasketName) : projectWorkflowSectionLabel(sectionId);
+    if (configured && (requiredStoredText(line.mainLineId) !== catalogueId ||
+      !Number.isSafeInteger(line.amountPaise) || Number(line.amountPaise) < 0)) procurementLineageConflict();
     return {
       key,
-      sectionId: catalogueId.slice(0, 2) || "OTHER",
+      sectionId,
+      sectionLabel,
+      ...(configured ? {
+        source: "configuration" as const,
+        mainBasketId: sectionId,
+        mainBasketName: sectionLabel,
+        subBasketId: requiredStoredText(line.subBasketId),
+        mainLineId: catalogueId,
+        mainLineName: requiredStoredText(line.mainLineName),
+        subBasketName: requiredStoredText(line.subBasketName)
+      } : {}),
       catalogueId,
       roomName,
-      specification: requiredStoredText(line.specification),
+      specification: configured
+        ? `${requiredStoredText(line.subBasketName)} · ${requiredStoredText(line.mainLineName)}`
+        : requiredStoredText(line.specification),
       unit: requiredStoredText(line.unit),
       quantity,
-      amountPaise: storedRupeesToPaise(line.amount)
+      amountPaise: configured ? Number(line.amountPaise) : storedRupeesToPaise(line.amount)
     };
   });
   if (firstDuplicate(lines.map((line) => line.key))) {
@@ -1481,7 +1536,10 @@ async function requireOpenMatchingBucket(
         estimateReviewRoundId: resolved.snapshot.estimateReviewRoundId,
         approvedSubtotalRupees: resolved.snapshot.subtotalRupees,
         approvedGstRupees: resolved.snapshot.gstRupees,
-        approvedContractTotalRupees: resolved.snapshot.totalRupees
+        approvedContractTotalRupees: resolved.snapshot.totalRupees,
+        approvedSubtotalPaise: resolved.snapshot.subtotalPaise,
+        approvedGstPaise: resolved.snapshot.gstPaise,
+        approvedContractTotalPaise: resolved.snapshot.totalPaise
       }
     }, session);
   }
@@ -1523,7 +1581,10 @@ function requireMatchingBucketLineage(
     baseline = projectFinanceBaseline({
       subtotalRupees: snapshot.subtotalRupees,
       gstRupees: snapshot.gstRupees,
-      totalRupees: snapshot.totalRupees
+      totalRupees: snapshot.totalRupees,
+      subtotalPaise: snapshot.subtotalPaise,
+      gstPaise: snapshot.gstPaise,
+      totalPaise: snapshot.totalPaise
     });
   } catch {
     procurementLineageConflict();

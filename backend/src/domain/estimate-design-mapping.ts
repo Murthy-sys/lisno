@@ -149,6 +149,28 @@ export function mappingContextForEstimate(
     if (line.included !== true) continue;
     const catalogueId = typeof line.catalogueId === "string" ? line.catalogueId.trim() : "";
     const roomName = typeof line.roomName === "string" ? line.roomName.trim() : "";
+    if (line.source === "configuration") {
+      const roomId = typeof line.roomId === "string" ? line.roomId.trim() : "";
+      const mainBasketId = typeof line.mainBasketId === "string" ? line.mainBasketId.trim() : "";
+      const mainLineId = typeof line.mainLineId === "string" ? line.mainLineId.trim() : "";
+      const mainLineName = typeof line.mainLineName === "string" ? line.mainLineName.trim() : "";
+      if (!catalogueId || catalogueId !== mainLineId || !mainBasketId || !mainLineName) {
+        invalidIncludedItems.push({ roomName, catalogueId, reason: "unknown_catalogue" });
+        continue;
+      }
+      const room = rooms.find((candidate) => candidate.id === roomId);
+      if (!room) {
+        invalidIncludedItems.push({ roomName, catalogueId, reason: "unknown_room" });
+        continue;
+      }
+      const candidate: EstimateMappingCandidate = {
+        roomId, roomTerms: room.terms, catalogueId,
+        itemTerms: itemTermsFor(mainLineName, []),
+        scopeSectionId: mainBasketId
+      };
+      candidates.set(candidateKey(candidate), candidate);
+      continue;
+    }
     const entry = estimatePdfCatalogue.get(catalogueId);
     if (!entry) {
       invalidIncludedItems.push({ roomName, catalogueId, reason: "unknown_catalogue" });

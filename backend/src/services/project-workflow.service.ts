@@ -33,6 +33,7 @@ import { EstimateDesignDrawingModel } from "../models/EstimateDesignDrawing.js";
 import { EstimateDesignRevisionModel } from "../models/EstimateDesignRevision.js";
 import { EstimateDesignUploadModel } from "../models/EstimateDesignUpload.js";
 import { EstimateModel } from "../models/Estimate.js";
+import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
 import { EstimatePlanChangeRequestModel } from "../models/EstimatePlanChangeRequest.js";
 import { LeadModel } from "../models/Lead.js";
 import { ProjectAccessGrantModel } from "../models/ProjectAccessGrant.js";
@@ -69,6 +70,7 @@ export interface DesignPlanTaskDto {
   designPlanVersion: number;
   rooms: Array<Record<string, unknown>>;
   scopes: string[];
+  selectedMainBasketIds: string[];
   lineItems: Array<Record<string, unknown>>;
 }
 
@@ -1331,7 +1333,7 @@ export function createProjectWorkflowService(input: {
         !estimateId.trim() || estimateId !== estimateId.trim() ||
         !Number.isSafeInteger(designPlanVersion) || designPlanVersion < 1 ||
         !sourceSectionId.trim() ||
-        sourceSectionId !== sourceSectionId.trim().toUpperCase() ||
+        sourceSectionId !== sourceSectionId.trim() ||
         !/^[a-f0-9]{64}$/u.test(expectedRevision) ||
         (workerId !== null && (!workerId.trim() || workerId !== workerId.trim()))
       ) sectionAssignmentConflict();
@@ -1910,7 +1912,10 @@ async function finalizeDesignApproval(input: {
         estimateReviewRoundId: null,
         approvedSubtotalRupees: Number(input.estimate.subtotal),
         approvedGstRupees: Number(input.estimate.gst),
-        approvedContractTotalRupees: Number(input.estimate.total)
+        approvedContractTotalRupees: Number(input.estimate.total),
+        ...(input.estimate.subtotalPaise == null ? {} : { approvedSubtotalPaise: Number(input.estimate.subtotalPaise) }),
+        ...(input.estimate.gstPaise == null ? {} : { approvedGstPaise: Number(input.estimate.gstPaise) }),
+        ...(input.estimate.totalPaise == null ? {} : { approvedContractTotalPaise: Number(input.estimate.totalPaise) })
       }
     }, input.session);
   }
@@ -1952,7 +1957,7 @@ async function generateDownstreamTasks(
 ) {
   const estimateId = String(estimate._id);
   const estimateVersion = approvedWorkflowEstimateVersion(estimate.version);
-  const lineItems = (estimate.lineItems ?? []) as Row[];
+  const lineItems = await approvedWorkflowLineSnapshots(estimate, session);
   const blueprints = projectWorkflowBlueprints({
     estimateId,
     estimateVersion,
@@ -1962,6 +1967,7 @@ async function generateDownstreamTasks(
   const claimedLegacyDedupeKeys = new Set<string>();
   lineItems.forEach((line, index) => {
     if (line.included !== true) return;
+    if (line.source === "configuration") return;
     const catalogueId = String(line.catalogueId ?? "").trim().toUpperCase();
     const roomName = String(line.roomName ?? "").trim();
     const stableKey = approvedEstimateLineItemKey({
@@ -2095,6 +2101,28 @@ interface CanonicalApprovedTradeSource {
   projectId: string;
   estimateId: string;
   designPlanVersion: number;
+  configuredSectionLabels: ReadonlyMap<string, string>;
+}
+
+async function approvedWorkflowLineSnapshots(
+  estimate: Row,
+  session: mongoose.ClientSession
+): Promise<Row[]> {
+  const estimateId = String(estimate._id);
+  const approvedVersion = approvedWorkflowEstimateVersion(estimate.version);
+  const liveLines = Array.isArray(estimate.lineItems) ? estimate.lineItems as Row[] : [];
+  if (!liveLines.some((line) => line.source === "configuration")) return liveLines;
+  const approvedRounds = await EstimateClientReviewRoundModel.find({
+    estimateId, status: "approved", decision: "approve"
+  }).select({ estimateVersion: 1, projectId: 1, estimateSnapshot: 1 }).session(session).lean();
+  if (approvedRounds.length === 0) {
+    sectionAssignmentConflict();
+  }
+  const matching = approvedRounds.filter((round) => Number(round.estimateVersion) === approvedVersion);
+  if (matching.length !== 1 || matching[0]?.projectId != null &&
+    String(matching[0]?.projectId) !== String(estimate.projectId) ||
+    !Array.isArray(matching[0]?.estimateSnapshot?.lineItems)) sectionAssignmentConflict();
+  return matching[0]!.estimateSnapshot.lineItems as Row[];
 }
 
 async function canonicalApprovedTradeSource(
@@ -2106,7 +2134,7 @@ async function canonicalApprovedTradeSource(
     status: "client_approved",
     designPlanStatus: "approved"
   })
-    .select({ _id: 1, projectId: 1, designPlanVersion: 1 })
+    .select({ _id: 1, projectId: 1, version: 1, designPlanVersion: 1, lineItems: 1 })
     .limit(2)
     .session(session)
     .lean();
@@ -2122,7 +2150,18 @@ async function canonicalApprovedTradeSource(
     !Number.isSafeInteger(designPlanVersion) ||
     designPlanVersion < 1
   ) sectionAssignmentConflict();
-  return { projectId, estimateId, designPlanVersion };
+  const sourceLines = await approvedWorkflowLineSnapshots(estimate, session);
+  const configuredSectionLabels = new Map<string, string>();
+  for (const line of sourceLines) {
+    if (line.source !== "configuration" || line.included !== true) continue;
+    const id = nonEmptyWorkflowId(line.mainBasketId);
+    const label = nonEmptyWorkflowId(line.mainBasketName);
+    if (!id || !label || configuredSectionLabels.has(id) && configuredSectionLabels.get(id) !== label) {
+      sectionAssignmentConflict();
+    }
+    configuredSectionLabels.set(id, label);
+  }
+  return { projectId, estimateId, designPlanVersion, configuredSectionLabels };
 }
 
 async function canonicalSectionAggregates(
@@ -2155,7 +2194,7 @@ async function canonicalSectionAggregates(
       version: task.version,
       plannedEffort: task.plannedEffort,
       updatedAt: task.updatedAt
-    } as ProjectWorkflowSectionTask)));
+    } as ProjectWorkflowSectionTask)), source.configuredSectionLabels);
   } catch (error) {
     if (error instanceof ProjectWorkflowSectionAssignmentConflict) {
       sectionAssignmentConflict();
@@ -2306,6 +2345,7 @@ function taskDto(estimate: Row, project: Row, lead: Row): DesignPlanTaskDto {
     designPlanVersion: Number(estimate.designPlanVersion ?? 0),
     rooms: (estimate.rooms ?? []) as Array<Record<string, unknown>>,
     scopes: (estimate.scopes ?? []).map(String),
+    selectedMainBasketIds: (estimate.selectedMainBasketIds ?? []).map(String),
     lineItems: (estimate.lineItems ?? []) as Array<Record<string, unknown>>
   };
 }

@@ -185,6 +185,7 @@ export const PERMISSION_CODES = [
   "estimation.lead_activity.read",
   "estimation.lead_activity.create",
   "estimation.estimate.read",
+  "estimation.catalogue.read",
   "estimation.estimate.list",
   "estimation.estimate.save",
   "estimation.estimate.submit",

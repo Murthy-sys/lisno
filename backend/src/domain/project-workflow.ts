@@ -36,12 +36,18 @@ export type ProjectWorkflowTaskStatus =
 
 export interface EstimateWorkflowLine {
   id?: string | null;
+  source?: "legacy" | "configuration";
   catalogueId: string;
+  mainBasketId?: string;
+  mainBasketName?: string;
+  subBasketName?: string;
+  mainLineName?: string;
   roomName: string;
-  specification: string;
+  specification: string | null;
   unit: string;
   quantity: number;
-  amount: number;
+  amount: number | null;
+  amountPaise?: number | null;
   included: boolean;
 }
 
@@ -102,7 +108,8 @@ export class ProjectWorkflowSectionAssignmentConflict extends Error {
 }
 
 export function projectWorkflowSectionAssignments(
-  tasks: readonly ProjectWorkflowSectionTask[]
+  tasks: readonly ProjectWorkflowSectionTask[],
+  configuredSectionLabels: ReadonlyMap<string, string> = new Map()
 ): ProjectWorkflowSectionAggregate[] {
   const taskIds = new Set<string>();
   const sourceLineItemKeys = new Set<string>();
@@ -157,14 +164,15 @@ export function projectWorkflowSectionAssignments(
     groups.set(groupKey, current);
   }
 
-  return [...groups.values()].map(sectionAggregate).sort((left, right) =>
+  return [...groups.values()].map((members) => sectionAggregate(members, configuredSectionLabels)).sort((left, right) =>
     left.sectionLabel.localeCompare(right.sectionLabel) ||
     left.sourceSectionId.localeCompare(right.sourceSectionId)
   );
 }
 
 function sectionAggregate(
-  unsortedMembers: readonly ProjectWorkflowSectionTask[]
+  unsortedMembers: readonly ProjectWorkflowSectionTask[],
+  configuredSectionLabels: ReadonlyMap<string, string>
 ): ProjectWorkflowSectionAggregate {
   const members = [...unsortedMembers].sort((left, right) =>
     left.id.localeCompare(right.id)
@@ -228,7 +236,7 @@ function sectionAggregate(
     estimateId: first.estimateId,
     designPlanVersion: first.designPlanVersion,
     sourceSectionId: first.sourceSectionId,
-    sectionLabel: projectWorkflowSectionLabel(first.sourceSectionId),
+    sectionLabel: configuredSectionLabels.get(first.sourceSectionId) ?? projectWorkflowSectionLabel(first.sourceSectionId),
     assigneeRole: first.assigneeRole,
     assignedWorkerId: assignmentState === "assigned"
       ? onlyAssignmentId ?? null
@@ -258,9 +266,7 @@ function exactWorkflowIdentity(value: unknown): string {
 }
 
 function exactWorkflowSectionId(value: unknown): string {
-  const sectionId = exactWorkflowIdentity(value);
-  if (sectionId !== sectionId.toUpperCase()) sectionAssignmentConflict();
-  return sectionId;
+  return exactWorkflowIdentity(value);
 }
 
 function storedWorkflowDate(value: unknown): Date {
@@ -309,7 +315,7 @@ const SECTION_LABELS: Readonly<Record<string, string>> = {
 };
 
 export function projectWorkflowSectionLabel(sectionId: string): string {
-  const normalized = sectionId.trim().toUpperCase();
+  const normalized = sectionId.trim();
   return SECTION_LABELS[normalized] ?? normalized;
 }
 
@@ -347,15 +353,13 @@ export function projectWorkflowBlueprints(input: {
   const included = input.lineItems
     .map((line, index) => ({ line, index }))
     .filter(({ line }) => line.included);
-  const sectionIds = [
-    ...new Set(
-      included.map(({ line }) =>
-        line.catalogueId.trim().toUpperCase().slice(0, 2)
-      )
-    )
-  ].sort();
-  const sectionSummary = sectionIds
-    .map((id) => SECTION_LABELS[id] ?? id)
+  const sectionLabels = new Map(included.map(({ line }) => line.source === "configuration"
+    ? [line.mainBasketId ?? "", line.mainBasketName ?? ""] as const
+    : [line.catalogueId.trim().toUpperCase().slice(0, 2), projectWorkflowSectionLabel(line.catalogueId.trim().toUpperCase().slice(0, 2))] as const
+  ));
+  const sectionSummary = [...sectionLabels.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, label]) => label)
     .join(", ");
   const blueprints: WorkflowTaskBlueprint[] = [
     {
@@ -398,8 +402,13 @@ export function projectWorkflowBlueprints(input: {
   ];
 
   for (const { line, index } of included) {
-    const catalogueId = line.catalogueId.trim().toUpperCase();
-    const sectionId = catalogueId.slice(0, 2) || "OTHER";
+    const configured = line.source === "configuration";
+    const catalogueId = configured ? line.catalogueId.trim() : line.catalogueId.trim().toUpperCase();
+    const sectionId = configured ? line.mainBasketId?.trim() ?? "" : catalogueId.slice(0, 2) || "OTHER";
+    const sectionLabel = configured ? line.mainBasketName?.trim() ?? "" : SECTION_LABELS[sectionId] ?? "Project";
+    if (configured && (!sectionId || !sectionLabel || !line.mainLineName?.trim() || !line.subBasketName?.trim())) {
+      throw new TypeError("The approved configured estimate line is missing its basket snapshot.");
+    }
     const sourceLineItemKey = approvedEstimateLineItemKey({
       id: line.id,
       estimateId: input.estimateId,
@@ -409,9 +418,11 @@ export function projectWorkflowBlueprints(input: {
     blueprints.push({
       dedupeKey: `${input.estimateId}:trade:${encodeURIComponent(sourceLineItemKey)}`,
       kind: "trade_execution",
-      assigneeRole: workerRoleForCatalogueId(catalogueId),
-      title: `${SECTION_LABELS[sectionId] ?? "Project"} · ${line.roomName}`,
-      description: `${catalogueId} · ${line.specification} · ${line.quantity} ${line.unit}`,
+      assigneeRole: configured ? "worker_other" : workerRoleForCatalogueId(catalogueId),
+      title: `${sectionLabel} · ${line.roomName}`,
+      description: configured
+        ? `${line.subBasketName} · ${line.mainLineName} · ${line.quantity} ${line.unit}`
+        : `${catalogueId} · ${line.specification} · ${line.quantity} ${line.unit}`,
       sourceSectionId: sectionId,
       sourceLineItemKey,
       roomName: line.roomName,

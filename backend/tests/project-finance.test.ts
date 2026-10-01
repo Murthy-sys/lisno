@@ -10,6 +10,20 @@ import {
 } from "../src/domain/project-finance.js";
 
 describe("project finance baseline", () => {
+  it("keeps exact configured paise for two unequal approved projects", () => {
+    const first = projectFinanceBaseline({
+      subtotalRupees: 121.25, gstRupees: 21.83, totalRupees: 143.08,
+      subtotalPaise: 12_125, gstPaise: 2_183, totalPaise: 14_308
+    });
+    const second = projectFinanceBaseline({
+      subtotalRupees: 70.03, gstRupees: 12.61, totalRupees: 82.64,
+      subtotalPaise: 7_003, gstPaise: 1_261, totalPaise: 8_264
+    });
+    expect(first.approvedSubtotalPaise + second.approvedSubtotalPaise).toBe(19_128);
+    expect(first.approvedContractTotalPaise + second.approvedContractTotalPaise).toBe(22_572);
+    expect(first.targetProfitPaise + first.costBudgetPaise).toBe(12_125);
+    expect(second.targetProfitPaise + second.costBudgetPaise).toBe(7_003);
+  });
   it("reserves a true 20% margin from pre-GST approved revenue", () => {
     expect(projectFinanceBaseline({
       subtotalRupees: 1_000_000,

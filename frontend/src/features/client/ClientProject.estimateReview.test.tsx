@@ -55,10 +55,37 @@ function installApi(rows: EstimateQueueItem[], options: { decisionStatus?: numbe
 }
 
 describe("Client project published estimate review", () => {
+  it("shows configured basket snapshots and paise without exposing opaque line IDs", async () => {
+    const configured = estimate();
+    configured.publishedReview!.snapshot.lineItems = [{
+      id: "estimate-line-1", source: "configuration", catalogueId: "line-internal-1",
+      mainBasketId: "basket-1", mainBasketName: "Joinery", subBasketId: "sub-1",
+      subBasketName: "Wardrobes", mainLineId: "line-internal-1", mainLineName: "Wardrobe carcass",
+      roomId: "room-1", roomName: "Master Bedroom", specification: null,
+      unit: "sq ft", uomName: "sq ft", rate: 80.05, ratePaise: 8005,
+      quantity: 1.25, included: true, amount: 100.06, amountPaise: 10006
+    }];
+    configured.publishedReview!.snapshot.subtotal = 100.06;
+    configured.publishedReview!.snapshot.subtotalPaise = 10006;
+    configured.publishedReview!.snapshot.gstPaise = 1801;
+    configured.publishedReview!.snapshot.totalPaise = 11807;
+    installApi([configured]);
+    renderApp([`/client/projects/${project.id}`]);
+    const review = await screen.findByRole("region", { name: "Submitted estimate" });
+    expect(within(review).getByText("Joinery")).toBeVisible();
+    expect(within(review).getByText("Wardrobe carcass")).toBeVisible();
+    expect(within(review).getByText("Wardrobes · Master Bedroom")).toBeVisible();
+    expect(within(review).getByText("1.25 sq ft × ₹80.05")).toBeVisible();
+    expect(within(review).getAllByText("₹100.06").length).toBeGreaterThan(0);
+    expect(within(review).queryByText("line-internal-1")).not.toBeInTheDocument();
+  });
+
   it("shows the exact project's submitted amounts and unknown items as read only, then confirms the displayed round", async () => {
     const selected = estimate();
     selected.total = 999999;
-    selected.lineItems = [{ ...selected.lineItems[0]!, specification: "Unsubmitted change" }];
+    const historicalLine = selected.lineItems[0]!;
+    if (historicalLine.source === "configuration") throw new Error("Expected a historical estimate line.");
+    selected.lineItems = [{ ...historicalLine, specification: "Unsubmitted change" }];
     const other = estimate("estimate-other", "project-other");
     other.publishedReview!.snapshot.projectName = "Private other project";
     other.publishedReview!.snapshot.total = 47200;

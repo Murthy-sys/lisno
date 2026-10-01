@@ -226,6 +226,9 @@ function legacyApprovedEstimateBaseline(
     subtotal: Number(estimate.subtotal ?? estimate.total),
     gst: Number(estimate.gst ?? 0),
     total: Number(estimate.total),
+    ...(estimate.subtotalPaise == null ? {} : { subtotalPaise: estimate.subtotalPaise }),
+    ...(estimate.gstPaise == null ? {} : { gstPaise: estimate.gstPaise }),
+    ...(estimate.totalPaise == null ? {} : { totalPaise: estimate.totalPaise }),
     decisionAt: estimate.clientDecisionAt ?? null,
     decisionSource: estimate.clientDecisionSource ?? null
   };

@@ -775,6 +775,31 @@ describe("DesignerDesignPlanTasksPage", () => {
     expect(await screen.findByRole("option", { name: /EL01.*Light \/ fan \/ switch points.*Electrical/i })).toBeVisible();
   });
 
+  it("offers configured Main Lines by room ID and saved basket name", async () => {
+    const configuredTask: DesignPlanTask = {
+      ...assignedTask, status: "in_progress", scopes: [], selectedMainBasketIds: ["basket-joinery"],
+      lineItems: [{
+        source: "configuration", catalogueId: "line-carcass", roomId: "room-living",
+        roomName: "Living area before rename", specification: null, unit: "sq ft",
+        quantity: 1.25, included: true, mainBasketId: "basket-joinery",
+        mainBasketName: "Joinery", subBasketId: "sub-wardrobes", subBasketName: "Wardrobes",
+        mainLineId: "line-carcass", mainLineName: "Wardrobe carcass", uomName: "sq ft"
+      }]
+    };
+    server.use(
+      http.get("/api/v1/designer/design-plan-tasks", () => HttpResponse.json({ data: [configuredTask] })),
+      http.get("/api/v1/estimates/estimate-1/design-uploads", () => HttpResponse.json({ data: extractedWorkspace("estimate-1") })),
+      http.get("/api/v1/estimate-design-revisions/:revisionId/image", () => new HttpResponse(new Uint8Array([137, 80, 78, 71]), { headers: { "Content-Type": "image/png" } }))
+    );
+    const user = userEvent.setup();
+    renderPage();
+    const drawing = await screen.findByRole("article", { name: /drawing$/i });
+    await user.click(within(drawing).getByRole("button", { name: /More actions/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Change estimate item" }));
+    expect(await screen.findByRole("option", { name: "Wardrobe carcass · Joinery" })).toBeVisible();
+    expect(screen.queryByRole("option", { name: /line-carcass/ })).not.toBeInTheDocument();
+  });
+
   it("opens the exact estimate selected from the dashboard project list", async () => {
     const workspaceRequests: string[] = [];
     server.use(

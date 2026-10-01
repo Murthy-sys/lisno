@@ -62,7 +62,10 @@ export function EstimateBuilder({
   );
 
   const [hiddenLineIds, setHiddenLineIds] = useState<Set<string>>(() => new Set());
-  const removeLine = (id: string) => setHiddenLineIds((current) => new Set(current).add(id));
+  const removeLine = (id: string) => {
+    onUpdateLine(id, { included: false });
+    setHiddenLineIds((current) => new Set(current).add(id));
+  };
   const visibleLines = useMemo(() => activeLines.filter((line) => !hiddenLineIds.has(line.id)), [activeLines, hiddenLineIds]);
 
   const defaultExpanded = () =>
@@ -95,7 +98,10 @@ export function EstimateBuilder({
     sectionRefs.current.forEach((el) => observer.observe(el));
     return () => observer.disconnect();
   }, [sections, activeRoomId]);
-  const jumpToSection = (id: string) => sectionRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const jumpToSection = (id: string) => sectionRefs.current.get(id)?.scrollIntoView({
+    behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
+    block: "start"
+  });
 
   const sectionSubtotal = (sectionId: string) =>
     visibleLines.filter((line) => line.sectionId === sectionId && line.included).reduce((sum, line) => sum + Math.round(line.quantity * line.rate), 0);

@@ -413,6 +413,9 @@ export interface EnsurePendingFinanceBucketInput {
   approvedSubtotalRupees: number;
   approvedGstRupees: number;
   approvedContractTotalRupees: number;
+  approvedSubtotalPaise?: number;
+  approvedGstPaise?: number;
+  approvedContractTotalPaise?: number;
   createdById: string;
   occurredAt: Date;
 }
@@ -429,6 +432,9 @@ export interface OpenFinanceBucketInput {
     approvedSubtotalRupees: number;
     approvedGstRupees: number;
     approvedContractTotalRupees: number;
+    approvedSubtotalPaise?: number;
+    approvedGstPaise?: number;
+    approvedContractTotalPaise?: number;
   };
 }
 
@@ -594,6 +600,7 @@ export function createProjectFinanceService(input: {
           documents.map((document) => [String(document.entryId), document])
         );
         const lineItemLabels = approvedEstimateLineLabels(approvedSource);
+        const sectionLabels = approvedEstimateSectionLabels(approvedSource);
         return {
           items: entries.map((entry) => {
             const document = documentsByEntryId.get(String(entry._id));
@@ -607,7 +614,8 @@ export function createProjectFinanceService(input: {
               )
                 ? document
                 : null,
-              lineItemLabels.get(String(entry.sourceLineItemKey)) ?? null
+              lineItemLabels.get(String(entry.sourceLineItemKey)) ?? null,
+              sectionLabels.get(String(entry.sourceSectionId)) ?? null
             );
           }),
           total
@@ -682,7 +690,7 @@ export function createProjectFinanceService(input: {
               session
             );
             return {
-              entry: financeEntryDto(replay),
+              entry: financeEntryDtoForApprovedSource(replay, approvedSource),
               bucket: bucketDto(
                 bucket,
                 project,
@@ -770,7 +778,7 @@ export function createProjectFinanceService(input: {
            * readable by non-finance Design leadership.
            */
           return {
-            entry: financeEntryDto(entry.toObject()),
+            entry: financeEntryDtoForApprovedSource(entry.toObject(), approvedSource),
             bucket: bucketDto(
               updated,
               project,
@@ -864,7 +872,10 @@ export async function ensurePendingProjectFinanceBucket(
   const baseline = projectFinanceBaseline({
     subtotalRupees: input.approvedSubtotalRupees,
     gstRupees: input.approvedGstRupees,
-    totalRupees: input.approvedContractTotalRupees
+    totalRupees: input.approvedContractTotalRupees,
+    subtotalPaise: input.approvedSubtotalPaise,
+    gstPaise: input.approvedGstPaise,
+    totalPaise: input.approvedContractTotalPaise
   });
   const candidate = {
     _id: `finance-bucket-${input.projectId}`,
@@ -1019,8 +1030,12 @@ async function replayCommittedEntry(
     );
     if (!entry || !bucket || !project) throw duplicateConflict();
     requireMatchingReplay(entry, input);
+    const estimates = await approvedFinanceEstimates([projectId], session);
+    if (estimates.length === 0) financeStateCorrupt();
+    const approvedSource = canonicalApprovedEstimate(estimates);
+    requireMatchingApprovedSource(bucket, approvedSource);
     return {
-      entry: financeEntryDto(entry),
+      entry: financeEntryDtoForApprovedSource(entry, approvedSource),
       bucket: bucketDto(bucket, project, enrichments.get(projectId), observedAt),
       replayed: true
     };
@@ -1402,8 +1417,11 @@ function financeDocumentMatchesLineage(
         estimateVersion: approval.estimateVersion,
         index
       }) === String(entry.sourceLineItemKey) &&
-      String(line.catalogueId).trim().toUpperCase().slice(0, 2) ===
-        String(entry.sourceSectionId)
+      (line.source === "configuration"
+        ? String(line.mainBasketId) === String(entry.sourceSectionId) &&
+          String(line.mainLineId) === String(line.catalogueId)
+        : String(line.catalogueId).trim().toUpperCase().slice(0, 2) ===
+          String(entry.sourceSectionId))
     );
   } catch {
     return false;
@@ -1437,7 +1455,10 @@ function approvedMoneyBaseline(value: Row): ReturnType<typeof projectFinanceBase
     return projectFinanceBaseline({
       subtotalRupees: Number(source.subtotal),
       gstRupees: Number(source.gst),
-      totalRupees: Number(source.total)
+      totalRupees: Number(source.total),
+      subtotalPaise: source.subtotalPaise === undefined ? undefined : Number(source.subtotalPaise),
+      gstPaise: source.gstPaise === undefined ? undefined : Number(source.gstPaise),
+      totalPaise: source.totalPaise === undefined ? undefined : Number(source.totalPaise)
     });
   } catch {
     financeSourceConflict("The approved Estimate contains invalid financial values.");
@@ -1481,10 +1502,36 @@ function approvedEstimateLineLabels(estimate: Row): Map<string, string> {
 }
 
 function approvedEstimateLineLabel(line: Row): string | null {
+  if (line.source === "configuration") {
+    const parts = [line.mainBasketName, line.subBasketName, line.mainLineName, line.roomName]
+      .map((value) => String(value ?? "").trim()).filter(Boolean);
+    return parts.length === 0 ? null : parts.join(" · ");
+  }
   const specification = String(line.specification ?? "").trim();
   const roomName = String(line.roomName ?? "").trim();
   const parts = [specification, roomName].filter(Boolean);
   return parts.length === 0 ? null : parts.join(" · ");
+}
+
+function approvedEstimateSectionLabels(estimate: Row): Map<string, string> {
+  const labels = new Map<string, string>();
+  const approval = approvedEstimateLineage(estimate);
+  for (const line of Array.isArray(approval.snapshot?.lineItems) ? approval.snapshot.lineItems : []) {
+    if (line?.source !== "configuration" || line.included !== true) continue;
+    const id = String(line.mainBasketId ?? "").trim();
+    const name = String(line.mainBasketName ?? "").trim();
+    if (id && name) labels.set(id, name);
+  }
+  return labels;
+}
+
+function financeEntryDtoForApprovedSource(entry: Row, estimate: Row): FinanceLedgerEntryDto {
+  return financeEntryDto(
+    entry,
+    null,
+    approvedEstimateLineLabels(estimate).get(String(entry.sourceLineItemKey)) ?? null,
+    approvedEstimateSectionLabels(estimate).get(String(entry.sourceSectionId)) ?? null
+  );
 }
 
 function approvedEstimateLineage(estimate: Row): FinanceApprovalLineage {
@@ -1508,6 +1555,9 @@ function pendingBucketInput(estimate: Row): EnsurePendingFinanceBucketInput {
     approvedGstRupees: approval.baseline.approvedGstPaise / 100,
     approvedContractTotalRupees:
       approval.baseline.approvedContractTotalPaise / 100,
+    approvedSubtotalPaise: approval.baseline.approvedSubtotalPaise,
+    approvedGstPaise: approval.baseline.approvedGstPaise,
+    approvedContractTotalPaise: approval.baseline.approvedContractTotalPaise,
     createdById: approval.createdById,
     occurredAt: approval.occurredAt
   };
@@ -2000,7 +2050,8 @@ export function financeSupportingDocumentDto(
 export function financeEntryDto(
   entry: Row,
   supportingDocument?: Row | null,
-  sourceLineItemLabel?: string | null
+  sourceLineItemLabel?: string | null,
+  configuredSectionLabel?: string | null
 ): FinanceLedgerEntryDto {
   const sourceSectionId = nullableString(entry.sourceSectionId);
   const sourceLineItemKey = nullableString(entry.sourceLineItemKey);
@@ -2022,7 +2073,7 @@ export function financeEntryDto(
     sourceLineItemKey,
     sourceSectionLabel: sourceSectionId === null
       ? null
-      : projectWorkflowSectionLabel(sourceSectionId),
+      : configuredSectionLabel?.trim() || projectWorkflowSectionLabel(sourceSectionId),
     sourceLineItemLabel: sourceLineItemKey === null
       ? null
       : sourceLineItemLabel?.trim() || null,

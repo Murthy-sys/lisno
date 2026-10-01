@@ -1107,11 +1107,18 @@ describe("lead and owner-estimate route characterizations", () => {
       lineItems: [{
         id: savedLineItemId,
         ...CHARACTERIZATION_ESTIMATE_BODY.lineItems[0],
-        amount: 1000
+        source: "legacy",
+        amount: 1000,
+        amountPaise: 100000
       }],
+      selectedMainBasketIds: [],
       subtotal: 1000,
+      subtotalPaise: 100000,
       gst: 180,
-      total: 1180
+      gstPaise: 18000,
+      total: 1180,
+      totalPaise: 118000,
+      isIncomplete: false
     };
 
     expect(response.body).toEqual({ data: estimateDto(expected) });

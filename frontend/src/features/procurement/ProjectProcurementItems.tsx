@@ -114,7 +114,7 @@ function ProjectProcurementItemsTable({ projectId, projectName, source, estimate
         <div>
           {estimateItem ? <p className="project-procurement-items__eyebrow">{estimateItem.roomName}</p> : null}
           <Heading id={`${id}-title`} ref={headingRef} tabIndex={-1}>{title}</Heading>
-          <p>{estimateItem ? `${estimateItem.quantity} ${estimateItem.unit} · ${estimateItem.catalogueId}` : unassigned ? "Saved items without a current eligible estimate item. Review their assignment before ordering." : "Manage item, brand, vendor and unit prices for this project."}</p>
+          <p>{estimateItem ? `${estimateItem.quantity} ${estimateItem.unit}${estimateItem.source === "configuration" ? "" : ` · ${estimateItem.catalogueId}`}` : unassigned ? "Saved items without a current eligible estimate item. Review their assignment before ordering." : "Manage item, brand, vendor and unit prices for this project."}</p>
         </div>
         {estimateItem ? <div className="project-procurement-items__budget"><span>Estimated budget</span><strong>{formatPaise(estimateItem.estimatedAmountPaise)}</strong></div> : null}
         {canManage && source && !accessDenied && !projectUnavailable ? <Button size="compact" leadingIcon={<Plus />} aria-label={parentLabel ? `Add item under ${parentLabel}` : undefined} onClick={(event) => {

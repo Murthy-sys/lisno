@@ -23,6 +23,28 @@ function bearer(id: string, role: string): string {
 }
 
 describe("Super Admin dashboard routes", () => {
+  it("uses exact approved paise in the memory finance overview", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.estimateSummaries = [{
+      id: "configured-dashboard-estimate", leadId: "configured-dashboard-lead",
+      projectId: "project-aurora-villa", version: 2, status: "client_approved",
+      subtotal: 999, gst: 180, total: 1_179,
+      clientDecisionAt: "2026-08-26T09:00:00.000Z", clientDecisionSource: "client_portal",
+      approvedBaseline: { estimateVersion: 1, reviewRoundId: "configured-dashboard-round",
+        subtotal: 162.49, gst: 29.25, total: 191.74,
+        subtotalPaise: 16_249, gstPaise: 2_925, totalPaise: 19_174,
+        decisionAt: "2026-08-26T09:00:00.000Z", decisionSource: "client_portal" },
+      clientReview: null, assignedAdminId: null, designPlanStatus: "pending_assignment",
+      designPlanVersion: 0, designPlanDesignerId: null,
+      createdAt: "2026-08-20T09:00:00.000Z", updatedAt: "2026-08-26T09:00:00.000Z"
+    }];
+    const response = await request(createApp(createMemoryRepository(seed)))
+      .get("/api/v1/admin/dashboard/overview?periodDays=30")
+      .set("Authorization", bearer("user-super-admin", "super_admin")).expect(200);
+    expect(response.body.data.finance).toMatchObject({ approvedSubtotalPaise: 16_249,
+      approvedGstPaise: 2_925, approvedContractTotalPaise: 19_174 });
+  });
+
   it("protects all reads and denies every non-Super-Admin before repository aggregation", async () => {
     const seed = structuredClone(demoSeedData);
     seed.users.push({

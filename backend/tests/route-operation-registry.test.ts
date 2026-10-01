@@ -37,6 +37,7 @@ import { EXPECTED_PROJECT_CHAT_OPERATIONS } from "./fixtures/project-chat-route-
 import { EXPECTED_PROFILE_PHOTO_OPERATIONS } from "./fixtures/profile-photo-route-operations.js";
 
 const EXPECTED_ALL_HUMAN_JWT_OPERATIONS = [
+  { key: "GET /estimation/catalogue", permission: "estimation.catalogue.read", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
   { key: "GET /estimates/:estimateId/design-plan-documents", permission: "estimation.plan_page_image.read", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
   { key: "POST /estimates/:estimateId/design-plan-documents/prepare", permission: "estimation.drawing.replace", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "baseline" },
   { key: "GET /estimates/:estimateId/design-plan-documents/:documentId/pdf", permission: "estimation.plan_page_image.read", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
@@ -236,9 +237,9 @@ describe("human JWT operation registry", () => {
     expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => expected.some((row) => row.key === key))).toEqual(expected);
   });
 
-  it("matches all 301 normative operation rows", () => {
+  it("matches all 302 normative operation rows", () => {
     expect(Object.values(HUMAN_JWT_OPERATIONS).sort((a, b) => a.key.localeCompare(b.key))).toEqual([...EXPECTED_ALL_HUMAN_JWT_OPERATIONS].sort((a, b) => a.key.localeCompare(b.key)));
-    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(301);
+    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(302);
   });
 
   it("mounts rows 2 through 23 as exact router groups with one ordered marker pair", () => {
@@ -542,7 +543,7 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("mounts the exact 301-operation manifest with one ordered marker pair each", () => {
+  it("mounts the exact 302-operation manifest with one ordered marker pair each", () => {
     const expectedKeys = EXPECTED_ALL_HUMAN_JWT_OPERATIONS.map(
       ({ key }) => key
     ).sort();
@@ -552,8 +553,8 @@ describe("human JWT operation registry", () => {
     const mountedOperations = mountedRoutes.map(({ key }) => key);
 
     expect([...mountedOperations].sort()).toEqual(expectedKeys);
-    expect(expectedKeys).toHaveLength(301);
-    expect(new Set(expectedKeys).size).toBe(301);
+    expect(expectedKeys).toHaveLength(302);
+    expect(new Set(expectedKeys).size).toBe(302);
     expect(mountedOperations).toContain(
       "POST /execution/worker-assignments/override"
     );
@@ -600,9 +601,9 @@ describe("human JWT operation registry", () => {
     expect(() => assertTaskSixRouteMounts(routers)).toThrow();
   });
 
-  it("has 301 unique keys and exactly 164 routed permissions", () => {
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(301);
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(164);
+  it("has 302 unique keys and exactly 165 routed permissions", () => {
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(302);
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(165);
     expect(HUMAN_JWT_OPERATION_LIST.every(({ permission }) =>
       (PERMISSION_CODES as readonly string[]).includes(permission)
     )).toBe(true);
@@ -646,7 +647,7 @@ describe("human JWT operation registry", () => {
         expect(["projects", "design", "finance"]).toContain(operation.scope.module);
       }
       if (operation.permission.startsWith("estimation.") && operation.scope.kind === "non_project") {
-        expect(["estimation_ownership", "organization", "estimate_client_response"]).toContain(
+        expect(["estimation_ownership", "organization", "estimate_client_response", "ai_estimator_knowledge"]).toContain(
           operation.scope.namespace
         );
         expect(operation.scope).not.toHaveProperty("module");

@@ -69,6 +69,27 @@ beforeEach(() => {
 });
 
 describe("Estimate-linked procurement groups", () => {
+  it("shows configured Sub Basket and Main Line names without an opaque catalogue ID", async () => {
+    const view = start();
+    view.change({ ...project, sections: [{
+      id: "basket-joinery", label: "Joinery", estimatedAmountPaise: 10006, actualSpendPaise: 0,
+      items: [{
+        key: "estimate-line-1", source: "configuration", catalogueId: "line-opaque-1",
+        mainBasketId: "basket-joinery", subBasketId: "sub-wardrobes", mainLineId: "line-opaque-1",
+        subBasketName: "Wardrobes", mainLineName: "Wardrobe carcass",
+        specification: "Wardrobes · Wardrobe carcass", roomName: "Bedroom", unit: "sq ft",
+        quantity: 1.25, estimatedAmountPaise: 10006, actualSpendPaise: 0, expenses: []
+      }]
+    }] });
+    expect(screen.getByRole("heading", { name: "Joinery" })).toBeVisible();
+    expect(screen.getByRole("group", { name: "Wardrobes · Wardrobe carcass — Bedroom" })).toBeVisible();
+    expect(screen.queryByText("line-opaque-1")).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("searchbox", { name: "Search estimate item, room or section" }), "carcass");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    expect(screen.getByRole("group", { name: "Wardrobes · Wardrobe carcass — Bedroom" })).toBeVisible();
+  });
+
   it("shows positive approved budgets but excludes a 400 sqft item valued at zero", async () => {
     start();
     expect(within(parent("Wardrobe")).getByText("₹1,250.50")).toBeVisible();

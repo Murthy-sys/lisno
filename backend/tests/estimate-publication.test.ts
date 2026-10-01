@@ -370,6 +370,40 @@ afterEach(() => {
 });
 
 describe("ordinary transactional Estimate publication", () => {
+  it("publishes configured identity and exact paise, and rechecks null rates inside the transaction", async () => {
+    const configuredLine = {
+      id: "configured-line", source: "configuration", catalogueId: "main-line-lower",
+      roomId: "room-a", roomName: "Living Room", specification: null,
+      unit: "sqft", rate: 48.5, ratePaise: 4_850, quantity: 2.5,
+      included: true, amount: 121.25, amountPaise: 12_125,
+      mainBasketId: "basket-a", subBasketId: "sub-a", mainLineId: "main-line-lower",
+      revisionId: "rev-a", uomId: "uom-sqft", mainBasketName: "Original basket",
+      subBasketName: "Original child", mainLineName: "Original line", uomName: "Square feet"
+    };
+    const configuredEstimate = estimate({
+      lineItems: [configuredLine], selectedMainBasketIds: ["basket-a"],
+      subtotal: 121.25, gst: 21.83, total: 143.08,
+      subtotalPaise: 12_125, gstPaise: 2_183, totalPaise: 14_308
+    });
+    const harness = setupHarness({ estimate: configuredEstimate });
+    await harness.publication.publishEstimateToClient(publicationInput());
+    expect(harness.createRound.mock.calls[0]?.[0][0].estimateSnapshot).toMatchObject({
+      selectedMainBasketIds: ["basket-a"], subtotalPaise: 12_125,
+      gstPaise: 2_183, totalPaise: 14_308,
+      lineItems: [configuredLine]
+    });
+
+    vi.restoreAllMocks();
+    const raced = setupHarness({
+      estimate: configuredEstimate,
+      transactionEstimate: estimate({ ...configuredEstimate,
+        lineItems: [{ ...configuredLine, rate: null, ratePaise: null, amount: null, amountPaise: null }] })
+    });
+    await expect(raced.publication.publishEstimateToClient(publicationInput()))
+      .rejects.toMatchObject({ code: "ESTIMATE_INCOMPLETE" });
+    expect(raced.createRound).not.toHaveBeenCalled();
+    expect(raced.events).toContain("storage:delete:new-snapshot-1.pdf");
+  });
   it("publishes one compact immutable snapshot, task, audit pair, compatibility effects, and post-commit delivery", async () => {
     const harness = setupHarness();
     const beforeEstimate = structuredClone(estimate());

@@ -936,19 +936,50 @@ function mapSnapshot(row: Row): EstimateClientReviewSnapshot {
     projectName: stringField(row, "projectName"),
     location: stringField(row, "location"),
     propertyType: stringField(row, "propertyType"),
-    lineItems: arrayField(row, "lineItems").map((lineItem) => ({
-      catalogueId: stringField(lineItem, "catalogueId"),
-      roomName: stringField(lineItem, "roomName"),
-      specification: stringField(lineItem, "specification"),
-      unit: stringField(lineItem, "unit"),
-      rate: numberField(lineItem, "rate"),
-      quantity: numberField(lineItem, "quantity"),
-      included: booleanField(lineItem, "included"),
-      amount: numberField(lineItem, "amount")
-    })),
+    lineItems: arrayField(row, "lineItems").map((lineItem) => {
+      const common = {
+        ...(lineItem.id === undefined ? {} : { id: nullableStringField(lineItem, "id") }),
+        catalogueId: stringField(lineItem, "catalogueId"),
+        roomName: stringField(lineItem, "roomName"),
+        unit: stringField(lineItem, "unit"),
+        quantity: numberField(lineItem, "quantity"),
+        included: booleanField(lineItem, "included"),
+      };
+      return lineItem.source === "configuration" ? {
+        ...common,
+        source: "configuration" as const,
+        specification: null,
+        rate: lineItem.rate === null ? null : numberField(lineItem, "rate"),
+        amount: lineItem.amount === null ? null : numberField(lineItem, "amount"),
+        roomId: stringField(lineItem, "roomId"),
+        mainBasketId: stringField(lineItem, "mainBasketId"),
+        subBasketId: stringField(lineItem, "subBasketId"),
+        mainLineId: stringField(lineItem, "mainLineId"),
+        revisionId: stringField(lineItem, "revisionId"),
+        uomId: stringField(lineItem, "uomId"),
+        ...(lineItem.uomCode === undefined ? {} : { uomCode: stringField(lineItem, "uomCode") }),
+        ...(lineItem.uomDecimalScale === undefined ? {} : { uomDecimalScale: numberField(lineItem, "uomDecimalScale") }),
+        mainBasketName: stringField(lineItem, "mainBasketName"),
+        subBasketName: stringField(lineItem, "subBasketName"),
+        mainLineName: stringField(lineItem, "mainLineName"),
+        uomName: stringField(lineItem, "uomName"),
+        ratePaise: lineItem.ratePaise === null ? null : numberField(lineItem, "ratePaise"),
+        amountPaise: lineItem.amountPaise === null ? null : numberField(lineItem, "amountPaise")
+      } : {
+        ...common,
+        ...(lineItem.source === "legacy" ? { source: "legacy" as const } : {}),
+        specification: stringField(lineItem, "specification"),
+        rate: numberField(lineItem, "rate"),
+        amount: numberField(lineItem, "amount")
+      };
+    }),
     subtotal: numberField(row, "subtotal"),
     gst: numberField(row, "gst"),
-    total: numberField(row, "total")
+    total: numberField(row, "total"),
+    ...(row.subtotalPaise === undefined ? {} : { subtotalPaise: numberField(row, "subtotalPaise") }),
+    ...(row.gstPaise === undefined ? {} : { gstPaise: numberField(row, "gstPaise") }),
+    ...(row.totalPaise === undefined ? {} : { totalPaise: numberField(row, "totalPaise") }),
+    ...(Array.isArray(row.selectedMainBasketIds) ? { selectedMainBasketIds: row.selectedMainBasketIds.map(String) } : {})
   };
 }
 

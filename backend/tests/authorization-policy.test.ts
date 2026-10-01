@@ -233,6 +233,7 @@ describe("authorization policy", () => {
           !PROCUREMENT_FULFILLMENT_PERMISSIONS.includes(permission as never) &&
           permission !== "projects.design_workflow.read" &&
           permission !== "estimation.design_upload.delete" &&
+          permission !== "estimation.catalogue.read" &&
           permission !== "projects.design_workflow.act" &&
           permission !== "projects.design_workflow.payments.read" &&
           permission !== "identity.self.profile_photo.manage" &&
@@ -260,8 +261,8 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(164);
-    expect(new Set(PERMISSION_CODES).size).toBe(164);
+    expect(PERMISSION_CODES).toHaveLength(165);
+    expect(new Set(PERMISSION_CODES).size).toBe(165);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 

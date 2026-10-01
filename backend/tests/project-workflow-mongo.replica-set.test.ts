@@ -1884,6 +1884,12 @@ describe("approved Design plan operational queues", () => {
       })
     ]);
 
+    await EstimateModel.collection.updateOne({ _id: estimateId }, { $set: {
+      "lineItems.0.rate": 10_000.01,
+      "lineItems.0.amount": 10_000.01,
+      subtotal: 42_000.01, gst: 7_560, total: 49_560.01,
+      subtotalPaise: 4_200_001, gstPaise: 756_000, totalPaise: 4_956_001
+    } });
     const appendInMongoTransaction = vi.fn(async () => ({ id: "audit-approved" }));
     const openFinance = vi.fn(async () => ({ id: "finance-bucket-project-approved" }));
     const workflow = createProjectWorkflowService({
@@ -1961,9 +1967,12 @@ describe("approved Design plan operational queues", () => {
         estimateId,
         estimateVersion: 5,
         estimateReviewRoundId: null,
-        approvedSubtotalRupees: 42_000,
+        approvedSubtotalRupees: 42_000.01,
         approvedGstRupees: 7_560,
-        approvedContractTotalRupees: 49_560
+        approvedContractTotalRupees: 49_560.01,
+        approvedSubtotalPaise: 4_200_001,
+        approvedGstPaise: 756_000,
+        approvedContractTotalPaise: 4_956_001
       }
     }, expect.anything());
     expect(tasks).toHaveLength(7);
@@ -2379,6 +2388,45 @@ describe("approved Design plan operational queues", () => {
 });
 
 describe("section-level worker assignment", () => {
+  it("uses exact configured basket IDs and immutable approved labels after live estimate labels change", async () => {
+    const fixture = await createSectionAssignmentFixture();
+    const approvedLines = [
+      { id: "configured-line-a", source: "configuration", catalogueId: "main-line-a",
+        mainLineId: "main-line-a", mainBasketId: "basket-a", mainBasketName: "Joinery at approval",
+        subBasketId: "sub-a", subBasketName: "Shared child", mainLineName: "Console",
+        roomId: "room-a", roomName: "Room", specification: null, unit: "nos", rate: 10,
+        ratePaise: 1_000, quantity: 1, included: true, amount: 10, amountPaise: 1_000 },
+      { id: "configured-line-b", source: "configuration", catalogueId: "main-line-b",
+        mainLineId: "main-line-b", mainBasketId: "basket-b", mainBasketName: "Electrical at approval",
+        subBasketId: "sub-b", subBasketName: "Shared child", mainLineName: "Outlet",
+        roomId: "room-a", roomName: "Room", specification: null, unit: "nos", rate: 20,
+        ratePaise: 2_000, quantity: 1, included: true, amount: 20, amountPaise: 2_000 }
+    ];
+    await EstimateModel.collection.updateOne({ _id: fixture.estimateId }, { $set: {
+      lineItems: approvedLines.map((line) => ({ ...line, mainBasketName: "Renamed later" }))
+    } });
+    await EstimateClientReviewRoundModel.collection.insertOne({
+      _id: "configured-assignment-round", estimateId: fixture.estimateId,
+      projectId: fixture.projectId, estimateVersion: 1,
+      status: "approved", decision: "approve",
+      estimateSnapshot: { lineItems: approvedLines }
+    });
+    await ProjectWorkflowTaskModel.collection.updateOne({ _id: fixture.openTaskId }, { $set: {
+      sourceSectionId: "basket-a", sourceLineItemKey: "configured-line-a", assigneeRole: "worker_other"
+    } });
+    await ProjectWorkflowTaskModel.collection.updateOne({ _id: fixture.startedTaskId }, { $set: {
+      sourceSectionId: "basket-b", sourceLineItemKey: "configured-line-b", assigneeRole: "worker_other",
+      assigneeUserId: null
+    } });
+    const groups = await sectionAssignmentWorkflow(vi.fn(async () => ({})))
+      .listProjectWorkflowSectionAssignments(sectionSuperAdmin(), fixture.projectId);
+    expect(groups.filter((group) => group.sourceSectionId.startsWith("basket-")).map((group) => ({
+      id: group.sourceSectionId, label: group.sectionLabel
+    }))).toEqual([
+      { id: "basket-b", label: "Electrical at approval" },
+      { id: "basket-a", label: "Joinery at approval" }
+    ]);
+  });
   it("groups mixed unfinished tasks and atomically assigns all unfinished members", async () => {
     const fixture = await createSectionAssignmentFixture();
     const audit = vi.fn(async () => ({ id: "audit-section-assignment" }));

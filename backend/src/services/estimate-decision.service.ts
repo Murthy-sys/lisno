@@ -550,6 +550,9 @@ async function approve(input: {
       approvedSubtotalRupees: Number(snapshot.subtotal),
       approvedGstRupees: Number(snapshot.gst),
       approvedContractTotalRupees: Number(snapshot.total),
+      approvedSubtotalPaise: snapshot.subtotalPaise === undefined ? undefined : Number(snapshot.subtotalPaise),
+      approvedGstPaise: snapshot.gstPaise === undefined ? undefined : Number(snapshot.gstPaise),
+      approvedContractTotalPaise: snapshot.totalPaise === undefined ? undefined : Number(snapshot.totalPaise),
       createdById: context.actor.id,
       occurredAt
     }, session);

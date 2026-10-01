@@ -28,6 +28,25 @@ import { readVendorWorkCompletion, type VendorWorkCompletionSnapshot } from "./v
 
 type Row = Record<string, any>;
 type Source = Awaited<ReturnType<typeof procurementItemSourceSnapshot>>;
+
+export function projectCompletionScopeLabel(line: {
+  source?: "legacy" | "configuration";
+  catalogueId: string;
+  sectionId: string;
+  mainBasketId?: string;
+  mainBasketName?: string;
+  subBasketName?: string;
+  mainLineId?: string;
+  mainLineName?: string;
+  specification: string;
+}): string {
+  if (line.source !== "configuration") return line.specification;
+  if (line.mainBasketId !== line.sectionId || line.mainLineId !== line.catalogueId ||
+    !line.mainBasketName?.trim() || !line.subBasketName?.trim() || !line.mainLineName?.trim()) {
+    lineageConflict("Configured project scope is missing its approved basket or line snapshot.");
+  }
+  return `${line.mainBasketName} · ${line.subBasketName} · ${line.mainLineName}`;
+}
 interface CompletionLineage {
   summary: ProjectCompletionSummary;
   revisionIds: string[];
@@ -221,11 +240,12 @@ async function buildLineage(project: Row, source: Source, session: ClientSession
   const scope: ProjectScopeCoverage[] = source.lineItems.map(line => {
     const count = coverageCounts.get(line.key) ?? 0;
     const exception = exceptionByKey.get(line.key);
+    const scopeLabel = projectCompletionScopeLabel(line);
     if (!count && !exception && line.amountPaise > 0) blockers.push({ code: "SCOPE_UNCOVERED",
-      message: `${line.roomName} · ${line.specification} has no approved purchase order work or scope decision. Ask Procurement to order it, or Super Admin to record a scope decision.`,
+      message: `${line.roomName} · ${scopeLabel} has no approved purchase order work or scope decision. Ask Procurement to order it, or Super Admin to record a scope decision.`,
       sourceLineItemKey: line.key });
     return { sourceLineItemKey: line.key, sourceSectionId: line.sectionId, roomName: line.roomName,
-      specification: line.specification, amountPaise: line.amountPaise,
+      specification: scopeLabel, amountPaise: line.amountPaise,
       approvedOrderLineCount: count, exception: exception ? { id: String(exception._id), kind: exception.kind, reason: exception.reason } : null,
       status: count ? "approved_order" : exception ? "exception" : line.amountPaise === 0 ? "not_required" : "uncovered" };
   });

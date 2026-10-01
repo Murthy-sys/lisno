@@ -9,6 +9,25 @@ const round: WorkflowEstimateApproval = { id: "round-a", estimateId: "estimate-a
 const source = { projectId: "project-a", estimateId: "estimate-a", estimateVersion: 3, rounds: [round], legacyLines: [{ ...line, id: "unapproved-live-item" }] };
 
 describe("selected approved estimate furniture items", () => {
+  it("uses configured line snapshots and exact paise with room IDs, including duplicate room labels", () => {
+    const configured: WorkflowEstimateLine = {
+      id: "configured-a", source: "configuration", catalogueId: "main-line-lower",
+      roomId: "room-b", roomName: "Shared room", specification: null, unit: "sqft",
+      quantity: 2, included: true, amount: 12.35, amountPaise: 1_235,
+      mainBasketId: "basket-a", subBasketId: "sub-a", mainLineId: "main-line-lower",
+      mainBasketName: "Storage", subBasketName: "Wardrobes", mainLineName: "Sliding wardrobe"
+    };
+    const selected = workflowEstimateRooms("estimate-a", 3, [
+      { id: "room-a", label: "Shared room" }, { id: "room-b", label: "Shared room" }
+    ], [configured]);
+    expect(selected[0]?.estimateItems).toEqual([]);
+    expect(selected[1]?.estimateItems[0]).toMatchObject({
+      id: "configured-a", catalogueId: "main-line-lower",
+      name: "Wardrobes · Sliding wardrobe", specification: ""
+    });
+    expect(() => workflowEstimateRooms("estimate-a", 3, [{ id: "room-b", label: "Shared room" }],
+      [{ ...configured, amountPaise: null }])).toThrow(WorkflowEstimateSourceError);
+  });
   it("excludes exact zero-value lines, retains positive-value zero-quantity lines and stable original indexes", () => {
     const approved = [
       { ...line, id: null, amount: 0, quantity: 400 },

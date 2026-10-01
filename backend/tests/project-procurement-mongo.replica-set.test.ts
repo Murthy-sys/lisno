@@ -27,6 +27,7 @@ import { createProjectProcurementService } from "../src/services/project-procure
 import { createProjectPurchaseOrderPreparationService } from "../src/services/project-purchase-order-preparation.service.js";
 import { procurementVendorAllocationTotals } from "../src/services/procurement-vendor-allocation.service.js";
 import { procurementItemSourceSnapshot } from "../src/services/procurement.service.js";
+import { projectCompletionScopeLabel } from "../src/services/project-completion.service.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
 const actor: PublicUser = { id: "buyer", name: "Buyer", email: "buyer@example.test", role: "procurement" };
@@ -183,6 +184,34 @@ async function completeVendorOnboarding(vendorId: string): Promise<void> {
 }
 
 describe("project procurement item Mongo transactions", () => {
+  it("carries immutable configured basket names into completion scope", async () => {
+    const approvedLine = {
+      id: "line-first", source: "configuration", catalogueId: "main-line-lower",
+      roomId: "living-room", roomName: "Living Room",
+      mainBasketId: "basket-lower", mainBasketName: "Original basket",
+      subBasketId: "child-lower", subBasketName: "Original child",
+      mainLineId: "main-line-lower", mainLineName: "Original console",
+      revisionId: "revision-lower", uomId: "square-foot", uomName: "Square foot",
+      specification: null, unit: "sqft", quantity: 1, included: true,
+      ratePaise: 1_000_000, amountPaise: 1_000_000, rate: 10_000, amount: 10_000
+    };
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "round-project-a" }, {
+      $set: { "estimateSnapshot.lineItems.0": approvedLine }
+    });
+    await EstimateModel.collection.updateOne({ _id: "estimate-project-a" }, {
+      $set: { "lineItems.0": { ...approvedLine, mainBasketName: "Renamed basket", mainLineName: "Renamed console" } }
+    });
+    const source = await mongoose.connection.transaction((session) => procurementItemSourceSnapshot("project-a", session));
+    expect(source.lineItems[0]).toMatchObject({
+      key: "line-first", sectionId: "basket-lower", mainBasketId: "basket-lower",
+      mainBasketName: "Original basket", subBasketName: "Original child",
+      mainLineId: "main-line-lower", mainLineName: "Original console",
+      amountPaise: 1_000_000
+    });
+    expect(projectCompletionScopeLabel(source.lineItems[0]!))
+      .toBe("Original basket · Original child · Original console");
+  });
+
   it("uses each unequal project's immutable approved line budgets without financial or workflow writes", async () => {
     const rounds = await EstimateClientReviewRoundModel.find().sort({ _id: 1 }).lean();
     const tasks = await ProjectWorkflowTaskModel.find().sort({ _id: 1 }).lean();

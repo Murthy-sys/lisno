@@ -177,6 +177,12 @@ function EstimateReviewCard({
     id,
     label: estimateBuilderSections.find((section) => section.id === id)?.label ?? id
   }));
+  for (const line of estimate.lineItems) {
+    if (line.source !== "configuration" || !line.included || !line.mainBasketId) continue;
+    if (!scopeOptions.some((option) => option.id === line.mainBasketId)) {
+      scopeOptions.push({ id: line.mainBasketId, label: line.mainBasketName });
+    }
+  }
   const reviewControls = !isClient && actionable ? <>
     {role === "design_manager" ? <label>Assign approval to<Select disabled={actionPending} value={selectedDesignerId} onChange={(event) => onDesignerChange(event.target.value)}><option value="">Choose designer</option>{designers.map((designer) => <option value={designer.id} key={designer.id}>{designer.name}</option>)}</Select></label> : <label>Review note<Textarea disabled={actionPending} value={note} onChange={(event) => onNoteChange(event.target.value)} placeholder={isClient ? "Optional note for the Lisno team" : "Add approval context or requested corrections"} /></label>}
     <div className="estimate-review-card__actions">

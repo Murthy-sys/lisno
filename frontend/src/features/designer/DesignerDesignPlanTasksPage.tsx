@@ -283,16 +283,33 @@ function roomOptions(task: DesignPlanTask): EstimateDesignPlacementOption[] {
 }
 
 function scopeOptions(task: DesignPlanTask): EstimateDesignPlacementOption[] {
-  return task.scopes.map((id) => ({
+  const options = task.scopes.map((id) => ({
     id,
     label: estimateBuilderSections.find((section) => section.id === id)?.label ?? id
   }));
+  for (const line of task.lineItems) {
+    if (line.source !== "configuration" || !line.included || !line.mainBasketId) continue;
+    if (!options.some((option) => option.id === line.mainBasketId)) {
+      options.push({ id: line.mainBasketId, label: line.mainBasketName ?? "Configured Main Basket" });
+    }
+  }
+  return options;
 }
 
 function itemOptions(task: DesignPlanTask): EstimateDesignItemOption[] {
   const rooms = roomOptions(task);
   return task.lineItems.flatMap((line) => {
     if (!line.included) return [];
+    if (line.source === "configuration") {
+      const room = rooms.find((item) => item.id === line.roomId);
+      if (!room || !line.mainBasketId || !line.mainLineId) return [];
+      return [{
+        roomId: room.id,
+        catalogueId: line.mainLineId,
+        label: line.mainLineName ?? "Configured Main Line",
+        scopeLabel: line.mainBasketName ?? "Configured Main Basket"
+      }];
+    }
     const sourceRoom = task.rooms.find((room) => {
       const id = typeof room.id === "string" ? room.id : "";
       const label = typeof room.label === "string" ? room.label : "";
@@ -314,7 +331,7 @@ function itemOptions(task: DesignPlanTask): EstimateDesignItemOption[] {
     return [{
       roomId: room.id,
       catalogueId: line.catalogueId,
-      label: `${line.catalogueId} · ${row?.description ?? line.specification}`,
+      label: `${line.catalogueId} · ${row?.description ?? line.specification ?? "Item"}`,
       scopeLabel: section.label
     }];
   });

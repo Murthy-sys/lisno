@@ -90,6 +90,7 @@ import { createEstimatePlanDocumentRouter } from "./routes/estimate-plan-documen
 import { createEstimatePlanDocumentService } from "./services/estimate-plan-document.service.js";
 import { createEstimateClientResponsesRouter } from "./routes/estimate-client-responses.js";
 import { createEstimatesRouter } from "./routes/estimates.js";
+import { createEstimatorCatalogueRouter } from "./routes/estimator-catalogue.js";
 import { healthRouter } from "./routes/health.js";
 import { createKpisRouter } from "./routes/kpis.js";
 import { createLeadsRouter } from "./routes/leads.js";
@@ -631,6 +632,7 @@ export function createApp(dependencies: AppDependencies) {
       estimateClientReviewService
     )
   );
+  app.use("/api/v1", createEstimatorCatalogueRouter(authService));
   app.use("/api/v1", createTasksRouter(authService, taskService));
   app.use("/api/v1", createOrganizationRouter(authService, hierarchyService));
   app.use("/api/v1", createKpisRouter(authService, kpiService));

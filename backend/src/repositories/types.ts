@@ -396,6 +396,9 @@ export interface EstimateSummaryRecord {
   subtotal: number;
   gst: number;
   total: number;
+  subtotalPaise?: number;
+  gstPaise?: number;
+  totalPaise?: number;
   clientDecisionAt: string | null;
   clientDecisionSource: EstimateClientDecisionSource | null;
   approvedBaseline: AdminProjectApprovedEstimateBaseline | null;
@@ -414,6 +417,9 @@ export interface AdminProjectApprovedEstimateBaseline {
   subtotal: number;
   gst: number;
   total: number;
+  subtotalPaise?: number;
+  gstPaise?: number;
+  totalPaise?: number;
   decisionAt: string | null;
   decisionSource: EstimateClientDecisionSource | null;
 }

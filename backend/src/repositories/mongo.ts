@@ -59,6 +59,7 @@ import { UserModel } from "../models/User.js";
 import { UserInvitationModel } from "../models/UserInvitation.js";
 import { PasswordResetRequestModel } from "../models/PasswordResetRequest.js";
 import { adminProjectSummary } from "./admin-project-summary.js";
+import { projectFinanceBaseline } from "../domain/project-finance.js";
 import {
   mongoSuperAdminDashboardOverview,
   mongoSuperAdminDashboardProjects,
@@ -229,6 +230,9 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         subtotal: 1,
         gst: 1,
         total: 1,
+        subtotalPaise: 1,
+        gstPaise: 1,
+        totalPaise: 1,
         clientDecisionAt: 1,
         designPlanStatus: 1,
         designPlanVersion: 1,
@@ -347,6 +351,9 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         subtotal: Number(document.subtotal),
         gst: Number(document.gst),
         total: Number(document.total),
+        ...(document.subtotalPaise == null ? {} : { subtotalPaise: document.subtotalPaise }),
+        ...(document.gstPaise == null ? {} : { gstPaise: document.gstPaise }),
+        ...(document.totalPaise == null ? {} : { totalPaise: document.totalPaise }),
         clientDecisionAt: nullableIso(document.clientDecisionAt),
         clientDecisionSource: currentRound?.clientDecisionSource ?? null,
         approvedBaseline: approvedAdminEstimateBaseline(
@@ -3691,6 +3698,9 @@ function approvedAdminEstimateBaseline(
       subtotal: Number(approvedRound.estimateSnapshot?.subtotal),
       gst: Number(approvedRound.estimateSnapshot?.gst),
       total: Number(approvedRound.estimateSnapshot?.total),
+      ...(approvedRound.estimateSnapshot?.subtotalPaise == null ? {} : { subtotalPaise: approvedRound.estimateSnapshot.subtotalPaise }),
+      ...(approvedRound.estimateSnapshot?.gstPaise == null ? {} : { gstPaise: approvedRound.estimateSnapshot.gstPaise }),
+      ...(approvedRound.estimateSnapshot?.totalPaise == null ? {} : { totalPaise: approvedRound.estimateSnapshot.totalPaise }),
       decisionAt: nullableIso(approvedRound.decidedAt),
       decisionSource: approvedRound.decisionSource ?? null
     };
@@ -3703,6 +3713,9 @@ function approvedAdminEstimateBaseline(
     subtotal: Number(estimate.subtotal),
     gst: Number(estimate.gst),
     total: Number(estimate.total),
+    ...(estimate.subtotalPaise == null ? {} : { subtotalPaise: estimate.subtotalPaise }),
+    ...(estimate.gstPaise == null ? {} : { gstPaise: estimate.gstPaise }),
+    ...(estimate.totalPaise == null ? {} : { totalPaise: estimate.totalPaise }),
     decisionAt: nullableIso(estimate.clientDecisionAt),
     decisionSource: null
   };
@@ -3711,14 +3724,18 @@ function approvedAdminEstimateBaseline(
 }
 
 function assertApprovedBaselineMoney(
-  baseline: Pick<AdminProjectApprovedEstimateBaseline, "subtotal" | "gst" | "total">
+  baseline: Pick<AdminProjectApprovedEstimateBaseline, "subtotal" | "gst" | "total" | "subtotalPaise" | "gstPaise" | "totalPaise">
 ): void {
-  if (
-    ![baseline.subtotal, baseline.gst, baseline.total].every(
-      (amount) => Number.isSafeInteger(amount) && amount >= 0
-    ) ||
-    baseline.subtotal + baseline.gst !== baseline.total
-  ) {
+  try {
+    projectFinanceBaseline({
+      subtotalRupees: baseline.subtotal,
+      gstRupees: baseline.gst,
+      totalRupees: baseline.total,
+      ...(baseline.subtotalPaise === undefined ? {} : { subtotalPaise: baseline.subtotalPaise }),
+      ...(baseline.gstPaise === undefined ? {} : { gstPaise: baseline.gstPaise }),
+      ...(baseline.totalPaise === undefined ? {} : { totalPaise: baseline.totalPaise })
+    });
+  } catch {
     throw new ApiError(
       409,
       "ESTIMATE_APPROVAL_BASELINE_INVALID",

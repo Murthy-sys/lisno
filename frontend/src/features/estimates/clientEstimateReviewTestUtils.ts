@@ -18,6 +18,6 @@ export function withPublishedReview<T extends TestEstimate>(estimate: T): T & { 
     submittedAt: "2026-09-30T08:00:00.000Z", decidedAt: null, decisionNote: null,
     canDecide: estimate.status === "sent_to_client",
     snapshot: { clientName: estimate.lead.clientName, projectName: estimate.lead.projectName, location: estimate.lead.location, propertyType: estimate.propertyType,
-      lineItems: estimate.lineItems.map((item) => ({ ...item, amount: item.amount ?? Math.round(item.quantity * item.rate) })), subtotal: estimate.subtotal, gst: estimate.gst, total: estimate.total }
+      lineItems: estimate.lineItems.map((item) => ({ ...item, amount: item.amount ?? Math.round(item.quantity * (item.rate ?? 0)) })), subtotal: estimate.subtotal, gst: estimate.gst, total: estimate.total }
   } };
 }

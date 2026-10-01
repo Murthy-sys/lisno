@@ -12,6 +12,29 @@ const estimate = { _id: "estimate-a", leadId: "lead-a", projectId: "project-a", 
 const round = { _id: "round-a", estimateId: "estimate-a", leadId: "lead-a", projectId: "project-a", status: "pending", estimateVersion: 3, version: 1, sendGeneration: 2, recipientEmailNormalized: actor.email, createdAt: new Date("2026-09-30T00:00:00Z"), estimateSnapshot: snapshot };
 
 describe("published Client estimate presentation", () => {
+  it("reads configured labels and paise only from the immutable review snapshot", () => {
+    const configured = {
+      ...snapshot, subtotal: 121.25, gst: 21.83, total: 143.08,
+      subtotalPaise: 12_125, gstPaise: 2_183, totalPaise: 14_308,
+      selectedMainBasketIds: ["basket-lower"],
+      lineItems: [{
+        id: "configured-line", source: "configuration", catalogueId: "main-line-lower",
+        roomId: "original-room", roomName: "Room A", specification: null,
+        unit: "sqft", rate: 48.5, ratePaise: 4_850, quantity: 2.5,
+        included: true, amount: 121.25, amountPaise: 12_125,
+        mainBasketId: "basket-lower", subBasketId: "sub-lower", mainLineId: "main-line-lower",
+        revisionId: "rev-old", uomId: "uom-sqft", mainBasketName: "Original basket",
+        subBasketName: "Original child", mainLineName: "Original console", uomName: "Square feet"
+      }]
+    };
+    const result = presentClientEstimate(actor, { ...estimate, lineItems: [{ catalogueId: "changed" }] }, lead,
+      { ...round, estimateSnapshot: configured });
+    expect(result).toMatchObject({
+      subtotalPaise: 12_125, totalPaise: 14_308,
+      lineItems: [{ mainBasketName: "Original basket", mainLineName: "Original console" }],
+      publishedReview: { snapshot: { lineItems: [{ mainLineId: "main-line-lower" }] } }
+    });
+  });
   it("uses persisted submitted values and IDs without exposing internal review notes", () => {
     const result = presentClientEstimate(actor, estimate, lead, round)!;
     expect(result).toMatchObject({ total: 354, projectId: "project-a", lead: { projectName: "Published project" }, publishedReview: { canDecide: true, snapshot }, reviewSourceIssue: null });
