@@ -77,12 +77,77 @@ beforeEach(() => {
 });
 
 describe("Super Admin purchase order approval", () => {
+  it("returns focus to each queue row when its review is closed", async () => {
+    server.use(http.get("/api/v1/admin/purchase-order-requests/pending", () => HttpResponse.json({ data: {
+      items: [projectRequest], total: 1, limit: 50, offset: 0
+    } })));
+    const user = userEvent.setup();
+    renderWithQuery(<SuperAdminPurchaseOrdersPage />);
+
+    const projectQueue = await screen.findByRole("list", { name: "Pending project purchase order requests" });
+    const projectRow = within(projectQueue).getByRole("button", { name: /Aurora Villa/ });
+    await user.click(projectRow);
+    await user.click(within(screen.getByRole("form", { name: "Review Aurora Villa purchase order request" })).getByRole("button", { name: "Close review" }));
+    expect(projectRow).toHaveFocus();
+
+    const individualQueue = await screen.findByRole("list", { name: "Pending purchase orders" });
+    const individualRow = within(individualQueue).getByRole("button", { name: /PO-ONE/ });
+    await user.click(individualRow);
+    await user.click(within(screen.getByRole("form", { name: "Review PO-ONE" })).getByRole("button", { name: "Close" }));
+    expect(individualRow).toHaveFocus();
+  });
+
+  it("labels both queues and shows submitted-revision totals instead of mutable draft totals", async () => {
+    server.use(
+      http.get("/api/v1/admin/purchase-order-requests/pending", () => HttpResponse.json({ data: {
+        items: [{ ...projectRequest, totals: { ...projectRequest.totals, totalPaise: 99999999 }, sectionTotals: [], vendorTotals: [] }], total: 1, limit: 50, offset: 0
+      } })),
+      http.get("/api/v1/admin/purchase-orders/pending", () => HttpResponse.json({ data: {
+        items: [{ ...order, draftTotals: { ...order.draftTotals, totalPaise: 99999999 } }], total: 1, limit: 50, offset: 0
+      } }))
+    );
+    renderWithQuery(<SuperAdminPurchaseOrdersPage />);
+
+    const projectQueue = await screen.findByRole("list", { name: "Pending project purchase order requests" });
+    const projectRow = within(projectQueue).getByRole("button", { name: /Aurora Villa/ });
+    expect(projectRow).toHaveAccessibleName(/Aurora Villa.*Scope.*2 estimate sections.*Submitted total.*₹7,080\.00/);
+    expect(projectRow).toHaveTextContent("2 estimate sections · 2 vendors");
+    expect(projectRow).toHaveTextContent("Submitted total");
+    expect(projectRow).toHaveTextContent("₹7,080.00");
+    expect(projectRow).not.toHaveTextContent("₹9,99,999.99");
+
+    const individualQueue = await screen.findByRole("list", { name: "Pending purchase orders" });
+    const individualRow = within(individualQueue).getByRole("button", { name: /PO-ONE/ });
+    expect(individualRow).toHaveAccessibleName(/PO-ONE.*Project.*project-one.*Submitted total.*₹7,080\.00/);
+    expect(individualRow).toHaveTextContent("Project");
+    expect(individualRow).toHaveTextContent("Submitted total");
+    expect(individualRow).toHaveTextContent("₹7,080.00");
+    expect(individualRow).not.toHaveTextContent("₹9,99,999.99");
+  });
+
+  it("does not present draft terms as submitted terms when the revision is missing", async () => {
+    server.use(http.get("/api/v1/admin/purchase-orders/pending", () => HttpResponse.json({ data: {
+      items: [{ ...order, submittedRevisionId: "missing-revision", terms: "Mutable draft terms" }], total: 1, limit: 50, offset: 0
+    } })));
+    const user = userEvent.setup();
+    renderWithQuery(<SuperAdminPurchaseOrdersPage />);
+    const row = await screen.findByRole("button", { name: /PO-ONE/ });
+    expect(row).toHaveTextContent("Unavailable");
+    await user.click(row);
+    const review = screen.getByRole("form", { name: "Review PO-ONE" });
+    expect(within(review).getByText(/Submitted terms unavailable/)).toBeVisible();
+    expect(within(review).queryByText("Mutable draft terms")).not.toBeInTheDocument();
+    expect(within(review).getByRole("button", { name: "Approve purchase order" })).toBeDisabled();
+  });
+
   it("reviews one project package by section and vendor, then sends one versioned approval", async () => {
     const decisions: unknown[] = [];
+    let decided = false;
     server.use(
-      http.get("/api/v1/admin/purchase-order-requests/pending", () => HttpResponse.json({ data: { items: [projectRequest], total: 1, limit: 50, offset: 0 } })),
+      http.get("/api/v1/admin/purchase-order-requests/pending", () => HttpResponse.json({ data: { items: decided ? [] : [projectRequest], total: decided ? 0 : 1, limit: 50, offset: 0 } })),
       http.post("/api/v1/admin/purchase-order-requests/request-project-one/decision", async ({ request }) => {
         decisions.push(await request.json());
+        decided = true;
         return HttpResponse.json({ data: { ...projectRequest, status: "approved", version: 5 } });
       })
     );
@@ -108,14 +173,21 @@ describe("Super Admin purchase order approval", () => {
     await waitFor(() => expect(decisions).toHaveLength(1));
     expect(decisions[0]).toEqual({ expectedVersion: 4, submittedRevisionId: "request-revision-two",
       decision: "approve", reason: null, budgetOverrideReason: "Client approved the extra work", idempotencyKey: "key-12345678" });
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Aurora Villa/ })).not.toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "Project purchase order requests" })).toHaveFocus();
   });
 
   it("requires an explicit budget override and submits the immutable revision and version", async () => {
     const decisions: unknown[] = [];
-    server.use(http.post("/api/v1/procurement/projects/project-one/purchase-orders/order-one/decision", async ({ request }) => {
-      decisions.push(await request.json());
-      return HttpResponse.json({ data: { ...order, status: "approved", version: 5 } });
-    }));
+    let decided = false;
+    server.use(
+      http.get("/api/v1/admin/purchase-orders/pending", () => HttpResponse.json({ data: { items: decided ? [] : [order], total: decided ? 0 : 1, limit: 50, offset: 0 } })),
+      http.post("/api/v1/procurement/projects/project-one/purchase-orders/order-one/decision", async ({ request }) => {
+        decisions.push(await request.json());
+        decided = true;
+        return HttpResponse.json({ data: { ...order, status: "approved", version: 5 } });
+      })
+    );
     const user = userEvent.setup();
     renderWithQuery(<SuperAdminPurchaseOrdersPage />);
     await user.click(await screen.findByRole("button", { name: /PO-ONE/ }));
@@ -127,5 +199,7 @@ describe("Super Admin purchase order approval", () => {
     await user.click(screen.getByRole("button", { name: "Approve purchase order" }));
     await waitFor(() => expect(decisions).toHaveLength(1));
     expect(decisions[0]).toEqual({ expectedVersion: 4, submittedRevisionId: "revision-one", idempotencyKey: "key-12345678", decision: "approve", reason: null, budgetOverrideReason: "Client approved additional cabinetry scope" });
+    await waitFor(() => expect(screen.queryByRole("button", { name: /PO-ONE/ })).not.toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "Individual vendor orders" })).toHaveFocus();
   });
 });

@@ -1,6 +1,7 @@
 import { ROLE_CODES, OPERATIONAL_ROLES, type Role } from "../../api/authorization-contract";
 import type { Lead, ProjectWorkflowTask, UserInvitationItem, ProjectFinanceBucket } from "../../api/types";
 import { superAdminDashboardOverviewFixture, superAdminDashboardProjectsPageFixture, superAdminDashboardWorkforcePageFixture } from "../../features/admin/dashboard/dashboardFixtures";
+import type { ProjectPurchaseOrderRequest, PurchaseOrder } from "../../features/procurement/purchaseOrderApi";
 import type { EnterpriseScenario } from "./enterpriseTransport";
 import * as admin from "./enterpriseAdminData";
 import * as users from "./enterpriseUsersData";
@@ -17,6 +18,54 @@ import type { KnowledgeSectionKey } from "../../features/ai-estimator-knowledge/
 
 const lead: Lead = { id: "lead-1", projectId: "project-1", ownerId: "estimator_sales-1", clientName: "Asha Shah", clientEmail: "asha@example.com", clientMobile: "+91 90000 00000", projectName: "Asha home — complete residence and terrace refurbishment", location: "Pune", propertyType: "3BHK", budgetMin: 800000, budgetMax: 1200000, source: "Referral", stage: "estimate_in_progress", nextAction: "Review updated living room measurements", nextActionAt: "2026-09-15T10:00:00.000Z", builder: null, areaSqft: 1400, targetHandoverAt: null, notes: "Synthetic project record for visual review.", latestActivityAt: null, createdAt: "2026-08-23T10:00:00.000Z", updatedAt: "2026-09-10T10:00:00.000Z" };
 const estimate = { id: "estimate-1", leadId: lead.id, projectId: lead.projectId, propertyType: "3BHK", rooms: [{ id: "living-room", label: "Living Room", type: "living", length: 16, width: 12, height: 10 }], scopes: ["FC"], lineItems: responses.pendingDetail.estimateSnapshot.lineItems, subtotal: 1200, gst: 216, total: 1416, status: "draft", approvalRequired: false, updatedAt: lead.updatedAt, lead };
+const qaRequestTotals = { netPaise: 60000000, gstPaise: 10800000, totalPaise: 70800000 };
+const qaRequestSectionTotals = [{ sectionId: "LIVING", label: "Living room and dining", totals: qaRequestTotals }];
+const qaRequestVendorTotals = [{ vendorId: "vendor-qa", code: "VEN-QA", name: "Synthetic Interior Works", terms: "Deliver and install at the project site.", totals: qaRequestTotals }];
+const qaPendingPurchaseRequest: ProjectPurchaseOrderRequest = {
+  id: "request-qa-one", projectId: "project-qa-one", projectName: "North Residence — upper floor and garden apartment renovation",
+  requestNumber: "POR-QA-001", status: "pending_approval", version: 3, revision: 2, submittedRevisionId: "request-revision-qa-two",
+  preparationDigest: "a".repeat(64), estimateSource: { estimateId: "estimate-qa-one", estimateVersion: 2, estimateReviewRoundId: "review-qa-one" },
+  approvedEstimatePaise: 90000000, committedPaise: 40000000, committedGstPaise: 0, committedTotalPaise: 40000000, remainingPaise: 50000000,
+  totals: qaRequestTotals, sectionTotals: qaRequestSectionTotals, vendorTotals: qaRequestVendorTotals,
+  approvedOrderIds: [], decisions: [], revisions: [{
+    id: "request-revision-qa-two", revision: 2, submittedAt: "2026-10-01T00:00:00.000Z", submittedById: "buyer-qa",
+    preparationDigest: "a".repeat(64), approvedEstimatePaise: 90000000, committedPaise: 40000000,
+    committedGstPaise: 0, committedTotalPaise: 40000000, remainingPaise: 50000000,
+    totals: qaRequestTotals, sectionTotals: qaRequestSectionTotals, vendorTotals: qaRequestVendorTotals,
+    lines: [{
+      id: "line-qa-one", procurementItemId: "item-qa-one", procurementItemVersion: 2,
+      quantityMilliUnits: 2000, unitPricePaise: 30000000, gstBasisPoints: 1800, scopeType: "execution",
+      description: "Custom cabinetry and wall panelling for the living and dining spaces",
+      targetDate: "2026-11-15", deliveryLocation: "North Residence", netPaise: 60000000, gstPaise: 10800000, totalPaise: 70800000,
+      vendorId: "vendor-qa", vendorCode: "VEN-QA", vendorName: "Synthetic Interior Works", allocatedWorkPaise: 60000000,
+      sectionLabel: "Living room and dining", sourceSectionId: "LIVING", sourceLineItemKey: "estimate-line-qa-one",
+      roomName: "Living and dining", itemName: "Custom cabinetry and wall panelling", brand: "Synthetic", uomCode: "set"
+    }]
+  }],
+  createdAt: "2026-09-30T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z"
+};
+const qaIndividualOrderTotals = { netPaise: 350000, gstPaise: 63000, totalPaise: 413000 };
+const qaPendingIndividualOrder: PurchaseOrder = {
+  id: "order-qa-one", orderNumber: "PO-QA-001", projectId: "project-qa-individual",
+  vendor: { id: "vendor-qa-individual", code: "VEN-QA-2", name: "Synthetic Workshop and Installations" },
+  status: "pending_approval", version: 3, revision: 1,
+  estimateSource: { estimateId: "estimate-qa-individual", estimateVersion: 1, estimateReviewRoundId: "review-qa-individual" },
+  terms: "Deliver and install at the project site.", draftLines: [], draftTotals: qaIndividualOrderTotals,
+  submittedRevisionId: "order-revision-qa-one", approvedRevisionId: null, approvedNetPaise: null,
+  approvedGstPaise: null, approvedTotalPaise: null, decisions: [], revisions: [{
+    id: "order-revision-qa-one", revision: 1, submittedAt: "2026-10-01T00:00:00.000Z", submittedById: "buyer-qa",
+    terms: "Deliver and install at the project site after measurements are confirmed.", totals: qaIndividualOrderTotals,
+    lines: [{
+      id: "order-line-qa-one", procurementItemId: "item-qa-individual", procurementItemVersion: 1,
+      quantityMilliUnits: 1000, unitPricePaise: 350000, gstBasisPoints: 1800, scopeType: "supply_and_execution",
+      description: "Supply and install measured living room shelving and joinery",
+      targetDate: "2026-11-20", deliveryLocation: "Synthetic project site",
+      netPaise: 350000, gstPaise: 63000, totalPaise: 413000,
+      itemName: "Living room shelving and joinery", roomName: "Living room", uomCode: "set"
+    }]
+  }],
+  createdAt: "2026-09-30T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z"
+};
 const team = [
   { user: { id: "designer-1", name: "Ananya Rao", email: "ananya@lisno.example" }, activeProjectCount: 2, workload: 24, overdueCount: 1, yellowRiskCount: 2, pendingEvaluation: true, kpi: { score: 84, components: designer.components }, projects: designer.projects.map((p) => ({ ...p, progress: 45 })), tasks: designer.kpiTasks },
   { user: { id: "designer-2", name: "Kabir Shah", email: "kabir@lisno.example" }, activeProjectCount: 1, workload: 12, overdueCount: 0, yellowRiskCount: 1, pendingEvaluation: false, kpi: { score: 79, components: designer.components }, projects: [], tasks: [] }
@@ -40,7 +89,8 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (path === "/admin/dashboard/overview") return empty ? { ...superAdminDashboardOverviewFixture, projects: zeroAggregates(superAdminDashboardOverviewFixture.projects), estimation: zeroAggregates(superAdminDashboardOverviewFixture.estimation), design: zeroAggregates(superAdminDashboardOverviewFixture.design), finance: zeroAggregates(superAdminDashboardOverviewFixture.finance), workforce: zeroAggregates(superAdminDashboardOverviewFixture.workforce), execution: zeroAggregates(superAdminDashboardOverviewFixture.execution), procurement: zeroAggregates(superAdminDashboardOverviewFixture.procurement), governance: zeroAggregates(superAdminDashboardOverviewFixture.governance), risk: zeroAggregates(superAdminDashboardOverviewFixture.risk), trends: [] } : superAdminDashboardOverviewFixture;
   if (path === "/daily-critical-tasks") return { timezone: "Asia/Kolkata", localDate: "2026-10-01", scheduledAt: "2026-10-01T11:30:00.000Z", acknowledgedAt: "2026-10-01T11:35:00.000Z", items: [] };
   if (path === "/chat/availability") return { available: false, reason: "Synthetic QA" };
-  if (path === "/admin/purchase-orders/pending") return { items: [], total: 0, limit: 50, offset: 0 };
+  if (path === "/admin/purchase-order-requests/pending") return { items: empty ? [] : [qaPendingPurchaseRequest], total: empty ? 0 : 1, limit: 50, offset: 0 };
+  if (path === "/admin/purchase-orders/pending") return { items: empty ? [] : [qaPendingIndividualOrder], total: empty ? 0 : 1, limit: 50, offset: 0 };
   if (path === "/admin/project-completion-tasks") return { items: [], total: 0, limit: 100, offset: 0 };
   if (path === "/admin/dashboard/projects") return { ...superAdminDashboardProjectsPageFixture, ...page(superAdminDashboardProjectsPageFixture.items) };
   if (path === "/admin/dashboard/workforce") return { ...superAdminDashboardWorkforcePageFixture, ...page(superAdminDashboardWorkforcePageFixture.items) };

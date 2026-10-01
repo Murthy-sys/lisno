@@ -152,7 +152,11 @@ describe("ClientDashboard", () => {
     renderApp(["/client"]);
 
     expect(await screen.findByRole("heading", { name: "Your design plans" })).toBeVisible();
+    const hero = document.querySelector(".client-dashboard__hero");
+    expect(hero?.querySelector(".client-dashboard__hero-image")).toHaveAttribute("alt", "");
+    expect(hero).not.toHaveTextContent("projects shared");
     const overview = screen.getByRole("region", { name: "Client overview" });
+    expect(overview.querySelectorAll("dl > div")).toHaveLength(3);
     expect(within(overview).getByText("Shared projects")).toBeVisible();
     expect(within(overview).getByText("2", { selector: "dd" })).toBeVisible();
     expect(within(overview).getByText("Average progress")).toBeVisible();

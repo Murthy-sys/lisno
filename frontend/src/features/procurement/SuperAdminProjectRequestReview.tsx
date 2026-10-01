@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 
 import { Button } from "../../components/ui/Button";
 import { Field, Textarea } from "../../components/ui/Field";
@@ -45,6 +45,8 @@ export function SuperAdminProjectRequestReview() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [pendingKey, setPendingKey] = useState<{ signature: string; key: string } | null>(null);
+  const queueHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const reviewOpenerRef = useRef<HTMLButtonElement | null>(null);
   const selected = requests.data?.find((request) => request.id === selectedId) ?? null;
   const revision = selected?.revisions.find((item) => item.id === selected.submittedRevisionId) ?? null;
   const exceedsBudget = Boolean(revision && revision.committedPaise + revision.totals.netPaise > revision.approvedEstimatePaise);
@@ -57,6 +59,8 @@ export function SuperAdminProjectRequestReview() {
         idempotencyKey
       }),
     onSuccess: async (request) => {
+      queueHeadingRef.current?.focus();
+      reviewOpenerRef.current = null;
       setSelectedId(null); setPendingKey(null); setReason(""); setOverrideReason(""); setError("");
       setNotice(`${request.projectName} request ${decision === "approve" ? "approved" : decision === "reject" ? "rejected" : "returned for changes"}.`);
       await Promise.all([
@@ -83,26 +87,38 @@ export function SuperAdminProjectRequestReview() {
     setPendingKey({ signature, key }); setError("");
     act.mutate({ request: selected, idempotencyKey: key });
   }
+  function closeReview() {
+    const opener = reviewOpenerRef.current;
+    if (opener?.isConnected) opener.focus();
+    else queueHeadingRef.current?.focus();
+    reviewOpenerRef.current = null;
+    setSelectedId(null);
+  }
 
   return <section className="purchase-orders__project-queue" aria-labelledby="project-purchase-order-queue-title">
-    <header><div><p className="eyebrow">Project approval queue</p><h2 id="project-purchase-order-queue-title">Project purchase order requests</h2>
+    <header><div><p className="eyebrow">Project approval queue</p><h2 id="project-purchase-order-queue-title" ref={queueHeadingRef} tabIndex={-1}>Project purchase order requests</h2>
       <p>One decision releases every vendor order in this project package.</p></div>
-      {requests.isFetching && !requests.isPending ? <span className="purchase-orders__hint">Refreshing…</span> : null}</header>
+      {requests.isFetching && !requests.isPending ? <span className="purchase-orders__hint" role="status">Refreshing…</span> : null}</header>
     {notice ? <p role="status" className="purchase-orders__notice">{notice}</p> : null}
     {requests.isPending ? <PageState state="loading" message="Loading project purchase order requests…" />
       : requests.isError ? <PageState state="error" message={procurementError(requests.error, "The project request queue could not be loaded.")} action={{ label: "Try again", onAction: () => void requests.refetch() }} />
-      : requests.data?.length ? <ul className="purchase-orders__list" aria-label="Pending project purchase order requests">
-        {requests.data.map((request) => <li key={request.id}><button type="button" className="purchase-orders__row"
+      : requests.data?.length ? <><div className="purchase-orders__queue-headings" aria-hidden="true"><span>Project request</span><span>Scope</span><span>Submitted total</span></div>
+        <ul className="purchase-orders__list" aria-label="Pending project purchase order requests">
+        {requests.data.map((request) => {
+          const submittedRevision = request.revisions.find((item) => item.id === request.submittedRevisionId);
+          return <li key={request.id}><button type="button" className="purchase-orders__row"
           aria-current={selectedId === request.id ? "true" : undefined}
-          onClick={() => { setSelectedId(request.id); setDecision("approve"); setReason(""); setOverrideReason(""); setError(""); }}>
-          <span><strong>{request.projectName}</strong><small>{request.requestNumber ?? "Project request"} · Revision {request.revision} · {request.vendorTotals.length} vendor{request.vendorTotals.length === 1 ? "" : "s"}</small></span>
-          <span>{request.sectionTotals.length} estimate sections</span><span>{formatPaise(request.totals.totalPaise)}</span>
-        </button></li>)}
-      </ul> : <PageState state="empty" message="No project purchase order requests are waiting for approval." />}
+          onClick={(event) => { reviewOpenerRef.current = event.currentTarget; setSelectedId(request.id); setDecision("approve"); setReason(""); setOverrideReason(""); setError(""); }}>
+          <span className="purchase-orders__queue-identity"><strong>{request.projectName}</strong><small>{request.requestNumber ?? "Project request"} · Revision {request.revision}</small></span>
+          <span className="purchase-orders__queue-scope"><small className="purchase-orders__field-label">Scope</small>{submittedRevision ? <>{submittedRevision.sectionTotals.length} estimate section{submittedRevision.sectionTotals.length === 1 ? "" : "s"} · {submittedRevision.vendorTotals.length} vendor{submittedRevision.vendorTotals.length === 1 ? "" : "s"}</> : "Unavailable"}</span>
+          <span className="purchase-orders__queue-amount"><small className="purchase-orders__field-label">Submitted total</small>{submittedRevision ? formatPaise(submittedRevision.totals.totalPaise) : "Unavailable"}</span>
+        </button></li>;
+        })}
+      </ul></> : <PageState state="empty" message="No project purchase order requests are waiting for approval." />}
     {selected ? <form className="purchase-orders__detail purchase-orders__request-review" aria-label={`Review ${selected.projectName} purchase order request`} onSubmit={submit}>
       <div className="purchase-orders__detail-head"><div><p className="eyebrow">Revision {selected.revision} · Submitted {revision ? new Date(revision.submittedAt).toLocaleDateString() : "unavailable"}</p>
         <h3>{selected.projectName}</h3><p>{selected.requestNumber ?? "Project request"}{revision ? ` · Submitted by account ${revision.submittedById}` : " · Submitted revision missing"}</p></div>
-        <Button variant="quiet" onClick={() => setSelectedId(null)}>Close review</Button></div>
+        <Button type="button" variant="quiet" onClick={closeReview}>Close review</Button></div>
       {!revision ? <InlineMessage tone="error">The submitted revision is unavailable. Refresh the queue before deciding.</InlineMessage> : <>
         <dl className="purchase-orders__totals" aria-label="Submitted project request total">
           <div><dt>Before GST</dt><dd>{formatPaise(revision.totals.netPaise)}</dd></div>
@@ -119,14 +135,14 @@ export function SuperAdminProjectRequestReview() {
         <div className="purchase-orders__request-breakdown">
           <h4>Section review</h4>
           {revision.sectionTotals.map((section) => <details key={section.sectionId} className="purchase-orders__section">
-            <summary><strong>{section.label}</strong><span>{formatPaise(section.totals.netPaise)} before GST · {formatPaise(section.totals.gstPaise)} GST · {formatPaise(section.totals.totalPaise)} total</span></summary>
+            <summary><strong>{section.label}</strong><span className="purchase-orders__section-amounts"><small>Before GST {formatPaise(section.totals.netPaise)}</small><small>GST {formatPaise(section.totals.gstPaise)}</small><small>Total {formatPaise(section.totals.totalPaise)}</small></span></summary>
             {revision.lines.some((line) => line.sourceSectionId === section.sectionId)
               ? <ul>{revision.lines.filter((line) => line.sourceSectionId === section.sectionId).map((line) => <ReviewLine key={line.id} line={line} />)}</ul>
               : <p className="purchase-orders__hint">No ordered items in this estimate section.</p>}
           </details>)}
           <h4>Vendor orders</h4>
           {revision.vendorTotals.map((vendor) => <details key={vendor.vendorId} className="purchase-orders__section">
-            <summary><strong>{vendor.name}</strong><span>{formatPaise(vendor.totals.netPaise)} before GST · {formatPaise(vendor.totals.gstPaise)} GST · {formatPaise(vendor.totals.totalPaise)} total</span></summary>
+            <summary><strong>{vendor.name}</strong><span className="purchase-orders__section-amounts"><small>Before GST {formatPaise(vendor.totals.netPaise)}</small><small>GST {formatPaise(vendor.totals.gstPaise)}</small><small>Total {formatPaise(vendor.totals.totalPaise)}</small></span></summary>
             <p className="purchase-orders__terms"><strong>Terms:</strong> {vendor.terms}</p>
             <ul>{revision.lines.filter((line) => line.vendorId === vendor.vendorId).map((line) => <ReviewLine key={line.id} line={line} />)}</ul>
           </details>)}

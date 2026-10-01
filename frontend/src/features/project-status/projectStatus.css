@@ -2,8 +2,6 @@
 .workflow-task-project-actions { display: grid; gap: .75rem; }
 .workflow-task-project-actions__row { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; }
 .workflow-task-project-actions__row strong { margin-right: auto; }
-.project-messaging-row-actions { display: flex; justify-content: flex-end; padding: 0 15px 12px 73px; }
-.project-messaging-row-actions .project-status-button { min-height: 40px; }
 .project-status-drawer { background: var(--color-surface, #fbfaf7); box-shadow: none; border-radius: 0; }
 .project-status-drawer .ui-drawer__header { background: #f4f4ee; }
 .project-status-drawer .ui-drawer__header::before, .project-status-drawer .ui-drawer__header::after { display: none; }

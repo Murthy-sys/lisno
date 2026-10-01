@@ -77,15 +77,33 @@ describe("shared project messages", () => {
     expect(await screen.findByText("Review the estimate")).toBeVisible();
     expect(screen.queryByRole("textbox", { name: "Message the project team" })).not.toBeInTheDocument();
   });
-  it("offers one independently verified status control in each conversation row", async () => {
+  it("keeps conversation rows compact and navigable without row status controls", async () => {
     vi.mocked(projectStatusApi.getProjectStatus).mockImplementation(async projectId => statusFixture(projectId));
+    vi.mocked(projectChatApi.conversations).mockResolvedValue({
+      items: [
+        { ...chatTestSummary({ project: { id: "project-a", name: "Courtyard residence", status: "completed" }, participantCount: 6 }), lastMessageAt: null },
+        { ...chatTestSummary({ project: { id: "project-b", name: "Garden residence", status: "completed" }, participantCount: 6 }), lastMessageAt: null }
+      ],
+      pagination: { limit: 30, offset: 0, total: 2, hasMore: false }
+    });
     app("/project-messages");
-    const trigger = await screen.findByRole("button", { name: "Project status for Courtyard residence" });
-    expect(projectStatusApi.getProjectStatus).not.toHaveBeenCalled();
-    await userEvent.click(trigger);
-    expect(await screen.findByText("Review the estimate")).toBeVisible();
-    expect(projectStatusApi.getProjectStatus).toHaveBeenCalledTimes(1);
+    await screen.findAllByText("6 participants · completed");
+    const list = screen.getByRole("list", { name: "Messages" });
+    const rows = within(list).getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    for (const [index, projectId] of ["project-a", "project-b"].entries()) {
+      const link = within(rows[index]).getByRole("link");
+      expect(link).toHaveAttribute("href", `/projects/${projectId}/messages`);
+      expect(within(rows[index]).getByText("6 participants · completed")).toBeVisible();
+      expect(within(rows[index]).queryByRole("button", { name: /Project status/i })).not.toBeInTheDocument();
+      expect(rows[index].children).toHaveLength(1);
+    }
+    expect(within(rows[0]).getByText("Critical 3")).toBeVisible();
+    expect(within(rows[0]).getByLabelText("2 unread messages")).toBeVisible();
     expect(mocks.streams).toHaveLength(0);
+    await userEvent.click(within(rows[0]).getByRole("link"));
+    expect(await screen.findByRole("textbox", { name: "Message the project team" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Project status" })).toBeVisible();
   });
   it("shows only other users typing without refetching messages and clears when disconnected", async () => {
     app(); await screen.findByText("Critical 3");

@@ -10,7 +10,6 @@ import { IconButton } from "../../components/ui/IconButton";
 import { chatErrorMessage, chatKeys, isChatDenied, projectChatApi } from "./projectChatApi";
 import { useProjectChat } from "./ProjectChatProvider";
 import { projectMessagesPath } from "./ProjectChatHeader";
-import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 
 // Keep this breakpoint aligned with projectChatShell.css. The sidebar stays
 // mounted on mobile to retain its scroll position and current page.
@@ -96,7 +95,7 @@ export function ProjectConversationList({ selectedProjectId }: { selectedProject
               </span></span>
               {counts.openCritical > 0 ? <span className="project-messaging-critical">Critical {counts.openCritical}</span> : null}
             </span>
-          </Link>{selectedProjectId !== project.id ? <div className="project-messaging-row-actions"><ProjectStatusButton projectId={project.id} projectName={project.name} participant={chat.enabled && !list.isError ? true : undefined} /></div> : null}</li>;
+          </Link></li>;
         })}
       </ul>
     </div>

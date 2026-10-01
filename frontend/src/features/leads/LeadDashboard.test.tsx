@@ -118,8 +118,37 @@ const savedEstimates = [
   }
 ];
 
+const stageFilters = [
+  ["new_lead", "New lead"],
+  ["contacted", "Contacted"],
+  ["site_visit", "Site visit"],
+  ["design_meeting", "Design meeting"],
+  ["estimate_in_progress", "Estimate in progress"],
+  ["estimate_sent", "Estimate sent"],
+  ["negotiation", "Negotiation"],
+  ["won", "Won"],
+  ["lost", "Lost"]
+] as const;
+
+function mockDashboardReads(getLeads: (url: URL) => Lead[]) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/v1/auth/me") return Response.json({ data: salesUser });
+    if (path === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(salesUser.role) });
+    if (path.startsWith("/api/v1/leads?")) {
+      const items = getLeads(new URL(path, "http://localhost"));
+      return Response.json({ data: {
+        items,
+        pagination: { limit: 20, offset: 0, total: items.length, hasMore: false }
+      } });
+    }
+    if (path === "/api/v1/estimates") return Response.json({ data: savedEstimates });
+    throw new Error(`Unhandled request: ${path}`);
+  });
+}
+
 describe("LeadDashboard", () => {
-  it("shows the estimator pipeline overview, responsive lead fields, and creation dialog", async () => {
+  it("shows truthful metrics, lead details, next actions, and the existing estimate routes", async () => {
     tokenStorage.set("sales-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
@@ -129,7 +158,7 @@ describe("LeadDashboard", () => {
         return Response.json({
           data: {
             items: leads,
-            pagination: { limit: 20, offset: 0, total: 2, hasMore: false }
+            pagination: { limit: 20, offset: 0, total: 42, hasMore: true }
           }
         });
       }
@@ -142,11 +171,20 @@ describe("LeadDashboard", () => {
     const overview = screen.getByRole("region", { name: "Pipeline overview" });
     expect(within(overview).getByText("Visible leads")).toBeVisible();
     expect(within(within(overview).getByText("Visible leads").parentElement!).getByText("2", { selector: "dd" })).toBeVisible();
+    expect(screen.getByText("2 shown of 42")).toBeVisible();
     expect(within(overview).getByText("Saved estimates")).toBeVisible();
     expect(within(overview).getByText("Draft estimates")).toBeVisible();
     expect(within(overview).getByText("1", { selector: "dd" })).toBeVisible();
     expect(within(overview).getByText("Saved value")).toBeVisible();
     expect(within(overview).getByText("₹3,54,000", { selector: "dd" })).toBeVisible();
+    for (const helper of [
+      "Shown on this page",
+      "Includes draft estimates",
+      "Of your saved estimates",
+      "Sum of saved estimates, including drafts"
+    ]) {
+      expect(within(overview).getByText(helper)).toBeVisible();
+    }
     expect(screen.getByRole("heading", { name: "Leads", level: 2 })).toBeVisible();
     // Saved estimates live in the lead list only: the duplicate card grid is gone.
     expect(
@@ -156,11 +194,153 @@ describe("LeadDashboard", () => {
       screen.getAllByRole("button", { name: "Export as PDF" })
     ).toHaveLength(1);
     expect(within(screen.getByRole("article", { name: "Aurora Villa" })).queryByRole("button", { name: "Export as PDF" })).not.toBeInTheDocument();
-    expect(screen.getByText("Estimate", { selector: ".lead-list__header span" })).toBeVisible();
-    expect(screen.queryByText("Contact architect")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Created on")[0]).toBeVisible();
+    expect(screen.getAllByText("Next action")[0]).toBeVisible();
+    const draftRow = screen.getByRole("article", { name: "Aurora Villa" });
+    expect(within(draftRow).getByText("Contact architect")).toBeVisible();
+    expect(within(draftRow).getByText("01 Jul 2026")).toBeVisible();
+    expect(within(draftRow).getByText("05 Aug 2026")).toBeVisible();
+    expect(within(draftRow).getByRole("link", { name: "Continue estimate" })).toHaveAttribute(
+      "href", "/estimator-sales/leads/lead-draft/estimate"
+    );
+    expect(within(screen.getByRole("article", { name: "Cedar Loft" })).getByRole("link", { name: "View details" })).toHaveAttribute(
+      "href", "/estimator-sales/leads/lead-sent/estimate"
+    );
     expect(screen.getByRole("button", { name: "Initiate project" })).toBeVisible();
-    // Initiation replaces standalone lead creation.
-    expect(screen.queryByRole("button", { name: "New lead" })).not.toBeInTheDocument();
+  });
+
+  it("requests each exact lead stage and marks the selected filter", async () => {
+    tokenStorage.set("sales-token");
+    const requests: URL[] = [];
+    mockDashboardReads((url) => {
+      requests.push(url);
+      return [];
+    });
+    const user = userEvent.setup();
+    renderApp(["/estimator-sales"]);
+
+    expect(await screen.findByRole("heading", { name: "No leads yet" })).toBeVisible();
+    const filters = screen.getByRole("group", { name: "Lead stage" });
+    expect(within(filters).getByRole("button", { name: "All stages" })).toHaveAttribute("aria-pressed", "true");
+    expect(requests[0]?.searchParams.get("stage")).toBeNull();
+
+    for (const [value, label] of stageFilters) {
+      const button = within(filters).getByRole("button", { name: label });
+      await user.click(button);
+      await waitFor(() => expect(requests.at(-1)?.searchParams.get("stage")).toBe(value));
+      expect(button).toHaveAttribute("aria-pressed", "true");
+      expect(requests.at(-1)?.searchParams.get("limit")).toBe("20");
+      expect(requests.at(-1)?.searchParams.get("offset")).toBe("0");
+      expect([...requests.at(-1)!.searchParams.keys()].sort()).toEqual(["limit", "offset", "stage"]);
+    }
+
+    await user.click(within(filters).getByRole("button", { name: "All stages" }));
+    expect(within(filters).getByRole("button", { name: "All stages" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("sends supported search terms and keeps search independent of the stage filter", async () => {
+    tokenStorage.set("sales-token");
+    const requests: URL[] = [];
+    mockDashboardReads((url) => {
+      requests.push(url);
+      const search = url.searchParams.get("search")?.toLowerCase() ?? "";
+      return leads.filter((lead) => [
+        lead.clientName, lead.clientEmail, lead.clientMobile, lead.projectName
+      ].some((field) => field.toLowerCase().includes(search)));
+    });
+    const user = userEvent.setup();
+    renderApp(["/estimator-sales"]);
+
+    const search = await screen.findByRole("searchbox", { name: "Search leads" });
+    expect(search).toHaveAttribute("placeholder", "Search client name, email, mobile or project");
+    for (const term of ["Aurora Homes", "aurora@example.com", "9000000001", "Aurora Villa"]) {
+      await user.clear(search);
+      await user.type(search, term);
+      await waitFor(() => expect(requests.some((url) => url.searchParams.get("search") === term)).toBe(true));
+      expect(await screen.findByRole("article", { name: "Aurora Villa" })).toBeVisible();
+    }
+
+    await user.click(within(screen.getByRole("group", { name: "Lead stage" })).getByRole("button", { name: "Contacted" }));
+    await waitFor(() => expect(requests.some((url) =>
+      url.searchParams.get("search") === "Aurora Villa" && url.searchParams.get("stage") === "contacted"
+    )).toBe(true));
+    expect(search).toHaveValue("Aurora Villa");
+  });
+
+  it("hides the previous page during a filter refresh and distinguishes no matches", async () => {
+    tokenStorage.set("sales-token");
+    let resolveFiltered!: (response: Response) => void;
+    const filteredPage = new Promise<Response>((resolve) => { resolveFiltered = resolve; });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/v1/auth/me") return Response.json({ data: salesUser });
+      if (path === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(salesUser.role) });
+      if (path.startsWith("/api/v1/leads?")) {
+        if (new URL(path, "http://localhost").searchParams.get("stage") === "lost") return filteredPage;
+        return Response.json({ data: { items: leads, pagination: { limit: 20, offset: 0, total: 2, hasMore: false } } });
+      }
+      if (path === "/api/v1/estimates") return Response.json({ data: savedEstimates });
+      throw new Error(`Unhandled request: ${path}`);
+    });
+    const user = userEvent.setup();
+    renderApp(["/estimator-sales"]);
+
+    expect(await screen.findByRole("article", { name: "Aurora Villa" })).toBeVisible();
+    await user.click(within(screen.getByRole("group", { name: "Lead stage" })).getByRole("button", { name: "Lost" }));
+    expect(await screen.findByText("Updating leads…")).toBeVisible();
+    expect(screen.queryByRole("article", { name: "Aurora Villa" })).not.toBeInTheDocument();
+    resolveFiltered(Response.json({ data: { items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false } } }));
+    expect(await screen.findByRole("heading", { name: "No matching leads" })).toBeVisible();
+    expect(screen.getByText("Try a different search or stage.")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "No leads yet" })).not.toBeInTheDocument();
+  });
+
+  it("uses explicit fallbacks for invalid or missing action dates", async () => {
+    tokenStorage.set("sales-token");
+    mockDashboardReads(() => [
+      { ...leads[0]!, createdAt: "invalid-date", nextAction: "Email client", nextActionAt: "invalid-date" },
+      { ...leads[1]!, nextAction: "", nextActionAt: "" }
+    ]);
+    renderApp(["/estimator-sales"]);
+
+    const invalid = await screen.findByRole("article", { name: "Aurora Villa" });
+    expect(within(invalid).getByText("Email client")).toBeVisible();
+    expect(within(invalid).getByText("Date unavailable")).toBeVisible();
+    expect(within(invalid).getByText("Date not set")).toBeVisible();
+    expect(within(invalid).queryByText(/Overdue|Due today|Upcoming|Invalid Date/)).not.toBeInTheDocument();
+    const missing = screen.getByRole("article", { name: "Cedar Loft" });
+    expect(within(missing).getByText("No next action set")).toBeVisible();
+    expect(within(missing).getByText("Date not set")).toBeVisible();
+  });
+
+  it("keeps the lead list loading and retry states usable", async () => {
+    tokenStorage.set("sales-token");
+    let resolveInitial!: (response: Response) => void;
+    const initialPage = new Promise<Response>((resolve) => { resolveInitial = resolve; });
+    let attempts = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/v1/auth/me") return Response.json({ data: salesUser });
+      if (path === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(salesUser.role) });
+      if (path.startsWith("/api/v1/leads?")) {
+        attempts += 1;
+        return attempts === 1 ? initialPage : Response.json({ data: {
+          items: leads,
+          pagination: { limit: 20, offset: 0, total: 2, hasMore: false }
+        } });
+      }
+      if (path === "/api/v1/estimates") return Response.json({ data: savedEstimates });
+      throw new Error(`Unhandled request: ${path}`);
+    });
+    const user = userEvent.setup();
+    renderApp(["/estimator-sales"]);
+
+    expect(await screen.findByText("Loading your leads…")).toBeVisible();
+    resolveInitial(Response.json({ error: { code: "LEADS_FAILED", message: "Unavailable" } }, { status: 500 }));
+    expect(await screen.findByText("We couldn't load your leads.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("article", { name: "Aurora Villa" })).toBeVisible();
+    expect(attempts).toBe(2);
   });
 
   it("keeps leads usable when saved estimates fail", async () => {
@@ -308,7 +488,7 @@ describe("LeadDashboard", () => {
     });
     const user = userEvent.setup();
     const { router, queryClient } = renderApp(["/estimator-sales"]);
-    await user.type(await screen.findByRole("textbox", { name: "Search leads" }), "Homes");
+    await user.type(await screen.findByRole("searchbox", { name: "Search leads" }), "Homes");
     const firstTrigger = await screen.findByRole("button", { name: "Review Aurora Villa" });
     await user.click(firstTrigger);
     expect(screen.getByRole("dialog", { name: "Lead review" })).toHaveTextContent("Loading lead details");
@@ -324,7 +504,7 @@ describe("LeadDashboard", () => {
     expect(requests).toContain("/api/v1/leads/lead-draft");
     expect(requests).toContain("/api/v1/leads/lead-sent");
     await user.keyboard("{Escape}");
-    expect(screen.getByRole("textbox", { name: "Search leads" })).toHaveValue("Homes");
+    expect(screen.getByRole("searchbox", { name: "Search leads" })).toHaveValue("Homes");
     expect(router.state.location.pathname).toBe("/estimator-sales");
   });
 
@@ -346,6 +526,7 @@ describe("LeadDashboard", () => {
     renderApp(["/estimator-sales"]);
     expect(await screen.findByRole("heading", { name: "Aurora Villa" })).toBeVisible();
     expect(screen.queryByRole("button", { name: /Review Aurora/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Open lead" })[0]).toHaveAttribute("href", "/estimator-sales/leads/lead-draft");
     expect(requests.some((url) => url.startsWith("/api/v1/leads/"))).toBe(false);
   });
 

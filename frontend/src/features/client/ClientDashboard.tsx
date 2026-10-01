@@ -12,6 +12,7 @@ import { getClientLatestApprovedVersions, getClientProjectSummaries, clientKeys 
 import { EstimateReviewPanel } from "../estimates/EstimateReviewPanel";
 import { ClientWorkflowTaskSummary } from "./ClientWorkflowTaskSummary";
 import { ClientProjectQuickView } from "./ClientProjectQuickView";
+import livingRoomImage from "../../assets/projects-living-room.webp";
 
 export function ClientDashboard() {
   const [searchParams] = useSearchParams();
@@ -43,15 +44,12 @@ export function ClientDashboard() {
 
   return <section className="client-page client-dashboard" aria-labelledby="client-dashboard-title">
     <header className="workspace-header client-dashboard__hero">
-      <div>
+      <img className="client-dashboard__hero-image" src={livingRoomImage} alt="" aria-hidden="true" />
+      <div className="client-dashboard__hero-copy">
         <p className="eyebrow">Client portal</p>
         <h1 id="client-dashboard-title">Your design plans</h1>
         <p>Follow your projects and view plans once they are approved for sharing.</p>
       </div>
-      <span className="client-dashboard__hero-count">
-        <strong>{projects.length}</strong>
-        <span>{projects.length === 1 ? "project shared" : "projects shared"}</span>
-      </span>
     </header>
     {projectsQuery.isError ? <AsyncState state="error" message="Your project list could not be refreshed. Previously loaded projects are shown." actionLabel="Refresh projects" onAction={() => void projectsQuery.refetch()} /> : null}
     <section className="client-dashboard__overview" aria-label="Client overview">
@@ -90,13 +88,13 @@ function ClientProjectCard({ project, latest, loading, failed, onRetry, onQuickV
 
   return <article className="client-project-card">
     <div className="client-project-card__header">
-      <span className="client-project-card__identity">
+      <div className="client-project-card__identity">
         <span className="eyebrow">{project.location}</span>
         <h2 id={headingId}>{project.name}</h2>
         <span className={`client-project-card__status client-project-card__status--${project.status}`}>
           {project.status.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase())}
         </span>
-      </span>
+      </div>
       <button type="button" className="client-project-card__toggle" aria-labelledby={headingId} aria-expanded={expanded} aria-controls={detailsId} onClick={() => setExpanded((current) => !current)}>
         <span className="client-project-card__summary">
           <strong>{project.progress}% complete</strong>
