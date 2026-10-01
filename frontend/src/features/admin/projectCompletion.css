@@ -1,0 +1,34 @@
+.project-completion-page { padding: clamp(1rem, 2vw, 1.5rem); color: #222b26; }
+.project-completion-page__notice, .project-completion-page__ready { padding: .7rem 1rem; background: #e7efe7; color: #205638; }
+.project-completion-page__layout { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 1.25rem; margin-top: 1.25rem; align-items: start; }
+.project-completion-page__layout nav { display: grid; gap: 1px; border: 1px solid #d0d7d1; background: #d0d7d1; }
+.project-completion-page__layout nav button { border: 0; padding: 1rem; background: #f8f9f6; text-align: left; font: inherit; cursor: pointer; display: grid; gap: .3rem; color: #24362b; }
+.project-completion-page__layout nav button.is-selected { background: #e8efe7; outline: 2px solid #4f7155; outline-offset: -2px; }
+.project-completion-page__layout nav button span { font-size: .8rem; color: #637166; text-transform: capitalize; }
+.project-completion-page__detail { min-width: 0; padding: clamp(1rem, 2vw, 1.5rem); border: 1px solid #d0d7d1; background: #fbfcfa; }
+.project-completion-page__detail-head, .project-completion-page__footer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.project-completion-page__detail-head p { margin: 0; color: #657369; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; font-weight: 700; }
+.project-completion-page__detail h2 { margin: .2rem 0; font-size: 1.45rem; }
+.project-completion-page__detail h3 { margin: 1.25rem 0 .75rem; font-size: 1rem; }
+.project-completion-page__counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: #d0d7d1; border: 1px solid #d0d7d1; margin: 1rem 0; }
+.project-completion-page__counts div { background: #fff; padding: .8rem; }
+.project-completion-page__counts dt { color: #667369; font-size: .75rem; }
+.project-completion-page__counts dd { margin: .2rem 0 0; font-size: 1.15rem; font-weight: 700; }
+.project-completion-page__scope { border: 1px solid #d0d7d1; }
+.project-completion-page__scope article { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .8rem; background: #fff; border-bottom: 1px solid #d0d7d1; }
+.project-completion-page__scope article:last-child { border-bottom: 0; }
+.project-completion-page__scope article div { display: grid; gap: .2rem; min-width: 0; }
+.project-completion-page__scope article span { font-size: .8rem; color: #667369; overflow-wrap: anywhere; }
+.project-completion-page button, .project-completion-page__detail a { border: 1px solid #617566; padding: .48rem .72rem; font: inherit; font-size: .85rem; font-weight: 700; color: #2f4f37; background: transparent; cursor: pointer; text-decoration: none; }
+.project-completion-page button:disabled { opacity: .5; cursor: not-allowed; }
+.project-completion-page button:focus-visible, .project-completion-page select:focus-visible, .project-completion-page textarea:focus-visible { outline: 2px solid #1f5b3b; outline-offset: 2px; }
+.project-completion-page__exception { display: grid; gap: .5rem; padding: 1rem; margin-top: 1rem; border: 1px solid #9baa9b; background: #f1f5f0; }
+.project-completion-page__exception h3 { margin: 0; }
+.project-completion-page__exception label { font-weight: 700; font-size: .85rem; }
+.project-completion-page__exception select, .project-completion-page__exception textarea { border: 1px solid #9baa9b; padding: .6rem; background: #fff; font: inherit; }
+.project-completion-page__exception > div { display: flex; justify-content: flex-end; gap: .5rem; }
+.project-completion-page__footer { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #d0d7d1; }
+.project-completion-page__footer p { color: #637166; font-size: .85rem; }
+.project-completion-page__footer button { background: #2e4834; color: #fff; white-space: nowrap; }
+@media (max-width: 800px) { .project-completion-page__layout { grid-template-columns: 1fr; } .project-completion-page__layout nav { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); } }
+@media (max-width: 580px) { .project-completion-page__counts { grid-template-columns: 1fr; } .project-completion-page__scope article, .project-completion-page__footer, .project-completion-page__detail-head { align-items: flex-start; flex-direction: column; } }

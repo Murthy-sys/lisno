@@ -36,7 +36,7 @@ async function setup() {
   state.version = 1;
   await UserModel.create(seed.users.map(user => ({ ...user, _id: user.id })));
   await ProjectModel.create({ ...project, _id: project.id, clientMobile: "9000000000", clientAddress: "Test address" });
-  await EstimateModel.create({ _id: source.estimateId, leadId: estimate.leadId, projectId: project.id, ownerId: users.estimator_sales!.id, version: 4, status: "client_approved", propertyType: "villa", rooms: [], lineItems: [], subtotal: 1000, gst: 0, total: 1000, designPlanStatus: "approved", designPlanVersion: 2, designPlanApprovedAt: now, designPlanApprovedById: users.client!.id, designPlanApprovalSource: "client_portal", designFrozenAt: now, designLifecycleVersion: 7 });
+  await EstimateModel.create({ _id: source.estimateId, leadId: estimate.leadId, projectId: project.id, ownerId: users.estimator_sales!.id, version: 4, status: "client_approved", propertyType: "villa", rooms: [], lineItems: [], subtotal: 1000, gst: 0, total: 1000, clientDecisionAt: now, designPlanStatus: "approved", designPlanVersion: 2, designPlanApprovedAt: now, designPlanApprovedById: users.client!.id, designPlanApprovalSource: "client_portal", designFrozenAt: now, designLifecycleVersion: 7 });
   await DesignWorkflowStateModel.create({ _id: project.id, ...state });
   await DesignPlanReviewRoundModel.create({ ...source.rounds[0], _id: "space-round", leadId: estimate.leadId, recipientEmail: users.client!.email, clientName: "Client", projectName: "Synthetic project", submittedById: users.designer!.id, submittedAt: now, assignedAdminId: users.admin!.id, attachments: [{ uploadId: "upload", filename: "plan.png", mimeType: "image/png", byteSize: 10, sha256: "a".repeat(64), storageReference: "opaque-synthetic" }] });
   for (const drawing of source.drawings) {
@@ -50,6 +50,37 @@ async function setup() {
 }
 
 describe("transactional Client space-planning completion", () => {
+  it("reads retained commercial-stage drawings and new draft images without treating version zero as a source conflict", async () => {
+    const { repository, project } = await setup();
+    await EstimateModel.updateOne({ _id: "space-estimate" }, { $set: {
+      designPlanStatus: "assigned", designPlanVersion: 0,
+      designPlanApprovedAt: null, designPlanApprovedById: null, designPlanApprovalSource: null, designFrozenAt: null
+    } });
+    await DesignPlanReviewRoundModel.deleteMany({ estimateId: "space-estimate" });
+    expect(await repository.findDesignWorkflowSpacePlanningSource(project.id)).toMatchObject({
+      designPlanVersion: 0, totalImages: 2, approvedImages: 0, entryBlockingReasons: [], readyForCompletion: false
+    });
+    await EstimateDesignRevisionModel.updateOne({ _id: "revision-a" }, { $set: { reviewedAt: new Date(Date.parse(SPACE_NOW) + 1_000) } });
+    expect(await repository.findDesignWorkflowSpacePlanningSource(project.id)).toMatchObject({
+      readyForCompletion: false, entryBlockingReasons: [expect.stringMatching(/inconsistent/)]
+    });
+    await EstimateModel.updateOne({ _id: "space-estimate" }, { $set: { designPlanStatus: "in_progress" } });
+    await EstimateDesignRevisionModel.updateMany({}, { $set: { reviewStatus: "draft", reviewerId: null, reviewedAt: null } });
+    expect(await repository.findDesignWorkflowSpacePlanningSource(project.id)).toMatchObject({
+      designPlanVersion: 0, totalImages: 2, entryBlockingReasons: [], readyForCompletion: false
+    });
+    await EstimateDesignDrawingModel.deleteMany({ estimateId: "space-estimate" });
+    await EstimateDesignRevisionModel.deleteMany({});
+    await EstimateModel.updateOne({ _id: "space-estimate" }, { $set: { designPlanStatus: "assigned" } });
+    expect(await repository.findDesignWorkflowSpacePlanningSource(project.id)).toMatchObject({
+      designPlanVersion: 0, totalImages: 0, entryBlockingReasons: [], readyForCompletion: false,
+      blockingReasons: [expect.stringMatching(/Submit the current Design plan for Client review/)]
+    });
+    await EstimateModel.updateOne({ _id: "space-estimate" }, { $set: { designPlanApprovedAt: new Date(SPACE_NOW) } });
+    expect(await repository.findDesignWorkflowSpacePlanningSource(project.id)).toMatchObject({
+      readyForCompletion: false, entryBlockingReasons: [expect.stringMatching(/inconsistent/)]
+    });
+  });
   it("serializes concurrent keys and same-key replays with exactly one audit and no Design side effects", async () => {
     const { act, input, project } = await setup();
     const results = await Promise.allSettled([act(), act({ ...input, idempotencyKey: "different-confirm-key" })]);

@@ -6,6 +6,7 @@ import type {
   AnnotationDocumentV1,
   EstimateDesignClientRevision
 } from "../../api/types";
+import { withPublishedReview } from "./clientEstimateReviewTestUtils";
 import { tokenStorage } from "../../api/client";
 import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
@@ -327,6 +328,21 @@ describe("client estimate drawings", () => {
       revisions: [{ ...draftRevision, annotationDraft: null }, { ...replacementRevision, changeSummary: "Use revised cabinet width" }]
     }, planWorkspace)).toEqual([
       { id: "drawing:revision-living-2", summary: "Use revised cabinet width", status: "submitted", source: "drawing" }
+    ]);
+  });
+
+  it.each([
+    [{ width: 80, height: 160 }, { x: 0.155, y: 0.2 }],
+    [{ width: 320, height: 100 }, { x: 0.21, y: 0.16875 }]
+  ])("projects a fitted replacement's edge onto its visible content for %j", (source, expected) => {
+    const original = { ...revisions[0]!, crop: { x: 50, y: 60, width: 160, height: 100 } };
+    const replacement = { ...original, id: "fitted-revision", revisionNumber: 2, sourcePageId: "replacement-page", replacesRevisionId: original.id,
+      crop: { x: 0, y: 0, ...source }, annotations: { schemaVersion: 1 as const, imageWidth: source.width, imageHeight: source.height,
+        elements: [{ id: "edge", type: "text" as const, x: 1, y: 1, text: "Edge", color: "#ff0000", strokeWidth: 2 }] } };
+    const planPage = { ...page, currentRevisionId: "manifest-1", status: "awaiting_review" as const, thumbnailUrl: "/thumb", currentImageUrl: "/current", annotationDraft: null };
+    const drawingWorkspace = { ...workspace([original, replacement]), drawings: [drawings[0]!] };
+    expect(projectDrawingAnnotationsToPage(planPage, drawingWorkspace, { uploads: [], pages: [planPage], openRequests: [] })).toEqual([
+      expect.objectContaining({ id: "drawing:fitted-revision:edge", ...expected })
     ]);
   });
 
@@ -839,14 +855,14 @@ describe("client estimate drawings", () => {
     resolveApproval?.(json(revisions[0]));
   });
 
-  it("keeps commercial approval independent from drawing readiness after a concurrent conflict", async () => {
+  it("refreshes a conflicting commercial decision without mutating drawing approvals", async () => {
     let workspaceReads = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       const common = commonResponse(url);
       if (common) return common;
       if (url.endsWith("/api/v1/client/estimates")) {
-        return json([estimate("estimate-a", "Aurora Villa")]);
+        return json([withPublishedReview(estimate("estimate-a", "Aurora Villa"))]);
       }
       if (url.endsWith("/api/v1/client/estimates/estimate-a/design-drawings")) {
         workspaceReads += 1;
@@ -895,14 +911,15 @@ describe("client estimate drawings", () => {
     expect(within(card).getByText("3 of 3 drawings approved.")).toBeVisible();
 
     await user.click(approve);
+    await user.click(screen.getByRole("button", { name: "Confirm approval" }));
 
     expect(await within(card).findByRole("alert")).toHaveTextContent(
       "Every submitted drawing must be approved before approving the estimate."
     );
-    await waitFor(() => expect(workspaceReads).toBe(2));
-    expect(approve).toBeEnabled();
-    expect(within(card).getByText(
-      "1 drawing unresolved: 1 awaiting review."
-    )).toBeVisible();
+    expect(within(card).queryByRole("button", { name: "Approve estimate" })).not.toBeInTheDocument();
+    await user.click(within(card).getByRole("button", { name: "Refresh estimate" }));
+    expect(await within(card).findByRole("button", { name: "Approve estimate" })).toBeEnabled();
+    expect(workspaceReads).toBe(1);
+    expect(within(card).getByText("3 of 3 drawings approved.")).toBeVisible();
   });
 });

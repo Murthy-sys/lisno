@@ -97,6 +97,16 @@ describe("Furniture configured UOM field", () => {
     expect(onRetry).toHaveBeenCalledOnce();
   });
 
+  it("links a missing configured UOM validation error to the select", () => {
+    setup({ validationError: "Select an active configured UOM for this item." });
+    const select = screen.getByRole("combobox", { name: "UOM" });
+    expect(select).toHaveAttribute("aria-invalid", "true");
+    expect(select).toHaveAccessibleDescription("Select an active configured UOM for this item.");
+    expect(screen.getByText("Select an active configured UOM for this item.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Retry UOMs" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add UOM" })).toBeEnabled();
+  });
+
   it("offers adding the first configured unit when the active catalog is empty", () => {
     setup({ options: [] });
     expect(screen.getByText("No active UOMs. Add a unit to continue.")).toBeVisible();

@@ -156,6 +156,58 @@ function installFinanceSession() {
   );
 }
 
+function installSuperAdminFinanceSession() {
+  tokenStorage.set("super-admin-finance-token");
+  server.use(
+    http.get("/api/v1/auth/me", () =>
+      HttpResponse.json({
+        data: {
+          id: "super-admin-one",
+          name: "Super Admin",
+          email: "super.admin@lisno.example",
+          role: "super_admin"
+        }
+      })
+    ),
+    http.get("/api/v1/auth/authorization", () =>
+      HttpResponse.json({
+        data: {
+          role: "super_admin",
+          policyVersion: AUTHORIZATION_POLICY_VERSION,
+          permissions: [
+            "identity.self.read",
+            "identity.authorization.read",
+            "finance.bucket.read",
+            "finance.entry.read",
+            "finance.entry.create",
+            "procurement.project_completion.decide"
+          ]
+        }
+      })
+    )
+  );
+}
+
+function completionSummary(ready: boolean, version = 7) {
+  return {
+    projectId: "project-one",
+    projectName: "Aurora Villa",
+    projectStatus: "active",
+    completionAuthority: "vendor_client",
+    completionAuthorityVersion: version,
+    estimateSource: { estimateId: "estimate-one", estimateVersion: 4, estimateReviewRoundId: "estimate-round-one" },
+    scope: [],
+    approvedOrders: [],
+    vendorWork: { totalAssignments: 1, approvedAssignments: 1, pendingAssignments: 0, openReviews: 0 },
+    siteCompletion: { status: "client_approved", progress: 100, round: 1, reviewId: "review-one" },
+    blockers: ready ? [] : [{ code: "SCOPE_UNCOVERED", message: "Living room · Wardrobe has no approved purchase order or scope decision." }],
+    pendingOwner: ready ? "super_admin" : "procurement",
+    readyForCompletion: ready,
+    completedAt: null,
+    completionDecisionId: null
+  };
+}
+
 function escapeForRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -918,5 +970,196 @@ describe("ProjectFinancePanel", () => {
     await user.click(screen.getByRole("button", { name: "Record project cost" }));
     expect(screen.getByLabelText(requiredLabel("Category"))).toHaveValue("");
     expect(screen.getByLabelText(requiredLabel("Amount (INR)"))).toHaveValue(null);
+  });
+});
+
+describe("Super Admin project closure from finance", () => {
+  it("confirms Close without cost fields, posts the current authority version, and refreshes the completed project", async () => {
+    installSuperAdminFinanceSession();
+    let completed = false;
+    let bucketRequests = 0;
+    let summaryRequests = 0;
+    const closureRequests: Array<Record<string, unknown>> = [];
+    const costRequests: Array<Record<string, unknown>> = [];
+    server.use(
+      http.get("/api/v1/finance/projects/project-one", () => {
+        bucketRequests += 1;
+        return HttpResponse.json({ data: completed ? { ...baseBucket, projectStatus: "completed" } : baseBucket });
+      }),
+      http.get("/api/v1/finance/projects/project-one/entries", () => HttpResponse.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } })),
+      http.get("/api/v1/admin/projects/project-one/completion", () => {
+        summaryRequests += 1;
+        return HttpResponse.json({ data: completed ? { ...completionSummary(true, 8), projectStatus: "completed", readyForCompletion: false, pendingOwner: "none", completedAt: "2026-10-01T09:00:00.000Z", completionDecisionId: "decision-one" } : completionSummary(true) });
+      }),
+      http.post("/api/v1/admin/projects/project-one/complete", async ({ request }) => {
+        closureRequests.push(await request.json() as Record<string, unknown>);
+        completed = true;
+        return HttpResponse.json({ data: { id: "decision-one", projectId: "project-one", completedAt: "2026-10-01T09:00:00.000Z", replayed: false } }, { status: 201 });
+      }),
+      http.post("/api/v1/finance/projects/project-one/entries", async ({ request }) => {
+        costRequests.push(await request.json() as Record<string, unknown>);
+        return HttpResponse.json({ error: { code: "UNEXPECTED_COST", message: "Closing must not create a cost." } }, { status: 500 });
+      })
+    );
+    const user = userEvent.setup();
+    renderApp(["/finance/projects/project-one"]);
+
+    await user.click(await screen.findByRole("button", { name: /^Close$/ }));
+    expect(screen.getByRole("button", { name: "Record project cost" })).toBeVisible();
+    let confirmation = screen.getByRole("alertdialog", { name: "Close Aurora Villa?" });
+    expect(within(confirmation).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(within(confirmation).queryByRole("spinbutton")).not.toBeInTheDocument();
+    await user.click(within(confirmation).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog", { name: "Close Aurora Villa?" })).not.toBeInTheDocument();
+    expect(closureRequests).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: /^Close$/ }));
+    confirmation = screen.getByRole("alertdialog", { name: "Close Aurora Villa?" });
+    await user.click(within(confirmation).getByRole("button", { name: "Close project" }));
+
+    await waitFor(() => {
+      expect(closureRequests).toHaveLength(1);
+      expect(closureRequests[0]).toEqual({ expectedAuthorityVersion: 7, idempotencyKey: expect.any(String) });
+      expect(costRequests).toHaveLength(0);
+      expect(bucketRequests).toBeGreaterThanOrEqual(2);
+      expect(summaryRequests).toBeGreaterThanOrEqual(2);
+    });
+    expect(await screen.findByText("Completed")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Close$/ })).not.toBeInTheDocument();
+  });
+
+  it("shows unresolved work and keeps confirmation unavailable without posting", async () => {
+    installSuperAdminFinanceSession();
+    const closureRequests: Array<Record<string, unknown>> = [];
+    server.use(
+      http.get("/api/v1/finance/projects/project-one", () => HttpResponse.json({ data: baseBucket })),
+      http.get("/api/v1/finance/projects/project-one/entries", () => HttpResponse.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } })),
+      http.get("/api/v1/admin/projects/project-one/completion", () => HttpResponse.json({ data: completionSummary(false) })),
+      http.post("/api/v1/admin/projects/project-one/complete", async ({ request }) => {
+        closureRequests.push(await request.json() as Record<string, unknown>);
+        return HttpResponse.json({ data: {} });
+      })
+    );
+    const user = userEvent.setup();
+    renderApp(["/finance/projects/project-one"]);
+
+    await user.click(await screen.findByRole("button", { name: /^Close$/ }));
+    const confirmation = screen.getByRole("alertdialog", { name: "Close Aurora Villa?" });
+    expect(within(confirmation).getByText(/Living room · Wardrobe has no approved purchase order or scope decision/)).toBeVisible();
+    expect(within(confirmation).getByRole("button", { name: "Close project" })).toBeDisabled();
+    await user.click(within(confirmation).getByRole("button", { name: "Cancel" }));
+    expect(closureRequests).toHaveLength(0);
+  });
+
+  it("refreshes completion authority after a 409 instead of closing with a stale version", async () => {
+    installSuperAdminFinanceSession();
+    let summaryRequests = 0;
+    const closureRequests: Array<Record<string, unknown>> = [];
+    server.use(
+      http.get("/api/v1/finance/projects/project-one", () => HttpResponse.json({ data: baseBucket })),
+      http.get("/api/v1/finance/projects/project-one/entries", () => HttpResponse.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } })),
+      http.get("/api/v1/admin/projects/project-one/completion", () => {
+        summaryRequests += 1;
+        return HttpResponse.json({ data: summaryRequests === 1 ? completionSummary(true) : completionSummary(false, 8) });
+      }),
+      http.post("/api/v1/admin/projects/project-one/complete", async ({ request }) => {
+        closureRequests.push(await request.json() as Record<string, unknown>);
+        return HttpResponse.json({ error: { code: "PROJECT_COMPLETION_VERSION_CONFLICT", message: "Project completion changed. Refresh and try again." } }, { status: 409 });
+      })
+    );
+    const user = userEvent.setup();
+    renderApp(["/finance/projects/project-one"]);
+
+    await user.click(await screen.findByRole("button", { name: /^Close$/ }));
+    await user.click(within(screen.getByRole("alertdialog", { name: "Close Aurora Villa?" })).getByRole("button", { name: "Close project" }));
+
+    await waitFor(() => {
+      expect(closureRequests).toHaveLength(1);
+      expect(closureRequests[0]).toEqual({ expectedAuthorityVersion: 7, idempotencyKey: expect.any(String) });
+      expect(summaryRequests).toBeGreaterThanOrEqual(2);
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(/changed|refresh|could not/i);
+    const confirmation = screen.getByRole("alertdialog", { name: "Close Aurora Villa?" });
+    expect(within(confirmation).getByText(/Living room · Wardrobe has no approved purchase order or scope decision/)).toBeVisible();
+    expect(within(confirmation).getByRole("button", { name: "Close project" })).toBeDisabled();
+    expect(closureRequests).toHaveLength(1);
+  });
+
+  it("retries an uncertain network outcome with the same completion idempotency key", async () => {
+    installSuperAdminFinanceSession();
+    const closureRequests: Array<Record<string, unknown>> = [];
+    const costRequests: Array<Record<string, unknown>> = [];
+    let completed = false;
+    server.use(
+      http.get("/api/v1/finance/projects/project-one", () => HttpResponse.json({ data: completed ? { ...baseBucket, projectStatus: "completed" } : baseBucket })),
+      http.get("/api/v1/finance/projects/project-one/entries", () => HttpResponse.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } })),
+      http.get("/api/v1/admin/projects/project-one/completion", () => HttpResponse.json({ data: completed ? { ...completionSummary(true, 8), projectStatus: "completed", readyForCompletion: false, pendingOwner: "none", completedAt: "2026-10-01T09:00:00.000Z", completionDecisionId: "decision-one" } : completionSummary(true) })),
+      http.post("/api/v1/admin/projects/project-one/complete", async ({ request }) => {
+        closureRequests.push(await request.json() as Record<string, unknown>);
+        if (closureRequests.length === 1) return HttpResponse.error();
+        completed = true;
+        return HttpResponse.json({ data: { id: "decision-one", projectId: "project-one", completedAt: "2026-10-01T09:00:00.000Z", replayed: true } });
+      }),
+      http.post("/api/v1/finance/projects/project-one/entries", async ({ request }) => {
+        costRequests.push(await request.json() as Record<string, unknown>);
+        return HttpResponse.json({ data: {} });
+      })
+    );
+    const user = userEvent.setup();
+    renderApp(["/finance/projects/project-one"]);
+
+    await user.click(await screen.findByRole("button", { name: /^Close$/ }));
+    let confirmation = screen.getByRole("alertdialog", { name: "Close Aurora Villa?" });
+    await user.click(within(confirmation).getByRole("button", { name: "Close project" }));
+    await waitFor(() => expect(closureRequests).toHaveLength(1));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/may have reached the server.*Retry/i);
+    confirmation = screen.getByRole("alertdialog", { name: "Close Aurora Villa?" });
+    await user.click(within(confirmation).getByRole("button", { name: "Close project" }));
+
+    await waitFor(() => {
+      expect(closureRequests).toHaveLength(2);
+      expect(closureRequests[0]).toEqual({ expectedAuthorityVersion: 7, idempotencyKey: expect.any(String) });
+      expect(closureRequests[1]).toEqual(closureRequests[0]);
+      expect(costRequests).toHaveLength(0);
+    });
+    expect(await screen.findByText("Completed")).toBeVisible();
+  });
+
+  it("keeps Close available when the ledger fails, while Finance Head retains only cost recording", async () => {
+    installSuperAdminFinanceSession();
+    server.use(
+      http.get("/api/v1/finance/projects/project-one", () => HttpResponse.json({ data: baseBucket })),
+      http.get("/api/v1/finance/projects/project-one/entries", () => HttpResponse.json({ error: { code: "LEDGER_UNAVAILABLE", message: "Ledger unavailable." } }, { status: 503 })),
+      http.get("/api/v1/admin/projects/project-one/completion", () => HttpResponse.json({ data: completionSummary(true) }))
+    );
+    renderApp(["/finance/projects/project-one"]);
+    expect(await screen.findByRole("button", { name: /^Close$/ })).toBeVisible();
+    expect(screen.getByText(/ledger could not be loaded/i)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Record project cost" })).not.toBeInTheDocument();
+  });
+
+  it("does not expose Close to Finance Head", async () => {
+    installFinanceSession();
+    server.use(
+      http.get("/api/v1/finance/projects/project-one", () => HttpResponse.json({ data: baseBucket })),
+      http.get("/api/v1/finance/projects/project-one/entries", () => HttpResponse.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } }))
+    );
+    renderApp(["/finance/projects/project-one"]);
+    expect(await screen.findByRole("button", { name: "Record project cost" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Close$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog", { name: "Close Aurora Villa?" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a previously completed project read only after a fresh page load", async () => {
+    installSuperAdminFinanceSession();
+    server.use(
+      http.get("/api/v1/finance/projects/project-one", () => HttpResponse.json({ data: { ...baseBucket, projectStatus: "completed" } })),
+      http.get("/api/v1/finance/projects/project-one/entries", () => HttpResponse.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } }))
+    );
+    renderApp(["/finance/projects/project-one"]);
+
+    expect(await screen.findByText("Completed")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Close$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Record project cost" })).not.toBeInTheDocument();
   });
 });

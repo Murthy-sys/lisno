@@ -6,6 +6,7 @@ import {
   invitationEmailSchema,
   invitationMobileSchema,
   invitationNameSchema,
+  vendorInvitationIdSchema,
   type InvitableRole
 } from "../domain/user-invitations.js";
 import { authenticate } from "../middleware/auth.js";
@@ -46,9 +47,15 @@ const createInvitationSchema = z
     name: invitationNameSchema,
     email: invitationEmailSchema,
     role: invitableRoleSchema,
-    mobile: invitationMobileSchema
+    mobile: invitationMobileSchema,
+    vendorId: vendorInvitationIdSchema.optional()
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if ((value.role === "vendor") !== (value.vendorId !== undefined)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["vendorId"], message: "Vendor ID is required only for a Vendor invitation." });
+    }
+  });
 
 const versionSchema = z
   .object({ version: z.number().int().positive() })

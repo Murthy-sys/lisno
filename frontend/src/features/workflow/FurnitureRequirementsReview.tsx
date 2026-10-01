@@ -46,12 +46,13 @@ export function FurnitureRequirementsReview({ projectId, operational }: { projec
     {rooms.filter((room) => room.dimensions).map((room) => {
       const dimensionItems = room.dimensions!.items.filter((item) => item.measurementType !== "count");
       const pointItems = room.dimensions!.items.filter((item) => item.measurementType === "count");
+      const hasSavedHeight = dimensionItems.some((item) => typeof item.height === "number");
       return <section className="furniture-review__dimensions" key={room.id} aria-label={`${room.name} submitted dimensions`}>
       <div className="furniture-review__dimension-heading"><h6>{room.name}</h6><span>Revision {room.dimensions!.revision} · {furnitureRoomStatusLabel(room)}</span></div>
       {room.dimensions!.returnReason ? <div className="furniture-review__feedback" role="note"><strong>Client requested changes</strong><p>{room.dimensions!.returnReason}</p></div> : null}
       {dimensionItems.length ? <div className="furniture-review__table-scroll" role="region" aria-label={`${room.name} measurements`} tabIndex={0}>
-        <table><caption className="sr-only">Furniture measurements for {room.name}</caption><thead><tr><th scope="col">Furniture item</th><th scope="col">Length</th><th scope="col">Width</th><th scope="col">Height</th><th scope="col">Unit</th></tr></thead>
-          <tbody>{dimensionItems.map((item) => <tr key={item.id}><th scope="row">{item.name}</th><td>{item.length}</td><td>{item.width}</td><td>{item.height}</td><td title={item.uomName}>{item.unit}</td></tr>)}</tbody>
+        <table><caption className="sr-only">Furniture measurements for {room.name}</caption><thead><tr><th scope="col">Furniture item</th><th scope="col">Length</th><th scope="col">Width</th>{hasSavedHeight ? <th scope="col">Height</th> : null}<th scope="col">Unit</th></tr></thead>
+          <tbody>{dimensionItems.map((item) => <tr key={item.id}><th scope="row">{item.name}</th><td>{item.length}</td><td>{item.width}</td>{hasSavedHeight ? <td>{item.height ?? "—"}</td> : null}<td title={item.uomName}>{item.unit}</td></tr>)}</tbody>
         </table>
       </div> : null}
       {pointItems.length ? <div className="furniture-review__table-scroll" role="region" aria-label={`${room.name} point counts`} tabIndex={0}>

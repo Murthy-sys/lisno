@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "../../components/ui/Button";
 import { Drawer } from "../../components/ui/Drawer";
+import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { attachmentSummary } from "./chatAttachments";
 import { ChatActionMenu, chatInitials } from "./ChatActionMenu";
 import { ChatProjectNameDialog } from "./ChatProjectNameDialog";
@@ -104,6 +105,7 @@ function ProjectConversation({ projectId }: { projectId: string }) {
         ...(overview && !unavailable ? [{ label: overview.label, to: overview.to }] : []),
         { label: "Back to workspace", to: "/" }
       ]} />
+      <ProjectStatusButton projectId={projectId} participant={summary.data && !summary.isError && !unavailable ? true : undefined} />
     </header>
     {unavailable ? <div className="project-chat-empty project-chat-state" role="status"><h2>Conversation unavailable</h2><p>Your account does not currently have access to this conversation.</p>{chat.enabled ? <Button variant="secondary" busy={checkingAccess} onClick={() => void checkAccess()}>Check access again</Button> : null}</div> : summary.isPending ? <p role="status" className="project-chat-state project-chat-empty">Loading project conversation…</p> : !summary.data ? <div className="project-chat-empty project-chat-state" role="alert"><p>{chatErrorMessage(summary.error)}</p><Button onClick={() => void summary.refetch()}>Retry conversation</Button></div> : <>
       <div role="status" className={`project-chat-connection${chat.connection === "live" ? " sr-only" : ""}`}><span aria-hidden="true" />{connectionLabels[chat.connection]}</div>

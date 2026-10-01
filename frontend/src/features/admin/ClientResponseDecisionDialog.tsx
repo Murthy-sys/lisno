@@ -1,3 +1,4 @@
+import { projectStatusKeys } from "../project-status/projectStatusApi";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   useRef,
@@ -14,6 +15,7 @@ import { Dialog } from "../../components/ui/Dialog";
 import { Field, FileInput, Textarea } from "../../components/ui/Field";
 import { ProgressBar } from "../../components/ui/ProgressBar";
 import { projectFinanceKeys } from "../finance/projectFinanceApi";
+import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import { adminProjectKeys } from "./adminProjectsApi";
 import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 import {
@@ -85,8 +87,12 @@ export function ClientResponseDecisionDialog({
           queryKey: estimateClientResponseKeys.all
         }),
         queryClient.invalidateQueries({ queryKey: adminProjectKeys.all }),
+        queryClient.invalidateQueries({ queryKey: projectStatusKeys.all }),
         queryClient.invalidateQueries({ queryKey: dashboardKeys.all }),
         queryClient.invalidateQueries({ queryKey: projectFinanceKeys.projects }),
+        ...(decision === "approve"
+          ? [queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all })]
+          : []),
         ...(task.project
           ? [queryClient.invalidateQueries({
               queryKey: projectFinanceKeys.bucket(task.project.id)

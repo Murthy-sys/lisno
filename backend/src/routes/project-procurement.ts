@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { projectProcurementItemSchema, projectProcurementItemQuerySchema, projectProcurementQuerySchema, projectProcurementUpdateSchema, procurementVendorSchema } from "../domain/project-procurement.js";
+import { projectProcurementItemSchema, projectProcurementItemQuerySchema, procurementVendorQuerySchema, projectProcurementUpdateSchema, projectProcurementRemovalSchema, procurementVendorSchema } from "../domain/project-procurement.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
 import { validateBody, validateQuery } from "../middleware/validate.js";
@@ -24,7 +24,10 @@ export function createProjectProcurementRouter(auth: AuthService, service: Proje
   router.patch("/procurement/projects/:projectId/items/:itemId", protectedRoute, requireOperation("PATCH /procurement/projects/:projectId/items/:itemId"), validateBody(projectProcurementUpdateSchema), async (request, response, next) => {
     try { response.json({ data: await service.update(request.authenticatedUser!, String(request.params.projectId), String(request.params.itemId), request.body) }); } catch (error) { next(error); }
   });
-  router.get("/procurement/vendors", protectedRoute, requireOperation("GET /procurement/vendors"), validateQuery(projectProcurementQuerySchema), async (request, response, next) => {
+  router.delete("/procurement/projects/:projectId/items/:itemId", protectedRoute, requireOperation("DELETE /procurement/projects/:projectId/items/:itemId"), validateBody(projectProcurementRemovalSchema), async (request, response, next) => {
+    try { response.json({ data: await service.remove(request.authenticatedUser!, String(request.params.projectId), String(request.params.itemId), request.body) }); } catch (error) { next(error); }
+  });
+  router.get("/procurement/vendors", protectedRoute, requireOperation("GET /procurement/vendors"), validateQuery(procurementVendorQuerySchema), async (request, response, next) => {
     try { response.json({ data: await service.listVendors(request.authenticatedUser!, response.locals.validatedQuery) }); } catch (error) { next(error); }
   });
   router.post("/procurement/vendors", protectedRoute, requireOperation("POST /procurement/vendors"), validateBody(procurementVendorSchema), async (request, response, next) => {

@@ -1,0 +1,46 @@
+- generic [active] [ref=f1e1]:
+  - generic [ref=f1e2]:
+    - generic [ref=f1e3]:
+      - link "Skip to main content" [ref=f1e4] [cursor=pointer]:
+        - /url: "#main-content"
+      - banner "Workspace tools" [ref=f1e5]:
+        - generic [ref=f1e6]:
+          - button "Open navigation" [ref=f1e7] [cursor=pointer]
+          - img "Lisno" [ref=f1e11]
+        - generic [ref=f1e12]:
+          - button "Notifications" [ref=f1e13] [cursor=pointer]
+          - button "Synthetic workspace reviewer" [ref=f1e18] [cursor=pointer]:
+            - generic [aria-hidden] [ref=f1e19]: SW
+      - main [ref=f1e20]:
+        - region [ref=f1e21]:
+          - generic [ref=f1e22]:
+            - link "Back to projects" [ref=f1e24] [cursor=pointer]:
+              - /url: /client
+            - generic [ref=f1e25]:
+              - generic [ref=f1e26]: Your project
+              - heading "Aurora Villa" [level=1] [ref=f1e28]
+              - paragraph [ref=f1e29]: Bengaluru
+              - generic [ref=f1e30]: active
+          - generic [ref=f1e32]:
+            - heading "Project estimate" [level=2] [ref=f1e33]
+            - status [ref=f1e34]: Loading submitted estimates…
+          - region "Project workflow" [ref=f1e36]:
+            - status [ref=f1e37]: Loading project stages and deadlines…
+          - region "Work for your review" [ref=f1e38]:
+            - status [ref=f1e39]: Loading submitted work…
+          - group [ref=f1e40]:
+            - generic "Floor progress 1 floor" [ref=f1e41] [cursor=pointer]:
+              - text: Floor progress
+              - generic [ref=f1e42]: 1 floor
+          - group [ref=f1e43]:
+            - generic "Approved documents 1 document" [ref=f1e44] [cursor=pointer]:
+              - text: Approved documents
+              - generic [ref=f1e45]: 1 document
+      - button "Ask Lisno" [disabled] [ref=f1e46]:
+        - generic [ref=f1e51]:
+          - strong [ref=f1e52]: Ask Lisno
+          - generic [ref=f1e53]: Coming soon
+    - status "Application announcements" [ref=f1e54]
+    - region "Notifications"
+  - status "Request status":
+    - generic: Loading Lisno…

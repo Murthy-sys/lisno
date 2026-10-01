@@ -1510,7 +1510,9 @@ const TASK_NINE_BODIES: Partial<Record<ExpectedHumanJwtOperation["key"], unknown
   },
   "POST /client/estimates/:estimateId/decision": {
     decision: "request_changes",
-    note: "Please revise"
+    note: "Please revise",
+    reviewRoundId: "review-router-fixture",
+    reviewRoundVersion: 1
   }
 };
 

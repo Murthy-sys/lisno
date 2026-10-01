@@ -18,7 +18,7 @@ import { WorkflowSubmittedDocument } from "./WorkflowSubmittedDocument";
 import { formatEvidenceSize, MEASUREMENT_MEDIA_ACCEPT, measurementFileKey, measurementMediaKind, validateMeasurementMedia } from "./measurementMedia";
 import { WorkflowMediaList } from "./WorkflowMediaList";
 import { FurnitureRequirementsReview } from "./FurnitureRequirementsReview";
-import { createFurnitureDimensionsDraft, FurnitureDimensionsEditor, parseFurnitureDimensionsDraft } from "./FurnitureDimensionsEditor";
+import { createFurnitureDimensionsDraft, formatApprovedRoomSize, FurnitureDimensionsEditor, parseFurnitureDimensionsDraft, type FurnitureDraftReveal } from "./FurnitureDimensionsEditor";
 import { SpacePlanningCompletion } from "./SpacePlanningCompletion";
 import { useRefreshDesignWorkflow } from "./useRefreshDesignWorkflow";
 export { useRefreshDesignWorkflow } from "./useRefreshDesignWorkflow";
@@ -90,7 +90,7 @@ export function WorkflowStageActions({ workflow, stage, expandKickoff = false, p
     {availableActions.length > 0 || selected ? <section aria-label={`${stage.name} available actions`}>
       {presentation === "full" ? <h5>{expandKickoff ? "Acknowledgement and completion" : "Available actions"}</h5> : null}
       {selected ? <StageActionForm key={selected.id} action={selected} workflow={workflow} stage={stage} autoFocus={focusRequested} documentReady={documentReady} presentation={presentation}
-        onClose={closeAction} onSaved={(version) => { setRecordedVersion(version); setSuccess(selected.id === "furniture_scope" ? "Furniture requirements submitted. Awaiting Client approval." : selected.id === "furniture_upload" ? "Dimensions submitted. Awaiting Client approval." : selected.id === "furniture_dimensions_return" || selected.id === "furniture_scope_return" ? "Sent back for corrections." : selected.id === "furniture_dimensions_approve" ? "Selected furniture dimensions approved." : "Action recorded. The project workflow has been updated."); closeAction(); }} />
+        onClose={closeAction} onSaved={(version, zeroValueResolution) => { setRecordedVersion(version); setSuccess(zeroValueResolution ? "Returned zero-value rooms resolved. The earlier submission and Client response remain in history." : selected.id === "furniture_scope" ? "Furniture requirements submitted. Awaiting Client approval." : selected.id === "furniture_upload" ? "Dimensions submitted. Awaiting Client approval." : selected.id === "furniture_dimensions_return" || selected.id === "furniture_scope_return" ? "Sent back for corrections." : selected.id === "furniture_dimensions_approve" ? "Selected furniture dimensions approved." : "Action recorded. The project workflow has been updated."); closeAction(); }} />
         : <div className="workflow-stage-actions__buttons">{availableActions.map((action) =>
           <div className="workflow-stage-actions__choice" key={action.id}>
             <Button ref={(element) => { if (element) buttons.current.set(action.id, element); else buttons.current.delete(action.id); }} variant="secondary" disabled={Boolean(action.disabledReason) || operational.version < recordedVersion} aria-describedby={action.disabledReason ? `${id}-${action.id}-reason` : undefined} onClick={() => { setSuccess(""); setFocusRequested(true); setSelected(action); }}>{actionLabel(action)}</Button>
@@ -126,7 +126,7 @@ function WorkflowHistoryMedia({ projectId, eventId, mediaFiles }: {
 }
 
 function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus = true, documentReady, presentation }: {
-  action: DesignWorkflowAction; workflow: DesignWorkflowView; stage: DesignWorkflowStage; onClose: () => void; onSaved: (version: number) => void; autoFocus?: boolean; documentReady: boolean; presentation: "full" | "client" | "designer";
+  action: DesignWorkflowAction; workflow: DesignWorkflowView; stage: DesignWorkflowStage; onClose: () => void; onSaved: (version: number, zeroValueResolution?: boolean) => void; autoFocus?: boolean; documentReady: boolean; presentation: "full" | "client" | "designer";
 }) {
   const id = useId();
   const refresh = useRefreshDesignWorkflow();
@@ -136,6 +136,7 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
   const [uomBusy, setUomBusy] = useState(false);
   const [version] = useState(stage.operational!.version);
   const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const [resolutionIdempotencyKey] = useState(() => crypto.randomUUID());
   const [note, setNote] = useState("");
   const [meetingAt, setMeetingAt] = useState("");
   const [designHandoverAcknowledged, setDesignHandoverAcknowledged] = useState(false);
@@ -146,15 +147,15 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
   const [initialScope] = useState(() => {
     const editingScope = action.id === "furniture_scope" && stage.type === "existing_furniture_dimensions";
     return {
-      roomIds: editingScope ? (stage.operational?.rooms ?? []).filter((room) => room.required && workflow.furnitureRooms?.some((option) => option.id === room.id)).map((room) => room.id)
-        : action.id === "furniture_upload" ? (stage.operational?.rooms ?? []).filter(canSubmitDimensions).map((room) => room.id) : [],
+      roomIds: editingScope ? (stage.operational?.rooms ?? []).filter((room) => room.required && workflow.furnitureRooms?.some((option) => option.id === room.id && (!Array.isArray(option.estimateItems) || option.estimateItems.length > 0))).map((room) => room.id)
+        : action.id === "furniture_upload" ? (stage.operational?.rooms ?? []).filter((room) => canSubmitDimensions(room) && workflow.furnitureRooms?.some((option) => option.id === room.id && (!Array.isArray(option.estimateItems) || option.estimateItems.length > 0))).map((room) => room.id) : [],
       noFurniture: editingScope && Boolean(stage.operational?.furniture?.notApplicable)
     };
   });
   const [roomIds, setRoomIds] = useState<string[]>(initialScope.roomIds);
   const [initialEstimateSource] = useState(() => JSON.stringify(workflow.furnitureRooms ?? []));
   const dimensionRooms = (workflow.furnitureRooms ?? []).map((room) => ({
-    id: room.id, name: room.name, estimateItems: room.estimateItems ?? [],
+    id: room.id, name: room.name, estimateItems: room.estimateItems ?? [], estimateDimensions: room.estimateDimensions,
     dimensions: stage.operational?.rooms?.find((saved) => saved.id === room.id)?.dimensions
   }));
   const [initialDimensions] = useState(() => isDimensionEntry ? createFurnitureDimensionsDraft(dimensionRooms, workflow.furnitureRooms ?? []) : {});
@@ -174,9 +175,12 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
   const submissionFile = isScope && noFurniture && !action.requiresProof ? null : file;
   const mediaByteSize = useMemo(() => mediaFiles.reduce((sum, media) => sum + media.size, 0), [mediaFiles]);
   const [validation, setValidation] = useState("");
+  const [dimensionErrorTarget, setDimensionErrorTarget] = useState<FurnitureDraftReveal>();
+  const validationRequest = useRef(0);
   const [progress, setProgress] = useState(0);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const inFlight = useRef(false);
+  const resolutionInFlight = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const mediaRef = useRef<HTMLInputElement>(null);
   const roomCheckboxes = useRef(new Map<string, HTMLInputElement>());
@@ -195,6 +199,20 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
     },
     onSettled: () => { inFlight.current = false; }
   });
+  const returnedZeroValueRooms = action.id === "furniture_upload" && presentation === "designer" ? (stage.operational?.rooms ?? []).filter((room) =>
+    room.required && room.dimensions?.status === "changes_requested" && Boolean(room.dimensions.submissionEventId)
+    && workflow.furnitureRooms?.some((source) => source.id === room.id && Array.isArray(source.estimateItems) && source.estimateItems.length === 0)
+  ) : [];
+  const resolutionMutation = useMutation({
+    mutationFn: (roomIds: string[]) => performDesignWorkflowAction({
+      projectId: workflow.projectId, stageId: stage.id, expectedVersion: version, action: "furniture_upload",
+      data: { resolveReturnedZeroValueRoomIds: roomIds }, idempotencyKey: resolutionIdempotencyKey
+    }),
+    onSuccess: async (result) => { await refresh(); onSaved(result.version, true); },
+    onError: async (error) => { if (error instanceof ApiError && error.status === 409) await refresh(); },
+    onSettled: () => { resolutionInFlight.current = false; }
+  });
+  const busy = mutation.isPending || resolutionMutation.isPending;
   const blockedReason = stage.operational?.availableActions.find((candidate) => candidate.id === action.id)?.disabledReason;
   const isClientKickoff = action.id === "client_kickoff_complete";
   const isDimensionReview = dimensionReviewActions.has(action.id);
@@ -217,6 +235,9 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
   const FormHeading = presentation === "designer" ? "h5" : "h6";
   const needsRooms = action.id === "furniture_scope" || action.id === "furniture_upload" || isDimensionReview;
   const rooms = action.id === "furniture_scope" ? workflow.furnitureRooms ?? [] : stage.operational?.rooms?.filter((room) => isDimensionReview ? room.required && room.dimensions?.status === "pending" : canSubmitDimensions(room)) ?? [];
+  const normalUploadUnavailable = action.id === "furniture_upload" && returnedZeroValueRooms.length > 0 && rooms.length > 0 && rooms.every((room) =>
+    workflow.furnitureRooms?.some((source) => source.id === room.id && Array.isArray(source.estimateItems) && source.estimateItems.length === 0)
+  );
   const selectRoom = (roomId: string, checked: boolean) => setRoomIds((current) => checked ? [...current.filter((value) => value !== roomId), roomId] : current.filter((value) => value !== roomId));
   const staleMessage = blockedReason ?? "The workflow changed while this form was open. Close it and reopen the action to review the latest state.";
   const unavailableRoomNames = unavailableRoomIds.map((roomId) => rooms.find((room) => room.id === roomId)?.name ?? roomId);
@@ -233,10 +254,30 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
     checkbox?.focus({ preventScroll: true });
     checkbox?.scrollIntoView?.({ block: "center", behavior: "auto" });
   };
+  const renderRoomOption = (room: { id: string; name: string }) => {
+    if (!isDimensionEntry) return <label key={room.id}><Checkbox checked={roomIds.includes(room.id)} onChange={(event) => selectRoom(room.id, event.target.checked)} />{room.name}</label>;
+    const sourceRoom = workflow.furnitureRooms?.find((source) => source.id === room.id);
+    const approvedSize = formatApprovedRoomSize(sourceRoom?.estimateDimensions);
+    const estimateItems = sourceRoom?.estimateItems ?? [];
+    const optionalOnly = Array.isArray(sourceRoom?.estimateItems) && estimateItems.length === 0;
+    return <div key={room.id} className="workflow-stage-actions__room-option">
+      <label><Checkbox ref={(element) => { if (element) roomCheckboxes.current.set(room.id, element); else roomCheckboxes.current.delete(room.id); }} checked={roomIds.includes(room.id)}
+        disabled={optionalOnly}
+        aria-describedby={unavailableRoomIds.includes(room.id) ? `${id}-${room.id}-unavailable` : undefined}
+        aria-invalid={unavailableRoomIds.includes(room.id) || undefined}
+        onChange={(event) => selectRoom(room.id, event.target.checked)} />{room.name}</label>
+      {!roomIds.includes(room.id) ? <div className="workflow-stage-actions__room-estimate">
+        <p>{approvedSize ? `Approved estimate room size: ${approvedSize}` : "Approved estimate room size unavailable"}</p>
+        <p>{optionalOnly ? isScope ? "No approved-value items. Included as an optional room." : "No approved-value items. No measurements can be submitted for this room." : !sourceRoom?.estimateItems ? "Approved estimate items unavailable. Refresh the workflow before submission." : `${estimateItems.length} selected estimate ${estimateItems.length === 1 ? "item" : "items"}`}</p>
+        {estimateItems.length ? <ul>{estimateItems.map((item) => <li key={item.id}>{item.name} · {item.quantity.toLocaleString("en-IN")} {item.uom}</li>)}</ul> : null}
+      </div> : null}
+      {unavailableRoomIds.includes(room.id) ? <p id={`${id}-${room.id}-unavailable`} className="workflow-stage-actions__room-warning">No selected estimate items. Uncheck if measurements are not needed, or update the approved estimate.</p> : null}
+    </div>;
+  };
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (inFlight.current || stale || uomBusy || uomsUnavailable) return;
+    if (inFlight.current || busy || stale || uomBusy || uomsUnavailable || normalUploadUnavailable) return;
     if (isInternalKickoff && !designHandoverAcknowledged) { setValidation("Acknowledge receipt of the design flow before completing Internal Kick off."); return; }
     if (isClientKickoff && (!documentEventId || !documentReady || !documentReviewed)) { setValidation("Review the Designer’s submitted document and confirm your acknowledgement before completing Client Kick off."); return; }
     if (needsFile && !submissionFile) { setValidation("Choose the required evidence file."); fileRef.current?.focus(); return; }
@@ -262,17 +303,28 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
       data.designerId = designerId;
     }
     if (action.id === "furniture_scope") {
-      data.rooms = noFurniture ? [] : rooms.map((room) => ({ id: room.id, required: roomIds.includes(room.id) }));
+      data.rooms = noFurniture ? [] : rooms.map((room) => {
+        const estimateItems = workflow.furnitureRooms?.find((source) => source.id === room.id)?.estimateItems;
+        return { id: room.id, required: roomIds.includes(room.id) && (!Array.isArray(estimateItems) || estimateItems.length > 0) };
+      });
       data.notApplicable = noFurniture;
       if (!noFurniture) {
         const parsed = parseFurnitureDimensionsDraft(roomIds, dimensionDraft, workflow.furnitureRooms ?? [], uoms.data ?? []);
-        if (parsed.error) { setValidation(parsed.error); return; }
+        if (parsed.error) {
+          setValidation(parsed.error);
+          setDimensionErrorTarget("invalidField" in parsed && parsed.invalidField ? { ...parsed.invalidField, requestId: ++validationRequest.current } : undefined);
+          return;
+        }
         data.dimensions = parsed.rooms;
       }
     }
     else if (action.id === "furniture_upload") {
       const parsed = parseFurnitureDimensionsDraft(roomIds, dimensionDraft, workflow.furnitureRooms ?? [], uoms.data ?? []);
-      if (parsed.error) { setValidation(parsed.error); return; }
+      if (parsed.error) {
+        setValidation(parsed.error);
+        setDimensionErrorTarget("invalidField" in parsed && parsed.invalidField ? { ...parsed.invalidField, requestId: ++validationRequest.current } : undefined);
+        return;
+      }
       data.rooms = parsed.rooms;
     }
     else if (isScopeReview && requirementsSubmissionEventId) data.submissionEventId = requirementsSubmissionEventId;
@@ -280,17 +332,30 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
     setValidation(""); setProgress(0); inFlight.current = true; mutation.mutate(data);
   }
 
+  function resolveReturnedZeroValueRooms() {
+    if (resolutionInFlight.current || busy || stale || returnedZeroValueRooms.length === 0) return;
+    resolutionInFlight.current = true;
+    resolutionMutation.mutate(returnedZeroValueRooms.map((room) => room.id));
+  }
+
   const actions = (requestClose: () => void) => {
-    const buttons = <div className="workflow-stage-actions__buttons"><Button type="submit" form={`${id}-action-form`} aria-describedby={entryBlocker ? `${id}-submit-blocker` : undefined} busy={mutation.isPending} busyLabel={hasEvidence && progress < 100 ? "Uploading evidence…" : "Saving action…"} disabled={stale || unavailableItems || uomBusy || uomsUnavailable || (isInternalKickoff && !designHandoverAcknowledged) || (isClientKickoff && (!documentEventId || !documentReady || !documentReviewed))}>{isInternalKickoff ? "Complete and save Internal Kick off" : actionLabel(action)}</Button><Button variant="destructive-outline" onClick={requestClose} disabled={mutation.isPending || uomBusy}>Cancel</Button></div>;
+    const buttons = <div className="workflow-stage-actions__buttons">{!normalUploadUnavailable ? <Button type="submit" form={`${id}-action-form`} aria-describedby={entryBlocker ? `${id}-submit-blocker` : undefined} busy={mutation.isPending} busyLabel={hasEvidence && progress < 100 ? "Uploading evidence…" : "Saving action…"} disabled={busy || stale || unavailableItems || uomBusy || uomsUnavailable || (isInternalKickoff && !designHandoverAcknowledged) || (isClientKickoff && (!documentEventId || !documentReady || !documentReviewed))}>{isInternalKickoff ? "Complete and save Internal Kick off" : actionLabel(action)}</Button> : null}<Button variant="destructive-outline" onClick={requestClose} disabled={busy || uomBusy}>Cancel</Button></div>;
     return isDimensionEntry ? <div className="workflow-stage-actions__submit-footer">{entryBlocker ? <div className="workflow-stage-actions__submit-blocker">
       <p id={`${id}-submit-blocker`} role={entryBlocker.kind === "stale" ? "alert" : "status"}>{entryBlocker.message}</p>
       {entryBlocker.kind === "rooms" ? <Button size="compact" variant="quiet" onClick={reviewRooms}>Review rooms</Button> : null}
       {entryBlocker.kind === "uom-error" ? <Button size="compact" variant="quiet" busy={uoms.isFetching} busyLabel="Loading UOMs…" onClick={() => void uoms.refetch()}>Retry UOMs</Button> : null}
     </div> : null}{buttons}</div> : buttons;
   };
-  const form = <form id={`${id}-action-form`} className={`workflow-stage-actions__form${contextual ? " workflow-stage-actions__form--panel" : ""}`} onSubmit={submit} aria-label={actionLabel(action)}>
+  const form = <form id={`${id}-action-form`} className={`workflow-stage-actions__form${contextual ? " workflow-stage-actions__form--panel" : ""}`} onSubmit={submit} noValidate={isDimensionEntry} aria-label={actionLabel(action)}>
     {!contextual ? <div className={`workflow-stage-actions__form-heading${(presentation === "designer" && isInternalKickoff) || (presentation === "client" && isClientKickoff) ? " sr-only" : ""}`}><FormHeading ref={heading} tabIndex={-1}>{action.label}</FormHeading>{action.requiresProof && presentation !== "designer" ? <p>Supporting evidence is required and will be retained with this action.</p> : null}</div> : null}
-    <fieldset disabled={mutation.isPending || stale}>
+    <fieldset disabled={busy || stale}>
+      {returnedZeroValueRooms.length > 0 ? <section className="workflow-stage-actions__rooms" aria-labelledby={`${id}-zero-value-heading`}>
+        <h3 id={`${id}-zero-value-heading`} style={{ margin: 0 }}>Correct returned zero-value rooms</h3>
+        <p>The approved estimate now has no approved-value furniture items in these returned rooms. Resolve their dimension requirement without uploading another document. The earlier submission and Client response remain in action history.</p>
+        <ul>{returnedZeroValueRooms.map((room) => <li key={room.id}>{room.name}{room.dimensions?.returnReason ? ` — Client requested: ${room.dimensions.returnReason}` : ""}</li>)}</ul>
+        <Button type="button" variant="secondary" busy={resolutionMutation.isPending} busyLabel="Resolving returned rooms…" disabled={busy || stale} onClick={resolveReturnedZeroValueRooms}>Resolve {returnedZeroValueRooms.length} returned zero-value {returnedZeroValueRooms.length === 1 ? "room" : "rooms"}</Button>
+        {rooms.some((room) => !returnedZeroValueRooms.some((returned) => returned.id === room.id)) ? <p>Other returned rooms still need measurements and a furniture dimensions document below.</p> : null}
+      </section> : null}
       {isClientKickoff ? <div className="workflow-stage-actions__handover">
         <label><Checkbox required checked={documentReviewed} disabled={!documentReady || !documentEventId} onChange={(event) => setDocumentReviewed(event.target.checked)} />I have reviewed the document submitted by the Designer</label>
       </div> : null}
@@ -324,35 +389,30 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
           </>} />
         </> : null}
       </div> : null}
-      {needsRooms ? <fieldset className="workflow-stage-actions__rooms">
+      {needsRooms && !normalUploadUnavailable ? <fieldset className="workflow-stage-actions__rooms">
         <legend>{action.id === "furniture_scope" ? "Rooms needing existing furniture dimensions" : isDimensionReview ? "Select submitted rooms to review" : "Select rooms"}</legend>
         {action.id === "furniture_scope" ? <label><Checkbox checked={noFurniture} onChange={(event) => { setNoFurniture(event.target.checked); }} />No existing furniture dimensions are needed</label> : null}
-        {!noFurniture ? rooms.length ? rooms.map((room) => isDimensionEntry ? <div key={room.id} className="workflow-stage-actions__room-option">
-          <label><Checkbox ref={(element) => { if (element) roomCheckboxes.current.set(room.id, element); else roomCheckboxes.current.delete(room.id); }} checked={roomIds.includes(room.id)}
-            aria-describedby={unavailableRoomIds.includes(room.id) ? `${id}-${room.id}-unavailable` : undefined}
-            aria-invalid={unavailableRoomIds.includes(room.id) || undefined}
-            onChange={(event) => selectRoom(room.id, event.target.checked)} />{room.name}</label>
-          {unavailableRoomIds.includes(room.id) ? <p id={`${id}-${room.id}-unavailable`} className="workflow-stage-actions__room-warning">No selected estimate items. Uncheck if measurements are not needed, or update the approved estimate.</p> : null}
-        </div> : <label key={room.id}><Checkbox checked={roomIds.includes(room.id)} onChange={(event) => selectRoom(room.id, event.target.checked)} />{room.name}</label>) : <p>{action.id === "furniture_scope" ? "Project rooms have not been configured yet. Add the rooms in the estimate before requesting room dimensions." : isDimensionReview ? "No submitted rooms are awaiting review." : "No rooms are awaiting a dimensions submission."}</p> : null}
+        {!noFurniture ? rooms.length ? rooms.map(renderRoomOption) : <p>{action.id === "furniture_scope" ? "Project rooms have not been configured yet. Add the rooms in the estimate before requesting room dimensions." : isDimensionReview ? "No submitted rooms are awaiting review." : "No rooms are awaiting a dimensions submission."}</p> : null}
         {isDimensionReview ? <p>Your decision applies only to the selected rooms and their current submitted dimensions.</p> : null}
       </fieldset> : null}
       {isScope && !noFurniture && !roomIds.length ? <p style={{ gridColumn: "1 / -1" }}>Select rooms above to enter dimensions for their estimate items.</p> : null}
-      {isDimensionEntry && !noFurniture ? <FurnitureDimensionsEditor projectId={workflow.projectId} rooms={dimensionRooms.filter((room) => roomIds.includes(room.id))} draft={dimensionDraft} onChange={setDimensionDraft}
+      {isDimensionEntry && !noFurniture && !normalUploadUnavailable ? <FurnitureDimensionsEditor projectId={workflow.projectId} rooms={dimensionRooms.filter((room) => roomIds.includes(room.id))} draft={dimensionDraft} onChange={(next) => { setDimensionDraft(next); setValidation(""); setDimensionErrorTarget(undefined); }}
         uoms={uoms.data ?? []} uomsLoading={uoms.isPending} uomsError={uoms.isError ? "UOMs could not be loaded. Try again." : undefined}
-        onRetryUoms={() => void uoms.refetch()} onUomBusyChange={setUomBusy} disabled={stale || mutation.isPending} /> : null}
-      {needsFile || isMeasurement || isScope ? <div hidden={isScope && !needsFile} style={{ gridColumn: "1 / -1" }}><Field id={`${id}-file`} label={action.id === "internal_kickoff_complete" ? "Signed kick-off checklist" : isMeasurement ? "As-built on-site sketch (optional)" : (action.id === "furniture_upload" || (isScope && dimensionsNeeded)) ? "Furniture dimensions document" : "Client action proof"} hint="PDF, JPG, PNG or WebP. Evidence stays in the action history." required={needsFile}>{(props) => <><FileInput {...props} ref={fileRef} accept=".pdf,.jpg,.jpeg,.png,.webp" onChange={(event) => { setFile(event.target.files?.[0] ?? null); setValidation(""); }} />{isMeasurement && file ? <Button size="compact" variant="quiet" onClick={() => { setFile(null); if (fileRef.current) { fileRef.current.value = ""; fileRef.current.focus(); } setValidation(""); }}>Remove sketch</Button> : null}</>}</Field></div> : null}
-      {!(presentation === "client" && isClientKickoff) ? <Field id={`${id}-note`} label={noteActions.has(action.id) ? "Reason" : action.id === "client_kickoff_schedule" ? "Client availability / note" : "Note"} hint={action.id === "furniture_scope_return" || action.id === "furniture_dimensions_return" ? "Explain what needs to be corrected. This feedback will be visible to the project team." : undefined} required={noteActions.has(action.id)}>{(props) => <Textarea {...props} rows={3} maxLength={1000} value={note} onChange={(event) => setNote(event.target.value)} />}</Field> : null}
+        onRetryUoms={() => void uoms.refetch()} onUomBusyChange={setUomBusy} disabled={stale || busy} validationTarget={dimensionErrorTarget} validationError={validation} /> : null}
+      {!normalUploadUnavailable && (needsFile || isMeasurement || isScope) ? <div hidden={isScope && !needsFile} style={{ gridColumn: "1 / -1" }}><Field id={`${id}-file`} label={action.id === "internal_kickoff_complete" ? "Signed kick-off checklist" : isMeasurement ? "As-built on-site sketch (optional)" : (action.id === "furniture_upload" || (isScope && dimensionsNeeded)) ? "Furniture dimensions document" : "Client action proof"} hint="PDF, JPG, PNG or WebP. Evidence stays in the action history." required={needsFile}>{(props) => <><FileInput {...props} ref={fileRef} accept=".pdf,.jpg,.jpeg,.png,.webp" onChange={(event) => { setFile(event.target.files?.[0] ?? null); setValidation(""); }} />{isMeasurement && file ? <Button size="compact" variant="quiet" onClick={() => { setFile(null); if (fileRef.current) { fileRef.current.value = ""; fileRef.current.focus(); } setValidation(""); }}>Remove sketch</Button> : null}</>}</Field></div> : null}
+      {!normalUploadUnavailable && !(presentation === "client" && isClientKickoff) ? <Field id={`${id}-note`} label={noteActions.has(action.id) ? "Reason" : action.id === "client_kickoff_schedule" ? "Client availability / note" : "Note"} hint={action.id === "furniture_scope_return" || action.id === "furniture_dimensions_return" ? "Explain what needs to be corrected. This feedback will be visible to the project team." : undefined} required={noteActions.has(action.id)}>{(props) => <Textarea {...props} rows={3} maxLength={1000} value={note} onChange={(event) => setNote(event.target.value)} />}</Field> : null}
     </fieldset>
     {validation ? <p role="alert">{validation}</p> : null}
     {stale && !mutation.isPending && !isDimensionEntry ? <p role="alert">{staleMessage}</p> : null}
     {mutation.isError ? <p role="alert">{mutation.error instanceof Error ? mutation.error.message : "The action could not be saved. Please try again."}</p> : null}
+    {resolutionMutation.isError ? <p role="alert">{resolutionMutation.error instanceof Error ? resolutionMutation.error.message : "The returned rooms could not be resolved. Please try again."}</p> : null}
     {mutation.isPending && hasEvidence ? <div role="status"><p>{progress < 100 ? `Uploading evidence… ${progress}%` : "Saving action and evidence…"}</p><ProgressBar value={progress} label="Evidence upload progress" /></div> : null}
-    {!contextual ? actions(() => { if (!mutation.isPending) { if (dirty) setConfirmDiscard(true); else onClose(); } }) : null}
+    {!contextual ? actions(() => { if (!busy) { if (dirty) setConfirmDiscard(true); else onClose(); } }) : null}
   </form>;
-  return contextual ? <ContextPanel className="workflow-action-panel" title={actionLabel(action)} eyebrow={stage.name}
-    description={isMeasurement ? "Upload site photos or videos to complete the measurement. A sketch is optional." : isDimensionEntry ? "Select the rooms, enter measurements for their estimate items and attach a document. Submit them together for Client approval." : action.requiresProof ? "Supporting evidence is required and will be retained with this action." : undefined}
+  return contextual ? <ContextPanel className={`workflow-action-panel${isDimensionEntry ? " workflow-action-panel--furniture" : ""}`} title={actionLabel(action)} eyebrow={stage.name}
+    description={isMeasurement ? "Upload site photos or videos to complete the measurement. A sketch is optional." : normalUploadUnavailable ? "Resolve returned rooms whose approved estimate now has no furniture items." : isDimensionEntry ? "Select the rooms, enter measurements for their estimate items and attach a document. Submit them together for Client approval." : action.requiresProof ? "Supporting evidence is required and will be retained with this action." : undefined}
     width={needsRooms || needsFile || isMeasurement ? "wide" : "medium"}
-    busy={mutation.isPending}
+    busy={busy}
     dirty={dirty}
     onClose={() => { if (!uomBusy) onClose(); }} footer={({ requestClose }) => actions(requestClose)}>{form}</ContextPanel> : <>{form}{confirmDiscard ? <Dialog
       title="Discard unsaved changes?" role="alertdialog" description="Your acknowledgement, notes, and selected evidence have not been saved."

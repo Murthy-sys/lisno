@@ -18,12 +18,13 @@ vi.mock("../../auth/AuthProvider", () => ({
   useAuth: () => ({ authorization: { role: "procurement", permissions } })
 }));
 
-const uom = { id: "uom-one", code: "sq ft", name: "Square feet" };
+const uom = { id: "uom-one", code: "sq ft", name: "Square feet", decimalScale: 2 };
 const sourceFor = (projectId = "project-one") => ({ estimateId: projectId === "project-one" ? "estimate-one" : "estimate-two", estimateVersion: 3, sourceLineItemKey: "line-one" });
 const storedSourceFor = (projectId = "project-one") => ({ ...sourceFor(projectId), estimateReviewRoundId: "round-one", sourceSectionId: "CA" });
 const item: ProjectProcurementItem = {
   id: "item-one", projectId: "project-one", vendor: null, itemName: "Plywood", brand: "Greenply", uom: { ...uom, status: "active" },
-  pricePaise: 12005, estimateSource: storedSourceFor(), version: 3, createdAt: "2026-09-17T00:00:00.000Z", updatedAt: "2026-09-17T00:00:00.000Z"
+  pricePaise: 12005, plannedOrderQuantityMilliUnits: 2000, plannedLineNetPaise: 24010,
+  estimateSource: storedSourceFor(), version: 3, createdAt: "2026-09-17T00:00:00.000Z", updatedAt: "2026-09-17T00:00:00.000Z"
 };
 
 function page(items: ProjectProcurementItem[], total = items.length, offset = 0) {
@@ -70,6 +71,8 @@ describe("ProjectProcurementItems", () => {
     expect(within(table).getByText("Greenply")).toBeVisible();
     expect(within(table).getByText("sq ft")).toBeVisible();
     expect(within(table).getByText("₹120.05")).toBeVisible();
+    expect(within(table).getByText("2 sq ft")).toBeVisible();
+    expect(within(table).getByText("₹240.10")).toBeVisible();
     expect(screen.queryByRole("button", { name: /Add item|Edit Plywood/ })).not.toBeInTheDocument();
     view.unmount();
     permissions = [];
@@ -86,7 +89,8 @@ describe("ProjectProcurementItems", () => {
       http.post("/api/v1/procurement/projects/project-one/items", async ({ request }) => {
         const body = await request.json() as Record<string, unknown>;
         post(body);
-        const saved = { ...item, itemName: String(body.itemName), brand: String(body.brand), pricePaise: Number(body.pricePaise) };
+        const saved = { ...item, itemName: String(body.itemName), brand: String(body.brand), pricePaise: Number(body.pricePaise),
+          plannedOrderQuantityMilliUnits: Number(body.plannedOrderQuantityMilliUnits), plannedLineNetPaise: 30013 };
         items = [saved];
         return HttpResponse.json({ data: saved }, { status: 201 });
       })
@@ -99,14 +103,41 @@ describe("ProjectProcurementItems", () => {
     await user.type(screen.getByRole("textbox", { name: "Brand" }), "  Greenply ");
     await user.selectOptions(screen.getByRole("combobox", { name: "UOM" }), uom.id);
     await user.type(screen.getByRole("textbox", { name: "Price (INR)" }), "120.05");
+    await user.type(screen.getByRole("textbox", { name: /Planned order quantity/ }), "2.5");
+    const amountPreview = within(screen.getByRole("dialog"));
+    expect(amountPreview.getByText("Planned amount, before GST").nextElementSibling).toHaveTextContent("₹300.13");
+    expect(amountPreview.getByText("GST (18%)").nextElementSibling).toHaveTextContent("₹54.02");
+    expect(amountPreview.getByText("Planned amount, with GST").nextElementSibling).toHaveTextContent("₹354.15");
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add item" }));
     await screen.findByText("Plywood board added in this project.");
-    expect(post).toHaveBeenCalledWith({ itemName: "Plywood board", brand: "Greenply", uomId: uom.id, vendorId: null, pricePaise: 12005, ...sourceFor() });
+    expect(post).toHaveBeenCalledWith({ itemName: "Plywood board", brand: "Greenply", uomId: uom.id, vendorId: null, pricePaise: 12005, plannedOrderQuantityMilliUnits: 2500, ...sourceFor() });
     expect(screen.getByRole("rowheader", { name: "Plywood board" })).toBeVisible();
+    expect(screen.getByText("₹300.13")).toBeVisible();
     expect(screen.getByRole("button", { name: "Add item" })).toHaveFocus();
     view.unmount();
     start();
     expect(await screen.findByRole("rowheader", { name: "Plywood board" })).toBeVisible();
+  });
+
+  it("requires a planned quantity at the configured UOM precision", async () => {
+    const patch = vi.fn(async ({ request }: { request: Request }) => {
+      const body = await request.json() as Record<string, unknown>;
+      expect(body.plannedOrderQuantityMilliUnits).toBe(1250);
+      return HttpResponse.json({ data: item });
+    });
+    server.use(http.patch("/api/v1/procurement/projects/project-one/items/:id", patch));
+    start();
+    const user = await edit();
+    const quantity = screen.getByRole("textbox", { name: /Planned order quantity/ });
+    await user.clear(quantity);
+    await user.type(quantity, "1.234");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByText(/at most 2 decimal places/)).toBeVisible();
+    expect(patch).not.toHaveBeenCalled();
+    await user.clear(quantity);
+    await user.type(quantity, "1.25");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(patch).toHaveBeenCalled());
   });
 
   it("rejects fractional paise and excessive prices, and preserves dirty entries on close", async () => {
@@ -174,8 +205,8 @@ describe("ProjectProcurementItems", () => {
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(writes).toHaveLength(2));
     expect(writes).toEqual([
-      { itemName: "Plywood", brand: "Greenply", uomId: uom.id, vendorId: null, pricePaise: 14501, expectedVersion: 3, ...sourceFor() },
-      { itemName: "Renamed panel", brand: "Greenply", uomId: uom.id, vendorId: null, pricePaise: 18999, expectedVersion: 4, ...sourceFor() }
+      { itemName: "Plywood", brand: "Greenply", uomId: uom.id, vendorId: null, pricePaise: 14501, plannedOrderQuantityMilliUnits: 2000, expectedVersion: 3, ...sourceFor() },
+      { itemName: "Renamed panel", brand: "Greenply", uomId: uom.id, vendorId: null, pricePaise: 18999, plannedOrderQuantityMilliUnits: 2000, expectedVersion: 4, ...sourceFor() }
     ]);
   });
 
@@ -249,6 +280,7 @@ describe("ProjectProcurementItems", () => {
     await user.type(screen.getByRole("textbox", { name: "Brand" }), "Brand");
     await user.selectOptions(screen.getByRole("combobox", { name: "UOM" }), uom.id);
     await user.type(screen.getByRole("textbox", { name: "Price (INR)" }), "15.99");
+    await user.type(screen.getByRole("textbox", { name: /Planned order quantity/ }), "1");
     await user.click(within(panel).getByRole("button", { name: "Add item" }));
     expect(await screen.findByText("This unit is no longer active.")).toBeVisible();
     expect(await screen.findByText(/No active units are available/)).toBeVisible();
@@ -347,82 +379,46 @@ describe("ProjectProcurementItems", () => {
     expect(screen.queryByText("Plywood")).not.toBeInTheDocument();
   });
 
-  it("saves a vendor independently, preserves the item draft and reuses that vendor in another project", async () => {
-    let vendors: ProcurementVendorOption[] = [];
-    const savedVendor: ProcurementVendorOption = { id: "vendor-one", code: "PV-1", name: "Shared Timber", status: "active" };
-    const vendorPosts = vi.fn();
+  it("uses a read-only active-vendor dropdown for Add item and retains the item draft", async () => {
+    permissions.push("procurement.vendor_directory.read");
+    const active: ProcurementVendorOption = { id: "vendor-one", code: "PV-1", name: "Shared Timber", status: "active" };
+    const inactive: ProcurementVendorOption = { id: "vendor-two", code: "PV-2", name: "Old Timber", status: "inactive" };
+    const requests: URL[] = [];
     const itemPosts = vi.fn();
-    let finishVendor!: () => void;
-    const vendorResponse = new Promise<void>((resolve) => { finishVendor = resolve; });
+    const vendorPosts = vi.fn();
     server.use(
-      http.get("/api/v1/procurement/vendors", () => HttpResponse.json({ data: { items: vendors, total: vendors.length, limit: 20, offset: 0 } })),
-      http.post("/api/v1/procurement/vendors", async ({ request }) => {
-        vendorPosts(await request.json());
-        await vendorResponse;
-        vendors = [savedVendor];
-        return HttpResponse.json({ data: savedVendor }, { status: 201 });
-      }),
-      http.get("/api/v1/procurement/projects/project-two/items", () => page([])),
-      http.post("/api/v1/procurement/projects/project-two/items", async ({ request }) => {
-        itemPosts(await request.json());
-        return HttpResponse.json({ data: { ...item, id: "second-item", projectId: "project-two", vendor: savedVendor, estimateSource: storedSourceFor("project-two") } }, { status: 201 });
-      })
-    );
-    const view = start();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Add item" }));
-    await user.type(screen.getByRole("textbox", { name: "Item name" }), "My unsaved item");
-    await user.click(screen.getByRole("button", { name: "Add vendor" }));
-    await user.type(screen.getByRole("textbox", { name: "New vendor name" }), " Shared   Timber ");
-    expect(screen.getByText(/It can be assigned only after induction/)).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Save vendor" }));
-    expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Add item" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
-    finishVendor();
-    expect(await screen.findByText("Shared Timber is selected and saved for future projects.")).toBeVisible();
-    expect(vendorPosts).toHaveBeenCalledWith({ name: "Shared Timber" });
-    expect(screen.getByRole("textbox", { name: "Item name" })).toHaveValue("My unsaved item");
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
-    await user.click(screen.getByRole("button", { name: "Discard changes" }));
-    view.showProject("project-two", "Harbour House");
-    await user.click(screen.getByRole("button", { name: "Add item" }));
-    const panel = screen.getByRole("dialog");
-    await user.type(screen.getByRole("textbox", { name: "Item name" }), "Plywood");
-    await user.type(screen.getByRole("textbox", { name: "Brand" }), "Greenply");
-    await user.click(screen.getByRole("combobox", { name: "Vendor" }));
-    await user.click(await screen.findByRole("option", { name: "Shared Timber" }));
-    await user.selectOptions(screen.getByRole("combobox", { name: "UOM" }), uom.id);
-    await user.type(screen.getByRole("textbox", { name: "Price (INR)" }), "88.01");
-    await user.type(screen.getByRole("textbox", { name: "Allocated work (INR)" }), "30000");
-    await user.click(within(panel).getByRole("button", { name: "Add item" }));
-    await waitFor(() => expect(itemPosts).toHaveBeenCalledWith({ itemName: "Plywood", brand: "Greenply", uomId: uom.id, vendorId: savedVendor.id, pricePaise: 8801, allocatedWorkPaise: 3000000, ...sourceFor("project-two") }));
-    expect(view.queryClient.getQueryState(projectProcurementKeys.list("project-one", "", 0, sourceFor()))?.isInvalidated).toBe(false);
-  });
-
-  it("keeps a quick-added Under Review candidate out of the item vendor selection", async () => {
-    const candidate: ProcurementVendorOption = { id: "candidate-one", code: "PV-C", name: "New Joinery", status: "under_review" };
-    const itemPosts: Array<Record<string, unknown>> = [];
-    server.use(
-      http.post("/api/v1/procurement/vendors", () => HttpResponse.json({ data: candidate }, { status: 201 })),
-      http.post("/api/v1/procurement/projects/project-one/items", async ({ request }) => {
-        const body = await request.json() as Record<string, unknown>; itemPosts.push(body);
-        return HttpResponse.json({ data: { ...item, itemName: body.itemName, brand: body.brand, vendor: null } }, { status: 201 });
-      })
+      http.get("/api/v1/procurement/vendors", ({ request }) => { requests.push(new URL(request.url)); return HttpResponse.json({ data: { items: [active, inactive], total: 2, limit: 20, offset: 0 } }); }),
+      http.post("/api/v1/procurement/vendors", vendorPosts),
+      http.post("/api/v1/procurement/projects/project-one/items", async ({ request }) => { itemPosts(await request.json()); return HttpResponse.json({ data: { ...item, vendor: active } }, { status: 201 }); })
     );
     start(); const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Add item" }));
-    await user.type(screen.getByRole("textbox", { name: "Item name" }), "Joinery scope");
-    await user.type(screen.getByRole("textbox", { name: "Brand" }), "Bespoke");
+    await user.type(screen.getByRole("textbox", { name: "Item name" }), "Plywood board");
+    const select = screen.getByRole("combobox", { name: "Vendor" });
+    expect(select).toHaveProperty("tagName", "SELECT");
+    expect(await screen.findByRole("option", { name: "Shared Timber" })).toBeVisible();
+    expect(screen.queryByRole("option", { name: "Old Timber" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add vendor" })).not.toBeInTheDocument();
+    const directoryLink = screen.getByRole("link", { name: "Manage vendors (opens in new tab)" });
+    expect(directoryLink).toHaveAttribute("href", "/procurement/vendors");
+    expect(directoryLink).toHaveAttribute("target", "_blank");
+    expect(directoryLink).toHaveAttribute("rel", "noopener noreferrer");
+    expect(requests[0].searchParams.get("effectiveStatus")).toBe("active");
+    await user.click(directoryLink);
+    expect(screen.getByRole("textbox", { name: "Item name" })).toHaveValue("Plywood board");
+    await user.selectOptions(select, active.id);
+    expect(screen.getByRole("textbox", { name: "Item name" })).toHaveValue("Plywood board");
+    await user.type(screen.getByRole("textbox", { name: "Brand" }), "Greenply");
     await user.selectOptions(screen.getByRole("combobox", { name: "UOM" }), uom.id);
-    await user.type(screen.getByRole("textbox", { name: "Price (INR)" }), "100");
-    await user.click(screen.getByRole("button", { name: "Add vendor" }));
-    await user.type(screen.getByRole("textbox", { name: "New vendor name" }), "New Joinery");
-    await user.click(screen.getByRole("button", { name: "Save vendor" }));
-    expect(await screen.findByText(/New Joinery was added as Under Review/)).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "Vendor" })).toHaveValue("");
+    await user.type(screen.getByRole("textbox", { name: "Price (INR)" }), "88.01");
+    await user.type(screen.getByRole("textbox", { name: /Planned order quantity/ }), "1");
+    await user.click(screen.getByRole("button", { name: "Use planned amount with GST for allocated work" }));
+    expect(screen.getByRole("textbox", { name: "Allocated work (INR)" })).toHaveValue("103.85");
+    await user.clear(screen.getByRole("textbox", { name: "Allocated work (INR)" }));
+    await user.type(screen.getByRole("textbox", { name: "Allocated work (INR)" }), "30000");
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add item" }));
-    await waitFor(() => expect(itemPosts).toHaveLength(1));
-    expect(itemPosts[0].vendorId).toBeNull();
+    await waitFor(() => expect(itemPosts).toHaveBeenCalledWith({ itemName: "Plywood board", brand: "Greenply", uomId: uom.id, vendorId: active.id, pricePaise: 8801, plannedOrderQuantityMilliUnits: 1000, allocatedWorkPaise: 3000000, ...sourceFor() }));
+    expect(vendorPosts).not.toHaveBeenCalled();
   });
 
   it("preserves an unknown legacy amount on price-only edits and displays cap errors without losing input", async () => {
@@ -445,139 +441,96 @@ describe("ProjectProcurementItems", () => {
     expect(writes[1]).toMatchObject({ allocatedWorkPaise: 5000001, pricePaise: 12005 });
   });
 
-  it("requires typed vendor text to be selected, saved or cleared and protects unsaved quick-add input", async () => {
+  it("does not allow free text or quick-add from the item editor", async () => {
     const post = vi.fn();
-    server.use(http.patch("/api/v1/procurement/projects/project-one/items/:id", post));
+    server.use(http.patch("/api/v1/procurement/projects/project-one/items/:id", async ({ request }) => { post(await request.json()); return HttpResponse.json({ data: item }); }));
     start();
     const user = await edit();
-    await user.type(screen.getByRole("combobox", { name: "Vendor" }), "Unknown vendor");
+    const select = screen.getByRole("combobox", { name: "Vendor" });
+    expect(select).toHaveProperty("tagName", "SELECT");
+    expect(screen.queryByRole("textbox", { name: "New vendor name" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add vendor" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Manage vendors/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    expect(await screen.findByText("Select a saved vendor, save the new vendor, or clear the vendor entry.")).toBeVisible();
-    expect(post).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Clear vendor" }));
-    await user.click(screen.getByRole("button", { name: "Add vendor" }));
-    await user.type(screen.getByRole("textbox", { name: "New vendor name" }), "Unsaved name");
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.getByRole("alertdialog", { name: "Discard unsaved changes?" })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Keep editing" }));
-    expect(screen.getByRole("textbox", { name: "New vendor name" })).toHaveValue("Unsaved name");
+    await waitFor(() => expect(post).toHaveBeenCalledWith(expect.objectContaining({ vendorId: null })));
   });
 
-  it("loads subsequent vendor pages and debounces searchable options with keyboard selection", async () => {
+  it("loads later active-vendor pages and selects a vendor", async () => {
     const vendors = Array.from({ length: 21 }, (_, i): ProcurementVendorOption => ({ id: `vendor-${i}`, code: `V${i}`, name: `Vendor ${String(i).padStart(2, "0")}`, status: "active" }));
     const requests: URL[] = [];
     server.use(http.get("/api/v1/procurement/vendors", ({ request }) => {
       const url = new URL(request.url); requests.push(url);
       const offset = Number(url.searchParams.get("offset"));
-      const q = url.searchParams.get("q") ?? "";
-      const filtered = vendors.filter((vendor) => vendor.name.toLowerCase().includes(q.toLowerCase()));
-      return HttpResponse.json({ data: { items: filtered.slice(offset, offset + 20), total: filtered.length, limit: 20, offset } });
+      return HttpResponse.json({ data: { items: vendors.slice(offset, offset + 20), total: vendors.length, limit: 20, offset } });
     }));
     start();
     const user = await edit();
-    await user.click(screen.getByRole("combobox", { name: "Vendor" }));
+    const select = screen.getByRole("combobox", { name: "Vendor" });
     expect(await screen.findByRole("option", { name: "Vendor 00" })).toBeVisible();
     expect(screen.queryByRole("option", { name: "Vendor 20" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Load more vendors" }));
-    await user.click(screen.getByRole("combobox", { name: "Vendor" }));
     expect(await screen.findByRole("option", { name: "Vendor 20" })).toBeVisible();
     expect(requests.some((request) => request.searchParams.get("offset") === "20")).toBe(true);
-    const before = requests.length;
-    await user.type(screen.getByRole("combobox", { name: "Vendor" }), "Vendor 20");
-    expect(requests).toHaveLength(before);
-    await waitFor(() => expect(requests).toHaveLength(before + 1));
-    expect(requests.at(-1)!.searchParams.get("q")).toBe("Vendor 20");
-    await screen.findByRole("option", { name: "Vendor 20" });
-    await user.keyboard("{ArrowDown}{Enter}");
-    expect(screen.getByRole("combobox", { name: "Vendor" })).toHaveValue("Vendor 20");
-    expect(screen.queryByRole("listbox", { name: "Vendor options" })).not.toBeInTheDocument();
+    expect(requests.every((request) => request.searchParams.get("effectiveStatus") === "active")).toBe(true);
+    await user.selectOptions(select, "vendor-20");
+    expect(select).toHaveValue("vendor-20");
   });
 
-  it("keeps vendor creation errors actionable and retains historical vendors while allowing clear", async () => {
+  it("shows the saved active vendor beyond the first page without duplicating it after load more", async () => {
+    const vendors = Array.from({ length: 21 }, (_, i): ProcurementVendorOption => ({ id: `vendor-${i}`, code: `V${i}`, name: `Vendor ${String(i).padStart(2, "0")}`, status: "active" }));
+    server.use(
+      http.get("/api/v1/procurement/projects/project-one/items", () => page([{ ...item, vendor: vendors[20] }])),
+      http.get("/api/v1/procurement/vendors", ({ request }) => {
+        const offset = Number(new URL(request.url).searchParams.get("offset"));
+        return HttpResponse.json({ data: { items: vendors.slice(offset, offset + 20), total: vendors.length, limit: 20, offset } });
+      })
+    );
+    start(); const user = await edit();
+    const select = screen.getByRole("combobox", { name: "Vendor" });
+    expect(select).toHaveValue("vendor-20");
+    expect(screen.getByRole("option", { name: "Current vendor: Vendor 20 (retained)" })).toBeDisabled();
+    expect(screen.queryByText(/Current vendor: Vendor 20 \(active\)/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Load more vendors" }));
+    await waitFor(() => expect(screen.getAllByRole("option", { name: "Vendor 20" })).toHaveLength(1));
+    expect(screen.queryByRole("option", { name: "Current vendor: Vendor 20 (retained)" })).not.toBeInTheDocument();
+    expect(select).toHaveValue("vendor-20");
+  });
+
+  it("retains an inactive historical vendor on unrelated edits, then allows explicit clear", async () => {
     const oldVendor = { id: "old-vendor", code: "OLD", name: "Old Timber", status: "inactive" as const };
     const writes = vi.fn();
     server.use(
       http.get("/api/v1/procurement/projects/project-one/items", () => page([{ ...item, vendor: oldVendor }])),
-      http.patch("/api/v1/procurement/projects/project-one/items/:id", async ({ request }) => { writes(await request.json()); return HttpResponse.json({ data: { ...item, vendor: oldVendor } }); }),
-      http.post("/api/v1/procurement/vendors", () => HttpResponse.json({ error: { code: "PROCUREMENT_VENDOR_INACTIVE", message: "This vendor is inactive. Ask an administrator to activate it." } }, { status: 409 }))
+      http.patch("/api/v1/procurement/projects/project-one/items/:id", async ({ request }) => { writes(await request.json()); return HttpResponse.json({ data: { ...item, vendor: oldVendor } }); })
     );
     start();
     const user = await edit();
-    expect(screen.getByText(/current vendor is inactive/)).toBeVisible();
+    expect(screen.getByText(/Current vendor: Old Timber \(inactive\)/)).toBeVisible();
+    expect(screen.queryByRole("option", { name: "Old Timber" })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Keep current vendor: Old Timber/ })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(writes).toHaveBeenCalledWith(expect.objectContaining({ vendorId: "old-vendor" })));
     await edit();
     await user.click(screen.getByRole("button", { name: "Clear vendor" }));
-    await user.click(screen.getByRole("button", { name: "Add vendor" }));
-    await user.type(screen.getByRole("textbox", { name: "New vendor name" }), "Old Timber");
-    await user.click(screen.getByRole("button", { name: "Save vendor" }));
-    expect(await screen.findByText("This vendor is inactive. Ask an administrator to activate it.")).toBeVisible();
-    expect(screen.getByRole("textbox", { name: "New vendor name" })).toHaveValue("Old Timber");
-    await user.click(screen.getByRole("button", { name: "Cancel vendor" }));
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(writes).toHaveBeenCalledWith(expect.objectContaining({ vendorId: null })));
   });
 
-  it("cannot select an earlier unfiltered vendor with immediate keyboard input during debounce", async () => {
-    const electrical: ProcurementVendorOption = { id: "vendor-electrical", code: "EL", name: "Electrical Supply", status: "active" };
-    const orion: ProcurementVendorOption = { id: "vendor-orion", code: "OR", name: "Orion Supply", status: "active" };
-    const writes = vi.fn();
-    server.use(
-      http.get("/api/v1/procurement/vendors", ({ request }) => {
-        const q = new URL(request.url).searchParams.get("q") ?? "";
-        const items = [electrical, orion].filter((vendor) => vendor.name.toLowerCase().includes(q.toLowerCase()));
-        return HttpResponse.json({ data: { items, total: items.length, limit: 20, offset: 0 } });
-      }),
-      http.patch("/api/v1/procurement/projects/project-one/items/:id", async ({ request }) => {
-        writes(await request.json());
-        return HttpResponse.json({ data: { ...item, vendor: orion } });
-      })
-    );
-    start();
-    const user = await edit();
-    const input = screen.getByRole("combobox", { name: "Vendor" });
-    await user.click(input);
-    expect(await screen.findByRole("option", { name: "Electrical Supply" })).toBeVisible();
-    expect(screen.getByRole("option", { name: "Orion Supply" })).toBeVisible();
-    await user.type(input, "Orion");
-    expect(screen.queryByRole("listbox", { name: "Vendor options" })).not.toBeInTheDocument();
-    await user.keyboard("{ArrowDown}{Enter}");
-    expect(input).toHaveValue("Orion");
-    expect(writes).not.toHaveBeenCalled();
-    expect(await screen.findByRole("option", { name: "Orion Supply" })).toBeVisible();
-    expect(screen.queryByRole("option", { name: "Electrical Supply" })).not.toBeInTheDocument();
-    await user.keyboard("{ArrowDown}{Enter}");
-    expect(input).toHaveValue("Orion Supply");
-    await user.type(screen.getByRole("textbox", { name: "Allocated work (INR)" }), "100");
-    await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(writes).toHaveBeenCalledWith(expect.objectContaining({ vendorId: orion.id, allocatedWorkPaise: 10000 })));
-  });
-
-  it("keeps a late response for an old vendor query unselectable after the search changes", async () => {
-    const orion: ProcurementVendorOption = { id: "vendor-orion", code: "OR", name: "Orion Supply", status: "active" };
-    const oak: ProcurementVendorOption = { id: "vendor-oak", code: "OK", name: "Oak Supply", status: "active" };
-    let finishOldQuery!: () => void;
-    const oldResponse = new Promise<void>((resolve) => { finishOldQuery = resolve; });
-    const oldStarted = vi.fn();
-    server.use(http.get("/api/v1/procurement/vendors", async ({ request }) => {
-      const q = new URL(request.url).searchParams.get("q");
-      if (q === "Orion") { oldStarted(); await oldResponse; }
-      const items = q === "Orion" ? [orion] : q === "Oak" ? [oak] : [orion, oak];
-      return HttpResponse.json({ data: { items, total: items.length, limit: 20, offset: 0 } });
+  it("refreshes an open item editor when the active-vendor dropdown receives focus", async () => {
+    const activated: ProcurementVendorOption = { id: "vendor-now-active", code: "VNA", name: "Newly Active", status: "active" };
+    let activeVendors: ProcurementVendorOption[] = [];
+    const requests = vi.fn();
+    server.use(http.get("/api/v1/procurement/vendors", ({ request }) => {
+      requests(new URL(request.url));
+      return HttpResponse.json({ data: { items: activeVendors, total: activeVendors.length, limit: 20, offset: 0 } });
     }));
     start();
-    const user = await edit();
-    const input = screen.getByRole("combobox", { name: "Vendor" });
-    await user.type(input, "Orion");
-    await waitFor(() => expect(oldStarted).toHaveBeenCalled());
-    await user.clear(input);
-    await user.type(input, "Oak");
-    finishOldQuery();
-    await user.keyboard("{ArrowDown}{Enter}");
-    expect(input).toHaveValue("Oak");
-    expect(screen.queryByRole("option", { name: "Orion Supply" })).not.toBeInTheDocument();
-    expect(await screen.findByRole("option", { name: "Oak Supply" })).toBeVisible();
-    await user.keyboard("{ArrowDown}{Enter}");
-    expect(input).toHaveValue("Oak Supply");
+    await edit();
+    expect(await screen.findByText(/No active vendors are available/)).toBeVisible();
+    activeVendors = [activated];
+    const select = screen.getByRole("combobox", { name: "Vendor" });
+    select.focus();
+    expect(await screen.findByRole("option", { name: "Newly Active" })).toBeInTheDocument();
+    expect(requests).toHaveBeenCalledTimes(2);
   });
 });

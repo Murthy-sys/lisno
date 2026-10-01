@@ -14,21 +14,28 @@ import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
 import { FinanceLedgerEntryModel } from "../src/models/FinanceLedgerEntry.js";
 import { ProjectFinanceBucketModel } from "../src/models/ProjectFinanceBucket.js";
 import { ProjectProcurementItemModel } from "../src/models/ProjectProcurementItem.js";
+import { ProjectPurchaseOrderModel } from "../src/models/ProjectPurchaseOrder.js";
+import { ProjectPurchaseOrderRevisionModel } from "../src/models/ProjectPurchaseOrderRevision.js";
+import { ProjectPurchaseOrderRequestModel } from "../src/models/ProjectPurchaseOrderRequest.js";
+import { ProjectPurchaseOrderRequestRevisionModel } from "../src/models/ProjectPurchaseOrderRequestRevision.js";
 import { UserModel } from "../src/models/User.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import { createAiEstimatorKnowledgeReferenceService } from "../src/services/ai-estimator-knowledge-reference.service.js";
 import type { PublicUser } from "../src/services/auth.service.js";
 import { createProjectProcurementService } from "../src/services/project-procurement.service.js";
+import { createProjectPurchaseOrderPreparationService } from "../src/services/project-purchase-order-preparation.service.js";
+import { procurementVendorAllocationTotals } from "../src/services/procurement-vendor-allocation.service.js";
 import { procurementItemSourceSnapshot } from "../src/services/procurement.service.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
 const actor: PublicUser = { id: "buyer", name: "Buyer", email: "buyer@example.test", role: "procurement" };
 const other: PublicUser = { ...actor, id: "other-buyer", email: "other@example.test" };
-const fields = { estimateId: "estimate-project-a", estimateVersion: 1, sourceLineItemKey: "line-first", itemName: "Plywood Sheet", brand: "Timber Brand", uomId: "sheet", vendorId: null, pricePaise: 12345 };
+const fields = { estimateId: "estimate-project-a", estimateVersion: 1, sourceLineItemKey: "line-first", itemName: "Plywood Sheet", brand: "Timber Brand", uomId: "sheet", vendorId: null, pricePaise: 12345, plannedOrderQuantityMilliUnits: 1_000 };
 const now = new Date("2026-09-17T10:00:00.000Z");
 const audit = createAuditService(createMemoryRepository());
 const service = createProjectProcurementService({ audit, now: () => now });
+const preparation = createProjectPurchaseOrderPreparationService();
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 beforeAll(async () => {
   replica = await startMongoReplicaSet("project-procurement-tests");
@@ -48,6 +55,77 @@ beforeEach(async () => {
     { _id: "meter", code: "M", name: "Meter", decimalScale: 2, displayOrder: 2, status: "active", version: 1, createdById: actor.id, updatedById: actor.id },
     { _id: "inactive", code: "OLD", name: "Old unit", decimalScale: 0, displayOrder: 3, status: "inactive", version: 1, createdById: actor.id, updatedById: actor.id }
   ]);
+});
+
+describe("project purchase order preparation", () => {
+  it("requires an explicit new quantity and enforces configured UOM precision", async () => {
+    await expect(service.create(actor, "project-a", { ...fields, plannedOrderQuantityMilliUnits: undefined })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR", fields: { plannedOrderQuantityMilliUnits: expect.any(String) }
+    });
+    await expect(service.create(actor, "project-a", { ...fields, plannedOrderQuantityMilliUnits: 1_250 })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR", fields: { plannedOrderQuantityMilliUnits: expect.any(String) }
+    });
+    const created = await service.create(actor, "project-a", { ...fields, uomId: "meter", pricePaise: 101,
+      plannedOrderQuantityMilliUnits: 1_250 });
+    expect(created).toMatchObject({ plannedOrderQuantityMilliUnits: 1_250, plannedLineNetPaise: 126,
+      uom: { decimalScale: 2 } });
+    await expect(service.update(actor, "project-a", created.id, { ...fields, uomId: "meter", pricePaise: 101,
+      plannedOrderQuantityMilliUnits: 1_255, expectedVersion: 1 })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect((await service.get(actor, "project-a", created.id)).plannedOrderQuantityMilliUnits).toBe(1_250);
+  });
+
+  it("returns canonical unequal project and section totals, blockers, and a stable changed digest", async () => {
+    const vendor = (await service.createVendor(actor, { name: "Preparation Vendor" })).vendor;
+    await completeVendorOnboarding(vendor.id);
+    const a = await service.create(actor, "project-a", { ...fields, uomId: "meter", vendorId: vendor.id,
+      allocatedWorkPaise: 500_000, pricePaise: 101, plannedOrderQuantityMilliUnits: 1_250 });
+    await service.create(other, "project-b", { ...fields, estimateId: "estimate-project-b", vendorId: vendor.id,
+      allocatedWorkPaise: 500_000, pricePaise: 333, plannedOrderQuantityMilliUnits: 2_000 });
+    const first = await preparation.get(actor, "project-a");
+    const second = await preparation.get(other, "project-b");
+    expect(first).toMatchObject({ approvedEstimatePaise: 1_000_000, netPaise: 126, itemCount: 1,
+      readyItemCount: 1, blockers: [], sections: [{ id: "CA", estimatedPaise: 1_000_000, netPaise: 126,
+        items: [{ id: a.id, plannedOrderQuantityMilliUnits: 1_250, plannedLineNetPaise: 126,
+          roomName: "Living Room", uom: { decimalScale: 2 }, vendor: { id: vendor.id, status: "active" }, blockers: [] }] }] });
+    expect(second).toMatchObject({ approvedEstimatePaise: 2_350_000, netPaise: 666, readyItemCount: 1 });
+    expect(first.digest).toMatch(/^[a-f0-9]{64}$/u);
+    expect((await preparation.get(actor, "project-a")).digest).toBe(first.digest);
+    await service.update(actor, "project-a", a.id, { ...fields, uomId: "meter", vendorId: vendor.id,
+      allocatedWorkPaise: 500_000, pricePaise: 101, plannedOrderQuantityMilliUnits: 2_250, expectedVersion: 1 });
+    const changed = await preparation.get(actor, "project-a");
+    expect(changed).toMatchObject({ netPaise: 227, sections: [{ netPaise: 227 }] });
+    expect(changed.digest).not.toBe(first.digest);
+  });
+
+  it("keeps historical missing quantity visible and never counts it as zero", async () => {
+    const empty = await preparation.get(actor, "project-a");
+    expect(empty).toMatchObject({ netPaise: 0, itemCount: 0, readyItemCount: 0,
+      blockers: [{ code: "NO_ITEMS" }], sections: [{ id: "CA", netPaise: 0, items: [] }] });
+    const item = await service.create(actor, "project-a", fields);
+    await ProjectProcurementItemModel.collection.updateOne({ _id: item.id }, { $unset: { plannedOrderQuantityMilliUnits: "" } });
+    const legacy = await preparation.get(actor, "project-a");
+    expect(legacy).toMatchObject({ netPaise: null, itemCount: 1, readyItemCount: 0,
+      sections: [{ netPaise: null, items: [{ id: item.id, plannedOrderQuantityMilliUnits: null,
+        plannedLineNetPaise: null, blockers: expect.arrayContaining([{ code: "QUANTITY_MISSING", message: expect.any(String), itemId: item.id }]) }] }] });
+    expect(legacy.blockers.map((blocker) => blocker.code)).toContain("QUANTITY_MISSING");
+  });
+
+  it("protects submitted request items until Super Admin returns them for correction", async () => {
+    const item = await service.create(actor, "project-a", fields);
+    await ProjectPurchaseOrderRequestModel.collection.insertOne({ _id: "request-pending", projectId: "project-a",
+      status: "pending_approval", submittedRevisionId: "revision-pending" } as never);
+    await ProjectPurchaseOrderRequestRevisionModel.collection.insertOne({ _id: "revision-pending", requestId: "request-pending",
+      projectId: "project-a", lines: [{ procurementItemId: item.id }] } as never);
+    await expect(service.update(actor, "project-a", item.id, { ...fields, pricePaise: 10_000, expectedVersion: 1 }))
+      .rejects.toMatchObject({ code: "PROCUREMENT_ITEM_REQUEST_PENDING", status: 409 });
+    await expect(service.remove(actor, "project-a", item.id, { expectedVersion: 1, reason: "Correct this item" }))
+      .rejects.toMatchObject({ code: "PROCUREMENT_ITEM_REQUEST_PENDING", status: 409 });
+    await ProjectPurchaseOrderRequestModel.collection.updateOne({ _id: "request-pending" }, { $set: { status: "changes_requested" } });
+    const corrected = await service.update(actor, "project-a", item.id, { ...fields, pricePaise: 10_000, expectedVersion: 1 });
+    expect(corrected.version).toBe(2);
+    await expect(service.remove(actor, "project-a", item.id, { expectedVersion: 2, reason: "Correct this item" }))
+      .resolves.toMatchObject({ version: 3 });
+  });
 });
 afterAll(async () => { await replica?.stop(); });
 
@@ -126,13 +204,104 @@ describe("project procurement item Mongo transactions", () => {
     const item = await service.create(actor, "project-a", fields);
     expect(item.estimateSource).toMatchObject({ estimateId: fields.estimateId, estimateVersion: 1, estimateReviewRoundId: null, sourceLineItemKey: "line-first" });
   });
-  it("links identical materials to distinct selected parents, including a zero-budget line", async () => {
+  it("rejects a zero-value approved source but preserves a historical child under that parent", async () => {
     const first = await service.create(actor, "project-a", fields);
-    const zero = await service.create(actor, "project-a", { ...fields, sourceLineItemKey: "line-zero" });
+    await expect(service.create(actor, "project-a", { ...fields, sourceLineItemKey: "line-zero" }))
+      .rejects.toMatchObject({ status: 409, code: "PROCUREMENT_ITEM_ZERO_ESTIMATE_VALUE" });
+    await ProjectProcurementItemModel.collection.updateOne({ _id: first.id }, { $set: { sourceLineItemKey: "line-zero" } });
+    const zero = await service.get(actor, "project-a", first.id);
     expect(first.estimateSource).toEqual({ estimateId: fields.estimateId, estimateVersion: 1, estimateReviewRoundId: "round-project-a", sourceSectionId: "CA", sourceLineItemKey: "line-first" });
     expect(zero.estimateSource?.sourceLineItemKey).toBe("line-zero");
-    await expect(service.create(other, "project-a", { ...fields, sourceLineItemKey: "line-zero" })).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_DUPLICATE" });
     expect((await service.list(actor, "project-a", { q: "", limit: 20, offset: 0, estimateId: fields.estimateId, estimateVersion: 1, sourceLineItemKey: "line-zero" })).items).toEqual([zero]);
+    expect((await service.list(actor, "project-a", { q: "", limit: 20, offset: 0, unassigned: true })).items).toEqual([zero]);
+    expect((await service.list(actor, "project-b", { q: "", limit: 20, offset: 0, unassigned: true })).total).toBe(0);
+    expect(await AuditEventModel.countDocuments({ action: "project_procurement_item_created" })).toBe(1);
+  });
+  it("uses approved value rather than quantity when creating or assigning items", async () => {
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "round-project-a" },
+      { $set: { "estimateSnapshot.lineItems.1.quantity": 4 } });
+    const unpaid = await mongoose.connection.transaction((session) => procurementItemSourceSnapshot("project-a", session));
+    expect(unpaid.lineItems.find((line) => line.key === "line-zero")).toMatchObject({ quantity: 4, amountPaise: 0 });
+    await expect(service.create(actor, "project-a", { ...fields, sourceLineItemKey: "line-zero" }))
+      .rejects.toMatchObject({ status: 409, code: "PROCUREMENT_ITEM_ZERO_ESTIMATE_VALUE" });
+    const legacy = await service.create(actor, "project-a", fields);
+    await ProjectProcurementItemModel.collection.updateOne({ _id: legacy.id },
+      { $unset: { estimateId: "", estimateVersion: "", estimateReviewRoundId: "", sourceSectionId: "", sourceLineItemKey: "" } });
+    await expect(service.update(actor, "project-a", legacy.id, { ...fields, sourceLineItemKey: "line-zero", expectedVersion: 1 }))
+      .rejects.toMatchObject({ status: 409, code: "PROCUREMENT_ITEM_ZERO_ESTIMATE_VALUE" });
+    expect((await service.get(actor, "project-a", legacy.id)).estimateSource).toBeNull();
+    expect(await AuditEventModel.countDocuments()).toBe(1);
+
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "round-project-b" },
+      { $set: { "estimateSnapshot.lineItems.0.amount": 23_400, "estimateSnapshot.lineItems.1.amount": 100 } });
+    const paidZeroQuantity = await mongoose.connection.transaction((session) => procurementItemSourceSnapshot("project-b", session));
+    expect(paidZeroQuantity.lineItems.find((line) => line.key === "line-zero")).toMatchObject({ quantity: 0, amountPaise: 10_000 });
+    await expect(service.create(other, "project-b", { ...fields, estimateId: "estimate-project-b", sourceLineItemKey: "line-zero" }))
+      .resolves.toMatchObject({ projectId: "project-b", estimateSource: { sourceLineItemKey: "line-zero" } });
+    expect((await service.list(actor, "project-a", { q: "", limit: 20, offset: 0 })).total).toBe(1);
+    expect((await service.list(other, "project-b", { q: "", limit: 20, offset: 0 })).total).toBe(1);
+  });
+  it("reassigns only a historical zero-value child to a paid source when no purchasing record references it", async () => {
+    const created = await service.create(actor, "project-a", fields);
+    await ProjectProcurementItemModel.collection.updateOne({ _id: created.id }, { $set: { sourceLineItemKey: "line-zero" } });
+    const historical = await service.get(actor, "project-a", created.id);
+    expect(historical.estimateSource?.sourceLineItemKey).toBe("line-zero");
+    await ProjectPurchaseOrderRevisionModel.collection.insertOne({ _id: "historical-order-revision", projectId: "project-a",
+      lines: [{ procurementItemId: created.id }] } as any);
+    await expect(service.update(actor, "project-a", created.id, { ...fields, expectedVersion: 1 }))
+      .rejects.toMatchObject({ status: 409, code: "PROCUREMENT_ITEM_ORDER_REFERENCED" });
+    await ProjectPurchaseOrderRevisionModel.collection.deleteOne({ _id: "historical-order-revision" });
+    const resolved = await service.update(actor, "project-a", created.id, { ...fields, expectedVersion: 1 });
+    expect(resolved).toMatchObject({ id: created.id, version: 2, estimateSource: { sourceLineItemKey: "line-first" } });
+    expect((await service.list(actor, "project-a", { q: "", limit: 20, offset: 0, unassigned: true })).total).toBe(0);
+    expect((await service.list(actor, "project-b", { q: "", limit: 20, offset: 0, unassigned: true })).total).toBe(0);
+    expect(await AuditEventModel.findOne({ action: "project_procurement_item_updated", entityId: created.id }).lean())
+      .toMatchObject({ oldValues: { estimateSource: { sourceLineItemKey: "line-zero" } },
+        newValues: { estimateSource: { sourceLineItemKey: "line-first" }, version: 2 } });
+  });
+  it("tombstones an eligible child with reason and CAS, removes its allocation, and permits a corrected replacement", async () => {
+    const vendor = (await service.createVendor(actor, { name: "Duplicate Material Vendor" })).vendor;
+    await completeVendorOnboarding(vendor.id);
+    const child = await service.create(actor, "project-a", { ...fields, vendorId: vendor.id, allocatedWorkPaise: 5_000_000 });
+    await expect(service.remove(actor, "project-a", child.id, { expectedVersion: 0, reason: "Duplicate procurement item" })).rejects.toMatchObject({ status: 400 });
+    await expect(service.remove(actor, "project-b", child.id, { expectedVersion: 1, reason: "Duplicate procurement item" })).rejects.toMatchObject({ status: 404 });
+    await expect(service.remove(actor, "project-a", child.id, { expectedVersion: 2, reason: "Duplicate procurement item" })).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_VERSION_CONFLICT" });
+    const removed = await service.remove(actor, "project-a", child.id, { expectedVersion: 1, reason: "Duplicate procurement item" });
+    expect(removed).toEqual({ id: child.id, projectId: "project-a", version: 2, removedAt: now.toISOString() });
+    expect(await ProjectProcurementItemModel.findById(child.id).lean()).toMatchObject({ removedById: actor.id, removalReason: "Duplicate procurement item", version: 2 });
+    expect((await service.list(actor, "project-a", { q: "", limit: 20, offset: 0 })).total).toBe(0);
+    await expect(service.get(actor, "project-a", child.id)).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_NOT_FOUND" });
+    await expect(service.update(actor, "project-a", child.id, { ...fields, expectedVersion: 2 })).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_NOT_FOUND" });
+    const totals = await mongoose.connection.transaction((session) => procurementVendorAllocationTotals(vendor.id, session));
+    expect(totals.totalAllocatedWorkPaise).toBe(0n);
+    const replacement = await service.create(actor, "project-a", { ...fields, vendorId: vendor.id, allocatedWorkPaise: 2_000_000 });
+    expect(replacement.id).not.toBe(child.id);
+    expect(await AuditEventModel.findOne({ action: "project_procurement_item_removed", entityId: child.id }).lean()).toMatchObject({
+      reason: "Duplicate procurement item", oldValues: { version: 1, allocatedWorkPaise: 5_000_000 }, newValues: { version: 2, removedById: actor.id }
+    });
+    expect(await FinanceLedgerEntryModel.countDocuments()).toBe(0);
+    expect(await ProjectFinanceBucketModel.countDocuments()).toBe(0);
+  });
+  it("blocks removal while a draft or submitted order references the child", async () => {
+    const child = await service.create(actor, "project-a", fields);
+    const removal = { expectedVersion: child.version, reason: "Duplicate procurement item" };
+    await ProjectPurchaseOrderModel.collection.insertOne({ _id: "draft-order", projectId: "project-a", draftLines: [{ procurementItemId: child.id }] } as any);
+    await expect(service.remove(actor, "project-a", child.id, removal)).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_ORDER_DRAFT_REFERENCED" });
+    await ProjectPurchaseOrderModel.collection.deleteOne({ _id: "draft-order" });
+    await ProjectPurchaseOrderRevisionModel.collection.insertOne({ _id: "submitted-revision", projectId: "project-a", lines: [{ procurementItemId: child.id }] } as any);
+    await expect(service.remove(actor, "project-a", child.id, removal)).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_ORDER_REFERENCED" });
+    expect(await ProjectProcurementItemModel.findById(child.id).lean()).toMatchObject({ removedAt: null, version: 1 });
+    expect(await AuditEventModel.countDocuments({ action: "project_procurement_item_removed" })).toBe(0);
+  });
+  it("releases an item referenced only by a cancelled unsubmitted draft", async () => {
+    const child = await service.create(actor, "project-a", fields);
+    await ProjectPurchaseOrderModel.collection.insertOne({
+      _id: "cancelled-draft", projectId: "project-a", status: "cancelled",
+      draftLines: [{ procurementItemId: child.id }], cancelledAt: now
+    } as any);
+    await expect(service.remove(actor, "project-a", child.id, {
+      expectedVersion: child.version, reason: "Duplicate item after cancelled draft"
+    })).resolves.toMatchObject({ id: child.id, version: child.version + 1 });
   });
   it.each([{ estimateId: "estimate-project-b" }, { estimateVersion: 2 }, { sourceLineItemKey: "line-excluded" }, { sourceLineItemKey: "missing" }])("rejects a noncanonical source without writes %o", async (source) => {
     await expect(service.create(actor, "project-a", { ...fields, ...source })).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_SOURCE_CONFLICT" });
@@ -143,12 +312,14 @@ describe("project procurement item Mongo transactions", () => {
   });
   it("pages and searches independently per parent beyond the project first page", async () => {
     for (let index = 0; index < 25; index += 1) await service.create(actor, "project-a", { ...fields, itemName: `Material ${String(index).padStart(2, "0")}` });
-    const otherParent = await service.create(actor, "project-a", { ...fields, itemName: "Material 24", sourceLineItemKey: "line-zero" });
+    const otherParent = await service.create(actor, "project-a", { ...fields, itemName: "Other parent item" });
+    await ProjectProcurementItemModel.collection.updateOne({ _id: otherParent.id }, { $set: { sourceLineItemKey: "line-zero" } });
     const query = { q: "", limit: 20, offset: 20, estimateId: fields.estimateId, estimateVersion: 1, sourceLineItemKey: "line-first" };
     const page = await service.list(actor, "project-a", query);
     expect(page.total).toBe(25); expect(page.items).toHaveLength(5);
     expect(page.items.every((item) => item.estimateSource?.sourceLineItemKey === "line-first")).toBe(true);
-    expect((await service.list(actor, "project-a", { ...query, offset: 0, q: "24", sourceLineItemKey: "line-zero" })).items).toEqual([otherParent]);
+    expect((await service.list(actor, "project-a", { ...query, offset: 0, q: "Other parent", sourceLineItemKey: "line-zero" })).items)
+      .toMatchObject([{ id: otherParent.id, estimateSource: { sourceLineItemKey: "line-zero" } }]);
   });
   it("keeps legacy rows visible and explicitly assigns only once without moving linked rows", async () => {
     const created = await service.create(actor, "project-a", fields);
@@ -255,7 +426,8 @@ describe("project procurement item Mongo transactions", () => {
     expect(first.total).toBe(4);
     expect(first.items[0]?.itemName).toBe("Cable [A.*]");
     expect(new Set([...first.items, ...second.items].map((i) => i.id)).size).toBe(4);
-    expect(await service.listUoms(actor)).toEqual([{ id: "sheet", code: "SHT", name: "Sheet" }, { id: "meter", code: "M", name: "Meter" }]);
+    expect(await service.listUoms(actor)).toEqual([{ id: "sheet", code: "SHT", name: "Sheet", decimalScale: 0 },
+      { id: "meter", code: "M", name: "Meter", decimalScale: 2 }]);
   });
   it("uses CAS for competing edits and does not audit the losing write", async () => {
     const item = await service.create(actor, "project-a", fields);
@@ -289,10 +461,10 @@ describe("project procurement item Mongo transactions", () => {
     if (status === "unavailable") await AiEstimatorKnowledgeUomModel.deleteOne({ _id: "sheet" });
     else await AiEstimatorKnowledgeUomModel.updateOne({ _id: "sheet" }, { $set: { status, code: "NEW", name: "Renamed master", ...(status === "archived" ? { archivedAt: now, archivedById: actor.id } : {}) } });
     const updated = await service.update(actor, "project-a", item.id, { ...fields, pricePaise: 10001, expectedVersion: 1 });
-    expect(updated.uom).toEqual({ id: "sheet", code: "SHT", name: "Sheet", status });
+    expect(updated.uom).toEqual({ id: "sheet", code: "SHT", name: "Sheet", decimalScale: 0, status });
     await expect(service.create(actor, "project-a", { ...fields, itemName: "New" })).rejects.toMatchObject({ code: "VALIDATION_ERROR", fields: { uomId: expect.any(String) } });
     const changed = await service.update(actor, "project-a", item.id, { ...fields, uomId: "meter", expectedVersion: 2 });
-    expect(changed.uom).toEqual({ id: "meter", code: "M", name: "Meter", status: "active" });
+    expect(changed.uom).toEqual({ id: "meter", code: "M", name: "Meter", decimalScale: 2, status: "active" });
     await expect(service.update(actor, "project-a", item.id, { ...fields, expectedVersion: 3 })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
   it("makes UOM lifecycle writes serialize with selection, while allowing later archive", async () => {
@@ -349,15 +521,17 @@ describe("saved Configuration vendors for project procurement", () => {
     const reused = await service.createVendor(other, { name: "wood   supply" });
     expect(reused).toEqual({ ...created, created: false });
     expect(await ProjectProcurementItemModel.countDocuments()).toBe(0);
-    expect((await service.listVendors(actor, { q: "SUPPLY", limit: 20, offset: 0 })).items).toEqual([]);
+    expect((await service.listVendors(actor, { q: "SUPPLY", limit: 20, offset: 0 })).items).toEqual([created.vendor]);
+    expect(created.vendor).toMatchObject({ assignable: false, readiness: { inductionApproved: false, physicalAddressVerified: false } });
     await expect(service.create(actor, "project-a", { ...fields, vendorId: created.vendor.id, allocatedWorkPaise: 500_000 })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
     await completeVendorOnboarding(created.vendor.id);
     const first = await service.create(actor, "project-a", { ...fields, vendorId: created.vendor.id, allocatedWorkPaise: 500_000 });
     const second = await service.create(other, "project-b", { ...fields, estimateId: "estimate-project-b", vendorId: created.vendor.id, allocatedWorkPaise: 500_000, pricePaise: 30001 });
-    const available = { ...created.vendor, status: "active" };
-    expect(first.vendor).toEqual(available);
-    expect(second.vendor).toEqual(available);
-    expect((await service.listVendors(other, { q: "SUPPLY", limit: 20, offset: 0 })).items).toEqual([available]);
+    const available = (await service.listVendors(other, { q: "SUPPLY", limit: 20, offset: 0 })).items[0]!;
+    expect(available).toMatchObject({ id: created.vendor.id, status: "active", assignable: true,
+      readiness: { inductionApproved: true, vendorSelfKpiComplete: true, procurementKpiComplete: true, profileComplete: true, physicalAddressVerified: true } });
+    expect(first.vendor).toEqual({ id: available.id, code: available.code, name: available.name, status: available.status });
+    expect(second.vendor).toEqual({ id: available.id, code: available.code, name: available.name, status: available.status });
     expect((await service.list(actor, "project-a", { q: "supply", limit: 20, offset: 0 })).items).toEqual([first]);
     expect(await AiEstimatorKnowledgeVendorModel.countDocuments()).toBe(1);
     expect(await AuditEventModel.countDocuments({ action: "ai_estimator_knowledge_master_created" })).toBe(1);
@@ -393,7 +567,9 @@ describe("saved Configuration vendors for project procurement", () => {
     const created = await service.createVendor(actor, { name: "Dormant Vendor" });
     await AiEstimatorKnowledgeVendorModel.updateOne({ _id: created.vendor.id }, { $set: { status: "inactive" } });
     await expect(service.createVendor(other, { name: " DORMANT  vendor " })).rejects.toMatchObject({ code: "PROCUREMENT_VENDOR_INACTIVE", status: 409 });
-    expect((await service.listVendors(actor, { q: "Dormant", limit: 20, offset: 0 })).total).toBe(0);
+    expect((await service.listVendors(actor, { q: "Dormant", limit: 20, offset: 0 })).items).toMatchObject([
+      { id: created.vendor.id, status: "inactive", assignable: false }
+    ]);
     expect(await AiEstimatorKnowledgeVendorModel.countDocuments()).toBe(1);
     expect(await AuditEventModel.countDocuments()).toBe(1);
   });
@@ -419,6 +595,40 @@ describe("saved Configuration vendors for project procurement", () => {
     expect(first.total).toBe(25);
     expect((await service.listVendors(actor, { q: ".*", limit: 20, offset: 0 })).items.map((row) => row.id)).toEqual(["vendor-24"]);
   });
+  it("filters current KPI-active vendors before total and paging, even without induction or a complete profile", async () => {
+    await AiEstimatorKnowledgeVendorModel.create(Array.from({ length: 25 }, (_, i) => ({
+      _id: `candidate-${i}`, code: `C${i}`, name: `Candidate Vendor ${String(i).padStart(2, "0")}`,
+      status: i === 24 ? "inactive" : "active", displayOrder: i, version: 1,
+      createdById: actor.id, updatedById: actor.id
+    })));
+    for (const i of [21, 22, 23, 24]) {
+      await completeVendorOnboarding(`candidate-${i}`);
+      await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: `candidate-${i}` },
+        { $set: { procurementProfile: { vendorType: "supplier" } } });
+      await VendorInductionReviewModel.deleteMany({ vendorId: `candidate-${i}` });
+    }
+    const first = await service.listVendors(actor, { q: "Candidate", limit: 1, offset: 0, effectiveStatus: "active" });
+    const second = await service.listVendors(actor, { q: "Candidate", limit: 1, offset: 1, effectiveStatus: "active" });
+    const beyond = await service.listVendors(actor, { q: "Candidate", limit: 1, offset: 3, effectiveStatus: "active" });
+    expect(first).toMatchObject({ total: 3, limit: 1, offset: 0, items: [{ id: "candidate-21", status: "active", assignable: true,
+      readiness: { inductionApproved: false, profileComplete: false, physicalAddressVerified: false } }] });
+    expect(second.items.map(item => item.id)).toEqual(["candidate-22"]);
+    expect(beyond).toMatchObject({ total: 3, items: [] });
+    expect((await service.listVendors(actor, { q: "Candidate", limit: 1, offset: 1 })).total).toBe(25);
+  });
+  it("pages under-review and inactive vendors before calculating readiness and excludes archived records", async () => {
+    await AiEstimatorKnowledgeVendorModel.create(Array.from({ length: 23 }, (_, i) => ({
+      _id: `new-vendor-${i}`, code: `N${i}`, name: `New Vendor ${String(i).padStart(2, "0")}`,
+      status: i === 22 ? "inactive" : "active", displayOrder: i, version: 1, createdById: actor.id, updatedById: actor.id
+    })));
+    await AiEstimatorKnowledgeVendorModel.create({ _id: "archived-vendor", code: "ARCH", name: "New Vendor Archived",
+      status: "archived", displayOrder: 23, version: 1, createdById: actor.id, updatedById: actor.id, archivedAt: now, archivedById: actor.id });
+    const page = await service.listVendors(actor, { q: "New Vendor", limit: 5, offset: 20 });
+    expect(page.total).toBe(23);
+    expect(page.items).toHaveLength(3);
+    expect(page.items[2]).toMatchObject({ id: "new-vendor-22", status: "inactive", assignable: false });
+    expect(page.items[0]).toMatchObject({ status: "under_review", assignable: false, readiness: { inductionApproved: false } });
+  });
   it("scopes duplicate products by nullable vendor identity and allows clearing the vendor", async () => {
     const firstVendor = (await service.createVendor(actor, { name: "One" })).vendor;
     const secondVendor = (await service.createVendor(actor, { name: "Two" })).vendor;
@@ -440,7 +650,7 @@ describe("saved Configuration vendors for project procurement", () => {
     if (status === "unavailable") await AiEstimatorKnowledgeVendorModel.deleteOne({ _id: saved.id });
     else await AiEstimatorKnowledgeVendorModel.updateOne({ _id: saved.id }, { $set: { status, name: "Renamed Vendor", code: "RENAMED", ...(status === "archived" ? { archivedAt: now, archivedById: actor.id } : {}) } });
     const updated = await service.update(actor, "project-a", item.id, { ...fields, vendorId: saved.id, allocatedWorkPaise: 500_000, pricePaise: 56001, expectedVersion: 1 });
-    expect(updated.vendor).toEqual({ ...saved, status });
+    expect(updated.vendor).toEqual({ id: saved.id, code: saved.code, name: saved.name, status });
     await expect(service.create(actor, "project-b", { ...fields, estimateId: "estimate-project-b", vendorId: saved.id, allocatedWorkPaise: 500_000 })).rejects.toMatchObject({ code: "VALIDATION_ERROR", fields: { vendorId: expect.any(String) } });
     const cleared = await service.update(actor, "project-a", item.id, { ...fields, expectedVersion: 2 });
     expect(cleared.vendor).toBeNull();
@@ -462,7 +672,7 @@ describe("saved Configuration vendors for project procurement", () => {
     release();
     const created = await creation;
     await archive;
-    expect((await service.get(actor, "project-a", created.id)).vendor).toEqual({ ...saved, status: "archived" });
+    expect((await service.get(actor, "project-a", created.id)).vendor).toEqual({ id: saved.id, code: saved.code, name: saved.name, status: "archived" });
     expect(await AiEstimatorKnowledgeVendorModel.findById(saved.id).lean()).toMatchObject({ dependencyEpoch: 1 });
     await expect(service.create(actor, "project-b", { ...fields, estimateId: "estimate-project-b", vendorId: saved.id, allocatedWorkPaise: 500_000 })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });

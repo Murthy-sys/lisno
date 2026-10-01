@@ -9,16 +9,18 @@ import type { AuthService, PublicUser } from "../src/services/auth.service.js";
 import type { ProjectProcurementService } from "../src/services/project-procurement.service.js";
 
 const actor: PublicUser = { id: "buyer", name: "Buyer", email: "buyer@example.test", role: "procurement" };
-const fields = { estimateId: "estimate-a", estimateVersion: 1, sourceLineItemKey: "line-a", itemName: "Plywood", brand: "Timber", uomId: "sheet", vendorId: null, pricePaise: 12345 };
-const item = { id: "item-1", projectId: "project-a", estimateSource: null, vendor: null, itemName: "Plywood", brand: "Timber", pricePaise: 12345, allocatedWorkPaise: null,
-  uom: { id: "sheet", name: "Sheet", code: "SHT", status: "active" as const },
+const fields = { estimateId: "estimate-a", estimateVersion: 1, sourceLineItemKey: "line-a", itemName: "Plywood", brand: "Timber", uomId: "sheet", vendorId: null, pricePaise: 12345, plannedOrderQuantityMilliUnits: 1_000 };
+const item = { id: "item-1", projectId: "project-a", estimateSource: null, vendor: null, itemName: "Plywood", brand: "Timber", pricePaise: 12345,
+  plannedOrderQuantityMilliUnits: 1_000, plannedLineNetPaise: 12345, allocatedWorkPaise: null,
+  uom: { id: "sheet", name: "Sheet", code: "SHT", decimalScale: 0, status: "active" as const },
   version: 1, createdAt: "2026-09-17T00:00:00.000Z", updatedAt: "2026-09-17T00:00:00.000Z" };
 const vendor = { id: "vendor-1", code: "V1", name: "Saved Vendor", status: "active" as const };
 function setup() {
   const service = {
     list: vi.fn(async () => ({ items: [item], total: 1, limit: 20, offset: 0 })),
-    get: vi.fn(async () => item), listUoms: vi.fn(async () => [{ id: "sheet", name: "Sheet", code: "SHT" }]),
+    get: vi.fn(async () => item), listUoms: vi.fn(async () => [{ id: "sheet", name: "Sheet", code: "SHT", decimalScale: 0 }]),
     create: vi.fn(async () => item), update: vi.fn(async () => ({ ...item, version: 2 })),
+    remove: vi.fn(async () => ({ id: item.id, projectId: item.projectId, version: 2, removedAt: "2026-09-17T00:00:00.000Z" })),
     listVendors: vi.fn(async () => ({ items: [vendor], total: 1, limit: 20, offset: 0 })),
     createVendor: vi.fn(async () => ({ vendor, created: true }))
   } satisfies ProjectProcurementService;
@@ -38,7 +40,7 @@ describe("project procurement item and vendor routes", () => {
     expect(service.list).toHaveBeenCalledWith(actor, "project-a", { q: "PLYWOOD", limit: 5, offset: 10 });
     await request(app).get(`${base}/items/item-1`).set("Authorization", "Bearer procurement").expect(200, { data: item });
     expect(service.get).toHaveBeenCalledWith(actor, "project-a", "item-1");
-    await request(app).get(`${referenceBase}/uoms`).set("Authorization", "Bearer procurement").expect(200, { data: [{ id: "sheet", name: "Sheet", code: "SHT" }] });
+    await request(app).get(`${referenceBase}/uoms`).set("Authorization", "Bearer procurement").expect(200, { data: [{ id: "sheet", name: "Sheet", code: "SHT", decimalScale: 0 }] });
   });
   it("normalizes labels, preserves integer paise and requires a version to edit", async () => {
     const { app, service } = setup();
@@ -49,6 +51,17 @@ describe("project procurement item and vendor routes", () => {
       .send({ ...fields, expectedVersion: 1 }).expect(200);
     expect(service.update).toHaveBeenCalledWith(actor, "project-a", "item-1", { ...fields, expectedVersion: 1 });
     await request(app).patch(`${base}/items/item-1`).set("Authorization", "Bearer procurement").send(fields).expect(400);
+  });
+  it("requires a normalized reason and expected version to remove a child item", async () => {
+    const { app, service } = setup();
+    await request(app).delete(`${base}/items/item-1`).set("Authorization", "Bearer procurement")
+      .send({ expectedVersion: 1, reason: "  Duplicate\n procurement item " }).expect(200);
+    expect(service.remove).toHaveBeenCalledWith(actor, "project-a", "item-1", { expectedVersion: 1, reason: "Duplicate procurement item" });
+    for (const body of [{ reason: "Duplicate item" }, { expectedVersion: 1 }, { expectedVersion: 0, reason: "Duplicate item" },
+      { expectedVersion: 1, reason: "x" }, { expectedVersion: 1, reason: "Duplicate item", removedById: "forged" }]) {
+      await request(app).delete(`${base}/items/item-1`).set("Authorization", "Bearer procurement").send(body).expect(400);
+    }
+    expect(service.remove).toHaveBeenCalledTimes(1);
   });
   it("accepts exact parent paging and explicit unassigned reads without widening vendor queries", async () => {
     const { app, service } = setup();
@@ -93,6 +106,7 @@ describe("project procurement item and vendor routes", () => {
     for (const path of ["items", "items/item-1"]) await request(app).get(`${base}/${path}`).set("Authorization", `Bearer ${role}`).expect(403);
     await request(app).post(`${base}/items`).set("Authorization", `Bearer ${role}`).send(fields).expect(403);
     await request(app).patch(`${base}/items/item-1`).set("Authorization", `Bearer ${role}`).send({ ...fields, expectedVersion: 1 }).expect(403);
+    await request(app).delete(`${base}/items/item-1`).set("Authorization", `Bearer ${role}`).send({ expectedVersion: 1, reason: "Duplicate item" }).expect(403);
     await request(app).get(`${referenceBase}/uoms`).set("Authorization", `Bearer ${role}`).expect(403);
     if (!["admin", "super_admin"].includes(role)) await request(app).get(`${referenceBase}/vendors`).set("Authorization", `Bearer ${role}`).expect(403);
     await request(app).post(`${referenceBase}/vendors`).set("Authorization", `Bearer ${role}`).send({ name: "Vendor" }).expect(403);
@@ -112,10 +126,14 @@ describe("project procurement item and vendor routes", () => {
     expect(service.create).toHaveBeenCalledWith(actor, "project-b", fields);
     await request(app).get("/api/v1/procurement/catalogue/items").set("Authorization", "Bearer procurement").expect(404);
   });
-  it("pages active Configuration vendors and returns 201 new or 200 reused", async () => {
+  it("pages current Configuration vendors and returns 201 new or 200 reused", async () => {
     const { app, service } = setup();
     await request(app).get(`${referenceBase}/vendors?q=Saved&limit=5&offset=10`).set("Authorization", "Bearer procurement").expect(200);
     expect(service.listVendors).toHaveBeenCalledWith(actor, { q: "Saved", limit: 5, offset: 10 });
+    await request(app).get(`${referenceBase}/vendors?q=Saved&limit=5&offset=10&effectiveStatus=active`).set("Authorization", "Bearer procurement").expect(200);
+    expect(service.listVendors).toHaveBeenLastCalledWith(actor, { q: "Saved", limit: 5, offset: 10, effectiveStatus: "active" });
+    await request(app).get(`${referenceBase}/vendors?effectiveStatus=under_review`).set("Authorization", "Bearer procurement").expect(400);
+    await request(app).get(`${base}/items?effectiveStatus=active`).set("Authorization", "Bearer procurement").expect(400);
     await request(app).post(`${referenceBase}/vendors`).set("Authorization", "Bearer procurement").send({ name: " Saved\n Vendor " }).expect(201, { data: vendor });
     expect(service.createVendor).toHaveBeenCalledWith(actor, { name: "Saved Vendor" });
     service.createVendor.mockResolvedValueOnce({ vendor, created: false });

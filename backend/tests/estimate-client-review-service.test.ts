@@ -151,6 +151,31 @@ function detailRow() {
   };
 }
 
+describe("Sales Client feedback", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("keeps an empty historical Client note readable after draft save", async () => {
+    vi.spyOn(EstimateModel, "aggregate").mockReturnValue(aggregateResult([{ _id: "estimate-1" }]) as never);
+    vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockReturnValue(aggregateResult([]) as never);
+    const service = createEstimateClientReviewService({ storage: storageDouble() });
+    await expect(service.currentClientFeedbackForEstimate(actors.estimator, "estimate-1", {
+      id: "estimate-1", status: "draft", reviews: [
+        { action: "client_changes_requested", note: "", occurredAt: NOW },
+        { action: "designer_changes_requested", note: "Private design note", occurredAt: LATER }
+      ]
+    })).resolves.toEqual({ note: "", occurredAt: NOW.toISOString(), reviewRoundId: null });
+  });
+
+  it("rejects another Sales estimator before reading Client feedback", async () => {
+    vi.spyOn(EstimateModel, "aggregate").mockReturnValue(aggregateResult([]) as never);
+    const rounds = vi.spyOn(EstimateClientReviewRoundModel, "aggregate");
+    const service = createEstimateClientReviewService({ storage: storageDouble() });
+    await expect(service.currentClientFeedbackForEstimate(actors.foreignEstimator, "estimate-1"))
+      .rejects.toMatchObject({ status: 404 });
+    expect(rounds).not.toHaveBeenCalled();
+  });
+});
+
 describe("estimate client review assignee resolution", () => {
   afterEach(() => vi.restoreAllMocks());
 

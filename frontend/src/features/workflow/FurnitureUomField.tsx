@@ -19,6 +19,7 @@ export interface FurnitureUomFieldProps {
   options: FurnitureUomOption[];
   loading: boolean;
   error?: string;
+  validationError?: string;
   disabled?: boolean;
   onChange: (id: string) => void;
   onRetry: () => void;
@@ -30,7 +31,7 @@ function normalizeLabel(value: string) {
 }
 
 export function FurnitureUomField({
-  id, projectId, value, previousUnit, options, loading, error, disabled = false,
+  id, projectId, value, previousUnit, options, loading, error, validationError, disabled = false,
   onChange, onRetry, onBusyChange
 }: FurnitureUomFieldProps) {
   const queryClient = useQueryClient();
@@ -106,7 +107,7 @@ export function FurnitureUomField({
       : !loading && !error && !options.length ? "No active UOMs. Add a unit to continue." : undefined;
 
   return <div className="furniture-uom-field">
-    <Field id={id} label="UOM" required hint={hint} error={error}>
+    <Field id={id} label="UOM" required hint={hint} error={error ?? validationError}>
       {(props) => <Select {...props} value={value} disabled={disabled || loading || Boolean(error)} onChange={(event) => {
         onChange(event.target.value); setNotice("");
       }}>
@@ -148,7 +149,7 @@ export function FurnitureUomField({
               setName(event.target.value); setFieldErrors((current) => ({ ...current, name: undefined })); create.reset();
             }} />}
           </Field>
-          <Field id={`${id}-decimals`} label="Quantity decimal places" hint="Used for estimate quantities. Your length, width and height measurements retain their entered precision.">
+          <Field id={`${id}-decimals`} label="Quantity decimal places" hint="Used for estimate quantities. Your length and width measurements retain their entered precision.">
             {(props) => <Select {...props} value={decimalScale} onChange={(event) => { setDecimalScale(Number(event.target.value)); create.reset(); }}>
               {[0, 1, 2, 3].map((scale) => <option key={scale} value={scale}>{scale}</option>)}
             </Select>}

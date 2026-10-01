@@ -1,127 +1,211 @@
 .furniture-dimensions-editor {
   grid-column: 1 / -1;
   display: grid;
-  gap: var(--space-4);
-  min-width: 0;
-}
-.furniture-dimensions-editor > p {
-  margin: 0;
-  color: var(--color-text-muted);
-  font-size: var(--text-sm);
-  line-height: 1.6;
-}
-.furniture-dimensions-editor__room {
-  display: grid;
-  gap: var(--space-3);
-  min-width: 0;
-  margin: 0;
-  padding: var(--space-3) 0 0;
-  border: 0;
-}
-.furniture-dimensions-editor__room > legend,
-.furniture-dimensions-editor__room-header {
-  width: 100%;
-  min-width: 0;
-  padding: 0;
-  color: var(--color-text);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-.furniture-dimensions-editor__room-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--space-1) var(--space-3);
-}
-.furniture-dimensions-editor__room-header > span {
-  color: var(--color-text-muted);
-  font-size: var(--text-xs);
-  font-weight: 400;
-}
-.furniture-dimensions-editor__item {
-  display: grid;
-  align-items: start;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-2) var(--space-3);
-  min-width: 0;
-  margin: 0;
-  padding: var(--space-4) 0;
-  border: 0;
+  min-inline-size: 0;
   border-block-start: 1px solid var(--color-border);
 }
-.furniture-dimensions-editor__item > legend {
-  padding-inline-end: var(--space-2);
+
+.furniture-dimensions-editor__intro {
+  margin: 0;
+  padding: var(--space-3) 0;
   color: var(--color-text-muted);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
+  line-height: 1.6;
 }
-.furniture-dimensions-editor__item--count {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+
+.furniture-dimensions-editor__room,
+.furniture-dimensions-editor__item {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
-.furniture-dimensions-editor__item > .furniture-dimensions-editor__legacy-note {
-  grid-column: 1 / -1;
+
+.furniture-dimensions-editor__room {
+  border-block-start: 1px solid var(--color-border);
 }
-.furniture-dimensions-editor__item-header {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  flex-wrap: wrap;
+
+.furniture-dimensions-editor__room:last-child {
+  border-block-end: 1px solid var(--color-border);
+}
+
+.furniture-dimensions-editor__room-toggle,
+.furniture-dimensions-editor__item-toggle {
+  display: grid;
+  align-items: center;
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 54px;
+  border: 0;
+  border-radius: 0;
+  color: var(--color-text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.furniture-dimensions-editor__room-toggle {
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--space-1) var(--space-3);
-  min-width: 0;
-  margin-block-end: var(--space-1);
-  line-height: 1.5;
+  padding: var(--space-4);
+  background: var(--color-surface);
+}
+
+.furniture-dimensions-editor__item-toggle {
+  grid-template-columns: minmax(0, 1fr) minmax(6rem, auto) auto;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-3) 0;
+  background: transparent;
+}
+
+.furniture-dimensions-editor__room-toggle:focus-visible,
+.furniture-dimensions-editor__item-toggle:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -2px;
+}
+
+.furniture-dimensions-editor__room-summary,
+.furniture-dimensions-editor__item-summary {
+  display: grid;
+  gap: var(--space-1);
+  min-inline-size: 0;
   overflow-wrap: anywhere;
 }
-.furniture-dimensions-editor__item-header strong {
-  min-width: 0;
-  color: var(--color-text);
+
+.furniture-dimensions-editor__room-summary strong,
+.furniture-dimensions-editor__item-summary strong {
   font-size: var(--text-sm);
-  font-weight: 600;
+  line-height: 1.45;
 }
-.furniture-dimensions-editor__item-header span {
+
+.furniture-dimensions-editor__room-summary > span,
+.furniture-dimensions-editor__item-summary > span,
+.furniture-dimensions-editor__quantity {
   color: var(--color-text-muted);
   font-size: var(--text-xs);
   font-weight: 400;
+  line-height: 1.5;
 }
-.furniture-dimensions-editor__specification {
-  grid-column: 1 / -1;
-  min-width: 0;
-  margin: 0 0 var(--space-2);
+
+.furniture-dimensions-editor__room-reference {
+  grid-column: 1;
   color: var(--color-text-muted);
   font-size: var(--text-xs);
-  line-height: 1.6;
-  white-space: pre-wrap;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
+
+.furniture-dimensions-editor__room-reference strong,
+.furniture-dimensions-editor__quantity strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.furniture-dimensions-editor__quantity {
+  justify-self: end;
+  text-align: end;
+  overflow-wrap: anywhere;
+}
+
+.furniture-dimensions-editor__disclosure {
+  grid-column: -2 / -1;
+  grid-row: 1 / span 2;
+  justify-self: end;
+  inline-size: .55rem;
+  block-size: .55rem;
+  border-inline-end: 1.5px solid currentColor;
+  border-block-end: 1.5px solid currentColor;
+  transform: rotate(45deg);
+}
+
+[aria-expanded="true"] > .furniture-dimensions-editor__disclosure {
+  transform: rotate(225deg);
+}
+
+.furniture-dimensions-editor__room-content {
+  display: grid;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  padding: 0 var(--space-4) var(--space-4);
+  background: var(--color-surface);
+}
+
+.furniture-dimensions-editor__item {
+  border-block-start: 1px solid var(--color-border);
+}
+
+.furniture-dimensions-editor__item-content {
+  display: grid;
+  align-items: start;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  min-inline-size: 0;
+  padding-block: var(--space-2) var(--space-4);
+}
+
+.furniture-dimensions-editor__item--count .furniture-dimensions-editor__item-content {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.furniture-dimensions-editor__room-content[hidden],
+.furniture-dimensions-editor__item-content[hidden] {
+  display: none;
+}
+
+.furniture-dimensions-editor__actual-label {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.furniture-dimensions-editor__item-content > .furniture-dimensions-editor__legacy-note {
+  grid-column: 1 / -1;
+}
+
 .furniture-dimensions-editor__feedback,
 .furniture-dimensions-editor__empty,
 .furniture-dimensions-editor__legacy-note {
-  margin: 0;
+  margin: var(--space-2) 0;
   padding: var(--space-3);
-  border-inline-start: 2px solid var(--color-border-strong);
+  border: 1px solid var(--color-border);
   background: var(--color-surface-subtle);
   font-size: var(--text-sm);
   line-height: 1.6;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
-.furniture-dimensions-editor__feedback {
-  border-inline-start-color: var(--color-brand-violet);
-}
+
 .furniture-dimensions-editor__legacy-note {
   color: var(--color-text-muted);
   font-size: var(--text-xs);
 }
-@media (max-width: 480px) {
-  .furniture-dimensions-editor__item {
+
+@media (max-width: 620px) {
+  .furniture-dimensions-editor__item-content {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-3);
   }
-  .furniture-dimensions-editor__item-header {
-    display: grid;
-    justify-content: stretch;
+}
+
+@media (max-width: 420px) {
+  .furniture-dimensions-editor__item-content > .furniture-uom-field {
+    grid-column: 1 / -1;
+  }
+
+  .furniture-dimensions-editor__item-toggle {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .furniture-dimensions-editor__quantity {
+    grid-column: 1;
+    justify-self: start;
+    text-align: start;
+  }
+
+  .furniture-dimensions-editor__room-toggle,
+  .furniture-dimensions-editor__room-content {
+    padding-inline: var(--space-3);
   }
 }

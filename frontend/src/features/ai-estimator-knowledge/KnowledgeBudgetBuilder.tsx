@@ -524,7 +524,7 @@ function BudgetMasterField({
               setQuickAddNotice("");
               onChange(master.id);
             } else if (type === "vendors") {
-              setQuickAddNotice(`${master.name} was added as Under Review. Complete induction, both KPIs, and verification in Procurement > Vendors before setting a new budget.`);
+              setQuickAddNotice(`${master.name} was added as Under Review. Submit the Vendor KPI and rate the Procurement KPI in Procurement > Vendors to activate it. Induction and verification are tracked separately; unverified allocations remain capped at ₹50,000.`);
             }
           })}
         >
@@ -717,7 +717,7 @@ function BudgetCatalogMessages({ catalogStates, activeCounts, canQuickAdd, onQui
         >
           {label === "Unit of measure"
             ? "No active Unit of measure is available. Add a Unit before setting a budget."
-            : "No active Vendor is available. Complete vendor induction, both KPIs, and verification in Procurement > Vendors before setting a budget."}
+            : "No active Vendor is available. Submit a Vendor KPI and rate a Procurement KPI in Procurement > Vendors before setting a budget. Induction and verification are separate; unverified allocations remain capped at ₹50,000."}
         </InlineMessage>
       ))}
     </div>

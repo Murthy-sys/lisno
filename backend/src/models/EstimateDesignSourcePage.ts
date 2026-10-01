@@ -4,6 +4,7 @@ export const estimateDesignSourcePageSchema = new Schema({
   _id: { type: String, required: true, immutable: true },
   uploadId: { type: String, ref: "EstimateDesignUpload", required: true, immutable: true },
   pageNumber: { type: Number, required: true, immutable: true, min: 1 },
+  sourceKind: { type: String, enum: ["original", "replacement"], immutable: true },
   normalizedFileReference: { type: String, required: true, immutable: true },
   width: { type: Number, required: true, immutable: true, min: 1 },
   height: { type: Number, required: true, immutable: true, min: 1 }

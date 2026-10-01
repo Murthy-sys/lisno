@@ -298,6 +298,7 @@ describe("self-service password reset", () => {
     it(`allows an active standard ${role} identity to reset`, async () => {
       const seed = standardSeed();
       seed.users[0]!.role = role;
+      seed.users[0]!.vendorId = role === "vendor" ? "vendor-password-reset-fixture" : null;
       const repository = createMemoryRepository(seed);
       const mailer = recordingMailer();
       const background: Promise<void>[] = [];

@@ -85,13 +85,13 @@ describe("frontend authorization contract parity", () => {
     expect(FRONTEND_POLICY_VERSION).toBe(AUTHORIZATION_POLICY_VERSION);
   });
 
-  it("publishes the 151-code Vendor Induction policy on both sides", () => {
-    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-09-28.vendor-induction.v1");
-    expect(FRONTEND_POLICY_VERSION).toBe("2026-09-28.vendor-induction.v1");
-    expect(PERMISSION_CODES).toHaveLength(151);
-    expect(FRONTEND_PERMISSION_CODES).toHaveLength(151);
-    expect(new Set(PERMISSION_CODES).size).toBe(151);
-    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(151);
+  it("publishes the 164-code vendor procurement policy on both sides", () => {
+    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-10-01.vendor-procurement.v1");
+    expect(FRONTEND_POLICY_VERSION).toBe("2026-10-01.vendor-procurement.v1");
+    expect(PERMISSION_CODES).toHaveLength(164);
+    expect(FRONTEND_PERMISSION_CODES).toHaveLength(164);
+    expect(new Set(PERMISSION_CODES).size).toBe(164);
+    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(164);
     expect(PERMISSION_CODES.at(-1)).toBe("procurement.vendor_induction.review");
     expect(FRONTEND_PERMISSION_CODES.at(-1)).toBe("procurement.vendor_induction.review");
     for (const permission of STAFF_INVITATION_PERMISSIONS) {

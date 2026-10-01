@@ -707,6 +707,56 @@ async function assertWinningProofIsOnlyReadableObject(
 }
 
 describe("Estimate decision races on a Mongo replica set", () => {
+  it("retains the pending commercial snapshot and PDF after design feedback and a Sales draft save", async () => {
+    const fixture = await seedDecisionFixture();
+    const storage = createProofStorage();
+    const harness = createDecisionHarness({ storage: storage.storage });
+    const pdfBytes = Buffer.alloc(32, fixture.estimateVersion);
+    storage.objects.set(`task12-pdf-${fixture.roundId}`, pdfBytes);
+    const submittedRooms = [{ id: "submitted-room", name: "Living Room", length: 12 }];
+    // The preapproval plan-review service changes this status without deciding the commercial round.
+    await EstimateModel.updateOne({ _id: fixture.estimateId }, {
+      $set: { status: "client_changes_requested", rooms: submittedRooms }
+    });
+    const [afterDesignRequest] = await harness.reviews.listClientEstimates(ACTORS.client, fixture.estimateId);
+    expect(afterDesignRequest).toMatchObject({
+      status: "client_changes_requested", total: 14750, rooms: submittedRooms, scopes: ["interiors"], reviewSourceIssue: null,
+      publishedReview: { id: fixture.roundId, status: "pending", canDecide: false, estimateVersion: fixture.estimateVersion }
+    });
+    await expect(harness.reviews.readClientPdf(ACTORS.client, fixture.roundId)).resolves.toMatchObject({ bytes: pdfBytes });
+    await expect(clientDecision(harness.decisions, fixture, "approve")).rejects.toMatchObject({ status: 409 });
+
+    await EstimateModel.updateOne({ _id: fixture.estimateId }, {
+      $set: { status: "draft", total: 98765, rooms: [{ id: "unsubmitted-room", length: 99 }], scopes: ["unsubmitted-scope"] },
+      $inc: { version: 1 }
+    });
+    const [afterSalesSave] = await harness.reviews.listClientEstimates(ACTORS.client, fixture.estimateId);
+    expect(afterSalesSave).toMatchObject({ status: "draft", total: 14750, rooms: [], scopes: [], reviewSourceIssue: null,
+      publishedReview: { id: fixture.roundId, status: "pending", canDecide: false } });
+    await expect(harness.reviews.readClientPdf(ACTORS.client, fixture.roundId)).resolves.toMatchObject({ bytes: pdfBytes });
+    expect(await EstimateClientReviewRoundModel.findById(fixture.roundId).lean())
+      .toMatchObject({ status: "pending", version: fixture.roundVersion });
+  });
+
+  it("scopes published snapshots to two Clients and retains exact project IDs with unequal totals", async () => {
+    const fixture = await seedDecisionFixture();
+    const storage = createProofStorage();
+    const harness = createDecisionHarness({ storage: storage.storage });
+    const secondClient = actor("second-review-client", "client", "second-review@example.test");
+    await insertUser(secondClient);
+    const firstEstimate = await EstimateModel.findById(fixture.estimateId).lean();
+    const firstLead = await LeadModel.findById(fixture.leadId).lean();
+    const firstRound = await EstimateClientReviewRoundModel.findById(fixture.roundId).select("+pdfStorageReference").lean();
+    await LeadModel.create({ ...firstLead, _id: "second-review-lead", projectId: "second-review-project", clientEmail: secondClient.email });
+    await EstimateModel.create({ ...firstEstimate, _id: "second-review-estimate", leadId: "second-review-lead", projectId: "second-review-project", total: 23600 });
+    await EstimateClientReviewRoundModel.create({ ...firstRound, _id: "second-review-round", estimateId: "second-review-estimate", leadId: "second-review-lead", projectId: "second-review-project", dedupeKey: sha256Hex("second-review"), recipientEmail: secondClient.email, recipientEmailNormalized: secondClient.email, estimateSnapshot: { ...firstRound!.estimateSnapshot, subtotal: 20000, gst: 3600, total: 23600 } });
+    const first = await harness.reviews.listClientEstimates(ACTORS.client);
+    const second = await harness.reviews.listClientEstimates(secondClient);
+    expect(first.map((item) => [item.id, item.projectId, item.total])).toEqual([[fixture.estimateId, fixture.projectId, 14750]]);
+    expect(second.map((item) => [item.id, item.projectId, item.total])).toEqual([["second-review-estimate", "second-review-project", 23600]]);
+    await expect(harness.reviews.listClientEstimates(ACTORS.client, "second-review-estimate")).resolves.toEqual([]);
+    await expect(harness.reviews.readClientPdf(ACTORS.client, "second-review-round")).rejects.toMatchObject({ status: 404 });
+  });
   it.each(["approve", "request_changes"] as const)(
     "commits exactly one %s across a simultaneous Client and Admin submission",
     async (decision) => {

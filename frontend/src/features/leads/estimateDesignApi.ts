@@ -15,6 +15,24 @@ import type {
   EstimatePlanChangeRequestQueueItem,
   EstimatePlanClientWorkspace
 } from "../../api/types";
+import type { PlanDocumentWorkspace } from "../../api/types";
+
+export const planDocumentKeys = {
+  all: ["estimate-plan-documents"] as const,
+  staff: (estimateId: string) => ["estimate-plan-documents", estimateId, "draft"] as const,
+  published: (estimateId: string, roundId: string) => ["estimate-plan-documents", estimateId, "published", roundId] as const
+};
+
+export const getPlanDocuments = (estimateId: string) => apiClient.get<PlanDocumentWorkspace>(
+  `/estimates/${encodeURIComponent(estimateId)}/design-plan-documents`, { showGlobalLoader: false }
+);
+export const preparePlanDocuments = (estimateId: string, expectedManifestHash: string) => apiClient.post<PlanDocumentWorkspace>(
+  `/estimates/${encodeURIComponent(estimateId)}/design-plan-documents/prepare`, { expectedManifestHash }, { showGlobalLoader: false }
+);
+export const getPublishedPlanDocuments = (estimateId: string, roundId: string) => apiClient.get<PlanDocumentWorkspace>(
+  `/client/estimates/${encodeURIComponent(estimateId)}/design-plan-documents?roundId=${encodeURIComponent(roundId)}`, { showGlobalLoader: false }
+);
+export const downloadPlanDocument = (url: string) => apiClient.getBlob(url, { showGlobalLoader: false });
 
 export const estimateDesignKeys = {
   all: ["estimate-designs"] as const,
@@ -194,13 +212,14 @@ export const clientPlanThumbnailUrl = (pageId: string) =>
 export const clientPlanCurrentImageUrl = (pageId: string) =>
   `/client/estimate-plan-pages/${encodeURIComponent(pageId)}/current-image`;
 
-export const saveClientPlanDraft = (pageId: string, version: number, annotations: AnnotationDocumentV1) =>
-  apiClient.put<EstimatePlanAnnotationDraft>(`/client/estimate-plan-pages/${encodeURIComponent(pageId)}/annotation-draft`, { version, annotations });
+export const saveClientPlanDraft = (pageId: string, version: number, annotations: AnnotationDocumentV1, reviewRoundId?: string | null) =>
+  apiClient.put<EstimatePlanAnnotationDraft>(`/client/estimate-plan-pages/${encodeURIComponent(pageId)}/annotation-draft`, { version, annotations, reviewRoundId: reviewRoundId ?? undefined });
 
-export const previewClientPlanTargets = (pageId: string, annotations: AnnotationDocumentV1) =>
-  apiClient.post<{ pageRevisionNumber: number; targets: Array<{ drawingId: string; title: string; reason: "anchor_inside" | "area_overlap" }>; snapshotToken: string }>(`/client/estimate-plan-pages/${encodeURIComponent(pageId)}/target-preview`, { annotations });
+export const previewClientPlanTargets = (pageId: string, annotations: AnnotationDocumentV1, reviewRoundId?: string | null) =>
+  apiClient.post<{ pageRevisionNumber: number; targets: Array<{ drawingId: string; title: string; reason: "anchor_inside" | "area_overlap" }>; snapshotToken: string }>(`/client/estimate-plan-pages/${encodeURIComponent(pageId)}/target-preview`, { annotations, reviewRoundId: reviewRoundId ?? undefined });
 
 export const submitClientPlanChangeRequest = (pageId: string, input: {
+  reviewRoundId?: string | null;
   version: number; summary: string; annotations: AnnotationDocumentV1;
   targetDrawingIds: string[]; snapshotToken: string; idempotencyKey: string;
 }) => apiClient.post<EstimatePlanChangeRequest>(`/client/estimate-plan-pages/${encodeURIComponent(pageId)}/change-requests`, input);

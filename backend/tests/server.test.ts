@@ -72,6 +72,8 @@ import { PasswordResetRequestModel } from "../src/models/PasswordResetRequest.js
 import { DesignPlanReviewRoundModel } from "../src/models/DesignPlanReviewRound.js";
 import { DesignPlanResponseProofModel } from "../src/models/DesignPlanResponseProof.js";
 import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
+import { DailyCriticalTaskReceiptModel } from "../src/models/DailyCriticalTaskReceipt.js";
+import { DailyCriticalScheduleStateModel } from "../src/models/DailyCriticalScheduleState.js";
 import { ProjectFinanceBucketModel } from "../src/models/ProjectFinanceBucket.js";
 import { FinanceLedgerEntryModel } from "../src/models/FinanceLedgerEntry.js";
 import { FinanceEntryDocumentModel } from "../src/models/FinanceEntryDocument.js";
@@ -465,6 +467,14 @@ describe("production server bootstrap", () => {
       events.push("project-workflow-task-index");
       return ProjectWorkflowTaskModel as never;
     });
+    vi.spyOn(DailyCriticalTaskReceiptModel, "init").mockImplementation(async () => {
+      events.push("daily-critical-task-receipt-index");
+      return DailyCriticalTaskReceiptModel as never;
+    });
+    vi.spyOn(DailyCriticalScheduleStateModel, "init").mockImplementation(async () => {
+      events.push("daily-critical-schedule-state-index");
+      return DailyCriticalScheduleStateModel as never;
+    });
     vi.spyOn(ProjectFinanceBucketModel, "init").mockImplementation(async () => {
       events.push("project-finance-bucket-index");
       return ProjectFinanceBucketModel as never;
@@ -585,6 +595,8 @@ describe("production server bootstrap", () => {
       "design-plan-review-index",
       "design-plan-proof-index",
       "project-workflow-task-index",
+      "daily-critical-task-receipt-index",
+      "daily-critical-schedule-state-index",
       "project-finance-bucket-index",
       "finance-ledger-entry-index",
       "finance-entry-document-index",

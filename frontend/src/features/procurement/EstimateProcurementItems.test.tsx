@@ -11,19 +11,20 @@ import { EstimateProcurementItems } from "./EstimateProcurementItems";
 
 let permissions: PermissionCode[];
 vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ authorization: { role: "procurement", permissions } }) }));
-const uom = { id: "uom-one", code: "nos", name: "Number", status: "active" as const };
+const uom = { id: "uom-one", code: "nos", name: "Number", decimalScale: 0, status: "active" as const };
 const project: ProcurementProject = {
   projectId: "project-one", projectName: "Project One", estimateId: "estimate-one", estimateVersion: 3,
   taskId: "task-one", taskVersion: 1, taskStatus: "open", taskProgress: 0, openedAt: "2026-09-18T00:00:00Z", updatedAt: "2026-09-18T00:00:00Z",
   sections: [{ id: "CA", label: "Carpentry", estimatedAmountPaise: 455055, actualSpendPaise: 0, items: [
     { key: "line-one", catalogueId: "CA01", specification: "Wardrobe", roomName: "Bedroom", quantity: 2, unit: "nos", estimatedAmountPaise: 125050, actualSpendPaise: 0, expenses: [] },
     { key: "line-two", catalogueId: "CA01", specification: "TV cabinet", roomName: "Living room", quantity: 1, unit: "lot", estimatedAmountPaise: 330005, actualSpendPaise: 0, expenses: [] },
-    { key: "line-zero", catalogueId: "CA03", specification: "Provisional shelf", roomName: "Kitchen", quantity: 0, unit: "nos", estimatedAmountPaise: 0, actualSpendPaise: 0, expenses: [] }
+    { key: "line-zero", catalogueId: "CA03", specification: "Provisional shelf", roomName: "Kitchen", quantity: 400, unit: "sqft", estimatedAmountPaise: 0, actualSpendPaise: 0, expenses: [] }
   ] }]
 };
 const source = (key: string) => ({ estimateId: "estimate-one", estimateVersion: 3, sourceLineItemKey: key });
 function item(id: string, key: string | null, price = 12505): ProjectProcurementItem {
-  return { id, projectId: "project-one", itemName: "Plywood", brand: "Sample", uom, vendor: null, pricePaise: price, version: 2,
+  return { id, projectId: "project-one", itemName: "Plywood", brand: "Sample", uom, vendor: null, pricePaise: price,
+    plannedOrderQuantityMilliUnits: 2000, plannedLineNetPaise: price * 2, version: 2,
     estimateSource: key ? { ...source(key), estimateReviewRoundId: "round-one", sourceSectionId: "CA" } : null,
     createdAt: "2026-09-18T00:00:00Z", updatedAt: "2026-09-18T00:00:00Z" };
 }
@@ -42,6 +43,7 @@ async function fillNew(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByRole("textbox", { name: "Brand" }), "Sample");
   await user.selectOptions(screen.getByRole("combobox", { name: "UOM" }), "uom-one");
   await user.type(screen.getByRole("textbox", { name: "Price (INR)" }), "880.01");
+  await user.type(screen.getByRole("textbox", { name: /Planned order quantity/ }), "2");
 }
 beforeEach(() => {
   permissions = ["procurement.items.read", "procurement.items.manage", "procurement.vendors.read", "procurement.vendors.create"];
@@ -51,7 +53,9 @@ beforeEach(() => {
     http.get("/api/v1/procurement/vendors", () => HttpResponse.json({ data: { items: [], total: 0, limit: 20, offset: 0 } })),
     http.get("/api/v1/procurement/projects/project-one/items", ({ request }) => {
       const params = new URL(request.url).searchParams; reads.push(params);
-      const matches = rows.filter((row) => params.get("unassigned") === "true" ? !row.estimateSource : row.estimateSource?.sourceLineItemKey === params.get("sourceLineItemKey"));
+      const matches = rows.filter((row) => params.get("unassigned") === "true"
+        ? !row.estimateSource || row.estimateSource.sourceLineItemKey === "line-zero"
+        : row.estimateSource?.sourceLineItemKey === params.get("sourceLineItemKey"));
       const q = params.get("q") ?? ""; const filtered = matches.filter((row) => row.itemName.toLowerCase().includes(q.toLowerCase()));
       const offset = Number(params.get("offset") ?? 0);
       return HttpResponse.json({ data: { items: filtered.slice(offset, offset + 20), total: filtered.length, limit: 20, offset } });
@@ -65,11 +69,12 @@ beforeEach(() => {
 });
 
 describe("Estimate-linked procurement groups", () => {
-  it("shows exact unequal approved budgets including zero and loads children only when opened", async () => {
+  it("shows positive approved budgets but excludes a 400 sqft item valued at zero", async () => {
     start();
     expect(within(parent("Wardrobe")).getByText("₹1,250.50")).toBeVisible();
     expect(within(parent("TV cabinet")).getByText("₹3,300.05")).toBeVisible();
-    expect(within(parent("Provisional shelf")).getByText("₹0.00")).toBeVisible();
+    expect(screen.queryByRole("group", { name: "Provisional shelf — Kitchen" })).not.toBeInTheDocument();
+    expect(screen.getByText("2 estimate items")).toBeVisible();
     await waitFor(() => expect(reads).toHaveLength(1));
     expect(reads[0]?.get("unassigned")).toBe("true");
     expect(screen.queryByText("Plywood")).not.toBeInTheDocument();
@@ -80,13 +85,53 @@ describe("Estimate-linked procurement groups", () => {
     expect(Object.fromEntries(request)).toEqual({ q: "", limit: "20", offset: "0", estimateId: "estimate-one", estimateVersion: "3", sourceLineItemKey: "line-one" });
   });
 
+  it("keeps a positive-value item eligible when its estimate quantity is zero", () => {
+    const view = start();
+    view.change({ ...project, sections: [{ ...project.sections[0]!, items: [
+      { ...project.sections[0]!.items[0]!, quantity: 0 }, project.sections[0]!.items[2]!
+    ] }] });
+    expect(within(parent("Wardrobe")).getByText("₹1,250.50")).toBeVisible();
+    expect(screen.queryByRole("group", { name: "Provisional shelf — Kitchen" })).not.toBeInTheDocument();
+    expect(screen.getByText("1 estimate item")).toBeVisible();
+  });
+
+  it("omits a section containing only zero-value estimate items", () => {
+    const view = start();
+    view.change({ ...project, sections: [{ id: "FC", label: "False Ceiling", estimatedAmountPaise: 0, actualSpendPaise: 0,
+      items: [{ ...project.sections[0]!.items[2]!, catalogueId: "FC01" }] }] });
+    expect(screen.queryByRole("heading", { name: "False Ceiling" })).not.toBeInTheDocument();
+    expect(screen.getByText("0 estimate items")).toBeVisible();
+    expect(screen.getByText("This approved estimate has no items with a positive value.")).toBeVisible();
+  });
+
+  it("keeps a previously saved zero-value child visible for reassignment to a paid source", async () => {
+    rows = [item("zero-child", "line-zero")];
+    const patches: unknown[] = [];
+    server.use(http.patch("/api/v1/procurement/projects/project-one/items/zero-child", async ({ request }) => {
+      const body = await request.json() as Record<string, unknown>; patches.push(body);
+      rows = [item("zero-child", String(body.sourceLineItemKey))];
+      return HttpResponse.json({ data: rows[0] });
+    }));
+    start();
+    const user = userEvent.setup();
+    const historical = await screen.findByRole("region", { name: "Items needing assignment" });
+    expect(await within(historical).findByText("Linked estimate item is not eligible for new procurement")).toBeVisible();
+    await user.click(within(historical).getByRole("button", { name: "Edit Plywood, Sample" }));
+    const assignment = screen.getByRole("combobox", { name: "Estimate item" });
+    expect(within(assignment).queryByRole("option", { name: /Provisional shelf/ })).not.toBeInTheDocument();
+    await user.selectOptions(assignment, "line-two");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(patches).toHaveLength(1));
+    expect(patches[0]).toMatchObject(source("line-two"));
+  });
+
   it("saves a child under exactly its chosen parent and keeps unit prices separate from the budget", async () => {
     start(); const user = userEvent.setup();
     await user.click(within(parent("TV cabinet")).getByRole("button", { name: /Add item under/ }));
     await fillNew(user);
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add item" }));
     expect(await within(parent("TV cabinet")).findByRole("rowheader", { name: "Plywood" })).toBeVisible();
-    expect(writes).toEqual([{ ...source("line-two"), itemName: "Plywood", brand: "Sample", uomId: "uom-one", vendorId: null, pricePaise: 88001 }]);
+    expect(writes).toEqual([{ ...source("line-two"), itemName: "Plywood", brand: "Sample", uomId: "uom-one", vendorId: null, pricePaise: 88001, plannedOrderQuantityMilliUnits: 2000 }]);
     expect(within(parent("TV cabinet")).getByText("₹3,300.05")).toBeVisible();
     expect(within(parent("TV cabinet")).getByText("₹880.01")).toBeVisible();
     await user.click(within(parent("Wardrobe")).getByRole("button", { name: /View procurement items/ }));
@@ -147,7 +192,7 @@ describe("Estimate-linked procurement groups", () => {
     expect(patches).toHaveLength(0);
     await user.selectOptions(screen.getByRole("combobox", { name: "Estimate item" }), "line-two");
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(patches).toEqual([{ ...source("line-two"), itemName: "Plywood", brand: "Sample", uomId: "uom-one", vendorId: null, pricePaise: 12505, expectedVersion: 2 }]));
+    await waitFor(() => expect(patches).toEqual([{ ...source("line-two"), itemName: "Plywood", brand: "Sample", uomId: "uom-one", vendorId: null, pricePaise: 12505, plannedOrderQuantityMilliUnits: 2000, expectedVersion: 2 }]));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     await user.click(within(parent("TV cabinet")).getByRole("button", { name: /View procurement items/ }));
     expect(await within(parent("TV cabinet")).findByRole("rowheader", { name: "Plywood" })).toBeVisible();

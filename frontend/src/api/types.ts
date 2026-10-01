@@ -7,13 +7,14 @@ import type {
 
 export type { Role } from "./authorization-contract";
 
-export type WorkflowAssignmentRole = WorkerRole | "procurement";
+export type WorkflowAssignmentRole = WorkerRole | "procurement" | "site_manager";
 
 export interface PublicUser {
   id: string;
   name: string;
   email: string;
   role: Role;
+  vendorId?: string;
   avatar?: string;
 }
 
@@ -276,6 +277,7 @@ export interface EstimateClientReviewSnapshot {
   location: string;
   propertyType: string;
   lineItems: Array<{
+    id?: string | null;
     catalogueId: string;
     roomName: string;
     specification: string;
@@ -288,6 +290,25 @@ export interface EstimateClientReviewSnapshot {
   subtotal: number;
   gst: number;
   total: number;
+}
+
+export interface ClientPublishedEstimateReview {
+  id: string;
+  version: number;
+  estimateVersion: number;
+  sendGeneration: number;
+  status: EstimateClientReviewSummary["status"];
+  submittedAt: string;
+  snapshot: EstimateClientReviewSnapshot;
+  decisionNote: string | null;
+  decidedAt: string | null;
+  canDecide: boolean;
+}
+
+export interface EstimateClientFeedback {
+  note: string;
+  occurredAt: string;
+  reviewRoundId: string | null;
 }
 
 export interface EstimateClientResponseTaskListItem {
@@ -442,6 +463,7 @@ export interface ProjectWorkflowTask {
   id: string;
   projectId: string;
   projectName: string;
+  completionAuthority?: "legacy_staff" | "vendor_client";
   estimateId: string;
   kind:
     | "design_plan_upload"
@@ -640,6 +662,7 @@ export interface ProcurementUomOption {
   id: string;
   code: string;
   name: string;
+  decimalScale?: number;
 }
 
 export interface ProcurementEstimateSource {
@@ -660,6 +683,8 @@ export interface ProjectProcurementItem {
   };
   vendor: ProcurementVendorReference | null;
   pricePaise: number;
+  plannedOrderQuantityMilliUnits?: number | null;
+  plannedLineNetPaise?: number | null;
   allocatedWorkPaise?: number | null;
   estimateSource: ProcurementEstimateSource | null;
   version: number;
@@ -682,7 +707,15 @@ export interface ProcurementVendorReference {
 }
 
 export interface ProcurementVendorOption extends ProcurementVendorReference {
-  status: "active" | "under_review";
+  status: "active" | "under_review" | "inactive";
+  assignable?: boolean;
+  readiness?: {
+    inductionApproved: boolean;
+    vendorSelfKpiComplete: boolean;
+    procurementKpiComplete: boolean;
+    profileComplete: boolean;
+    physicalAddressVerified: boolean;
+  };
 }
 
 export interface ProcurementVendorPage {
@@ -1441,6 +1474,27 @@ export interface EstimatePlanPage {
   thumbnailUrl: string;
   currentImageUrl: string;
   annotationDraft: EstimatePlanAnnotationDraft | null;
+  reviewRoundId?: string;
+  document?: PlanDocument;
+}
+
+export interface PlanDocument {
+  sourceUploadId: string;
+  originalFilename: string;
+  documentId: string | null;
+  manifestHash: string;
+  status: "not_prepared" | "preparing" | "ready" | "failed" | "blocked";
+  pageCount: number;
+  pdfUrl: string | null;
+  failureCode: string | null;
+  failureMessage: string | null;
+}
+
+export interface PlanDocumentWorkspace {
+  manifestHash: string;
+  readyForSubmission: boolean;
+  documents: PlanDocument[];
+  reviewRoundId: string | null;
 }
 
 export interface EstimatePlanChangeRequest {
@@ -1498,3 +1552,32 @@ export interface EstimateDesignQueuedReplacement {
 }
 
 export type EstimateDesignReplacementResult = EstimateDesignDrawingUpdate | EstimateDesignQueuedReplacement;
+export interface ProjectStatusPerson {
+  id: string;
+  name: string;
+  role: Role;
+}
+
+export interface ProjectPendingAction {
+  id: string;
+  stageKey: string;
+  stageLabel: string;
+  action: string;
+  state: "pending" | "scheduled" | "blocked" | "unassigned";
+  responsibleRole: Role;
+  people: ProjectStatusPerson[];
+  scheduledAt: string | null;
+  deadlineAt: string | null;
+  blocker: string | null;
+}
+
+export interface ProjectStatusSummary {
+  projectId: string;
+  projectName: string;
+  projectStatus: string;
+  serverNow: string;
+  state: "active" | "scheduled" | "paused" | "completed" | "no_pending" | "unavailable";
+  currentStage: { key: string; label: string } | null;
+  pendingActions: ProjectPendingAction[];
+  issue: string | null;
+}

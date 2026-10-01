@@ -56,6 +56,7 @@ const secondTask: DesignPlanTask = {
 
 beforeEach(() => {
   server.use(
+    http.get("/api/v1/estimates/:estimateId/design-plan-documents", () => HttpResponse.json({ data: { manifestHash: "a".repeat(64), readyForSubmission: true, documents: [], reviewRoundId: null } })),
     http.get("/api/v1/projects/:projectId/design-workflow", ({ params }) => HttpResponse.json({ data: uploadWorkflow(String(params.projectId)) })),
     http.get("/api/v1/admin/design-plan-response-tasks", () => HttpResponse.json({ data: [] }))
   );
@@ -90,6 +91,7 @@ function kickoffWorkflow(): DesignWorkflowView {
   const targetAt = "2026-09-14T09:00:00.000Z";
   return {
     projectId: "project-1", projectName: "Aurora Villa", serverNow: confirmedAt,
+    estimateApprovalStatus: "approved",
     initialPayment: { confirmedAt, canConfirm: false, version: 1, status: "received" },
     floors: [],
     projectStages: [{
@@ -130,6 +132,12 @@ function uploadWorkflow(projectId = "project-1"): DesignWorkflowView {
       status: index === 5 ? "in_progress" : "completed", progress: index === 5 ? 0 : 100,
       operational: {
         ...template.operational!, status: index === 5 ? "in_progress" : "completed", availableActions: [],
+        ...(index === 5 ? { spacePlanning: {
+          estimateId: projectId === "project-1" ? "estimate-1" : "estimate-2",
+          designPlanVersion: 0, reviewRoundId: null, totalImages: 0, approvedImages: 0,
+          readyForCompletion: false, completedAt: null,
+          completionBlockingReasons: ["Upload and submit the design plan for Client review."]
+        } } : {}),
         timing: { ...template.operational!.timing, state: index === 5 ? "not_applicable" : "completed", slaAllowanceMs: null, remainingMs: null, startsAt: null, targetAt: null, originalTargetAt: null, band: null, clockOwner: null }
       }
     }))
@@ -431,7 +439,52 @@ describe("DesignerDesignPlanTasksPage", () => {
     await act(async () => { await queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.designWorkflow("project-1") }); });
     expect(await screen.findByLabelText("Design plan file")).toBeVisible();
     expect(within(selected).getByText("Upload the design plan", { selector: "dd" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Designer Uploading Space planning with Tentative look and Feel — In progress" })).toHaveAttribute("aria-current", "step");
     await waitFor(() => expect(uploadReads).toEqual(["estimate-1"]));
+  });
+
+  it("keeps final Client requirements separate from an assigned v0 upload and submits the file by keyboard", async () => {
+    const user = userEvent.setup();
+    const uploads: string[] = [];
+    const uploadSpy = vi.spyOn(apiClient, "postMultipartWithProgress");
+    let workflowReads = 0;
+    let taskReads = 0;
+    server.use(
+      http.get("/api/v1/designer/design-plan-tasks", () => {
+        taskReads += 1;
+        return HttpResponse.json({ data: [assignedTask] });
+      }),
+      http.get("/api/v1/projects/project-1/design-workflow", () => {
+        workflowReads += 1;
+        return HttpResponse.json({ data: uploadWorkflow() });
+      }),
+      http.get("/api/v1/estimates/estimate-1/design-uploads", () => HttpResponse.json({ data: emptyWorkspace() })),
+      http.post("/api/v1/estimates/estimate-1/design-uploads", () => {
+        uploads.push("received");
+        return HttpResponse.json({ data: { id: "upload-1", estimateId: "estimate-1" } });
+      })
+    );
+    renderPage();
+
+    const stage = await screen.findByRole("button", { name: "Designer Uploading Space planning with Tentative look and Feel — In progress" });
+    expect(stage).toHaveAttribute("aria-current", "step");
+    expect(within(screen.getByRole("region", { name: "Selected project workspace" })).getByText("Upload the design plan", { selector: "dd" })).toBeVisible();
+    await user.click(stage);
+    const requirements = screen.getByRole("group", { name: "Client completion requirements" });
+    expect(within(requirements).getByText("Upload and submit the design plan for Client review.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Approve and complete stage" })).not.toBeInTheDocument();
+    const fileInput = screen.getByLabelText<HTMLInputElement>("Design plan file");
+    fileInput.focus();
+    expect(fileInput).toHaveFocus();
+    await user.upload(fileInput, new File(["plan"], "aurora-plan.pdf", { type: "application/pdf" }));
+    const uploadButton = screen.getByRole("button", { name: "Upload design" });
+    uploadButton.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(uploads).toEqual(["received"]));
+    expect(uploadSpy).toHaveBeenCalledWith("/estimates/estimate-1/design-uploads", expect.any(FormData), expect.any(Function), { showGlobalLoader: false });
+    expect((uploadSpy.mock.calls[0]![1] as FormData).get("file")).toMatchObject({ name: "aurora-plan.pdf", type: "application/pdf" });
+    await waitFor(() => expect(workflowReads).toBeGreaterThan(1));
+    await waitFor(() => expect(taskReads).toBeGreaterThan(1));
   });
 
   it("does not request or show design uploads while the selected workflow is loading", async () => {
@@ -468,16 +521,18 @@ describe("DesignerDesignPlanTasksPage", () => {
     expect(reads.mock.calls.some(([path]) => path.includes("/design-uploads"))).toBe(false);
   });
 
-  it.each(["blocked", "paused", "missing_operational"] as const)("keeps reached Space planning images read-only when %s", async (state) => {
+  it.each(["blocked", "paused", "missing_operational", "foreign_source", "unconfirmed_payment", "unassigned"] as const)("keeps reached Space planning images read-only when %s", async (state) => {
     const workflow = uploadWorkflow();
     const stage = workflow.projectStages![5]!;
     if (state === "blocked") {
       stage.operational!.status = "blocked";
       stage.operational!.blockingReasons = ["Site access must be restored before preparing drawings."];
     } else if (state === "paused") stage.operational!.timing.state = "paused";
-    else delete stage.operational;
+    else if (state === "missing_operational") delete stage.operational;
+    else if (state === "foreign_source") stage.operational!.spacePlanning!.estimateId = "another-estimate";
+    else if (state === "unconfirmed_payment") workflow.initialPayment!.confirmedAt = null;
     server.use(
-      http.get("/api/v1/designer/design-plan-tasks", () => HttpResponse.json({ data: [{ ...assignedTask, status: "in_progress" }] })),
+      http.get("/api/v1/designer/design-plan-tasks", () => HttpResponse.json({ data: [{ ...assignedTask, status: state === "unassigned" ? "pending_assignment" : "in_progress" }] })),
       http.get("/api/v1/projects/project-1/design-workflow", () => HttpResponse.json({ data: workflow })),
       http.get("/api/v1/estimates/estimate-1/design-uploads", () => HttpResponse.json({ data: extractedWorkspace("estimate-1") })),
       http.get("/api/v1/estimate-design-revisions/:revisionId/image", () => new HttpResponse(new Uint8Array([137, 80, 78, 71]), { headers: { "Content-Type": "image/png" } }))
@@ -489,6 +544,10 @@ describe("DesignerDesignPlanTasksPage", () => {
     expect(screen.queryByRole("button", { name: "Upload design" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Design plan file")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Submit drawings to client" })).not.toBeInTheDocument();
+    if (state === "blocked") expect(screen.getByText("Site access must be restored before preparing drawings.", { selector: "dd" })).toBeVisible();
+    if (state === "foreign_source") expect(screen.getByText("Project design source is unavailable for this estimate", { selector: "dd" })).toBeVisible();
+    if (state === "unconfirmed_payment") expect(screen.getByText("Await initial payment confirmation", { selector: "dd" })).toBeVisible();
+    if (state === "unassigned") expect(screen.getByText("Await Designer assignment", { selector: "dd" })).toBeVisible();
   });
 
   it("keeps existing extracted images but removes editing after a background workflow refresh fails", async () => {

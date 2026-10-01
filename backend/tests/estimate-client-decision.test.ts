@@ -175,7 +175,11 @@ function setup(options: {
     leadId: "lead-1",
     projectId: null,
     estimateVersion: 7,
+    recipientEmailNormalized: "asha.rao@example.com",
+    createdAt: new Date("2026-08-23T09:00:00.000Z"),
     estimateSnapshot: {
+      clientName: "Asha Rao", projectName: "Aurora Residence", location: "Bengaluru", propertyType: "Apartment",
+      lineItems: [{ catalogueId: "ceiling", roomName: "Living room", specification: "Gypsum", unit: "sqft", rate: 120, quantity: 100, included: true, amount: 12000 }],
       subtotal: 12_000,
       gst: 2_160,
       total: 14_160
@@ -494,7 +498,7 @@ afterEach(() => {
 });
 
 describe("EstimateDecisionService Client compatibility", () => {
-  it("keeps the portal body at decision/note while the adapter supplies the estimate and current round token", async () => {
+  it("records the Client decision against the viewed round token", async () => {
     const state = setup();
 
     const result = await state.service.decide(portalInput());
@@ -570,37 +574,11 @@ describe("EstimateDecisionService Client compatibility", () => {
     expect(state.audits).toEqual([]);
   });
 
-  it("decides a legacy Client-visible Estimate without synthesizing a round or proof", async () => {
+  it("rejects a legacy Client estimate without an immutable review round", async () => {
     const state = setup({ round: false });
-
-    const result = await state.service.decide(portalInput({
-      round: null,
-      note: "Please revise the wardrobe depth."
-    }));
-
-    expect(result.estimate).toMatchObject({
-      id: "estimate-1",
-      status: "client_changes_requested",
-      version: 8,
-      designLifecycleVersion: 4
-    });
-    expect(result.clientReview).toBeNull();
-    expect(state.rounds).toEqual([]);
-    expect(state.proofs).toEqual([]);
-    expect(state.audits[1]).toEqual({
-      actorId: "client-1",
-      action: "estimate_client_response_recorded_through_portal",
-      entityType: "estimate",
-      entityId: "estimate-1",
-      occurredAt: NOW.toISOString(),
-      oldValues: { status: "sent_to_client" },
-      newValues: {
-        status: "client_changes_requested",
-        decision: "request_changes",
-        decisionSource: "client_portal",
-        noteLength: 33
-      }
-    });
+    await expect(state.service.decide(portalInput({ round: null }))).rejects.toMatchObject({ code: "ESTIMATE_NOT_REVIEWABLE", status: 409 });
+    expect(state.audits).toEqual([]);
+    expect(state.estimates[0].status).toBe("sent_to_client");
   });
 
   it("rejects a null portal round when a current review round exists", async () => {
@@ -620,13 +598,17 @@ describe("EstimateDecisionService Client compatibility", () => {
     expect(state.audits).toEqual([]);
   });
 
-  it("allows the legacy portal request-changes note to remain empty", async () => {
-    const state = setup({ round: false });
+  it.each(["", "   "])("requires a nonblank Client changes note: %j", async (note) => {
+    const state = setup();
+    await expect(state.service.decide(portalInput({ note }))).rejects.toMatchObject({ code: "ESTIMATE_CLIENT_NOTE_REQUIRED", status: 400 });
+    expect(state.audits).toEqual([]);
+  });
 
-    await expect(state.service.decide(portalInput({ round: null, note: "" }))).resolves.toMatchObject({
-      estimate: { status: "client_changes_requested" },
-      clientReview: null
-    });
+  it("rejects an untrustworthy submitted snapshot without writes", async () => {
+    const state = setup();
+    state.rounds[0].estimateSnapshot = null;
+    await expect(state.service.decide(portalInput())).rejects.toMatchObject({ code: "ESTIMATE_NOT_REVIEWABLE", status: 409 });
+    expect(state.audits).toEqual([]);
   });
 
   it("approves the commercial estimate without consulting drawing readiness", async () => {
@@ -757,7 +739,7 @@ describe("EstimateDecisionService Admin proof decisions", () => {
     }
   );
 
-  it("requires a non-empty Admin request-changes note but keeps portal empty-note compatibility", async () => {
+  it("requires a non-empty Admin request-changes note", async () => {
     const state = setup();
 
     await state.service.decide(adminInput({ decision: "request_changes", note: "   " })).then(

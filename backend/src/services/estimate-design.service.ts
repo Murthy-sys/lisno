@@ -2,6 +2,8 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 import mongoose from "mongoose";
 import sharp, { type Metadata } from "sharp";
+import type { PreparedPlanDocuments } from "../contracts/estimate-plan-document.js";
+import { createEstimatePlanDocumentService, type EstimatePlanDocumentService } from "./estimate-plan-document.service.js";
 import {
   deriveEstimateDesignUploadPurpose,
   isEstimateDesignEditable,
@@ -24,6 +26,7 @@ import { normalizeEmail } from "../domain/email.js";
 import type { ExtractionRetryPolicy } from "../domain/extraction-lifecycle.js";
 import { estimateScopeCatalogue } from "../domain/estimate-scope-catalogue.js";
 import { projectAnnotationToCrop } from "../domain/estimate-plan-review.js";
+import { planDocumentContentRect, resolveDrawingPlacement } from "../domain/estimate-plan-document.js";
 import { ApiError } from "../middleware/errors.js";
 import type { ValidatedUpload } from "../middleware/upload.js";
 import { EstimateDesignDrawingModel } from "../models/EstimateDesignDrawing.js";
@@ -34,6 +37,7 @@ import { EstimateDesignSourcePageModel } from "../models/EstimateDesignSourcePag
 import { EstimateDesignUploadModel } from "../models/EstimateDesignUpload.js";
 import { EstimatePlanChangeRequestModel } from "../models/EstimatePlanChangeRequest.js";
 import { EstimateModel } from "../models/Estimate.js";
+import { DesignPlanReviewRoundModel } from "../models/DesignPlanReviewRound.js";
 import { LeadModel } from "../models/Lead.js";
 import { UserModel } from "../models/User.js";
 import type { PublicUser as AuthenticatedUser } from "./auth.service.js";
@@ -72,6 +76,7 @@ export interface CreateEstimateDesignServiceInput {
   audit: AuditService;
   maxUploadBytes: number;
   ocrRetryPolicy?: ExtractionRetryPolicy;
+  planDocuments?: Pick<EstimatePlanDocumentService, "prepareForSubmission">;
   now?: () => Date;
   projectWorkflow?: Pick<
     ProjectWorkflowService,
@@ -310,6 +315,7 @@ export interface EstimateDesignService {
 
 export function createEstimateDesignService(input: CreateEstimateDesignServiceInput): EstimateDesignService {
   const now = input.now ?? (() => new Date());
+  const planDocuments = input.planDocuments ?? createEstimatePlanDocumentService({ storage: input.storage, now });
   const calculateApprovalReadinessForDecision = async (
     estimateId: string,
     session?: mongoose.ClientSession
@@ -494,7 +500,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       if (revisionRows.some((revision) => revision.reviewStatus === "changes_requested" && !revision.annotations)) {
         const requests = await EstimatePlanChangeRequestModel.find({ estimateId, status: "open" }).sort({ createdAt: 1, _id: 1 }).lean();
         const pageById = new Map(pages.map((page) => [String(page._id), page]));
+        const drawingById = new Map(drawings.map((drawing) => [String(drawing._id), drawing]));
         const revisionById = new Map(revisionRows.map((revision) => [String(revision._id), revision]));
+        const lineage = { estimateId, uploads, pages, drawings, revisions };
         for (const request of requests) {
           const page = pageById.get(String(request.sourcePageId));
           if (!page) continue;
@@ -502,8 +510,13 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           for (const target of request.targets) {
             const revision = revisionById.get(String(target.requestedRevisionId));
             if (!revision || revision.annotations) continue;
+            const drawing = drawingById.get(String(revision.drawingId));
+            if (!drawing) continue;
+            const placement = resolveDrawingPlacement(lineage, drawing, String(revision._id));
+            if (String(placement.originPage._id) !== String(page._id)) continue;
+            const annotationCrop = planDocumentContentRect(placement.patch);
             const elements = requestAnnotations.elements
-              .map((element) => projectAnnotationToCrop(element, revision.crop as never, { width: Number(page.width), height: Number(page.height) }))
+              .map((element) => projectAnnotationToCrop(element, annotationCrop, { width: Number(page.width), height: Number(page.height) }))
               .filter((element): element is NonNullable<typeof element> => element !== null);
             revision.annotationLayerId = String(request._id);
             revision.annotations = {
@@ -529,6 +542,10 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
 
     async listClient(user, estimateId) {
       const { clientId, estimate } = await requireClientVisibleEstimateReader(user, estimateId);
+      const publishedRound = estimate.status === "client_approved"
+        ? await DesignPlanReviewRoundModel.findOne({ estimateId, status: { $in: ["pending", "approved", "changes_requested"] } }).sort({ designPlanVersion: -1 }).lean()
+        : null;
+      const publishedRevisionIds = publishedRound ? new Set(publishedRound.submittedRevisionIds.map(String)) : null;
       const deletedUploads = (await EstimateDesignUploadModel.find({ estimateId, deletedAt: { $ne: null } }).sort({ _id: 1 }).lean()).filter((upload) => upload.deletedAt);
       const deletedPages = deletedUploads.length
         ? await EstimateDesignSourcePageModel.find({ uploadId: { $in: deletedUploads.map((upload) => upload._id) } }).sort({ _id: 1 }).lean()
@@ -536,7 +553,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       const deletedPageIds = new Set(deletedPages.map((page) => String(page._id)));
       const drawings = await EstimateDesignDrawingModel.find({
         estimateId,
-        active: true
+        ...(publishedRevisionIds ? {} : { active: true })
       }).sort({ _id: 1 }).lean();
       const visibleDrawings: Array<Record<string, unknown>> = [];
       const revisions: Array<Record<string, unknown>> = [];
@@ -546,9 +563,11 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         const history = await EstimateDesignRevisionModel.find({
           drawingId: drawing._id
         }).sort({ revisionNumber: 1 }).lean();
-        if (estimate.status === "client_approved" && estimate.designPlanStatus === "in_progress" && history.at(-1)?.reviewStatus === "draft") continue;
+        const publishedRevision = publishedRevisionIds ? history.find((revision) => publishedRevisionIds.has(String(revision._id))) : null;
+        if (publishedRevisionIds && !publishedRevision) continue;
+        if (!publishedRevisionIds && estimate.status === "client_approved" && estimate.designPlanStatus === "in_progress" && history.at(-1)?.reviewStatus === "draft") continue;
         const visibleHistory = history.filter((revision) =>
-          !deletedPageIds.has(String(revision.sourcePageId)) &&
+          (publishedRevision ? Number(revision.revisionNumber) <= Number(publishedRevision.revisionNumber) : !deletedPageIds.has(String(revision.sourcePageId))) &&
           ["submitted", "approved", "changes_requested"].includes(
             String(revision.reviewStatus)
           )
@@ -947,6 +966,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             _id: pageId,
             uploadId: currentDrawing.uploadId,
             pageNumber: await nextPageNumber(String(currentDrawing.uploadId), session),
+            sourceKind: "replacement",
             normalizedFileReference: stored.reference,
             width: metadata.width,
             height: metadata.height
@@ -2280,6 +2300,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         roomIds: designDrawingRoomIds(requestDrawings)
       });
       const requestRevisionIds = new Map<string, string | null>();
+      let returnedDrawingPending = false;
       for (const drawing of requestDrawings) {
         const revision = await EstimateDesignRevisionModel.findOne({
           drawingId: drawing._id
@@ -2290,7 +2311,13 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           String(drawing._id),
           revision ? String(revision._id) : null
         );
+        returnedDrawingPending ||= revision?.reviewStatus === "changes_requested";
       }
+      // Preserve stale/readiness guard ordering inside the transaction. Render
+      // only a potentially submittable plan, before opening that transaction.
+      const preparedDocuments: PreparedPlanDocuments | undefined = requestEstimate.status === "client_approved" &&
+        user.role === "designer" && requestDrawings.length > 0 && !returnedDrawingPending
+        ? await planDocuments.prepareForSubmission(user, estimateId) : undefined;
       let submittedCount = 0;
       let preparedReview: {
         roundId: string;
@@ -2381,6 +2408,17 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
               "Every active drawing requires a current revision before submission."
             );
           }
+        }
+        if (
+          user.role === "designer" &&
+          estimate.status === "client_approved" &&
+          latest.some((revision) => revision?.reviewStatus === "changes_requested")
+        ) {
+          throw new ApiError(
+            409,
+            "DESIGN_PLAN_RETURNED_DRAWINGS_PENDING",
+            "Replace every returned drawing before submitting. Uploading a new plan adds another file; if it supersedes an old plan, remove the eligible old upload after checking the new plan."
+          );
         }
         const draftLatest = latest.filter(
           (revision): revision is Record<string, any> =>
@@ -2528,7 +2566,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             latest.map((revision) => String(revision!._id)),
             [...attachmentUploadIdSet],
             submittedAt,
-            session
+            session,
+            preparedDocuments
           );
         }
         submittedCount = revisionIds.length;
@@ -3160,6 +3199,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           _id: pageId,
           uploadId: currentUpload._id,
           pageNumber: match.candidate.pageNumber,
+          sourceKind: "replacement",
           normalizedFileReference: storedReference,
           width: page.width,
           height: page.height
@@ -3413,7 +3453,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         await EstimateDesignSourcePageModel.create([{
           _id: pageId,
           uploadId: currentUpload._id,
-          pageNumber: 1,
+          pageNumber: page.pageNumber,
+          sourceKind: "replacement",
           normalizedFileReference: stored.reference,
           width: page.width,
           height: page.height

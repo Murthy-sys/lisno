@@ -10,7 +10,7 @@ import type { AuthService, PublicUser } from "../src/services/auth.service.js";
 import type { ProcurementVendorBaselineService } from "../src/services/procurement-vendor-baseline.service.js";
 
 const policy = { totalAllocatedWorkPaise: 3_000_000n, unknownItemCount: 0, physicallyVerified: false, previousItemPaise: 0, nextItemPaise: 2_000_000 };
-const item = { estimateId: "estimate", estimateVersion: 1, sourceLineItemKey: "line", itemName: "Material", brand: "Brand", uomId: "uom", vendorId: "vendor", pricePaise: 1500 };
+const item = { estimateId: "estimate", estimateVersion: 1, sourceLineItemKey: "line", itemName: "Material", brand: "Brand", uomId: "uom", vendorId: "vendor", pricePaise: 1500, plannedOrderQuantityMilliUnits: 1_000 };
 const baseline = { expectedVersion: 1, allocatedWorkPaise: 6_000_000, reason: "Record the existing commitment", idempotencyKey: "request-1" };
 
 describe("vendor allocation policy and input boundaries", () => {

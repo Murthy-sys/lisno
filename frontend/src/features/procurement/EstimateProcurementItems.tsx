@@ -22,13 +22,17 @@ export function EstimateProcurementItems({ project }: { project: ProcurementProj
   const [notice, setNotice] = useState("");
   const returnFocusRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const options = project?.sections.flatMap((section) => section.items.map((item) => ({
+  const actionableSections = project?.sections.map((section) => ({
+    ...section,
+    items: section.items.filter((item) => item.estimatedAmountPaise > 0)
+  })).filter((section) => section.items.length) ?? [];
+  const options = project ? actionableSections.flatMap((section) => section.items.map((item) => ({
     estimateId: project.estimateId, estimateVersion: project.estimateVersion, sourceLineItemKey: item.key,
     label: `${item.specification} · ${item.roomName} · ${item.catalogueId}`
-  }))) ?? [];
-  const sections = project?.sections.map((section) => ({ ...section, items: section.items.filter((item) =>
+  }))) : [];
+  const sections = actionableSections.map((section) => ({ ...section, items: section.items.filter((item) =>
     !search || [item.specification, item.roomName, item.catalogueId, section.label].some((value) => value.toLocaleLowerCase().includes(search))
-  ) })).filter((section) => section.items.length) ?? [];
+  ) })).filter((section) => section.items.length);
   function submit(event: FormEvent) {
     event.preventDefault();
     setSearch(draft.normalize("NFKC").trim().toLocaleLowerCase());
@@ -55,13 +59,14 @@ export function EstimateProcurementItems({ project }: { project: ProcurementProj
           setNotice("");
           setEditor({ item: child, projectId: project.projectId, projectName: project.projectName, source: { estimateId: project.estimateId, estimateVersion: project.estimateVersion, sourceLineItemKey: item.key }, parentLabel: `${item.specification} — ${item.roomName}` });
         }} />)}
-    </div>) : <PageState state="empty" message={search ? "No estimate items match your search." : "This approved estimate has no selected items."} />}
+    </div>) : <PageState state="empty" message={search ? "No eligible estimate items match your search." : "This approved estimate has no items with a positive value."} />}
     <ProjectProcurementItems projectId={project.projectId} projectName={project.projectName} unassigned assignmentOptions={options}
       onEditorRequested={(item, opener) => { returnFocusRef.current = opener; setNotice(""); setEditor({ item, projectId: project.projectId, projectName: project.projectName }); }} />
   </Surface> : null}
     {editor && canEdit ? <ProjectProcurementItemEditor key={editor.item?.id ?? JSON.stringify(editor.source)} projectId={editor.projectId} projectName={editor.projectName}
       item={editor.item} source={editor.source} parentLabel={editor.parentLabel} assignmentOptions={options}
       sourceStale={!project || Boolean(editor.source && !options.some((option) => sameProcurementParent(editor.source, option)))}
+      currentEstimate={project ? { estimateId: project.estimateId, estimateVersion: project.estimateVersion } : undefined}
       returnFocusRef={returnFocusRef} fallbackFocusRef={headingRef} onClose={() => setEditor(null)}
       onSaved={(saved) => { setNotice(`${saved.itemName} ${editor.item ? "updated" : "added"}.`); setEditor(null); }} /> : null}
   </>;

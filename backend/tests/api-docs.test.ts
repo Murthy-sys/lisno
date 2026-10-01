@@ -26,6 +26,55 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents procurement approval, vendor handoff, Client review and final completion contracts", () => {
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const schemas = componentSchemas();
+    const operations = [
+      ["/procurement/projects/{projectId}/items/{itemId}", "delete", "procurement.items.manage", "ProjectProcurementRemoval"],
+      ["/procurement/projects/{projectId}/purchase-orders/{orderId}/submit", "post", "procurement.purchase_orders.manage", "ProjectPurchaseOrderSubmitInput"],
+      ["/procurement/projects/{projectId}/purchase-orders/{orderId}/decision", "post", "procurement.purchase_orders.approve", "ProjectPurchaseOrderDecisionInput"],
+      ["/procurement/projects/{projectId}/purchase-order-requests", "post", "procurement.purchase_orders.manage", "ProjectPurchaseOrderRequestSubmit"],
+      ["/procurement/projects/{projectId}/purchase-order-requests/quote", "post", "procurement.purchase_orders.manage", "ProjectPurchaseOrderRequestQuoteInput"],
+      ["/admin/purchase-order-requests/{requestId}/decision", "post", "procurement.purchase_orders.approve", "ProjectPurchaseOrderRequestDecision"],
+      ["/vendor/work/{assignmentId}/progress", "patch", "procurement.vendor_work.update", "VendorWorkProgress"],
+      ["/vendor/work/{assignmentId}/submit", "post", "procurement.vendor_work.update", "VendorWorkSubmit"],
+      ["/clients/projects/{projectId}/vendor-work-reviews/{reviewId}/decision", "post", "procurement.client_work.decide", "ClientVendorWorkDecision"],
+      ["/admin/projects/{projectId}/complete", "post", "procurement.project_completion.decide", "ProjectCompletionInput"]
+    ] as const;
+    for (const [path, method, permission, requestName] of operations) {
+      const operation = paths[path]![method]!;
+      expect(operation["x-lisno-permission"]).toBe(permission);
+      expect(operation.requestBody.content["application/json"].schema.$ref).toBe(`#/components/schemas/${requestName}`);
+      expect(schemas[requestName]!.additionalProperties).toBe(false);
+    }
+    expect(paths["/vendor/work/{assignmentId}/images"]!.post!.requestBody.content["multipart/form-data"].schema.$ref).toBe("#/components/schemas/VendorWorkImageUpload");
+    expect(paths["/procurement/projects/{projectId}/purchase-order-preparation"]!.get!.responses["2XX"].content["application/json"].schema.properties.data.$ref).toBe("#/components/schemas/ProjectPurchaseOrderPreparation");
+    expect(paths["/projects/{projectId}/vendor-work/{assignmentId}/images/{imageId}"]!.get!["x-lisno-permission"]).toBe("procurement.vendor_work.media.read");
+    expect(paths["/admin/project-completion-tasks"]!.get!["x-lisno-permission"]).toBe("procurement.project_completion.decide");
+    expect(schemas.ProjectPurchaseOrderCommitments!.properties.approvedEstimatePaise.description).toContain("before GST");
+    expect(schemas.ProjectCompletionSummary!.properties.readyForCompletion).toEqual({ type: "boolean" });
+  });
+  it("documents the participant-only status response without source records", () => {
+    const schemas = componentSchemas();
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    expect(paths["/projects/{projectId}/status"]!.get!.responses["2XX"].content["application/json"].schema.properties.data.$ref).toBe("#/components/schemas/ProjectStatusSummary");
+    expect(schemas.ProjectStatusSummary!.additionalProperties).toBe(false);
+    expect(schemas.ProjectStatusSummary!.required).toContain("pendingActions");
+    expect(Object.keys(schemas.ProjectPendingAction!.properties.people.items.properties)).toEqual(["id", "name", "role"]);
+    for (const field of ["estimate", "total", "proof", "email", "notes"]) expect(schemas.ProjectStatusSummary!.properties).not.toHaveProperty(field);
+  });
+  it("binds Client estimate decisions and PDF downloads to the published review", () => {
+    const schemas = componentSchemas();
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    expect(paths["/client/estimates/{estimateId}/decision"]!.post!.requestBody.content["application/json"].schema.$ref).toBe("#/components/schemas/ClientEstimateDecisionRequest");
+    expect(schemas.ClientEstimateDecisionRequest!.required).toEqual(["decision", "reviewRoundId", "reviewRoundVersion"]);
+    expect(schemas.ClientEstimateDecisionRequest!.description).toContain("nonblank trimmed note");
+    expect(paths["/client/estimates/{estimateId}/pdf"]!.get!.parameters).toContainEqual(expect.objectContaining({ name: "roundId", in: "query", required: true }));
+    expect(paths["/client/estimates"]!.get!.responses["2XX"].content["application/json"].schema.properties.data.$ref).toBe("#/components/schemas/ClientEstimateReviewList");
+    expect(schemas.ClientPublishedEstimateReview!.properties).toHaveProperty("snapshot.$ref", "#/components/schemas/ClientEstimateSnapshot");
+    expect(schemas.ClientPublishedEstimateReview!.properties).not.toHaveProperty("pdfStorageReference");
+    expect(schemas.ClientEstimateSnapshot!.description).toContain("whole-rupee");
+  });
   it("documents scoped project search, stable sorting and status counts before status selection", () => {
     const schemas = componentSchemas();
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
@@ -286,9 +335,27 @@ describe("OpenAPI and Swagger UI", () => {
     expect(schemas.FurnitureDimensionItem!.oneOf).toEqual([{ $ref: "#/components/schemas/FurniturePhysicalDimensionItem" }, { $ref: "#/components/schemas/FurnitureCountItem" }]);
     expect(schemas.FurnitureCountItem).toMatchObject({ additionalProperties: false, required: ["id", "name", "measurementType", "quantity", "unit"], properties: { measurementType: { enum: ["count"] }, quantity: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER } } });
     expect(schemas.FurnitureCountItem!.properties).not.toHaveProperty("length");
+    expect(schemas.FurniturePhysicalDimensionItem!.required).not.toContain("height");
+    expect(schemas.FurniturePhysicalDimensionItem!.required).toEqual(["id", "name", "length", "width", "unit"]);
     expect(schemas.DesignWorkflow).toHaveProperty("properties.furnitureRooms.items.properties.estimateItems.items.properties.measurementType.enum", ["count", "dimensions"]);
     expect(schemas.DesignWorkflow).toHaveProperty("properties.furnitureRooms.items.properties.estimateItems.items.properties.quantity", {
-      type: "number", minimum: 0, description: "Approved estimate reference quantity. Selected items remain available for measurements when this quantity is zero."
+      type: "number", minimum: 0, description: "Approved estimate reference quantity. Positive-value items remain available for measurements when this quantity is zero; exact zero-value items are excluded."
+    });
+  });
+  it("documents optional read-only estimated room dimensions in feet", () => {
+    const room = (componentSchemas().DesignWorkflow!.properties as Record<string, OpenApiObject>).furnitureRooms!.items! as OpenApiObject;
+    expect(room.required).toEqual(["id", "name", "estimateItems"]);
+    expect(room.properties).toHaveProperty("estimateDimensions.required", ["lengthFt", "widthFt"]);
+    expect(room.properties).toHaveProperty("estimateDimensions.properties.lengthFt", { type: "number", minimum: 0, exclusiveMinimum: true });
+    expect(room.properties).toHaveProperty("estimateDimensions.properties.widthFt", { type: "number", minimum: 0, exclusiveMinimum: true });
+  });
+  it("documents the fail-closed Estimate approval visibility status on design workflow reads", () => {
+    const schema = componentSchemas().DesignWorkflow!;
+    expect(schema.required).not.toContain("estimateApprovalStatus");
+    expect(schema).toHaveProperty("properties.estimateApprovalStatus", {
+      type: "string",
+      enum: ["approved", "awaiting_approval", "source_issue"],
+      description: expect.stringContaining("project-linked approved Estimate source")
     });
   });
   it("documents combined furniture requirements, exact review tokens and pre-acceptance Designer UOM creation", () => {
@@ -297,6 +364,7 @@ describe("OpenAPI and Swagger UI", () => {
     const description = (schemas.DesignWorkflowActionRequest!.properties as Record<string, OpenApiObject>).data!.description;
     expect(description).toContain("Combined furniture_accept and furniture_scope_return require {submissionEventId}");
     expect(description).toContain("dimensions: [{roomId, items:");
+    expect(description).toContain("{resolveReturnedZeroValueRoomIds: [roomId]}");
     expect(schemas.FurnitureUomCreate!.description).toContain("eligible Designer furniture scope declaration/edit");
   });
   it("documents direct measurement media and authenticated individual downloads with an optional sketch", () => {
@@ -323,13 +391,15 @@ describe("OpenAPI and Swagger UI", () => {
     ]));
     expect(paths["/procurement/projects/{projectId}/items"]!.post!.requestBody).toHaveProperty("content.application/json.schema.$ref", "#/components/schemas/ProjectProcurementCreate");
     expect(paths["/procurement/projects/{projectId}/items/{itemId}"]!.patch!.requestBody).toHaveProperty("content.application/json.schema.$ref", "#/components/schemas/ProjectProcurementUpdate");
-    expect(componentSchemas().ProjectProcurementCreate).toMatchObject({ additionalProperties: false, required: ["itemName", "brand", "uomId", "pricePaise", "estimateId", "estimateVersion", "sourceLineItemKey"] });
+    expect(componentSchemas().ProjectProcurementCreate).toMatchObject({ additionalProperties: false, required: ["itemName", "brand", "uomId", "pricePaise", "plannedOrderQuantityMilliUnits", "estimateId", "estimateVersion", "sourceLineItemKey"] });
     expect(componentSchemas().ProjectProcurementUpdate!.required).toContain("expectedVersion");
     expect(componentSchemas().ProjectProcurementItem!.required).toEqual(expect.arrayContaining(["projectId", "uom", "vendor", "estimateSource"]));
     expect(componentSchemas().ProjectProcurementCreate!.properties).toHaveProperty("vendorId", expect.objectContaining({ nullable: true, default: null }));
     expect(paths["/procurement/vendors"]!.post!.requestBody).toHaveProperty("content.application/json.schema.$ref", "#/components/schemas/ProcurementVendorCreate");
     expect(paths["/procurement/vendors"]!.get!.parameters).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: "q" }), expect.objectContaining({ name: "limit" }), expect.objectContaining({ name: "offset" })
+      expect.objectContaining({ name: "q" }),
+      expect.objectContaining({ name: "effectiveStatus", schema: { type: "string", enum: ["active"] } }),
+      expect.objectContaining({ name: "limit" }), expect.objectContaining({ name: "offset" })
     ]));
     expect(componentSchemas().ProjectProcurementItem!.properties).not.toHaveProperty("createdById");
     expect(componentSchemas().ProjectProcurementItem!.properties).toHaveProperty("pricePaise", expect.objectContaining({ type: "integer", minimum: 1, maximum: 9_000_000_000_000 }));
@@ -718,7 +788,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 274 routes without versioning paths twice", () => {
+  it("contains all 318 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -727,7 +797,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 17);
-    expect(operationCount).toBe(274);
+    expect(operationCount).toBe(318);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);

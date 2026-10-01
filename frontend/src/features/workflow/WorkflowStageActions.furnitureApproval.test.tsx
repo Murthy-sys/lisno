@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "../../api/client";
 import { WorkflowStageActions } from "./WorkflowStageActions";
+import { openFurnitureItem } from "./furnitureDisclosureTestUtils";
 import { projectWorkflowKeys, type DesignWorkflowAction, type DesignWorkflowStage, type DesignWorkflowView, type FurnitureDimensionsSubmission, type FurnitureUomOption } from "./projectWorkflowApi";
 import { workflowStageNextStep, workflowStageStatusLabel } from "./projectWorkflowSelectors";
 
@@ -47,11 +48,11 @@ function setup(data = fixture(), presentation: "designer" | "client" | "full" = 
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return { ...data, client, ...render(<WorkflowStageActions {...data} presentation={presentation} />, { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> }) };
 }
-async function fillItem(user: ReturnType<typeof userEvent.setup>, room = "Bedroom") {
-  const group = within(screen.getByRole("group", { name: `${room} dimensions` }));
+async function fillItem(user: ReturnType<typeof userEvent.setup>, room = "Bedroom", itemName = room === "Bedroom" ? "Sofa" : "Table") {
+  const group = await openFurnitureItem(user, room, itemName);
   await user.type(group.getByRole("spinbutton", { name: "Length" }), "210.5");
   await user.type(group.getByRole("spinbutton", { name: "Width" }), "90");
-  await user.type(group.getByRole("spinbutton", { name: "Height" }), "85");
+  expect(group.queryByRole("spinbutton", { name: "Height" })).not.toBeInTheDocument();
   await user.selectOptions(group.getByRole("combobox", { name: "UOM" }), "uom-cm");
 }
 
@@ -71,7 +72,7 @@ describe("Furniture submission and Client decisions", () => {
     fireEvent.submit(screen.getByRole("form"));
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
     const body = post.mock.calls[0]![1];
-    expect(JSON.parse(body.get("data") as string)).toEqual({ rooms: [{ roomId: "room-bedroom", items: [{ estimateItemId: "estimate-bedroom", length: 210.5, width: 90, height: 85, uomId: "uom-cm" }] }] });
+    expect(JSON.parse(body.get("data") as string)).toEqual({ rooms: [{ roomId: "room-bedroom", items: [{ estimateItemId: "estimate-bedroom", length: 210.5, width: 90, uomId: "uom-cm" }] }] });
     expect(body.get("action")).toBe("furniture_upload"); expect(body.get("expectedVersion")).toBe("7"); expect(body.get("file")).toBe(proof);
     expect(await screen.findByRole("status")).toHaveTextContent("Awaiting Client approval");
     expect(invalidate).toHaveBeenCalledWith({ queryKey: projectWorkflowKeys.all });
@@ -86,7 +87,7 @@ describe("Furniture submission and Client decisions", () => {
     await fillItem(user, "Living room");
     const width = within(screen.getByRole("group", { name: "Living room dimensions" })).getByRole("spinbutton", { name: "Width" });
     fireEvent.change(width, { target: { value: "0" } }); fireEvent.submit(screen.getByRole("form"));
-    expect(screen.getByRole("alert")).toHaveTextContent("positive length, width and height"); expect(post).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("positive length and width"); expect(post).not.toHaveBeenCalled();
   });
 
   it("loads all selected estimate items and confirms discarding unsaved measurements", async () => {
@@ -97,10 +98,10 @@ describe("Furniture submission and Client decisions", () => {
     const bedroom = within(screen.getByRole("group", { name: "Bedroom dimensions" }));
     expect(bedroom.getByRole("group", { name: "Sofa measurements" })).toBeVisible();
     expect(bedroom.getByRole("group", { name: "Sideboard measurements" })).toBeVisible();
-    expect(bedroom.getByText("Estimate: 2 nos")).toBeVisible();
+    expect(within(bedroom.getByRole("group", { name: "Sofa measurements" })).getByRole("button", { name: /Estimate 2 nos/ })).toBeVisible();
     expect(screen.queryByRole("textbox", { name: "Furniture item" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Add item|Remove item/ })).not.toBeInTheDocument();
-    const width = within(bedroom.getByRole("group", { name: "Sideboard measurements" })).getByRole("spinbutton", { name: "Width" });
+    const width = (await openFurnitureItem(user, "Bedroom", "Sideboard")).getByRole("spinbutton", { name: "Width" });
     await user.type(width, "90");
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByRole("alertdialog", { name: "Discard unsaved changes?" })).toBeVisible();
@@ -139,26 +140,95 @@ describe("Furniture submission and Client decisions", () => {
     const data = fixture(); data.workflow.furnitureRooms![1]!.estimateItems![0]!.name = "Sofa";
     setup(data); const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: submitAction.label }));
-    await fillItem(user); await fillItem(user, "Living room");
+    await fillItem(user); await fillItem(user, "Living room", "Sofa");
     await user.upload(screen.getByLabelText(/Furniture dimensions document/), proof);
     fireEvent.submit(screen.getByRole("form"));
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
     expect(JSON.parse(post.mock.calls[0]![1].get("data") as string)).toEqual({ rooms: [
-      { roomId: "room-bedroom", items: [{ estimateItemId: "estimate-bedroom", length: 210.5, width: 90, height: 85, uomId: "uom-cm" }] },
-      { roomId: "room-living", items: [{ estimateItemId: "estimate-living", length: 210.5, width: 90, height: 85, uomId: "uom-cm" }] }
+      { roomId: "room-bedroom", items: [{ estimateItemId: "estimate-bedroom", length: 210.5, width: 90, uomId: "uom-cm" }] },
+      { roomId: "room-living", items: [{ estimateItemId: "estimate-living", length: 210.5, width: 90, uomId: "uom-cm" }] }
     ] });
   });
 
-  it("blocks submission and explains when the approved estimate has no selected items for a room", async () => {
-    const post = vi.spyOn(apiClient, "postMultipartWithProgress");
+  it("does not select a zero-only room for dimension upload", async () => {
+    const post = vi.spyOn(apiClient, "postMultipartWithProgress").mockResolvedValue({ version: 8 });
     const data = fixture(); data.workflow.furnitureRooms![0]!.estimateItems = [];
     setup(data); const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: submitAction.label }));
-    expect(screen.getByText(/No selected estimate items are available for Bedroom/)).toBeVisible();
-    expect(screen.getByRole("button", { name: submitAction.label })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Bedroom" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Bedroom" })).not.toBeChecked();
+    await fillItem(user, "Living room", "Table");
     await user.upload(screen.getByLabelText(/Furniture dimensions document/), proof);
     fireEvent.submit(screen.getByRole("form"));
-    expect(screen.getByRole("alert")).toHaveTextContent("Selected estimate items are unavailable");
+    await waitFor(() => expect(post).toHaveBeenCalledOnce());
+    expect(JSON.parse(post.mock.calls[0]![1].get("data") as string)).toEqual({ rooms: [{ roomId: "room-living", items: [{ estimateItemId: "estimate-living", length: 210.5, width: 90, uomId: "uom-cm" }] }] });
+  });
+
+  it("resolves multiple returned zero-value rooms without a document while keeping the submission and Client response", async () => {
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue({ version: 8 });
+    const multipart = vi.spyOn(apiClient, "postMultipartWithProgress");
+    const data = fixture();
+    data.stage.operational!.furniture!.phase = "dimension_changes_requested";
+    for (let index = 0; index < 2; index += 1) {
+      data.workflow.furnitureRooms![index]!.estimateItems = [];
+      const room = data.stage.operational!.rooms![index]!;
+      data.stage.operational!.rooms![index] = { ...room, hasDimensions: true, dimensions: submission(room.id, "changes_requested") };
+    }
+    const { client } = setup(data); const invalidate = vi.spyOn(client, "invalidateQueries"); const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: submitAction.label }));
+    expect(screen.getByText(/earlier submission and Client response remain in action history/)).toBeVisible();
+    const correction = screen.getByRole("region", { name: "Correct returned zero-value rooms" });
+    expect(within(correction).getByText(/Bedroom — Client requested/)).toBeVisible();
+    expect(within(correction).getByText(/Living room — Client requested/)).toBeVisible();
+    expect(screen.queryByLabelText(/Furniture dimensions document/)).not.toBeInTheDocument();
+    expect(within(screen.getByRole("dialog")).queryByRole("button", { name: submitAction.label })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Resolve 2 returned zero-value rooms" }));
+    await waitFor(() => expect(post).toHaveBeenCalledOnce());
+    expect(post.mock.calls[0]![1]).toEqual(expect.objectContaining({
+      action: "furniture_upload", stageId: data.stage.id, expectedVersion: 7,
+      data: { resolveReturnedZeroValueRoomIds: ["room-bedroom", "room-living"] },
+      idempotencyKey: expect.any(String)
+    }));
+    expect(multipart).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Returned zero-value rooms resolved/)).toBeVisible();
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: projectWorkflowKeys.all });
+    expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  });
+
+  it("keeps paid returned rooms on the document upload path when another returned room has zero approved value", async () => {
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue({ version: 8 });
+    const multipart = vi.spyOn(apiClient, "postMultipartWithProgress");
+    const data = fixture();
+    data.stage.operational!.furniture!.phase = "dimension_changes_requested";
+    data.workflow.furnitureRooms![0]!.estimateItems = [];
+    data.stage.operational!.rooms = data.stage.operational!.rooms!.map((room) => room.required ? { ...room, hasDimensions: true, dimensions: submission(room.id, "changes_requested") } : room);
+    setup(data); const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: submitAction.label }));
+    expect(screen.getByRole("button", { name: "Resolve 1 returned zero-value room" })).toBeEnabled();
+    expect(screen.getByRole("checkbox", { name: "Bedroom" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Living room" })).toBeChecked();
+    expect(screen.getByLabelText(/Furniture dimensions document/)).toBeVisible();
+    fireEvent.submit(screen.getByRole("form"));
+    expect(screen.getByRole("alert")).toHaveTextContent("required evidence file");
+    expect(post).not.toHaveBeenCalled(); expect(multipart).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Resolve 1 returned zero-value room" }));
+    await waitFor(() => expect(post).toHaveBeenCalledOnce());
+    expect(post.mock.calls[0]![1]).toEqual(expect.objectContaining({ data: { resolveReturnedZeroValueRoomIds: ["room-bedroom"] } }));
+    expect(multipart).not.toHaveBeenCalled();
+  });
+
+  it("blocks zero-value correction when the estimate source changes while the panel is open", async () => {
+    const post = vi.spyOn(apiClient, "post");
+    const data = fixture();
+    data.workflow.furnitureRooms![0]!.estimateItems = [];
+    data.stage.operational!.rooms![0] = { ...data.stage.operational!.rooms![0]!, hasDimensions: true, dimensions: submission("room-bedroom", "changes_requested") };
+    const { rerender } = setup(data); const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: submitAction.label }));
+    const replacement = structuredClone(data.workflow);
+    replacement.furnitureRooms![0]!.estimateItems = [{ id: "new-item", name: "New item", catalogueId: "new-item", specification: "Approved", quantity: 1, uom: "nos" }];
+    rerender(<WorkflowStageActions workflow={replacement} stage={data.stage} presentation="designer" />);
+    expect(screen.queryByRole("button", { name: "Resolve 1 returned zero-value room" })).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("workflow changed");
     expect(post).not.toHaveBeenCalled();
   });
 
@@ -215,7 +285,7 @@ describe("Furniture submission and Client decisions", () => {
     expect(apiClient.get).toHaveBeenCalledTimes(1);
     expect(apiClient.get).toHaveBeenCalledWith("/projects/project-a/design-workflow/furniture-uoms", expect.objectContaining({ showGlobalLoader: false }));
     await user.click(screen.getByRole("checkbox", { name: "Living room" }));
-    for (const name of ["Length", "Width", "Height"]) await user.type(screen.getByRole("spinbutton", { name }), "90");
+    for (const name of ["Length", "Width"]) await user.type(screen.getByRole("spinbutton", { name }), "90");
     expect(screen.getByRole("combobox", { name: "UOM" })).toHaveValue("");
     await user.upload(screen.getByLabelText(/Furniture dimensions document/), proof);
     fireEvent.submit(screen.getByRole("form"));

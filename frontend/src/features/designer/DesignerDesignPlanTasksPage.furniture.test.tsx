@@ -42,10 +42,14 @@ function furnitureWorkflow(): DesignWorkflowView {
   };
   return {
     projectId: task.projectId, projectName: task.projectName, serverNow: "2026-09-17T08:00:00.000Z", floors: [],
+    estimateApprovalStatus: "approved",
+    initialPayment: { confirmedAt: "2026-09-17T08:00:00.000Z", canConfirm: false, version: 1, status: "received" },
     furnitureRooms: [{ id: "room-living", name: "Living Room" }, { id: "room-study", name: "Study" }, { id: "room-bedroom", name: "Bedroom" }].map((room) => ({ ...room, estimateItems: [{ id: `item-${room.id}`, name: `Furniture in ${room.name}`, catalogueId: `catalogue-${room.id}`, specification: "Selected estimate item", quantity: 1, uom: "nos" }] })),
     projectStages: [stage, {
       ...stage, id: "project-1:planning", type: "space_planning_tentative_look_feel", name: "Space planning", order: 6, status: "blocked",
-      operational: { ...stage.operational!, furniture: undefined, status: "blocked", availableActions: [], blockingReasons: ["Client acceptance is required."] }
+      operational: { ...stage.operational!, furniture: undefined, status: "blocked", availableActions: [], blockingReasons: ["Client acceptance is required."],
+        spacePlanning: { estimateId: task.estimateId, designPlanVersion: 0, reviewRoundId: null, totalImages: 0, approvedImages: 0, readyForCompletion: false, completedAt: null,
+          completionBlockingReasons: ["Upload and submit the design plan for Client review."] } }
     }]
   };
 }

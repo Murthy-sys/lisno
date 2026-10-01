@@ -4,6 +4,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { ApiError, tokenStorage } from "../../api/client";
 import { invalidateProjectNameQueries } from "../../api/projectNameSync";
+import { projectStatusKeys } from "../project-status/projectStatusApi";
 import { chatErrorMessage, chatKeys, isChatDenied, projectChatApi } from "./projectChatApi";
 import { emptyChatDraft, type ChatDraft, type ChatLocalAttachment } from "./projectChatState";
 import { ChatTransferPool } from "./chatTransfers";
@@ -97,6 +98,7 @@ function ChatSession({ children, userId, enabled }: { children: ReactNode; userI
     if (!mounted.current || deniedRef.current.has(projectId)) return;
     await Promise.all([
       invalidateProject(projectId),
+      queryClient.invalidateQueries({ queryKey: projectStatusKeys.project(projectId) }),
       queryClient.invalidateQueries({ queryKey: chatKeys.list(scope) })
     ]);
   }, [invalidateProject, queryClient, scope]);
@@ -105,6 +107,9 @@ function ChatSession({ children, userId, enabled }: { children: ReactNode; userI
     deniedRef.current = new Set([...deniedRef.current, projectId]);
     projectNames.current.delete(projectId);
     setDenied(deniedRef.current);
+    void queryClient.cancelQueries({ queryKey: projectStatusKeys.project(projectId) }).then(() => {
+      queryClient.removeQueries({ queryKey: projectStatusKeys.project(projectId) });
+    });
     for (const { controller, projectId: requestProject } of controllers.current.values()) if (projectId === requestProject) controller.abort();
     const nextMemory = { ...memoryRef.current }; delete nextMemory[projectId]; memoryRef.current = nextMemory; setMemory(nextMemory);
     setOverview(old => { const next = { ...old }; delete next[projectId]; return next; });

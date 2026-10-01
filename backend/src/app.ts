@@ -4,6 +4,18 @@ import { createProjectVendorSuggestionRouter } from "./routes/project-vendor-sug
 import { createProjectVendorSuggestionService } from "./services/project-vendor-suggestions.service.js";
 import { createProjectProcurementRouter } from "./routes/project-procurement.js";
 import { createProjectProcurementService } from "./services/project-procurement.service.js";
+import { createProjectPurchaseOrderRouter } from "./routes/project-purchase-orders.js";
+import { createProjectPurchaseOrderService } from "./services/project-purchase-order.service.js";
+import { createProjectPurchaseOrderPreparationRouter } from "./routes/project-purchase-order-preparation.js";
+import { createProjectPurchaseOrderPreparationService } from "./services/project-purchase-order-preparation.service.js";
+import { createProjectPurchaseOrderRequestRouter } from "./routes/project-purchase-order-requests.js";
+import { createProjectPurchaseOrderRequestService } from "./services/project-purchase-order-request.service.js";
+import { createProjectCompletionRouter } from "./routes/project-completion.js";
+import { createProjectCompletionService } from "./services/project-completion.service.js";
+import { createSiteCompletionRouter } from "./routes/site-completion.js";
+import { createSiteCompletionService } from "./services/site-completion.service.js";
+import { createVendorWorkRouter } from "./routes/vendor-work.js";
+import { createVendorWorkService, onPurchaseOrderApproved } from "./services/vendor-work.service.js";
 import { createProcurementVendorBaselineService } from "./services/procurement-vendor-baseline.service.js";
 import { createProcurementVendorBaselineRouter } from "./routes/procurement-vendor-baseline.js";
 import { createProcurementVendorPhotoService } from "./services/procurement-vendor-photo.service.js";
@@ -74,6 +86,8 @@ import { createDesignSectionsRouter } from "./routes/design-sections.js";
 import { createExtractionWorkerRouter } from "./routes/extraction-worker.js";
 import { createEstimateDesignsRouter } from "./routes/estimate-designs.js";
 import { createEstimatePlanReviewRouter } from "./routes/estimate-plan-review.js";
+import { createEstimatePlanDocumentRouter } from "./routes/estimate-plan-documents.js";
+import { createEstimatePlanDocumentService } from "./services/estimate-plan-document.service.js";
 import { createEstimateClientResponsesRouter } from "./routes/estimate-client-responses.js";
 import { createEstimatesRouter } from "./routes/estimates.js";
 import { healthRouter } from "./routes/health.js";
@@ -124,6 +138,8 @@ import { createKpiService } from "./services/kpi.service.js";
 import { createLeadService } from "./services/lead.service.js";
 import { createProjectActivityService } from "./services/project-activity.service.js";
 import { createProjectService } from "./services/project.service.js";
+import { createProjectStatusService } from "./services/project-status.service.js";
+import { createProjectStatusRouter } from "./routes/project-status.js";
 import { createProjectWorkflowService } from "./services/project-workflow.service.js";
 import {
   createProjectFinanceService,
@@ -361,6 +377,20 @@ export function createApp(dependencies: AppDependencies) {
   const vendorInductionService = createVendorInductionService({ audit: auditService,
     mailer: dependencies.vendorInductionMailer ?? { deliveryKind: "disabled" }, activationForVendor: vendorActivation, now: clock });
   const projectProcurementService = createProjectProcurementService({ audit: auditService, now: clock });
+  const vendorWorkService = createVendorWorkService({ audit: auditService, storage, maxUploadBytes, now: clock });
+  const projectPurchaseOrderService = createProjectPurchaseOrderService({
+    audit: auditService,
+    onApproved: onPurchaseOrderApproved,
+    now: clock
+  });
+  const projectPurchaseOrderPreparationService = createProjectPurchaseOrderPreparationService();
+  const projectPurchaseOrderRequestService = createProjectPurchaseOrderRequestService({
+    audit: auditService,
+    onApproved: onPurchaseOrderApproved,
+    now: clock
+  });
+  const projectCompletionService = createProjectCompletionService({ audit: auditService, now: clock });
+  const siteCompletionService = createSiteCompletionService({ audit: auditService, now: clock });
   const procurementVendorBaselineService = createProcurementVendorBaselineService({ audit: auditService, now: clock });
   const procurementVendorCertificateService = createProcurementVendorCertificateService({ storage, maxUploadBytes, now: clock });
   const procurementVendorPhotoService = createProcurementVendorPhotoService({ audit: auditService, storage, maxUploadBytes, now: clock });
@@ -398,6 +428,7 @@ export function createApp(dependencies: AppDependencies) {
     now: clock,
     projectWorkflow: projectWorkflowService
   });
+  const estimatePlanDocumentService = createEstimatePlanDocumentService({ storage, now: clock });
   const estimatePlanReviewService = createEstimatePlanReviewService({
     estimateDesigns: estimateDesignService,
     storage,
@@ -472,6 +503,7 @@ export function createApp(dependencies: AppDependencies) {
   app.use("/api/v1", createNotificationsRouter(authService, notifications, notificationStream));
   app.use("/api/v1", createDailyCriticalTasksRouter(authService, dailyCriticalTasks));
   app.use("/api/v1", createProjectChatRouter(authService, projectChatService, projectChatTyping));
+  app.use("/api/v1", createProjectStatusRouter(createProjectStatusService({ repository, chatRepository, clock }), authService));
   app.use("/api/v1", createProjectChatAttachmentsRouter(authService, chatAttachments));
   app.use("/api/v1", createProjectChatEventsRouter(authService, projectChatStream));
   app.use("/api/v1", createPasswordResetsRouter(passwordResetService));
@@ -539,6 +571,12 @@ export function createApp(dependencies: AppDependencies) {
   app.use("/api/v1", createVendorInductionRouter(authService, vendorInductionService, vendorInductionPublicRateLimit, vendorInductionDeliveryRateLimit));
   app.use("/api/v1", createProcurementVendorBaselineRouter(authService, procurementVendorBaselineService));
   app.use("/api/v1", createProcurementVendorPhotoRouter({ authService, photoService: procurementVendorPhotoService, maxUploadBytes }));
+  app.use("/api/v1", createProjectPurchaseOrderRouter(authService, projectPurchaseOrderService));
+  app.use("/api/v1", createProjectPurchaseOrderPreparationRouter(authService, projectPurchaseOrderPreparationService));
+  app.use("/api/v1", createProjectPurchaseOrderRequestRouter(authService, projectPurchaseOrderRequestService));
+  app.use("/api/v1", createProjectCompletionRouter(authService, projectCompletionService));
+  app.use("/api/v1", createSiteCompletionRouter(authService, siteCompletionService));
+  app.use("/api/v1", createVendorWorkRouter(authService, vendorWorkService, maxUploadBytes));
   app.use(
     "/api/v1",
     createProjectProcurementRouter(authService, projectProcurementService)
@@ -551,6 +589,7 @@ export function createApp(dependencies: AppDependencies) {
     "/api/v1",
     createEstimateDesignsRouter(authService, estimateDesignService, maxUploadBytes)
   );
+  app.use("/api/v1", createEstimatePlanDocumentRouter(authService, estimatePlanDocumentService));
   app.use(
     "/api/v1",
     createEstimatePlanReviewRouter(
@@ -620,7 +659,8 @@ export function createApp(dependencies: AppDependencies) {
     closeProjectChat: async () => { dailyCriticalTasks.stop(); await Promise.all([projectChatStream.close(), notificationStream.close(), notificationEmail.stop()]); },
     cleanupProjectChatAttachments: () => chatAttachments.cleanup(),
     cleanupProcurementVendorPhotos: () => procurementVendorPhotoService.cleanup(),
-    cleanupProcurementVendorCertificates: () => procurementVendorCertificateService.cleanup()
+    cleanupProcurementVendorCertificates: () => procurementVendorCertificateService.cleanup(),
+    cleanupVendorWorkImages: () => vendorWorkService.cleanupImages()
   });
 }
 

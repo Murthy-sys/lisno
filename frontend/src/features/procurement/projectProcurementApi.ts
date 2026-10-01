@@ -12,11 +12,13 @@ export const projectProcurementKeys = {
   list: (projectId: string, q: string, offset: number, scope?: ProjectProcurementItemScope) => ["procurement", "project-items", projectId, { q, offset, ...scope }] as const,
   uoms: ["procurement", "uoms"] as const,
   vendors: ["procurement", "vendors"] as const,
+  activeVendorOptions: ["procurement", "vendors", "active-options"] as const,
   vendorSearch: (q: string) => ["procurement", "vendors", q] as const
 };
 
 export const PROCUREMENT_ITEMS_PAGE_SIZE = 20;
 export const MAX_PROCUREMENT_ITEM_PRICE_PAISE = 9_000_000_000_000;
+export const MAX_PROCUREMENT_ORDER_QUANTITY_MILLIUNITS = 1_000_000_000;
 
 export interface ProjectProcurementItemInput {
   itemName: string;
@@ -24,6 +26,7 @@ export interface ProjectProcurementItemInput {
   uomId: string;
   vendorId: string | null;
   pricePaise: number;
+  plannedOrderQuantityMilliUnits?: number | null;
   allocatedWorkPaise?: number | null;
 }
 
@@ -83,8 +86,20 @@ export async function updateProjectProcurementItem(projectId: string, id: string
   return item;
 }
 
+export function removeProjectProcurementItem(projectId: string, id: string, expectedVersion: number, reason: string) {
+  return apiClient.delete<{ id: string; projectId: string; version: number; removedAt: string }>(
+    `${projectItemsPath(projectId)}/${encodeURIComponent(id)}`,
+    { expectedVersion, reason }
+  );
+}
+
 export function getProcurementVendors(q: string, offset: number, signal?: AbortSignal) {
   const params = new URLSearchParams({ q, limit: "20", offset: String(offset) });
+  return apiClient.get<ProcurementVendorPage>(`/procurement/vendors?${params}`, { signal, showGlobalLoader: false });
+}
+
+export function getActiveProcurementVendors(offset: number, signal?: AbortSignal) {
+  const params = new URLSearchParams({ effectiveStatus: "active", limit: "20", offset: String(offset) });
   return apiClient.get<ProcurementVendorPage>(`/procurement/vendors?${params}`, { signal, showGlobalLoader: false });
 }
 

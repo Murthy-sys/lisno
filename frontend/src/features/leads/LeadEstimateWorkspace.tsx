@@ -1,5 +1,5 @@
 import { ProjectChatNavigation } from "../messages";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Armchair, BarChart3, Bath, Bed, BedDouble, BedSingle, Briefcase, Building2, ChefHat, ClipboardList, DoorOpen, FileText, Hammer, Layers, Leaf, PanelTop, Paintbrush, Pencil, Settings, ShowerHead, Sofa, Utensils, Wrench, Zap } from "lucide-react";
@@ -7,16 +7,20 @@ import { Armchair, BarChart3, Bath, Bed, BedDouble, BedSingle, Briefcase, Buildi
 import { ApiError } from "../../api/client";
 import type { EstimateClientReviewSummary } from "../../api/types";
 import { AsyncState } from "../../components/ui/AsyncState";
+import { clientKeys } from "../client/clientApi";
+import { estimateWorkflowKeys } from "../estimates/estimateWorkflowApi";
+import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import { calculateEstimateTotals, defaultQuantity, resolveRate, type QuantityBasis } from "./estimateEngine";
 import { estimateBuilderSections } from "./estimateBuilderCatalogue";
 import { EstimateBuilder, type BuilderLine, type BuilderRoom, type BuilderSection } from "./EstimateBuilder";
 import { EstimateDeliveryStatus } from "./EstimateDeliveryStatus";
+import { EstimateClientFeedback } from "./EstimateClientFeedback";
 import { EstimatePlanChangeRequests } from "./EstimatePlanChangeRequests";
 import { PropertyTypeDropdown } from "./PropertyTypeDropdown";
 import { RoomsMultiSelectDropdown, type RoomGroup, type RoomOption } from "./RoomsMultiSelectDropdown";
 import { RoomDimensionsAccordion } from "./RoomDimensionsAccordion";
 import { ScopeSectionsToggleList, type ScopeSectionOption } from "./ScopeSectionsToggleList";
-import { getLead, getLeadEstimate, leadKeys, retryEstimateClientEmail, saveLeadEstimate, sendEstimateToClient, submitLeadEstimate } from "./leadsApi";
+import { getLead, getLeadEstimate, leadKeys, retryEstimateClientEmail, saveLeadEstimate, sendEstimateToClient, submitLeadEstimate, type EstimateDraft } from "./leadsApi";
 import "../../styles/estimator-dashboard.css";
 
 const propertyTypes = ["1BHK", "2BHK", "2.5BHK", "3BHK", "3.5BHK", "4BHK", "Villa", "Penthouse", "Studio", "Duplex"];
@@ -109,6 +113,7 @@ const publicationNotice = (
 
 export function LeadEstimateWorkspace() {
   const { leadId = "" } = useParams();
+  const queryClient = useQueryClient();
   const lead = useQuery({ queryKey: leadKeys.detail(leadId), queryFn: () => getLead(leadId) });
   const saved = useQuery({ queryKey: leadKeys.estimate(leadId), queryFn: () => getLeadEstimate(leadId), retry: false });
   const [tab, setTab] = useState<EstimateTab>("configure");
@@ -153,30 +158,49 @@ export function LeadEstimateWorkspace() {
     rooms, scopes: Array.from(enabledSections),
     lineItems: lines.map(({ catalogueId, roomName, specification, unit, rate, quantity, included }) => ({ catalogueId, roomName, specification, unit, rate, quantity, included }))
   });
+  const refreshSubmittedEstimate = (estimate: EstimateDraft, submittedLeadId: string) => {
+    queryClient.setQueryData<EstimateDraft>(leadKeys.estimate(submittedLeadId), (current) => ({
+      ...estimate,
+      clientFeedback: estimate.clientFeedback === undefined ? current?.clientFeedback : estimate.clientFeedback
+    }));
+    void queryClient.refetchQueries({ queryKey: leadKeys.estimate(submittedLeadId), exact: true });
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client }),
+      queryClient.invalidateQueries({ queryKey: clientKeys.projects }),
+      queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
+      queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.reviewQueue }),
+      queryClient.invalidateQueries({ queryKey: [...leadKeys.all, "saved-estimates"] }),
+      queryClient.invalidateQueries({ queryKey: leadKeys.detail(submittedLeadId), exact: true })
+    ]);
+  };
   const save = useMutation({
     mutationFn: () => saveLeadEstimate(leadId, draftInput()),
-    onSuccess: () => { setNotice("Estimate draft saved."); void saved.refetch(); }
+    onSuccess: () => { setNotice("Estimate draft saved."); void saved.refetch(); void queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all }); }
   });
   const submit = useMutation({
     mutationFn: async () => {
-      await saveLeadEstimate(leadId, draftInput());
-      return submitLeadEstimate(leadId);
+      const submittedLeadId = leadId;
+      await saveLeadEstimate(submittedLeadId, draftInput());
+      return { estimate: await submitLeadEstimate(submittedLeadId), submittedLeadId };
     },
-    onSuccess: (estimate) => {
-      setNotice(estimate.approvalRequired
+    onSuccess: ({ estimate, submittedLeadId }) => {
+      if (leadId === submittedLeadId) setNotice(estimate.approvalRequired
         ? "Submitted. A design manager must now assign a designer for approval."
         : publicationNotice("Submitted to the client portal for approval.", estimate.clientReview));
-      void saved.refetch();
+      refreshSubmittedEstimate(estimate, submittedLeadId);
     }
   });
   const sendToClient = useMutation({
-    mutationFn: () => sendEstimateToClient(saved.data!.id),
-    onSuccess: (estimate) => {
-      setNotice(publicationNotice(
+    mutationFn: async () => {
+      const submittedLeadId = leadId;
+      return { estimate: await sendEstimateToClient(saved.data!.id), submittedLeadId };
+    },
+    onSuccess: ({ estimate, submittedLeadId }) => {
+      if (leadId === submittedLeadId) setNotice(publicationNotice(
         "Estimate sent to the client portal for approval.",
         estimate.clientReview
       ));
-      void saved.refetch();
+      refreshSubmittedEstimate(estimate, submittedLeadId);
     }
   });
   const retryEmail = useMutation({
@@ -289,6 +313,7 @@ export function LeadEstimateWorkspace() {
     <header className="estimate-workspace__header"><div><p className="eyebrow">Estimate draft · {leadItem.clientName}</p><h1 id="estimate-title">{tab === "configure" ? "Configure estimate" : "Select estimate items"}</h1><p>{leadItem.projectName} · {leadItem.location}</p></div><div className="estimate-workspace__summary"><strong>{money(totals.total)}</strong><span>Total including GST</span></div></header>
     {leadItem.projectId && (!saved.data?.projectId || saved.data.projectId === leadItem.projectId) ? <ProjectChatNavigation projectId={leadItem.projectId} overviewTo={`/estimator-sales/leads/${leadId}/estimate`} overviewLabel="Estimate" /> : null}
     {saved.data?.clientReview ? <EstimateDeliveryStatus review={saved.data.clientReview} retrying={retryEmail.isPending} onRetry={() => retryEmail.mutate()} /> : null}
+    {saved.data?.clientFeedback ? <EstimateClientFeedback feedback={saved.data.clientFeedback} editable={editable} refreshing={saved.isFetching} refreshFailed={saved.isRefetchError} onRefresh={() => void saved.refetch()} /> : null}
     {saved.data?.status === "client_changes_requested" ? <EstimatePlanChangeRequests estimateId={saved.data.id} /> : null}
     {tab !== "configure" ? <nav aria-label="Estimate views" className="grid grid-cols-3 gap-2">{(["builder", "summary", "proposal"] as const).map((value) => { const active = tab === value; return <button type="button" key={value} onClick={() => setTab(value)} aria-pressed={active} className={`flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${active ? "bg-[var(--color-primary)] text-[var(--color-bg)]" : "border border-[var(--color-primary)]/20 bg-[var(--color-bg)] text-[var(--color-primary)]"}`}><TabIcon tab={value} /> {value === "builder" ? "Estimate Builder" : value === "summary" ? "Summary" : "Proposal"}</button>; })}</nav> : null}
     {tab === "configure" ? <><section className="estimate-panel"><h2>Property type</h2><PropertyTypeDropdown options={propertyTypes} value={propertyType || leadItem.propertyType} onChange={setPropertyType} /><h2>Rooms</h2><RoomsMultiSelectDropdown options={roomSelectOptions} selected={selectedRoomTypeIds} onChange={handleRoomsChange} />{rooms.length ? <RoomDimensionsAccordion rooms={rooms.map((room) => ({ id: room.id, label: room.label, icon: roomIcons[room.typeId] ?? Pencil, length: room.length, width: room.width }))} onDimensionChange={updateRoom} onRemove={removeRoom} /> : null}</section><section className="estimate-panel"><h2>Scope sections</h2><ScopeSectionsToggleList options={scopeSectionOptions} enabled={enabledSections} onToggle={toggleScopeSection} onSelectAll={selectAllScopeSections} onDeselectAll={deselectAllScopeSections} /></section><button type="button" className="button button--primary estimate-continue" disabled={!rooms.length || !enabledSections.size} onClick={buildLines}>Continue to item selection<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14" /><path d="M12 5l7 7-7 7" /></svg></button></> : null}

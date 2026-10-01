@@ -56,6 +56,26 @@ export interface EstimateClientReviewSnapshot {
   total: number;
 }
 
+/** Client-facing projection of the immutable proposal submitted for review. */
+export interface ClientPublishedEstimateReview {
+  id: string;
+  version: number;
+  estimateVersion: number;
+  sendGeneration: number;
+  status: EstimateClientReviewStatus;
+  submittedAt: string;
+  snapshot: EstimateClientReviewSnapshot;
+  decisionNote: string | null;
+  decidedAt: string | null;
+  canDecide: boolean;
+}
+
+export interface EstimateClientFeedback {
+  note: string;
+  occurredAt: string;
+  reviewRoundId: string | null;
+}
+
 export interface EstimateClientReviewRoundRecord {
   id: string;
   estimateId: string;

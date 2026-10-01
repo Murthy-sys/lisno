@@ -29,6 +29,15 @@ const projectSchema = new Schema(
       enum: ["planning", "active", "on_hold", "completed"],
       required: true
     },
+    completionAuthority: {
+      type: String,
+      enum: ["legacy_staff", "vendor_client"],
+      default: "vendor_client"
+    },
+    completionAuthorityVersion: { type: Number, min: 1, default: 1 },
+    completionDecisionId: { type: String, default: null },
+    purchaseOrderApprovalEpoch: { type: Number, min: 0, default: 0, validate: Number.isSafeInteger },
+    siteCompletionFenceEpoch: { type: Number, min: 0, default: 0, validate: Number.isSafeInteger },
     location: { type: String, required: true },
     plannedStartAt: { type: Date, required: true },
     plannedEndAt: { type: Date, required: true },

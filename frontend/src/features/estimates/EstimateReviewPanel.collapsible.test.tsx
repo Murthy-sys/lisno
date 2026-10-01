@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +6,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { tokenStorage } from "../../api/client";
 import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
+
+import { withPublishedReview } from "./clientEstimateReviewTestUtils";
+import { estimateWorkflowKeys } from "./estimateWorkflowApi";
 
 const stylesheet = readFileSync("src/styles/index.css", "utf8");
 
@@ -65,6 +68,7 @@ const clientEstimates = [
     lead: { _id: "lead-penthouse", clientName: "Aurora Homes", clientEmail: "client@lisno.example", projectName: "Harbor Penthouse", location: "Kochi" }
   }
 ];
+clientEstimates.forEach((estimate) => Object.assign(estimate, withPublishedReview(estimate)));
 const emptyDrawingWorkspace = {
   uploads: [],
   pages: [],
@@ -94,14 +98,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function installClientApi() {
+function installClientApi(getEstimates: () => unknown[] = () => clientEstimates) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
     if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
     if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
     if (url.endsWith("/api/v1/client/latest-approved-versions")) return Response.json({ data: [] });
-    if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: clientEstimates });
+    if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: getEstimates() });
     if (url.includes("/api/v1/client/estimates/") && url.endsWith("/design-drawings")) {
       return Response.json({ data: emptyDrawingWorkspace });
     }
@@ -262,22 +266,42 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(launchers[0]!.closest("article")).toBeNull();
   });
 
-  it("keeps full-design annotations editable after an earlier client change request", async () => {
+  it("keeps drawings closed while Sales revises a commercial change request", async () => {
     tokenStorage.set("client-token");
     installClientApi();
-    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:plan-page") });
-    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
     renderApp(["/client"]);
     await userEvent.click(await screen.findByRole("button", { name: /Harbor Penthouse/i }));
-    await userEvent.click(await screen.findByRole("button", { name: "Open uploaded plan client-design.pdf" }));
+    expect(await screen.findByText("Sales is revising your estimate")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Open uploaded plan client-design.pdf" })).not.toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("estimate-changes/design-drawings"))).toBe(false);
+  });
 
-    expect(await screen.findByText("Mark the drawing or add a text note before requesting changes.")).toBeVisible();
-    expect(await screen.findByRole("img", { name: "Design page 1 protected drawing" })).toBeVisible();
+  it("preserves drawing tools after a design-only request until Sales changes the submitted estimate version", async () => {
+    tokenStorage.set("client-token");
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:plan-page") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    let current = { ...withPublishedReview(clientEstimates[0]!), version: 3 };
+    installClientApi(() => [current]);
+    const user = userEvent.setup();
+    const { queryClient } = renderApp(["/client?estimate=estimate-ready"]);
+    expect(await screen.findByRole("button", { name: "Open uploaded plan client-design.pdf" })).toBeVisible();
+    current = { ...current, status: "client_changes_requested", publishedReview: { ...current.publishedReview, canDecide: false } };
+    await act(async () => { await queryClient.refetchQueries({ queryKey: estimateWorkflowKeys.client }); });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Approve estimate" })).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Open uploaded plan client-design.pdf" }));
     expect(await screen.findByRole("toolbar", { name: "Annotation tools" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Save as draft" })).toBeVisible();
+
+    current = { ...current, version: 4, rooms: [], scopes: [] };
+    await act(async () => { await queryClient.refetchQueries({ queryKey: estimateWorkflowKeys.client }); });
+    await waitFor(() => expect(screen.queryByRole("toolbar", { name: "Annotation tools" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Open uploaded plan client-design.pdf" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Submitted estimate" })).toBeVisible();
   });
 
   it("opens full-design annotations after the Designer submits the plan", async () => {
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:plan-page") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
     tokenStorage.set("client-token");
     installClientApi();
     renderApp(["/client"]);
@@ -285,7 +309,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Open uploaded plan client-design.pdf" }));
 
     expect(await screen.findByText("Mark the drawing or add a text note before requesting changes.")).toBeVisible();
-    expect(screen.getByRole("toolbar", { name: "Annotation tools" })).toBeVisible();
+    expect(await screen.findByRole("toolbar", { name: "Annotation tools" })).toBeVisible();
   });
 
   it("keeps client estimate details collapsed until each project is opened independently", async () => {
@@ -332,11 +356,10 @@ describe("EstimateReviewPanel client disclosures", () => {
     const villaPanel = document.getElementById("client-estimate-estimate-ready-details")!;
     expect(villaToggle).toHaveAttribute("aria-expanded", "true");
     expect(loftToggle).toHaveAttribute("aria-expanded", "false");
-    expect(within(villaPanel).getByText("Bengaluru")).toBeVisible();
-    expect(within(villaPanel).getByText("Aurora Homes")).toBeVisible();
+    expect(within(villaPanel).getByText("Aurora Homes · Bengaluru")).toBeVisible();
     expect(within(villaPanel).getByText("1 items · GST included")).toBeVisible();
     expect(within(villaPanel).getByText("False Ceiling")).toBeVisible();
-    expect(within(villaPanel).getByLabelText("Review note")).toBeVisible();
+    expect(within(villaPanel).queryByLabelText("Review note")).not.toBeInTheDocument();
     expect(within(villaPanel).getByRole("button", { name: "Approve estimate" })).toBeVisible();
     expect(within(villaPanel).getByRole("button", { name: "Request changes" })).toBeVisible();
     expect(within(villaHeader).getByRole("button", { name: "Export as PDF" })).toBeVisible();
@@ -379,7 +402,7 @@ describe("EstimateReviewPanel client disclosures", () => {
       if (url.includes("/api/v1/client/estimates/") && url.endsWith("/design-drawings")) {
         return Response.json({ data: emptyDrawingWorkspace });
       }
-      if (url.endsWith("/api/v1/client/estimates/estimate-ready/pdf")) {
+      if (url.endsWith("/api/v1/client/estimates/estimate-ready/pdf?roundId=round-estimate-ready")) {
         return new Response(new Blob(["pdf"], { type: "application/pdf" }));
       }
       throw new Error(`Unhandled request: ${url}`);
@@ -402,14 +425,14 @@ describe("EstimateReviewPanel client disclosures", () => {
     }));
 
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith(
-      "/api/v1/client/estimates/estimate-ready/pdf",
+      "/api/v1/client/estimates/estimate-ready/pdf?roundId=round-estimate-ready",
       expect.objectContaining({
         method: "GET",
         headers: expect.any(Headers)
       })
     ));
     const pdfRequest = fetchSpy.mock.calls.find(
-      ([input]) => String(input) === "/api/v1/client/estimates/estimate-ready/pdf"
+      ([input]) => String(input) === "/api/v1/client/estimates/estimate-ready/pdf?roundId=round-estimate-ready"
     );
     expect((pdfRequest?.[1]?.headers as Headers).get("Authorization")).toBe(
       "Bearer client-token"
@@ -430,7 +453,7 @@ describe("EstimateReviewPanel client disclosures", () => {
       if (url.includes("/api/v1/client/estimates/") && url.endsWith("/design-drawings")) {
         return Response.json({ data: emptyDrawingWorkspace });
       }
-      if (url.endsWith("/api/v1/client/estimates/estimate-ready/pdf")) {
+      if (url.endsWith("/api/v1/client/estimates/estimate-ready/pdf?roundId=round-estimate-ready")) {
         return Response.json(
           { error: { code: "PDF_FAILED", message: "PDF failed" } },
           { status: 500 }

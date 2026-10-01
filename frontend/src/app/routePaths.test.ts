@@ -19,6 +19,7 @@ const expectedRoleHomes: Record<Role, string> = {
   worker_other: "/home",
   design_manager: "/manager",
   design_head: "/head",
+  vendor: "/vendor",
   client: "/client"
 };
 

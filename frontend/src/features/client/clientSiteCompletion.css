@@ -1,0 +1,20 @@
+.client-site-completion { margin: 26px 0; padding: 22px; border: 1px solid #d9ded7; border-radius: 8px; background: #f9f9f5; }
+.client-site-completion header { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px; align-items: start; }
+.client-site-completion header p { margin: 0 0 5px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: #53604d; }
+.client-site-completion h2 { margin: 0 0 5px; font-size: 22px; }
+.client-site-completion header strong { font-size: 25px; }
+.client-site-completion__sections { display: grid; margin-top: 18px; border-top: 1px solid #d9ded7; }
+.client-site-completion__sections article { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 14px 0; border-bottom: 1px solid #d9ded7; }
+.client-site-completion__sections h3 { margin: 3px 0; font-size: 16px; }
+.client-site-completion__sections small, .client-site-completion__sections span { color: #626b63; }
+.client-site-completion__actions, .client-site-completion__reason div, .client-site-completion__lightbox-head, .client-site-completion__lightbox-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: space-between; }
+.client-site-completion__actions { justify-content: flex-start; margin-top: 18px; }
+.client-site-completion button { min-height: 40px; border: 1px solid #53604d; border-radius: 6px; padding: 7px 13px; background: #f9f9f5; color: #303d30; cursor: pointer; }
+.client-site-completion button:focus-visible { outline: 2px solid #303d30; outline-offset: 2px; }
+.client-site-completion button:disabled { opacity: .55; cursor: default; }
+.client-site-completion__reason { display: grid; gap: 10px; margin-top: 16px; }
+.client-site-completion__reason textarea { width: 100%; box-sizing: border-box; border: 1px solid #9aa596; border-radius: 6px; padding: 10px; font: inherit; }
+.client-site-completion__lightbox { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 16px; background: #101711d9; }
+.client-site-completion__lightbox > div { width: min(850px, 100%); max-height: 95vh; overflow: auto; padding: 16px; background: #f9f9f5; }
+.client-site-completion__lightbox img { display: block; width: 100%; max-height: 70vh; object-fit: contain; margin: 12px 0; }
+@media (max-width: 600px) { .client-site-completion { padding: 16px; } .client-site-completion__sections article { align-items: start; flex-direction: column; } }

@@ -1,18 +1,22 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
-import { ApiError } from "../../api/client";
+import { ApiError, apiClient } from "../../api/client";
 import type { FinanceLedgerEntry, ProjectFinanceBucket } from "../../api/types";
 import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { Button } from "../../components/ui/Button";
 import { ContextPanel } from "../../components/ui/ContextPanel";
+import { Dialog } from "../../components/ui/Dialog";
 import { Field, Input, Select, Textarea } from "../../components/ui/Field";
+import { InlineMessage } from "../../components/ui/InlineMessage";
 import { PageState } from "../../components/ui/PageState";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
 import { dashboardKeys } from "../admin/dashboard/superAdminDashboardApi";
+import { adminProjectKeys } from "../admin/adminProjectsApi";
 import { SupportingDocumentActions } from "../procurement/SupportingDocumentActions";
+import { projectStatusKeys } from "../project-status/projectStatusApi";
 import { formatBps, formatPaise, formatPercentage } from "./financeFormat";
 import { ProjectFinanceChart } from "./ProjectFinanceChart";
 import {
@@ -46,6 +50,9 @@ export function ProjectFinancePanel({
   const auth = useAuth();
   const canCreate = hasFrontendPermission(auth.authorization, "finance.entry.create");
   const canReadDocuments = hasFrontendPermission(auth.authorization, "finance.entry.read");
+  const canDecideCompletion = auth.user?.role === "super_admin" &&
+    hasFrontendPermission(auth.authorization, "procurement.project_completion.decide");
+  const [completedProjectId, setCompletedProjectId] = useState<string | null>(null);
   const queryEnabled = enabled && expectedSource !== null;
   const bucket = useQuery({
     queryKey: projectFinanceKeys.bucket(projectId),
@@ -72,6 +79,7 @@ export function ProjectFinancePanel({
   const trustedBucket = bucket.data && integrityError === null
     ? bucket.data
     : null;
+  const projectCompleted = Boolean(trustedBucket && (trustedBucket.projectStatus === "completed" || completedProjectId === projectId));
   const ledgerIntegrityError = trustedBucket && entries.data
     ? projectFinanceLedgerIntegrityError(
         entryItems,
@@ -79,6 +87,9 @@ export function ProjectFinancePanel({
         trustedBucket.id
       )
     : null;
+  const canRecordCost = Boolean(canCreate && trustedBucket?.status === "open" && trustedBucket.projectStatus === "active" &&
+    !projectCompleted && entries.data && !ledgerIntegrityError);
+  const canCloseProject = Boolean(canDecideCompletion && trustedBucket?.projectStatus === "active" && !projectCompleted);
   const heading = expectedSource
     ? `${expectedSource.projectName} finance`
     : trustedBucket
@@ -98,8 +109,8 @@ export function ProjectFinancePanel({
         </div>
         {trustedBucket ? (
           <StatusBadge
-            tone={trustedBucket.overBudget ? "danger" : trustedBucket.status === "open" ? "success" : "info"}
-            label={trustedBucket.overBudget ? "Over cost budget" : trustedBucket.status.replaceAll("_", " ")}
+            tone={projectCompleted ? "success" : trustedBucket.overBudget ? "danger" : trustedBucket.status === "open" ? "success" : "info"}
+            label={projectCompleted ? "Completed" : trustedBucket.overBudget ? "Over cost budget" : trustedBucket.status.replaceAll("_", " ")}
           />
         ) : null}
       </div>
@@ -147,8 +158,10 @@ export function ProjectFinancePanel({
               <div><dt>Schedule position</dt><dd>{deadlineLabel(trustedBucket)}</dd></div>
             </dl>
           </div>
-          {canCreate && trustedBucket.status === "open" && entries.data && !ledgerIntegrityError ? (
-            <FinanceEntryWorkspace key={`entry-form-${projectId}`} projectId={projectId} projectName={trustedBucket.projectName} />
+          {canRecordCost || canCloseProject ? (
+            <FinanceEntryWorkspace key={`entry-form-${projectId}`} projectId={projectId} projectName={trustedBucket.projectName}
+              projectStatus={trustedBucket.projectStatus} canRecordCost={canRecordCost} canCloseProject={canCloseProject}
+              onCompleted={() => setCompletedProjectId(projectId)} />
           ) : null}
           {entries.isPending ? (
             <PageState state="loading" message="Loading spending and overhead ledger…" />
@@ -269,15 +282,125 @@ function uniqueFinanceEntries(entries: FinanceLedgerEntry[]) {
   return [...unique.values()];
 }
 
-function FinanceEntryWorkspace({ projectId, projectName }: { projectId: string; projectName: string }) {
+interface CompletionReadiness {
+  projectId: string;
+  projectStatus: string;
+  completionAuthority: string;
+  completionAuthorityVersion: number;
+  blockers: Array<{ code: string; message: string }>;
+  readyForCompletion: boolean;
+  completedAt: string | null;
+}
+
+interface CompletionDecision { projectId: string; completedAt: string; resultingAuthorityVersion: number }
+interface CompletionRequest { expectedAuthorityVersion: number; idempotencyKey: string }
+const completionSummaryKey = (projectId: string) => ["admin", "project-completion", projectId] as const;
+
+function ProjectCompletionControl({ projectId, projectName, projectStatus, onCompleted }: {
+  projectId: string; projectName: string; projectStatus: string; onCompleted: () => void;
+}) {
+  const client = useQueryClient();
+  const openerRef = useRef<HTMLButtonElement>(null);
+  const requestRef = useRef<CompletionRequest | null>(null);
+  const [open, setOpen] = useState(false);
+  const readiness = useQuery({
+    queryKey: completionSummaryKey(projectId),
+    queryFn: () => apiClient.get<CompletionReadiness>(`/admin/projects/${encodeURIComponent(projectId)}/completion`, { showGlobalLoader: false }),
+    enabled: open,
+    refetchOnMount: "always",
+    staleTime: 0,
+    retry: false
+  });
+  const completion = useMutation({
+    mutationFn: async (request: CompletionRequest) => {
+      const result = await apiClient.post<CompletionDecision>(`/admin/projects/${encodeURIComponent(projectId)}/complete`, request, { showGlobalLoader: false });
+      if (result.projectId !== projectId) throw new Error("The completion response belongs to another project. Refresh before continuing.");
+      return result;
+    },
+    onSuccess: async () => {
+      requestRef.current = null;
+      setOpen(false);
+      onCompleted();
+      await Promise.all([
+        client.invalidateQueries({ queryKey: projectFinanceKeys.bucket(projectId) }),
+        client.invalidateQueries({ queryKey: projectFinanceKeys.projects }),
+        client.invalidateQueries({ queryKey: adminProjectKeys.all }),
+        client.invalidateQueries({ queryKey: projectStatusKeys.all }),
+        client.invalidateQueries({ queryKey: ["admin", "project-completion-tasks"] }),
+        client.invalidateQueries({ queryKey: completionSummaryKey(projectId) }),
+        client.invalidateQueries({ queryKey: dashboardKeys.all })
+      ]);
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        requestRef.current = null;
+        void readiness.refetch();
+      }
+    }
+  });
+  const summary = readiness.isSuccess && !readiness.isFetching ? readiness.data : null;
+  const sameActiveProject = Boolean(summary && summary.projectId === projectId && summary.projectStatus === "active" && projectStatus === "active");
+  const validAuthority = Boolean(summary && summary.completionAuthority === "vendor_client" &&
+    Number.isSafeInteger(summary.completionAuthorityVersion) && summary.completionAuthorityVersion > 0);
+  const blockers = Array.isArray(summary?.blockers) ? summary.blockers : null;
+  const canConfirm = Boolean(sameActiveProject && validAuthority && blockers?.length === 0 && summary?.readyForCompletion === true &&
+    !completion.isPending && !(completion.error instanceof ApiError && [401, 403].includes(completion.error.status)));
+
+  function close() {
+    requestRef.current = null;
+    completion.reset();
+    setOpen(false);
+  }
+
+  function confirm() {
+    if (!canConfirm || !summary) return;
+    if (!requestRef.current || requestRef.current.expectedAuthorityVersion !== summary.completionAuthorityVersion) {
+      requestRef.current = { expectedAuthorityVersion: summary.completionAuthorityVersion, idempotencyKey: financeRequestKey() };
+    }
+    completion.mutate(requestRef.current);
+  }
+
+  return <>
+    <Button ref={openerRef} onClick={() => { requestRef.current = null; completion.reset(); setOpen(true); }}>Close</Button>
+    {open ? <Dialog title={`Close ${projectName}?`} eyebrow="Final project approval" role="alertdialog"
+      description="This marks the project completed and records its completion date. No project cost will be added."
+      busy={completion.isPending} onClose={close} returnFocusRef={openerRef}>
+      {readiness.isPending || readiness.isFetching ? <p role="status">Checking project completion readiness…</p> :
+        readiness.isError ? <InlineMessage tone="error" action={<Button variant="secondary" onClick={() => void readiness.refetch()}>Retry readiness</Button>}>
+          {readiness.error instanceof ApiError && readiness.error.code === "PROJECT_COMPLETION_LINEAGE_CONFLICT"
+            ? `This project cannot be closed through this workflow. ${readiness.error.message}`
+            : readiness.error instanceof ApiError ? readiness.error.message : "Completion readiness could not be loaded."}
+        </InlineMessage> : summary?.projectId !== projectId ? <InlineMessage tone="error">Completion details do not match this project. Refresh before continuing.</InlineMessage> :
+        summary.projectStatus === "completed" ? <p role="status">Completed</p> :
+        !sameActiveProject ? <InlineMessage tone="warning">The project is not active. Refresh its status before closing.</InlineMessage> :
+        !validAuthority || !blockers ? <InlineMessage tone="error">Completion authority is unavailable. Refresh the project before continuing.</InlineMessage> :
+        blockers.length ? <section aria-label="Completion blockers"><p>Resolve these items before closing the project:</p><ul>{blockers.map((blocker, index) => <li key={`${blocker.code}-${index}`}>{blocker.message}</li>)}</ul></section> :
+        !summary.readyForCompletion ? <InlineMessage tone="warning">The project is not ready for completion. Refresh the current review state.</InlineMessage> :
+        <p>All completion requirements are satisfied. Closing records the final project decision.</p>}
+      {completion.isError ? <InlineMessage tone="error">{completion.error instanceof ApiError && completion.error.status === 409
+        ? "Completion changed before the decision was recorded. Review the refreshed requirements and try again."
+        : completion.error instanceof ApiError ? completion.error.message
+          : "The completion request may have reached the server. Retry to check the same decision safely."}</InlineMessage> : null}
+      <div className="finance-panel-actions"><Button variant="secondary" disabled={completion.isPending} onClick={close}>Cancel</Button><Button variant="destructive" busy={completion.isPending} disabled={!canConfirm} onClick={confirm}>Close project</Button></div>
+    </Dialog> : null}
+  </>;
+}
+
+function FinanceEntryWorkspace({ projectId, projectName, projectStatus, canRecordCost, canCloseProject, onCompleted }: {
+  projectId: string; projectName: string; projectStatus: string;
+  canRecordCost: boolean; canCloseProject: boolean; onCompleted: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [recorded, setRecorded] = useState(false);
   return (
     <div className="finance-entry-workspace">
-      <div><h3>Project costs</h3><p>Record employee payments, other expenses, and ledger overheads.</p></div>
-      <Button onClick={() => { setRecorded(false); setOpen(true); }}>Record project cost</Button>
+      <div><h3>{canCloseProject ? "Project actions" : "Project costs"}</h3><p>{canCloseProject ? "Review final completion or record a project cost." : "Record employee payments, other expenses, and ledger overheads."}</p></div>
+      <div className="finance-entry-workspace__actions">
+        {canRecordCost ? <Button variant={canCloseProject ? "secondary" : "primary"} onClick={() => { setRecorded(false); setOpen(true); }}>Record project cost</Button> : null}
+        {canCloseProject ? <ProjectCompletionControl projectId={projectId} projectName={projectName} projectStatus={projectStatus} onCompleted={onCompleted} /> : null}
+      </div>
       {recorded ? <p role="status">Project cost recorded.</p> : null}
-      {open ? <FinanceEntryForm projectId={projectId} projectName={projectName} onClose={() => setOpen(false)} onRecorded={() => { setRecorded(true); setOpen(false); }} /> : null}
+      {open && canRecordCost ? <FinanceEntryForm projectId={projectId} projectName={projectName} onClose={() => setOpen(false)} onRecorded={() => { setRecorded(true); setOpen(false); }} /> : null}
     </div>
   );
 }

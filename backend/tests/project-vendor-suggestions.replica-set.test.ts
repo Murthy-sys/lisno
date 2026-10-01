@@ -88,17 +88,26 @@ async function createProject(projectId: string, assigneeId: string, subtotal: nu
 }
 
 describe("project vendor suggestions", () => {
-  it("keeps historical suggestions readable but blocks reinstatement after induction approval is reopened", async () => {
+  it("keeps induction-independent suggestions available and blocks reinstatement after KPI generation changes", async () => {
     const created = await service.create(actor, "project-a", fields);
     const withdrawn = await service.update(actor, "project-a", created.suggestion.id,
       { expectedVersion: 1, note: "Needs renewed induction", status: "withdrawn" });
     await VendorInductionReviewModel.collection.insertOne({ _id: "review-reopened-1", vendorId: "vendor-1",
       version: 2, vendorType: "execution", decision: "reopened", idempotencyKey: "reopen-vendor-1" });
     expect((await service.list(buyer, "project-a", query)).items).toMatchObject([{
+      id: created.suggestion.id, vendor: { id: "vendor-1", status: "active" }
+    }]);
+    const reinstated = await service.update(actor, "project-a", created.suggestion.id,
+      { expectedVersion: withdrawn.version, note: "KPIs are current", status: "suggested" });
+    expect(reinstated.status).toBe("suggested");
+    await AiEstimatorKnowledgeVendorModel.collection.updateOne({ _id: "vendor-1" }, { $set: { kpiRubricGeneration: 1 } });
+    expect((await service.list(buyer, "project-a", query)).items).toMatchObject([{
       id: created.suggestion.id, vendor: { id: "vendor-1", status: "under_review" }
     }]);
+    const held = await service.update(actor, "project-a", created.suggestion.id,
+      { expectedVersion: reinstated.version, note: "KPIs need renewal", status: "withdrawn" });
     await expect(service.update(actor, "project-a", created.suggestion.id,
-      { expectedVersion: withdrawn.version, note: "Reinstate", status: "suggested" }))
+      { expectedVersion: held.version, note: "Reinstate", status: "suggested" }))
       .rejects.toMatchObject({ code: "VENDOR_SUGGESTION_VENDOR_UNAVAILABLE" });
   });
   it("scopes two managers to their grants while Procurement and Super Admin can read eligible projects", async () => {

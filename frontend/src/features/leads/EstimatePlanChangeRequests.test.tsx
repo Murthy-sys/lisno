@@ -65,9 +65,8 @@ describe("EstimatePlanChangeRequests", () => {
     expect(within(withdrawn).getByText("This drawing was deleted. Its feedback is retained for reference.")).toBeVisible();
     expect(within(withdrawn).queryByRole("button")).not.toBeInTheDocument();
     const openTarget = screen.getByRole("region", { name: "Lighting target" });
-    await userEvent.click(within(openTarget).getByText("Replace only this drawing"));
     expect(within(openTarget).getByLabelText("Replacement for Lighting")).toBeVisible();
-    expect(within(openTarget).getByRole("button", { name: "Upload only Lighting" })).toBeVisible();
+    expect(within(openTarget).getByRole("button", { name: "Upload revised item: Lighting" })).toBeVisible();
   });
 
   it("shows a withdrawn request without replacement or mapping actions", async () => {
@@ -116,19 +115,38 @@ describe("EstimatePlanChangeRequests", () => {
     expect(await screen.findByText("OCR is matching the requested pages. Unrelated pages will not be added.")).toBeVisible();
   });
 
-  it("keeps the per-drawing replacement behind an explicit fallback", async () => {
+  it("keeps the per-drawing upload visible and targets its exact revision", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><EstimatePlanChangeRequests estimateId="estimate-1" /></QueryClientProvider>);
     await userEvent.click(await screen.findByRole("button", { name: /Lower the ceiling/ }));
     const target = await screen.findByRole("region", { name: "False Ceiling target" });
-    expect(within(target).getByText("Replace only this drawing")).toBeVisible();
-    expect(within(target).getByLabelText("Replacement for False Ceiling")).not.toBeVisible();
+    expect(within(target).getByRole("button", { name: "Upload revised item: False Ceiling" })).toBeVisible();
+    expect(within(target).getByLabelText("Replacement for False Ceiling")).toBeVisible();
 
-    await userEvent.click(within(target).getByText("Replace only this drawing"));
     const file = new File(["replacement"], "ceiling.png", { type: "image/png" });
     await userEvent.upload(within(target).getByLabelText("Replacement for False Ceiling"), file);
-    await userEvent.click(within(target).getByRole("button", { name: "Upload only False Ceiling" }));
+    await userEvent.click(within(target).getByRole("button", { name: "Upload revised item: False Ceiling" }));
     expect(api.replaceEstimateDrawing).toHaveBeenCalledWith("drawing-a", 3, file);
+  });
+
+  it("refreshes target detail after individual PDF extraction completes", async () => {
+    const queued = replacementUpload({ purpose: "drawing_replacement", requestReplacement: null });
+    vi.mocked(api.replaceEstimateDrawing).mockResolvedValue({ queued: true, upload: queued } as never);
+    vi.mocked(api.getEstimateDesignWorkspace).mockResolvedValue({ uploads: [queued], pages: [], drawings: [], revisions: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><EstimatePlanChangeRequests estimateId="estimate-1" /></QueryClientProvider>);
+    await userEvent.click(await screen.findByRole("button", { name: /Lower the ceiling/ }));
+    const file = new File(["replacement"], "ceiling.pdf", { type: "application/pdf" });
+    await userEvent.upload(screen.getByLabelText("Replacement for False Ceiling"), file);
+    expect(screen.getByRole("button", { name: "Upload revised item: False Ceiling" })).toBeDisabled();
+    expect(screen.getByText(/Extracting the revised item/)).toBeVisible();
+    const detailCalls = vi.mocked(api.getEstimatePlanChangeRequest).mock.calls.length;
+    const detail = await api.getEstimatePlanChangeRequest("request-1");
+    vi.mocked(api.getEstimatePlanChangeRequest).mockResolvedValue({ ...detail, drawingTargets: [{ ...detail.drawingTargets[0]!, status: "resolved", latestRevisionNumber: 4 }] });
+    vi.mocked(api.getEstimateDesignWorkspace).mockResolvedValue({ uploads: [{ ...queued, extractionStatus: "estimator_review" }], pages: [], drawings: [], revisions: [] });
+    await act(async () => { await client.invalidateQueries({ queryKey: api.estimateDesignKeys.workspace("estimate-1") }); });
+    expect(await screen.findByText("Replacement submitted for client review.")).toBeVisible();
+    expect(vi.mocked(api.getEstimatePlanChangeRequest).mock.calls.length).toBeGreaterThan(detailCalls + 1);
   });
 
   it("reports matched targets and pages ignored from a full revised PDF", async () => {

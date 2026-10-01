@@ -603,7 +603,7 @@ describe("role landing staging contract", () => {
 
 describe("public invitation route", () => {
   it("mounts directly while staying outside the protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(39);
+    expect(ROUTE_REGISTRY).toHaveLength(42);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -710,12 +710,13 @@ describe("registered permission routes", () => {
       (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
     );
 
-    expect(paths).toHaveLength(historicalProtectedPaths.length + 18);
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 21);
     expect(additions).toEqual([
       "/project-messages", "/projects/:projectId/messages",
       "/designer/design-plans",
+      "/vendor",
       knowledgeConfigurationPaths[0],
-      "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/procurement", "/procurement/vendors", "/procurement/vendors/:vendorId",
+      "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/admin/purchase-orders", "/admin/project-completion", "/procurement", "/procurement/vendors", "/procurement/vendors/:vendorId",
       ...knowledgeConfigurationPaths.slice(1),
       ...clientResponsePaths,
       "/admin/design-approvals",
@@ -726,8 +727,9 @@ describe("registered permission routes", () => {
       (path) => ![
         "/project-messages", "/projects/:projectId/messages",
         "/designer/design-plans",
+        "/vendor",
         ...knowledgeConfigurationPaths,
-        "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/procurement", "/procurement/vendors", "/procurement/vendors/:vendorId",
+        "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/admin/purchase-orders", "/admin/project-completion", "/procurement", "/procurement/vendors", "/procurement/vendors/:vendorId",
         ...clientResponsePaths,
         "/admin/design-approvals",
         ...procurementPaths,
@@ -932,7 +934,7 @@ describe("registered permission routes", () => {
       const { router } = renderApp([path]);
 
       expect(await screen.findByRole("heading", { name: title })).toBeVisible();
-      expect(await screen.findByText(emptyState)).toBeVisible();
+      expect((await screen.findAllByText(emptyState))[0]).toBeVisible();
       expect(screen.queryByRole("heading", { name: "Page not found" })).not.toBeInTheDocument();
       expect(router.state.location.pathname).toBe(path);
     }
@@ -1181,9 +1183,6 @@ describe("protected role routing", () => {
     fireEvent.change(screen.getByLabelText("Mobile number"), {
       target: { value: "+91 98765 43210" }
     });
-    fireEvent.change(screen.getByLabelText("Address"), {
-      target: { value: "42 Garden Lane, Bengaluru" }
-    });
     fireEvent.change(screen.getByLabelText("Password", { exact: true }), {
       target: { value: "StrongPassword!23" }
     });
@@ -1198,7 +1197,6 @@ describe("protected role routing", () => {
       ["Full name", "Priya Shah"],
       ["Email address", "priya@example.com"],
       ["Mobile number", "+91 98765 43210"],
-      ["Address", "42 Garden Lane, Bengaluru"],
       ["Password", "StrongPassword!23"],
       ["Confirm password", "StrongPassword!23"]
     ] as const) {

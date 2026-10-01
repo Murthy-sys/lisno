@@ -14,18 +14,21 @@ import type { createEstimatePlanReviewService } from "../services/estimate-plan-
 
 type EstimatePlanReviewService = ReturnType<typeof createEstimatePlanReviewService>;
 
+const reviewRoundIdSchema = z.string().trim().min(1).max(200).optional();
 const draftSchema = z.object({
   version: z.number().int().nonnegative(),
-  annotations: annotationDocumentSchema
+  annotations: annotationDocumentSchema,
+  reviewRoundId: reviewRoundIdSchema
 }).strict();
-const previewSchema = z.object({ annotations: annotationDocumentSchema }).strict();
+const previewSchema = z.object({ annotations: annotationDocumentSchema, reviewRoundId: reviewRoundIdSchema }).strict();
 const requestSchema = z.object({
   version: z.number().int().positive(),
   summary: z.string().trim().min(1).max(1_000),
   annotations: annotationDocumentSchema.refine((value) => value.elements.length > 0),
   targetDrawingIds: z.array(z.string().trim().min(1)).max(50),
   snapshotToken: z.string().length(64),
-  idempotencyKey: z.string().trim().min(1).max(128)
+  idempotencyKey: z.string().trim().min(1).max(128),
+  reviewRoundId: reviewRoundIdSchema
 }).strict();
 const updateClientRequestSchema = z.object({
   version: z.number().int().positive(),
@@ -56,8 +59,8 @@ export function createEstimatePlanReviewRouter(
   router.get("/client/estimates/:estimateId/plan-review", protectedRoute, requireOperation("GET /client/estimates/:estimateId/plan-review"), async (request, response, next) => {
     try { response.json({ data: await plans.listClient(request.authenticatedUser!, request.params.estimateId as string) }); } catch (error) { next(error); }
   });
-  router.get("/client/estimate-plan-pages/:pageId/thumbnail", protectedRoute, requireOperation("GET /client/estimate-plan-pages/:pageId/thumbnail"), stream((user, pageId) => plans.pageImage(user, pageId, true)));
-  router.get("/client/estimate-plan-pages/:pageId/current-image", protectedRoute, requireOperation("GET /client/estimate-plan-pages/:pageId/current-image"), stream((user, pageId) => plans.pageImage(user, pageId, false)));
+  router.get("/client/estimate-plan-pages/:pageId/thumbnail", protectedRoute, requireOperation("GET /client/estimate-plan-pages/:pageId/thumbnail"), stream((user, pageId, roundId) => plans.pageImage(user, pageId, true, roundId)));
+  router.get("/client/estimate-plan-pages/:pageId/current-image", protectedRoute, requireOperation("GET /client/estimate-plan-pages/:pageId/current-image"), stream((user, pageId, roundId) => plans.pageImage(user, pageId, false, roundId)));
   router.put("/client/estimate-plan-pages/:pageId/annotation-draft", protectedRoute, requireOperation("PUT /client/estimate-plan-pages/:pageId/annotation-draft"), validateBody(draftSchema), async (request, response, next) => {
     try { response.json({ data: await plans.saveDraft(request.authenticatedUser!, request.params.pageId as string, request.body) }); } catch (error) { next(error); }
   });
@@ -116,12 +119,12 @@ export function createEstimatePlanReviewRouter(
   return router;
 }
 
-function stream(open: (user: NonNullable<Request["authenticatedUser"]>, id: string) => Promise<NodeJS.ReadableStream>) {
+function stream(open: (user: NonNullable<Request["authenticatedUser"]>, id: string, roundId?: string) => Promise<NodeJS.ReadableStream>) {
   return async (request: Request, response: Response, next: NextFunction) => {
     try {
       response.type("image/png");
       response.setHeader("Cache-Control", "private, no-store");
-      await pipeline(await open(request.authenticatedUser!, request.params.pageId as string), response);
+      await pipeline(await open(request.authenticatedUser!, request.params.pageId as string, typeof request.query.roundId === "string" ? request.query.roundId : undefined), response);
     } catch (error) { next(error); }
   };
 }

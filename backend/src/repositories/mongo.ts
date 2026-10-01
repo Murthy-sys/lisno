@@ -1,13 +1,15 @@
 import { workflowSpacePlanningSource, type WorkflowDesignPlanData } from "../domain/workflow-space-planning.js";
+import { readMongoProjectStatusEstimateEvidence } from "./project-status.js";
 import { DesignPlanReviewRoundModel } from "../models/DesignPlanReviewRound.js";
 import { DesignPlanResponseProofModel } from "../models/DesignPlanResponseProof.js";
 import { EstimateDesignDrawingModel } from "../models/EstimateDesignDrawing.js";
 import { EstimateDesignRevisionModel } from "../models/EstimateDesignRevision.js";
 import { EstimatePlanChangeRequestModel } from "../models/EstimatePlanChangeRequest.js";
 import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
+import { AiEstimatorKnowledgeVendorModel } from "../models/AiEstimatorKnowledgeVendor.js";
 import { allocateAiEstimatorKnowledgeDisplayOrder, createAiEstimatorKnowledgeMasterDisplayOrderScope } from "../services/ai-estimator-knowledge-display-order.service.js";
 import type { FurnitureUomOption } from "../domain/workflow-uoms.js";
-import { workflowApprovedLines, workflowEstimateRooms, WorkflowEstimateSourceError, type WorkflowEstimateApproval } from "../domain/workflow-estimate-items.js";
+import { workflowApprovedLines, workflowEstimateRoomDimensions, workflowEstimateRooms, WorkflowEstimateSourceError, type WorkflowEstimateApproval } from "../domain/workflow-estimate-items.js";
 import { ProjectFinanceBucketModel } from "../models/ProjectFinanceBucket.js";
 import { DesignWorkflowStateModel } from "../models/DesignWorkflowState.js";
 import type { DesignWorkflowState } from "../domain/design-workflow-state.js";
@@ -18,6 +20,7 @@ import { ApiError } from "../middleware/errors.js";
 import {
   invitationEmailSchema,
   invitationNameSchema,
+  VENDOR_ID_PATTERN,
   normalizeInvitationEmail,
   normalizeInvitationMobile
 } from "../domain/user-invitations.js";
@@ -431,6 +434,13 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
   };
 
   const repository: AppRepository = {
+    async findVendorInvitationTarget(vendorId) {
+      const query = AiEstimatorKnowledgeVendorModel.findById(vendorId).select("_id status");
+      if (session) query.session(session);
+      const row = await query.lean().exec();
+      return row ? { id: String(row._id), status: row.status as "active" | "inactive" | "archived" } : null;
+    },
+    findProjectStatusEstimateEvidence: projectId => readMongoProjectStatusEstimateEvidence(projectId, session),
     async findDesignWorkflowSpacePlanningSource(projectId, lock = false) {
       if (lock && !session) throw new Error("Confirming space planning requires a transaction.");
       const context = await repository.findDesignWorkflowRoomContext(projectId);
@@ -444,7 +454,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         if (await orphanQuery) throw new RepositoryConflictError("The Design plan approved estimate is unavailable.");
         return null;
       }
-      const estimateQuery = EstimateModel.findOne({ _id: context.estimateId, projectId, status: "client_approved" }).select("version designLifecycleVersion designPlanVersion designPlanStatus designPlanApprovedAt designPlanApprovedById designPlanApprovalSource designFrozenAt");
+      const estimateQuery = EstimateModel.findOne({ _id: context.estimateId, projectId, status: "client_approved" }).select("version designLifecycleVersion designPlanVersion designPlanStatus designPlanApprovedAt designPlanApprovedById designPlanApprovalSource designFrozenAt clientDecisionAt");
       if (session) estimateQuery.session(session);
       const estimate = await estimateQuery.lean();
       if (!estimate) throw new RepositoryConflictError("The Design plan estimate is unavailable.");
@@ -468,7 +478,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       const proofs = await proofQuery.lean();
       const iso = (value: unknown): string | null => value instanceof Date && Number.isFinite(value.getTime()) ? value.toISOString() : typeof value === "string" ? value : null;
       const data: WorkflowDesignPlanData = {
-        estimateId: String(estimate._id), projectId, designPlanStatus: estimate.designPlanStatus ?? null, designPlanVersion: Number(estimate.designPlanVersion ?? 0), approvedAt: iso(estimate.designPlanApprovedAt), approvedById: estimate.designPlanApprovedById ?? null, approvalSource: estimate.designPlanApprovalSource ?? null, frozenAt: iso(estimate.designFrozenAt), openFeedback,
+        estimateId: String(estimate._id), projectId, designPlanStatus: estimate.designPlanStatus ?? null, designPlanVersion: Number(estimate.designPlanVersion ?? 0), commercialApprovedAt: iso(estimate.clientDecisionAt), approvedAt: iso(estimate.designPlanApprovedAt), approvedById: estimate.designPlanApprovedById ?? null, approvalSource: estimate.designPlanApprovalSource ?? null, frozenAt: iso(estimate.designFrozenAt), openFeedback,
         rounds: rounds.map(round => {
           const matchingProofs = proofs.filter(proof => String(proof.reviewRoundId) === String(round._id));
           const proof = matchingProofs.length === 1 ? matchingProofs[0] : undefined;
@@ -507,7 +517,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       }
       return result;
     },
-    async findDesignWorkflowRoomContext(projectId, includeEstimateItems = false) {
+    async findDesignWorkflowRoomContext(projectId, includeEstimateItems = false, includeZeroValueItems = false) {
       const bucketQuery = ProjectFinanceBucketModel.findOne({ projectId }).select({ estimateId: 1, estimateVersion: 1, estimateReviewRoundId: 1 });
       if (session) bucketQuery.session(session);
       const bucket = await bucketQuery.lean();
@@ -526,7 +536,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
           if (session) roundQuery.session(session);
           if (!(await roundQuery)) throw new RepositoryConflictError("The approved estimate snapshot does not match its finance source.");
         }
-        return { estimateId: String(estimate._id), estimateVersion: approvedVersion, rooms: (Array.isArray(estimate.rooms) ? estimate.rooms : []).flatMap((room: PlainDocument) => typeof room?.id === "string" && typeof room.label === "string" ? [{ id: room.id, name: room.label, estimateItems: [] }] : []) };
+        return { estimateId: String(estimate._id), estimateVersion: approvedVersion, rooms: (Array.isArray(estimate.rooms) ? estimate.rooms : []).flatMap((room: PlainDocument) => typeof room?.id === "string" && typeof room.label === "string" ? [{ id: room.id, name: room.label, ...workflowEstimateRoomDimensions(room), estimateItems: [] }] : []) };
       }
       const roundQuery = EstimateClientReviewRoundModel.find({ estimateId: estimate._id, status: "approved" });
       if (session) roundQuery.session(session);
@@ -534,7 +544,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       try {
         const lines = workflowApprovedLines({ projectId, estimateId: String(estimate._id), estimateVersion: approvedVersion, reviewRoundId: bucket?.estimateReviewRoundId ?? null,
           rounds: rounds.map((round): WorkflowEstimateApproval => ({ id: String(round._id), estimateId: String(round.estimateId), projectId: round.projectId ?? null, estimateVersion: round.estimateVersion, status: round.status, decision: round.decision ?? null, decidedById: round.decidedById ?? null, decidedAt: round.decidedAt ? new Date(round.decidedAt).toISOString() : null, decisionSource: round.decisionSource ?? null, lineItems: round.estimateSnapshot.lineItems })), legacyLines: estimate.lineItems ?? [] });
-        return { estimateId: String(estimate._id), estimateVersion: approvedVersion, rooms: workflowEstimateRooms(String(estimate._id), approvedVersion, Array.isArray(estimate.rooms) ? estimate.rooms : [], lines) };
+        return { estimateId: String(estimate._id), estimateVersion: approvedVersion, rooms: workflowEstimateRooms(String(estimate._id), approvedVersion, Array.isArray(estimate.rooms) ? estimate.rooms : [], lines, { includeZeroValueItems }) };
       } catch (error) {
         if (error instanceof WorkflowEstimateSourceError) throw new RepositoryConflictError(error.message);
         throw error;
@@ -1258,6 +1268,9 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     },
 
     async createUser(input: NewUser) {
+      if ((input.role === "vendor") !== (typeof input.vendorId === "string" && VENDOR_ID_PATTERN.test(input.vendorId))) {
+        throw new RepositoryConflictError("Vendor membership is required only for Vendor users.");
+      }
       const emailNormalized = normalizeEmail(input.email);
       const createdAt = input.createdAt ? date(input.createdAt) : new Date();
       const document = await createMongoDocument("User", () =>
@@ -1270,6 +1283,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
           address: input.address ?? null,
           passwordHash: input.passwordHash,
           role: input.role,
+          vendorId: input.role === "vendor" ? input.vendorId : null,
           active: input.active ?? true,
           accountKind: input.accountKind ?? "standard",
           version: 1,
@@ -1441,6 +1455,9 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     },
 
     async updateUser(userId, expectedVersion, change) {
+      if (change.role === "vendor") {
+        throw new RepositoryConflictError("Vendor membership requires an invitation.");
+      }
       const set: PlainDocument = {
         ...(change.role === undefined ? {} : { role: change.role }),
         ...(change.active === undefined ? {} : { active: change.active }),
@@ -1453,6 +1470,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
               $or: [{ version: 1 }, { version: { $exists: false } }]
             }
           : { _id: userId, version: expectedVersion };
+      if (change.role !== undefined) filter.role = { $ne: "vendor" };
       const update: PlainDocument =
         expectedVersion === 1
           ? { $set: { ...set, version: 2 } }
@@ -3202,6 +3220,7 @@ function userInvitationForMongo(input: UserInvitationRecord): PlainDocument {
     email: invitationEmailSchema.parse(input.email),
     emailNormalized: normalizeInvitationEmail(input.email),
     role: input.role,
+    vendorId: input.role === "vendor" ? input.vendorId : null,
     mobile: normalizeInvitationMobile(input.mobile),
     tokenHash: input.tokenHash,
     tokenGeneration: input.tokenGeneration,
@@ -3501,6 +3520,7 @@ async function pageUserInvitations(
               name: 1,
               email: 1,
               role: 1,
+              vendorId: 1,
               mobile: 1,
               tokenValidity: 1,
               presentationStatus: 1,
@@ -3741,6 +3761,7 @@ function mapUser(document: PlainDocument): UserRecord {
     address: document.address ?? null,
     passwordHash: document.passwordHash,
     role: document.role,
+    ...(typeof document.vendorId === "string" ? { vendorId: document.vendorId } : {}),
     active: document.active,
     accountKind:
       document.accountKind === "development_demo" ? "development_demo" : "standard",
@@ -3805,6 +3826,7 @@ function mapUserInvitation(document: PlainDocument): UserInvitationRecord {
     emailNormalized:
       document.emailNormalized ?? normalizeInvitationEmail(document.email),
     role: document.role,
+    ...(document.role === "vendor" ? { vendorId: document.vendorId ?? null } : {}),
     mobile: document.mobile,
     tokenHash: document.tokenHash ?? null,
     tokenGeneration: document.tokenGeneration,
@@ -3839,6 +3861,7 @@ function mapUserInvitationAdmin(
     name: document.name,
     email: document.email,
     role: document.role,
+    ...(document.role === "vendor" ? { vendorId: document.vendorId ?? null } : {}),
     mobile: document.mobile,
     tokenValidity: document.tokenValidity,
     presentationStatus: document.presentationStatus,

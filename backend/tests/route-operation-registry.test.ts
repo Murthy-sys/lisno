@@ -1,4 +1,5 @@
 import { EXPECTED_PROJECT_PROCUREMENT_OPERATIONS } from "./fixtures/project-procurement-route-operations.js";
+import { EXPECTED_PROJECT_PROCUREMENT_FULFILLMENT_OPERATIONS } from "./fixtures/project-procurement-fulfillment-route-operations.js";
 import express, { type RequestHandler } from "express";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
@@ -36,7 +37,13 @@ import { EXPECTED_PROJECT_CHAT_OPERATIONS } from "./fixtures/project-chat-route-
 import { EXPECTED_PROFILE_PHOTO_OPERATIONS } from "./fixtures/profile-photo-route-operations.js";
 
 const EXPECTED_ALL_HUMAN_JWT_OPERATIONS = [
+  { key: "GET /estimates/:estimateId/design-plan-documents", permission: "estimation.plan_page_image.read", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
+  { key: "POST /estimates/:estimateId/design-plan-documents/prepare", permission: "estimation.drawing.replace", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "baseline" },
+  { key: "GET /estimates/:estimateId/design-plan-documents/:documentId/pdf", permission: "estimation.plan_page_image.read", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
+  { key: "GET /client/estimates/:estimateId/design-plan-documents", permission: "estimation.client_plan_review.read", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
+  { key: "GET /client/estimates/:estimateId/design-plan-documents/:documentId/pdf", permission: "estimation.client_plan_review.read", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
   ...EXPECTED_PROJECT_PROCUREMENT_OPERATIONS,
+  ...EXPECTED_PROJECT_PROCUREMENT_FULFILLMENT_OPERATIONS,
   ...EXPECTED_PROJECT_CHAT_OPERATIONS,
   ...EXPECTED_HUMAN_JWT_OPERATIONS,
   ...EXPECTED_PROJECT_FINANCE_HUMAN_JWT_OPERATIONS,
@@ -229,9 +236,9 @@ describe("human JWT operation registry", () => {
     expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => expected.some((row) => row.key === key))).toEqual(expected);
   });
 
-  it("matches all 254 normative operation rows", () => {
+  it("matches all 301 normative operation rows", () => {
     expect(Object.values(HUMAN_JWT_OPERATIONS).sort((a, b) => a.key.localeCompare(b.key))).toEqual([...EXPECTED_ALL_HUMAN_JWT_OPERATIONS].sort((a, b) => a.key.localeCompare(b.key)));
-    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(254);
+    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(301);
   });
 
   it("mounts rows 2 through 23 as exact router groups with one ordered marker pair", () => {
@@ -420,11 +427,11 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("appends exactly seventeen project-workflow operations with explicit scope and access metadata", () => {
+  it("appends exactly nineteen project-workflow operations with explicit scope and access metadata", () => {
     expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => EXPECTED_PROJECT_WORKFLOW_OPERATIONS.some((row) => row.key === key))).toEqual(EXPECTED_PROJECT_WORKFLOW_OPERATIONS);
     expect(
       HUMAN_JWT_OPERATION_LIST.filter(
-        ({ availability, permission }) => availability === "project_workflow" && !permission.startsWith("procurement.items.") && !permission.startsWith("procurement.vendors.") && !permission.startsWith("procurement.vendor_suggestions.")
+        ({ availability, key, permission }) => availability === "project_workflow" && !permission.startsWith("procurement.items.") && !permission.startsWith("procurement.vendors.") && !permission.startsWith("procurement.vendor_suggestions.") && !EXPECTED_PROJECT_PROCUREMENT_FULFILLMENT_OPERATIONS.some((row) => row.key === key)
       )
     ).toEqual(EXPECTED_PROJECT_WORKFLOW_OPERATIONS);
   });
@@ -437,12 +444,24 @@ describe("human JWT operation registry", () => {
     expect(matches.flatMap((router) => router.routes.map(({ key }) => key)).sort()).toEqual([...expectedKeys].sort());
   });
 
-  it("mounts all seventeen project-workflow operations across authenticated workflow routers", () => {
+  it("registers and mounts the exact purchase-order, vendor work, Client review and completion operations", () => {
+    const expected = EXPECTED_PROJECT_PROCUREMENT_FULFILLMENT_OPERATIONS;
+    const expectedKeys = expected.map(({ key }) => key);
+    expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => expectedKeys.some((value) => value === key))).toEqual(expected);
+    const mounted = mountedHumanRouters().flatMap(({ routes }) => routes).filter(({ key }) => expectedKeys.some((value) => value === key));
+    expect(mounted.map(({ key }) => key).sort()).toEqual([...expectedKeys].sort());
+    for (const route of mounted) {
+      expect(route.authenticationIndices).toHaveLength(1);
+      expect(route.operationMarkers).toEqual([{ index: route.authenticationIndices[0]! + 1, key: route.key }]);
+    }
+  });
+
+  it("mounts all nineteen project-workflow operations across authenticated workflow routers", () => {
     const expectedKeys = EXPECTED_PROJECT_WORKFLOW_OPERATIONS.map(({ key }) => key);
     const matches = mountedHumanRouters().filter((router) =>
       router.routes.some(({ key }) => expectedKeys.includes(key as never))
     );
-    expect(matches).toHaveLength(2);
+    expect(matches).toHaveLength(3);
     expect(matches.flatMap(({ routes }) => routes.map(({ key }) => key)).sort()).toEqual(
       [...expectedKeys].sort()
     );
@@ -523,7 +542,7 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("mounts the exact 254-operation manifest with one ordered marker pair each", () => {
+  it("mounts the exact 301-operation manifest with one ordered marker pair each", () => {
     const expectedKeys = EXPECTED_ALL_HUMAN_JWT_OPERATIONS.map(
       ({ key }) => key
     ).sort();
@@ -533,8 +552,8 @@ describe("human JWT operation registry", () => {
     const mountedOperations = mountedRoutes.map(({ key }) => key);
 
     expect([...mountedOperations].sort()).toEqual(expectedKeys);
-    expect(expectedKeys).toHaveLength(254);
-    expect(new Set(expectedKeys).size).toBe(254);
+    expect(expectedKeys).toHaveLength(301);
+    expect(new Set(expectedKeys).size).toBe(301);
     expect(mountedOperations).toContain(
       "POST /execution/worker-assignments/override"
     );
@@ -581,9 +600,9 @@ describe("human JWT operation registry", () => {
     expect(() => assertTaskSixRouteMounts(routers)).toThrow();
   });
 
-  it("has 254 unique keys and exactly 151 routed permissions", () => {
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(254);
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(151);
+  it("has 301 unique keys and exactly 164 routed permissions", () => {
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(301);
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(164);
     expect(HUMAN_JWT_OPERATION_LIST.every(({ permission }) =>
       (PERMISSION_CODES as readonly string[]).includes(permission)
     )).toBe(true);

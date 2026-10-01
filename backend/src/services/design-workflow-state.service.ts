@@ -174,7 +174,7 @@ function dateField(data: Record<string, unknown>, key: string, at: number, futur
 function checkData(data: Record<string, unknown>, fields: string[]) {
   if (Object.keys(data).some((key) => !fields.includes(key))) throw new ApiError(400, "INVALID_WORKFLOW_ACTION", "This action contains unsupported fields.");
 }
-const furnitureMeasurementsSchema = z.object({ measurementType: z.literal("dimensions").optional(), length: z.number().finite().positive(), width: z.number().finite().positive(), height: z.number().finite().positive() });
+const furnitureMeasurementsSchema = z.object({ measurementType: z.literal("dimensions").optional(), length: z.number().finite().positive(), width: z.number().finite().positive(), height: z.number().finite().positive().optional() });
 const furnitureCountSchema = z.object({ measurementType: z.literal("count"), quantity: z.number().finite().int().positive().max(Number.MAX_SAFE_INTEGER) });
 const estimateItemIdSchema = z.string().min(1).max(500).refine((value) => value === value.trim());
 const furnitureInputIdentity = { estimateItemId: estimateItemIdSchema, uomId: z.string().trim().min(1).max(128) };
@@ -182,6 +182,7 @@ const furnitureInputItemSchema = z.union([furnitureMeasurementsSchema.extend(fur
 const furnitureStoredIdentity = { id: estimateItemIdSchema, estimateItemId: estimateItemIdSchema.optional(), name: z.string().min(1), unit: z.string().min(1).max(64), uomId: z.string().min(1).max(128).optional(), uomName: z.string().min(1).max(240).optional() };
 const furnitureStoredItemSchema = z.union([furnitureMeasurementsSchema.extend(furnitureStoredIdentity).strict(), furnitureCountSchema.extend(furnitureStoredIdentity).strict()]).refine(item => Boolean(item.uomId) === Boolean(item.uomName));
 const furnitureUploadSchema = z.object({ rooms: z.array(z.object({ roomId: z.string().min(1), items: z.array(furnitureInputItemSchema).min(1) }).strict()).min(1).max(100) }).strict();
+const furnitureReturnedZeroValueResolutionSchema = z.object({ resolveReturnedZeroValueRoomIds: z.array(z.string().min(1)).min(1).max(100) }).strict();
 const furnitureStoredSubmissionSchema = z.object({ rooms: z.array(z.object({ roomId: z.string().min(1), items: z.array(furnitureStoredItemSchema).min(1) }).strict()).min(1).max(100) }).strict();
 function canonicalFurnitureItems<T extends { estimateItemId: string }>(source: WorkflowEstimateRoomContext, roomId: string, items: T[], requireComplete = true) {
   const selected = source.rooms.find((room) => room.id === roomId)?.estimateItems ?? [];
@@ -189,10 +190,15 @@ function canonicalFurnitureItems<T extends { estimateItemId: string }>(source: W
   if (requireComplete && items.length !== selected.length || new Set(items.map((item) => item.estimateItemId)).size !== items.length || items.some((item) => !selected.some((entry) => entry.id === item.estimateItemId))) throw new ApiError(400, "INVALID_FURNITURE_DIMENSIONS", "Enter measurements for every selected estimate item in this room, using its current estimate item ID.");
   return items.map((item) => ({ ...item, id: item.estimateItemId, name: selected.find((entry) => entry.id === item.estimateItemId)!.name }));
 }
+function canonicalReviewedFurnitureItems<T extends { estimateItemId: string }>(actionableSource: WorkflowEstimateRoomContext, historicalSource: WorkflowEstimateRoomContext, roomId: string, items: T[], requireComplete = true) {
+  const actionableIds = new Set(actionableSource.rooms.find(room => room.id === roomId)?.estimateItems.map(item => item.id) ?? []);
+  const source = items.some(item => !actionableIds.has(item.estimateItemId)) ? historicalSource : actionableSource;
+  return { source, items: canonicalFurnitureItems(source, roomId, items, requireComplete) };
+}
 function assertFurnitureMeasurementTypes(source: WorkflowEstimateRoomContext, roomId: string, items: Array<{ estimateItemId: string; measurementType?: "count" | "dimensions" }>, reviewing = false) {
   const selected = source.rooms.find(room => room.id === roomId)!.estimateItems;
   if (items.some(item => (item.measurementType ?? "dimensions") !== selected.find(entry => entry.id === item.estimateItemId)!.measurementType)) {
-    const message = "Point items require an actual number of points; other items require length, width and height. Send existing measurements back for correction before approval.";
+    const message = "Point items require an actual number of points; other items require length and width. Send existing measurements back for correction before approval.";
     if (reviewing) blocked([message]);
     throw new ApiError(400, "INVALID_FURNITURE_MEASUREMENT_TYPE", message);
   }
@@ -220,8 +226,8 @@ function nextFurnitureRevision(state: DesignWorkflowState, stageId: string, room
   return Math.max(state.stages.existing_furniture_dimensions?.rooms?.find(room => room.id === roomId)?.dimensions?.revision ?? 0, eventIds.size) + 1;
 }
 const furnitureReviewSchema = z.object({ submissions: z.array(z.object({ roomId: z.string().min(1), submissionEventId: z.string().min(1) }).strict()).min(1).max(100) }).strict();
-async function assertFurnitureScopeSource(repository: AppRepository, projectId: string, current: WorkflowStageState) {
-  const source = await repository.findDesignWorkflowRoomContext(projectId, true);
+async function assertFurnitureScopeSource(repository: AppRepository, projectId: string, current: WorkflowStageState, includeZeroValueItems = false) {
+  const source = await repository.findDesignWorkflowRoomContext(projectId, true, includeZeroValueItems);
   if (!source || current.scopeEstimateId !== source.estimateId || current.scopeEstimateVersion !== source.estimateVersion || !current.rooms || !current.noExistingFurniture && (current.rooms.length !== source.rooms.length || current.rooms.some((room) => !source.rooms.some((saved) => saved.id === room.id)))) blocked(["The approved estimate no longer matches this furniture confirmation. Reconcile the project approved source before continuing."]);
   return source!;
 }
@@ -337,7 +343,8 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
             if (!capabilities[actionActor]) throw new ApiError(403, "FORBIDDEN", "You cannot perform this stage action.");
             if (!allowed(state, input.action, at.getTime(), actor.id)) blocked(["This action is not available until its stage prerequisites are met."]);
             onBehalfOfClient = actionActor === "client" && capabilities.representative;
-            if ((definition.file || onBehalfOfClient) && !proof) throw new ApiError(400, "WORKFLOW_PROOF_REQUIRED", "Upload the required supporting document.");
+            const resolvingReturnedZeroValueRooms = input.action === "furniture_upload" && Object.hasOwn(input.data, "resolveReturnedZeroValueRoomIds");
+            if ((definition.file && !resolvingReturnedZeroValueRooms || onBehalfOfClient) && !proof) throw new ApiError(400, "WORKFLOW_PROOF_REQUIRED", "Upload the required supporting document.");
             const current = state.stages[definition.type] ??= {};
             const furnitureSource = definition.type === "existing_furniture_dimensions" && input.action !== "furniture_scope" ? await assertFurnitureScopeSource(tx, projectId, current) : undefined;
             switch (input.action) {
@@ -421,6 +428,7 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
                 const bundle = furnitureRequirementsSubmission(state, stage.id);
                 if (bundle.kind === "invalid") blocked(["The furniture requirements evidence does not match the current submission. Ask the Designer to resubmit the complete requirements and dimensions."]);
                 if (input.action === "furniture_scope_return" && !input.note) throw new ApiError(400, "WORKFLOW_NOTE_REQUIRED", "Explain which furniture requirements need correction.");
+                const historicalSource = bundle.kind === "combined" ? await assertFurnitureScopeSource(tx, projectId, current, true) : furnitureSource!;
                 if (bundle.kind === "combined") {
                   const parsed = furnitureRequirementsReviewSchema.safeParse(input.data);
                   if (!parsed.success || parsed.data.submissionEventId !== bundle.event.id) blocked(["The furniture requirements changed. Refresh and review the current submission before deciding."]);
@@ -429,9 +437,9 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
                     const items = room.dimensions!.items;
                     if (items.some(item => !item.estimateItemId || item.id !== item.estimateItemId)) blocked(["The furniture submission must reference the selected estimate items."]);
                     // Older submissions may omit selected zero-quantity lines; returning them still validates every submitted identity.
-                    const canonical = canonicalFurnitureItems(furnitureSource!, room.id, items.map(item => ({ ...item, estimateItemId: item.estimateItemId! })), input.action === "furniture_accept");
-                    if (input.action === "furniture_accept") assertFurnitureMeasurementTypes(furnitureSource!, room.id, canonical, true);
-                    if (canonical.some((item, index) => item.name !== items[index]!.name) || room.name !== furnitureSource!.rooms.find(source => source.id === room.id)?.name) blocked(["The submitted furniture items no longer match the approved estimate. Ask the Designer to resubmit them."]);
+                    const canonical = canonicalReviewedFurnitureItems(furnitureSource!, historicalSource, room.id, items.map(item => ({ ...item, estimateItemId: item.estimateItemId! })), input.action === "furniture_accept");
+                    if (input.action === "furniture_accept") assertFurnitureMeasurementTypes(canonical.source, room.id, canonical.items, true);
+                    if (canonical.items.some((item, index) => item.name !== items[index]!.name) || room.name !== historicalSource.rooms.find(source => source.id === room.id)?.name) blocked(["The submitted furniture items no longer match the approved estimate. Ask the Designer to resubmit them."]);
                   }
                   for (const room of current.rooms!.filter(room => room.required)) {
                     room.dimensions!.status = input.action === "furniture_accept" ? "approved" : "changes_requested";
@@ -441,15 +449,34 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
                   recordedData = { submissionEventId: bundle.event.id, submissions: current.rooms!.filter(room => room.required).map(room => ({ roomId: room.id, submissionEventId: bundle.event.id })) };
                 } else checkData(input.data, []);
                 if (input.action === "furniture_accept") {
-                  if (current.rooms?.some(room => room.required && !furnitureSource!.rooms.find(entry => entry.id === room.id)?.estimateItems.length)) blocked(["A required room has no selected estimate items. Send the furniture requirements back for correction before accepting them."]);
+                  if (current.rooms?.some(room => room.required && !(bundle.kind === "combined" ? historicalSource : furnitureSource!).rooms.find(entry => entry.id === room.id)?.estimateItems.length)) blocked(["A required room has no selected estimate items. Send the furniture requirements back for correction before accepting them."]);
                   current.acceptedAt = timestamp;
                   if (current.noExistingFurniture || current.rooms?.every(room => workflowFurnitureRoomReady(current, room))) current.completedAt = timestamp;
                 } else current.scopeReturn = { reason: input.note, at: timestamp };
                 break;
               }
               case "furniture_upload": {
+                if (resolvingReturnedZeroValueRooms) {
+                  const parsed = furnitureReturnedZeroValueResolutionSchema.safeParse(input.data);
+                  if (!capabilities.designer) throw new ApiError(403, "FORBIDDEN", "Only an assigned Designer can resolve returned zero-value rooms.");
+                  if (proof) throw new ApiError(400, "INVALID_WORKFLOW_EVIDENCE", "No document is needed to resolve returned zero-value rooms.");
+                  if (!parsed.success || new Set(parsed.data.resolveReturnedZeroValueRoomIds).size !== parsed.data.resolveReturnedZeroValueRoomIds.length) throw new ApiError(400, "INVALID_FURNITURE_ROOMS", "Choose unique returned zero-value rooms to resolve.");
+                  const historicalSource = await assertFurnitureScopeSource(tx, projectId, current, true);
+                  for (const roomId of parsed.data.resolveReturnedZeroValueRoomIds) {
+                    const room = current.rooms?.find(entry => entry.id === roomId && entry.required);
+                    const actionableItems = furnitureSource!.rooms.find(entry => entry.id === roomId)?.estimateItems;
+                    const historicalItems = historicalSource.rooms.find(entry => entry.id === roomId)?.estimateItems;
+                    if (!room || room.dimensions?.status !== "changes_requested" || !currentFurnitureSubmission(state, stage.id, room) || !historicalItems?.length || actionableItems?.length !== 0) blocked(["A selected room is not a returned zero-value furniture room. Refresh and review its approved estimate source."]);
+                    if (room.name !== historicalSource.rooms.find(entry => entry.id === roomId)?.name) blocked(["The returned room no longer matches its approved estimate source. Reconcile the project before continuing."]);
+                    room.required = false;
+                  }
+                  recordedData = { resolveReturnedZeroValueRoomIds: parsed.data.resolveReturnedZeroValueRoomIds };
+                  auditDetails = { resolvedZeroValueRoomIds: parsed.data.resolveReturnedZeroValueRoomIds };
+                  if (current.rooms!.every(room => workflowFurnitureRoomReady(current, room))) current.completedAt ??= timestamp;
+                  break;
+                }
                 const parsed = furnitureUploadSchema.safeParse(input.data);
-                if (!parsed.success) throw new ApiError(400, "INVALID_FURNITURE_DIMENSIONS", "Enter a positive whole number for points or positive length, width and height for other items, with a configured UOM and the approved estimate item ID.");
+                if (!parsed.success) throw new ApiError(400, "INVALID_FURNITURE_DIMENSIONS", "Enter a positive whole number for points or positive length and width for other items, with a configured UOM and the approved estimate item ID.");
                 const submittedRooms = parsed.data.rooms;
                 if (new Set(submittedRooms.map((room) => room.roomId)).size !== submittedRooms.length || submittedRooms.some((entry) => !current.rooms?.some((room) => room.id === entry.roomId && room.required))) throw new ApiError(400, "INVALID_FURNITURE_ROOMS", "Choose unique required rooms from the accepted furniture scope.");
                 const canonicalRooms = await canonicalDimensionRooms(tx, furnitureSource!, submittedRooms);
@@ -468,6 +495,8 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
                 const parsed = furnitureReviewSchema.safeParse(input.data);
                 if (!parsed.success || new Set(parsed.data.submissions.map((entry) => entry.roomId)).size !== parsed.data.submissions.length) throw new ApiError(400, "INVALID_FURNITURE_REVIEW", "Choose unique rooms and their current dimension submissions.");
                 if (input.action === "furniture_dimensions_return" && !input.note) throw new ApiError(400, "WORKFLOW_NOTE_REQUIRED", "Explain which furniture dimensions need correction.");
+                const historicalSource = input.action === "furniture_dimensions_approve" ? await assertFurnitureScopeSource(tx, projectId, current, true) : furnitureSource!;
+                const noLongerRequiredRoomIds: string[] = [];
                 for (const entry of parsed.data.submissions) {
                   const room = current.rooms?.find((room) => room.id === entry.roomId && room.required);
                   const dimensions = room?.dimensions;
@@ -475,13 +504,23 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
                   if (!dimensions || dimensions.status !== "pending" || dimensions.submissionEventId !== entry.submissionEventId || !submission) blocked(["The furniture dimensions changed. Refresh and review the current pending submission."]);
                   if (input.action === "furniture_dimensions_approve") {
                     if (dimensions.items.some((item) => !item.estimateItemId || item.id !== item.estimateItemId)) blocked(["These dimensions predate estimate item links. Send them back for a fresh submission against the selected estimate items."]);
-                    const canonical = canonicalFurnitureItems(furnitureSource!, room!.id, dimensions.items.map((item) => ({ ...item, estimateItemId: item.estimateItemId! })));
-                    assertFurnitureMeasurementTypes(furnitureSource!, room!.id, canonical, true);
-                    if (canonical.some((item, index) => item.name !== dimensions.items[index]!.name)) blocked(["The submitted furniture items no longer match the approved estimate. Send the dimensions back for correction."]);
+                    const canonical = canonicalReviewedFurnitureItems(furnitureSource!, historicalSource, room!.id, dimensions.items.map((item) => ({ ...item, estimateItemId: item.estimateItemId! })));
+                    assertFurnitureMeasurementTypes(canonical.source, room!.id, canonical.items, true);
+                    if (canonical.items.some((item, index) => item.name !== dimensions.items[index]!.name)) blocked(["The submitted furniture items no longer match the approved estimate. Send the dimensions back for correction."]);
                   }
                   dimensions.status = input.action === "furniture_dimensions_approve" ? "approved" : "changes_requested";
                   dimensions.reviewedAt = timestamp;
-                  if (input.action === "furniture_dimensions_return") dimensions.returnReason = input.note;
+                  if (input.action === "furniture_dimensions_return") {
+                    dimensions.returnReason = input.note;
+                    if (!furnitureSource!.rooms.find(sourceRoom => sourceRoom.id === room.id)?.estimateItems.length) {
+                      room.required = false;
+                      noLongerRequiredRoomIds.push(room.id);
+                    }
+                  }
+                }
+                if (noLongerRequiredRoomIds.length) {
+                  recordedData = { ...recordedData, noLongerRequiredRoomIds };
+                  auditDetails = { noLongerRequiredRoomIds };
                 }
                 if (current.rooms!.every((room) => workflowFurnitureRoomReady(current, room))) current.completedAt ??= timestamp;
                 break;
@@ -595,6 +634,17 @@ function currentFurnitureSubmission(state: DesignWorkflowState, stageId: string,
   return entries.length === 1 && currentItems.success && JSON.stringify(entries[0]!.items) === JSON.stringify(currentItems.data) ? event : undefined;
 }
 
+/** Reuse the workflow's evidence checks without disclosing documents or private history. */
+export function projectStatusWorkflowEvidence(state: DesignWorkflowState, stages: readonly ProjectDesignWorkflowStage[]): { workflow: boolean; furniture: boolean } {
+  const kickoff = stages.find(stage => stage.type === "internal_kickoff");
+  const furniture = stages.find(stage => stage.type === "existing_furniture_dimensions");
+  return {
+    workflow: Boolean(kickoff && state.stages.internal_kickoff?.completedAt && !submittedInternalKickoffEvent(state, state.projectId, kickoff.id)),
+    furniture: Boolean(furniture && (furnitureRequirementsSubmission(state, furniture.id).kind === "invalid" ||
+      state.stages.existing_furniture_dimensions?.rooms?.some(room => room.dimensions && !currentFurnitureSubmission(state, furniture.id, room))))
+  };
+}
+
 function projectFurnitureEvidence(stageId: string, state: DesignWorkflowState, canReadProof: boolean, context?: WorkflowStageContext): FurnitureReviewEvidence[] | undefined {
   if (!canReadProof || !context?.projectId || state.projectId !== context.projectId) return undefined;
   const evidence: FurnitureReviewEvidence[] = [];
@@ -688,11 +738,21 @@ export function projectOperationalStage(stage: ProjectDesignWorkflowStage, state
   if (!state.initialPaymentAt) reasons.push(paymentBlockingReason(context));
   if (paused) reasons.push("Site access is unavailable. All workflow clocks are paused.");
   if (!current.completedAt && (stage.type !== "space_planning_tentative_look_feel" || spacePlanning || context?.spacePlanningIssue || stored.spacePlanningApproval)) reasons.push(...workflowStagePrerequisiteBlockers(state, stage.type));
+  const completionReasons: string[] = [];
   if (stage.type === "space_planning_tentative_look_feel") {
-    reasons.push(...workflowSubmissionBlockers(state));
-    if (context?.spacePlanningIssue) reasons.push(context.spacePlanningIssue);
-    if (spacePlanning) reasons.push(...spacePlanning.blockingReasons);
-    if (stored.completedAt && !validSpaceCompletion) reasons.push("The stage confirmation no longer matches the current approved Design plan. Reconcile the approval source.");
+    reasons.push(...workflowSubmissionBlockers(state, undefined, "upload"));
+    completionReasons.push(...workflowSubmissionBlockers(state));
+    if (context?.spacePlanningIssue) { reasons.push(context.spacePlanningIssue); completionReasons.push(context.spacePlanningIssue); }
+    if (spacePlanning) {
+      reasons.push(...spacePlanning.entryBlockingReasons);
+      completionReasons.push(...spacePlanning.blockingReasons);
+    }
+    if (stored.completedAt && !validSpaceCompletion) {
+      const staleCompletion = "The stage confirmation no longer matches the current approved Design plan. Reconcile the approval source.";
+      reasons.push(staleCompletion);
+      completionReasons.push(staleCompletion);
+    }
+    completionReasons.push(...reasons);
   }
   const facts: Array<{ label: string; value: string }> = [];
   for (const [field, label] of [["meetingAt", "Meeting conducted"], ["calendarAcceptedAt", "Sales calendar accepted"], ["requestedAt", "Meeting requested"], ["preferredAt", "Requested meeting date"], ["scheduledAt", "Client meeting date"], ["handedOverAt", "Client handed over keys"], ["receivedAt", "Designer received keys"], ["mediaFolderUrl", "Photos and videos folder"]] as const) if (current[field]) facts.push({ label, value: current[field]! });
@@ -722,7 +782,7 @@ export function projectOperationalStage(stage: ProjectDesignWorkflowStage, state
       band: clock && startsAt ? elapsed <= clock.bands[0] * DAY ? "On track" : elapsed <= clock.bands[1] * DAY ? "Yellow" : elapsed <= clock.bands[2] * DAY ? "Late" : "Overdue" : null,
       clockOwner: clock && startsAt ? owner : null, designerElapsedMs: Math.max(0, activeElapsed - clientElapsed), clientElapsedMs: clientElapsed
     }, blockingReasons: [...new Set(reasons)], facts, history, reminders,
-    ...(spacePlanning && canReadProof ? { spacePlanning: { estimateId: spacePlanning.estimateId, designPlanVersion: spacePlanning.designPlanVersion, reviewRoundId: spacePlanning.reviewRoundId, totalImages: spacePlanning.totalImages, approvedImages: spacePlanning.approvedImages, readyForCompletion: spacePlanning.readyForCompletion && reasons.length === 0 && !current.completedAt, completedAt: current.completedAt ?? null } } : {}),
+    ...(spacePlanning && canReadProof ? { spacePlanning: { estimateId: spacePlanning.estimateId, designPlanVersion: spacePlanning.designPlanVersion, reviewRoundId: spacePlanning.reviewRoundId, totalImages: spacePlanning.totalImages, approvedImages: spacePlanning.approvedImages, readyForCompletion: spacePlanning.readyForCompletion && completionReasons.length === 0 && !current.completedAt, completedAt: current.completedAt ?? null, completionBlockingReasons: [...new Set(completionReasons)] } } : {}),
     ...(stage.type === "existing_furniture_dimensions" ? { furniture: projectFurnitureProgress(current, projectFurnitureEvidence(stage.id, state, canReadProof, context), canReadFurnitureDetails, furnitureSubmission?.kind === "combined" ? furnitureSubmission.event.id : undefined) } : {}),
     ...(submittedDocument ? { submittedDocument } : {}),
     ...(current.rooms ? { rooms: current.rooms.map((room) => ({ id: room.id, name: room.name, required: room.required, hasDimensions: Boolean(room.uploadedAt), canProceed: workflowFurnitureRoomReady(current, room), ...(room.dimensions && canReadFurnitureDetails ? { dimensions: structuredClone(room.dimensions) } : {}) })) } : {})

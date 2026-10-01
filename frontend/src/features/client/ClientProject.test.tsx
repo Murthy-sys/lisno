@@ -22,7 +22,7 @@ function kickoffWorkflow(state: "internal" | "client" | "keys" = "client"): Desi
   const stageNames = [["internal_kickoff", "Internal Kick off"], ["client_kickoff", "Client Kick off"], ["key_collection", "Key Collection"]] as const;
   const currentIndex = state === "internal" ? 0 : state === "client" ? 1 : 2;
   return {
-    projectId: project.id, projectName: project.name, serverNow: started, floors: [],
+    projectId: project.id, projectName: project.name, serverNow: started, floors: [], estimateApprovalStatus: "approved",
     initialPayment: { confirmedAt: started, canConfirm: false, version: currentIndex + 1, status: "received" },
     projectStages: stageNames.map(([type, name], index) => ({
       id: `${project.id}:${type}`, type, name, order: index + 1, dependencyStageIds: [],
@@ -47,6 +47,7 @@ function installKickoffApi(getWorkflow: () => DesignWorkflowView, getDocuments =
   tokenStorage.set("client-token");
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    if (url === "/api/v1/client/estimates") return Response.json({ data: [] });
     if (url === "/api/v1/auth/me") return Response.json({ data: client });
     if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor("client", ["projects.read", "projects.design_workflow.read", "projects.design_workflow.act", "design.plan_response_tasks.read"]) });
     if (url === "/api/v1/projects/project-villa") return Response.json({ data: currentProject });
@@ -161,6 +162,7 @@ describe("ClientProject", () => {
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(download);
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
+      if (url === "/api/v1/client/estimates") return Response.json({ data: [] });
       if (url === "/api/v1/auth/me") return Response.json({ data: client });
       if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(client.role) });
       if (url === "/api/v1/projects/project-villa") return Response.json({ data: project });

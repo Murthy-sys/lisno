@@ -111,6 +111,11 @@ const VENDOR_DIRECTORY_PERMISSIONS = [
 const VENDOR_KPI_PERMISSIONS = ["procurement.vendor_kpi.read", "procurement.vendor_kpi.rate", "procurement.vendor_kpi.request"] as const;
 const VENDOR_INDUCTION_PERMISSIONS = ["procurement.vendor_induction.read", "procurement.vendor_induction.manage",
   "procurement.vendor_induction.request", "procurement.vendor_induction.review"] as const;
+const PROCUREMENT_FULFILLMENT_PERMISSIONS = [
+  "procurement.purchase_orders.read", "procurement.purchase_orders.manage", "procurement.purchase_orders.approve",
+  "procurement.vendor_work.read", "procurement.vendor_work.update", "procurement.vendor_work.media.read", "procurement.vendor_work.media.upload",
+  "procurement.client_work.read", "procurement.client_work.decide", "procurement.progress.read", "procurement.site_completion.manage", "procurement.project_completion.decide"
+] as const;
 
 const AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS = [
   "ai_estimator_knowledge.configuration.read",
@@ -136,7 +141,8 @@ const ADDITIONAL_ROWS = {
   worker_carpenter: [17, 18],
   worker_painter: [17, 18],
   worker_civil: [17, 18],
-  worker_other: [17, 18]
+  worker_other: [17, 18],
+  vendor: []
 } as const satisfies Record<Exclude<Role, "super_admin">, readonly number[]>;
 
 function range(start: number, end: number): number[] {
@@ -209,16 +215,22 @@ describe("authorization policy", () => {
     expect(hasPermission(role, action)).toBe(false);
   });
 
+  it("permits status reads for every role subject to project participant scope", () => {
+    for (const role of ROLE_CODES) expect(hasPermission(role, "projects.status.read")).toBe(true);
+  });
+
   it("matches the exact role-to-operation allowlist", () => {
     for (const role of ROLE_CODES) {
       if (role === "super_admin") continue;
       const historicalPermissions = ROLE_PERMISSIONS[role].filter(
         (permission) =>
           !permission.startsWith("chat.") &&
+          permission !== "projects.status.read" &&
           !permission.startsWith("procurement.items.") && !permission.startsWith("procurement.vendors.") && !permission.startsWith("procurement.vendor_suggestions.") &&
           !VENDOR_DIRECTORY_PERMISSIONS.includes(permission as never) &&
           !VENDOR_KPI_PERMISSIONS.includes(permission as never) &&
           !VENDOR_INDUCTION_PERMISSIONS.includes(permission as never) &&
+          !PROCUREMENT_FULFILLMENT_PERMISSIONS.includes(permission as never) &&
           permission !== "projects.design_workflow.read" &&
           permission !== "estimation.design_upload.delete" &&
           permission !== "projects.design_workflow.act" &&
@@ -248,8 +260,8 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(151);
-    expect(new Set(PERMISSION_CODES).size).toBe(151);
+    expect(PERMISSION_CODES).toHaveLength(164);
+    expect(new Set(PERMISSION_CODES).size).toBe(164);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
@@ -266,7 +278,7 @@ describe("authorization policy", () => {
   it("gives every role scoped chat operations and restricts participant management", () => {
     for (const role of ROLE_CODES) {
       for (const permission of ["chat.read", "chat.send", "chat.issue", "chat.read_state"] as const) {
-        expect(hasPermission(role, permission), `${role} ${permission}`).toBe(true);
+        expect(hasPermission(role, permission), `${role} ${permission}`).toBe(role !== "vendor");
       }
       expect(hasPermission(role, "chat.participants.manage"), role).toBe(["admin", "super_admin"].includes(role));
     }
@@ -362,7 +374,7 @@ describe("authorization policy", () => {
   it("gives all worker trades identical identity and workflow-task permissions", () => {
     for (const role of WORKER_ROLES) {
       expect(ROLE_PERMISSIONS[role]).toEqual([
-        "chat.read", "chat.send", "chat.issue", "chat.read_state",
+        "projects.status.read", "chat.read", "chat.send", "chat.issue", "chat.read_state",
         "identity.self.read",
         "identity.self.profile_photo.manage",
         // Workers share the Designer KPI over their own record.
@@ -372,6 +384,20 @@ describe("authorization policy", () => {
         "workflow.tasks.read",
         "workflow.tasks.update"
       ]);
+    }
+  });
+
+  it("grants purchase-order, vendor, Client, progress and completion actions to their exact roles", () => {
+    const expectedByRole: Partial<Record<Role, readonly string[]>> = {
+      procurement: ["procurement.purchase_orders.read", "procurement.purchase_orders.manage", "procurement.progress.read", "procurement.vendor_work.media.read"],
+      site_manager: ["procurement.progress.read", "procurement.site_completion.manage", "procurement.vendor_work.media.read"],
+      vendor: ["procurement.vendor_work.read", "procurement.vendor_work.update", "procurement.vendor_work.media.read", "procurement.vendor_work.media.upload"],
+      client: ["procurement.client_work.read", "procurement.client_work.decide", "procurement.vendor_work.media.read"]
+    };
+    expect(PERMISSION_CODES.filter((code) => PROCUREMENT_FULFILLMENT_PERMISSIONS.includes(code as never))).toEqual(PROCUREMENT_FULFILLMENT_PERMISSIONS);
+    for (const role of ROLE_CODES) {
+      const expected = role === "super_admin" ? PROCUREMENT_FULFILLMENT_PERMISSIONS : expectedByRole[role] ?? [];
+      expect(ROLE_PERMISSIONS[role].filter((code) => PROCUREMENT_FULFILLMENT_PERMISSIONS.includes(code as never)), role).toEqual(expected);
     }
   });
 
@@ -515,9 +541,16 @@ describe("authorization policy", () => {
       "vendor_induction.changes_requested", "vendor_induction.reopened",
       "procurement_vendor_allocation_baseline_recorded",
       "procurement_vendor_photo_updated", "procurement_vendor_photo_removed",
-      "procurement_expense_recorded", "project_procurement_item_created",
+      "procurement_expense_recorded", "project_procurement_item_created", "project_procurement_item_removed",
       "project_vendor_suggestion_created", "project_vendor_suggestion_updated",
-      "project_procurement_item_updated"
+      "project_procurement_item_updated",
+      "project_purchase_order_created", "project_purchase_order_updated", "project_purchase_order_submitted",
+      "project_purchase_order_decided", "project_purchase_order_amended", "project_purchase_order_cancelled",
+      "project_purchase_order_request_submitted", "project_purchase_order_request_decided",
+      "vendor_work_progress_updated", "vendor_work_media_uploaded", "vendor_work_submitted",
+      "client_vendor_work_decided", "project_scope_exception_recorded",
+      "project_completion_authority_changed", "project_completion_recorded",
+      "site_completion_progress_updated", "site_completion_submitted", "client_site_completion_decided"
     ]);
     expect(AUDIT_ACTIONS).toContain("procurement_expense_recorded");
   });

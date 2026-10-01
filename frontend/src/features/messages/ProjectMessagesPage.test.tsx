@@ -7,6 +7,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import axe from "axe-core";
 import { ApiError, tokenStorage } from "../../api/client";
 import { clientKeys } from "../client/clientApi";
+import type { ProjectStatusSummary } from "../../api/types";
+import * as projectStatusApi from "../project-status/projectStatusApi";
 import { projectChatApi } from "./projectChatApi";
 import { chatTestMessage, chatTestPage, chatTestPolicy, chatTestPeople, chatTestSummary } from "./projectChatFixtures";
 import { ProjectChatNavigation, ProjectChatLink } from "./ProjectChatHeader";
@@ -17,9 +19,9 @@ import { ProjectMessagesListPage } from "./ProjectMessagesListPage";
 import type { runProjectChatStream } from "./projectChatStream";
 
 type StreamOptions = Parameters<typeof runProjectChatStream>[0];
-const mocks = vi.hoisted(() => ({ streams: [] as StreamOptions[], user: { id: "client-a", role: "client", name: "Maya Client" }, status: "authenticated" }));
+const mocks = vi.hoisted(() => ({ streams: [] as StreamOptions[], user: { id: "client-a", role: "client", name: "Maya Client" }, status: "authenticated", chatAllowed: true }));
 vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: mocks.status === "authenticated" ? mocks.user : null, status: mocks.status, authorization: {} }) }));
-vi.mock("../../auth/authorization", () => ({ hasFrontendPermission: () => true }));
+vi.mock("../../auth/authorization", () => ({ hasFrontendPermission: (_authorization: unknown, permission: string) => permission !== "chat.read" || mocks.chatAllowed }));
 vi.mock("./projectChatStream", () => ({ runProjectChatStream: async (options: StreamOptions) => {
   mocks.streams.push(options); options.onStatus("live");
   await new Promise<void>(resolve => { if (options.signal.aborted) resolve(); else options.signal.addEventListener("abort", () => resolve(), { once: true }); });
@@ -35,8 +37,13 @@ function app(initial = "/projects/project-a/messages", strict = false) {
   </Routes><Link to="/overview">Project overview</Link><Link to="/projects/project-a/messages">Open conversation</Link><Link to="/projects/project-b/messages">Other conversation</Link></ProjectChatProvider></MemoryRouter></QueryClientProvider>;
   return { ...render(strict ? <StrictMode>{content}</StrictMode> : content), queryClient };
 }
+function statusFixture(projectId = "project-a"): ProjectStatusSummary {
+  return { projectId, projectName: "Courtyard residence", projectStatus: "active", serverNow: "2026-10-01T08:00:00Z", state: "active", currentStage: { key: "estimate_review", label: "Estimate approval" }, issue: null,
+    pendingActions: [{ id: "client-review", stageKey: "estimate_review", stageLabel: "Estimate approval", action: "Review the estimate", responsibleRole: "client", people: [{ id: "client-a", name: "Maya Client", role: "client" }], state: "pending", scheduledAt: null, deadlineAt: null, blocker: null }] };
+}
 beforeEach(() => {
-  mocks.streams = []; mocks.status = "authenticated"; mocks.user = { id: "client-a", role: "client", name: "Maya Client" };
+  mocks.streams = []; mocks.status = "authenticated"; mocks.user = { id: "client-a", role: "client", name: "Maya Client" }; mocks.chatAllowed = true;
+  vi.spyOn(projectStatusApi, "getProjectStatus").mockRejectedValue(new ApiError(404, "NOT_FOUND", "Unavailable"));
   tokenStorage.set("chat-test-session");
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({ matches: query.includes("pointer: fine"), addEventListener: vi.fn(), removeEventListener: vi.fn() }));
   vi.spyOn(projectChatApi, "summary").mockImplementation(async projectId => chatTestSummary({ project: { id: projectId, name: projectId === "project-a" ? "Courtyard residence" : "Garden residence", status: "active" } }));
@@ -51,6 +58,35 @@ beforeEach(() => {
 });
 
 describe("shared project messages", () => {
+  it("shows Project status on a project overview when messaging is unavailable", async () => {
+    mocks.chatAllowed = false;
+    vi.mocked(projectStatusApi.getProjectStatus).mockImplementation(async projectId => statusFixture(projectId));
+    app("/overview");
+    const trigger = await screen.findByRole("button", { name: "Project status" });
+    expect(screen.queryByRole("link", { name: "Messages" })).not.toBeInTheDocument();
+    await userEvent.click(trigger);
+    expect(await screen.findByText("Review the estimate")).toBeVisible();
+    expect(projectStatusApi.getProjectStatus).toHaveBeenCalledWith("project-a", expect.any(AbortSignal));
+  });
+  it("keeps Project status available when the conversation summary fails", async () => {
+    vi.mocked(projectChatApi.summary).mockRejectedValue(new ApiError(503, "UNAVAILABLE", "Chat unavailable"));
+    vi.mocked(projectStatusApi.getProjectStatus).mockImplementation(async projectId => statusFixture(projectId));
+    app();
+    const trigger = await screen.findByRole("button", { name: "Project status" });
+    await userEvent.click(trigger);
+    expect(await screen.findByText("Review the estimate")).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "Message the project team" })).not.toBeInTheDocument();
+  });
+  it("offers one independently verified status control in each conversation row", async () => {
+    vi.mocked(projectStatusApi.getProjectStatus).mockImplementation(async projectId => statusFixture(projectId));
+    app("/project-messages");
+    const trigger = await screen.findByRole("button", { name: "Project status for Courtyard residence" });
+    expect(projectStatusApi.getProjectStatus).not.toHaveBeenCalled();
+    await userEvent.click(trigger);
+    expect(await screen.findByText("Review the estimate")).toBeVisible();
+    expect(projectStatusApi.getProjectStatus).toHaveBeenCalledTimes(1);
+    expect(mocks.streams).toHaveLength(0);
+  });
   it("shows only other users typing without refetching messages and clears when disconnected", async () => {
     app(); await screen.findByText("Critical 3");
     await waitFor(() => expect(mocks.streams.length).toBeGreaterThan(0));

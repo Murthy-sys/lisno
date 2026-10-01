@@ -14,6 +14,7 @@
 .finance-entry-workspace h3 { font: var(--type-heading-3); }
 .finance-entry-workspace p { color: var(--color-text-muted); }
 .finance-entry-workspace > [role="status"] { flex-basis: 100%; color: var(--color-success); }
+.finance-entry-workspace__actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); }
 
 .finance-entry-form.finance-entry-form--panel {
   padding: 0;
@@ -51,4 +52,6 @@
   .finance-entry-form--panel .finance-entry-form__grid,
   .finance-entry-detail__facts { grid-template-columns: minmax(0, 1fr); }
   .finance-panel-actions > .ui-button { flex: 1 1 auto; }
+  .finance-entry-workspace__actions { width: 100%; justify-content: flex-start; }
+  .finance-entry-workspace__actions > .ui-button { flex: 1 1 auto; }
 }

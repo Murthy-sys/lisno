@@ -22,6 +22,7 @@ export function ProjectWorkflowPanel({ projectId, onOpenTask, timelineContainer,
     refetchInterval: 60_000
   });
   const currentStage = workflow.data ? currentProjectWorkflowStage(workflow.data) : undefined;
+  const showProjectProgress = workflow.data?.projectId === projectId && workflow.data.estimateApprovalStatus === "approved";
   const initialStageId = presentation !== "client" && timelineContainer !== undefined && currentStage?.type === "space_planning_tentative_look_feel"
     ? undefined : currentStage?.id;
 
@@ -44,9 +45,9 @@ export function ProjectWorkflowPanel({ projectId, onOpenTask, timelineContainer,
           {presentation === "full" && workflow.data?.initialPayment ? <ProjectInitialPaymentStatus key={`payment-${projectId}`} workflow={workflow.data} /> : null}
           {presentation === "full" && workflow.data?.notices?.length ? <section className="workflow-live-notices" aria-label="Project notifications"><h3>Project updates</h3><ul>{workflow.data.notices.map((notice) => <li key={notice.id}>{notice.message}</li>)}</ul></section> : null}
           {presentation === "full" && workflow.data?.projectStages?.some((stage) => stage.operational?.reminders?.length) ? <section className="workflow-live-notices" aria-label="Stage SLA reminders"><h3>Stage SLA reminders</h3><ul>{workflow.data.projectStages.flatMap((stage) => stage.operational?.reminders?.map((reminder) => <li key={reminder.id}><strong>{stage.name}</strong><span>{reminder.label}</span><time dateTime={reminder.dueAt}>{new Date(reminder.dueAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</time></li>) ?? [])}</ul><p>Due reminders refresh while this project is open.</p></section> : null}
-          <ProjectWorkflowProgress key={`workflow-${projectId}`} workflow={workflow.data!} onOpenTask={onOpenTask} timelineContainer={timelineContainer}
+          {showProjectProgress ? <ProjectWorkflowProgress key={`workflow-${projectId}`} workflow={workflow.data!} onOpenTask={onOpenTask} timelineContainer={timelineContainer}
             initialStageId={initialStageId} presentation={presentation}
-            renderStageActions={(stage) => <WorkflowStageActions key={`${workflow.data!.projectId}:${stage.id}`} workflow={workflow.data!} stage={stage} expandKickoff={stage.type === "internal_kickoff"} presentation={presentation} refreshError={workflow.isError} refreshing={workflow.isFetching} />} />
+            renderStageActions={(stage) => <WorkflowStageActions key={`${workflow.data!.projectId}:${stage.id}`} workflow={workflow.data!} stage={stage} expandKickoff={stage.type === "internal_kickoff"} presentation={presentation} refreshError={workflow.isError} refreshing={workflow.isFetching} />} /> : null}
         </>
       )}
       <ProjectClientActions key={projectId} projectId={projectId} hideWhenEmpty={presentation !== "full"} />

@@ -38,6 +38,10 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
     return { items: filtered.slice(offset, offset + limit), pagination: { limit, offset, total: filtered.length, hasMore: offset + limit < filtered.length } };
   };
   if (path === "/admin/dashboard/overview") return empty ? { ...superAdminDashboardOverviewFixture, projects: zeroAggregates(superAdminDashboardOverviewFixture.projects), estimation: zeroAggregates(superAdminDashboardOverviewFixture.estimation), design: zeroAggregates(superAdminDashboardOverviewFixture.design), finance: zeroAggregates(superAdminDashboardOverviewFixture.finance), workforce: zeroAggregates(superAdminDashboardOverviewFixture.workforce), execution: zeroAggregates(superAdminDashboardOverviewFixture.execution), procurement: zeroAggregates(superAdminDashboardOverviewFixture.procurement), governance: zeroAggregates(superAdminDashboardOverviewFixture.governance), risk: zeroAggregates(superAdminDashboardOverviewFixture.risk), trends: [] } : superAdminDashboardOverviewFixture;
+  if (path === "/daily-critical-tasks") return { timezone: "Asia/Kolkata", localDate: "2026-10-01", scheduledAt: "2026-10-01T11:30:00.000Z", acknowledgedAt: "2026-10-01T11:35:00.000Z", items: [] };
+  if (path === "/chat/availability") return { available: false, reason: "Synthetic QA" };
+  if (path === "/admin/purchase-orders/pending") return { items: [], total: 0, limit: 50, offset: 0 };
+  if (path === "/admin/project-completion-tasks") return { items: [], total: 0, limit: 100, offset: 0 };
   if (path === "/admin/dashboard/projects") return { ...superAdminDashboardProjectsPageFixture, ...page(superAdminDashboardProjectsPageFixture.items) };
   if (path === "/admin/dashboard/workforce") return { ...superAdminDashboardWorkforcePageFixture, ...page(superAdminDashboardWorkforcePageFixture.items) };
   if (path === "/admin/projects") return page([admin.project, { ...admin.approvedPendingProject, name: "North Residence — upper floor and garden apartment renovation" }]);
@@ -68,7 +72,13 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (path === "/admin/design-plan-response-tasks") return [];
   if (path === "/projects") return page(designer.projects);
   if (/^\/projects\/[^/]+$/.test(path)) return { ...project.project, id: decodeURIComponent(path.split("/").at(-1)!), progress: 45, ...(empty ? { floors: [] } : {}) };
-  if (/^\/projects\/[^/]+\/design-workflow$/.test(path)) return empty ? { projectId: path.split("/")[2], projectName: "Aurora Villa", serverNow: "2026-09-13T10:00:00.000Z", floors: [] } : drawing.drawingWorkflow(path.split("/")[2], scenario.role === "designer");
+  if (/^\/projects\/[^/]+\/status$/.test(path)) {
+    const projectId = decodeURIComponent(path.split("/")[2]);
+    return { projectId, projectName: project.project.name, projectStatus: "active", serverNow: "2026-10-01T10:00:00.000Z", state: "no_pending", currentStage: null, pendingActions: [], issue: null };
+  }
+  if (/^\/projects\/[^/]+\/vendor-work-progress$/.test(path)) return { projectId: decodeURIComponent(path.split("/")[2]), assignments: [], pendingOwner: "none" };
+  if (path === "/vendor/work") return { items: [], total: 0, limit: Number(params.get("limit") ?? 50), offset: Number(params.get("offset") ?? 0) };
+  if (/^\/projects\/[^/]+\/design-workflow$/.test(path)) return empty ? { projectId: path.split("/")[2], projectName: "Aurora Villa", estimateApprovalStatus: "approved", serverNow: "2026-09-13T10:00:00.000Z", floors: [] } : { ...drawing.drawingWorkflow(path.split("/")[2], scenario.role === "designer"), estimateApprovalStatus: "approved" };
   if (path === "/design-workflow/payment-confirmations") return [];
   if (/^\/projects\/[^/]+\/design-versions$/.test(path)) return page([{ ...drawing.approvedDocument, projectId: path.split("/")[2] }]);
   if (path === "/design-versions/qa-approved-document/sections") return empty ? { ...drawing.approvedExtraction, pages: [], sections: [] } : drawing.approvedExtraction;
@@ -89,12 +99,14 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (path === "/client/estimates/estimate-1/design-drawings") return empty ? { uploads: [], pages: [], drawings: [], revisions: [], readiness: { ready: false, total: 0, approved: 0, awaitingReview: 0, changesRequested: 0 } } : drawing.clientDrawingWorkspace("estimate-1");
   if (path === "/client/estimates/estimate-1/plan-review") return empty ? { uploads: [], pages: [], openRequests: [] } : drawing.clientPlanWorkspace("estimate-1");
   if (/^\/client\/projects\/[^/]+\/design-sections$/.test(path)) return empty ? { projectId: path.split("/")[3], sections: [], progress: { total: 0, approved: 0, awaitingReview: 0, rejected: 0 } } : { ...drawing.review, projectId: path.split("/")[3] };
+  if (/^\/clients\/projects\/[^/]+\/vendor-work-reviews$/.test(path)) return { items: [], total: 0, pendingTotal: 0, limit: Number(params.get("limit") ?? 50), offset: Number(params.get("offset") ?? 0) };
   if (path === "/leads") return page([lead]);
   if (path === "/leads/lead-1") return lead;
   if (path === "/leads/lead-1/activities") return page([{ id: "activity-1", leadId: lead.id, actorId: lead.ownerId, type: "meeting", note: "Reviewed kitchen and living room measurements with the client.", occurredAt: lead.updatedAt, createdAt: lead.updatedAt }]);
   if (path === "/leads/lead-1/estimate") return empty ? null : estimate;
   if (path === "/estimates") return list([estimate]);
   if (/^\/estimates\/(estimate-1|estimate-aurora-villa|estimate-aurora-studio)\/design-uploads$/.test(path)) return empty ? { uploads: [], pages: [], drawings: [], revisions: [] } : drawing.extractedWorkspace(path.split("/")[2]);
+  if (/^\/estimates\/(estimate-1|estimate-aurora-villa|estimate-aurora-studio)\/design-plan-documents$/.test(path)) return { manifestHash: `synthetic-${path.split("/")[2]}`, readyForSubmission: false, documents: [], reviewRoundId: null };
   if (path === "/estimates/pending-review" || path === "/estimates/review-queue") return [];
   if (path === "/estimates/designers") return team.map((t) => t.user);
   if (path === "/finance/projects") return { ...page(buckets), summary: empty ? zeroAggregates(finance.portfolioSummary) : finance.portfolioSummary };
@@ -106,7 +118,18 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   }
   if (path === "/procurement/projects") return list([procurement.procurementProject]);
   if (/^\/procurement\/projects\/[^/]+\/items$/.test(path)) return { items: [], total: 0, limit: Number(params.get("limit") ?? 20), offset: Number(params.get("offset") ?? 0) };
-  if (path === "/procurement/uoms") return [];
+  if (/^\/procurement\/projects\/[^/]+\/purchase-orders$/.test(path)) return { items: [], total: 0, limit: Number(params.get("limit") ?? 50), offset: Number(params.get("offset") ?? 0) };
+  if (/^\/procurement\/projects\/[^/]+\/purchase-order-commitments$/.test(path)) return { approvedEstimatePaise: 375_000, committedPaise: 0, committedGstPaise: 0, committedTotalPaise: 0, remainingPaise: 375_000 };
+  if (path === "/procurement/vendors") {
+    const vendorDemo = scenario.route.includes("qaVendor=ready") && !empty;
+    const items = vendorDemo && params.get("effectiveStatus") === "active"
+      ? [{ id: "qa-vendor-active", code: "QA-V1", name: "Timber House", status: "active", assignable: true,
+        readiness: { inductionApproved: false, vendorSelfKpiComplete: true, procurementKpiComplete: true, profileComplete: false, physicalAddressVerified: false } }]
+      : [];
+    return { items, total: items.length, limit: Number(params.get("limit") ?? 20), offset: Number(params.get("offset") ?? 0) };
+  }
+  if (path === "/procurement/uoms") return scenario.route.includes("qaVendor=ready") && !empty
+    ? [{ id: "qa-uom-sheet", code: "SHT", name: "Sheet" }] : [];
   if (path === "/workflow-tasks") return list([workflowTask(scenario.role)]);
   if (/^\/design-section-revisions\/(revision-1|revision-2|revision-3)\/image$/.test(path)) return drawing.syntheticDrawingResponse(drawing.revision.crop);
   if (/^\/design-source-pages\/(page-1|page-2)\/image$/.test(path)) return drawing.syntheticDrawingResponse();

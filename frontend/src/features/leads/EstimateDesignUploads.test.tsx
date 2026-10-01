@@ -1,10 +1,13 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { QueryClient } from "@tanstack/react-query";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EstimateDesignUpload } from "../../api/types";
 import { renderWithQuery } from "../../test/render";
+import * as designApi from "./estimateDesignApi";
 import { EstimateDesignUploads } from "./EstimateDesignUploads";
+import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 
 const rooms = [
   { id: "room-living", label: "Living Room" },
@@ -80,6 +83,37 @@ const deletableUpload: EstimateDesignUpload = {
   requestReplacement: null
 };
 
+function resubmissionWorkspace() {
+  return {
+    uploads: [
+      { ...deletableUpload, id: "upload-1", originalFilename: "old-plan.pdf" },
+      { ...deletableUpload, id: "upload-2", originalFilename: "new-plan.pdf" }
+    ],
+    pages: [page, { ...page, id: "page-2", uploadId: "upload-2" }],
+    drawings: [drawings[0]!, { ...drawings[1]!, uploadId: "upload-2", sourcePageId: "page-2" }],
+    revisions: [
+      { ...revisions[0]!, reviewStatus: "changes_requested", replacesRevisionId: null as string | null },
+      { ...revisions[1]!, sourcePageId: "page-2" }
+    ]
+  };
+}
+
+function mockReadinessWorkspace(
+  getWorkspace: () => unknown,
+  request?: (url: string, init?: RequestInit) => Response | Promise<Response> | undefined
+) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    const override = request?.(url, init);
+    if (override) return override;
+    if (url.endsWith("/estimates/estimate-1/design-uploads")) return response(getWorkspace());
+    if (url.includes("/estimate-design-revisions/") && url.endsWith("/image")) {
+      return new Response(new Blob(["image"], { type: "image/png" }));
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  });
+}
+
 class FakeXMLHttpRequest {
   static instances: FakeXMLHttpRequest[] = [];
 
@@ -107,6 +141,10 @@ class FakeXMLHttpRequest {
   }
 }
 
+beforeEach(() => {
+  vi.spyOn(designApi, "getPlanDocuments").mockResolvedValue({ manifestHash: "a".repeat(64), readyForSubmission: true, documents: [], reviewRoundId: null });
+});
+
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -114,6 +152,171 @@ afterEach(() => {
 });
 
 describe("EstimateDesignUploads", () => {
+  it("lists every active returned drawing ID beside an additional plan and opens the existing replacement dialog by keyboard", async () => {
+    const workspace = resubmissionWorkspace();
+    workspace.drawings.push({ ...drawings[0]!, id: "another-returned-drawing" });
+    workspace.revisions.push({ ...revisions[0]!, id: "another-returned-revision", drawingId: "another-returned-drawing", reviewStatus: "changes_requested" });
+    const fetchSpy = mockReadinessWorkspace(() => workspace);
+    const user = userEvent.setup();
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} variant="designer" />);
+
+    const notice = await screen.findByRole("region", { name: "Resolve returned drawings before submitting" });
+    expect(notice).toHaveTextContent("Upload the revised file for each requested item.");
+    const list = within(notice).getByRole("list", { name: "Returned drawings awaiting replacement" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(list).getAllByText("old-plan.pdf")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Delete upload old-plan.pdf" })).toBeEnabled();
+    const submit = screen.getByRole("button", { name: "Submit drawings to client" });
+    expect(submit).toBeDisabled();
+    expect(submit).toHaveAccessibleDescription(/Upload the revised file for each requested item/);
+    expect(fetchSpy.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+
+    const replace = within(list).getAllByRole("button", { name: "Upload revised item: Living ceiling" })[1]!;
+    replace.focus();
+    await user.keyboard("{Enter}");
+    const dialog = screen.getByRole("dialog", { name: "Upload replacement" });
+    expect(within(dialog).getByLabelText("Replacement drawing file")).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(replace).toHaveFocus();
+    expect(fetchSpy.mock.calls.some(([input]) => String(input).endsWith("/submit"))).toBe(false);
+  });
+
+  it.each(["estimator", "read-only designer"])("keeps returned-drawing submission guidance out of the %s workspace", async (variant) => {
+    mockReadinessWorkspace(resubmissionWorkspace);
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} variant={variant === "estimator" ? "estimator" : "designer"} readOnly={variant !== "estimator"} />);
+    await screen.findByRole("article", { name: "Living ceiling drawing" });
+    expect(screen.queryByRole("region", { name: "Resolve returned drawings before submitting" })).not.toBeInTheDocument();
+    if (variant === "estimator") expect(screen.getByRole("button", { name: "Submit drawings to client" })).toBeEnabled();
+    else expect(screen.queryByRole("button", { name: "Submit drawings to client" })).not.toBeInTheDocument();
+  });
+
+  it.each(["draft", "approved"])("allows submission with a current %s revision despite returned history and retired drawings", async (reviewStatus) => {
+    const workspace = resubmissionWorkspace();
+    workspace.revisions.unshift({ ...workspace.revisions[0]!, id: "current-revision", revisionNumber: 2, reviewStatus });
+    workspace.drawings.push({ ...drawings[0]!, id: "retired-drawing", active: false });
+    workspace.revisions.push({ ...revisions[0]!, id: "retired-revision", drawingId: "retired-drawing", reviewStatus: "changes_requested" });
+    const fetchSpy = mockReadinessWorkspace(() => workspace, (url) => url.endsWith("/submit") ? response({ submittedCount: 2, deliveryStatus: "sent" }) : undefined);
+    const user = userEvent.setup();
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} variant="designer" />);
+    const submit = await screen.findByRole("button", { name: "Submit drawings to client" });
+    expect(screen.queryByRole("region", { name: "Resolve returned drawings before submitting" })).not.toBeInTheDocument();
+    await waitFor(() => expect(submit).toBeEnabled());
+    await user.click(submit);
+    expect(await screen.findByText("Design submitted and emailed to the Client.")).toBeVisible();
+    expect(fetchSpy.mock.calls.filter(([input]) => String(input).endsWith("/submit"))).toHaveLength(1);
+  });
+
+  it("explains a PDF preparation failure beside the disabled Submit button", async () => {
+    const workspace = resubmissionWorkspace();
+    workspace.revisions.push({ ...workspace.revisions[0]!, id: "updated-revision", revisionNumber: 2, reviewStatus: "draft" });
+    mockReadinessWorkspace(() => workspace);
+    vi.mocked(designApi.getPlanDocuments).mockResolvedValue({ manifestHash: "a".repeat(64), readyForSubmission: false, reviewRoundId: null, documents: [{ sourceUploadId: "upload-1", documentId: "document-1", originalFilename: "plan.pdf", manifestHash: "b".repeat(64), status: "failed", pageCount: 1, pdfUrl: null, failureCode: "PLAN_DOCUMENT_ASSET_MISSING", failureMessage: "A source drawing is unavailable. Re-upload the affected file." }] });
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} variant="designer" />);
+    const submit = await screen.findByRole("button", { name: "Submit drawings to client" });
+    await waitFor(() => expect(submit).toHaveAccessibleDescription("A source drawing is unavailable. Re-upload the affected file."));
+    expect(submit).toBeDisabled();
+    expect(screen.queryByText(/drawings? can be submitted now/)).not.toBeInTheDocument();
+  });
+
+  it("clears the Designer blocker after replacing its returned revision and keeps earlier history", async () => {
+    const workspace = resubmissionWorkspace();
+    const nextRevision = { ...revisions[0]!, id: "replacement-revision", revisionNumber: 2, reviewStatus: "draft", replacesRevisionId: revisions[0]!.id };
+    const fetchSpy = mockReadinessWorkspace(() => workspace, (url) => {
+      if (!url.endsWith("/drawing-living/replacement")) return;
+      workspace.revisions.push(nextRevision);
+      return response({ ...drawings[0], revision: nextRevision });
+    });
+    const user = userEvent.setup();
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} variant="designer" />);
+    await user.click(await screen.findByRole("button", { name: "Upload revised item: Living ceiling" }));
+    await user.upload(screen.getByLabelText("Replacement drawing file"), new File(["replacement"], "replacement.png", { type: "image/png" }));
+    await user.click(screen.getByRole("button", { name: "Upload replacement" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Resolve returned drawings before submitting" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Submit drawings to client" })).toBeEnabled();
+    const request = fetchSpy.mock.calls.find(([input]) => String(input).endsWith("/drawing-living/replacement"))!;
+    expect((request[1]?.body as FormData).get("version")).toBe("1");
+    await user.click(screen.getByRole("button", { name: "More actions for Living ceiling" }));
+    await user.click(screen.getByRole("menuitem", { name: "History" }));
+    const history = screen.getByRole("dialog", { name: "Drawing history" });
+    expect(history).toHaveTextContent("Revision 1 · changes requested");
+    expect(history).toHaveTextContent("Revision 2 · draft");
+  });
+
+  it("clears the Designer blocker only after explicitly confirming removal of the eligible superseded upload", async () => {
+    const workspace = resubmissionWorkspace();
+    const fetchSpy = mockReadinessWorkspace(() => workspace, (url, init) => {
+      if (url.endsWith("/estimate-design-uploads/upload-1") && init?.method === "DELETE") {
+        workspace.uploads = workspace.uploads.filter((upload) => upload.id !== "upload-1");
+        workspace.drawings = workspace.drawings.filter((drawing) => drawing.uploadId !== "upload-1");
+        return response({ id: "upload-1", deleted: true });
+      }
+      if (url.endsWith("/submit")) return response({ submittedCount: 1, deliveryStatus: "sent" });
+    });
+    const user = userEvent.setup();
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} variant="designer" />);
+    await user.click(await screen.findByRole("button", { name: "Delete upload old-plan.pdf" }));
+    expect(fetchSpy.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+    const dialog = screen.getByRole("alertdialog", { name: "Delete design upload?" });
+    expect(dialog).toHaveTextContent("old-plan.pdf");
+    await user.click(within(dialog).getByRole("button", { name: "Delete upload" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Resolve returned drawings before submitting" })).not.toBeInTheDocument());
+    expect(screen.getByText("new-plan.pdf")).toBeVisible();
+    expect(screen.queryByRole("article", { name: "Living ceiling drawing" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Submit drawings to client" }));
+    expect(await screen.findByText("Design submitted and emailed to the Client.")).toBeVisible();
+    expect(fetchSpy.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
+  });
+
+  it.each(["DESIGN_PLAN_RETURNED_DRAWINGS_PENDING", "DESIGN_PLAN_REVISION_CONFLICT", "STALE_ESTIMATE_DRAWING"])("shows the actionable %s error and refreshes current blockers plus workflow queries", async (code) => {
+    const workspace = resubmissionWorkspace();
+    workspace.revisions[0]!.reviewStatus = "draft";
+    let workspaceGets = 0;
+    const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+    mockReadinessWorkspace(() => { workspaceGets += 1; return workspace; }, (url) => {
+      if (!url.endsWith("/submit")) return;
+      workspace.revisions[0]!.reviewStatus = "changes_requested";
+      return Response.json({ error: { code, message: "Replace every returned drawing before submitting." } }, { status: 409 });
+    });
+    const user = userEvent.setup();
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} variant="designer" />);
+    await user.click(await screen.findByRole("button", { name: "Submit drawings to client" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Replace every returned drawing before submitting.");
+    expect(screen.getByRole("region", { name: "Resolve returned drawings before submitting" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Submit drawings to client" })).toBeDisabled();
+    expect(workspaceGets).toBeGreaterThanOrEqual(2);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: projectWorkflowKeys.all });
+    workspace.revisions.push({ ...revisions[0]!, id: "current-revision", revisionNumber: 2 });
+    await user.click(screen.getByRole("button", { name: "Refresh design plans" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Resolve returned drawings before submitting" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Submit drawings to client" })).toBeEnabled();
+  });
+
+  it("keeps submission disabled through conflict refresh and a refresh failure, then recovers on retry", async () => {
+    const workspace = resubmissionWorkspace();
+    workspace.revisions[0]!.reviewStatus = "draft";
+    let refreshing = false;
+    let finishRefresh!: (value: Response) => void;
+    mockReadinessWorkspace(() => workspace, (url) => {
+      if (url.endsWith("/submit")) {
+        refreshing = true;
+        return Response.json({ error: { code: "DESIGN_PLAN_REVISION_CONFLICT", message: "The drawings changed. Refresh and review them." } }, { status: 409 });
+      }
+      if (refreshing && url.endsWith("/design-uploads")) return new Promise<Response>((resolve) => { finishRefresh = resolve; });
+    });
+    const user = userEvent.setup();
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} variant="designer" />);
+    await user.click(await screen.findByRole("button", { name: "Submit drawings to client" }));
+    expect(await screen.findByText("Refreshing design plans…")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Submitting…" })).toBeDisabled();
+    finishRefresh(Response.json({ error: { code: "UNAVAILABLE", message: "Unavailable" } }, { status: 503 }));
+    expect(await screen.findByText(/displayed drawings may be out of date/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Submit drawings to client" })).toBeDisabled();
+    refreshing = false;
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(screen.queryByText(/displayed drawings may be out of date/)).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Submit drawings to client" })).toBeEnabled();
+  });
+
   it("keeps ordinary uploads behind an explicit new-page action while a plan request is open", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(response({ uploads: [], pages: [], drawings: [], revisions: [] }));
     const user = userEvent.setup();
@@ -1179,7 +1382,7 @@ describe("EstimateDesignUploads", () => {
     await user.click(screen.getByRole("button", { name: "Upload replacement" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "The replacement was not uploaded."
+      "Temporary storage failure."
     );
     expect(fileInput.files?.[0]?.name).toBe("changed.png");
     expect(within(row).getByText("Changes requested")).toBeVisible();

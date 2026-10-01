@@ -48,6 +48,7 @@ const statusTones: Record<DesignPlanStatus, StatusTone> = {
 };
 
 function designAction(status: DesignPlanStatus) {
+  if (status === "pending_assignment") return "Await Designer assignment";
   if (status === "changes_requested") return "Update and resubmit the design";
   if (status === "ready_for_client") return "Await Client approval";
   if (status === "approved") return "View approved design images";
@@ -55,13 +56,25 @@ function designAction(status: DesignPlanStatus) {
   return "Upload the design plan";
 }
 
-function stageAction(workflow: DesignWorkflowView, stage: DesignWorkflowStage | undefined, status: DesignPlanStatus) {
+function stageAction(workflow: DesignWorkflowView, stage: DesignWorkflowStage | undefined, status: DesignPlanStatus, estimateId: string) {
   if (workflow.initialPayment && !workflow.initialPayment.confirmedAt) {
     return workflow.initialPayment.status === "awaiting_estimate_approval" ? "Await estimate approval" : "Await initial payment confirmation";
   }
   if (!stage) {
     if (!workflow.projectStages?.length) return "Configure the project workflow";
     return status === "ready_for_client" || status === "approved" ? designAction(status) : "Review project designs";
+  }
+  if (stage.type === "space_planning_tentative_look_feel") {
+    const operational = stage.operational;
+    if (!workflow.initialPayment) return "Initial payment status is unavailable";
+    if (!operational) return "Project stage availability is unavailable";
+    if (operational.blockingReasons.length) return operational.blockingReasons[0]!;
+    if (!operational.spacePlanning || operational.spacePlanning.estimateId !== estimateId) return "Project design source is unavailable for this estimate";
+    if (operational.timing.state === "paused") return "Project work is paused";
+    if (operational.timing.state === "waiting" || !["in_progress", "in_review"].includes(operational.status)) {
+      return "Await project stage availability";
+    }
+    return designAction(status);
   }
   const actions = stage.operational?.availableActions ?? [];
   const pendingStep = workflowStageNextStep(stage);
@@ -71,7 +84,6 @@ function stageAction(workflow: DesignWorkflowView, stage: DesignWorkflowStage | 
   if (completion) return completion.label;
   if (enabled.length) return enabled[0]!.label;
   if (stage.operational?.blockingReasons.length) return stage.operational.blockingReasons[0]!;
-  if (stage.type === "space_planning_tentative_look_feel") return designAction(status);
   return `Await completion of ${stage.name}`;
 }
 
@@ -112,13 +124,17 @@ export function DesignerDesignPlanTasksPage() {
   const savedWorkflow = workflow.data?.projectId === task?.projectId ? workflow.data : undefined;
   const currentStage = savedWorkflow ? currentProjectWorkflowStage(savedWorkflow) : undefined;
   const uploadStage = savedWorkflow?.projectStages?.find((stage) => stage.type === "space_planning_tentative_look_feel");
+  const uploadOperational = uploadStage?.operational;
   const atUploadStage = Boolean(uploadStage && currentStage?.id === uploadStage.id);
   const showDesignSection = Boolean(uploadStage && (atUploadStage || workflowStageStatus(uploadStage) === "completed"));
-  const canEditDesign = Boolean(atUploadStage && uploadStage?.operational &&
-    uploadStage.operational.status !== "blocked" && uploadStage.operational.blockingReasons.length === 0 &&
-    !["waiting", "paused"].includes(uploadStage.operational.timing.state) && !workflow.isError &&
-    task && ["assigned", "in_progress", "changes_requested"].includes(task.status));
-  const nextAction = workflow.isError ? "Refresh the project workflow" : !savedWorkflow ? "Loading project workflow…" : stageAction(savedWorkflow, currentStage, task!.status);
+  const canWorkOnUploadStage = Boolean(atUploadStage && uploadOperational?.spacePlanning?.estimateId === task?.estimateId &&
+    savedWorkflow?.initialPayment?.confirmedAt && uploadOperational &&
+    ["in_progress", "in_review"].includes(uploadOperational.status) && uploadOperational.blockingReasons.length === 0 &&
+    !["waiting", "paused"].includes(uploadOperational.timing.state) &&
+    !workflow.isError && !workflow.isFetching && !tasks.isFetching);
+  const canEditDesign = Boolean(canWorkOnUploadStage && task && ["assigned", "in_progress", "changes_requested"].includes(task.status));
+  const nextAction = workflow.isError ? "Refresh the project workflow" : !savedWorkflow ? "Loading project workflow…" :
+    workflow.isFetching || tasks.isFetching ? "Checking the latest project workflow…" : stageAction(savedWorkflow, currentStage, task!.status, task!.estimateId);
 
   return (
     <section
@@ -215,7 +231,7 @@ export function DesignerDesignPlanTasksPage() {
             <ProjectWorkflowPanel key={`workflow-${task.projectId}`} projectId={task.projectId} timelineContainer={timelineContainer} presentation="designer" />
 
             {showDesignSection && task.status === "changes_requested" ? (
-              <EstimatePlanChangeRequests estimateId={task.estimateId} />
+              <EstimatePlanChangeRequests key={`requests-${task.estimateId}`} estimateId={task.estimateId} />
             ) : null}
             {showDesignSection && task.status === "ready_for_client" ? (
               <p className="designer-plan-workspace__notice" role="status">
@@ -242,8 +258,7 @@ export function DesignerDesignPlanTasksPage() {
                       ? "open"
                       : "none"}
               readOnly={!canEditDesign}
-              onUploaded={() => void tasks.refetch()}
-              onSubmitted={() => void tasks.refetch()}
+              allowDeletion={canWorkOnUploadStage && task.status !== "pending_assignment" && task.status !== "approved"}
             /> : null}
           </section>
         </div>

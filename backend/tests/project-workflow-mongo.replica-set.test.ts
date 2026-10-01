@@ -1,15 +1,19 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import mongoose from "mongoose";
+import sharp from "sharp";
+import { PDFDocument, rgb } from "pdf-lib";
 
 import { sha256Hex } from "../src/domain/estimate-client-review.js";
 import type { WorkerRole } from "../src/domain/roles.js";
 import { DesignPlanResponseProofModel } from "../src/models/DesignPlanResponseProof.js";
 import { DesignPlanReviewRoundModel } from "../src/models/DesignPlanReviewRound.js";
+import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
 import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
 import { EstimateDesignExtractionJobModel } from "../src/models/EstimateDesignExtractionJob.js";
 import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
 import { EstimateDesignSourcePageModel } from "../src/models/EstimateDesignSourcePage.js";
 import { EstimateDesignUploadModel } from "../src/models/EstimateDesignUpload.js";
+import { EstimateDesignPlanDocumentModel } from "../src/models/EstimateDesignPlanDocument.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
@@ -19,6 +23,7 @@ import { UserModel } from "../src/models/User.js";
 import type { AuditService } from "../src/services/audit.service.js";
 import { createEstimateDecisionService } from "../src/services/estimate-decision.service.js";
 import { createEstimateDesignService } from "../src/services/estimate-design.service.js";
+import { createEstimatePlanDocumentService } from "../src/services/estimate-plan-document.service.js";
 import { createProjectWorkflowService, DesignDecisionProofRetentionError } from "../src/services/project-workflow.service.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
@@ -26,10 +31,33 @@ const NOW = new Date("2026-08-25T10:00:00.000Z");
 const ESTIMATE_ID = "workflow-commercial-estimate";
 const LEAD_ID = "workflow-commercial-lead";
 
+async function nativePlanPdf(width: number, height: number, label: string) {
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([width, height]);
+  page.drawText(label, { x: 5, y: height - 15, size: 10, color: rgb(0, 0, 0) });
+  return Buffer.from(await pdf.save());
+}
+
+function storedTestFiles(objects: Map<string, Buffer>) {
+  return {
+    read: vi.fn(async (reference: string) => {
+      const bytes = objects.get(reference);
+      if (!bytes) throw new Error(`Missing test object: ${reference}`);
+      return Buffer.from(bytes);
+    }),
+    saveGenerated: vi.fn(async ({ data, extension }: { data: Buffer; extension: string }) => {
+      const reference = `synthetic/generated-${objects.size}${extension}`;
+      objects.set(reference, Buffer.from(data));
+      return { reference };
+    }),
+    delete: vi.fn(async (reference: string) => { objects.delete(reference); })
+  };
+}
+
 function workerUser(
   id: string,
   name: string,
-  role: WorkerRole | "procurement",
+  role: WorkerRole | "procurement" | "site_manager",
   active = true
 ) {
   const email = `${id}@example.test`;
@@ -61,8 +89,10 @@ beforeAll(async () => {
     EstimateDesignRevisionModel.syncIndexes(),
     EstimateDesignSourcePageModel.syncIndexes(),
     EstimateDesignUploadModel.syncIndexes(),
+    EstimateDesignPlanDocumentModel.syncIndexes(),
     DesignPlanReviewRoundModel.syncIndexes(),
     DesignPlanResponseProofModel.syncIndexes(),
+    EstimateClientReviewRoundModel.syncIndexes(),
     LeadModel.syncIndexes(),
     ProjectAccessGrantModel.syncIndexes(),
     ProjectModel.syncIndexes(),
@@ -312,6 +342,38 @@ describe("commercial approval handoff", () => {
       updatedAt: NOW
     });
 
+    // Client portal decisions require the immutable proposal that was actually published.
+    await EstimateClientReviewRoundModel.create({
+      _id: "workflow-commercial-round",
+      estimateId: ESTIMATE_ID,
+      leadId: LEAD_ID,
+      projectId: null,
+      estimateVersion: 3,
+      sendGeneration: 1,
+      dedupeKey: "a".repeat(64),
+      recipientEmail: "asha@example.test",
+      estimateSnapshot: {
+        clientName: "Asha Rao", projectName: "Aurora Residence", location: "Pune", propertyType: "Apartment",
+        lineItems: [{
+          catalogueId: "CA02", roomName: "Master Bedroom", specification: "Wardrobe", unit: "sqft",
+          rate: 1_000, quantity: 10, included: true, amount: 10_000
+        }],
+        subtotal: 10_000, gst: 1_800, total: 11_800
+      },
+      pdfFilename: "estimate.pdf",
+      pdfMimeType: "application/pdf",
+      pdfByteSize: 10,
+      pdfSha256: "b".repeat(64),
+      pdfStorageReference: "synthetic/commercial-estimate.pdf",
+      deliveryStatus: "sent",
+      deliveryAttemptGeneration: 1,
+      deliveryAttemptCount: 1,
+      assignedAdminId: "workflow-admin",
+      status: "pending",
+      version: 1,
+      createdAt: NOW
+    });
+
     const drawingReadiness = vi.fn(async () => {
       throw new Error("Commercial approval must not inspect Design drawings.");
     });
@@ -331,7 +393,7 @@ describe("commercial approval handoff", () => {
 
     const result = await service.decide({
       estimateId: ESTIMATE_ID,
-      round: null,
+      round: { id: "workflow-commercial-round", expectedVersion: 1 },
       decision: "approve",
       note: "Approved",
       context: {
@@ -709,15 +771,8 @@ describe("Designer assignment and task access", () => {
       }
     );
 
-    const planBytes = Buffer.from("%PDF-1.7 legacy Designer plan");
-    const storage = {
-      read: vi.fn(async (reference: string) => {
-        if (reference !== "design-plans/legacy-designer-plan.pdf") {
-          throw new Error(`Missing test storage object: ${reference}`);
-        }
-        return Buffer.from(planBytes);
-      })
-    };
+    const planBytes = await nativePlanPdf(1000, 700, "Legacy Designer plan");
+    const storage = storedTestFiles(new Map([["design-plans/legacy-designer-plan.pdf", planBytes]]));
     const sendDesignPlan = vi.fn(async () => ({ kind: "sent" as const }));
     const append = vi.fn(async () => ({ id: "audit-legacy-delivery" }));
     const appendInMongoTransaction = vi.fn(async () => ({ id: "audit-legacy-assignment" }));
@@ -931,11 +986,240 @@ describe("Designer assignment and task access", () => {
       projectName: "Legacy Approval Residence",
       designPlanVersion: 1,
       attachments: [{
-        filename: "legacy-designer-plan.pdf",
+        filename: expect.stringMatching(/^legacy-designer-plan-revised-[a-f0-9]{8}\.pdf$/),
         mimeType: "application/pdf",
         bytes: planBytes
       }]
     }));
+  });
+});
+
+describe("Designer resubmission readiness", () => {
+  const designer = {
+    id: "readiness-designer", name: "Designer", email: "designer@example.test", role: "designer"
+  } as const;
+  const estimateId = "readiness-estimate";
+  const oldUploadId = "readiness-old-upload";
+  const oldDrawingId = "readiness-old-drawing";
+  const oldRevisionId = "readiness-old-revision";
+  const newRevisionId = "readiness-new-revision";
+
+  async function setup(options: { oldStatus?: "changes_requested" | "approved"; newDraft?: boolean } = {}) {
+    const oldStatus = options.oldStatus ?? "changes_requested";
+    const storageObjects = new Map<string, Buffer>();
+    const audit = {
+      append: vi.fn(async () => ({ id: "readiness-audit" })),
+      appendInMongoTransaction: vi.fn(async () => ({ id: "readiness-audit" }))
+    };
+    const sendDesignPlan = vi.fn(async () => ({ kind: "sent" as const }));
+    const storage = storedTestFiles(storageObjects);
+    const workflow = createProjectWorkflowService({
+      storage: storage as never, audit: audit as unknown as AuditService,
+      mailer: { deliveryKind: "local_test", sendDesignPlan }, now: () => NOW
+    });
+    const service = createEstimateDesignService({
+      storage: storage as never, audit: audit as unknown as AuditService,
+      projectWorkflow: workflow, maxUploadBytes: 1_000_000, now: () => NOW
+    });
+    await Promise.all([
+      UserModel.create({
+        _id: designer.id, name: designer.name, email: designer.email, emailNormalized: designer.email,
+        passwordHash: "unused", role: designer.role, active: true
+      }),
+      UserModel.create({
+        _id: "readiness-admin", name: "Admin", email: "admin@example.test", emailNormalized: "admin@example.test",
+        passwordHash: "unused", role: "super_admin", active: true
+      }),
+      ProjectModel.create({
+        _id: "readiness-project", name: "Test residence", clientId: "readiness-client", clientName: "Client",
+        clientEmail: "client@example.test", clientEmailNormalized: "client@example.test", clientMobile: "9000000000", clientAddress: "Pune",
+        status: "planning", location: "Pune", assignedDesignerIds: [designer.id],
+        plannedStartAt: NOW, plannedEndAt: new Date("2026-11-23T10:00:00.000Z")
+      }),
+      LeadModel.create({
+        _id: "readiness-lead", projectId: "readiness-project", ownerId: "readiness-sales", clientName: "Client",
+        clientEmail: "client@example.test", clientMobile: "9000000000", projectName: "Test residence",
+        location: "Pune", propertyType: "Villa", source: "direct", stage: "won", nextAction: "Revise Design", nextActionAt: NOW
+      }),
+      EstimateModel.create({
+        _id: estimateId, leadId: "readiness-lead", projectId: "readiness-project", ownerId: "readiness-sales",
+        status: "client_approved", propertyType: "Villa", designPlanDesignerId: designer.id,
+        designPlanStatus: "changes_requested", designPlanVersion: 1, designFrozenAt: null
+      }),
+      ProjectWorkflowTaskModel.create({
+        _id: "readiness-task", dedupeKey: `${estimateId}:design-plan-upload`, projectId: "readiness-project", estimateId,
+        designPlanVersion: 1, kind: "design_plan_upload", title: "Revise Design", assigneeRole: "designer",
+        assigneeUserId: designer.id, status: "open", progress: 0, openedAt: NOW
+      })
+    ]);
+    for (const kind of options.newDraft === false ? ["old"] : ["old", "new"]) {
+      const uploadId = `readiness-${kind}-upload`;
+      const pageId = `readiness-${kind}-page`;
+      const drawingId = `readiness-${kind}-drawing`;
+      const reference = `readiness/${kind}.pdf`;
+      const bytes = await nativePlanPdf(100, 100, `${kind} plan`);
+      storageObjects.set(reference, bytes);
+      const extractionStatus = kind === "new" ? "estimator_review" : oldStatus;
+      await Promise.all([
+        EstimateDesignUploadModel.create({
+          _id: uploadId, estimateId, leadId: "readiness-lead", originalFilename: `${kind}.pdf`,
+          storedFileReference: reference, mimeType: "application/pdf", sizeBytes: bytes.length,
+          uploaderId: designer.id, uploadedAt: NOW, extractionStatus
+        }),
+        EstimateDesignExtractionJobModel.create({
+          _id: `readiness-${kind}-job`, uploadId, status: extractionStatus, attemptCount: 1, queuedAt: NOW, completedAt: NOW
+        }),
+        EstimateDesignSourcePageModel.create({
+          _id: pageId, uploadId, pageNumber: 1, normalizedFileReference: `readiness/${kind}.png`, width: 100, height: 100
+        }),
+        EstimateDesignDrawingModel.create({
+          _id: drawingId, uploadId, sourcePageId: pageId, estimateId, active: true,
+          displayTitle: `${kind} drawing`, detectedTitle: `${kind} drawing`, source: "ocr", mappingStatus: "misc"
+        }),
+        EstimateDesignRevisionModel.create({
+          _id: `readiness-${kind}-revision`, drawingId, revisionNumber: 1, sourcePageId: pageId,
+          crop: { x: 0, y: 0, width: 100, height: 100 }, croppedFileReference: `readiness/${kind}-crop.png`,
+          label: `${kind} drawing`, mappingStatus: "misc", reviewStatus: kind === "new" ? "draft" : oldStatus
+        })
+      ]);
+    }
+    await DesignPlanReviewRoundModel.create({
+      _id: "readiness-old-round", estimateId, projectId: "readiness-project", leadId: "readiness-lead", designPlanVersion: 1,
+      recipientEmail: "client@example.test", clientName: "Client", projectName: "Test residence",
+      submittedRevisionIds: [oldRevisionId], attachments: [{
+        uploadId: oldUploadId, filename: "old.pdf", mimeType: "application/pdf",
+        byteSize: storageObjects.get("readiness/old.pdf")!.length,
+        sha256: sha256Hex(storageObjects.get("readiness/old.pdf")!), storageReference: "readiness/old.pdf"
+      }],
+      submittedById: designer.id, submittedAt: NOW, assignedAdminId: "readiness-admin", deliveryStatus: "sent",
+      status: "changes_requested", decision: "request_changes", decisionSource: "admin_proof",
+      decidedById: "readiness-admin", decidedByName: "Admin", decidedByRole: "super_admin", decidedAt: NOW
+    });
+    await DesignPlanResponseProofModel.create({
+      _id: "readiness-old-proof", reviewRoundId: "readiness-old-round", estimateId, storageReference: "readiness/proof.png",
+      originalFilename: "proof.png", mimeType: "image/png", byteSize: 10, sha256: "a".repeat(64),
+      uploadedById: "readiness-admin", uploadedAt: NOW
+    });
+    return { service, workflow, audit, sendDesignPlan, storage, storageObjects };
+  }
+
+  async function history() {
+    return Promise.all([
+      DesignPlanReviewRoundModel.findById("readiness-old-round").select("+attachments.storageReference").lean(),
+      DesignPlanResponseProofModel.findById("readiness-old-proof").select("+storageReference").lean()
+    ]);
+  }
+
+  it("rejects a new draft alongside an active returned drawing before any submission side effects", async () => {
+    const { service, audit, sendDesignPlan, storage } = await setup();
+    const snapshot = async () => Promise.all([
+      EstimateModel.findById(estimateId).lean(),
+      EstimateDesignRevisionModel.find({}).sort({ _id: 1 }).lean(),
+      EstimateDesignUploadModel.find({}).sort({ _id: 1 }).lean(),
+      EstimateDesignExtractionJobModel.find({}).sort({ _id: 1 }).lean(),
+      ProjectWorkflowTaskModel.find({}).sort({ _id: 1 }).lean(),
+      history()
+    ]);
+    const before = await snapshot();
+
+    await expect(service.submitDrawings(designer, estimateId)).rejects.toMatchObject({
+      status: 409, code: "DESIGN_PLAN_RETURNED_DRAWINGS_PENDING",
+      message: expect.stringContaining("Replace every returned drawing")
+    });
+
+    expect(await snapshot()).toEqual(before);
+    expect(await DesignPlanReviewRoundModel.countDocuments({ estimateId })).toBe(1);
+    expect(audit.append).not.toHaveBeenCalled();
+    expect(audit.appendInMongoTransaction).not.toHaveBeenCalled();
+    expect(sendDesignPlan).not.toHaveBeenCalled();
+    expect(storage.read).not.toHaveBeenCalled();
+  });
+
+  it("submits only the new plan after explicit deletion of an eligible returned upload, preserving earlier history", async () => {
+    const { service, sendDesignPlan, storage } = await setup();
+    const beforeHistory = await history();
+    const beforeRevision = await EstimateDesignRevisionModel.findById(oldRevisionId).lean();
+    await expect(service.deleteUpload(designer, oldUploadId)).resolves.toEqual({ id: oldUploadId, deleted: true });
+    const result = await service.submitDrawings(designer, estimateId);
+
+    expect(result).toMatchObject({ submittedCount: 1, designPlanVersion: 2, deliveryStatus: "sent" });
+    expect(await DesignPlanReviewRoundModel.countDocuments({ estimateId })).toBe(2);
+    expect(await DesignPlanReviewRoundModel.findById(result.reviewRoundId!).select("+attachments.storageReference").lean()).toMatchObject({
+      submittedRevisionIds: [newRevisionId], attachments: [{ uploadId: "readiness-new-upload", storageReference: expect.stringMatching(/^synthetic\/generated-.*\.pdf$/) }]
+    });
+    expect(await history()).toEqual(beforeHistory);
+    expect(await EstimateDesignRevisionModel.findById(oldRevisionId).lean()).toEqual(beforeRevision);
+    expect(await EstimateDesignDrawingModel.findById(oldDrawingId).lean()).toMatchObject({ active: false, deletedById: designer.id });
+    expect(sendDesignPlan).toHaveBeenCalledOnce();
+    expect(storage.delete).not.toHaveBeenCalled();
+  });
+
+  it("submits a replacement while leaving the historical returned revision intact", async () => {
+    const { service, sendDesignPlan } = await setup({ newDraft: false });
+    const beforeHistory = await history();
+    const beforeRevision = await EstimateDesignRevisionModel.findById(oldRevisionId).lean();
+    const image = await sharp({ create: { width: 20, height: 20, channels: 3, background: "white" } }).png().toBuffer();
+    const replacement = await service.replaceDrawing(designer, oldDrawingId, {
+      version: 1, file: { data: image, originalFilename: "replacement.png", mimeType: "image/png", sizeBytes: image.length }
+    });
+    const replacementId = replacement.revision!.id;
+    const result = await service.submitDrawings(designer, estimateId);
+
+    expect(result).toMatchObject({ submittedCount: 1, designPlanVersion: 2, deliveryStatus: "sent" });
+    const round = await DesignPlanReviewRoundModel.findById(result.reviewRoundId!).lean();
+    expect(round!.submittedRevisionIds).toEqual([replacementId]);
+    expect(round!.attachments.map((attachment: { uploadId: string }) => attachment.uploadId)).toEqual([oldUploadId]);
+    expect(round!.attachments[0]).toMatchObject({ mimeType: "application/pdf", filename: expect.stringMatching(/^old-revised-/) });
+    expect(await EstimateDesignRevisionModel.findById(replacementId).lean()).toMatchObject({
+      reviewStatus: "submitted", revisionNumber: 2, replacesRevisionId: oldRevisionId
+    });
+    expect(await EstimateDesignRevisionModel.findById(oldRevisionId).lean()).toEqual(beforeRevision);
+    expect(await history()).toEqual(beforeHistory);
+    expect(await DesignPlanReviewRoundModel.countDocuments({ estimateId })).toBe(2);
+    expect(sendDesignPlan).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an approved current drawing unchanged when submitting an additional draft", async () => {
+    const { service } = await setup({ oldStatus: "approved" });
+    const beforeRevision = await EstimateDesignRevisionModel.findById(oldRevisionId).lean();
+    const beforeHistory = await history();
+    const result = await service.submitDrawings(designer, estimateId);
+    expect(result).toMatchObject({ submittedCount: 1, designPlanVersion: 2 });
+    const round = await DesignPlanReviewRoundModel.findById(result.reviewRoundId!).lean();
+    expect(round!.submittedRevisionIds).toEqual([newRevisionId, oldRevisionId]);
+    expect(round!.attachments).toHaveLength(2);
+    expect(await EstimateDesignRevisionModel.findById(oldRevisionId).lean()).toEqual(beforeRevision);
+    expect(await history()).toEqual(beforeHistory);
+  });
+
+  it("preserves the supported approved-revision resubmission after a round-level change request", async () => {
+    const { service } = await setup({ oldStatus: "approved", newDraft: false });
+    const beforeHistory = await history();
+    const result = await service.submitDrawings(designer, estimateId);
+    expect(result).toMatchObject({ submittedCount: 1, designPlanVersion: 2 });
+    expect(await DesignPlanReviewRoundModel.findById(result.reviewRoundId!).lean()).toMatchObject({ submittedRevisionIds: [oldRevisionId] });
+    expect(await EstimateDesignRevisionModel.findById(oldRevisionId).lean()).toMatchObject({ reviewStatus: "submitted" });
+    expect(await history()).toEqual(beforeHistory);
+  });
+
+  it("keeps stale-revision errors ahead of returned-drawing readiness errors", async () => {
+    const { service, audit, sendDesignPlan } = await setup();
+    const oldRevision = await EstimateDesignRevisionModel.findById(oldRevisionId).lean();
+    const startSession = mongoose.startSession.bind(mongoose);
+    const sessionSpy = vi.spyOn(mongoose, "startSession").mockImplementationOnce(async () => {
+      // Commit a concurrent revision after the request snapshot and before its transaction starts.
+      await EstimateDesignRevisionModel.create({ ...oldRevision, _id: "readiness-concurrent-revision", revisionNumber: 2 });
+      return startSession();
+    });
+    try {
+      await expect(service.submitDrawings(designer, estimateId)).rejects.toMatchObject({ status: 409, code: "STALE_ESTIMATE_DRAWING" });
+    } finally {
+      sessionSpy.mockRestore();
+    }
+    expect(await EstimateDesignRevisionModel.findById(newRevisionId).lean()).toMatchObject({ reviewStatus: "draft" });
+    expect(await DesignPlanReviewRoundModel.countDocuments({ estimateId })).toBe(1);
+    expect(audit.appendInMongoTransaction).not.toHaveBeenCalled();
+    expect(sendDesignPlan).not.toHaveBeenCalled();
   });
 });
 
@@ -950,9 +1234,9 @@ describe("Design review replacement delivery and Admin feedback", () => {
     const drawingId = "workflow-replacement-drawing";
     const originalRevisionId = "workflow-original-revision";
     const replacementRevisionId = "workflow-replacement-revision";
-    const originalBytes = Buffer.from("%PDF-1.7 original Design plan");
-    const replacementSourceBytes = Buffer.from("replacement source image");
-    const replacementSnapshotBytes = Buffer.from("replacement drawing snapshot");
+    const originalBytes = await nativePlanPdf(1000, 700, "Original Design plan");
+    const replacementSourceBytes = await sharp({ create: { width: 600, height: 420, channels: 3, background: "#345678" } }).png().toBuffer();
+    const replacementSnapshotBytes = replacementSourceBytes;
 
     await Promise.all([
       UserModel.create({
@@ -1088,7 +1372,7 @@ describe("Design review replacement delivery and Admin feedback", () => {
         pageNumber: 1,
         normalizedFileReference: "design-plans/replacement-source.png",
         width: 600,
-        height: 400
+        height: 420
       }),
       EstimateDesignDrawingModel.create({
         _id: drawingId,
@@ -1125,7 +1409,7 @@ describe("Design review replacement delivery and Admin feedback", () => {
         drawingId,
         revisionNumber: 2,
         sourcePageId: "workflow-replacement-page",
-        crop: { x: 0, y: 0, width: 600, height: 400 },
+        crop: { x: 0, y: 0, width: 600, height: 420 },
         croppedFileReference: "design-plans/replacement-crop.png",
         roomId: null,
         scopeSectionId: null,
@@ -1163,14 +1447,10 @@ describe("Design review replacement delivery and Admin feedback", () => {
       ["design-plans/replacement-crop.png", replacementSnapshotBytes]
     ]);
     const sendDesignPlan = vi.fn(async () => ({ kind: "sent" as const }));
+    const storage = storedTestFiles(storedBytes);
+    const planDocuments = createEstimatePlanDocumentService({ storage: storage as never, now: () => NOW });
     const workflow = createProjectWorkflowService({
-      storage: {
-        read: vi.fn(async (reference: string) => {
-          const bytes = storedBytes.get(reference);
-          if (!bytes) throw new Error(`Missing test storage object: ${reference}`);
-          return Buffer.from(bytes);
-        })
-      } as never,
+      storage: storage as never,
       mailer: { deliveryKind: "local_test", sendDesignPlan },
       portalUrl: "https://portal.example.test/client",
       audit: {
@@ -1192,6 +1472,13 @@ describe("Design review replacement delivery and Admin feedback", () => {
       role: "super_admin"
     } as const;
 
+    const preparedDocuments = await planDocuments.prepareForSubmission(designer, estimateId);
+    expect(preparedDocuments.documents).toHaveLength(1);
+    const fullPlan = preparedDocuments.documents[0]!;
+    const fullPlanBytes = storedBytes.get(fullPlan.storageReference)!;
+    expect(fullPlanBytes).not.toEqual(originalBytes);
+    expect((await PDFDocument.load(fullPlanBytes)).getPageCount()).toBe(1);
+    expect(fullPlan.sha256).toBe(sha256Hex(fullPlanBytes));
     const prepared = await mongoose.connection.transaction((session) =>
       workflow.prepareDesignReview(
         designer,
@@ -1199,7 +1486,8 @@ describe("Design review replacement delivery and Admin feedback", () => {
         [replacementRevisionId],
         [originalUploadId],
         NOW,
-        session
+        session,
+        preparedDocuments
       )
     );
     expect(prepared.designPlanVersion).toBe(1);
@@ -1216,26 +1504,18 @@ describe("Design review replacement delivery and Admin feedback", () => {
     });
     expect(preparedRound?.attachments).toEqual([
       expect.objectContaining({
-        uploadId: originalUploadId,
-        filename: "original-plan.pdf",
-        mimeType: "application/pdf",
-        byteSize: originalBytes.byteLength,
-        storageReference: "design-plans/original-plan.pdf"
-      }),
-      expect.objectContaining({
-        uploadId: `revision:${replacementRevisionId}`,
-        filename: "revised-kitchen-layout-v2.png",
-        mimeType: "image/png",
-        byteSize: replacementSnapshotBytes.byteLength,
-        storageReference: "design-plans/replacement-crop.png"
+        uploadId: originalUploadId, filename: fullPlan.filename, mimeType: "application/pdf",
+        byteSize: fullPlanBytes.length, sha256: fullPlan.sha256, storageReference: fullPlan.storageReference
       })
     ]);
-    await expect(
-      workflow.readDesignReviewAttachment(superAdmin, prepared.roundId, 0)
-    ).resolves.toEqual({
-      filename: "original-plan.pdf",
-      mimeType: "application/pdf",
-      bytes: originalBytes
+    expect(preparedRound?.planDocuments).toEqual([
+      expect.objectContaining({ documentId: fullPlan.documentId, manifestHash: fullPlan.manifestHash, sourceUploadId: originalUploadId })
+    ]);
+    await expect(workflow.readDesignReviewAttachment(superAdmin, prepared.roundId, 0)).resolves.toEqual({
+      filename: fullPlan.filename, mimeType: "application/pdf", bytes: fullPlanBytes
+    });
+    await expect(planDocuments.readClient({ id: "workflow-replacement-client", name: "Client", email: "asha@example.test", role: "client" }, estimateId, fullPlan.documentId, prepared.roundId)).resolves.toEqual({
+      filename: fullPlan.filename, mimeType: "application/pdf", bytes: fullPlanBytes
     });
     await expect(workflow.readDesignReviewAttachment({
       id: "workflow-unassigned-admin",
@@ -1247,7 +1527,7 @@ describe("Design review replacement delivery and Admin feedback", () => {
       code: "NOT_FOUND"
     });
     storedBytes.set(
-      "design-plans/original-plan.pdf",
+      fullPlan.storageReference,
       Buffer.from("tampered Design plan")
     );
     await expect(
@@ -1256,7 +1536,7 @@ describe("Design review replacement delivery and Admin feedback", () => {
       status: 409,
       code: "DESIGN_PLAN_ATTACHMENT_CONFLICT"
     });
-    storedBytes.set("design-plans/original-plan.pdf", originalBytes);
+    storedBytes.set(fullPlan.storageReference, fullPlanBytes);
     expect(await ProjectWorkflowTaskModel.findById(
       "workflow-replacement-design-task"
     ).lean()).toMatchObject({ status: "completed", completedAt: NOW });
@@ -1267,18 +1547,7 @@ describe("Design review replacement delivery and Admin feedback", () => {
     expect(sendDesignPlan).toHaveBeenCalledWith(expect.objectContaining({
       to: "asha@example.test",
       designPlanVersion: 1,
-      attachments: [
-        {
-          filename: "original-plan.pdf",
-          mimeType: "application/pdf",
-          bytes: originalBytes
-        },
-        {
-          filename: "revised-kitchen-layout-v2.png",
-          mimeType: "image/png",
-          bytes: replacementSnapshotBytes
-        }
-      ]
+      attachments: [{ filename: fullPlan.filename, mimeType: "application/pdf", bytes: fullPlanBytes }]
     }));
     const deliveredRound = await DesignPlanReviewRoundModel.findById(
       prepared.roundId
@@ -1410,6 +1679,7 @@ describe("approved Design plan operational queues", () => {
       ProjectModel.create({
         _id: projectId,
         name: "Approved Design Residence",
+        completionAuthority: "legacy_staff",
         clientId: "workflow-approved-client",
         clientName: "Asha Rao",
         clientEmail: "asha@example.test",
@@ -1873,6 +2143,15 @@ describe("approved Design plan operational queues", () => {
       email: "site.manager@example.test",
       role: "site_manager"
     } as const;
+    await UserModel.create(workerUser(siteManager.id, siteManager.name, siteManager.role));
+    const siteTask = projectTasks.find(({ kind }) => kind === "site_execution")!;
+    await workflow.overrideWorkerAssignment({
+      actor: superAdmin,
+      projectId,
+      taskId: siteTask.id,
+      expectedVersion: siteTask.version,
+      workerId: siteManager.id
+    });
     const siteVisible = await workflow.listOperationalTasks(siteManager);
     expect(siteVisible).toHaveLength(5);
     expect(siteVisible).toEqual(expect.arrayContaining([
@@ -2418,6 +2697,23 @@ describe("section-level worker assignment", () => {
 });
 
 describe("operational workflow project completion", () => {
+  it("keeps vendor-owned projects active after legacy coordination tasks reach 100%", async () => {
+    const projectId = "workflow-completion-vendor-project";
+    const taskId = "workflow-completion-vendor-finance";
+    await createOperationalCompletionFixture(
+      projectId,
+      [{ id: taskId, kind: "finance", role: "finance_head" }],
+      { status: "active", actualEndAt: null, completionAuthority: "vendor_client" }
+    );
+    const workflow = completionWorkflow(vi.fn(async () => ({ id: "audit-vendor-coordination" })));
+    await workflow.updateOperationalTask(operationalActor("finance_head"), taskId, 1, 100);
+    expect(await ProjectModel.findById(projectId).lean()).toMatchObject({
+      status: "active",
+      actualEndAt: null,
+      completionAuthority: "vendor_client"
+    });
+  });
+
   it("keeps the project active until the last execution task completes and keeps completion terminal", async () => {
     const projectId = "workflow-completion-sequential-project";
     const procurementTaskId = "workflow-completion-procurement";
@@ -2808,6 +3104,7 @@ async function createOperationalCompletionFixture(
   projectState: {
     status: "active" | "completed";
     actualEndAt: Date | null;
+    completionAuthority?: "legacy_staff" | "vendor_client";
   } = { status: "active", actualEndAt: null }
 ) {
   const createdAt = new Date(NOW.getTime() - 60_000);
@@ -2824,6 +3121,7 @@ async function createOperationalCompletionFixture(
     assignedEstimatorId: "workflow-completion-estimator",
     assignedDesignerIds: ["workflow-completion-designer"],
     managerId: null,
+    completionAuthority: projectState.completionAuthority ?? "legacy_staff",
     status: projectState.status,
     location: "Pune",
     plannedStartAt: createdAt,

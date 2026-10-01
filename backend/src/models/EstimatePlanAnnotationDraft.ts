@@ -6,6 +6,7 @@ export const estimatePlanAnnotationDraftSchema = new Schema({
   estimateId: { type: String, ref: "Estimate", required: true, immutable: true },
   sourcePageId: { type: String, ref: "EstimateDesignSourcePage", required: true, immutable: true },
   clientId: { type: String, ref: "User", required: true, immutable: true },
+  reviewRoundId: { type: String, ref: "DesignPlanReviewRound", default: null },
   version: { type: Number, required: true, min: 1 },
   annotations: { type: Schema.Types.Mixed, required: true }
 }, { timestamps: true, versionKey: false, strict: "throw" });

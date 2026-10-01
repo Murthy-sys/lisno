@@ -1,4 +1,5 @@
 import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoordination.js";
+import { createProjectDesignWorkflow } from "../src/domain/design-workflow.js";
 import { Readable } from "node:stream";
 import mongoose from "mongoose";
 import { PDFDocument } from "pdf-lib";
@@ -115,6 +116,7 @@ function modelMatches(
   for (const [key, expected] of Object.entries(filter)) {
     if (key === "$or") continue;
     const actual = record[key];
+    if (expected === null && actual == null) continue;
     if (expected && typeof expected === "object" && !(expected instanceof Date)) {
       if ("$in" in expected && !expected.$in.includes(actual)) return false;
       if ("$gt" in expected && !(new Date(actual) > expected.$gt)) return false;
@@ -241,6 +243,13 @@ function setupEstimateDrawingJourneyModels() {
     return { matchedCount: record ? 1 : 0, modifiedCount: record ? 1 : 0 } as never;
   });
   vi.spyOn(EstimateModel, "aggregate").mockImplementation((pipeline) => {
+    if ((pipeline as Array<Record<string, any>>).some((stage) => stage.$lookup?.as === "publishedRounds")) {
+      const id = (pipeline as Array<Record<string, any>>).find((stage) => stage.$match?._id)?.$match._id;
+      return modelQuery(estimates.filter((estimate) => !id || estimate._id === id).map((estimate) => ({
+        ...plainRecord(estimate), clientLead: plainRecord(leads.find((lead) => lead._id === estimate.leadId)!),
+        publishedRounds: clientReviewRounds.filter((round) => round.estimateId === estimate._id).sort((left, right) => right.sendGeneration - left.sendGeneration).slice(0, 1).map(plainRecord)
+      }))) as never;
+    }
     const match = (pipeline as Array<Record<string, any>>)
       .find((stage) => stage.$match)?.$match ?? {};
     const record = estimates.find((candidate) => modelMatches(candidate, match));
@@ -427,7 +436,10 @@ function setupEstimateDrawingJourneyModels() {
   });
   vi.spyOn(EstimateClientReviewRoundModel, "create").mockImplementation(async (input) => {
     const created = (input as Array<Record<string, any>>).map((value) => {
-      const record: Record<string, any> = { ...value };
+      const record: Record<string, any> = {
+        ...value,
+        createdAt: value.createdAt ?? new Date("2026-07-30T15:00:00.000Z")
+      };
       record.toObject = () => plainRecord(record);
       clientReviewRounds.push(record);
       return record;
@@ -597,6 +609,23 @@ function setupWorkflowCharacterization(
     return `Bearer ${response.body.data.token}`;
   };
   return { app, estimate, extraEstimates, lead, login, state };
+}
+
+function addPublishedReview(fixture: ReturnType<typeof setupWorkflowCharacterization>) {
+  const estimate = fixture.estimate;
+  const lineItems = estimate.lineItems.length ? estimate.lineItems : [{ catalogueId: "FC01", roomName: "Living Room", specification: "False ceiling", unit: "sqft", rate: 100, quantity: 10, included: true, amount: 1000 }];
+  estimate.lineItems = lineItems;
+  const round = {
+    _id: `round-${estimate._id}`, estimateId: estimate._id, leadId: fixture.lead._id,
+    projectId: estimate.projectId, estimateVersion: estimate.version, version: 1, sendGeneration: 1,
+    recipientEmailNormalized: fixture.lead.clientEmail, status: "pending", decision: null,
+    createdAt: new Date("2026-07-30T14:00:00.000Z"), decidedAt: null, decisionNote: null,
+    deliveryStatus: "disabled", deliveryAttemptCount: 0, deliveredAt: null,
+    estimateSnapshot: { clientName: fixture.lead.clientName, projectName: fixture.lead.projectName, location: fixture.lead.location,
+      propertyType: estimate.propertyType, lineItems: structuredClone(lineItems), subtotal: estimate.subtotal, gst: estimate.gst, total: estimate.total }
+  };
+  fixture.state.clientReviewRounds.push(round);
+  return { reviewRoundId: round._id, reviewRoundVersion: round.version };
 }
 
 function expectNoWorkflowWrites(fixture: ReturnType<typeof setupWorkflowCharacterization>) {
@@ -865,21 +894,19 @@ describe("complete cross-role journey", () => {
         { _id: "estimate-hidden-ready", status: "ready_for_client" }
       ]
     );
+    const target = addPublishedReview(fixture);
     const client = await fixture.login("client@aurora.example");
     const response = await request(fixture.app)
       .get("/api/v1/client/estimates")
       .set("Authorization", client)
       .expect(200);
 
-    expect(response.body).toEqual({ data: [{
-      ...estimateResponseDto(fixture.estimate),
-      lead: JSON.parse(JSON.stringify(fixture.lead))
-    }] });
-    expect(EstimateModel.find).toHaveBeenCalledOnce();
-    expect(EstimateModel.find).toHaveBeenCalledWith({
-      leadId: { $in: ["lead-aurora"] },
-      status: { $in: ["sent_to_client", "client_changes_requested", "client_approved"] }
-    });
+    expect(response.body.data).toEqual([expect.objectContaining({
+      id: "estimate-client-visible", total: 1180,
+      publishedReview: expect.objectContaining({ id: target.reviewRoundId, canDecide: true, snapshot: expect.objectContaining({ total: 1180 }) }),
+      reviewSourceIssue: null, reviews: [], notifications: []
+    })]);
+    expect(response.body.data[0].lead).not.toHaveProperty("clientEmail");
     expect(response.body.data.map((item: { id: string }) => item.id)).toEqual(["estimate-client-visible"]);
     expectNoWorkflowWrites(fixture);
     for (const hidden of fixture.extraEstimates) expect(hidden.save).not.toHaveBeenCalled();
@@ -894,6 +921,7 @@ describe("complete cross-role journey", () => {
       designFrozenAt: null,
       assignedDesignerId: "user-designer-ananya"
     });
+    const target = addPublishedReview(fixture);
     const initialEstimate = immutableRecordSnapshot(fixture.estimate);
     vi.spyOn(EstimateModel, "findOne").mockImplementation((filter) =>
       modelQuery(modelMatches(initialEstimate, filter as never) ? structuredClone(initialEstimate) : null) as never
@@ -905,36 +933,17 @@ describe("complete cross-role journey", () => {
     const response = await request(fixture.app)
       .post("/api/v1/client/estimates/estimate-client-visible/decision")
       .set("Authorization", client)
-      .send({ decision: "approve", note: "Approved" })
+      .send({ decision: "approve", note: "Approved", ...target })
       .expect(200);
     const projectId = response.body.data.projectId as string;
     const decisionAt = response.body.data.clientDecisionAt as string;
 
-    expect(response.body).toEqual({ data: {
-      ...estimateResponseDto(initialEstimate),
-      status: "client_approved",
-      version: 2,
-      designLifecycleVersion: 1,
-      designFrozenAt: null,
-      designPlanStatus: "pending_assignment",
-      designPlanVersion: 0,
-      designPlanDesignerId: null,
-      designPlanAssignedById: null,
-      designPlanAssignedAt: null,
-      designPlanSubmittedAt: null,
-      designPlanApprovedAt: null,
-      designPlanApprovedById: null,
-      designPlanApprovalSource: null,
-      projectId: expect.stringMatching(/^project-/),
-      clientDecisionAt: decisionAt,
-      reviews: [{
-        actorId: "user-client-aurora",
-        action: "client_approved",
-        note: "Approved",
-        occurredAt: decisionAt
-      }],
-      notifications: []
-    } });
+    expect(response.body.data).toMatchObject({
+      id: initialEstimate._id, status: "client_approved", version: 2,
+      projectId, clientDecisionAt: decisionAt, designPlanStatus: "pending_assignment",
+      publishedReview: { id: target.reviewRoundId, status: "approved", canDecide: false },
+      reviews: [], notifications: []
+    });
     expect(EstimateModel.updateOne).toHaveBeenCalledOnce();
     expect(EstimateModel.updateOne).toHaveBeenCalledWith(
       {
@@ -990,6 +999,7 @@ describe("complete cross-role journey", () => {
     expect(ProjectModel.create).toHaveBeenCalledOnce();
     expect(fixture.state.projects).toEqual([{
       _id: projectId,
+      designWorkflowStages: createProjectDesignWorkflow(projectId),
       name: "Aurora",
       clientId: "user-client-aurora",
       clientName: "Rhea Kapoor",
@@ -1027,12 +1037,13 @@ describe("complete cross-role journey", () => {
         _id: expect.stringMatching(/^audit-/),
         actorId: "user-client-aurora",
         action: "estimate_client_response_recorded_through_portal",
-        entityType: "estimate",
-        entityId: "estimate-client-visible",
+        entityType: "estimate_client_review_round",
+        entityId: target.reviewRoundId,
         occurredAt: decisionAt,
-        oldValues: { status: "sent_to_client" },
+        oldValues: { status: "pending" },
         newValues: {
-          status: "client_approved",
+          status: "approved",
+          estimateStatus: "client_approved",
           decision: "approve",
           decisionSource: "client_portal",
           noteLength: 8
@@ -1109,12 +1120,13 @@ describe("complete cross-role journey", () => {
       plannedStartAt: adminProject.plannedStartAt,
       plannedEndAt: adminProject.plannedEndAt
     };
+    const target = addPublishedReview(fixture);
     const client = await fixture.login("client@aurora.example");
 
     const response = await request(fixture.app)
       .post("/api/v1/client/estimates/estimate-admin-linked/decision")
       .set("Authorization", client)
-      .send({ decision: "approve", note: "Approved" })
+      .send({ decision: "approve", note: "Approved", ...target })
       .expect(200);
 
     expect(fixture.state.projects).toHaveLength(projectCountBefore);
@@ -1138,7 +1150,7 @@ describe("complete cross-role journey", () => {
     });
   });
 
-  it("links every unclaimed mixed-case client project through upload, review, and revision history", async () => {
+  it("links every unclaimed mixed-case client project through legacy upload, review, and revision history", async () => {
     const repository = createMemoryRepository(structuredClone(demoSeedData));
     const storage = new JourneyStorage();
     const app = createApp({
@@ -1217,6 +1229,13 @@ describe("complete cross-role journey", () => {
       "Journey Studio",
       "  JOURNEY.CLIENT@example.com  "
     );
+    // Legacy projects without the newer Design workflow can still use task design versions.
+    const legacyResidence = await repository.createProject({
+      ...residence,
+      id: "project-journey-legacy-design",
+      name: "Journey Legacy Residence",
+      designWorkflowStages: undefined
+    });
 
     const createFloor = async (
       projectId: string,
@@ -1235,12 +1254,13 @@ describe("complete cross-role journey", () => {
           plannedEndAt: "2026-09-30T17:00:00.000Z"
         })
         .expect(201);
-    const groundFloor = await createFloor(residence.id, "Ground floor", "G", 0);
+    await createFloor(residence.id, "Ground floor", "G", 0);
     await createFloor(residence.id, "First floor", "1", 1);
     await createFloor(studio.id, "Studio floor", "G", 0);
+    const legacyFloor = await createFloor(legacyResidence.id, "Legacy floor", "G", 0);
 
     const stage = await request(app)
-      .post(`/api/v1/floors/${groundFloor.body.data.id}/stages`)
+      .post(`/api/v1/floors/${legacyFloor.body.data.id}/stages`)
       .set("Authorization", designer)
       .send({
         name: "Floor plan",
@@ -1266,8 +1286,8 @@ describe("complete cross-role journey", () => {
       .attach("file", PDF, {
         filename: "journey-client-plan.pdf",
         contentType: "application/pdf"
-      })
-      .expect(201);
+      });
+    expect(upload.status, JSON.stringify(upload.body)).toBe(201);
 
     const manager = await login("aarav@lisno.example");
     await request(app)
@@ -1319,7 +1339,7 @@ describe("complete cross-role journey", () => {
       .expect(200);
 
     const submitted = await request(app)
-      .get(`/api/v1/client/projects/${residence.id}/design-sections`)
+      .get(`/api/v1/client/projects/${legacyResidence.id}/design-sections`)
       .set("Authorization", unrelatedClient)
       .expect(404);
     expect(submitted.body.error.code).toBe("NOT_FOUND");
@@ -1343,7 +1363,8 @@ describe("complete cross-role journey", () => {
       .expect(200);
     expect(projects.body.data.items).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: residence.id, name: "Journey Residence" }),
-      expect.objectContaining({ id: studio.id, name: "Journey Studio" })
+      expect.objectContaining({ id: studio.id, name: "Journey Studio" }),
+      expect.objectContaining({ id: legacyResidence.id, name: "Journey Legacy Residence" })
     ]));
     const dashboard = await request(app)
       .get("/api/v1/client/project-summaries?limit=20&offset=0")
@@ -1359,11 +1380,16 @@ describe("complete cross-role journey", () => {
         id: studio.id,
         name: "Journey Studio",
         floorCount: 1
+      }),
+      expect.objectContaining({
+        id: legacyResidence.id,
+        name: "Journey Legacy Residence",
+        floorCount: 1
       })
     ]));
 
     const review = await request(app)
-      .get(`/api/v1/client/projects/${residence.id}/design-sections`)
+      .get(`/api/v1/client/projects/${legacyResidence.id}/design-sections`)
       .set("Authorization", client)
       .expect(200);
     expect(review.body.data.progress).toEqual({
@@ -1422,7 +1448,7 @@ describe("complete cross-role journey", () => {
       .expect(200);
 
     const finalReview = await request(app)
-      .get(`/api/v1/client/projects/${residence.id}/design-sections`)
+      .get(`/api/v1/client/projects/${legacyResidence.id}/design-sections`)
       .set("Authorization", client)
       .expect(200);
     expect(finalReview.body.data.progress).toEqual({
@@ -1458,6 +1484,10 @@ describe("complete cross-role journey", () => {
       clientEmailNormalized: "journey.client@example.com"
     });
     expect(await repository.findProjectById(studio.id)).toMatchObject({
+      clientId: signup.body.data.user.id,
+      clientEmailNormalized: "journey.client@example.com"
+    });
+    expect(await repository.findProjectById(legacyResidence.id)).toMatchObject({
       clientId: signup.body.data.user.id,
       clientEmailNormalized: "journey.client@example.com"
     });
@@ -1851,7 +1881,7 @@ describe("complete cross-role journey", () => {
       }
     });
 
-    await request(app)
+    const completion = await request(app)
       .post(`/api/v1/internal/extraction-jobs/${job._id}/complete`)
       .set("Authorization", `Bearer ${workerToken}`)
       .set("X-Extraction-Claim-Token", claim.body.data.claimToken)
@@ -1916,6 +1946,7 @@ describe("complete cross-role journey", () => {
         ]
       })
       .expect(200);
+    expect(state.drawings, JSON.stringify({ completion: completion.body.data, jobs: state.jobs.map((entry) => ({ status: entry.status, workerResultId: entry.workerResultId })) })).toHaveLength(2);
 
     const estimatorWorkspace = await request(app)
       .get("/api/v1/estimates/estimate-journey/design-uploads")
@@ -1929,7 +1960,7 @@ describe("complete cross-role journey", () => {
       (drawing: { detectedTitle: string }) =>
         drawing.detectedTitle === "Bedroom Floorimg"
     );
-    expect(living).toMatchObject({
+    expect(living, JSON.stringify(estimatorWorkspace.body.data.drawings)).toMatchObject({
       roomId: "room-living",
       scopeSectionId: "FC",
       catalogueId: "FC01",
@@ -2058,7 +2089,7 @@ describe("complete cross-role journey", () => {
     const finalApproval = await request(app)
       .post("/api/v1/client/estimates/estimate-journey/decision")
       .set("Authorization", client)
-      .send({ decision: "approve", note: "" });
+      .send({ decision: "approve", note: "", reviewRoundId: state.clientReviewRounds.at(-1)!._id, reviewRoundVersion: state.clientReviewRounds.at(-1)!.version });
     expect(finalApproval.status, JSON.stringify({
       body: finalApproval.body,
       estimate: plainRecord(state.estimates[0]!),

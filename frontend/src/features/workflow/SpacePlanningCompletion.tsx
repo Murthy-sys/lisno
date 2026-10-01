@@ -22,7 +22,8 @@ function hasReviewSource(source: PlanningSource) {
 
 function isReady(source: PlanningSource) {
   return source.readyForCompletion && hasReviewSource(source) && Number.isSafeInteger(source.totalImages) &&
-    source.totalImages > 0 && source.approvedImages === source.totalImages && !source.completedAt;
+    source.totalImages > 0 && source.approvedImages === source.totalImages && !source.completedAt &&
+    !source.completionBlockingReasons?.length;
 }
 
 interface CompletionProps {
@@ -47,18 +48,23 @@ export function SpacePlanningCompletion({ workflow, stage, reviewHref, refreshEr
   const action = stage.operational?.availableActions.find((item) => item.id === "space_planning_complete" && item.actor === "client");
   const completed = Boolean(source.completedAt) || savedIdentity === identity;
   const eligible = !completed && isReady(source) && Boolean(action);
+  const awaitingFirstUpload = source.designPlanVersion === 0 && source.reviewRoundId === null && source.totalImages === 0;
   const blocked = refreshError ? "The workflow could not be refreshed. Retry the workflow before completing this stage."
     : refreshing ? "Checking the latest workflow…" : action?.disabledReason;
 
   return <div role="group" className="space-planning-completion" aria-label="Space planning completion">
     <div className="space-planning-completion__summary">
       <p ref={status} tabIndex={-1} role="status">
-        <strong>{completed ? "Space planning completed" : "Design image review"}</strong>
-        <span>{source.approvedImages} of {source.totalImages} images approved</span>
+        <strong>{completed ? "Space planning completed" : awaitingFirstUpload ? "Awaiting design plan upload" : "Design image review"}</strong>
+        <span>{awaitingFirstUpload ? "Upload a plan to start image review" : `${source.approvedImages} of ${source.totalImages} images approved`}</span>
       </p>
       {reviewHref ? <a className="space-planning-completion__review" href={reviewHref}>Review design images</a> : null}
     </div>
-    {!completed && !source.readyForCompletion && source.totalImages > 0 ? <p className="space-planning-completion__hint">Review every image and resolve any requested changes before completing this stage.</p> : null}
+    {!completed && source.completionBlockingReasons?.length ? <div className="space-planning-completion__hint" role="group" aria-label="Client completion requirements">
+      <strong>Before Client completion</strong>
+      <ul>{source.completionBlockingReasons.map((reason, index) => <li key={`${index}-${reason}`}>{reason}</li>)}</ul>
+    </div> : null}
+    {!completed && !source.completionBlockingReasons?.length && !source.readyForCompletion && source.totalImages > 0 ? <p className="space-planning-completion__hint">Review every image and resolve any requested changes before completing this stage.</p> : null}
     {eligible ? <div className="space-planning-completion__actions">
       <Button ref={trigger} size="compact" disabled={Boolean(blocked) || pending} aria-describedby={blocked ? `${id}-blocked` : `${id}-ready`}
         onClick={() => setConfirmation({ identity, version: stage.operational!.version, source: { ...source } })}>{action!.label}</Button>

@@ -9,6 +9,7 @@ import { ProgressBar } from "../../components/ui/ProgressBar";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import {
   estimateDesignKeys,
+  planDocumentKeys,
   estimatePlanChangeRequestKeys,
   getEstimateDesignWorkspace,
   getEstimatePlanChangeRequest,
@@ -64,25 +65,26 @@ export function EstimatePlanChangeRequests({ estimateId }: { estimateId?: string
     queryFn: () => getEstimateDesignWorkspace(activeEstimateId!),
     enabled: Boolean(activeEstimateId),
     refetchInterval: (query) => query.state.data?.uploads.some((upload) =>
-      upload.purpose === "plan_request_replacement" &&
+      ["plan_request_replacement", "drawing_replacement"].includes(upload.purpose) &&
       (upload.extractionStatus === "queued" || upload.extractionStatus === "processing")
     ) ? 1_000 : false
   });
 
-  async function refresh(requestId = selectedId) {
+  async function refresh(requestId = selectedId, targetEstimateId = activeEstimateId) {
     await Promise.all([
+      queryClient.invalidateQueries({ queryKey: planDocumentKeys.all }),
       queryClient.invalidateQueries({ queryKey: estimatePlanChangeRequestKeys.all }),
       requestId
         ? queryClient.invalidateQueries({ queryKey: estimatePlanChangeRequestKeys.detail(requestId) })
         : Promise.resolve(),
-      activeEstimateId
-        ? queryClient.invalidateQueries({ queryKey: estimateDesignKeys.workspace(activeEstimateId) })
+      targetEstimateId
+        ? queryClient.invalidateQueries({ queryKey: estimateDesignKeys.workspace(targetEstimateId) })
         : Promise.resolve(),
-      activeEstimateId
-        ? queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(activeEstimateId) })
+      targetEstimateId
+        ? queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(targetEstimateId) })
         : Promise.resolve(),
-      activeEstimateId
-        ? queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(activeEstimateId) })
+      targetEstimateId
+        ? queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(targetEstimateId) })
         : Promise.resolve(),
       queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all })
     ]);
@@ -91,6 +93,16 @@ export function EstimatePlanChangeRequests({ estimateId }: { estimateId?: string
   const selectedUpload = selectedId
     ? latestRequestUpload(workspace.data?.uploads ?? [], selectedId) ?? submittedUploads[selectedId]
     : undefined;
+  const individualUploads = workspace.data?.uploads.filter((upload) => upload.purpose === "drawing_replacement") ?? [];
+  const individualPending = individualUploads.some((upload) => ["queued", "processing"].includes(upload.extractionStatus));
+  const individualUploadState = individualUploads.map((upload) => `${upload.id}:${upload.extractionStatus}`).join("|");
+
+  useEffect(() => {
+    const completed = individualUploads.filter((upload) => !["queued", "processing"].includes(upload.extractionStatus) && !reconciledTerminalUploads.current.has(`${upload.id}:${upload.extractionStatus}`));
+    if (!completed.length) return;
+    completed.forEach((upload) => reconciledTerminalUploads.current.add(`${upload.id}:${upload.extractionStatus}`));
+    void refresh(selectedId, activeEstimateId);
+  }, [individualUploadState, selectedId, activeEstimateId]);
 
   useEffect(() => {
     if (
@@ -119,7 +131,7 @@ export function EstimatePlanChangeRequests({ estimateId }: { estimateId?: string
       setSubmittedUploads((current) => ({ ...current, [input.requestId]: upload }));
       setRequestFiles((current) => ({ ...current, [input.requestId]: undefined }));
       setRequestKeys((current) => ({ ...current, [input.requestId]: undefined }));
-      await refresh(input.requestId);
+      await refresh(input.requestId, upload.estimateId);
     },
     onSettled: (_data, _error, input) => {
       if (input) setRequestProgress((current) => ({ ...current, [input.requestId]: undefined }));
@@ -130,13 +142,16 @@ export function EstimatePlanChangeRequests({ estimateId }: { estimateId?: string
     onSuccess: (upload) => {
       const requestId = upload.requestReplacement?.requestId;
       if (requestId) setSubmittedUploads((current) => ({ ...current, [requestId]: upload }));
-      return refresh(requestId);
+      return refresh(requestId, upload.estimateId);
     }
   });
   const replaceTarget = useMutation({
-    mutationFn: ({ drawingId, version, file }: { drawingId: string; version: number; file: File }) =>
+    mutationFn: ({ drawingId, version, file }: { drawingId: string; version: number; file: File; estimateId: string; requestId: string }) =>
       replaceEstimateDrawing(drawingId, version, file),
-    onSuccess: () => refresh()
+    onSuccess: (_result, input) => {
+      setTargetFiles((current) => ({ ...current, [input.drawingId]: undefined }));
+      return refresh(input.requestId, input.estimateId);
+    }
   });
   const link = useMutation({
     mutationFn: () => updateEstimatePlanRequestTargets(selectedId!, {
@@ -268,16 +283,16 @@ export function EstimatePlanChangeRequests({ estimateId }: { estimateId?: string
                 ) : null}
 
                 <div className="plan-request-workspace__targets" aria-label="Requested drawing targets">
+                  {individualPending ? <p role="status">Extracting the revised item. Upload actions will resume when extraction finishes.</p> : null}
                   {detail.data.drawingTargets.map((target) => (
                     <section className="plan-request-workspace__target" aria-label={`${target.title} target`} key={target.drawingId}>
                       <div><strong>{target.title}</strong><small>{target.status.replaceAll("_", " ")}</small></div>
                       {target.status === "open" ? (
-                        <details>
-                          <summary>Replace only this drawing</summary>
-                          <p>Use this fallback only when you have a separate file for this one drawing.</p>
+                        <div>
+                          <p>Upload this revised item to replace its original position in the full plan PDF.</p>
                           <label>Replacement for {target.title}<input type="file" accept="image/*,.pdf,.heic,.heif" onChange={(event) => setTargetFiles((current) => ({ ...current, [target.drawingId]: event.target.files?.[0] }))} /></label>
-                          <Button variant="secondary" disabled={!targetFiles[target.drawingId] || replaceTarget.isPending || uploadIsPending} busy={replaceTarget.isPending && replaceTarget.variables?.drawingId === target.drawingId} busyLabel="Uploading replacement…" onClick={() => replaceTarget.mutate({ drawingId: target.drawingId, version: target.latestRevisionNumber, file: targetFiles[target.drawingId]! })}>Upload only {target.title}</Button>
-                        </details>
+                          <Button variant="secondary" disabled={!targetFiles[target.drawingId] || replaceTarget.isPending || uploadIsPending || individualPending} busy={replaceTarget.isPending && replaceTarget.variables?.drawingId === target.drawingId} busyLabel="Uploading replacement…" onClick={() => replaceTarget.mutate({ drawingId: target.drawingId, version: target.latestRevisionNumber, file: targetFiles[target.drawingId]!, estimateId: activeEstimateId!, requestId: detail.data.id })}>Upload revised item: {target.title}</Button>
+                        </div>
                       ) : target.status === "withdrawn" ? (
                         <p>This drawing was deleted. Its feedback is retained for reference.</p>
                       ) : <p>Replacement submitted for client review.</p>}

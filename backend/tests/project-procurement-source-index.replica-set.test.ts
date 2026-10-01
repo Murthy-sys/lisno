@@ -1,6 +1,8 @@
 import mongoose from "mongoose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { inspectProcurementSourceIndex, migrateProcurementSourceIndex, PROCUREMENT_NEW_INDEX_KEY, PROCUREMENT_NEW_INDEX_NAME, PROCUREMENT_OLD_INDEX_KEY, PROCUREMENT_OLD_INDEX_NAME } from "../src/migrations/project-procurement-source-index.js";
+import { inspectProcurementActiveIndex, inspectProcurementSourceIndex, migrateProcurementActiveIndex, migrateProcurementSourceIndex,
+  PROCUREMENT_ACTIVE_INDEX_KEY, PROCUREMENT_ACTIVE_INDEX_NAME, PROCUREMENT_NEW_INDEX_KEY, PROCUREMENT_NEW_INDEX_NAME,
+  PROCUREMENT_OLD_INDEX_KEY, PROCUREMENT_OLD_INDEX_NAME } from "../src/migrations/project-procurement-source-index.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
@@ -86,5 +88,38 @@ describe("procurement source-index migration", () => {
     expect(report).toMatchObject({ sourceIndexPresent: false, legacyIndexPresent: true });
     await expect(collection.insertOne(row("two", { sourceLineItemKey: "line-b" }))).rejects.toMatchObject({ code: 11000 });
     expect((await migrateProcurementSourceIndex(collection, { mode: "rollback", backupIndexMetadata: async () => {} })).indexes).toEqual(report.indexes);
+  });
+});
+
+describe("active procurement item index migration", () => {
+  it("dry-runs and then replaces the all-row source index without losing tombstones", async () => {
+    await collection.createIndex(PROCUREMENT_NEW_INDEX_KEY, { unique: true, name: PROCUREMENT_NEW_INDEX_NAME });
+    await collection.insertOne(row("removed", { removedAt: new Date(), removedById: "buyer", removalReason: "Duplicate" }));
+    const before = await collection.listIndexes().toArray();
+    expect(await migrateProcurementActiveIndex(collection)).toMatchObject({ indexes: before, activeIndexPresent: false,
+      sourceIndexPresent: true, removedItemCount: 1, activeDuplicateGroups: [] });
+    expect(await collection.listIndexes().toArray()).toEqual(before);
+    const backup = vi.fn(async () => {});
+    const after = await migrateProcurementActiveIndex(collection, { mode: "apply", backupIndexMetadata: backup });
+    expect(backup).toHaveBeenCalledTimes(1);
+    expect(after).toMatchObject({ activeIndexPresent: true, sourceIndexPresent: false, removedItemCount: 1 });
+    await collection.insertOne(row("replacement"));
+    await expect(collection.insertOne(row("duplicate-active"))).rejects.toMatchObject({ code: 11000 });
+    expect(await collection.countDocuments()).toBe(2);
+    expect((await migrateProcurementActiveIndex(collection, { mode: "apply", backupIndexMetadata: async () => {} })).indexes).toEqual(after.indexes);
+  });
+  it("refuses active duplicates, unfamiliar indexes, missing backup, and unsafe rollback", async () => {
+    await collection.insertMany([row("first"), row("second")]);
+    expect((await inspectProcurementActiveIndex(collection)).activeDuplicateGroups).toEqual([["first", "second"]]);
+    await expect(migrateProcurementActiveIndex(collection, { mode: "apply", backupIndexMetadata: async () => {} })).rejects.toThrow("conflicts");
+    await collection.deleteOne({ _id: "second" as any });
+    await collection.createIndex(PROCUREMENT_ACTIVE_INDEX_KEY, { unique: true, name: PROCUREMENT_ACTIVE_INDEX_NAME, partialFilterExpression: { removedAt: null } });
+    await expect(migrateProcurementActiveIndex(collection, { mode: "apply" })).rejects.toThrow("backup");
+    await collection.insertOne(row("removed", { removedAt: new Date(), removedById: "buyer", removalReason: "Duplicate" }));
+    await expect(migrateProcurementActiveIndex(collection, { mode: "rollback", backupIndexMetadata: async () => {} })).rejects.toThrow("removed and active");
+    expect(await collection.indexExists(PROCUREMENT_ACTIVE_INDEX_NAME)).toBe(true);
+    await collection.dropIndex(PROCUREMENT_ACTIVE_INDEX_NAME);
+    await collection.createIndex({ sourceLineItemKey: 1, _id: 1 }, { unique: true, name: PROCUREMENT_ACTIVE_INDEX_NAME });
+    expect((await inspectProcurementActiveIndex(collection)).indexConflicts).not.toHaveLength(0);
   });
 });

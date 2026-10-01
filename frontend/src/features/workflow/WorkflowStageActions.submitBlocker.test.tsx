@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "../../api/client";
 import { WorkflowStageActions } from "./WorkflowStageActions";
+import { openFurnitureItem } from "./furnitureDisclosureTestUtils";
 import { projectWorkflowKeys, type DesignWorkflowAction, type DesignWorkflowStage, type DesignWorkflowView, type FurnitureUomOption } from "./projectWorkflowApi";
 
 const scopeAction: DesignWorkflowAction = { id: "furniture_scope", label: "Edit furniture requirements", actor: "designer", requiresProof: false };
@@ -44,8 +45,9 @@ async function open(user: ReturnType<typeof userEvent.setup>, action = scopeActi
 const footer = () => within(document.querySelector<HTMLElement>(".workflow-stage-actions__submit-footer")!);
 async function fill(user: ReturnType<typeof userEvent.setup>) {
   await screen.findAllByRole("option", { name: /Points/ });
+  await openFurnitureItem(user, "Living room", "Switch points");
   const dimensions = within(screen.getByRole("group", { name: "Wardrobe measurements" }));
-  for (const [name, value] of [["Length", "1800"], ["Width", "600"], ["Height", "2100"]]) await user.type(dimensions.getByRole("spinbutton", { name }), value!);
+  for (const [name, value] of [["Length", "1800"], ["Width", "600"]]) await user.type(dimensions.getByRole("spinbutton", { name }), value!);
   await user.selectOptions(dimensions.getByRole("combobox", { name: "UOM" }), "uom-mm");
   const points = within(screen.getByRole("group", { name: "Switch points measurements" }));
   await user.type(points.getByRole("spinbutton", { name: "Number of points" }), "9");
@@ -56,7 +58,7 @@ async function fill(user: ReturnType<typeof userEvent.setup>) {
 function expectDraft(fileInput: HTMLElement) {
   expect(screen.getByRole("spinbutton", { name: "Length" })).toHaveValue(1800);
   expect(screen.getByRole("spinbutton", { name: "Width" })).toHaveValue(600);
-  expect(screen.getByRole("spinbutton", { name: "Height" })).toHaveValue(2100);
+  expect(screen.queryByRole("spinbutton", { name: "Height" })).not.toBeInTheDocument();
   expect(screen.getByRole("spinbutton", { name: "Number of points" })).toHaveValue(9);
   expect(screen.getAllByRole("combobox", { name: "UOM" }).map((item) => (item as HTMLSelectElement).value)).toEqual(["uom-mm", "uom-pts"]);
   expect(screen.getByRole("textbox", { name: "Note" })).toHaveValue("Measured at site.");
@@ -65,23 +67,16 @@ function expectDraft(fileInput: HTMLElement) {
 }
 
 describe("Furniture submission blocker guidance", () => {
-  it.each([scopeAction, uploadAction])("names an empty selected room and preserves full drafts through explicit selection recovery in $id", async (action) => {
+  it.each([scopeAction, uploadAction])("keeps zero-only rooms out of required measurements in $id", async (action) => {
     const post = vi.spyOn(apiClient, "postMultipartWithProgress").mockResolvedValue({ version: 8 });
     setup(fixture(action)); const user = userEvent.setup(); await open(user, action); await fill(user);
     const fileInput = screen.getByLabelText(/Furniture dimensions document/);
     const submit = footer().getByRole("button", { name: action.label });
-    expect(submit).toBeDisabled();
-    expect(submit).toHaveAccessibleDescription(/No selected estimate items in Study/);
-    expect(footer().getByRole("status")).toHaveTextContent("Uncheck rooms that do not need measurements, or update the approved estimate.");
+    expect(submit).toBeEnabled();
     const study = screen.getByRole("checkbox", { name: "Study" });
-    expect(study).toBeChecked(); expect(study).toHaveAccessibleDescription(/No selected estimate items/);
-    expect(study).toHaveAttribute("aria-invalid", "true");
-    fireEvent.submit(screen.getByRole("form")); expect(post).not.toHaveBeenCalled();
-    await user.click(footer().getByRole("button", { name: "Review rooms" })); expect(study).toHaveFocus();
-    await user.click(study); expect(submit).toBeEnabled(); expect(submit).not.toHaveAttribute("aria-describedby");
+    expect(study).toBeDisabled(); expect(study).not.toBeChecked();
     expect(study).not.toHaveAttribute("aria-invalid"); expectDraft(fileInput);
-    await user.click(study); expect(submit).toBeDisabled(); expect(submit).toHaveAccessibleDescription(/Study/);
-    await user.click(study); expectDraft(fileInput);
+    expect(footer().queryByRole("button", { name: "Review rooms" })).not.toBeInTheDocument();
     expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
     fireEvent.submit(screen.getByRole("form")); await waitFor(() => expect(post).toHaveBeenCalledOnce());
     const body = post.mock.calls[0]![1]; expect(body.get("file")).toBe(proof); expect(body.get("note")).toBe("Measured at site.");
@@ -91,16 +86,13 @@ describe("Furniture submission blocker guidance", () => {
     expect((data.dimensions ?? data.rooms)[1].items).toEqual([{ estimateItemId: "lights", measurementType: "count", quantity: 9, uomId: "uom-pts" }]);
   });
 
-  it("summarizes more than three unavailable rooms while Review rooms targets the first selected one", async () => {
+  it("does not select any zero-only rooms from a historical required scope", async () => {
     setup(fixture(scopeAction, ["Study", "Utility", "Terrace", "Balcony", "Store"])); const user = userEvent.setup(); await open(user);
-    expect(footer().getByRole("status")).toHaveTextContent("No selected estimate items in Study, Utility, Terrace and 2 more.");
-    expect(footer().getByRole("status")).not.toHaveTextContent("Balcony");
-    await user.click(screen.getByRole("checkbox", { name: "Study" }));
-    await user.click(footer().getByRole("button", { name: "Review rooms" }));
-    expect(screen.getByRole("checkbox", { name: "Utility" })).toHaveFocus();
-    await user.click(screen.getByRole("checkbox", { name: "Study" }));
-    await user.click(footer().getByRole("button", { name: "Review rooms" }));
-    expect(screen.getByRole("checkbox", { name: "Study" })).toHaveFocus();
+    for (const name of ["Study", "Utility", "Terrace", "Balcony", "Store"]) {
+      expect(screen.getByRole("checkbox", { name })).toBeDisabled();
+      expect(screen.getByRole("checkbox", { name })).not.toBeChecked();
+    }
+    expect(footer().queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("explains initial UOM loading and releases the disabled button on success without weakening field validation", async () => {

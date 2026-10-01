@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AnnotationElement } from "../../api/types";
 import {
+  containedDrawingCrop,
   cropPointToPage,
   pagePointToCrop,
   projectAnnotationToCrop,
@@ -19,6 +20,20 @@ const elements: AnnotationElement[] = [
 ];
 
 describe("plan geometry", () => {
+  it.each([
+    [{ width: 80, height: 160 }, { x: 105, y: 60, width: 50, height: 100 }],
+    [{ width: 320, height: 100 }, { x: 50, y: 85, width: 160, height: 50 }]
+  ])("keeps annotations aligned to fitted content and excludes blank padding for %j", (source, expected) => {
+    const slot = { x: 50, y: 60, width: 160, height: 100 };
+    const content = containedDrawingCrop(slot, source);
+    expect(content).toEqual(expected);
+    for (const point of [{ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 0.75, y: 0.25 }]) {
+      expect(pagePointToCrop(cropPointToPage(point, content, page), content, page)).toEqual(point);
+    }
+    expect(pagePointToCrop(cropPointToPage({ x: 0, y: 0 }, slot, page), content, page)).toBeNull();
+    for (const element of elements) expect(projectAnnotationToCrop(projectAnnotationToPage(element, content, page), content, page)).toEqual(element);
+  });
+
   it("matches the backend crop and page projection contract", () => {
     expect(cropPointToPage({ x: 0.25, y: 0.5 }, crop, page)).toEqual({ x: 0.35, y: 0.4 });
     expect(pagePointToCrop({ x: 0.35, y: 0.4 }, crop, page)).toEqual({ x: 0.25, y: 0.5 });

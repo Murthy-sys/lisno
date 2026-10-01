@@ -46,7 +46,7 @@ export function createProcurementVendorBaselineService(input: { audit: AuditServ
         const fields = parsed.data;
         const vendors = await lockProcurementVendors([vendorId], session);
         if (!vendors.has(vendorId)) vendorNotFound();
-        const current = await ProjectProcurementItemModel.findById(itemId).session(session).lean();
+        const current = await ProjectProcurementItemModel.findOne({ _id: itemId, removedAt: null }).session(session).lean();
         if (!current) itemNotFound();
         const requestDigest = createHash("sha256").update(JSON.stringify({ vendorId, itemId, ...fields })).digest("hex");
         const receipt = current.allocationBaselineReceipt;
@@ -81,7 +81,7 @@ export function createProcurementVendorBaselineService(input: { audit: AuditServ
 
 function baselineFilter(vendorId: string) {
   // Equality to null intentionally matches absent fields in pre-feature documents.
-  return { vendorId, allocatedWorkPaise: null, allocationTrackingVersion: null };
+  return { vendorId, allocatedWorkPaise: null, allocationTrackingVersion: null, removedAt: null };
 }
 function receiptResult(item: Row, receipt: Row): ProcurementVendorBaselineResult {
   return { itemId: String(item._id), projectId: item.projectId, vendorId: receipt.vendorId,

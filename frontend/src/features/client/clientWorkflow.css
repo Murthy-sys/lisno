@@ -1,4 +1,9 @@
 .client-project-workflow { min-width: 0; }
+.client-page--project > .ui-page-header { padding-block: var(--space-2) var(--space-4); border-block-end: 1px solid var(--color-border); gap: var(--space-3); }
+.client-page--project .ui-page-header__title { overflow-wrap: anywhere; }
+.client-project-back { display: inline-flex; align-items: center; min-block-size: 44px; color: var(--color-text-muted); font-size: var(--text-sm); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.client-project-status { display: inline-block; padding: var(--space-1) var(--space-2); border: 1px solid var(--color-border-strong); font: var(--type-metadata); text-transform: capitalize; }
+.client-page--project .estimate-review-panel--project { margin-block: var(--space-2); }
 .client-page--project .workflow-progress--external { border: 0; padding: 0; background: transparent; box-shadow: none; }
 .client-page--project .workflow-progress__details--client { margin-block-start: 0; }
 .client-page.client-page--project { gap: var(--space-4); }

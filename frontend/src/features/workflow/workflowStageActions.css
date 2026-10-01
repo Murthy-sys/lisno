@@ -203,6 +203,31 @@
   font-size: var(--text-xs);
 }
 .workflow-stage-actions__room-option { min-inline-size: 0; }
+.workflow-action-panel--furniture .workflow-stage-actions__room-estimate {
+  display: grid;
+  gap: var(--space-1);
+  min-inline-size: 0;
+  margin-inline-start: calc(18px + var(--space-3) + var(--space-2));
+  padding: 0 var(--space-2) var(--space-3);
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+.workflow-action-panel--furniture .workflow-stage-actions__room-estimate p {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+.workflow-action-panel--furniture .workflow-stage-actions__room-estimate ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+.workflow-action-panel--furniture .workflow-stage-actions__room-estimate li { min-inline-size: 0; overflow-wrap: anywhere; }
 .workflow-action-panel .workflow-stage-actions__room-warning {
   margin: 0;
   padding: 0 var(--space-2) var(--space-2) calc(18px + var(--space-3) + var(--space-2));
@@ -218,6 +243,24 @@
   min-inline-size: 0;
 }
 .workflow-stage-actions__submit-footer > .workflow-stage-actions__buttons { justify-content: flex-end; }
+.workflow-action-panel--furniture .ui-drawer__footer { box-shadow: none; }
+.workflow-action-panel--furniture .workflow-stage-actions__submit-footer > .workflow-stage-actions__buttons {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: var(--space-2);
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+.workflow-action-panel--furniture .workflow-stage-actions__submit-footer > .workflow-stage-actions__buttons .ui-button {
+  min-inline-size: 0;
+  max-inline-size: none;
+  min-block-size: 48px;
+  padding-inline: var(--space-3);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
 .workflow-stage-actions__submit-blocker {
   display: flex;
   align-items: center;
@@ -260,6 +303,9 @@
   }
   .workflow-action-panel .ui-drawer__footer .ui-button {
     flex: 1 1 auto;
+  }
+  .workflow-action-panel--furniture .workflow-stage-actions__submit-footer > .workflow-stage-actions__buttons {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 @media (max-width: 640px) {

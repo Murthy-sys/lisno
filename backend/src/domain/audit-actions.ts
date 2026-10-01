@@ -134,9 +134,28 @@ export const PROCUREMENT_AUDIT_ACTIONS = [
   "procurement_vendor_photo_removed",
   "procurement_expense_recorded",
   "project_procurement_item_created",
+  "project_procurement_item_removed",
   "project_vendor_suggestion_created",
   "project_vendor_suggestion_updated",
-  "project_procurement_item_updated"
+  "project_procurement_item_updated",
+  "project_purchase_order_created",
+  "project_purchase_order_updated",
+  "project_purchase_order_submitted",
+  "project_purchase_order_decided",
+  "project_purchase_order_amended",
+  "project_purchase_order_cancelled",
+  "project_purchase_order_request_submitted",
+  "project_purchase_order_request_decided",
+  "vendor_work_progress_updated",
+  "vendor_work_media_uploaded",
+  "vendor_work_submitted",
+  "client_vendor_work_decided",
+  "project_scope_exception_recorded",
+  "project_completion_authority_changed",
+  "project_completion_recorded",
+  "site_completion_progress_updated",
+  "site_completion_submitted",
+  "client_site_completion_decided"
 ] as const;
 
 export const AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS = [

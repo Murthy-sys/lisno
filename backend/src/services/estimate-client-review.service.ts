@@ -6,6 +6,7 @@ import {
   type EstimateClientReviewSnapshot,
   type EstimateClientReviewStatus,
   type EstimateClientReviewSummary,
+  type EstimateClientFeedback,
   type ReviewAssignee,
   type StoredDownload
 } from "../domain/estimate-client-review.js";
@@ -21,11 +22,14 @@ import { UserModel } from "../models/User.js";
 import type { PageResult, PaginationInput } from "../repositories/types.js";
 import type { PublicUser } from "./auth.service.js";
 import type { EstimateClientReviewStorage } from "./estimate-client-review-storage.js";
+import { presentClientEstimate } from "./estimate-client-presentation.js";
 
 type Pipeline = Record<string, unknown>[];
 type Row = Record<string, unknown>;
 
 export interface EstimateClientReviewService {
+  listClientEstimates(actor: PublicUser, estimateId?: string): Promise<Record<string, any>[]>;
+  currentClientFeedbackForEstimate(actor: PublicUser, estimateId: string, authorizedEstimate?: Row): Promise<EstimateClientFeedback | null>;
   resolveReviewAssignee(
     projectId: string | null,
     session: mongoose.ClientSession
@@ -62,6 +66,57 @@ export interface EstimateClientReviewService {
 export function createEstimateClientReviewService(input: {
   storage: EstimateClientReviewStorage;
 }): EstimateClientReviewService {
+  async function listClientEstimates(actor: PublicUser, estimateId?: string): Promise<Record<string, any>[]> {
+    if (!["client", "super_admin"].includes(actor.role)) notFound();
+    const rows = await aggregateRows(EstimateModel, [
+      ...(estimateId ? [{ $match: { _id: estimateId } }] : []),
+      ...activeActorStages(actor, "activeActor", actor.role === "client"
+        ? { emailNormalized: normalizeEmail(actor.email) } : {}),
+      { $lookup: {
+        from: LeadModel.collection.name, localField: "leadId", foreignField: "_id", as: "leadRows"
+      } },
+      { $set: { clientLead: { $arrayElemAt: ["$leadRows", 0] } } },
+      { $match: { "clientLead._id": { $exists: true } } },
+      ...(actor.role === "client" ? [{ $match: { $expr: { $eq: [
+        { $toLower: { $trim: { input: "$clientLead.clientEmail" } } }, normalizeEmail(actor.email)
+      ] } } }] : []),
+      { $lookup: {
+        from: EstimateClientReviewRoundModel.collection.name,
+        let: { currentEstimateId: "$_id" },
+        pipeline: [
+          { $match: { $expr: { $eq: ["$estimateId", "$$currentEstimateId"] } } },
+          { $sort: { sendGeneration: -1, _id: 1 } }, { $limit: 1 }
+        ], as: "publishedRounds"
+      } },
+      { $sort: { updatedAt: -1, _id: 1 } }
+    ]);
+    return rows.flatMap((row) => {
+      const value = presentClientEstimate(actor, row, recordField(row, "clientLead"), arrayField(row, "publishedRounds")[0] ?? null);
+      return value ? [value] : [];
+    });
+  }
+
+  async function currentClientFeedbackForEstimate(actor: PublicUser, estimateId: string, authorizedEstimate?: Row): Promise<EstimateClientFeedback | null> {
+    await requireEstimateReader(actor, estimateId);
+    const rounds = await aggregateRows(EstimateClientReviewRoundModel, [
+      { $match: { estimateId } }, { $sort: { sendGeneration: -1, _id: 1 } }, { $limit: 1 },
+      { $project: { _id: 1, leadId: 1, projectId: 1, status: 1, decision: 1, decisionNote: 1, decidedAt: 1 } }
+    ]);
+    if (rounds[0]) {
+      const round = rounds[0];
+      if (round.status !== "changes_requested" || round.decision !== "request_changes") return null;
+      const estimate = authorizedEstimate ?? await EstimateModel.findById(estimateId).lean();
+      if (!estimate || String(estimate.leadId) !== String(round.leadId) ||
+        (estimate.projectId != null && round.projectId != null && estimate.projectId !== round.projectId)) return null;
+      return { note: typeof round.decisionNote === "string" ? round.decisionNote : "",
+        occurredAt: isoField(round, "decidedAt"), reviewRoundId: stringField(round, "_id") };
+    }
+    const estimate = authorizedEstimate ?? await EstimateModel.findById(estimateId).lean() as Record<string, any> | null;
+    if (!estimate || !["client_changes_requested", "draft", "pending_manager_assignment", "pending_designer_approval", "designer_changes_requested", "ready_for_client"].includes(estimate.status)) return null;
+    const review = [...(estimate.reviews ?? [])].reverse().find((item: Record<string, unknown>) => item.action === "client_changes_requested");
+    return review ? { note: String(review.note ?? ""), occurredAt: isoField(review, "occurredAt"), reviewRoundId: null } : null;
+  }
+
   async function resolveReviewAssignee(
     projectId: string | null,
     session: mongoose.ClientSession
@@ -487,6 +542,8 @@ export function createEstimateClientReviewService(input: {
   }
 
   return {
+    listClientEstimates,
+    currentClientFeedbackForEstimate,
     resolveReviewAssignee,
     currentSummaryForEstimate,
     currentRoundForClientEstimate,

@@ -2167,7 +2167,8 @@ function maintenanceErrorCode(error: unknown): string {
 
 function storedRupeesToPaise(value: unknown): number {
   try {
-    return rupeesToPaise(Number(value));
+    if (typeof value !== "number") procurementLineageConflict();
+    return rupeesToPaise(value);
   } catch {
     procurementLineageConflict();
   }

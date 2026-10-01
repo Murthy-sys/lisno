@@ -24,7 +24,19 @@ function bearer(id: string, role: string): string {
 
 describe("Super Admin dashboard routes", () => {
   it("protects all reads and denies every non-Super-Admin before repository aggregation", async () => {
-    const repository = createMemoryRepository();
+    const seed = structuredClone(demoSeedData);
+    seed.users.push({
+      ...structuredClone(seed.users[0]!),
+      id: "user-vendor-dashboard-fixture",
+      name: "Vendor dashboard fixture",
+      email: "vendor-dashboard-fixture@lisno.example",
+      emailNormalized: "vendor-dashboard-fixture@lisno.example",
+      role: "vendor",
+      vendorId: "vendor-dashboard-fixture",
+      accountKind: "standard",
+      active: true
+    });
+    const repository = createMemoryRepository(seed);
     const aggregate = vi.spyOn(repository, "readSuperAdminDashboardOverview");
     const app = createApp(repository);
 
@@ -32,7 +44,7 @@ describe("Super Admin dashboard routes", () => {
     expect(aggregate).not.toHaveBeenCalled();
 
     for (const role of ROLE_CODES.filter((candidate) => candidate !== "super_admin")) {
-      const actor = demoSeedData.users.find((user) => user.role === role);
+      const actor = seed.users.find((user) => user.role === role);
       expect(actor, `fixture for ${role}`).toBeDefined();
       await request(app)
         .get("/api/v1/admin/dashboard/overview")

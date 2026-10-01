@@ -2,13 +2,20 @@ import { QueryClient } from "@tanstack/react-query";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ProjectWorkflowTask } from "../../api/types";
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
 import { dashboardKeys } from "../admin/dashboard/superAdminDashboardApi";
 import { OperationalTaskQueue } from "./OperationalTaskQueue";
+
+const statusAuth = vi.hoisted(() => ({ role: "worker_carpenter" as "worker_carpenter" | "site_manager" }));
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({
+  user: { id: "participant-a", role: statusAuth.role }, status: "authenticated",
+  authorization: { role: statusAuth.role, permissions: statusAuth.role === "site_manager"
+    ? ["projects.status.read", "procurement.site_completion.manage"] : ["projects.status.read"] }
+}) }));
 
 const carpenterTask: ProjectWorkflowTask = {
   id: "workflow-task-1",
@@ -35,7 +42,14 @@ const carpenterTask: ProjectWorkflowTask = {
   updatedAt: "2026-08-26T09:30:00.000Z"
 };
 
-afterEach(() => vi.restoreAllMocks());
+beforeEach(() => server.use(http.get("/api/v1/projects/:projectId/status", ({ params }) => {
+  const projectId = String(params.projectId);
+  return HttpResponse.json({ data: {
+    projectId, projectName: projectId === "project-1" ? "Aurora Villa" : "Lake House", projectStatus: "active",
+    serverNow: "2026-10-01T08:00:00Z", state: "active", currentStage: { key: "trade_execution", label: "Trade execution" }, issue: null, pendingActions: []
+  } });
+})));
+afterEach(() => { statusAuth.role = "worker_carpenter"; vi.restoreAllMocks(); });
 
 describe("OperationalTaskQueue", () => {
   it("preserves an unsaved progress draft when the worker keeps editing", async () => {
@@ -85,6 +99,45 @@ describe("OperationalTaskQueue", () => {
     expect(within(task).getByRole("button", {
       name: "Update progress for Carpentry · Living Room"
     })).toBeEnabled();
+    expect(await within(queue).findByRole("button", { name: "Project status for Aurora Villa" })).toBeEnabled();
+  });
+
+  it("opens the status of a worker's project without depending on project messaging", async () => {
+    let statusReads = 0;
+    server.use(
+      http.get("/api/v1/workflow-tasks", () => HttpResponse.json({ data: [carpenterTask, { ...carpenterTask, id: "workflow-task-2", title: "Carpentry · Bedroom" }] })),
+      http.get("/api/v1/projects/project-1/status", () => {
+        statusReads += 1;
+        return HttpResponse.json({ data: {
+          projectId: "project-1", projectName: "Aurora Villa", projectStatus: "active", serverNow: "2026-10-01T08:00:00Z", state: "active",
+          currentStage: { key: "trade_execution", label: "Trade execution" }, issue: null,
+          pendingActions: [{ id: "task-1", stageKey: "trade_execution", stageLabel: "Trade execution", action: "Complete carpentry", responsibleRole: "worker_carpenter", people: [{ id: "worker-1", name: "Kiran Carpenter", role: "worker_carpenter" }], state: "pending", scheduledAt: null, deadlineAt: null, blocker: null }]
+        } });
+      })
+    );
+    renderWithQuery(<OperationalTaskQueue role="worker_carpenter" />);
+    const trigger = await screen.findByRole("button", { name: "Project status for Aurora Villa" });
+    expect(screen.getAllByRole("button", { name: "Project status for Aurora Villa" })).toHaveLength(1);
+    expect(statusReads).toBe(1);
+    await userEvent.click(trigger);
+    expect(await screen.findByText("Complete carpentry")).toBeVisible();
+    expect(screen.getByText("Kiran Carpenter", { selector: ".project-status-people strong" })).toBeVisible();
+    expect(statusReads).toBe(2);
+  });
+
+  it("does not show status for a task project when current membership is denied", async () => {
+    let statusReads = 0;
+    server.use(
+      http.get("/api/v1/workflow-tasks", () => HttpResponse.json({ data: [carpenterTask] })),
+      http.get("/api/v1/projects/project-1/status", () => {
+        statusReads += 1;
+        return HttpResponse.json({ error: { code: "NOT_FOUND", message: "Unavailable" } }, { status: 404 });
+      })
+    );
+    renderWithQuery(<OperationalTaskQueue role="worker_carpenter" />);
+    expect(await screen.findByRole("heading", { name: "Carpentry · Living Room" })).toBeVisible();
+    await waitFor(() => expect(statusReads).toBe(1));
+    expect(screen.queryByRole("button", { name: "Project status for Aurora Villa" })).not.toBeInTheDocument();
   });
 
   it("validates and saves a versioned worker progress update", async () => {
@@ -194,11 +247,13 @@ describe("OperationalTaskQueue", () => {
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: dashboardKeys.all });
   });
 
-  it("gives Site Managers a grouped, read-only view of trade progress", async () => {
+  it("lets the assigned Site Manager save 100% before sending completion to the Client", async () => {
+    statusAuth.role = "site_manager";
     const siteTask: ProjectWorkflowTask = {
       ...carpenterTask,
       id: "workflow-site-1",
       kind: "site_execution",
+      completionAuthority: "vendor_client",
       title: "Plan site execution",
       description: "Coordinate the approved work.",
       assigneeRole: "site_manager",
@@ -207,23 +262,31 @@ describe("OperationalTaskQueue", () => {
       progress: 30,
       version: 1
     };
-    const completedPlumbing: ProjectWorkflowTask = {
-      ...carpenterTask,
-      id: "workflow-plumber-1",
-      projectId: "project-2",
-      projectName: "Lake House",
-      title: "Civil & Plumbing · Kitchen",
-      assigneeRole: "worker_plumber",
-      sourceSectionId: "CV",
-      roomName: "Kitchen",
-      status: "completed",
-      progress: 100,
-      version: 4
-    };
+    let current = { projectId: "project-1", projectStatus: "active", version: 1, progress: 30,
+      note: "", status: "draft", currentRound: 0, canSubmit: false, blockers: [] as string[], review: null };
+    const sent: Array<Record<string, unknown>> = [];
     server.use(
       http.get("/api/v1/workflow-tasks", () =>
-        HttpResponse.json({ data: [siteTask, carpenterTask, completedPlumbing] })
-      )
+        HttpResponse.json({ data: [siteTask] })
+      ),
+      http.get("/api/v1/projects/project-1/site-completion", () => HttpResponse.json({ data: current })),
+      http.get("/api/v1/projects/project-1/vendor-work-progress", () => HttpResponse.json({ data: { projectId: "project-1", assignments: [{
+        id: "vendor-section-1", projectId: "project-1", vendorId: "vendor-1", orderId: "order-1", sectionLabel: "Carpentry",
+        roomName: "Living room", itemName: "TV unit", scopeType: "execution", description: "Install TV unit", targetDate: "2026-11-01",
+        status: "ready", progress: 0, displayProgress: current.progress === 100 ? 100 : 0,
+        progressSource: current.progress === 100 ? "site_manager" : "vendor", note: "", imageCount: 0, imageIds: [],
+        requestedChangeReason: null, submittedAt: null, acceptedAt: null
+      }], pendingOwner: "site_manager" } })),
+      http.patch("/api/v1/projects/project-1/site-completion/progress", async ({ request }) => {
+        const body = await request.json() as Record<string, unknown>;
+        current = { ...current, version: current.version + 1, progress: Number(body.progress), note: String(body.note), canSubmit: body.progress === 100 };
+        return HttpResponse.json({ data: current });
+      }),
+      http.post("/api/v1/projects/project-1/site-completion/submit", async ({ request }) => {
+        sent.push(await request.json() as Record<string, unknown>);
+        current = { ...current, version: current.version + 1, status: "pending_client", canSubmit: false };
+        return HttpResponse.json({ data: current });
+      })
     );
 
     renderWithQuery(<OperationalTaskQueue role="site_manager" />);
@@ -231,32 +294,32 @@ describe("OperationalTaskQueue", () => {
     const overview = await screen.findByRole("region", {
       name: "Site execution overview"
     });
-    expect(await within(overview).findByRole("heading", {
-      name: "Your coordination tasks"
-    })).toBeVisible();
-    expect(within(overview).getByRole("button", {
-      name: "Update progress for Plan site execution"
-    })).toBeEnabled();
-    const workers = within(overview).getByRole("region", {
-      name: "Worker progress"
-    });
-    expect(within(workers).getByRole("heading", {
-      name: "Aurora Villa",
-      level: 4
-    })).toBeVisible();
-    expect(within(workers).getByRole("heading", {
-      name: "Lake House",
-      level: 4
-    })).toBeVisible();
-    expect(within(workers).getByText("0 of 1 complete")).toBeVisible();
-    expect(within(workers).getByText("1 of 1 complete")).toBeVisible();
-    expect(within(workers).getByRole("progressbar", {
-      name: "Carpentry · Living Room: 25% complete"
-    })).toHaveAttribute("aria-valuenow", "25");
-    expect(within(workers).getByRole("progressbar", {
-      name: "Civil & Plumbing · Kitchen: 100% complete"
-    })).toHaveAttribute("aria-valuenow", "100");
-    expect(within(workers).queryByRole("button", { name: /Update progress/ }))
-      .not.toBeInTheDocument();
+    expect(await within(overview).findByRole("heading", { name: "Aurora Villa completion" })).toBeVisible();
+    expect(within(overview).getByRole("button", { name: "Project status for Aurora Villa" })).toBeVisible();
+    const complete = within(overview).getByRole("button", { name: "Complete and send to Client" });
+    expect(complete).toBeDisabled();
+    const progress = within(overview).getByRole("spinbutton", { name: "Project execution progress (%)" });
+    await userEvent.clear(progress);
+    await userEvent.type(progress, "100");
+    expect(within(overview).getByText("Save 100% progress first. Then send completion to the Client.")).toBeVisible();
+    await userEvent.click(within(overview).getByRole("button", { name: "Save 100% progress" }));
+    await waitFor(() => expect(complete).toBeEnabled());
+    expect(await within(overview).findByText("100% · Site Manager verified")).toBeVisible();
+    await userEvent.click(complete);
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]).toMatchObject({ expectedVersion: 2 });
+    expect(await within(overview).findByText("Completion is with the Client for review.")).toBeVisible();
+  });
+
+  it("keeps legacy Site Manager coordination tasks on their existing update action", async () => {
+    statusAuth.role = "site_manager";
+    server.use(http.get("/api/v1/workflow-tasks", () => HttpResponse.json({ data: [{
+      ...carpenterTask, id: "legacy-site-task", kind: "site_execution", completionAuthority: "legacy_staff",
+      title: "Plan site execution", assigneeRole: "site_manager", sourceSectionId: null, roomName: null
+    }] })));
+    renderWithQuery(<OperationalTaskQueue role="site_manager" />);
+    expect(await screen.findByRole("heading", { name: "Your coordination tasks" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Update progress for Plan site execution" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Complete and send to Client" })).not.toBeInTheDocument();
   });
 });

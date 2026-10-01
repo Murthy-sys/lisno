@@ -8,6 +8,7 @@ import { apiClient } from "../../api/client";
 import { createFurnitureDimensionsDraft, parseFurnitureDimensionsDraft } from "./FurnitureDimensionsEditor";
 import { FurnitureRequirementsReview } from "./FurnitureRequirementsReview";
 import { WorkflowStageActions } from "./WorkflowStageActions";
+import { openFurnitureItem } from "./furnitureDisclosureTestUtils";
 import type { DesignWorkflowAction, DesignWorkflowStage, DesignWorkflowView, FurnitureDimensionItem, FurnitureEstimateRoom } from "./projectWorkflowApi";
 
 const scopeAction: DesignWorkflowAction = { id: "furniture_scope", label: "Edit furniture requirements", actor: "designer", requiresProof: false };
@@ -49,11 +50,12 @@ function setup(data = fixture()) {
 async function open(user: ReturnType<typeof userEvent.setup>, action = scopeAction) {
   await user.click(screen.getByRole("button", { name: action.label }));
   await screen.findAllByRole("option", { name: /Points/ });
+  await openFurnitureItem(user, "Bedroom", "Light / fan / switch points");
 }
 const pointGroup = () => within(screen.getByRole("group", { name: "Light / fan / switch points measurements" }));
 async function fill(user: ReturnType<typeof userEvent.setup>) {
   const dimensions = within(screen.getByRole("group", { name: "Wardrobe measurements" }));
-  for (const [name, value] of [["Length", "1800"], ["Width", "600"], ["Height", "2100"]]) await user.type(dimensions.getByRole("spinbutton", { name }), value!);
+  for (const [name, value] of [["Length", "1800"], ["Width", "600"]]) await user.type(dimensions.getByRole("spinbutton", { name }), value!);
   await user.selectOptions(dimensions.getByRole("combobox", { name: "UOM" }), "uom-mm");
   await user.type(pointGroup().getByRole("spinbutton", { name: "Number of points" }), "9");
   await user.selectOptions(pointGroup().getByRole("combobox", { name: "UOM" }), "uom-pts");
@@ -61,7 +63,7 @@ async function fill(user: ReturnType<typeof userEvent.setup>) {
 }
 
 const expectedItems = [
-  { estimateItemId: "wardrobe", length: 1800, width: 600, height: 2100, uomId: "uom-mm" },
+  { estimateItemId: "wardrobe", length: 1800, width: 600, uomId: "uom-mm" },
   { estimateItemId: "lights", measurementType: "count", quantity: 9, uomId: "uom-pts" }
 ];
 
@@ -73,7 +75,7 @@ describe("Point-count entry and submission", () => {
     expect(pointGroup().queryByRole("spinbutton", { name: /Length|Width|Height/ })).not.toBeInTheDocument();
     const count = pointGroup().getByRole("spinbutton", { name: "Number of points" });
     expect(count).toHaveAttribute("min", "1"); expect(count).toHaveAttribute("step", "1"); expect(count).toHaveAttribute("max", String(Number.MAX_SAFE_INTEGER));
-    expect(within(screen.getByRole("group", { name: "Wardrobe measurements" })).getAllByRole("spinbutton")).toHaveLength(3);
+    expect(within(screen.getByRole("group", { name: "Wardrobe measurements" })).getAllByRole("spinbutton")).toHaveLength(2);
     await fill(user); fireEvent.submit(screen.getByRole("form"));
     await waitFor(() => expect(post).toHaveBeenCalledOnce());
     const body = post.mock.calls[0]![1];
@@ -93,6 +95,7 @@ describe("Point-count entry and submission", () => {
     await user.click(screen.getByRole("checkbox", { name: "Bedroom" }));
     expect(screen.queryByRole("spinbutton", { name: "Number of points" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "Bedroom" }));
+    await openFurnitureItem(user, "Bedroom", "Light / fan / switch points");
     expect(pointGroup().getByRole("spinbutton", { name: "Number of points" })).toHaveValue(12);
     expect(pointGroup().getByRole("combobox", { name: "UOM" })).toHaveValue("uom-pts");
     await user.upload(screen.getByLabelText(/Furniture dimensions document/), proof); fireEvent.submit(screen.getByRole("form"));
@@ -106,6 +109,7 @@ describe("Point-count entry and submission", () => {
     fireEvent.change(pointGroup().getByRole("spinbutton", { name: "Number of points" }), { target: { value: "13" } });
     const toggle = screen.getByRole("checkbox", { name: "No existing furniture dimensions are needed" });
     await user.click(toggle); await user.click(toggle);
+    await openFurnitureItem(user, "Bedroom", "Light / fan / switch points");
     expect(pointGroup().getByRole("spinbutton", { name: "Number of points" })).toHaveValue(13);
     expect(pointGroup().getByRole("combobox", { name: "UOM" })).toHaveValue("uom-pts");
     expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
@@ -128,7 +132,7 @@ describe("Point-count entry and submission", () => {
     setup(data); const user = userEvent.setup(); await open(user);
     expect(pointGroup().getByRole("spinbutton", { name: "Number of points" })).toHaveValue(null);
     expect(pointGroup().getByRole("combobox", { name: "UOM" })).toHaveValue("");
-    expect(pointGroup().getByText(/Earlier length, width and height values do not represent a point count/)).toBeVisible();
+    expect(pointGroup().getByText(/Earlier dimensional values do not represent a point count/)).toBeVisible();
     expect(screen.getByRole("row", { name: "Light / fan / switch points 5 5 5 mm" })).toBeInTheDocument();
   });
 
@@ -136,9 +140,9 @@ describe("Point-count entry and submission", () => {
     const data = fixture(); delete data.workflow.furnitureRooms![0]!.estimateItems![1]!.measurementType;
     setup(data); const user = userEvent.setup(); await open(user);
     expect(pointGroup().queryByRole("spinbutton", { name: "Number of points" })).not.toBeInTheDocument();
-    expect(pointGroup().getAllByRole("spinbutton")).toHaveLength(3);
+    expect(pointGroup().getAllByRole("spinbutton")).toHaveLength(2);
     await user.selectOptions(pointGroup().getByRole("combobox", { name: "UOM" }), "uom-pts");
-    expect(pointGroup().getAllByRole("spinbutton")).toHaveLength(3);
+    expect(pointGroup().getAllByRole("spinbutton")).toHaveLength(2);
   });
 
   it("blocks an open draft when the canonical measurement mode changes", async () => {
@@ -156,7 +160,7 @@ describe("Point-count draft boundaries", () => {
   const draft = () => createFurnitureDimensionsDraft(fixture(scopeAction, true).stage.operational!.rooms!, estimateRooms);
   it.each(["NaN", "Infinity", "-Infinity", "9007199254740992", "9007199254740991.1", "1.00000000000000001"])("rejects nonfinite, fractional or unsafe draft count %s", (quantity) => {
     const values = draft(); values.bedroom![1] = { estimateItemId: "lights", measurementType: "count", quantity, uomId: "uom-pts" };
-    expect(parseFurnitureDimensionsDraft(["bedroom"], values, estimateRooms, units)).toEqual({ error: expect.stringContaining("positive whole number") });
+    expect(parseFurnitureDimensionsDraft(["bedroom"], values, estimateRooms, units)).toEqual(expect.objectContaining({ error: expect.stringContaining("positive whole number"), invalidField: { roomId: "bedroom", estimateItemId: "lights", field: "quantity" } }));
   });
   it("retains full count precision at the maximum safe integer", () => {
     const values = draft(); values.bedroom![1] = { estimateItemId: "lights", measurementType: "count", quantity: String(Number.MAX_SAFE_INTEGER), uomId: "uom-pts" };
@@ -164,10 +168,10 @@ describe("Point-count draft boundaries", () => {
     expect(parsed.rooms?.[0]!.items[1]).toEqual({ estimateItemId: "lights", measurementType: "count", quantity: Number.MAX_SAFE_INTEGER, uomId: "uom-pts" });
   });
   it("requires an active configured unit for points", () => {
-    expect(parseFurnitureDimensionsDraft(["bedroom"], draft(), estimateRooms, [units[0]!])).toEqual({ error: expect.stringContaining("active configured UOM") });
+    expect(parseFurnitureDimensionsDraft(["bedroom"], draft(), estimateRooms, [units[0]!])).toEqual(expect.objectContaining({ error: expect.stringContaining("active configured UOM") }));
   });
   it("rejects a draft mode that does not match the estimate item", () => {
-    const values = draft(); values.bedroom![1] = { estimateItemId: "lights", measurementType: "dimensions", length: "5", width: "5", height: "5", uomId: "uom-pts" };
+    const values = draft(); values.bedroom![1] = { estimateItemId: "lights", measurementType: "dimensions", length: "5", width: "5", uomId: "uom-pts" };
     expect(parseFurnitureDimensionsDraft(["bedroom"], values, estimateRooms, units)).toEqual({ error: expect.stringContaining("unavailable or have changed") });
   });
   it("never prefills a different estimate item by name", () => {

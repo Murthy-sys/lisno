@@ -9,6 +9,7 @@ import { createProjectDesignWorkflow } from "../src/domain/design-workflow.js";
 import { CALENDAR_DAY_MS as DAY, emptyDesignWorkflowState, workflowSubmissionBlockers } from "../src/domain/design-workflow-state.js";
 import { sha256Hex } from "../src/domain/estimate-client-review.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
+import { RepositoryConflictError } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import type { PublicUser } from "../src/services/auth.service.js";
@@ -73,6 +74,19 @@ describe("operational design workflow", () => {
     expect(await service.queue(users.super_admin!)).not.toContainEqual(expect.objectContaining({ projectId: project.id }));
   });
 
+  it.each(["client_portal", "admin_proof"] as const)("shows project progress eligibility for a %s approved Estimate, including zero rooms", async (approvalSource) => {
+    const { repository, project, users, now } = setup(false, (seed) => {
+      const estimate = seed.estimateSummaries!.find((row) => row.id === "workflow-approved-estimate")!;
+      estimate.clientDecisionSource = approvalSource;
+      estimate.rooms = [];
+      const otherProject = seed.projects.find((row) => row.id === "project-aurora-studio")!;
+      otherProject.designWorkflowStages = createProjectDesignWorkflow(otherProject.id);
+    });
+    const projects = createProjectService(repository, createAuditService(repository), now);
+    expect((await projects.designWorkflow(users.client!, project.id)).estimateApprovalStatus).toBe("approved");
+    expect((await projects.designWorkflow(users.client!, "project-aurora-studio")).estimateApprovalStatus).toBe("awaiting_approval");
+  });
+
   it.each(["missing", "draft", "sent", "foreign", "conflicting"])("keeps queue, projection and mutation closed for %s estimate approval", async (source) => {
     const { act, service, state, users, project, repository, now } = setup(false, (seed) => {
       const estimate = seed.estimateSummaries!.find((row) => row.id === "workflow-approved-estimate")!;
@@ -82,6 +96,7 @@ describe("operational design workflow", () => {
       else estimate.status = source;
     });
     const view = await createProjectService(repository, createAuditService(repository), now).designWorkflow(users.super_admin!, project.id);
+    expect(view.estimateApprovalStatus).toBe(source === "conflicting" ? "source_issue" : "awaiting_approval");
     expect(view.initialPayment).toMatchObject({ status: "awaiting_estimate_approval", canConfirm: false, confirmedAt: null });
     expect(view.projectStages![0]!.operational!.timing.state).toBe("waiting");
     const designerView = await createProjectService(repository, createAuditService(repository), now).designWorkflow(users.designer!, project.id);
@@ -107,7 +122,13 @@ describe("operational design workflow", () => {
     expect(source).not.toHaveBeenCalled();
     await act("super_admin", "confirm_initial_payment");
     source.mockResolvedValue(null);
-    expect((await projects.designWorkflow(users.super_admin!, project.id)).initialPayment).toMatchObject({ status: "received", canConfirm: false });
+    const withdrawn = await projects.designWorkflow(users.super_admin!, project.id);
+    expect(withdrawn.initialPayment).toMatchObject({ status: "received", canConfirm: false });
+    expect(withdrawn.estimateApprovalStatus).toBe("awaiting_approval");
+    source.mockRejectedValue(new RepositoryConflictError("Approved source mismatch"));
+    const conflicted = await projects.designWorkflow(users.super_admin!, project.id);
+    expect(conflicted.initialPayment).toMatchObject({ status: "received", canConfirm: false });
+    expect(conflicted.estimateApprovalStatus).toBe("source_issue");
   });
 
   it.each([{}, { designHandoverAcknowledged: false }, { designHandoverAcknowledged: "true" }])("requires explicit Designer receipt acknowledgement: %j", async (data) => {
@@ -1111,6 +1132,20 @@ describe("estimate-linked furniture dimensions", () => {
     expect(saved.stages.existing_furniture_dimensions!.rooms![0]!.dimensions!.items).toEqual([savedFurnitureItem("room-living")]);
     expect(saved.history.at(-1)!.data).toEqual({ rooms: [{ roomId: "room-living", items: [savedFurnitureItem("room-living")] }] });
   });
+  it("shows approved room dimensions as read-only references without adding them to furniture submissions", async () => {
+    const fixture = await ready(seed => {
+      const estimate = seed.estimateSummaries!.find(row => row.id === "workflow-approved-estimate")!;
+      estimate.rooms = [
+        { id: "room-living", label: "Living room", length: 10, width: 12 },
+        { id: "room-bedroom", label: "Bedroom", length: "8", width: 9 }
+      ];
+    });
+    const view = await createProjectService(fixture.repository, createAuditService(fixture.repository), fixture.now).designWorkflow(fixture.users.designer!, fixture.project.id);
+    expect(view.furnitureRooms![0]).toMatchObject({ id: "room-living", estimateDimensions: { lengthFt: 10, widthFt: 12 }, estimateItems: [{ id: "room-living-item" }] });
+    expect(view.furnitureRooms![1]).not.toHaveProperty("estimateDimensions");
+    await fixture.act("designer", "furniture_upload", dimensionsData("room-living"), document);
+    expect((await fixture.state())!.history.at(-1)!.data).toEqual({ rooms: [{ roomId: "room-living", items: [savedFurnitureItem("room-living")] }] });
+  });
   it.each(["missing", "foreign", "cross-room", "excluded", "duplicate", "label", "unlinked"])("rejects %s item sets with no workflow or audit writes", async (scenario) => {
     const { act, state, repository } = await ready(seed => {
       const estimate = seed.estimateSummaries!.find(row => row.id === "workflow-approved-estimate")!;
@@ -1458,6 +1493,160 @@ describe("furniture dimensions submitted with requirements", () => {
     await f.act("admin", "furniture_accept", { submissionEventId: token }, document);
     expect((await f.state())!.history.at(-1)).toMatchObject({ actorId: f.users.admin!.id, onBehalfOfClient: true, data: { submissionEventId: token } });
     expect((await current(f)).completedAt).toBeTruthy();
+  });
+});
+
+describe("zero-value furniture eligibility and historical reviews", () => {
+  async function ready() {
+    const fixture = setup(false, seed => {
+      const estimate = seed.estimateSummaries!.find(row => row.id === "workflow-approved-estimate")!;
+      const approved = [
+        { ...estimate.lineItems![0]!, amount: 120, quantity: 0 },
+        { ...estimate.lineItems![0]!, id: "zero-living-item", amount: 0, quantity: 400 },
+        { ...estimate.lineItems![1]!, amount: 0, quantity: 400 }
+      ];
+      seed.estimateReviewRounds = [{ id: "furniture-value-round", estimateId: estimate.id, projectId: estimate.projectId!, estimateVersion: 3, status: "approved", decision: "approve", decisionSource: "client_portal", decidedById: "fixture-client", decidedAt: new Date(BASE).toISOString(), lineItems: approved }];
+    });
+    await fixture.act("finance_head", "confirm_initial_payment");
+    await fixture.openFurniture();
+    return fixture;
+  }
+
+  function historicalItem(id: string) {
+    return { ...furnitureItem, id, estimateItemId: id, name: "CUSTOM — Existing item", unit: "mm", uomName: "Millimetre" };
+  }
+
+  async function pendingHistoricalCombined(f: Awaited<ReturnType<typeof ready>>) {
+    const state = (await f.state())!;
+    const at = f.now().toISOString();
+    const stageId = f.project.designWorkflowStages!.find(stage => stage.type === "existing_furniture_dimensions")!.id;
+    const eventId = "historical-combined-zero-value";
+    const rooms = [{ id: "room-living", required: true }, { id: "room-bedroom", required: true }];
+    const dimensions = [
+      { roomId: "room-living", items: [historicalItem("room-living-item"), historicalItem("zero-living-item")] },
+      { roomId: "room-bedroom", items: [historicalItem("room-bedroom-item")] }
+    ];
+    state.stages.existing_furniture_dimensions = { scopeEstimateId: "workflow-approved-estimate", scopeEstimateVersion: 3, noExistingFurniture: false, requirementsSubmissionEventId: eventId,
+      rooms: rooms.map(room => ({ ...room, name: room.id === "room-living" ? "Living room" : "Bedroom", uploadedAt: at, proceed: false, dimensions: { submissionEventId: eventId, revision: 1, status: "pending" as const, items: dimensions.find(entry => entry.roomId === room.id)!.items, submittedAt: at } })) };
+    state.history.push({ id: eventId, idempotencyKey: "historical-combined-key", requestHash: "historical-submission", action: "furniture_scope", stageId, actorId: f.users.designer!.id, actorName: f.users.designer!.name, actorRole: "designer", onBehalfOfClient: false, at, note: "Historical measurements", data: { rooms, dimensions }, proof: document });
+    await f.repository.saveDesignWorkflowState(f.project.id, state.version, state);
+    return { eventId, at, dimensions };
+  }
+
+  async function pendingHistoricalSeparate(f: Awaited<ReturnType<typeof ready>>) {
+    const state = (await f.state())!;
+    const at = f.now().toISOString();
+    const stageId = f.project.designWorkflowStages!.find(stage => stage.type === "existing_furniture_dimensions")!.id;
+    const eventId = "historical-upload-zero-value";
+    const items = [historicalItem("room-bedroom-item")];
+    state.stages.existing_furniture_dimensions = { scopeEstimateId: "workflow-approved-estimate", scopeEstimateVersion: 3, acceptedAt: at,
+      rooms: [{ id: "room-living", name: "Living room", required: false, uploadedAt: null, proceed: false }, { id: "room-bedroom", name: "Bedroom", required: true, uploadedAt: at, proceed: false, dimensions: { submissionEventId: eventId, revision: 1, status: "pending", items, submittedAt: at } }] };
+    state.history.push({ id: eventId, idempotencyKey: "historical-upload-key", requestHash: "historical-submission", action: "furniture_upload", stageId, actorId: f.users.designer!.id, actorName: f.users.designer!.name, actorRole: "designer", onBehalfOfClient: false, at, note: "Historical measurements", data: { rooms: [{ roomId: "room-bedroom", items }] }, proof: document });
+    await f.repository.saveDesignWorkflowState(f.project.id, state.version, state);
+    return { eventId, at, items };
+  }
+
+  it("shows paid items even at zero quantity and accepts a new two-dimensional submission without zero-value items", async () => {
+    const f = await ready();
+    const source = await f.repository.findDesignWorkflowRoomContext(f.project.id, true);
+    expect(source!.rooms.map(room => room.estimateItems.map(item => item.id))).toEqual([["room-living-item"], []]);
+    const view = await createProjectService(f.repository, createAuditService(f.repository), f.now).designWorkflow(f.users.designer!, f.project.id);
+    expect(view.furnitureRooms!.map(room => room.estimateItems.map(item => item.id))).toEqual([["room-living-item"], []]);
+    const rooms = [{ id: "room-living", required: true }, { id: "room-bedroom", required: false }];
+    const item = { estimateItemId: "room-living-item", length: 2100, width: 900, uomId: "uom-mm" };
+    await expect(f.act("designer", "furniture_scope", { rooms: [{ ...rooms[0] }, { id: "room-bedroom", required: true }], dimensions: [{ roomId: "room-living", items: [item] }, { roomId: "room-bedroom", items: [item] }] }, document)).rejects.toMatchObject({ code: "INVALID_FURNITURE_ROOMS" });
+    await expect(f.act("designer", "furniture_scope", { rooms, dimensions: [{ roomId: "room-living", items: [item, { ...item, estimateItemId: "zero-living-item" }] }] }, document)).rejects.toMatchObject({ code: "INVALID_FURNITURE_DIMENSIONS" });
+    await f.act("designer", "furniture_scope", { rooms, dimensions: [{ roomId: "room-living", items: [item] }] }, document);
+    const pending = (await f.state())!.stages.existing_furniture_dimensions!;
+    expect(pending.rooms![0]!.dimensions!.items).toEqual([{ ...item, id: item.estimateItemId, name: "CUSTOM — Existing item", unit: "mm", uomName: "Millimetre" }]);
+    expect(pending.rooms![0]!.dimensions!.items[0]).not.toHaveProperty("height");
+    await f.act("client", "furniture_accept", { submissionEventId: pending.requirementsSubmissionEventId });
+    expect((await f.state())!.stages.existing_furniture_dimensions!.completedAt).toBeTruthy();
+  });
+
+  it("approves an existing pending combined submission with recorded Height and zero-value items", async () => {
+    const f = await ready();
+    const { eventId, at, dimensions } = await pendingHistoricalCombined(f);
+    await f.act("client", "furniture_accept", { submissionEventId: eventId });
+    const approved = (await f.state())!;
+    expect(approved.stages.existing_furniture_dimensions).toMatchObject({ completedAt: at, rooms: [{ dimensions: { status: "approved" } }, { dimensions: { status: "approved" } }] });
+    expect(approved.history.find(event => event.id === eventId)).toMatchObject({ data: { dimensions } });
+  });
+
+  it("replaces returned historical zero-value rows with only paid two-dimensional measurements", async () => {
+    const f = await ready();
+    const { eventId } = await pendingHistoricalCombined(f);
+    await f.act("client", "furniture_scope_return", { submissionEventId: eventId }, null, "Measure only the paid work.");
+    const item = { estimateItemId: "room-living-item", length: 2100, width: 900, uomId: "uom-mm" };
+    await f.act("designer", "furniture_scope", { rooms: [{ id: "room-living", required: true }, { id: "room-bedroom", required: false }], dimensions: [{ roomId: "room-living", items: [item] }] }, document);
+    const current = (await f.state())!.stages.existing_furniture_dimensions!;
+    expect(current.rooms![0]!.dimensions!.items).toEqual([{ ...item, id: item.estimateItemId, name: "CUSTOM — Existing item", unit: "mm", uomName: "Millimetre" }]);
+    expect(current.rooms![1]).not.toHaveProperty("dimensions");
+    await f.act("client", "furniture_accept", { submissionEventId: current.requirementsSubmissionEventId });
+    expect((await f.state())!.history.find(event => event.id === eventId)!.data).toHaveProperty("dimensions");
+    expect((await f.state())!.stages.existing_furniture_dimensions!.completedAt).toBeTruthy();
+  });
+
+  it("approves a separate pending zero-value revision while preserving its original evidence", async () => {
+    const f = await ready();
+    const { eventId, at, items } = await pendingHistoricalSeparate(f);
+    await f.act("client", "furniture_dimensions_approve", { submissions: [{ roomId: "room-bedroom", submissionEventId: eventId }] });
+    const approved = (await f.state())!;
+    expect(approved.stages.existing_furniture_dimensions).toMatchObject({ completedAt: at, rooms: [{ required: false }, { dimensions: { status: "approved", items } }] });
+    expect(approved.history.find(event => event.id === eventId)).toMatchObject({ data: { rooms: [{ roomId: "room-bedroom", items }] }, proof: document });
+  });
+
+  it("makes a pending zero-only room optional on Client return with an auditable transition", async () => {
+    const f = await ready();
+    const { eventId, items } = await pendingHistoricalSeparate(f);
+    const before = (await f.state())!;
+    const paidRoom = before.stages.existing_furniture_dimensions!.rooms![0]!;
+    paidRoom.required = true;
+    paidRoom.uploadedAt = f.now().toISOString();
+    paidRoom.dimensions = { submissionEventId: "historical-approved-paid-room", revision: 1, status: "approved", items: [historicalItem("room-living-item")], submittedAt: f.now().toISOString(), reviewedAt: f.now().toISOString() };
+    await f.repository.saveDesignWorkflowState(f.project.id, before.version, before);
+    await f.act("client", "furniture_dimensions_return", { submissions: [{ roomId: "room-bedroom", submissionEventId: eventId }] }, null, "The zero-value work needs no measurement.");
+    const saved = (await f.state())!;
+    const room = saved.stages.existing_furniture_dimensions!.rooms![1]!;
+    expect(saved.stages.existing_furniture_dimensions).toMatchObject({ acceptedAt: expect.any(String), completedAt: expect.any(String), rooms: [{ required: true }, { required: false }] });
+    expect(saved.stages.existing_furniture_dimensions!.rooms![0]).toEqual(paidRoom);
+    expect(room.dimensions).toMatchObject({ status: "changes_requested", revision: 1, submissionEventId: eventId, items });
+    expect(saved.history.find(event => event.id === eventId)).toMatchObject({ proof: document });
+    expect(saved.history.at(-1)).toMatchObject({ action: "furniture_dimensions_return", data: { noLongerRequiredRoomIds: ["room-bedroom"] } });
+    expect(await f.repository.listAuditEvents({})).toContainEqual(expect.objectContaining({ newValues: expect.objectContaining({ action: "furniture_dimensions_return", noLongerRequiredRoomIds: ["room-bedroom"] }) }));
+  });
+
+  it("reconciles a previously returned accepted zero-only room through an explicit Designer action", async () => {
+    const f = await ready();
+    const { eventId, items } = await pendingHistoricalSeparate(f);
+    const prior = (await f.state())!;
+    const stage = prior.stages.existing_furniture_dimensions!;
+    const paidRoom = stage.rooms![0]!;
+    paidRoom.required = true;
+    paidRoom.uploadedAt = f.now().toISOString();
+    paidRoom.dimensions = { submissionEventId: "historical-approved-paid-room", revision: 1, status: "approved", items: [historicalItem("room-living-item")], submittedAt: f.now().toISOString(), reviewedAt: f.now().toISOString() };
+    stage.rooms![1]!.dimensions!.status = "changes_requested";
+    stage.rooms![1]!.dimensions!.reviewedAt = f.now().toISOString();
+    stage.rooms![1]!.dimensions!.returnReason = "Recheck this work";
+    const stageId = f.project.designWorkflowStages!.find(entry => entry.type === "existing_furniture_dimensions")!.id;
+    prior.history.push({ id: "historical-return", idempotencyKey: "historical-return-key", requestHash: "historical-client-return", action: "furniture_dimensions_return", stageId, actorId: f.users.client!.id, actorName: f.users.client!.name, actorRole: "client", onBehalfOfClient: false, at: f.now().toISOString(), note: "Recheck this work", data: { submissions: [{ roomId: "room-bedroom", submissionEventId: eventId }] }, proof: null });
+    await f.repository.saveDesignWorkflowState(f.project.id, prior.version, prior);
+    const current = (await f.state())!;
+    const data = { resolveReturnedZeroValueRoomIds: ["room-bedroom"] };
+    const action = { action: "furniture_upload" as const, expectedVersion: current.version, stageId, idempotencyKey: "resolve-historical-zero-room", data, note: "No paid furniture work remains in this room" };
+    await expect(f.service.act(f.users.designer!, f.project.id, { ...action, data: { resolveReturnedZeroValueRoomIds: ["room-living"] } }, null)).rejects.toMatchObject({ code: "DESIGN_WORKFLOW_BLOCKED" });
+    expect(await f.state()).toEqual(current);
+    await expect(f.service.act(f.users.client!, f.project.id, action, document)).rejects.toMatchObject({ status: 403 });
+    expect(await f.service.act(f.users.designer!, f.project.id, action, null)).toMatchObject({ replayed: false });
+    expect(await f.service.act(f.users.designer!, f.project.id, action, null)).toMatchObject({ replayed: true });
+    const resolved = (await f.state())!;
+    expect(resolved.stages.existing_furniture_dimensions).toMatchObject({ acceptedAt: expect.any(String), completedAt: expect.any(String), rooms: [{ required: true }, { required: false }] });
+    expect(resolved.stages.existing_furniture_dimensions!.rooms![0]).toEqual(paidRoom);
+    expect(resolved.stages.existing_furniture_dimensions!.rooms![1]!.dimensions).toMatchObject({ status: "changes_requested", revision: 1, submissionEventId: eventId, items });
+    expect(resolved.history.find(event => event.id === eventId)).toEqual(current.history.find(event => event.id === eventId));
+    expect(resolved.history.find(event => event.id === "historical-return")).toEqual(current.history.find(event => event.id === "historical-return"));
+    expect(resolved.history.at(-1)).toMatchObject({ action: "furniture_upload", data });
+    expect(await f.repository.listAuditEvents({})).toContainEqual(expect.objectContaining({ newValues: expect.objectContaining({ action: "furniture_upload", resolvedZeroValueRoomIds: ["room-bedroom"] }) }));
   });
 });
 

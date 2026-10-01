@@ -6,6 +6,7 @@ import {
   type SharedChangeRequestComment
 } from "../../components/design/EstimateDrawingPreviewDialog";
 import { Dialog } from "../../components/ui/Dialog";
+import { PlanDocumentPreview } from "../leads/PlanDocumentPreview";
 
 type TargetPreview = {
   pageRevisionNumber: number;
@@ -58,6 +59,7 @@ export function ClientPlanPageReview({
         editableRequest={editableRequest ? { id: editableRequest.id, version: editableRequest.version, summary: editableRequest.summary } : undefined}
         canAnnotate={canReview && page.status !== "approved"}
         navigation={<nav className="client-plan-page-navigation" aria-label="Uploaded plan pages">
+          {page.document ? <PlanDocumentPreview document={page.document} published /> : null}
           {pages.slice().sort((left, right) => left.pageNumber - right.pageNumber).map((candidate) => <button type="button" className="button button--secondary" aria-current={candidate.id === page.id ? "page" : undefined} onClick={() => onSelectPage?.(candidate)} key={candidate.id}>Page {candidate.pageNumber}</button>)}
         </nav>}
         onClose={onClose}

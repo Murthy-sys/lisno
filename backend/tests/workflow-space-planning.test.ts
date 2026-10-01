@@ -16,7 +16,80 @@ function setup(change?: (fixture: ReturnType<typeof spacePlanningFixture>) => vo
   return { ...fixture, repository, audit, service, input, view, act: (role = "client", value = input) => service.act(fixture.users[role]!, fixture.project.id, value, null) };
 }
 
+function assignedPreReview(fixture: ReturnType<typeof spacePlanningFixture>) {
+  Object.assign(fixture.source, {
+    designPlanStatus: "assigned", designPlanVersion: 0,
+    commercialApprovedAt: SPACE_NOW,
+    approvedAt: null, approvedById: null, approvalSource: null, frozenAt: null,
+    rounds: [], drawings: [], openFeedback: 0
+  });
+  fixture.seed.estimateSummaries![0]!.designPlanStatus = "assigned";
+  fixture.seed.estimateSummaries![0]!.designPlanVersion = 0;
+}
+
 describe("space planning source integrity", () => {
+  it("classifies an assigned version-zero plan as awaiting upload and review", () => {
+    const fixture = spacePlanningFixture(); assignedPreReview(fixture);
+    expect(workflowSpacePlanningSource(fixture.source)).toMatchObject({
+      designPlanVersion: 0, reviewRoundId: null, readyForCompletion: false,
+      entryBlockingReasons: [],
+      blockingReasons: [expect.stringMatching(/Submit the current Design plan for Client review/)]
+    });
+  });
+  it("keeps draft extracted drawings uploadable before the first review round", () => {
+    const fixture = spacePlanningFixture(); assignedPreReview(fixture);
+    fixture.source.designPlanStatus = "in_progress";
+    fixture.source.drawings = [{ id: "draft-drawing", revisions: [{ id: "draft-revision", revisionNumber: 1, reviewStatus: "draft", reviewerId: null, reviewedAt: null }] }];
+    expect(workflowSpacePlanningSource(fixture.source)).toMatchObject({
+      totalImages: 1, readyForCompletion: false, entryBlockingReasons: []
+    });
+  });
+  it("accepts pre-approval reviewed drawings and feedback retained at assignment", () => {
+    const fixture = spacePlanningFixture(); assignedPreReview(fixture);
+    fixture.source.drawings = structuredClone(spacePlanningFixture().source.drawings);
+    fixture.source.openFeedback = 1;
+    expect(workflowSpacePlanningSource(fixture.source)).toMatchObject({
+      totalImages: 2, approvedImages: 0, readyForCompletion: false, entryBlockingReasons: [],
+      blockingReasons: [expect.stringMatching(/Submit the current Design plan/), expect.stringMatching(/open plan feedback/)]
+    });
+  });
+  it("rejects a version-zero review recorded after commercial approval", () => {
+    const fixture = spacePlanningFixture(); assignedPreReview(fixture);
+    fixture.source.drawings = structuredClone(spacePlanningFixture().source.drawings);
+    fixture.source.drawings[0]!.revisions[0]!.reviewedAt = new Date(Date.parse(SPACE_NOW) + 1_000).toISOString();
+    expect(workflowSpacePlanningSource(fixture.source)).toMatchObject({
+      readyForCompletion: false, entryBlockingReasons: [expect.stringMatching(/inconsistent/)]
+    });
+  });
+  it.each(["orphaned-round", "approval", "invalid-reviewed-image", "invalid-feedback"])("fails closed for version-zero %s", cause => {
+    const fixture = spacePlanningFixture(); assignedPreReview(fixture);
+    if (cause === "orphaned-round") fixture.source.rounds = [{ ...spacePlanningFixture().source.rounds[0]! }];
+    if (cause === "approval") fixture.source.approvedAt = SPACE_NOW;
+    if (cause === "invalid-reviewed-image") fixture.source.drawings = [{ id: "drawing", revisions: [{ id: "revision", revisionNumber: 1, reviewStatus: "approved", reviewerId: null, reviewedAt: SPACE_NOW }] }];
+    if (cause === "invalid-feedback") fixture.source.openFeedback = -1;
+    expect(workflowSpacePlanningSource(fixture.source)).toMatchObject({ readyForCompletion: false, entryBlockingReasons: [expect.stringMatching(/inconsistent/)] });
+  });
+  it("marks missing assignment as a stage-entry requirement", () => {
+    const fixture = spacePlanningFixture(); assignedPreReview(fixture);
+    fixture.source.designPlanStatus = "pending_assignment";
+    fixture.source.drawings = structuredClone(spacePlanningFixture().source.drawings);
+    expect(workflowSpacePlanningSource(fixture.source)).toMatchObject({
+      readyForCompletion: false,
+      entryBlockingReasons: ["Assign a Designer to the Design plan before uploading."]
+    });
+  });
+  it("separates pending Client review from malformed submitted evidence", () => {
+    const { source } = spacePlanningFixture();
+    source.designPlanStatus = "ready_for_client";
+    source.approvedAt = source.approvedById = source.approvalSource = source.frozenAt = null;
+    source.rounds[0]!.status = "pending";
+    source.rounds[0]!.decision = source.rounds[0]!.decisionSource = source.rounds[0]!.decidedById = source.rounds[0]!.decidedByRole = source.rounds[0]!.decidedAt = null;
+    source.drawings[0]!.revisions[0]!.reviewStatus = "submitted";
+    source.drawings[0]!.revisions[0]!.reviewerId = source.drawings[0]!.revisions[0]!.reviewedAt = null;
+    expect(workflowSpacePlanningSource(source)).toMatchObject({ readyForCompletion: false, entryBlockingReasons: [] });
+    source.rounds[0]!.submittedRevisionIds = ["revision-a", "revision-a"];
+    expect(workflowSpacePlanningSource(source)).toMatchObject({ readyForCompletion: false, entryBlockingReasons: [expect.stringMatching(/inconsistent/)] });
+  });
   it("requires the exact current revision set, while allowing prior approved revisions in a new round", () => {
     const { source } = spacePlanningFixture();
     source.drawings[0]!.revisions.push({ ...source.drawings[0]!.revisions[0]!, id: "old-revision", revisionNumber: 1, reviewStatus: "changes_requested" });
@@ -63,6 +136,58 @@ describe("space planning source integrity", () => {
 });
 
 describe("Client space-planning acknowledgement", () => {
+  it("opens the assigned first-upload stage without offering Client completion", async () => {
+    const { view } = setup(assignedPreReview);
+    expect(await view("designer")).toMatchObject({ status: "in_progress", operational: {
+      status: "in_progress", blockingReasons: [], availableActions: [],
+      spacePlanning: { designPlanVersion: 0, reviewRoundId: null, readyForCompletion: false,
+        completionBlockingReasons: [expect.stringMatching(/Submit the current Design plan for Client review/)] }
+    } });
+    expect((await view("client")).operational?.availableActions).toEqual([]);
+  });
+  it("keeps draft extracted images active before the first submission", async () => {
+    const { view } = setup((fixture) => {
+      assignedPreReview(fixture);
+      fixture.source.designPlanStatus = "in_progress";
+      fixture.source.drawings = [{ id: "draft-drawing", revisions: [{ id: "draft-revision", revisionNumber: 1, reviewStatus: "draft", reviewerId: null, reviewedAt: null }] }];
+    });
+    expect(await view("designer")).toMatchObject({ status: "in_progress", operational: {
+      blockingReasons: [], spacePlanning: { totalImages: 1, readyForCompletion: false }
+    } });
+  });
+  it("opens an assigned plan with commercial-stage approved drawings while keeping Client completion unavailable", async () => {
+    const { view } = setup((fixture) => {
+      assignedPreReview(fixture);
+      fixture.source.drawings = structuredClone(spacePlanningFixture().source.drawings);
+      fixture.source.openFeedback = 1;
+    });
+    expect(await view("designer")).toMatchObject({ status: "in_progress", operational: {
+      blockingReasons: [], availableActions: [],
+      spacePlanning: { totalImages: 2, approvedImages: 0, readyForCompletion: false,
+        completionBlockingReasons: [expect.stringMatching(/Submit the current Design plan/), expect.stringMatching(/open plan feedback/)] }
+    } });
+  });
+  it("keeps final submission requirements separate from stage entry", async () => {
+    const { view } = setup(({ state }) => { state.stages.existing_furniture_dimensions!.acceptedAt = undefined; });
+    expect(await view()).toMatchObject({ status: "in_progress", operational: {
+      blockingReasons: [], availableActions: [],
+      spacePlanning: { readyForCompletion: false,
+        completionBlockingReasons: [expect.stringMatching(/Client acceptance/)] }
+    } });
+  });
+  it.each(["payment", "predecessor", "pause", "ambiguous", "malformed"])("keeps %s as a real stage-entry blocker", async cause => {
+    const { view } = setup((fixture) => {
+      assignedPreReview(fixture);
+      if (cause === "payment") fixture.state.initialPaymentAt = null;
+      if (cause === "predecessor") delete fixture.state.stages.site_measurement!.completedAt;
+      if (cause === "pause") fixture.state.pauses.push({ startedAt: SPACE_NOW, endedAt: null });
+      if (cause === "ambiguous") fixture.seed.estimateSummaries!.push({ ...fixture.seed.estimateSummaries![0]!, id: "other-estimate" });
+      if (cause === "malformed") fixture.source.rounds = [{ ...spacePlanningFixture().source.rounds[0]! }];
+    });
+    const stage = await view("designer");
+    expect(stage.operational?.blockingReasons.length).toBeGreaterThan(0);
+    expect(stage.operational?.status).not.toBe("in_progress");
+  });
   it("exposes final approval only to the Client, persists source and audit, then completes and replays once", async () => {
     const { view, act, repository, project, input } = setup();
     expect(await view()).toMatchObject({ status: "in_progress", operational: { availableActions: [{ id: "space_planning_complete", requiresProof: false }], spacePlanning: { readyForCompletion: true, approvedImages: 2, completedAt: null } } });

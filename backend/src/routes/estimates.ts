@@ -29,11 +29,14 @@ const estimateLineSchema = z.object({ catalogueId: z.string().min(1), roomName: 
 const estimateSchema = z.object({ propertyType: z.string().min(1), rooms: z.array(z.record(z.unknown())), scopes: z.array(z.string()), lineItems: z.array(estimateLineSchema) }).strict();
 const assignmentSchema = z.object({ designerId: z.string().trim().min(1) }).strict();
 const decisionSchema = z.object({ decision: z.enum(["approve", "request_changes"]), note: z.string().trim().max(1000).default("") }).strict();
-const clientVisibleEstimateStatuses = [
-  "sent_to_client",
-  "client_changes_requested",
-  "client_approved"
-] as const;
+const clientDecisionSchema = decisionSchema.extend({
+  reviewRoundId: z.string().trim().min(1),
+  reviewRoundVersion: z.number().int().positive()
+}).superRefine((value, context) => {
+  if (value.decision === "request_changes" && !value.note) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["note"], message: "Explain the changes you need." });
+  }
+});
 
 export function createEstimatesRouter(
   auth: AuthService,
@@ -51,12 +54,12 @@ export function createEstimatesRouter(
     value: Record<string, unknown> | null
   ) => {
     const estimate = mapEstimate(value);
-    if (!estimate || actor.role !== "estimator_sales") return estimate;
-    const clientReview = await reviews.currentSummaryForEstimate(
-      actor,
-      String(estimate.id)
-    );
-    return clientReview ? { ...estimate, clientReview } : estimate;
+    if (!estimate || !["estimator_sales", "super_admin"].includes(actor.role)) return estimate;
+    const [clientReview, clientFeedback] = await Promise.all([
+      reviews.currentSummaryForEstimate(actor, String(estimate.id)),
+      reviews.currentClientFeedbackForEstimate(actor, String(estimate.id), estimate)
+    ]);
+    return { ...estimate, ...(clientReview ? { clientReview } : {}), ...(clientFeedback ? { clientFeedback } : {}) };
   };
   router.get("/leads/:leadId/estimate", protectedRoute, requireOperation("GET /leads/:leadId/estimate"), async (req, res, next) => { try { const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string); const estimateFilter = req.authenticatedUser!.role === "super_admin" ? { leadId: lead.id } : { leadId: lead.id, ownerId: req.authenticatedUser!.id }; const estimate = await EstimateModel.findOne(estimateFilter).lean(); res.json({ data: await estimatorEstimate(req.authenticatedUser!, estimate) }); } catch (error) { next(error); } });
   router.get("/estimates", protectedRoute, requireOperation("GET /estimates"), async (req, res, next) => { try {
@@ -260,46 +263,25 @@ export function createEstimatesRouter(
   } catch (error) { next(error); } });
 
   router.get("/client/estimates", protectedRoute, requireOperation("GET /client/estimates"), async (req, res, next) => { try {
-    const globalReader = req.authenticatedUser!.role === "super_admin";
-    const estimates = globalReader
-      ? await EstimateModel.find({ status: { $in: clientVisibleEstimateStatuses } }).lean()
-      : [];
-    const leadsForClient = globalReader
-      ? await LeadModel.find({ _id: { $in: estimates.map((estimate) => estimate.leadId) } }).lean()
-      : await LeadModel.find({ clientEmail: { $regex: `^${escapeRegex(req.authenticatedUser!.email)}$`, $options: "i" } }).lean();
-    const visibleEstimates = globalReader
-      ? estimates
-      : await EstimateModel.find({ leadId: { $in: leadsForClient.map((lead) => lead._id) }, status: { $in: clientVisibleEstimateStatuses } }).lean();
-    const byId = new Map(leadsForClient.map((lead) => [lead._id, lead]));
-    res.json({ data: visibleEstimates.map((estimate) => ({ ...mapEstimate(estimate), lead: byId.get(estimate.leadId) ?? null })) });
+    res.json({ data: await reviews.listClientEstimates(req.authenticatedUser!) });
   } catch (error) { next(error); } });
 
   router.get("/client/estimates/:estimateId/pdf", protectedRoute, requireOperation("GET /client/estimates/:estimateId/pdf"), async (req, res, next) => { try {
-    const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, status: { $in: clientVisibleEstimateStatuses } }).lean();
-    if (!estimate) throw estimateNotFound();
-    const leadFilter = req.authenticatedUser!.role === "super_admin"
-      ? { _id: estimate.leadId }
-      : { _id: estimate.leadId, clientEmail: { $regex: `^${escapeRegex(req.authenticatedUser!.email)}$`, $options: "i" } };
-    const lead = await LeadModel.findOne(leadFilter).lean();
-    if (!lead) throw estimateNotFound();
+    const roundId = z.string().trim().min(1).safeParse(req.query.roundId);
+    if (!roundId.success) throw new ApiError(400, "ESTIMATE_REVIEW_ROUND_REQUIRED", "Refresh the estimate before downloading its PDF.");
     const actor = req.authenticatedUser!;
-    if (actor.role === "client" || actor.role === "super_admin") {
-      const currentRound = actor.role === "client"
-        ? await reviews.currentRoundForClientEstimate(actor, String(estimate._id))
-        : await reviews.currentSummaryForEstimate(actor, String(estimate._id));
-      if (currentRound) {
-        const download = actor.role === "client"
-          ? await reviews.readClientPdf(actor, currentRound.id)
-          : await reviews.readPdf(actor, currentRound.id);
-        sendDownload(res, download);
-        return;
-      }
+    const [estimate] = await reviews.listClientEstimates(actor, String(req.params.estimateId));
+    if (!estimate) throw estimateNotFound();
+    if (!estimate.publishedReview || estimate.publishedReview.id !== roundId.data) {
+      throw new ApiError(409, "ESTIMATE_NOT_REVIEWABLE", "The submitted estimate changed. Refresh before downloading its PDF.");
     }
-    const pdf = await estimatePdf.generate(toEstimatePdfInput(estimate, lead));
-    sendDownload(res, { ...pdf, mimeType: "application/pdf" });
+    const download = actor.role === "client"
+      ? await reviews.readClientPdf(actor, roundId.data)
+      : await reviews.readPdf(actor, roundId.data);
+    sendDownload(res, download);
   } catch (error) { next(error); } });
 
-  router.post("/client/estimates/:estimateId/decision", protectedRoute, requireOperation("POST /client/estimates/:estimateId/decision"), validateBody(decisionSchema), async (req, res, next) => { try {
+  router.post("/client/estimates/:estimateId/decision", protectedRoute, requireOperation("POST /client/estimates/:estimateId/decision"), validateBody(clientDecisionSchema), async (req, res, next) => { try {
     const actor = req.authenticatedUser!;
     const estimateId = String(req.params.estimateId);
     const estimate = await EstimateModel.findOne({ _id: estimateId }).lean();
@@ -311,20 +293,16 @@ export function createEstimatesRouter(
     ) {
       throw estimateNotFound();
     }
-    const currentRound = await reviews.currentRoundForClientEstimate(
-      actor,
-      estimateId
-    );
-    const result = await decisions.decide({
+    await decisions.decide({
       estimateId,
-      round: currentRound
-        ? { id: currentRound.id, expectedVersion: currentRound.version }
-        : null,
+      round: { id: req.body.reviewRoundId, expectedVersion: req.body.reviewRoundVersion },
       decision: req.body.decision,
       note: req.body.note,
       context: { source: "client_portal", actor, proof: null }
     });
-    res.json({ data: mapEstimate(result.estimate) });
+    const [published] = await reviews.listClientEstimates(actor, estimateId);
+    if (!published) throw estimateNotFound();
+    res.json({ data: published });
   } catch (error) { next(error); } });
   return router;
 }
@@ -334,7 +312,6 @@ function mapEstimate(value: Record<string, unknown> | null) {
   const { _id, ...estimate } = value;
   return { ...estimate, id: _id ?? value.id };
 }
-function escapeRegex(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 function estimateNotFound() { return new ApiError(404, "ESTIMATE_NOT_FOUND", "Estimate not found."); }
 async function withMongoTransaction<T>(
   operation: (session: mongoose.ClientSession) => Promise<T>
