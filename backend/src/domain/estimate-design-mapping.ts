@@ -1,4 +1,5 @@
 import { estimatePdfCatalogue } from "./estimate-pdf-catalogue.js";
+import { configuredEstimateParentIsValid } from "./estimate-client-review.js";
 
 export const estimateDesignMappingStatuses = [
   "auto_mapped",
@@ -154,7 +155,7 @@ export function mappingContextForEstimate(
       const mainBasketId = typeof line.mainBasketId === "string" ? line.mainBasketId.trim() : "";
       const mainLineId = typeof line.mainLineId === "string" ? line.mainLineId.trim() : "";
       const mainLineName = typeof line.mainLineName === "string" ? line.mainLineName.trim() : "";
-      if (!catalogueId || catalogueId !== mainLineId || !mainBasketId || !mainLineName) {
+      if (!catalogueId || catalogueId !== mainLineId || !mainBasketId || !mainLineName || !configuredEstimateParentIsValid(line)) {
         invalidIncludedItems.push({ roomName, catalogueId, reason: "unknown_catalogue" });
         continue;
       }

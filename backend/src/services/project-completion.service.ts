@@ -6,6 +6,7 @@ import {
   type ProjectCompletionBlocker, type ProjectCompletionInput, type ProjectCompletionSummary,
   type ProjectScopeCoverage, type ProjectScopeExceptionInput
 } from "../domain/project-completion.js";
+import { configuredEstimateParentIsValid } from "../domain/estimate-client-review.js";
 import { ApiError } from "../middleware/errors.js";
 import { ProjectModel } from "../models/Project.js";
 import { EstimateModel } from "../models/Estimate.js";
@@ -31,21 +32,24 @@ type Source = Awaited<ReturnType<typeof procurementItemSourceSnapshot>>;
 
 export function projectCompletionScopeLabel(line: {
   source?: "legacy" | "configuration";
+  itemType?: "main_line" | "temporary";
   catalogueId: string;
   sectionId: string;
   mainBasketId?: string;
   mainBasketName?: string;
-  subBasketName?: string;
+  subBasketId?: string | null;
+  subBasketName?: string | null;
   mainLineId?: string;
   mainLineName?: string;
   specification: string;
 }): string {
   if (line.source !== "configuration") return line.specification;
   if (line.mainBasketId !== line.sectionId || line.mainLineId !== line.catalogueId ||
-    !line.mainBasketName?.trim() || !line.subBasketName?.trim() || !line.mainLineName?.trim()) {
+    !line.mainBasketName?.trim() || !configuredEstimateParentIsValid(line) || !line.mainLineName?.trim()) {
     lineageConflict("Configured project scope is missing its approved basket or line snapshot.");
   }
-  return `${line.mainBasketName} · ${line.subBasketName} · ${line.mainLineName}`;
+  return [line.mainBasketName, line.subBasketName, line.itemType === "temporary" ? "Temporary item" : null, line.mainLineName]
+    .filter(Boolean).join(" · ");
 }
 interface CompletionLineage {
   summary: ProjectCompletionSummary;

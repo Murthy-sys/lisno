@@ -6,6 +6,7 @@ import mongoose from "mongoose";
 
 import {
   buildEstimateClientReviewDedupeKey,
+  configuredEstimateParentIsValid,
   type EstimateClientReviewSnapshot,
   type EstimateClientReviewSummary
 } from "../domain/estimate-client-review.js";
@@ -491,9 +492,9 @@ function assertPublishableConfiguredLines(estimate: PublicationEstimate): void {
     !Number.isSafeInteger(line.ratePaise) ||
     !Number.isSafeInteger(line.amountPaise) ||
     Number(line.ratePaise) < 0 || Number(line.amountPaise) < 0 ||
-    !line.mainBasketId || !line.subBasketId || !line.mainLineId ||
+    !line.mainBasketId || !configuredEstimateParentIsValid(line) || !line.mainLineId ||
     !line.revisionId || !line.uomId || !line.roomId ||
-    !line.mainBasketName || !line.subBasketName || !line.mainLineName ||
+    !line.mainBasketName || !line.mainLineName ||
     !line.uomName || line.catalogueId !== line.mainLineId ||
     line.specification !== null ||
     line.rate !== Number(line.ratePaise) / 100 ||

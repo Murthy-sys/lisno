@@ -114,7 +114,9 @@ describe("EstimateClientReviewRound persistence model", () => {
         unit: "sqft", rate: 48.5, ratePaise: 4_850, quantity: 2.5,
         included: true, amount: 121.25, amountPaise: 12_125,
         mainBasketId: "basket-a", subBasketId: "sub-a", mainLineId: "ml-lower-case",
-        revisionId: "rev-a", uomId: "uom-sqft", mainBasketName: "Original basket",
+        revisionId: "rev-a", sourceItemStatus: "inactive", sourceRevisionStatus: "draft",
+        sourceItemVersion: 7, sourceRevisionVersion: 3,
+        uomId: "uom-sqft", mainBasketName: "Original basket",
         subBasketName: "Original child", mainLineName: "Original line", uomName: "Square feet"
       }],
       subtotal: 121.25, gst: 21.83, total: 143.08,
@@ -129,6 +131,56 @@ describe("EstimateClientReviewRound persistence model", () => {
       lineItems: [{ ...configured.lineItems[0], rate: null, ratePaise: null }]
     } }).validate()).rejects.toThrow();
     await expect(round({ estimateSnapshot: { ...configured, totalPaise: 14_309 } }).validate()).rejects.toThrow();
+    for (const changed of [
+      { sourceItemStatus: "archived" },
+      { sourceRevisionStatus: "unknown" },
+      { sourceItemVersion: 0 },
+      { sourceRevisionVersion: 1.5 },
+      { sourceRevisionVersion: undefined },
+      { sourceItemStatus: null }
+    ]) {
+      await expect(round({ estimateSnapshot: {
+        ...configured,
+        lineItems: [{ ...configured.lineItems[0], ...changed }]
+      } }).validate()).rejects.toThrow();
+    }
+  });
+
+  it("preserves direct and grouped temporary parents while rejecting inconsistent configured snapshots", async () => {
+    const configuredLine = {
+      id: "temporary-line", source: "configuration", itemType: "temporary",
+      catalogueId: "temporary-a", roomId: "room-a", roomName: "Living Room",
+      specification: null, unit: "nos", rate: 70.03, ratePaise: 7_003,
+      quantity: 1, included: true, amount: 70.03, amountPaise: 7_003,
+      mainBasketId: "basket-a", subBasketId: null, mainLineId: "temporary-a",
+      revisionId: "rev-a", uomId: "uom-nos", mainBasketName: "Painting",
+      subBasketName: null, mainLineName: "Custom finish", uomName: "Number"
+    };
+    const configured = {
+      ...snapshot(), lineItems: [configuredLine], subtotal: 70.03, gst: 12.61,
+      total: 82.64, subtotalPaise: 7_003, gstPaise: 1_261, totalPaise: 8_264
+    };
+    const direct = round({ estimateSnapshot: configured });
+    await expect(direct.validate()).resolves.toBeUndefined();
+    expect(direct.toObject().estimateSnapshot.lineItems[0]).toMatchObject({
+      itemType: "temporary", subBasketId: null, subBasketName: null, amountPaise: 7_003
+    });
+    for (const field of ["sourceItemStatus", "sourceRevisionStatus", "sourceItemVersion", "sourceRevisionVersion"]) {
+      expect(direct.toObject().estimateSnapshot.lineItems[0]).not.toHaveProperty(field);
+    }
+    await expect(round({ estimateSnapshot: {
+      ...configured, lineItems: [{ ...configuredLine, subBasketId: "sub-a", subBasketName: "Finishes" }]
+    } }).validate()).resolves.toBeUndefined();
+    for (const changed of [
+      { itemType: "main_line" },
+      { itemType: undefined },
+      { subBasketName: "Invented" },
+      { subBasketId: "sub-a" }
+    ]) {
+      await expect(round({ estimateSnapshot: {
+        ...configured, lineItems: [{ ...configuredLine, ...changed }]
+      } }).validate()).rejects.toThrow();
+    }
   });
 
   it("normalizes the persisted recipient and validates a complete pending round", async () => {

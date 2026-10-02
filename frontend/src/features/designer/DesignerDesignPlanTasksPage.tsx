@@ -306,7 +306,7 @@ function itemOptions(task: DesignPlanTask): EstimateDesignItemOption[] {
       return [{
         roomId: room.id,
         catalogueId: line.mainLineId,
-        label: line.mainLineName ?? "Configured Main Line",
+        label: line.mainLineName ?? (line.itemType === "temporary" ? "Temporary item" : "Configured Main Line"),
         scopeLabel: line.mainBasketName ?? "Configured Main Basket"
       }];
     }

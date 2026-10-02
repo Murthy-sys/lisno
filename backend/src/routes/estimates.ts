@@ -37,13 +37,19 @@ const legacyEstimateLineSchema = z.object({
 const configuredEstimateLineSchema = z.object({
   source: z.literal("configuration"), id: stableIdSchema.optional(),
   catalogueId: stableIdSchema, roomId: stableIdSchema, roomName: z.string().trim().min(1),
-  mainBasketId: stableIdSchema, subBasketId: stableIdSchema,
+  mainBasketId: stableIdSchema, subBasketId: stableIdSchema.nullable(),
+  itemType: z.enum(["main_line", "temporary"]).default("main_line"),
   mainLineId: stableIdSchema, revisionId: stableIdSchema, uomId: stableIdSchema,
+  itemVersion: z.number().int().positive().safe().optional(),
+  revisionVersion: z.number().int().positive().safe().optional(),
   quantity: z.number().finite().nonnegative(), included: z.boolean(),
   ratePaise: z.number().int().nonnegative().safe().nullable()
 }).strict().superRefine((line, context) => {
   if (line.catalogueId !== line.mainLineId) context.addIssue({
     code: z.ZodIssueCode.custom, path: ["catalogueId"], message: "Catalogue identity must match the Main Line."
+  });
+  if (line.itemType === "main_line" && line.subBasketId === null) context.addIssue({
+    code: z.ZodIssueCode.custom, path: ["subBasketId"], message: "A Main Line requires a Sub Basket."
   });
 });
 const estimateLineSchema = z.union([configuredEstimateLineSchema, legacyEstimateLineSchema]);
@@ -189,26 +195,48 @@ export function createEstimatesRouter(
         }
         const firstSave = configured.get(line.mainLineId);
         if (!prior && !selectedMainBasketIds.includes(line.mainBasketId)) {
-          throw new ApiError(400, "ESTIMATE_BASKET_NOT_SELECTED", "Select the Main Basket before adding its Main Line.");
+          throw new ApiError(400, "ESTIMATE_BASKET_NOT_SELECTED", "Select the Main Basket before adding its item.");
         }
-        if (!prior && (!firstSave || firstSave.line.basketId !== line.mainBasketId ||
+        if (!prior && (!firstSave || firstSave.line.itemType !== line.itemType ||
+          firstSave.line.basketId !== line.mainBasketId ||
           firstSave.line.subBasketId !== line.subBasketId ||
           firstSave.line.revisionId !== line.revisionId || firstSave.line.uom.id !== line.uomId)) {
           throw new ApiError(409, "ESTIMATE_CATALOGUE_CHANGED", "Configuration changed. Refresh the catalogue before saving this line.");
         }
+        if (!prior && firstSave && (
+          firstSave.line.itemStatus !== "active" && (line.itemVersion === undefined || line.revisionVersion === undefined) ||
+          line.itemVersion !== undefined && line.itemVersion !== firstSave.line.itemVersion ||
+          line.revisionVersion !== undefined && line.revisionVersion !== firstSave.line.revisionVersion
+        )) {
+          throw new ApiError(409, "ESTIMATE_CATALOGUE_CHANGED", "Configuration changed. Refresh the catalogue before saving this line.");
+        }
         const snapshot = prior ? savedConfiguredSnapshot(prior) : firstSave!;
+        if (prior && (snapshot.line.itemType !== line.itemType ||
+          snapshot.line.basketId !== line.mainBasketId ||
+          snapshot.line.subBasketId !== line.subBasketId ||
+          snapshot.line.revisionId !== line.revisionId || snapshot.line.uom.id !== line.uomId)) {
+          throw new ApiError(409, "ESTIMATE_LINE_CHANGED", "Refresh the saved estimate line before editing it.");
+        }
         const quantityScale = snapshot.line.uom.decimalScale;
         const quantityUnits = scaledQuantity(line.quantity, quantityScale, line.included);
         const amountPaise = line.included && line.ratePaise === null
           ? null : line.included
             ? calculateAmountPaise(line.ratePaise!, quantityUnits, quantityScale)
             : 0;
+        const sourceProvenance = prior ? savedSourceProvenance(prior) : {
+          sourceItemStatus: firstSave!.line.itemStatus,
+          sourceRevisionStatus: firstSave!.line.revisionStatus,
+          sourceItemVersion: firstSave!.line.itemVersion,
+          sourceRevisionVersion: firstSave!.line.revisionVersion
+        };
         return {
           id: typeof prior?.id === "string" ? prior.id : `estimate-line-${randomUUID()}`,
           source: "configuration" as const, catalogueId: line.mainLineId,
           roomId: line.roomId, roomName: line.roomName,
+          itemType: snapshot.line.itemType,
           mainBasketId: snapshot.line.basketId, subBasketId: snapshot.line.subBasketId,
           mainLineId: line.mainLineId, revisionId: snapshot.line.revisionId,
+          ...sourceProvenance,
           uomId: snapshot.line.uom.id, uomCode: snapshot.line.uom.code,
           uomDecimalScale: quantityScale,
           mainBasketName: snapshot.mainBasketName, subBasketName: snapshot.subBasketName,
@@ -476,23 +504,50 @@ function mapEstimate(value: Record<string, unknown> | null) {
 function estimateNotFound() { return new ApiError(404, "ESTIMATE_NOT_FOUND", "Estimate not found."); }
 
 function savedConfiguredSnapshot(prior: Record<string, unknown>): {
-  line: EstimatorCatalogueLine; mainBasketName: string; subBasketName: string;
+  line: Omit<EstimatorCatalogueLine, "itemStatus" | "revisionStatus" | "itemVersion" | "revisionVersion" | "inHouseBaseRatePaise">;
+  mainBasketName: string; subBasketName: string | null;
 } {
-  const strings = ["mainBasketId", "subBasketId", "mainLineId", "revisionId", "uomId",
-    "uomCode", "mainBasketName", "subBasketName", "mainLineName", "uomName"] as const;
+  const strings = ["mainBasketId", "mainLineId", "revisionId", "uomId",
+    "uomCode", "mainBasketName", "mainLineName", "uomName"] as const;
+  const itemType = prior.itemType === "temporary" ? "temporary" :
+    prior.itemType == null || prior.itemType === "main_line" ? "main_line" : null;
+  const hasSubBasket = typeof prior.subBasketId === "string" && Boolean(prior.subBasketId) &&
+    typeof prior.subBasketName === "string" && Boolean(prior.subBasketName);
+  const directTemporary = itemType === "temporary" &&
+    prior.subBasketId === null && prior.subBasketName === null;
   if (strings.some((field) => typeof prior[field] !== "string" || !prior[field]) ||
+    !itemType || (!hasSubBasket && !directTemporary) ||
     !Number.isInteger(prior.uomDecimalScale) || Number(prior.uomDecimalScale) < 0 || Number(prior.uomDecimalScale) > 3) {
     throw new ApiError(409, "ESTIMATE_LINE_SNAPSHOT_INVALID", "This saved line needs review before it can be edited.");
   }
   return {
-    mainBasketName: String(prior.mainBasketName), subBasketName: String(prior.subBasketName),
+    mainBasketName: String(prior.mainBasketName),
+    subBasketName: directTemporary ? null : String(prior.subBasketName),
     line: {
       id: String(prior.mainLineId), mainLineId: String(prior.mainLineId),
-      basketId: String(prior.mainBasketId), subBasketId: String(prior.subBasketId),
+      basketId: String(prior.mainBasketId),
+      subBasketId: directTemporary ? null : String(prior.subBasketId), itemType,
       name: String(prior.mainLineName), displayOrder: 0, revisionId: String(prior.revisionId),
       uom: { id: String(prior.uomId), code: String(prior.uomCode), name: String(prior.uomName),
         decimalScale: Number(prior.uomDecimalScale) }
     }
+  };
+}
+
+function savedSourceProvenance(prior: Record<string, unknown>) {
+  const fields = ["sourceItemStatus", "sourceRevisionStatus", "sourceItemVersion", "sourceRevisionVersion"] as const;
+  if (fields.every((field) => prior[field] === undefined || prior[field] === null)) return {};
+  if (!["draft", "active", "inactive"].includes(String(prior.sourceItemStatus)) ||
+    !["draft", "active"].includes(String(prior.sourceRevisionStatus)) ||
+    !Number.isSafeInteger(prior.sourceItemVersion) || Number(prior.sourceItemVersion) < 1 ||
+    !Number.isSafeInteger(prior.sourceRevisionVersion) || Number(prior.sourceRevisionVersion) < 1) {
+    throw new ApiError(409, "ESTIMATE_LINE_SNAPSHOT_INVALID", "This saved line needs review before it can be edited.");
+  }
+  return {
+    sourceItemStatus: prior.sourceItemStatus,
+    sourceRevisionStatus: prior.sourceRevisionStatus,
+    sourceItemVersion: prior.sourceItemVersion,
+    sourceRevisionVersion: prior.sourceRevisionVersion
   };
 }
 
@@ -529,7 +584,7 @@ function assertEstimateReadyToSubmit(lines: readonly {
 }[]): void {
   if (lines.some((line) => line.source === "configuration" && line.included &&
     (!Number.isSafeInteger(line.ratePaise) || !Number.isSafeInteger(line.amountPaise)))) {
-    throw new ApiError(409, "ESTIMATE_INCOMPLETE", "Enter a valid selling rate for every selected Main Line before submitting.");
+    throw new ApiError(409, "ESTIMATE_INCOMPLETE", "Enter a valid selling rate for every selected item before submitting.");
   }
 }
 

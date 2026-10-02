@@ -28,6 +28,27 @@ describe("selected approved estimate furniture items", () => {
     expect(() => workflowEstimateRooms("estimate-a", 3, [{ id: "room-b", label: "Shared room" }],
       [{ ...configured, amountPaise: null }])).toThrow(WorkflowEstimateSourceError);
   });
+  it("keeps direct temporary items in their real basket and grouped temporary items in their real child", () => {
+    const direct: WorkflowEstimateLine = {
+      id: "direct-a", source: "configuration", itemType: "temporary",
+      catalogueId: "temporary-a", roomId: "room-a", roomName: "Living room",
+      specification: null, unit: "nos", quantity: 1, included: true,
+      amountPaise: 7_003, mainBasketId: "basket-a", mainBasketName: "Painting",
+      subBasketId: null, subBasketName: null, mainLineId: "temporary-a",
+      mainLineName: "Custom finish"
+    };
+    const grouped: WorkflowEstimateLine = {
+      ...direct, id: "grouped-b", catalogueId: "temporary-b", mainLineId: "temporary-b",
+      subBasketId: "sub-b", subBasketName: "Ceilings", mainLineName: "Accent coat"
+    };
+    const items = workflowEstimateRooms("estimate-a", 3, rooms, [direct, grouped])[0]!.estimateItems;
+    expect(items.map(({ id, name }) => ({ id, name }))).toEqual([
+      { id: "direct-a", name: "Painting · Custom finish" },
+      { id: "grouped-b", name: "Ceilings · Accent coat" }
+    ]);
+    expect(() => workflowEstimateRooms("estimate-a", 3, rooms, [{ ...direct, itemType: "main_line" }]))
+      .toThrow(WorkflowEstimateSourceError);
+  });
   it("excludes exact zero-value lines, retains positive-value zero-quantity lines and stable original indexes", () => {
     const approved = [
       { ...line, id: null, amount: 0, quantity: 400 },

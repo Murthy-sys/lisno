@@ -344,7 +344,7 @@ const storedAttachmentContentTypes = [
 ] as const;
 
 const operationSummaries: Readonly<Record<string, string>> = {
-  "GET /estimation/catalogue": "Read the active estimator Main Basket catalogue",
+  "GET /estimation/catalogue": "Read the estimator Main Basket catalogue",
   "GET /health": "Check API health",
   "GET /procurement/vendor-kpis/:vendorId": "Read vendor profile and KPI assessments",
   "PUT /procurement/vendor-kpis/:vendorId/procurement": "Save Procurement's official vendor assessment",
@@ -581,6 +581,11 @@ const queryParametersByOperation: Readonly<
   Record<string, readonly OpenApiParameter[]>
 > = {
   ...CHAT_QUERY_PARAMETERS,
+  "GET /estimation/catalogue": [
+    { name: "includeReadyNonActive", in: "query", required: false,
+      schema: { type: "string", enum: ["true", "false"], default: "false" },
+      description: "Opt in to Draft and Inactive items with complete Overview and Mode tabs. Omit for the Active-only catalogue." }
+  ],
   "GET /client/estimates/:estimateId/design-plan-documents": [{
     name: "roundId", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 200 },
     description: "A submitted Design review round; defaults to the latest visible round."
@@ -2141,9 +2146,13 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
             rate: { type: "number", minimum: 0, nullable: true }, ratePaise: { type: "integer", minimum: 0, nullable: true },
             quantity: { type: "number", minimum: 0 }, included: { type: "boolean" },
             amount: { type: "number", minimum: 0, nullable: true }, amountPaise: { type: "integer", minimum: 0, nullable: true },
-            mainBasketId: { type: "string" }, subBasketId: { type: "string" }, mainLineId: { type: "string" },
+            mainBasketId: { type: "string" }, subBasketId: { type: "string", nullable: true }, mainLineId: { type: "string" },
+            itemType: { type: "string", enum: ["main_line", "temporary"], description: "Absent on historical configured lines, which are Main Lines." },
             revisionId: { type: "string" }, uomId: { type: "string" }, mainBasketName: { type: "string" },
-            subBasketName: { type: "string" }, mainLineName: { type: "string" }, uomName: { type: "string" }
+            sourceItemStatus: { type: "string", enum: ["draft", "active", "inactive"] },
+            sourceRevisionStatus: { type: "string", enum: ["draft", "active"] },
+            sourceItemVersion: { type: "integer", minimum: 1 }, sourceRevisionVersion: { type: "integer", minimum: 1 },
+            subBasketName: { type: "string", nullable: true }, mainLineName: { type: "string" }, uomName: { type: "string" }
           }
         } },
         subtotal: { type: "number", minimum: 0 }, gst: { type: "number", minimum: 0 }, total: { type: "number", minimum: 0 },
@@ -2205,28 +2214,36 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     },
     EstimatorCatalogueLine: {
       type: "object", additionalProperties: false,
-      required: ["id", "mainLineId", "basketId", "subBasketId", "name", "displayOrder", "revisionId", "uom"],
+      required: ["id", "mainLineId", "basketId", "subBasketId", "itemType", "name", "displayOrder", "revisionId", "itemStatus", "revisionStatus", "itemVersion", "revisionVersion", "inHouseBaseRatePaise", "uom"],
       properties: {
         id: { type: "string" }, mainLineId: { type: "string" }, basketId: { type: "string" },
-        subBasketId: { type: "string" }, name: { type: "string" },
+        subBasketId: { type: "string", nullable: true }, itemType: { type: "string", enum: ["main_line", "temporary"] },
+        name: { type: "string" },
         displayOrder: { type: "integer" }, revisionId: { type: "string" },
+        itemStatus: { type: "string", enum: ["draft", "active", "inactive"] },
+        revisionStatus: { type: "string", enum: ["draft", "active"] },
+        itemVersion: { type: "integer", minimum: 1 }, revisionVersion: { type: "integer", minimum: 1 },
+        inHouseBaseRatePaise: { type: "integer", minimum: 0, nullable: true,
+          description: "Combined Labor and Material in-house base rate for the selected source revision, in paise; null when unavailable." },
         uom: { $ref: "#/components/schemas/EstimatorCatalogueUom" }
       }
     },
     EstimatorCatalogueSubBasket: {
       type: "object", additionalProperties: false,
-      required: ["id", "basketId", "name", "displayOrder", "mainLines"],
+      required: ["id", "basketId", "name", "displayOrder", "mainLines", "temporaryItems"],
       properties: {
         id: { type: "string" }, basketId: { type: "string" }, name: { type: "string" },
-        displayOrder: { type: "integer" }, mainLines: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueLine" } }
+        displayOrder: { type: "integer" }, mainLines: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueLine" } },
+        temporaryItems: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueLine" } }
       }
     },
     EstimatorCatalogueBasket: {
       type: "object", additionalProperties: false,
-      required: ["id", "name", "displayOrder", "subBaskets"],
+      required: ["id", "name", "displayOrder", "subBaskets", "directTemporaryItems"],
       properties: {
         id: { type: "string" }, name: { type: "string" }, displayOrder: { type: "integer" },
-        subBaskets: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueSubBasket" } }
+        subBaskets: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueSubBasket" } },
+        directTemporaryItems: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueLine" } }
       }
     },
     EstimatorCataloguePage: {
@@ -2235,7 +2252,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       properties: {
         items: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueBasket" } },
         pagination: { $ref: "#/components/schemas/Pagination" },
-        ineligibleLineCount: { type: "integer", minimum: 0, description: "Active lines omitted from this page because they lack the required eligible hierarchy, revision, or UOM." }
+        ineligibleLineCount: { type: "integer", minimum: 0, description: "Queried Main Lines or temporary items omitted from this page because they lack eligible hierarchy, source revision, readiness where required, or UOM." }
       }
     },
     LegacyEstimateLineInput: {
@@ -2259,8 +2276,11 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       properties: {
         source: { type: "string", enum: ["configuration"] }, id: { type: "string" },
         catalogueId: { type: "string" }, roomId: { type: "string" }, roomName: { type: "string" },
-        mainBasketId: { type: "string" }, subBasketId: { type: "string" }, mainLineId: { type: "string" },
+        mainBasketId: { type: "string" }, subBasketId: { type: "string", nullable: true }, mainLineId: { type: "string" },
+        itemType: { type: "string", enum: ["main_line", "temporary"], default: "main_line", description: "Optional for older clients; Main Lines require a real Sub Basket. Only temporary items may have null Sub Basket." },
         revisionId: { type: "string" }, uomId: { type: "string" },
+        itemVersion: { type: "integer", minimum: 1, description: "Required with revisionVersion for a new Draft or Inactive item; checked when provided for Active items." },
+        revisionVersion: { type: "integer", minimum: 1, description: "Required with itemVersion for a new Draft or Inactive item; checked when provided for Active items." },
         quantity: { type: "number", minimum: 0 }, included: { type: "boolean" },
         ratePaise: { type: "integer", minimum: 0, nullable: true,
           description: "Entered customer rate in integer paise. Null keeps an included draft line incomplete." }

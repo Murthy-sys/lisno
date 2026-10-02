@@ -15,9 +15,39 @@ import * as procurement from "./enterpriseProcurementData";
 import * as knowledge from "./enterpriseKnowledgeData";
 import * as drawing from "./enterpriseDrawingData";
 import type { KnowledgeSectionKey } from "../../features/ai-estimator-knowledge/knowledgeTypes";
+import type { EstimationCatalogueBasket } from "../../features/leads/estimationCatalogueApi";
 
 const lead: Lead = { id: "lead-1", projectId: "project-1", ownerId: "estimator_sales-1", clientName: "Asha Shah", clientEmail: "asha@example.com", clientMobile: "+91 90000 00000", projectName: "Asha home — complete residence and terrace refurbishment", location: "Pune", propertyType: "3BHK", budgetMin: 800000, budgetMax: 1200000, source: "Referral", stage: "estimate_in_progress", nextAction: "Review updated living room measurements", nextActionAt: "2026-09-15T10:00:00.000Z", builder: null, areaSqft: 1400, targetHandoverAt: null, notes: "Synthetic project record for visual review.", latestActivityAt: null, createdAt: "2026-08-23T10:00:00.000Z", updatedAt: "2026-09-10T10:00:00.000Z" };
 const estimate = { id: "estimate-1", leadId: lead.id, projectId: lead.projectId, propertyType: "3BHK", rooms: [{ id: "living-room", label: "Living Room", type: "living", length: 16, width: 12, height: 10 }], scopes: ["FC"], lineItems: responses.pendingDetail.estimateSnapshot.lineItems, subtotal: 1200, gst: 216, total: 1416, status: "draft", approvalRequired: false, updatedAt: lead.updatedAt, lead };
+const estimatorCatalogue: EstimationCatalogueBasket[] = [
+  {
+    id: "basket-pop", name: "POP / Gypsum", displayOrder: 1, directTemporaryItems: [],
+    subBaskets: [{
+      id: "sub-pop", basketId: "basket-pop", name: "Gypsum ceilings", displayOrder: 1,
+      mainLines: [{ id: "line-pop", mainLineId: "line-pop", itemType: "main_line", basketId: "basket-pop", subBasketId: "sub-pop", name: "Plain gypsum ceiling", displayOrder: 1, revisionId: "revision-pop", inHouseBaseRatePaise: 95_000, uom: { id: "uom-sqft", code: "SQFT", name: "Square foot", decimalScale: 2 } }],
+      temporaryItems: []
+    }, {
+      id: "sub-pop-na", basketId: "basket-pop", name: "NA", displayOrder: 2, mainLines: [],
+      temporaryItems: [
+        { id: "item-cove", mainLineId: "item-cove", itemType: "temporary", basketId: "basket-pop", subBasketId: "sub-pop-na", name: "Cove in Gypsum", displayOrder: 1, revisionId: "revision-cove", itemStatus: "draft", revisionStatus: "draft", itemVersion: 3, revisionVersion: 5, inHouseBaseRatePaise: 5_000, uom: { id: "uom-rft", code: "RFT", name: "Running foot", decimalScale: 2 } },
+        { id: "item-false-ceiling", mainLineId: "item-false-ceiling", itemType: "temporary", basketId: "basket-pop", subBasketId: "sub-pop-na", name: "POP false ceiling", displayOrder: 2, revisionId: "revision-false-ceiling", itemStatus: "inactive", revisionStatus: "active", itemVersion: 4, revisionVersion: 2, inHouseBaseRatePaise: 105_000, uom: { id: "uom-sqft", code: "SQFT", name: "Square foot", decimalScale: 2 } }
+      ]
+    }]
+  },
+  {
+    id: "basket-paint", name: "Painting", displayOrder: 2, directTemporaryItems: [],
+    subBaskets: [{
+      id: "sub-paint", basketId: "basket-paint", name: "Decorative paints", displayOrder: 1,
+      mainLines: [{ id: "line-paint", mainLineId: "line-paint", itemType: "main_line", basketId: "basket-paint", subBasketId: "sub-paint", name: "Textured wall paint", displayOrder: 1, revisionId: "revision-paint", uom: { id: "uom-sqft", code: "SQFT", name: "Square foot", decimalScale: 2 } }],
+      temporaryItems: [{ id: "item-paint-touchup", mainLineId: "item-paint-touchup", itemType: "temporary", basketId: "basket-paint", subBasketId: "sub-paint", name: "Paint touch-up", displayOrder: 2, revisionId: "revision-paint-touchup", uom: { id: "uom-sqft", code: "SQFT", name: "Square foot", decimalScale: 2 } }]
+    }]
+  },
+  {
+    id: "basket-general", name: "General Items", displayOrder: 3, subBaskets: [],
+    directTemporaryItems: [{ id: "item-site-protection", mainLineId: "item-site-protection", itemType: "temporary", basketId: "basket-general", subBasketId: null, name: "Site protection", displayOrder: 1, revisionId: "revision-site-protection", uom: { id: "uom-set", code: "SET", name: "Set", decimalScale: 0 } }]
+  },
+  { id: "basket-empty", name: "Building Material", displayOrder: 4, subBaskets: [], directTemporaryItems: [] }
+];
 const qaRequestTotals = { netPaise: 60000000, gstPaise: 10800000, totalPaise: 70800000 };
 const qaRequestSectionTotals = [{ sectionId: "LIVING", label: "Living room and dining", totals: qaRequestTotals }];
 const qaRequestVendorTotals = [{ vendorId: "vendor-qa", code: "VEN-QA", name: "Synthetic Interior Works", terms: "Deliver and install at the project site.", totals: qaRequestTotals }];
@@ -80,6 +110,7 @@ function zeroAggregates(value: unknown): unknown {
 
 export function enterpriseDataFor(path: string, params: URLSearchParams, scenario: EnterpriseScenario): unknown {
   const empty = scenario.state === "empty";
+  const estimatorReady = new URLSearchParams(scenario.route.split("?")[1]).get("qaEstimator") === "ready";
   const list = <T,>(rows: readonly T[]): T[] => empty ? [] : [...rows];
   const page = <T,>(rows: readonly T[]) => {
     const filtered = list(rows).filter((row) => !params.get("search") || JSON.stringify(row).toLowerCase().includes(params.get("search")!.toLowerCase()));
@@ -153,7 +184,8 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (path === "/leads") return page([lead]);
   if (path === "/leads/lead-1") return lead;
   if (path === "/leads/lead-1/activities") return page([{ id: "activity-1", leadId: lead.id, actorId: lead.ownerId, type: "meeting", note: "Reviewed kitchen and living room measurements with the client.", occurredAt: lead.updatedAt, createdAt: lead.updatedAt }]);
-  if (path === "/leads/lead-1/estimate") return empty ? null : estimate;
+  if (path === "/leads/lead-1/estimate") return empty || estimatorReady ? null : estimate;
+  if (path === "/estimation/catalogue") return { ...page(estimatorReady ? estimatorCatalogue : []), ineligibleLineCount: estimatorReady ? 1 : 0 };
   if (path === "/estimates") return list([estimate]);
   if (/^\/estimates\/(estimate-1|estimate-aurora-villa|estimate-aurora-studio)\/design-uploads$/.test(path)) return empty ? { uploads: [], pages: [], drawings: [], revisions: [] } : drawing.extractedWorkspace(path.split("/")[2]);
   if (/^\/estimates\/(estimate-1|estimate-aurora-villa|estimate-aurora-studio)\/design-plan-documents$/.test(path)) return { manifestHash: `synthetic-${path.split("/")[2]}`, readyForSubmission: false, documents: [], reviewRoundId: null };

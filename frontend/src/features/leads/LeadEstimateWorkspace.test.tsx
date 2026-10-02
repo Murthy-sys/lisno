@@ -247,6 +247,7 @@ describe("LeadEstimateWorkspace", () => {
       <Routes><Route path="/estimator-sales/leads/:leadId/estimate" element={<LeadEstimateWorkspace />} /></Routes>
     </MemoryRouter>);
     expect(await screen.findByText("Wardrobe carcass")).toBeVisible();
+    expect(screen.getByRole("region", { name: "Saved items unavailable in current Configuration" })).toBeVisible();
     await user.click(screen.getByRole("link", { name: "Next lead" }));
     expect(await screen.findByRole("heading", { name: "Configure estimate" })).toBeVisible();
     expect(screen.queryByText("Wardrobe carcass")).not.toBeInTheDocument();
@@ -312,7 +313,7 @@ describe("LeadEstimateWorkspace", () => {
 
     expect(screen.getByRole("region", { name: "Joinery" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Wardrobes" })).toBeVisible();
-    expect(screen.getByText("sq ft")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Wardrobe carcass/ })).toHaveAccessibleName(/sq ft/);
     expect(screen.queryByText("False ceiling")).not.toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: /Wardrobe carcass/ }));
     expect(screen.getByText("Rate required")).toBeVisible();
@@ -361,6 +362,591 @@ describe("LeadEstimateWorkspace", () => {
     await waitFor(() => expect(saves).toHaveLength(5));
     expect(saves[4]!.expectedVersion).toBe(3);
     await waitFor(() => expect(screen.queryByText("The estimate action could not be completed. Check the current workflow state and try again.")).not.toBeInTheDocument());
+  });
+
+  it("starts a new configured estimate line at its In-house base rate", async () => {
+    const catalogue = { items: [{ id: "basket-pop", name: "POP / Gypsum", displayOrder: 1,
+      subBaskets: [{ id: "sub-na", basketId: "basket-pop", name: "NA", displayOrder: 1,
+        mainLines: [{ id: "line-pop", mainLineId: "line-pop", basketId: "basket-pop", subBasketId: "sub-na",
+          name: "POP false ceiling", displayOrder: 1, revisionId: "revision-pop", inHouseBaseRatePaise: 105_000,
+          uom: { id: "uom-sq", code: "SQFT", name: "sq ft", decimalScale: 2 } }] }] }],
+      pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 };
+    let savedInput: Record<string, unknown> | null = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/leads/lead-1") && method === "GET") return response(leadFixture);
+      if (url.endsWith("/leads/lead-1/estimate") && method === "GET") return response(null);
+      if (url.includes("/estimation/catalogue?") && method === "GET") return response(catalogue);
+      if (url.endsWith("/leads/lead-1/estimate") && method === "PUT") {
+        savedInput = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return response({ ...savedInput, id: "estimate-pop", version: 1, status: "draft",
+          approvalRequired: false, subtotal: 1050, gst: 189, total: 1239 });
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+    await screen.findByRole("heading", { name: "Main Baskets" });
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("checkbox", { name: /POP \/ Gypsum/ }));
+    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    const rate = screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ });
+    expect(rate).toHaveValue("1050");
+    await user.click(screen.getByRole("checkbox", { name: /POP false ceiling/ }));
+    expect(screen.getByRole("button", { name: "Submit estimate" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(savedInput).not.toBeNull());
+    expect((savedInput!.lineItems as Array<Record<string, unknown>>)[0]).toMatchObject({
+      mainLineId: "line-pop", ratePaise: 105_000, quantity: 1, included: true
+    });
+  });
+
+  it("previews quantity times unit price while only checked items affect totals and the saved draft", async () => {
+    const catalogue = { readyNonActiveSupported: true, ineligibleLineCount: 0,
+      pagination: { limit: 100, offset: 0, total: 1, hasMore: false },
+      items: [{ id: "basket-pop", name: "POP / Gypsum", displayOrder: 1, directTemporaryItems: [],
+        subBaskets: [{ id: "sub-na", basketId: "basket-pop", name: "NA", displayOrder: 1,
+          mainLines: [{ id: "line-pop", mainLineId: "line-pop", basketId: "basket-pop", subBasketId: "sub-na",
+            name: "POP false ceiling", displayOrder: 1, revisionId: "revision-pop", itemType: "main_line",
+            uom: { id: "uom-sq", code: "SQFT", name: "sq ft", decimalScale: 2 } }],
+          temporaryItems: [{ id: "line-cove", mainLineId: "line-cove", basketId: "basket-pop", subBasketId: "sub-na",
+            name: "Cove in Gypsum", displayOrder: 2, revisionId: "revision-cove", itemType: "temporary",
+            uom: { id: "uom-rft", code: "RFT", name: "Rft", decimalScale: 1 } }]
+        }] }]
+    };
+    const savedInputs: Array<Record<string, unknown>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/leads/lead-1") && method === "GET") return response(leadFixture);
+      if (url.endsWith("/leads/lead-1/estimate") && method === "GET") return response(null);
+      if (url.includes("/estimation/catalogue?") && method === "GET") return response(catalogue);
+      if (url.endsWith("/leads/lead-1/estimate") && method === "PUT") {
+        const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        savedInputs.push(payload);
+        return response({ ...payload, id: "estimate-preview", version: 1, status: "draft", approvalRequired: false,
+          subtotal: 38.25, gst: 6.89, total: 45.14, subtotalPaise: 3825, gstPaise: 689, totalPaise: 4514,
+          lineItems: (payload.lineItems as Array<Record<string, unknown>>).map((line) => ({ ...line,
+            id: "saved-cove", mainBasketName: "POP / Gypsum", subBasketName: "NA", mainLineName: "Cove in Gypsum",
+            uomCode: "RFT", uomName: "Rft", uomDecimalScale: 1, unit: "Rft", specification: null,
+            rate: 25.5, amount: 38.25, amountPaise: 3825 })) });
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    const user = userEvent.setup();
+    renderWorkspace();
+    await screen.findByRole("heading", { name: "Main Baskets" });
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("option", { name: "Master Bedroom" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("checkbox", { name: /POP \/ Gypsum/ }));
+    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+
+    let popRow = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
+    const popQuantity = within(popRow).getByRole("spinbutton", { name: /Quantity.*POP false ceiling/ });
+    let popRate = within(popRow).getByRole("textbox", { name: /Selling rate.*POP false ceiling/ });
+    await user.clear(popQuantity);
+    await user.type(popQuantity, "100");
+    await user.type(popRate, "60");
+    expect(within(popRow).getByRole("status", { name: /amount for/i })).toHaveTextContent("₹6,000");
+    expect(within(popRow).getByRole("checkbox", { name: /POP false ceiling/ })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: /Collapse POP \/ Gypsum, subtotal ₹0/ })).toBeVisible();
+    expect(screen.getByText("₹0 total")).toBeVisible();
+
+    await user.click(within(popRow).getByRole("checkbox", { name: /POP false ceiling/ }));
+    expect(screen.getByRole("button", { name: /Collapse POP \/ Gypsum, subtotal ₹6,000/ })).toBeVisible();
+    expect(screen.getByText("₹7,080 total")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
+    await user.clear(popRate);
+    await user.type(popRate, "1000000000000");
+    expect(within(popRow).getByRole("status", { name: /amount for/i })).toHaveTextContent("Too large");
+    expect(within(popRow).getByText("Amount too large for this quantity and price.")).toBeVisible();
+    expect(screen.getByRole("button", { name: /Collapse POP \/ Gypsum, subtotal Incomplete/ })).toBeVisible();
+    expect(within(screen.getByRole("navigation", { name: "Rooms" })).getByRole("button", { name: /Living & Dining.*Incomplete/ })).toBeVisible();
+    expect(screen.getByText("Total incomplete")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Submit estimate" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Summary" }));
+    const overflowSummary = screen.getByRole("heading", { name: "Estimate summary" }).closest("section") as HTMLElement;
+    expect(within(overflowSummary).getByText("Sub-total").closest("span")).toHaveTextContent("Incomplete");
+    expect(within(overflowSummary).getByText("GST @ 18%").closest("span")).toHaveTextContent("Incomplete");
+    expect(within(overflowSummary).getByText("Total (incl. GST)").closest("span")).toHaveTextContent("Incomplete");
+    expect(within(overflowSummary).getByText(/Total incomplete: correct the quantity or price/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Estimate Builder" }));
+    popRow = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
+    popRate = within(popRow).getByRole("textbox", { name: /Selling rate.*POP false ceiling/ });
+    await user.clear(popRate);
+    await user.type(popRate, "60");
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
+    await user.click(within(popRow).getByRole("checkbox", { name: /POP false ceiling/ }));
+    expect(within(popRow).getByRole("status", { name: /amount for/i })).toHaveTextContent("₹6,000");
+    expect(screen.getByText("₹0 total")).toBeVisible();
+
+    await user.click(within(screen.getByRole("navigation", { name: "Rooms" })).getByRole("button", { name: /Master Bedroom/ }));
+    const coveRow = screen.getByText("Cove in Gypsum").closest(".configured-estimate-line") as HTMLElement;
+    const coveQuantity = within(coveRow).getByRole("spinbutton", { name: /Quantity.*Cove in Gypsum/ });
+    const coveRate = within(coveRow).getByRole("textbox", { name: /Selling rate.*Cove in Gypsum/ });
+    await user.clear(coveQuantity);
+    await user.type(coveQuantity, "1.5");
+    await user.type(coveRate, "25.50");
+    expect(within(coveRow).getByRole("status", { name: /amount for/i })).toHaveTextContent("₹38.25");
+    expect(screen.getByText("₹0 total")).toBeVisible();
+    await user.click(within(coveRow).getByRole("checkbox", { name: /Cove in Gypsum/ }));
+    expect(screen.getByRole("button", { name: /Collapse POP \/ Gypsum, subtotal ₹38.25/ })).toBeVisible();
+    expect(screen.getByText("₹45.14 total")).toBeVisible();
+    const roomNavigation = screen.getByRole("navigation", { name: "Rooms" });
+    expect(within(roomNavigation).getByRole("button", { name: /Living & Dining.*₹0/ })).toBeVisible();
+    expect(within(roomNavigation).getByRole("button", { name: /Master Bedroom.*₹38.25/ })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Summary" }));
+    const summary = screen.getByRole("heading", { name: "Estimate summary" }).closest("section") as HTMLElement;
+    expect(within(summary).getByText("Sub-total").closest("span")).toHaveTextContent("₹38.25");
+    expect(within(summary).getByText("GST @ 18%").closest("span")).toHaveTextContent("₹6.89");
+    expect(within(summary).getByText("Total (incl. GST)").closest("span")).toHaveTextContent("₹45.14");
+
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(savedInputs).toHaveLength(1));
+    expect(savedInputs[0]!.lineItems).toEqual([expect.objectContaining({
+      source: "configuration", itemType: "temporary", roomName: "Master Bedroom", mainLineId: "line-cove",
+      uomId: "uom-rft", quantity: 1.5, ratePaise: 2550, included: true
+    })]);
+  });
+
+  it("selects empty baskets and saves direct and grouped temporary items with real parent IDs", async () => {
+    const catalogue = {
+      items: [
+        { id: "basket-empty", name: "General Items", displayOrder: 1, subBaskets: [{ id: "sub-empty", basketId: "basket-empty", name: "Miscellaneous", displayOrder: 1, mainLines: [], temporaryItems: [] }], directTemporaryItems: [] },
+        { id: "basket-paint", name: "Painting", displayOrder: 2, directTemporaryItems: [
+          { id: "temporary-direct", mainLineId: "temporary-direct", itemType: "temporary", basketId: "basket-paint", subBasketId: null, name: "Site protection", displayOrder: 1, revisionId: "revision-direct", itemStatus: "draft", revisionStatus: "draft", itemVersion: 9, revisionVersion: 4, uom: { id: "uom-sqft", code: "SQFT", name: "sq ft", decimalScale: 2 } }
+        ], subBaskets: [{
+          id: "sub-paint", basketId: "basket-paint", name: "Decorative paints", displayOrder: 1, mainLines: [], temporaryItems: [
+            { id: "temporary-grouped", mainLineId: "temporary-grouped", itemType: "temporary", basketId: "basket-paint", subBasketId: "sub-paint", name: "Finish sample", displayOrder: 1, revisionId: "revision-grouped", itemStatus: "inactive", revisionStatus: "active", itemVersion: 11, revisionVersion: 8, uom: { id: "uom-each", code: "NOS", name: "each", decimalScale: 0 } }
+          ]
+        }] }
+      ], pagination: { limit: 100, offset: 0, total: 2, hasMore: false }, ineligibleLineCount: 0
+    };
+    const saves: Array<Record<string, unknown>> = [];
+    let savedEstimate: Record<string, unknown> | null = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/leads/lead-1") && method === "GET") return response(leadFixture);
+      if (url.endsWith("/leads/lead-1/estimate") && method === "GET") return response(savedEstimate);
+      if (url.includes("/estimation/catalogue?") && method === "GET") return response(catalogue);
+      if (url.endsWith("/leads/lead-1/estimate") && method === "PUT") {
+        const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        saves.push(payload);
+        const lineItems = (payload.lineItems as Array<Record<string, unknown>>).map((line, index) => {
+          const amountPaise = !line.included ? 0 : line.ratePaise === null ? null : Math.round(Number(line.ratePaise) * Number(line.quantity));
+          return { ...line, id: `saved-${index}`, mainBasketName: "Painting", subBasketName: line.subBasketId === null ? null : "Decorative paints", mainLineName: line.mainLineId === "temporary-direct" ? "Site protection" : "Finish sample", sourceItemStatus: line.mainLineId === "temporary-direct" ? "draft" : "inactive", sourceRevisionStatus: line.mainLineId === "temporary-direct" ? "draft" : "active", sourceItemVersion: line.mainLineId === "temporary-direct" ? 9 : 11, sourceRevisionVersion: line.mainLineId === "temporary-direct" ? 4 : 8, uomCode: line.mainLineId === "temporary-direct" ? "SQFT" : "NOS", uomName: line.mainLineId === "temporary-direct" ? "sq ft" : "each", uomDecimalScale: line.mainLineId === "temporary-direct" ? 2 : 0, unit: line.mainLineId === "temporary-direct" ? "sq ft" : "each", specification: null, rate: line.ratePaise === null ? null : Number(line.ratePaise) / 100, amount: amountPaise === null ? null : amountPaise / 100, amountPaise };
+        });
+        const subtotalPaise = lineItems.reduce((sum, line) => sum + (line.amountPaise ?? 0), 0);
+        savedEstimate = { ...payload, id: "estimate-temporary", version: saves.length, lineItems, subtotalPaise, gstPaise: Math.round(subtotalPaise * .18), totalPaise: subtotalPaise + Math.round(subtotalPaise * .18), subtotal: subtotalPaise / 100, gst: Math.round(subtotalPaise * .18) / 100, total: (subtotalPaise + Math.round(subtotalPaise * .18)) / 100, status: "draft", approvalRequired: false };
+        return response(savedEstimate);
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    const user = userEvent.setup();
+    const view = renderWorkspace();
+    expect(await screen.findByRole("heading", { name: "Project details" })).toBeVisible();
+    expect(screen.getByRole("group", { name: "Property type" })).toBeVisible();
+    expect(screen.getByRole("group", { name: "Rooms" })).toBeVisible();
+    expect(await screen.findByRole("checkbox", { name: /General Items/ })).toBeEnabled();
+    expect(screen.getByRole("checkbox", { name: /General Items/ })).toHaveAccessibleName(/0 Main Lines · 0 temporary items/);
+    expect(screen.getByRole("checkbox", { name: /Painting/ })).toHaveAccessibleName(/0 Main Lines · 2 temporary items/);
+    const paintDetails = screen.getByRole("button", { name: "Show Painting details" });
+    await user.click(paintDetails);
+    expect(screen.getByRole("checkbox", { name: /Painting/ })).not.toBeChecked();
+    expect(screen.getByText("Directly under Main Basket")).toBeVisible();
+    expect(screen.getByText("Decorative paints")).toBeVisible();
+    expect(paintDetails).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Continue to item selection" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.getByRole("region", { name: /Living & Dining dimensions/ })).toBeVisible();
+    screen.getByRole("checkbox", { name: /General Items/ }).focus();
+    await user.keyboard(" ");
+    expect(screen.getByRole("checkbox", { name: /General Items/ })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    expect(screen.getByRole("region", { name: "Miscellaneous" })).toBeVisible();
+    expect(screen.getByText("No available items in this Sub Basket.")).toBeVisible();
+    expect(screen.getByText(/No available items in this Main Basket/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Submit estimate" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(saves).toHaveLength(1));
+    expect(saves[0]!.selectedMainBasketIds).toEqual(["basket-empty"]);
+    expect(saves[0]!.lineItems).toEqual([]);
+
+    await user.click(screen.getByRole("button", { name: "Back to Asha Shah" }));
+    expect(screen.getByRole("checkbox", { name: /General Items/ })).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: /Painting/ }));
+    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    expect(screen.getByRole("region", { name: "Direct items in Painting" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Decorative paints" })).toBeVisible();
+    expect(screen.queryByText(/Temporary item ·/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Draft source$/)).toBeVisible();
+    expect(screen.getByText(/Inactive source$/)).toBeVisible();
+    await user.click(screen.getByRole("checkbox", { name: /Site protection/ }));
+    await user.click(screen.getByRole("checkbox", { name: /Finish sample/ }));
+    expect(screen.getByRole("button", { name: "Submit estimate" })).toBeDisabled();
+    await user.type(screen.getByRole("textbox", { name: /Selling rate.*Site protection/ }), "80.05");
+    await user.type(screen.getByRole("textbox", { name: /Selling rate.*Finish sample/ }), "11");
+    await user.clear(screen.getByRole("spinbutton", { name: /Quantity.*Site protection/ }));
+    await user.type(screen.getByRole("spinbutton", { name: /Quantity.*Site protection/ }), "1.25");
+    expect(screen.getByRole("button", { name: "Submit estimate" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(saves).toHaveLength(2));
+    expect(saves[1]!.selectedMainBasketIds).toEqual(["basket-empty", "basket-paint"]);
+    expect(saves[1]!.lineItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: "configuration", itemType: "temporary", mainLineId: "temporary-direct", subBasketId: null, revisionId: "revision-direct", itemVersion: 9, revisionVersion: 4, uomId: "uom-sqft", ratePaise: 8005, quantity: 1.25 }),
+      expect.objectContaining({ source: "configuration", itemType: "temporary", mainLineId: "temporary-grouped", subBasketId: "sub-paint", revisionId: "revision-grouped", itemVersion: 11, revisionVersion: 8, uomId: "uom-each", ratePaise: 1100, quantity: 1 })
+    ]));
+    expect(await screen.findByText(/Draft source at save$/)).toBeVisible();
+    expect(screen.getByText(/Inactive source at save$/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Proposal" }));
+    expect(screen.getByText(/Painting · Temporary item · 1.25 sq ft/)).toBeVisible();
+    expect(screen.getByText(/Painting \/ Decorative paints · Temporary item/)).toBeVisible();
+
+    view.unmount();
+    renderWorkspace();
+    expect(await screen.findByRole("checkbox", { name: /Site protection/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Finish sample/ })).toBeChecked();
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Site protection/ })).toHaveValue("80.05");
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Finish sample/ })).toHaveValue("11");
+
+    await user.click(screen.getByRole("button", { name: "Back to Asha Shah" }));
+    expect(screen.getByRole("checkbox", { name: /Painting/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /General Items/ })).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: /Painting/ }));
+    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    const unselected = screen.getByRole("region", { name: "Saved items from unselected Main Baskets" });
+    expect(within(unselected).getByText("Recheck the Main Basket to edit or include these items.")).toBeVisible();
+    expect(within(unselected).getByRole("checkbox", { name: /Site protection/ })).not.toBeChecked();
+    expect(within(unselected).getByRole("checkbox", { name: /Site protection/ })).toBeDisabled();
+    expect(within(unselected).getByRole("checkbox", { name: /Finish sample/ })).toBeDisabled();
+    expect(screen.queryByRole("region", { name: "Saved items unavailable in current Configuration" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(saves).toHaveLength(3));
+    expect(saves[2]!.selectedMainBasketIds).toEqual(["basket-empty"]);
+    expect(saves[2]!.lineItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "saved-0", itemType: "temporary", subBasketId: null, included: false, ratePaise: 8005 }),
+      expect.objectContaining({ id: "saved-1", itemType: "temporary", subBasketId: "sub-paint", included: false, ratePaise: 1100 })
+    ]));
+    expect((saves[2]!.lineItems as Array<Record<string, unknown>>).every((line) => !("itemVersion" in line) && !("revisionVersion" in line))).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: "Back to Asha Shah" }));
+    await user.click(screen.getByRole("checkbox", { name: /Painting/ }));
+    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    expect(screen.getByRole("checkbox", { name: /Site protection/ })).toBeEnabled();
+    expect(screen.getByRole("checkbox", { name: /Site protection/ })).not.toBeChecked();
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Site protection/ })).toHaveValue("80.05");
+  });
+
+  it("distinguishes a denied catalogue from a failed request that can be retried", async () => {
+    let catalogueReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/leads/lead-1")) return response(leadFixture);
+      if (url.endsWith("/leads/lead-1/estimate")) return response(null);
+      if (url.includes("/estimation/catalogue?")) {
+        catalogueReads += 1;
+        return catalogueReads === 1
+          ? Response.json({ error: { code: "UNAVAILABLE", message: "Read failed" } }, { status: 503 })
+          : response({ items: [{ id: "basket-empty", name: "General Items", displayOrder: 1, subBaskets: [] }], pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Configured baskets could not be loaded");
+    expect(screen.queryByRole("checkbox", { name: /General Items/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry catalogue" }));
+    expect(await screen.findByRole("checkbox", { name: /General Items/ })).toBeEnabled();
+    expect(catalogueReads).toBe(2);
+  });
+
+  it("keeps configured basket selection read-only in a locked estimate", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/leads/lead-1")) return response(leadFixture);
+      if (url.endsWith("/leads/lead-1/estimate")) return response({ ...estimateFixture("sent_to_client"), lineItems: [], selectedMainBasketIds: ["basket-1"] });
+      if (url.includes("/estimation/catalogue?")) return response({ items: [{ id: "basket-1", name: "Painting", displayOrder: 1, subBaskets: [] }], pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    renderWorkspace();
+    expect(await screen.findByRole("checkbox", { name: /Painting/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Painting/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Continue to item selection" })).toBeDisabled();
+  });
+
+  it("shows denied catalogue access without an empty-basket message or retry control", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/leads/lead-1")) return response(leadFixture);
+      if (url.endsWith("/leads/lead-1/estimate")) return response(null);
+      if (url.includes("/estimation/catalogue?")) return Response.json({ error: { code: "FORBIDDEN", message: "Denied" } }, { status: 403 });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    renderWorkspace();
+    expect(await screen.findByRole("alert")).toHaveTextContent("You do not have permission to read the estimator catalogue.");
+    expect(screen.queryByText("No active Main Baskets are available in the estimator catalogue.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry catalogue" })).not.toBeInTheDocument();
+  });
+
+  it("uses the legacy save shape after an older catalogue service rejects the ready flag", async () => {
+    const readyFlags: Array<string | null> = [];
+    const saves: Array<Record<string, unknown>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/leads/lead-1") && method === "GET") return response(leadFixture);
+      if (url.endsWith("/leads/lead-1/estimate") && method === "GET") return response(null);
+      if (url.includes("/estimation/catalogue?")) {
+        const readyFlag = new URL(url, "http://localhost").searchParams.get("includeReadyNonActive");
+        readyFlags.push(readyFlag);
+        return readyFlag
+          ? Response.json({ error: { code: "VALIDATION_ERROR", message: "Request validation failed.", fields: { includeReadyNonActive: "Unrecognized field" } } }, { status: 400 })
+          : response({ items: [{ id: "basket-active", name: "Active basket", displayOrder: 1, subBaskets: [{ id: "sub-active", basketId: "basket-active", name: "Painting", displayOrder: 1, mainLines: [{ id: "line-active", mainLineId: "line-active", basketId: "basket-active", subBasketId: "sub-active", name: "Wall paint", displayOrder: 1, revisionId: "revision-active", uom: { id: "uom-sqft", code: "SQFT", name: "Square foot", decimalScale: 2 } }] }] }], pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 });
+      }
+      if (url.endsWith("/leads/lead-1/estimate") && method === "PUT") {
+        const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        saves.push(payload);
+        const line = (payload.lineItems as Array<Record<string, unknown>>)[0]!;
+        if ("itemType" in line || "itemVersion" in line || "revisionVersion" in line || line.subBasketId === null) {
+          return Response.json({ error: { code: "VALIDATION_ERROR", message: "Older save schema rejected the configured line." } }, { status: 400 });
+        }
+        return response({ ...payload, id: "legacy-compatible-estimate", version: saves.length, lineItems: [{ ...line, id: "saved-active", mainBasketName: "Active basket", subBasketName: "Painting", mainLineName: "Wall paint", uomCode: "SQFT", uomName: "Square foot", uomDecimalScale: 2, unit: "Square foot", specification: null, rate: 20, amount: 20, amountPaise: 2000 }], subtotal: 20, gst: 3.6, total: 23.6, status: "draft", approvalRequired: false });
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+    expect(await screen.findByRole("checkbox", { name: /Active basket/ })).toBeEnabled();
+    expect(screen.getByText(/This catalogue currently shows Active items only/)).toBeVisible();
+    expect(readyFlags).toEqual(["true", null]);
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("checkbox", { name: /Active basket/ }));
+    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    await user.click(screen.getByRole("checkbox", { name: /Wall paint/ }));
+    await user.type(screen.getByRole("textbox", { name: /Selling rate.*Wall paint/ }), "20");
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    expect(await screen.findByText("Estimate draft saved.")).toBeVisible();
+    expect(saves).toHaveLength(1);
+    expect((saves[0]!.lineItems as Array<Record<string, unknown>>)[0]).toMatchObject({ source: "configuration", mainBasketId: "basket-active", subBasketId: "sub-active", mainLineId: "line-active", ratePaise: 2000 });
+    const rate = screen.getByRole("textbox", { name: /Selling rate.*Wall paint/ });
+    await user.clear(rate);
+    await user.type(rate, "25");
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(saves).toHaveLength(2));
+    expect((saves[1]!.lineItems as Array<Record<string, unknown>>)[0]).toMatchObject({ id: "saved-active", ratePaise: 2500 });
+    expect((saves[1]!.lineItems as Array<Record<string, unknown>>)[0]).not.toHaveProperty("itemType");
+    expect((saves[1]!.lineItems as Array<Record<string, unknown>>)[0]).not.toHaveProperty("itemVersion");
+    expect((saves[1]!.lineItems as Array<Record<string, unknown>>)[0]).not.toHaveProperty("revisionVersion");
+  });
+
+  it("does not send a temporary saved line to an older backend that cannot accept it", async () => {
+    const savedEstimate = {
+      id: "estimate-temporary", version: 1, propertyType: "2BHK",
+      rooms: [{ id: "room-a", label: "Living & Dining", typeId: "living", icon: "", sqft: 300, length: null, width: null }],
+      scopes: [], selectedMainBasketIds: ["basket-active"], status: "draft", approvalRequired: false,
+      lineItems: [{ id: "saved-temporary", source: "configuration", itemType: "temporary", catalogueId: "temporary-direct", roomId: "room-a", roomName: "Living & Dining", mainBasketId: "basket-active", mainBasketName: "Active basket", subBasketId: null, subBasketName: null, mainLineId: "temporary-direct", mainLineName: "Site protection", revisionId: "revision-direct", sourceItemStatus: "active", sourceRevisionStatus: "active", sourceItemVersion: 2, sourceRevisionVersion: 1, uomId: "uom-each", uomCode: "NOS", uomName: "Each", uomDecimalScale: 0, unit: "Each", specification: null, rate: 10, ratePaise: 1000, quantity: 1, included: true, amount: 10, amountPaise: 1000 }],
+      subtotal: 10, gst: 1.8, total: 11.8
+    };
+    let saveRequests = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/leads/lead-1") && method === "GET") return response(leadFixture);
+      if (url.endsWith("/leads/lead-1/estimate") && method === "GET") return response(savedEstimate);
+      if (url.includes("/estimation/catalogue?") && method === "GET") {
+        const readyFlag = new URL(url, "http://localhost").searchParams.get("includeReadyNonActive");
+        return readyFlag
+          ? Response.json({ error: { code: "VALIDATION_ERROR", message: "Request validation failed.", fields: { includeReadyNonActive: "Unrecognized field" } } }, { status: 400 })
+          : response({ items: [{ id: "basket-active", name: "Active basket", displayOrder: 1, subBaskets: [], directTemporaryItems: [] }], pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 });
+      }
+      if (url.endsWith("/leads/lead-1/estimate") && method === "PUT") {
+        saveRequests += 1;
+        throw new Error("Temporary line must not reach the older save schema");
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+    expect(await screen.findByRole("region", { name: "Saved items unavailable in current Configuration" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    expect(screen.getByText(/This catalogue service cannot save temporary items yet/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    expect(saveRequests).toBe(0);
+  });
+
+  it("refreshes changed Draft source versions before retrying a rejected first save", async () => {
+    const basket = (revisionVersion: number) => ({
+      id: "basket-pop", name: "POP / Gypsum", displayOrder: 1, directTemporaryItems: [],
+      subBaskets: [{ id: "sub-na", basketId: "basket-pop", name: "NA", displayOrder: 1, mainLines: [], temporaryItems: [{
+        id: "temporary-cove", mainLineId: "temporary-cove", itemType: "temporary", basketId: "basket-pop", subBasketId: "sub-na", name: "Cove in Gypsum", displayOrder: 1,
+        revisionId: revisionVersion === 2 ? "revision-cove" : "revision-cove-next", itemStatus: "draft", revisionStatus: "draft", itemVersion: 5, revisionVersion,
+        uom: revisionVersion === 2
+          ? { id: "uom-rft", code: "RFT", name: "Running foot", decimalScale: 2 }
+          : { id: "uom-sqft", code: "SQFT", name: "Square foot", decimalScale: 2 }
+      }] }]
+    });
+    const saves: Array<Record<string, unknown>> = [];
+    let catalogueReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/leads/lead-1") && method === "GET") return response(leadFixture);
+      if (url.endsWith("/leads/lead-1/estimate") && method === "GET") return response(null);
+      if (url.includes("/estimation/catalogue?") && method === "GET") {
+        catalogueReads += 1;
+        return response({ items: [basket(catalogueReads === 1 ? 2 : 3)], pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 });
+      }
+      if (url.endsWith("/leads/lead-1/estimate") && method === "PUT") {
+        const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        saves.push(payload);
+        if (saves.length === 1) return Response.json({ error: { code: "ESTIMATE_CATALOGUE_CHANGED", message: "Source changed." } }, { status: 409 });
+        const line = (payload.lineItems as Array<Record<string, unknown>>)[0]!;
+        return response({ ...payload, id: "estimate-1", version: 1, lineItems: [{ ...line, id: "saved-cove", mainBasketName: "POP / Gypsum", subBasketName: "NA", mainLineName: "Cove in Gypsum", sourceItemStatus: "draft", sourceRevisionStatus: "draft", sourceItemVersion: 5, sourceRevisionVersion: 3, uomCode: "SQFT", uomName: "Square foot", uomDecimalScale: 2, unit: "Square foot", specification: null, rate: 20, amount: 20, amountPaise: 2000 }], subtotal: 20, gst: 3.6, total: 23.6, status: "draft", approvalRequired: false });
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+    expect(await screen.findByRole("checkbox", { name: /POP \/ Gypsum/ })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("checkbox", { name: /POP \/ Gypsum/ }));
+    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    await user.click(screen.getByRole("checkbox", { name: /Cove in Gypsum/ }));
+    await user.type(screen.getByRole("textbox", { name: /Selling rate.*Cove in Gypsum/ }), "20");
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    expect(await screen.findByText(/Configuration changed since you opened this estimate/)).toBeVisible();
+    expect((saves[0]!.lineItems as Array<Record<string, unknown>>)[0]).toMatchObject({ itemVersion: 5, revisionVersion: 2 });
+    await user.click(screen.getByRole("button", { name: "Refresh catalogue" }));
+    await waitFor(() => expect(catalogueReads).toBe(2));
+    await waitFor(() => expect(screen.queryByText(/Configuration changed since you opened this estimate/)).not.toBeInTheDocument());
+    expect(screen.getByRole("checkbox", { name: /Cove in Gypsum/ })).toBeChecked();
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Cove in Gypsum/ })).toHaveValue("20");
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    expect(screen.getByText(/UOM changed from Running foot to Square foot/)).toHaveTextContent("revision");
+    await user.click(screen.getByRole("button", { name: "Use updated source for Cove in Gypsum in Living & Dining" }));
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(saves).toHaveLength(2));
+    expect((saves[1]!.lineItems as Array<Record<string, unknown>>)[0]).toMatchObject({ revisionId: "revision-cove-next", itemVersion: 5, revisionVersion: 3, uomId: "uom-sqft", ratePaise: 2000 });
+    expect(await screen.findByText(/Draft source at save/)).toBeVisible();
+  });
+
+  it("separates a missing new selection from saved unavailable items and blocks its first save", async () => {
+    const temporaryItem = { id: "temporary-cove", mainLineId: "temporary-cove", itemType: "temporary", basketId: "basket-pop", subBasketId: "sub-na", name: "Cove in Gypsum", displayOrder: 1,
+      revisionId: "revision-cove", itemStatus: "inactive", revisionStatus: "active", itemVersion: 5, revisionVersion: 2,
+      uom: { id: "uom-rft", code: "RFT", name: "Running foot", decimalScale: 2 } };
+    let catalogueReads = 0;
+    let saveRequests = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/leads/lead-1") && method === "GET") return response(leadFixture);
+      if (url.endsWith("/leads/lead-1/estimate") && method === "GET") return response(null);
+      if (url.includes("/estimation/catalogue?") && method === "GET") {
+        catalogueReads += 1;
+        return response({ items: [{ id: "basket-pop", name: "POP / Gypsum", displayOrder: 1, directTemporaryItems: [], subBaskets: [{ id: "sub-na", basketId: "basket-pop", name: "NA", displayOrder: 1, mainLines: [], temporaryItems: catalogueReads === 1 ? [temporaryItem] : [] }] }], pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 });
+      }
+      if (url.endsWith("/leads/lead-1/estimate") && method === "PUT") {
+        saveRequests += 1;
+        throw new Error("Unavailable first save should be blocked in the builder");
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+    expect(await screen.findByRole("checkbox", { name: /POP \/ Gypsum/ })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("checkbox", { name: /POP \/ Gypsum/ }));
+    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    await user.click(screen.getByRole("checkbox", { name: /Cove in Gypsum/ }));
+    await user.type(screen.getByRole("textbox", { name: /Selling rate.*Cove in Gypsum/ }), "20");
+    await user.click(screen.getAllByRole("button", { name: "Refresh available items" })[0]!);
+    const unavailable = await screen.findByRole("region", { name: "Unavailable new selections" });
+    expect(within(unavailable).getByRole("checkbox", { name: /Cove in Gypsum/ })).toBeChecked();
+    expect(screen.queryByRole("region", { name: "Saved items unavailable in current Configuration" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    expect(screen.getByText(/A selected item is no longer available for a new estimate line/)).toBeVisible();
+    await user.click(within(unavailable).getByRole("checkbox", { name: /Cove in Gypsum/ }));
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
+    expect(saveRequests).toBe(0);
+  });
+
+  it("refreshes a successful empty catalogue in place and reveals new grouped and direct items", async () => {
+    const emptyBasket = { id: "basket-pop", name: "POP / Gypsum", displayOrder: 1, directTemporaryItems: [], subBaskets: [
+      { id: "sub-na", basketId: "basket-pop", name: "NA", displayOrder: 1, mainLines: [], temporaryItems: [] }
+    ] };
+    const populatedBasket = { ...emptyBasket,
+      directTemporaryItems: [{ id: "direct-protection", mainLineId: "direct-protection", basketId: "basket-pop", subBasketId: null, itemType: "temporary", name: "Site protection", displayOrder: 1, revisionId: "revision-direct", uom: { id: "uom-each", code: "NOS", name: "each", decimalScale: 0 } }],
+      subBaskets: [{ ...emptyBasket.subBaskets[0]!, mainLines: [
+        { id: "line-gypsum", mainLineId: "line-gypsum", basketId: "basket-pop", subBasketId: "sub-na", itemType: "main_line", name: "Gypsum finishing", displayOrder: 1, revisionId: "revision-line", uom: { id: "uom-sqft", code: "SQFT", name: "sq ft", decimalScale: 2 } }
+      ] }]
+    };
+    const pendingRefresh = deferred<Response>();
+    let catalogueReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/leads/lead-1")) return response(leadFixture);
+      if (url.endsWith("/leads/lead-1/estimate")) return response(null);
+      if (url.includes("/estimation/catalogue?")) {
+        catalogueReads += 1;
+        if (catalogueReads === 3) return pendingRefresh.promise;
+        if (catalogueReads === 4) return Response.json({ error: { code: "UNAVAILABLE", message: "Read failed" } }, { status: 503 });
+        if (catalogueReads === 5) return response({ items: [populatedBasket], pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 });
+        return response({ items: [emptyBasket], pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+    expect(await screen.findByRole("checkbox", { name: /POP \/ Gypsum/ })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("checkbox", { name: /POP \/ Gypsum/ }));
+    await user.click(screen.getByRole("button", { name: "Refresh available items" }));
+    await waitFor(() => expect(catalogueReads).toBe(2));
+    expect(screen.getByRole("checkbox", { name: /POP \/ Gypsum/ })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    expect(screen.getByRole("region", { name: "NA" })).toBeVisible();
+    expect(screen.getByText("No available items in this Sub Basket.")).toBeVisible();
+    expect(screen.getByText(/No available items in this Main Basket/)).toBeVisible();
+
+    await user.click(within(screen.getByRole("region", { name: "POP / Gypsum" })).getByRole("button", { name: "Refresh available items" }));
+    await waitFor(() => expect(catalogueReads).toBe(3));
+    expect(screen.getByText("Refreshing available items…")).toBeVisible();
+    for (const button of screen.getAllByRole("button", { name: "Refresh available items" })) expect(button).toBeDisabled();
+    pendingRefresh.resolve(response({ items: [populatedBasket], pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 }));
+    expect(await screen.findByRole("checkbox", { name: /Gypsum finishing/ })).toBeEnabled();
+    expect(screen.getByRole("checkbox", { name: /Site protection/ })).toBeEnabled();
+    expect(screen.getByRole("region", { name: "Direct items in POP / Gypsum" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "NA" })).toBeVisible();
+    expect(screen.queryByText(/No available items in this Main Basket/)).not.toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Rooms" })).toHaveTextContent("Living & Dining");
+    await user.click(screen.getByRole("button", { name: "Refresh available items" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Available items could not be refreshed. The last loaded catalogue is shown. Try again.");
+    expect(screen.getByRole("checkbox", { name: /Gypsum finishing/ })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Refresh available items" }));
+    await waitFor(() => expect(catalogueReads).toBe(5));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Back to Asha Shah" }));
+    expect(screen.getByRole("checkbox", { name: /POP \/ Gypsum/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /POP \/ Gypsum/ })).toHaveAccessibleName(/1 Main Line · 1 temporary item/);
   });
 
   const clientFeedback = {

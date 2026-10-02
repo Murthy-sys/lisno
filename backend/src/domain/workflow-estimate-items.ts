@@ -1,10 +1,12 @@
 import { approvedEstimateLineItemKey } from "./estimate-line-item.js";
+import { configuredEstimateParentIsValid } from "./estimate-client-review.js";
 import { estimatePdfCatalogue } from "./estimate-pdf-catalogue.js";
 import { rupeesToPaise } from "./project-finance.js";
 
 export interface WorkflowEstimateLine {
   id?: string | null;
   source?: "legacy" | "configuration";
+  itemType?: "main_line" | "temporary";
   catalogueId: string;
   roomId?: string;
   roomName: string;
@@ -15,10 +17,10 @@ export interface WorkflowEstimateLine {
   amount?: unknown;
   amountPaise?: unknown;
   mainBasketId?: string;
-  subBasketId?: string;
+  subBasketId?: string | null;
   mainLineId?: string;
   mainBasketName?: string;
-  subBasketName?: string;
+  subBasketName?: string | null;
   mainLineName?: string;
 }
 export interface WorkflowEstimateItem { id: string; name: string; catalogueId: string; specification: string; quantity: number; uom: string; measurementType: "count" | "dimensions" }
@@ -105,11 +107,11 @@ export function workflowEstimateRooms(estimateId: string, estimateVersion: numbe
     ids.add(id);
     if (typeof line.catalogueId !== "string" || !line.catalogueId.trim() || line.source !== "configuration" && typeof line.specification !== "string" || typeof line.unit !== "string" || !line.unit.trim()) throw new WorkflowEstimateSourceError("The approved estimate is missing selected item details.");
     const catalogueId = line.catalogueId;
-    if (line.source === "configuration" && (line.mainLineId !== catalogueId || !line.mainLineName?.trim() || !line.subBasketName?.trim() || !line.mainBasketName?.trim())) {
+    if (line.source === "configuration" && (line.mainLineId !== catalogueId || !line.mainLineName?.trim() || !configuredEstimateParentIsValid(line) || !line.mainBasketName?.trim())) {
       throw new WorkflowEstimateSourceError("The approved configured estimate item is missing its saved identity or labels.");
     }
     const name = line.source === "configuration"
-      ? `${line.subBasketName} · ${line.mainLineName}`
+      ? [line.subBasketName ?? line.mainBasketName, line.mainLineName].join(" · ")
       : estimatePdfCatalogue.get(catalogueId.toUpperCase())?.description ?? (line.specification?.trim() ? `${catalogueId} — ${line.specification.trim()}` : catalogueId);
     let actionable: boolean;
     try { actionable = approvedEstimateLineIsActionable(line); }

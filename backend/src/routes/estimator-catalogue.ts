@@ -9,7 +9,8 @@ import { listEstimatorCatalogue } from "../services/estimator-catalogue.service.
 
 const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
-  offset: z.coerce.number().int().min(0).default(0)
+  offset: z.coerce.number().int().min(0).default(0),
+  includeReadyNonActive: z.enum(["true", "false"]).default("false").transform((value) => value === "true")
 }).strict();
 
 export function createEstimatorCatalogueRouter(auth: AuthService): Router {
@@ -17,8 +18,8 @@ export function createEstimatorCatalogueRouter(auth: AuthService): Router {
   router.get("/estimation/catalogue", authenticate(auth), requireOperation("GET /estimation/catalogue"),
     validateQuery(querySchema), async (request, response, next) => {
       try {
-        const { limit, offset } = response.locals.validatedQuery as z.infer<typeof querySchema>;
-        response.json({ data: await listEstimatorCatalogue(request.authenticatedUser!, { limit, offset }) });
+        const { limit, offset, includeReadyNonActive } = response.locals.validatedQuery as z.infer<typeof querySchema>;
+        response.json({ data: await listEstimatorCatalogue(request.authenticatedUser!, { limit, offset }, includeReadyNonActive) });
       } catch (error) { next(error); }
     });
   return router;

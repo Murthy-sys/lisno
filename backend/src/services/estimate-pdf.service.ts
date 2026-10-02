@@ -7,6 +7,7 @@ import { estimatePdfCatalogue } from "../domain/estimate-pdf-catalogue.js";
 
 export interface EstimatePdfLine {
   source?: "legacy" | "configuration";
+  itemType?: "main_line" | "temporary";
   catalogueId: string;
   roomId?: string;
   roomName: string;
@@ -19,14 +20,14 @@ export interface EstimatePdfLine {
   amount: number | null;
   amountPaise?: number | null;
   mainBasketId?: string;
-  subBasketId?: string;
+  subBasketId?: string | null;
   mainLineId?: string;
   revisionId?: string;
   uomId?: string;
   uomCode?: string;
   uomDecimalScale?: number;
   mainBasketName?: string;
-  subBasketName?: string;
+  subBasketName?: string | null;
   mainLineName?: string;
   uomName?: string;
 }
@@ -241,7 +242,9 @@ function lineDescription(line: EstimatePdfLine): string {
 
 function lineCellText(line: EstimatePdfLine) {
   const description = line.source === "configuration"
-    ? [lineDescription(line), line.subBasketName].filter(Boolean).join("\n")
+    ? [lineDescription(line), line.itemType === "temporary"
+      ? ["Temporary item", line.subBasketName].filter(Boolean).join(" · ")
+      : line.subBasketName].filter(Boolean).join("\n")
     : [lineDescription(line), line.specification].filter(Boolean).join("\n");
   return {
     description,

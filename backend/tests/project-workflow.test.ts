@@ -62,10 +62,10 @@ describe("project workflow trade-role mapping", () => {
     const lines: EstimateWorkflowLine[] = [
       { ...line("main-line-a", "Living Room"), source: "configuration", specification: null,
         mainBasketId: "basket-a", mainBasketName: "Joinery at approval",
-        subBasketName: "Custom units", mainLineName: "Console at approval" },
+        subBasketId: "sub-a", subBasketName: "Custom units", mainLineName: "Console at approval" },
       { ...line("main-line-b", "Bedroom"), source: "configuration", specification: null,
         mainBasketId: "basket-b", mainBasketName: "Electrical at approval",
-        subBasketName: "Devices", mainLineName: "Outlet at approval" }
+        subBasketId: "sub-b", subBasketName: "Devices", mainLineName: "Outlet at approval" }
     ];
     const blueprints = projectWorkflowBlueprints({ estimateId: "configured", estimateVersion: 2, lineItems: lines });
     expect(blueprints.filter(({ kind }) => kind === "trade_execution")).toMatchObject([
@@ -74,6 +74,21 @@ describe("project workflow trade-role mapping", () => {
     ]);
     expect(blueprints[0]?.description).toContain("Joinery at approval");
     expect(blueprints[0]?.description).toContain("Electrical at approval");
+  });
+  it("uses basket and item snapshots for direct temporary trade work", () => {
+    const direct: EstimateWorkflowLine = {
+      ...line("temporary-a", "Living Room"), source: "configuration", itemType: "temporary",
+      specification: null, mainBasketId: "basket-a", mainBasketName: "Painting",
+      subBasketId: null, subBasketName: null, mainLineName: "Custom finish"
+    };
+    const trade = projectWorkflowBlueprints({ estimateId: "estimate-a", estimateVersion: 3, lineItems: [direct] })
+      .find(({ kind }) => kind === "trade_execution");
+    expect(trade).toMatchObject({
+      sourceSectionId: "basket-a", sourceLineItemKey: direct.id, assigneeRole: "worker_other",
+      description: "Painting · Custom finish · 2 nos"
+    });
+    expect(() => projectWorkflowBlueprints({ estimateId: "estimate-a", estimateVersion: 3,
+      lineItems: [{ ...direct, itemType: "main_line" }] })).toThrow(/basket snapshot/u);
   });
   it.each([
     ["FC01", "worker_civil"],

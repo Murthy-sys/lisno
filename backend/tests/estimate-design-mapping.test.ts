@@ -26,13 +26,27 @@ describe("estimate design mapping", () => {
       scopes: [], selectedMainBasketIds: ["basket-lower"],
       lineItems: [{ source: "configuration", roomId: "room-b", roomName: "Shared room",
         catalogueId: "main-line-lower", mainLineId: "main-line-lower", mainLineName: "Custom console",
-        mainBasketId: "basket-lower", included: true }]
+        mainBasketId: "basket-lower", subBasketId: "sub-lower", subBasketName: "Custom units", included: true }]
     });
     expect(configured.invalidIncludedItems).toEqual([]);
     expect(assignEstimateItem({ roomId: "room-b", catalogueId: "main-line-lower" }, configured))
       .toMatchObject({ scopeSectionId: "basket-lower", mappingStatus: "estimator_assigned" });
     expect(autoMapDrawingTitle("Custom console", configured).mapping)
       .toMatchObject({ roomId: "room-b", scopeSectionId: "basket-lower" });
+  });
+  it("maps direct temporary items by their real basket and rejects a false ordinary direct parent", () => {
+    const line = {
+      source: "configuration", itemType: "temporary", roomId: "room-a", roomName: "Living room",
+      catalogueId: "temporary-a", mainLineId: "temporary-a", mainLineName: "Custom finish",
+      mainBasketId: "basket-a", subBasketId: null, subBasketName: null, included: true
+    };
+    const input = { rooms: [{ id: "room-a", label: "Living room" }], lineItems: [line] };
+    const direct = mappingContextForEstimate(input);
+    expect(direct.invalidIncludedItems).toEqual([]);
+    expect(autoMapDrawingTitle("Custom finish", direct).mapping)
+      .toMatchObject({ catalogueId: "temporary-a", scopeSectionId: "basket-a" });
+    expect(mappingContextForEstimate({ ...input, lineItems: [{ ...line, itemType: "main_line" }] })
+      .invalidIncludedItems).toMatchObject([{ catalogueId: "temporary-a", reason: "unknown_catalogue" }]);
   });
   it("maps TV UNIT - BEDROOM 1 to the one included exact item", () => {
     expect(autoMapDrawingTitle("TV UNIT - BEDROOM 1", mappingContextForEstimate(estimate))).toEqual({

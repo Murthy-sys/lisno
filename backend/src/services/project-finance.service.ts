@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession } from "mongoose";
 
 import { approvedEstimateLineItemKey } from "../domain/estimate-line-item.js";
+import { configuredEstimateParentIsValid } from "../domain/estimate-client-review.js";
 import {
   projectWorkflowSectionLabel,
   workflowTaskDueAt,
@@ -1419,7 +1420,8 @@ function financeDocumentMatchesLineage(
       }) === String(entry.sourceLineItemKey) &&
       (line.source === "configuration"
         ? String(line.mainBasketId) === String(entry.sourceSectionId) &&
-          String(line.mainLineId) === String(line.catalogueId)
+          String(line.mainLineId) === String(line.catalogueId) &&
+          configuredEstimateParentIsValid(line)
         : String(line.catalogueId).trim().toUpperCase().slice(0, 2) ===
           String(entry.sourceSectionId))
     );
@@ -1503,7 +1505,7 @@ function approvedEstimateLineLabels(estimate: Row): Map<string, string> {
 
 function approvedEstimateLineLabel(line: Row): string | null {
   if (line.source === "configuration") {
-    const parts = [line.mainBasketName, line.subBasketName, line.mainLineName, line.roomName]
+    const parts = [line.mainBasketName, line.subBasketName, line.itemType === "temporary" ? "Temporary item" : null, line.mainLineName, line.roomName]
       .map((value) => String(value ?? "").trim()).filter(Boolean);
     return parts.length === 0 ? null : parts.join(" · ");
   }

@@ -784,6 +784,12 @@ describe("DesignerDesignPlanTasksPage", () => {
         quantity: 1.25, included: true, mainBasketId: "basket-joinery",
         mainBasketName: "Joinery", subBasketId: "sub-wardrobes", subBasketName: "Wardrobes",
         mainLineId: "line-carcass", mainLineName: "Wardrobe carcass", uomName: "sq ft"
+      }, {
+        source: "configuration", itemType: "temporary", catalogueId: "temporary-direct", roomId: "room-living",
+        roomName: "Living area before rename", specification: null, unit: "each",
+        quantity: 1, included: true, mainBasketId: "basket-joinery",
+        mainBasketName: "Joinery", subBasketId: null, subBasketName: null,
+        mainLineId: "temporary-direct", mainLineName: "Site protection", uomName: "each"
       }]
     };
     server.use(
@@ -797,6 +803,7 @@ describe("DesignerDesignPlanTasksPage", () => {
     await user.click(within(drawing).getByRole("button", { name: /More actions/ }));
     await user.click(screen.getByRole("menuitem", { name: "Change estimate item" }));
     expect(await screen.findByRole("option", { name: "Wardrobe carcass · Joinery" })).toBeVisible();
+    expect(screen.getByRole("option", { name: "Site protection · Joinery" })).toBeVisible();
     expect(screen.queryByRole("option", { name: /line-carcass/ })).not.toBeInTheDocument();
   });
 

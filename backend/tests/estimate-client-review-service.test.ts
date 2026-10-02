@@ -388,6 +388,53 @@ describe("estimate client review scoped queries", () => {
     expect(text).not.toContain("pdfStorageReference");
   });
 
+  it("returns direct temporary identity and nullable parent from the immutable round", async () => {
+    const original = detailRow();
+    const direct = {
+      id: "temporary-line", source: "configuration", itemType: "temporary",
+      catalogueId: "temporary-a", roomId: "room-a", roomName: "Living Room",
+      specification: null, unit: "nos", rate: 70.03, ratePaise: 7_003,
+      quantity: 1, included: true, amount: 70.03, amountPaise: 7_003,
+      mainBasketId: "basket-a", subBasketId: null, mainLineId: "temporary-a",
+      revisionId: "rev-a", sourceItemStatus: "inactive",
+      sourceRevisionStatus: "draft", sourceItemVersion: 7, sourceRevisionVersion: 3,
+      uomId: "uom-nos", mainBasketName: "Painting",
+      subBasketName: null, mainLineName: "Custom finish", uomName: "Number"
+    };
+    vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockReturnValue(
+      aggregateResult([{ ...original, estimateSnapshot: {
+        ...original.estimateSnapshot, lineItems: [direct], subtotal: 70.03,
+        gst: 12.61, total: 82.64, subtotalPaise: 7_003, gstPaise: 1_261,
+        totalPaise: 8_264
+      } }]) as never
+    );
+    const detail = await createEstimateClientReviewService({ storage: storageDouble() })
+      .detail(actors.admin, "round-1");
+    expect(detail.estimateSnapshot.lineItems[0]).toMatchObject({
+      id: "temporary-line", itemType: "temporary", subBasketId: null,
+      subBasketName: null, mainLineId: "temporary-a", amountPaise: 7_003,
+      sourceItemStatus: "inactive", sourceRevisionStatus: "draft",
+      sourceItemVersion: 7, sourceRevisionVersion: 3
+    });
+    const historical = {
+      ...direct,
+      sourceItemStatus: undefined, sourceRevisionStatus: undefined,
+      sourceItemVersion: undefined, sourceRevisionVersion: undefined
+    };
+    vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockReturnValue(
+      aggregateResult([{ ...original, estimateSnapshot: {
+        ...original.estimateSnapshot, lineItems: [historical], subtotal: 70.03,
+        gst: 12.61, total: 82.64, subtotalPaise: 7_003, gstPaise: 1_261,
+        totalPaise: 8_264
+      } }]) as never
+    );
+    const historicalDetail = await createEstimateClientReviewService({ storage: storageDouble() })
+      .detail(actors.admin, "round-1");
+    for (const field of ["sourceItemStatus", "sourceRevisionStatus", "sourceItemVersion", "sourceRevisionVersion"]) {
+      expect(historicalDetail.estimateSnapshot.lineItems[0]).not.toHaveProperty(field);
+    }
+  });
+
   it("authorizes a task PDF before reading bytes and returns only safe download fields", async () => {
     const storage = storageDouble();
     vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockReturnValue(

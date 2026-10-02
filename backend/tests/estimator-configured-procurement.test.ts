@@ -11,14 +11,17 @@ function approvedProject(input: {
   basketName: string;
   lineId: string;
   lineAmountPaise: number;
+  placement?: "direct_temporary" | "grouped_temporary";
 }) {
   const subtotalPaise = input.lineAmountPaise;
   const gstPaise = Math.round(subtotalPaise * 0.18);
   const totalPaise = subtotalPaise + gstPaise;
   const line = {
     id: `${input.estimateId}-line`, source: "configuration", catalogueId: input.lineId,
+    ...(input.placement ? { itemType: "temporary" } : {}),
     mainBasketId: input.basketId, mainBasketName: input.basketName,
-    subBasketId: `${input.basketId}-child`, subBasketName: "Shared child",
+    subBasketId: input.placement === "direct_temporary" ? null : `${input.basketId}-child`,
+    subBasketName: input.placement === "direct_temporary" ? null : "Shared child",
     mainLineId: input.lineId, mainLineName: "Configured line",
     roomId: "room-a", roomName: "Living room", specification: null,
     unit: "sqft", quantity: 1, included: true,
@@ -56,6 +59,27 @@ describe("configured Procurement approval lineage", () => {
     }));
     expect(first).toMatchObject({ sourceSectionIds: ["basket-lower-a"], approvedAmountPaise: 12_125 });
     expect(second).toMatchObject({ sourceSectionIds: ["basket-lower-b"], approvedAmountPaise: 7_003 });
+    expect(first.approvedAmountPaise + second.approvedAmountPaise).toBe(19_128);
+  });
+  it("reconciles direct and grouped temporary approved lines across unequal projects without a synthetic child", () => {
+    const first = procurementDashboardProjection(approvedProject({
+      projectId: "project-direct", estimateId: "estimate-direct", basketId: "painting",
+      basketName: "Painting", lineId: "temporary-direct", lineAmountPaise: 12_125,
+      placement: "direct_temporary"
+    }));
+    const second = procurementDashboardProjection(approvedProject({
+      projectId: "project-grouped", estimateId: "estimate-grouped", basketId: "lights",
+      basketName: "Functional Lights", lineId: "temporary-grouped", lineAmountPaise: 7_003,
+      placement: "grouped_temporary"
+    }));
+    expect(first).toMatchObject({
+      sourceSectionIds: ["painting"], sourceLineItemKeys: ["estimate-direct-line"],
+      approvedAmountPaise: 12_125
+    });
+    expect(second).toMatchObject({
+      sourceSectionIds: ["lights"], sourceLineItemKeys: ["estimate-grouped-line"],
+      approvedAmountPaise: 7_003
+    });
     expect(first.approvedAmountPaise + second.approvedAmountPaise).toBe(19_128);
   });
 });

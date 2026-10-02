@@ -90,6 +90,17 @@ describe("Estimate-linked procurement groups", () => {
     expect(screen.getByRole("group", { name: "Wardrobes · Wardrobe carcass — Bedroom" })).toBeVisible();
   });
 
+  it("uses a direct temporary item's real Main Basket and item name", () => {
+    const view = start();
+    view.change({ ...project, sections: [{
+      id: "basket-paint", label: "Painting", estimatedAmountPaise: 10006, actualSpendPaise: 0,
+      items: [{ key: "estimate-temporary", source: "configuration", itemType: "temporary", catalogueId: "temporary-direct", mainBasketId: "basket-paint", subBasketId: null, mainLineId: "temporary-direct", mainLineName: "Site protection", subBasketName: null, specification: "Site protection", roomName: "Bedroom", unit: "sq ft", quantity: 1.25, estimatedAmountPaise: 10006, actualSpendPaise: 0, expenses: [] }]
+    }] });
+    expect(screen.getByRole("heading", { name: "Painting" })).toBeVisible();
+    expect(screen.getByRole("group", { name: "Painting · Temporary item · Site protection — Bedroom" })).toBeVisible();
+    expect(screen.queryByText(/Sub Basket/)).not.toBeInTheDocument();
+  });
+
   it("shows positive approved budgets but excludes a 400 sqft item valued at zero", async () => {
     start();
     expect(within(parent("Wardrobe")).getByText("₹1,250.50")).toBeVisible();

@@ -12,10 +12,11 @@ import { ProjectProcurementItems } from "./ProjectProcurementItems";
 import { ProjectProcurementItemEditor } from "./ProjectProcurementItemEditor";
 import { sameProcurementParent, type ProcurementParentSource } from "./projectProcurementApi";
 
-function estimateItemLabel(item: ProcurementProject["sections"][number]["items"][number]): string {
-  return item.source === "configuration"
-    ? `${item.subBasketName ?? "Sub Basket"} · ${item.mainLineName ?? "Main Line"}`
-    : item.specification;
+function estimateItemLabel(item: ProcurementProject["sections"][number]["items"][number], sectionLabel: string): string {
+  if (item.source !== "configuration") return item.specification;
+  const name = item.mainLineName ?? (item.itemType === "temporary" ? "Temporary item" : "Main Line");
+  if (item.itemType === "temporary" && item.subBasketId === null) return `${item.mainBasketName ?? sectionLabel} · Temporary item · ${name}`;
+  return `${item.subBasketName ?? "Sub Basket"} · ${name}`;
 }
 
 export function EstimateProcurementItems({ project }: { project: ProcurementProject | null }) {
@@ -34,10 +35,10 @@ export function EstimateProcurementItems({ project }: { project: ProcurementProj
   })).filter((section) => section.items.length) ?? [];
   const options = project ? actionableSections.flatMap((section) => section.items.map((item) => ({
     estimateId: project.estimateId, estimateVersion: project.estimateVersion, sourceLineItemKey: item.key,
-    label: `${estimateItemLabel(item)} · ${item.roomName}${item.source === "configuration" ? "" : ` · ${item.catalogueId}`}`
+    label: `${estimateItemLabel(item, section.label)} · ${item.roomName}${item.source === "configuration" ? "" : ` · ${item.catalogueId}`}`
   }))) : [];
   const sections = actionableSections.map((section) => ({ ...section, items: section.items.filter((item) =>
-    !search || [estimateItemLabel(item), item.roomName, item.catalogueId, section.label].some((value) => value.toLocaleLowerCase().includes(search))
+    !search || [estimateItemLabel(item, section.label), item.roomName, item.catalogueId, section.label].some((value) => value.toLocaleLowerCase().includes(search))
   ) })).filter((section) => section.items.length);
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -59,11 +60,11 @@ export function EstimateProcurementItems({ project }: { project: ProcurementProj
     {sections.length ? sections.map((section) => <div key={section.id} className="estimate-procurement__section">
       <div className="estimate-procurement__section-heading"><h3><Layers3 aria-hidden="true" />{section.label}</h3><span>{section.items.length} {section.items.length === 1 ? "item" : "items"}</span></div>
       {section.items.map((item) => <ProjectProcurementItems key={item.key} projectId={project.projectId} projectName={project.projectName}
-        source={{ estimateId: project.estimateId, estimateVersion: project.estimateVersion, sourceLineItemKey: item.key }} estimateItem={item}
+        source={{ estimateId: project.estimateId, estimateVersion: project.estimateVersion, sourceLineItemKey: item.key }} estimateItem={item.source === "configuration" ? { ...item, specification: estimateItemLabel(item, section.label) } : item}
         onEditorRequested={(child, opener) => {
           returnFocusRef.current = opener;
           setNotice("");
-          setEditor({ item: child, projectId: project.projectId, projectName: project.projectName, source: { estimateId: project.estimateId, estimateVersion: project.estimateVersion, sourceLineItemKey: item.key }, parentLabel: `${estimateItemLabel(item)} — ${item.roomName}` });
+          setEditor({ item: child, projectId: project.projectId, projectName: project.projectName, source: { estimateId: project.estimateId, estimateVersion: project.estimateVersion, sourceLineItemKey: item.key }, parentLabel: `${estimateItemLabel(item, section.label)} — ${item.roomName}` });
         }} />)}
     </div>) : <PageState state="empty" message={search ? "No eligible estimate items match your search." : "This approved estimate has no items with a positive value."} />}
     <ProjectProcurementItems projectId={project.projectId} projectName={project.projectName} unassigned assignmentOptions={options}
