@@ -7,11 +7,15 @@ describe("project completion approved scope labels", () => {
     const line = {
       source: "configuration" as const, catalogueId: "main-line-lower",
       sectionId: "basket-lower", mainBasketId: "basket-lower",
-      mainBasketName: "Original basket", subBasketName: "Original child",
+      mainBasketName: "Original basket", subBasketId: "original-child", subBasketName: "Original child",
       mainLineId: "main-line-lower", mainLineName: "Original console",
       specification: ""
     };
     expect(projectCompletionScopeLabel(line)).toBe("Original basket · Original child · Original console");
+    expect(projectCompletionScopeLabel({ ...line, itemType: "temporary", subBasketId: null, subBasketName: null }))
+      .toBe("Original basket · Temporary item · Original console");
+    expect(() => projectCompletionScopeLabel({ ...line, itemType: "main_line", subBasketId: null, subBasketName: null }))
+      .toThrow(/basket or line snapshot/u);
     expect(() => projectCompletionScopeLabel({ ...line, sectionId: "BA" })).toThrow(/basket or line snapshot/u);
     expect(projectCompletionScopeLabel({ ...line, source: "legacy", specification: "BWR ply" }))
       .toBe("BWR ply");

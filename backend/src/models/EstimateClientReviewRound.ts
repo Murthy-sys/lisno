@@ -5,7 +5,8 @@ import {
   ESTIMATE_CLIENT_REVIEW_STATUSES,
   ESTIMATE_CLIENT_SHA256,
   ESTIMATE_DELIVERY_FAILURE_CODE,
-  ESTIMATE_DELIVERY_STATUSES
+  ESTIMATE_DELIVERY_STATUSES,
+  configuredEstimateParentIsValid
 } from "../domain/estimate-client-review.js";
 import { emailSchema, normalizeEmail } from "../domain/email.js";
 import type { Query } from "mongoose";
@@ -41,6 +42,7 @@ const estimateClientReviewLineItemSchema = new Schema(
     // derives a deterministic, version-and-position-scoped identity for them.
     id: { type: String, default: null, immutable: true },
     source: { type: String, enum: ["legacy", "configuration"], default: undefined, immutable: true },
+    itemType: { type: String, enum: ["main_line", "temporary"], default: undefined, immutable: true },
     catalogueId: { type: String, required: true, immutable: true },
     roomId: { type: String, default: undefined, immutable: true },
     roomName: { type: String, required: true, immutable: true },
@@ -56,6 +58,10 @@ const estimateClientReviewLineItemSchema = new Schema(
     subBasketId: { type: String, default: undefined, immutable: true },
     mainLineId: { type: String, default: undefined, immutable: true },
     revisionId: { type: String, default: undefined, immutable: true },
+    sourceItemStatus: { type: String, enum: ["draft", "active", "inactive"], default: undefined, immutable: true },
+    sourceRevisionStatus: { type: String, enum: ["draft", "active", "superseded"], default: undefined, immutable: true },
+    sourceItemVersion: { type: Number, default: undefined, immutable: true, min: 1, validate: optionalSafeIntegerValidator },
+    sourceRevisionVersion: { type: Number, default: undefined, immutable: true, min: 1, validate: optionalSafeIntegerValidator },
     uomId: { type: String, default: undefined, immutable: true },
     uomCode: { type: String, default: undefined, immutable: true },
     uomDecimalScale: { type: Number, default: undefined, immutable: true, min: 0, validate: optionalSafeIntegerValidator },
@@ -70,11 +76,23 @@ const estimateClientReviewLineItemSchema = new Schema(
 estimateClientReviewLineItemSchema.pre("validate", function validateFrozenLine() {
   const configured = this.get("source") === "configuration";
   const required = configured
-    ? ["roomId", "mainBasketId", "subBasketId", "mainLineId", "revisionId", "uomId", "mainBasketName", "subBasketName", "mainLineName", "uomName"]
+    ? ["roomId", "mainBasketId", "mainLineId", "revisionId", "uomId", "mainBasketName", "mainLineName", "uomName"]
     : ["specification"];
   for (const field of required) {
     const value = this.get(field);
     if (typeof value !== "string" || !value.trim()) this.invalidate(field, "Published estimate line snapshot is incomplete.");
+  }
+  if (configured && !configuredEstimateParentIsValid({
+    itemType: this.get("itemType"),
+    subBasketId: this.get("subBasketId"),
+    subBasketName: this.get("subBasketName")
+  })) this.invalidate("subBasketId", "Published configured estimate Sub Basket identity is inconsistent.");
+  if (configured) {
+    const provenance = ["sourceItemStatus", "sourceRevisionStatus", "sourceItemVersion", "sourceRevisionVersion"] as const;
+    const presentCount = provenance.filter((field) => this.get(field) !== undefined).length;
+    if (presentCount > 0 && (presentCount !== provenance.length || provenance.some((field) => this.get(field) === null))) {
+      this.invalidate("sourceRevisionVersion", "Published configured estimate source provenance is incomplete.");
+    }
   }
   if (configured && (this.get("catalogueId") !== this.get("mainLineId") || this.get("specification") !== null)) {
     this.invalidate("catalogueId", "Configured line identity or specification is inconsistent.");

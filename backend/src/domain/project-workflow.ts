@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { isWorkerRole, type Role, type WorkerRole } from "./roles.js";
 import { approvedEstimateLineItemKey } from "./estimate-line-item.js";
+import { configuredEstimateParentIsValid } from "./estimate-client-review.js";
 
 export const DESIGN_PLAN_STATUSES = [
   "pending_assignment",
@@ -37,10 +38,12 @@ export type ProjectWorkflowTaskStatus =
 export interface EstimateWorkflowLine {
   id?: string | null;
   source?: "legacy" | "configuration";
+  itemType?: "main_line" | "temporary";
   catalogueId: string;
   mainBasketId?: string;
   mainBasketName?: string;
-  subBasketName?: string;
+  subBasketId?: string | null;
+  subBasketName?: string | null;
   mainLineName?: string;
   roomName: string;
   specification: string | null;
@@ -406,7 +409,7 @@ export function projectWorkflowBlueprints(input: {
     const catalogueId = configured ? line.catalogueId.trim() : line.catalogueId.trim().toUpperCase();
     const sectionId = configured ? line.mainBasketId?.trim() ?? "" : catalogueId.slice(0, 2) || "OTHER";
     const sectionLabel = configured ? line.mainBasketName?.trim() ?? "" : SECTION_LABELS[sectionId] ?? "Project";
-    if (configured && (!sectionId || !sectionLabel || !line.mainLineName?.trim() || !line.subBasketName?.trim())) {
+    if (configured && (!sectionId || !sectionLabel || !line.mainLineName?.trim() || !configuredEstimateParentIsValid(line))) {
       throw new TypeError("The approved configured estimate line is missing its basket snapshot.");
     }
     const sourceLineItemKey = approvedEstimateLineItemKey({
@@ -421,7 +424,7 @@ export function projectWorkflowBlueprints(input: {
       assigneeRole: configured ? "worker_other" : workerRoleForCatalogueId(catalogueId),
       title: `${sectionLabel} · ${line.roomName}`,
       description: configured
-        ? `${line.subBasketName} · ${line.mainLineName} · ${line.quantity} ${line.unit}`
+        ? `${line.subBasketName ?? sectionLabel} · ${line.mainLineName} · ${line.quantity} ${line.unit}`
         : `${catalogueId} · ${line.specification} · ${line.quantity} ${line.unit}`,
       sourceSectionId: sectionId,
       sourceLineItemKey,

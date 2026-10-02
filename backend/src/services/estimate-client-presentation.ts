@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { ClientPublishedEstimateReview } from "../domain/estimate-client-review.js";
+import { configuredEstimateParentIsValid, type ClientPublishedEstimateReview } from "../domain/estimate-client-review.js";
 import { normalizeEmail } from "../domain/email.js";
 import type { PublicUser } from "./auth.service.js";
 
@@ -16,14 +16,15 @@ const legacyLine = z.object({ ...commonLine, source: z.literal("legacy").optiona
 const configuredLine = z.object({
   ...commonLine, rate: money.nullable(), amount: money.nullable(),
   source: z.literal("configuration"), specification: z.null(),
+  itemType: z.enum(["main_line", "temporary"]).optional(),
   roomId: z.string().min(1), mainBasketId: z.string().min(1),
-  subBasketId: z.string().min(1), mainLineId: z.string().min(1),
+  subBasketId: z.string().min(1).nullable(), mainLineId: z.string().min(1),
   revisionId: z.string().min(1), uomId: z.string().min(1),
   uomCode: z.string().min(1).optional(), uomDecimalScale: z.number().int().nonnegative().optional(),
-  mainBasketName: z.string().min(1), subBasketName: z.string().min(1),
+  mainBasketName: z.string().min(1), subBasketName: z.string().min(1).nullable(),
   mainLineName: z.string().min(1), uomName: z.string().min(1),
   ratePaise: paise.nullable(), amountPaise: paise.nullable()
-}).refine((line) => line.catalogueId === line.mainLineId &&
+}).refine((line) => configuredEstimateParentIsValid(line) && line.catalogueId === line.mainLineId &&
   (!line.included || line.ratePaise !== null && line.amountPaise !== null));
 const snapshotSchema = z.object({
   clientName: z.string().min(1), projectName: z.string().min(1),

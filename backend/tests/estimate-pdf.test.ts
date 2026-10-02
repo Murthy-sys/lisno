@@ -183,6 +183,37 @@ describe("estimate PDF service", () => {
       ...configured.lineItems[0]!, rate: null, ratePaise: null, amount: null, amountPaise: null
     }] })).rejects.toThrow(/entered rate/u);
   });
+  it("renders direct and grouped temporary items with frozen names and exact paise", async () => {
+    const service = createEstimatePdfService({ logoSvg: backendLogo });
+    const configured: EstimatePdfInput = {
+      ...fixture, subtotal: 121.25, gst: 21.83, total: 143.08,
+      subtotalPaise: 12_125, gstPaise: 2_183, totalPaise: 14_308,
+      lineItems: [
+        {
+          source: "configuration", itemType: "temporary", catalogueId: "direct-a",
+          roomName: "Living room", specification: null, unit: "nos", quantity: 1,
+          rate: 70.03, ratePaise: 7_003, included: true, amount: 70.03, amountPaise: 7_003,
+          mainBasketId: "basket-a", mainBasketName: "Painting", subBasketId: null,
+          subBasketName: null, mainLineId: "direct-a", mainLineName: "Custom finish"
+        },
+        {
+          source: "configuration", itemType: "temporary", catalogueId: "grouped-b",
+          roomName: "Living room", specification: null, unit: "nos", quantity: 1,
+          rate: 51.22, ratePaise: 5_122, included: true, amount: 51.22, amountPaise: 5_122,
+          mainBasketId: "basket-a", mainBasketName: "Painting", subBasketId: "sub-a",
+          subBasketName: "Ceilings", mainLineId: "grouped-b", mainLineName: "Accent coat"
+        }
+      ]
+    };
+    const result = await readPdf((await service.generate(configured)).bytes);
+    expect(result.text).toContain("Painting");
+    expect(result.text).toContain("Custom finish");
+    expect(result.text).toContain("Accent coat");
+    expect(result.text).toContain("Temporary item");
+    expect(result.text).toContain("Ceilings");
+    expect(result.text).not.toMatch(/null|undefined/u);
+    expect(result.text).toContain("INR 143.08");
+  });
   it("generates compact client-delivery PDFs with scaled typography only", async () => {
     expect(scaleEstimateTextSize(12, "standard")).toBe(12);
     expect(scaleEstimateTextSize(12, "compact_client_delivery")).toBe(10);

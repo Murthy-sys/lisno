@@ -26,6 +26,24 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents the ready-item catalogue opt-in and mutable-source versions", () => {
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const catalogue = paths["/estimation/catalogue"]!.get!;
+    expect(catalogue.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "includeReadyNonActive", in: "query",
+        schema: expect.objectContaining({ default: "false", enum: ["true", "false"] }) })
+    ]));
+    const schemas = componentSchemas();
+    expect(schemas.EstimatorCatalogueLine!.required).toEqual(expect.arrayContaining([
+      "itemStatus", "revisionStatus", "itemVersion", "revisionVersion"
+    ]));
+    expect(schemas.ConfiguredEstimateLineInput).toHaveProperty("properties.itemVersion.minimum", 1);
+    expect(schemas.ConfiguredEstimateLineInput).toHaveProperty("properties.revisionVersion.minimum", 1);
+    expect(schemas.ClientEstimateSnapshot).toHaveProperty(
+      "properties.lineItems.items.properties.sourceItemVersion.minimum", 1
+    );
+  });
+
   it("documents procurement approval, vendor handoff, Client review and final completion contracts", () => {
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
     const schemas = componentSchemas();

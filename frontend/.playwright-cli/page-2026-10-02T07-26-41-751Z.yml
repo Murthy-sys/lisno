@@ -1,0 +1,28 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - link "Skip to main content" [ref=e4] [cursor=pointer]:
+        - /url: "#main-content"
+      - complementary "Application sidebar" [ref=e5]:
+        - generic [ref=e6]:
+          - generic [ref=e7]:
+            - img "Lisno" [ref=e8]
+            - generic [ref=e9]: INTERIOR WORKSPACE
+          - navigation "Primary navigation" [ref=e10]:
+            - link "Leads & estimates" [ref=e11] [cursor=pointer]:
+              - /url: /estimator-sales
+      - banner "Workspace tools" [ref=e16]:
+        - generic [ref=e17]:
+          - button "View daily critical tasks" [ref=e18] [cursor=pointer]:
+            - generic [ref=e19]: Critical tasks
+          - button "Notifications" [ref=e22] [cursor=pointer]
+          - button "Synthetic workspace reviewer" [ref=e27] [cursor=pointer]:
+            - generic [aria-hidden] [ref=e28]: SW
+            - generic [ref=e29]:
+              - generic [ref=e30]: Synthetic workspace reviewer
+              - generic [ref=e31]: Sales
+      - main [ref=e34]
+    - status "Application announcements" [ref=e38]
+    - region "Notifications"
+  - status "Content status":
+    - generic: Loading estimate…

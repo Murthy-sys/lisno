@@ -37,6 +37,9 @@ export function ClientPublishedEstimate({ estimate, decisionBlocked = false }: {
 
 function PublishedEstimateDetails({ snapshot }: { snapshot: EstimateClientReviewSnapshot }) {
   const included = snapshot.lineItems.filter((item) => item.included);
+  const configuredDetails = (item: typeof included[number]) => item.itemType === "temporary"
+    ? `${item.subBasketId === null ? item.mainBasketName ?? "Configured items" : item.subBasketName ?? "Sub Basket"} · Temporary item · ${item.roomName}`
+    : `${item.subBasketName ?? "Sub Basket"} · ${item.roomName}`;
   const catalogue = new Map<string, { description: string; sectionId: string }>(estimateBuilderSections.flatMap((section) => section.rows.map((row) => [row.id, { description: row.description, sectionId: section.id }] as const)));
   const groups: Array<{ id: string; label: string; items: typeof included }> = [];
   for (const item of included) {
@@ -64,7 +67,7 @@ function PublishedEstimateDetails({ snapshot }: { snapshot: EstimateClientReview
         <summary><span>{group.label}</span><strong>{clientEstimateMoney(group.items.reduce((total, item) => total + (amount(item) ?? 0), 0))}</strong></summary>
         <div className="client-commercial-lines">
           {group.items.map((item, index) => <div className="client-commercial-line" key={`${item.catalogueId}:${item.roomName}:${index}`}>
-            <div><strong>{item.source === "configuration" ? item.mainLineName ?? "Main Line" : catalogue.get(item.catalogueId)?.description ?? item.catalogueId}</strong><span>{item.source === "configuration" ? `${item.subBasketName ?? "Sub Basket"} · ${item.roomName}` : item.roomName}</span>{item.specification ? <span>{item.specification}</span> : null}</div>
+            <div><strong>{item.source === "configuration" ? item.mainLineName ?? (item.itemType === "temporary" ? "Temporary item" : "Main Line") : catalogue.get(item.catalogueId)?.description ?? item.catalogueId}</strong><span>{item.source === "configuration" ? configuredDetails(item) : item.roomName}</span>{item.specification ? <span>{item.specification}</span> : null}</div>
             <div className="client-commercial-line__quantity"><span>Quantity / rate</span><span>{item.quantity} {item.source === "configuration" ? item.uomName ?? item.unit : item.unit} × {item.rate === null ? "Rate unavailable" : clientEstimateMoney(item.ratePaise === undefined || item.ratePaise === null ? item.rate : item.ratePaise / 100)}</span></div>
             <strong className="client-commercial-line__amount">{amount(item) === null ? "Amount unavailable" : clientEstimateMoney(amount(item)!)}</strong>
           </div>)}

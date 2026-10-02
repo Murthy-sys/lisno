@@ -35,14 +35,17 @@ export interface LegacyEstimateLineInput {
 
 export interface ConfiguredEstimateLineInput {
   source: "configuration";
+  itemType?: "main_line" | "temporary";
   id?: string;
   catalogueId: string;
   roomId: string;
   roomName: string;
   mainBasketId: string;
-  subBasketId: string;
+  subBasketId: string | null;
   mainLineId: string;
   revisionId: string;
+  itemVersion?: number;
+  revisionVersion?: number;
   uomId: string;
   quantity: number;
   ratePaise: number | null;
@@ -51,14 +54,19 @@ export interface ConfiguredEstimateLineInput {
 
 export type EstimateLineInput = LegacyEstimateLineInput | ConfiguredEstimateLineInput;
 
-export interface ConfiguredEstimateLine extends ConfiguredEstimateLineInput {
+export interface ConfiguredEstimateLine extends Omit<ConfiguredEstimateLineInput, "itemType"> {
+  itemType?: "main_line" | "temporary";
   id: string;
   mainBasketName: string;
-  subBasketName: string;
+  subBasketName: string | null;
   mainLineName: string;
   uomName: string;
   uomCode: string;
   uomDecimalScale: number;
+  sourceItemStatus?: "draft" | "active" | "inactive";
+  sourceRevisionStatus?: "draft" | "active";
+  sourceItemVersion?: number;
+  sourceRevisionVersion?: number;
   unit: string;
   specification: null;
   rate: number | null;

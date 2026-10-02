@@ -206,6 +206,24 @@ describe("ClientResponseTaskDetailPage", () => {
     expect(within(estimate).queryByRole("spinbutton")).not.toBeInTheDocument();
   });
 
+  it("shows a direct temporary snapshot under its actual Main Basket", async () => {
+    installAdmin();
+    server.use(http.get("/api/v1/admin/estimate-client-response-tasks/round-1", () => HttpResponse.json({ data: {
+      ...pendingDetail,
+      estimateSnapshot: { ...pendingDetail.estimateSnapshot, lineItems: [{
+        id: "line-direct", source: "configuration", itemType: "temporary", catalogueId: "temporary-direct", roomId: "room-1", roomName: "Living Room",
+        mainBasketId: "basket-paint", mainBasketName: "Painting", subBasketId: null, subBasketName: null,
+        mainLineId: "temporary-direct", mainLineName: "Site protection", specification: null, unit: "sq ft", uomName: "sq ft", rate: 80.05, ratePaise: 8005, quantity: 1.25, amount: 100.06, amountPaise: 10006, included: true
+      }] }
+    } })));
+    renderApp(["/admin/client-responses/round-1"]);
+    const estimate = await screen.findByRole("region", { name: "Immutable estimate snapshot" });
+    expect(within(estimate).getByText("Site protection")).toBeVisible();
+    expect(within(estimate).getByText("Painting · Temporary item")).toBeVisible();
+    expect(within(estimate).queryByText(/Sub Basket/)).not.toBeInTheDocument();
+    expect(within(estimate).getByText("₹100.06")).toBeVisible();
+  });
+
   it("makes the horizontal estimate table a labeled keyboard focus target", async () => {
     installAdmin();
     server.use(

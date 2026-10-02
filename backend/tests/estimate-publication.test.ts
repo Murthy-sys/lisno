@@ -11,6 +11,7 @@ import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientRevi
 import { EstimateModel } from "../src/models/Estimate.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { createEstimateClientReviewStorage } from "../src/services/estimate-client-review-storage.js";
+import { presentClientEstimate } from "../src/services/estimate-client-presentation.js";
 import {
   createEstimatePublicationService,
   type PublishEstimateToClientInput
@@ -403,6 +404,57 @@ describe("ordinary transactional Estimate publication", () => {
       .rejects.toMatchObject({ code: "ESTIMATE_INCOMPLETE" });
     expect(raced.createRound).not.toHaveBeenCalled();
     expect(raced.events).toContain("storage:delete:new-snapshot-1.pdf");
+  });
+  it("freezes source provenance for a direct temporary line and keeps it out of the Client view", async () => {
+    const direct = {
+      id: "temporary-line", source: "configuration", itemType: "temporary",
+      catalogueId: "temporary-a", roomId: "room-a", roomName: "Living Room",
+      specification: null, unit: "nos", rate: 70.03, ratePaise: 7_003,
+      quantity: 1, included: true, amount: 70.03, amountPaise: 7_003,
+      mainBasketId: "basket-a", subBasketId: null, mainLineId: "temporary-a",
+      revisionId: "rev-a", sourceItemStatus: "inactive", sourceRevisionStatus: "draft",
+      sourceItemVersion: 7, sourceRevisionVersion: 3,
+      uomId: "uom-nos", mainBasketName: "Painting",
+      subBasketName: null, mainLineName: "Custom finish", uomName: "Number"
+    };
+    const inputEstimate = estimate({
+      lineItems: [direct], selectedMainBasketIds: ["basket-a"],
+      subtotal: 70.03, gst: 12.61, total: 82.64,
+      subtotalPaise: 7_003, gstPaise: 1_261, totalPaise: 8_264
+    });
+    const harness = setupHarness({ estimate: inputEstimate });
+    await harness.publication.publishEstimateToClient(publicationInput());
+    const roundInput = harness.createRound.mock.calls[0]?.[0][0];
+    expect(roundInput.estimateSnapshot.lineItems[0]).toMatchObject({
+      itemType: "temporary", subBasketId: null, subBasketName: null,
+      amountPaise: 7_003, sourceItemStatus: "inactive", sourceRevisionStatus: "draft",
+      sourceItemVersion: 7, sourceRevisionVersion: 3
+    });
+    const frozenRound = new EstimateClientReviewRoundModel(roundInput);
+    await expect(frozenRound.validate()).resolves.toBeUndefined();
+    const frozen = frozenRound.toObject();
+    expect(frozen.estimateSnapshot.lineItems[0]).toMatchObject({
+      sourceItemStatus: "inactive", sourceRevisionStatus: "draft",
+      sourceItemVersion: 7, sourceRevisionVersion: 3
+    });
+    const clientView = presentClientEstimate(
+      { id: "client-1", name: "Priya Shah", email: "client@example.com", role: "client" },
+      { ...inputEstimate, status: "sent_to_client" }, lead(),
+      { ...frozen, createdAt: NOW }
+    );
+    expect(clientView).toMatchObject({ reviewSourceIssue: null, publishedReview: { snapshot: { lineItems: [{ itemType: "temporary" }] } } });
+    for (const field of ["sourceItemStatus", "sourceRevisionStatus", "sourceItemVersion", "sourceRevisionVersion"]) {
+      expect(clientView?.lineItems[0]).not.toHaveProperty(field);
+      expect(clientView?.publishedReview?.snapshot.lineItems[0]).not.toHaveProperty(field);
+    }
+
+    vi.restoreAllMocks();
+    const invalid = setupHarness({ estimate: estimate({ ...inputEstimate,
+      lineItems: [{ ...direct, itemType: "main_line" }]
+    }) });
+    await expect(invalid.publication.publishEstimateToClient(publicationInput()))
+      .rejects.toMatchObject({ code: "ESTIMATE_INCOMPLETE" });
+    expect(invalid.createRound).not.toHaveBeenCalled();
   });
   it("publishes one compact immutable snapshot, task, audit pair, compatibility effects, and post-commit delivery", async () => {
     const harness = setupHarness();

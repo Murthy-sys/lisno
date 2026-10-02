@@ -42,6 +42,7 @@ import {
   type FinanceLedgerEntryDto,
   type PostFinanceEntryResult
 } from "./project-finance.service.js";
+import { configuredEstimateParentIsValid } from "../domain/estimate-client-review.js";
 
 type Row = Record<string, any>;
 
@@ -58,13 +59,14 @@ export interface ProcurementExpenseInput {
 export interface ProcurementItemDto {
   key: string;
   source?: "legacy" | "configuration";
+  itemType?: "main_line" | "temporary";
   catalogueId: string;
   mainBasketId?: string;
   mainBasketName?: string;
-  subBasketId?: string;
+  subBasketId?: string | null;
   mainLineId?: string;
   mainLineName?: string;
-  subBasketName?: string;
+  subBasketName?: string | null;
   roomName: string;
   specification: string;
   unit: string;
@@ -692,13 +694,14 @@ interface ApprovedProcurementLine {
   sectionId: string;
   sectionLabel: string;
   source?: "legacy" | "configuration";
+  itemType?: "main_line" | "temporary";
   catalogueId: string;
   mainBasketId?: string;
   mainBasketName?: string;
-  subBasketId?: string;
+  subBasketId?: string | null;
   mainLineId?: string;
   mainLineName?: string;
-  subBasketName?: string;
+  subBasketName?: string | null;
   roomName: string;
   specification: string;
   unit: string;
@@ -1288,6 +1291,7 @@ async function procurementProjectDto(
           key: line.key,
           ...(line.source === "configuration" ? {
             source: "configuration" as const,
+            ...(line.itemType === undefined ? {} : { itemType: line.itemType }),
             mainBasketId: line.mainBasketId,
             mainBasketName: line.mainBasketName,
             subBasketId: line.subBasketId,
@@ -1486,25 +1490,30 @@ function approvedSnapshotLines(
     if (!Number.isFinite(quantity) || quantity < 0) procurementLineageConflict();
     const sectionId = configured ? requiredStoredText(line.mainBasketId) : catalogueId.slice(0, 2) || "OTHER";
     const sectionLabel = configured ? requiredStoredText(line.mainBasketName) : projectWorkflowSectionLabel(sectionId);
-    if (configured && (requiredStoredText(line.mainLineId) !== catalogueId ||
+    if (configured && (!configuredEstimateParentIsValid(line) || requiredStoredText(line.mainLineId) !== catalogueId ||
       !Number.isSafeInteger(line.amountPaise) || Number(line.amountPaise) < 0)) procurementLineageConflict();
+    const subBasketName = configured
+      ? line.subBasketName === null ? null : requiredStoredText(line.subBasketName)
+      : undefined;
+    const mainLineName = configured ? requiredStoredText(line.mainLineName) : undefined;
     return {
       key,
       sectionId,
       sectionLabel,
       ...(configured ? {
         source: "configuration" as const,
+        ...(line.itemType === undefined ? {} : { itemType: line.itemType as "main_line" | "temporary" }),
         mainBasketId: sectionId,
         mainBasketName: sectionLabel,
-        subBasketId: requiredStoredText(line.subBasketId),
+        subBasketId: line.subBasketId === null ? null : requiredStoredText(line.subBasketId),
         mainLineId: catalogueId,
-        mainLineName: requiredStoredText(line.mainLineName),
-        subBasketName: requiredStoredText(line.subBasketName)
+        mainLineName,
+        subBasketName
       } : {}),
       catalogueId,
       roomName,
       specification: configured
-        ? `${requiredStoredText(line.subBasketName)} · ${requiredStoredText(line.mainLineName)}`
+        ? `${subBasketName ?? sectionLabel} · ${mainLineName}`
         : requiredStoredText(line.specification),
       unit: requiredStoredText(line.unit),
       quantity,

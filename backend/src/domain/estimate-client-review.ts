@@ -35,6 +35,22 @@ export type EstimateClientDecisionSource =
 export type EstimateClientProofMimeType =
   (typeof ESTIMATE_CLIENT_PROOF_MIME_TYPES)[number];
 
+export type ConfiguredEstimateItemType = "main_line" | "temporary";
+export type ConfiguredEstimateSourceItemStatus = "draft" | "active" | "inactive";
+export type ConfiguredEstimateSourceRevisionStatus = "draft" | "active" | "superseded";
+
+/** Historical configured lines have no itemType and always have a real Sub Basket. */
+export function configuredEstimateParentIsValid(line: {
+  itemType?: unknown;
+  subBasketId?: unknown;
+  subBasketName?: unknown;
+}): boolean {
+  if (line.itemType !== undefined && line.itemType !== "main_line" && line.itemType !== "temporary") return false;
+  if (line.itemType === "temporary" && line.subBasketId === null && line.subBasketName === null) return true;
+  return typeof line.subBasketId === "string" && !!line.subBasketId.trim() &&
+    typeof line.subBasketName === "string" && !!line.subBasketName.trim();
+}
+
 export interface EstimateClientReviewSnapshot {
   clientName: string;
   projectName: string;
@@ -43,6 +59,7 @@ export interface EstimateClientReviewSnapshot {
   lineItems: readonly {
     id?: string | null;
     source?: "legacy" | "configuration";
+    itemType?: ConfiguredEstimateItemType;
     catalogueId: string;
     roomId?: string;
     roomName: string;
@@ -55,14 +72,18 @@ export interface EstimateClientReviewSnapshot {
     amount: number | null;
     amountPaise?: number | null;
     mainBasketId?: string;
-    subBasketId?: string;
+    subBasketId?: string | null;
     mainLineId?: string;
     revisionId?: string;
+    sourceItemStatus?: ConfiguredEstimateSourceItemStatus;
+    sourceRevisionStatus?: ConfiguredEstimateSourceRevisionStatus;
+    sourceItemVersion?: number;
+    sourceRevisionVersion?: number;
     uomId?: string;
     uomCode?: string;
     uomDecimalScale?: number;
     mainBasketName?: string;
-    subBasketName?: string;
+    subBasketName?: string | null;
     mainLineName?: string;
     uomName?: string;
   }[];

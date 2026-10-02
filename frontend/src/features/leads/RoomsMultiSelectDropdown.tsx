@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Check, ChevronDown, Search, X, type LucideIcon } from "lucide-react";
 
 export type RoomGroup = "Common Areas" | "Bedrooms" | "Bathrooms" | "Other";
@@ -26,6 +26,8 @@ export function RoomsMultiSelectDropdown({
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const listboxId = useId();
+  const selectionCountId = useId();
 
   const filtered = useMemo(
     () => options.filter((option) => option.label.toLowerCase().includes(query.trim().toLowerCase())),
@@ -37,6 +39,7 @@ export function RoomsMultiSelectDropdown({
       .filter((entry) => entry.items.length),
     [filtered]
   );
+  const displayedOptions = groups.flatMap((entry) => entry.items);
 
   useEffect(() => {
     if (!open) return;
@@ -72,11 +75,11 @@ export function RoomsMultiSelectDropdown({
 
   const onSearchKeyDown = (event: KeyboardEvent) => {
     if (event.key === "Escape") { setOpen(false); triggerRef.current?.focus(); return; }
-    if (event.key === "ArrowDown") { event.preventDefault(); setHighlight((current) => Math.min(current + 1, filtered.length - 1)); return; }
+    if (event.key === "ArrowDown") { event.preventDefault(); setHighlight((current) => Math.min(current + 1, Math.max(displayedOptions.length - 1, 0))); return; }
     if (event.key === "ArrowUp") { event.preventDefault(); setHighlight((current) => Math.max(current - 1, 0)); return; }
     if (event.key === "Enter") {
       event.preventDefault();
-      const target = filtered[highlight];
+      const target = displayedOptions[highlight];
       if (target) toggle(target.id);
     }
   };
@@ -84,26 +87,28 @@ export function RoomsMultiSelectDropdown({
   const selectedOptions = options.filter((option) => selected.includes(option.id));
 
   return (
-    <div ref={rootRef} className="relative w-full">
+    <div ref={rootRef} className="rooms-select__root relative w-full min-w-0">
       <button
         ref={triggerRef}
         type="button"
         aria-label="Select rooms"
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
+        aria-describedby={selectedOptions.length ? selectionCountId : undefined}
         onClick={() => setOpen((current) => !current)}
-        className={`flex w-full items-center gap-2 rounded-lg border bg-[var(--color-bg)] px-3 py-2 text-sm transition-colors ${open ? "border-[var(--color-primary)]" : "border-[var(--color-primary)]/20"}`}
+        className={`rooms-select__trigger flex w-full min-w-0 items-center gap-2 rounded-md border bg-[var(--color-bg)] px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)] ${open ? "border-[var(--color-primary)]" : "border-[var(--color-primary)]/20"}`}
       >
-        <span className="flex-1 text-left">{selectedOptions.length ? `${selectedOptions.length} rooms selected` : "Select rooms"}</span>
-        <ChevronDown size={16} aria-hidden="true" className={`shrink-0 text-[var(--color-primary)] transition-transform ${open ? "rotate-180" : ""}`} />
+        <span id={selectionCountId} className="min-w-0 flex-1 text-left [overflow-wrap:anywhere]">{selectedOptions.length ? `${selectedOptions.length} ${selectedOptions.length === 1 ? "room" : "rooms"} selected` : "Select rooms"}</span>
+        <ChevronDown size={16} aria-hidden="true" className={`shrink-0 text-[var(--color-primary)] ${open ? "rotate-180" : ""}`} />
       </button>
-      {selectedOptions.length ? <ul aria-label="Selected rooms" className="mt-2 flex flex-wrap gap-2">{selectedOptions.map((option) => <li key={option.id} className="flex items-center gap-1 rounded-lg bg-[var(--color-primary)] px-2 text-xs text-[var(--color-bg)]">
-        {option.label}
-        <button type="button" aria-label={`Remove ${option.label}`} onClick={() => toggle(option.id)} className="px-1 text-[var(--color-bg)]"><X size={14} aria-hidden="true" /></button>
+      {selectedOptions.length ? <ul aria-label="Selected rooms" className="rooms-select__chips mt-2 flex min-w-0 flex-wrap gap-2">{selectedOptions.map((option) => <li key={option.id} className="flex max-w-full min-w-0 items-center gap-1 rounded-md bg-[var(--color-primary)] px-2 text-xs text-[var(--color-bg)]">
+        <span className="min-w-0 [overflow-wrap:anywhere]">{option.label}</span>
+        <button type="button" aria-label={`Remove ${option.label} from selected rooms`} onClick={() => toggle(option.id)} className="shrink-0 px-1 text-[var(--color-bg)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-bg)]"><X size={14} aria-hidden="true" /></button>
       </li>)}</ul> : null}
 
       {open ? (
-        <div className="absolute z-20 mt-1.5 w-full min-w-[16rem] rounded-lg border border-[var(--color-primary)]/20 bg-[var(--color-bg)] shadow-lg">
+        <div className="rooms-select__menu absolute z-20 mt-1.5 w-full min-w-0 rounded-md border border-[var(--color-primary)]/20 bg-[var(--color-bg)]">
           <div className="flex items-center gap-2 border-b-2 border-[var(--color-primary)] px-3 py-2">
             <Search size={14} className="shrink-0 text-[var(--color-primary)]/60" />
             <input
@@ -112,6 +117,8 @@ export function RoomsMultiSelectDropdown({
               onChange={(event) => { setQuery(event.target.value); setHighlight(0); }}
               onKeyDown={onSearchKeyDown}
               aria-label="Search rooms"
+              aria-controls={listboxId}
+              aria-activedescendant={displayedOptions.length ? `${listboxId}-option-${Math.min(highlight, displayedOptions.length - 1)}` : undefined}
               placeholder="Search rooms"
               className="w-full appearance-none border-0 bg-transparent text-sm text-[var(--color-primary)] shadow-none placeholder:text-[var(--color-text-muted)] focus:border-0"
             />
@@ -124,14 +131,14 @@ export function RoomsMultiSelectDropdown({
             <span className="text-[var(--color-text-muted)]">{selected.length} of {options.length} selected</span>
           </div>
 
-          <div role="listbox" aria-label="Rooms" aria-multiselectable="true" className="max-h-64 overflow-y-auto py-1">
+          <div id={listboxId} role="listbox" aria-label="Rooms" aria-multiselectable="true" className="max-h-64 overflow-y-auto py-1">
             {groups.map(({ group, items }) => (
-              <div key={group}>
-                <p className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+              <div key={group} role="group" aria-label={group}>
+                <p aria-hidden="true" className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
                   {group}
                 </p>
                 {items.map((option) => {
-                  const flatIndex = filtered.indexOf(option);
+                  const flatIndex = displayedOptions.indexOf(option);
                   const checked = selected.includes(option.id);
                   const isHighlighted = flatIndex === highlight;
                   const Icon = option.icon;
@@ -139,17 +146,18 @@ export function RoomsMultiSelectDropdown({
                     <button
                       type="button"
                       key={option.id}
+                      id={`${listboxId}-option-${flatIndex}`}
                       role="option"
                       aria-selected={checked}
                       onMouseEnter={() => setHighlight(flatIndex)}
                       onClick={() => toggle(option.id)}
-                      className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[var(--color-primary)] ${isHighlighted ? "bg-[var(--color-primary)]/5" : ""}`}
+                      className={`flex w-full min-w-0 items-center gap-2.5 px-3 py-2 text-left text-sm text-[var(--color-primary)] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--color-primary)] ${isHighlighted ? "bg-[var(--color-primary)]/5" : ""}`}
                     >
                       <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${checked ? "border-[var(--color-primary)] bg-[var(--color-primary)]" : "border-[var(--color-primary)]/30 bg-[var(--color-bg)]"}`}>
                         {checked ? <Check size={11} className="text-[var(--color-bg)]" /> : null}
                       </span>
                       <Icon size={15} className="shrink-0 text-[var(--color-primary)]/60" />
-                      <span>{option.label}</span>
+                      <span className="min-w-0 [overflow-wrap:anywhere]">{option.label}</span>
                     </button>
                   );
                 })}

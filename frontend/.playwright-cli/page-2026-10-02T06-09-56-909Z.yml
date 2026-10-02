@@ -1,0 +1,145 @@
+- generic [ref=f1e2]:
+  - generic [ref=f1e3]:
+    - link "Skip to main content" [ref=f1e4] [cursor=pointer]:
+      - /url: "#main-content"
+    - complementary "Application sidebar" [ref=f1e5]:
+      - generic [ref=f1e6]:
+        - generic [ref=f1e7]:
+          - img "Lisno" [ref=f1e8]
+          - generic [ref=f1e9]: INTERIOR WORKSPACE
+        - navigation "Primary navigation" [ref=f1e10]:
+          - link "Leads & estimates" [ref=f1e11] [cursor=pointer]:
+            - /url: /estimator-sales
+        - paragraph [ref=f1e17]: Build Better Spaces
+    - banner "Workspace tools" [ref=f1e18]:
+      - generic [ref=f1e19]:
+        - button "View daily critical tasks" [ref=f1e20] [cursor=pointer]:
+          - generic [ref=f1e21]: Critical tasks
+        - button "Notifications" [ref=f1e24] [cursor=pointer]
+        - button "Synthetic workspace reviewer" [ref=f1e29] [cursor=pointer]:
+          - generic [aria-hidden] [ref=f1e30]: SW
+          - generic [ref=f1e31]:
+            - generic [ref=f1e32]: Synthetic workspace reviewer
+            - generic [ref=f1e33]: Sales
+    - main [ref=f1e36]:
+      - region [ref=f1e37]:
+        - link "Back to Asha Shah" [ref=f1e38] [cursor=pointer]:
+          - /url: /estimator-sales/leads/lead-1
+        - generic [ref=f1e41]:
+          - generic [ref=f1e42]:
+            - paragraph [ref=f1e43]: Estimate draft · Asha Shah
+            - heading "Configure estimate" [level=1] [ref=f1e44]
+            - paragraph [ref=f1e45]: Asha home — complete residence and terrace refurbishment · Pune
+          - generic [ref=f1e46]:
+            - strong [ref=f1e47]: ₹0
+            - generic [ref=f1e48]: Total including GST
+        - button "Project status" [ref=f1e49] [cursor=pointer]
+        - region [ref=f1e53]:
+          - heading "Project details" [level=2] [ref=f1e57]
+          - generic [ref=f1e58]:
+            - group "Property type" [ref=f1e59]:
+              - button "3BHK" [ref=f1e62]
+            - group "Rooms" [ref=f1e66]:
+              - generic [ref=f1e68]:
+                - button "Select rooms" [expanded] [ref=f1e69]:
+                  - generic [ref=f1e70]: 1 room selected
+                - list "Selected rooms" [ref=f1e238]:
+                  - listitem [ref=f1e239]:
+                    - generic [ref=f1e240]: Living & Dining
+                    - button "Remove Living & Dining from selected rooms" [ref=f1e241]
+                - generic [ref=f1e152]:
+                  - textbox "Search rooms" [ref=f1e157]
+                  - generic [ref=f1e158]:
+                    - button "Select all" [ref=f1e159]
+                    - generic [ref=f1e160]: 1 of 11 selected
+                  - listbox "Rooms" [ref=f1e161]:
+                    - group "Common Areas" [ref=f1e162]:
+                      - paragraph [aria-hidden] [ref=f1e163]: Common Areas
+                      - option "Living & Dining" [active] [selected] [ref=f1e164]
+                      - option "Kitchen" [ref=f1e170]
+                      - option "Balcony / Utility" [ref=f1e176]
+                      - option "Foyer / Entrance" [ref=f1e182]
+                      - option "Home Office/Study" [ref=f1e188]
+                    - group "Bedrooms" [ref=f1e195]:
+                      - paragraph [aria-hidden] [ref=f1e196]: Bedrooms
+                      - option "Master Bedroom" [ref=f1e197]
+                      - option "Bedroom 2" [ref=f1e202]
+                      - option "Bedroom 3" [ref=f1e207]
+                    - group "Bathrooms" [ref=f1e212]:
+                      - paragraph [aria-hidden] [ref=f1e213]: Bathrooms
+                      - option "Master Bathroom" [ref=f1e214]
+                      - option "Common Bathroom" [ref=f1e221]
+                    - group "Other" [ref=f1e227]:
+                      - paragraph [aria-hidden] [ref=f1e228]: Other
+                      - option "Custom Room" [ref=f1e229]
+                  - generic [ref=f1e235]:
+                    - button "Clear all" [ref=f1e236]
+                    - button "Done" [ref=f1e237]
+        - region "Room dimensions" [ref=f1e247]:
+          - region [ref=f1e249]:
+            - generic [ref=f1e250]:
+              - heading [level=3] [ref=f1e251]:
+                - button "Living & Dining dimensions Not set" [expanded] [ref=f1e252]:
+                  - generic [ref=f1e256]: Living & Dining dimensions
+                  - generic [ref=f1e257]: Not set
+              - button "Remove Living & Dining room" [ref=f1e260]
+            - generic [ref=f1e263]:
+              - generic [ref=f1e264]:
+                - generic [ref=f1e265]: Length (ft)
+                - spinbutton "Living & Dining length" [ref=f1e266]
+              - generic [aria-hidden] [ref=f1e267]: ×
+              - generic [ref=f1e268]:
+                - generic [ref=f1e269]: Width (ft)
+                - spinbutton "Living & Dining width" [ref=f1e270]
+        - region [ref=f1e73]:
+          - generic [ref=f1e74]:
+            - generic [ref=f1e75]:
+              - paragraph [ref=f1e76]: Configuration
+              - heading "Main Baskets" [level=2] [ref=f1e77]
+              - paragraph [ref=f1e78]: Select the Main Baskets for this estimate. Available Main Lines and temporary items appear in the builder.
+            - button "Refresh available items" [ref=f1e79] [cursor=pointer]
+          - paragraph [ref=f1e80]: 1 configured item is unavailable in the estimator catalogue. Availability depends on item completeness and a valid UOM.
+          - generic [ref=f1e81]:
+            - generic [ref=f1e83]:
+              - generic [ref=f1e84] [cursor=pointer]:
+                - checkbox "POP / Gypsum 2 Sub Baskets · 1 Main Line · 2 temporary items" [ref=f1e85]
+                - strong [ref=f1e90]: POP / Gypsum
+                - generic [ref=f1e91]: 2 Sub Baskets · 1 Main Line · 2 temporary items
+              - generic [ref=f1e92]:
+                - generic [ref=f1e93]: 2 Sub Baskets
+                - generic [ref=f1e94]: 1 Main Line
+                - generic [ref=f1e95]: 2 Temporary Items
+              - button "Show POP / Gypsum details" [ref=f1e96]
+            - generic [ref=f1e100]:
+              - generic [ref=f1e101] [cursor=pointer]:
+                - checkbox "Painting 1 Sub Basket · 1 Main Line · 1 temporary item" [ref=f1e102]
+                - strong [ref=f1e107]: Painting
+                - generic [ref=f1e108]: 1 Sub Basket · 1 Main Line · 1 temporary item
+              - generic [ref=f1e109]:
+                - generic [ref=f1e110]: 1 Sub Basket
+                - generic [ref=f1e111]: 1 Main Line
+                - generic [ref=f1e112]: 1 Temporary Item
+              - button "Show Painting details" [ref=f1e113]
+            - generic [ref=f1e117]:
+              - generic [ref=f1e118] [cursor=pointer]:
+                - checkbox "General Items 0 Sub Baskets · 0 Main Lines · 1 temporary item" [ref=f1e119]
+                - strong [ref=f1e124]: General Items
+                - generic [ref=f1e125]: 0 Sub Baskets · 0 Main Lines · 1 temporary item
+              - generic [ref=f1e126]:
+                - generic [ref=f1e127]: 0 Sub Baskets
+                - generic [ref=f1e128]: 0 Main Lines
+                - generic [ref=f1e129]: 1 Temporary Item
+              - button "Show General Items details" [ref=f1e130]
+            - generic [ref=f1e134]:
+              - generic [ref=f1e135] [cursor=pointer]:
+                - checkbox "Building Material 0 Sub Baskets · 0 Main Lines · 0 temporary items" [ref=f1e136]
+                - strong [ref=f1e141]: Building Material
+                - generic [ref=f1e142]: 0 Sub Baskets · 0 Main Lines · 0 temporary items
+              - generic [ref=f1e143]:
+                - generic [ref=f1e144]: 0 Sub Baskets
+                - generic [ref=f1e145]: 0 Main Lines
+                - generic [ref=f1e146]: 0 Temporary Items
+              - button "Show Building Material details" [ref=f1e147]
+        - button "Continue to item selection" [disabled] [ref=f1e150]
+  - status "Application announcements" [ref=f1e151]
+  - region "Notifications"

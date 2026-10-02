@@ -67,10 +67,10 @@ afterAll(async () => {
 describe("Procurement approved-item workspace and receipt ledger", () => {
   it("uses the immutable fractional-paise baseline for existing and late-opened finance buckets", async () => {
     const configuredLine = {
-      id: "configured-line", source: "configuration", catalogueId: "line-lower",
+      id: "configured-line", source: "configuration", itemType: "temporary", catalogueId: "line-lower",
       roomId: "living-room", roomName: "Living Room",
       mainBasketId: "basket-lower", mainBasketName: "Approved basket",
-      subBasketId: "child-lower", subBasketName: "Approved child",
+      subBasketId: null, subBasketName: null,
       mainLineId: "line-lower", mainLineName: "Approved console",
       revisionId: "revision-lower", uomId: "square-foot", uomName: "Square foot",
       specification: null, unit: "sqft", quantity: 1, included: true,
@@ -98,7 +98,9 @@ describe("Procurement approved-item workspace and receipt ledger", () => {
     const [project] = await service.listProjects(procurementActor());
     expect(project?.sections).toEqual([expect.objectContaining({
       id: "basket-lower", label: "Approved basket", estimatedAmountPaise: 16_249,
-      items: [expect.objectContaining({ key: "configured-line", mainBasketName: "Approved basket" })]
+      items: [expect.objectContaining({ key: "configured-line", itemType: "temporary",
+        mainBasketName: "Approved basket", subBasketId: null, subBasketName: null,
+        specification: "Approved basket · Approved console" })]
     })]);
 
     await ProjectFinanceBucketModel.deleteOne({ projectId: PROJECT_ID });
