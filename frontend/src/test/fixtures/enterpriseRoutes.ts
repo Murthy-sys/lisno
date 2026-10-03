@@ -220,7 +220,9 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (path === "/design-versions/qa-approved-document/download" || path === "/client/estimates/estimate-1/pdf" || /^\/projects\/[^/]+\/design-workflow\/history\/qa-internal-document\/proof$/.test(path)) return drawing.syntheticDocumentResponse();
   const prefix = "/admin/ai-estimator-knowledge";
   const temporaryKnowledge = new URLSearchParams(scenario.route.split("?")[1]).get("qaTemporary") === "ready";
-  const knowledgeItem = temporaryKnowledge ? { ...knowledge.item, itemType: "temporary" as const, completionRequired: true } : knowledge.item;
+  const renameKnowledge = new URLSearchParams(scenario.route.split("?")[1]).get("qaRename") === "ready";
+  const baseKnowledgeItem = temporaryKnowledge ? { ...knowledge.item, itemType: "temporary" as const, completionRequired: true } : knowledge.item;
+  const knowledgeItem = renameKnowledge ? { ...baseKnowledgeItem, subBasketId: "sub-joinery", subBasketName: "Joinery" } : baseKnowledgeItem;
   if (path === `${prefix}/items`) return { ...page([knowledgeItem]), facets: {} };
   if (path === `${prefix}/main-lines/line-1`) return knowledgeItem;
   if (path === `${prefix}/baskets`) return page([{ id: "basket-1", name: "Carpentry", description: "Furniture and interior timber work", displayOrder: 1, status: "active", version: 1, itemCount: 1, createdAt: knowledge.item.createdAt, updatedAt: knowledge.item.updatedAt }]);
@@ -256,7 +258,11 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
     }
     return knowledge.section(sectionKey);
   }
-  if (path === `${prefix}/baskets/basket-1/sub-baskets`) return page([]);
+  if (path === `${prefix}/baskets/basket-1/sub-baskets`) return page(renameKnowledge ? [{
+    id: "sub-joinery", basketId: "basket-1", name: "Joinery", displayOrder: 1,
+    version: 2, createdById: "super-admin-1", updatedById: "super-admin-1",
+    createdAt: knowledge.item.createdAt, updatedAt: knowledge.item.updatedAt
+  }] : []);
   if (path === `${prefix}/baskets/basket-1/quality`) return { basketId: "basket-1", basketName: "Carpentry", basketStatus: "active", revisionId: null, revisionNumber: 0, contentDigest: null, parameters: [], updatedAt: null, version: 1 };
   return undefined;
 }

@@ -1486,7 +1486,7 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.getByRole("textbox", { name: "Question / check" })).toHaveValue("Unsaved finish check");
   });
 
-  it("renders minimal item cards with only the linked heading and completeness", async () => {
+  it("renders minimal item cards with a linked heading and direct rename action", async () => {
     vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [{ id: "basket-1", name: "Carpentry", description: null, displayOrder: 0, status: "active", version: 1, createdById: "super-admin-1", updatedById: "super-admin-1", createdAt: item.createdAt, updatedAt: item.updatedAt }], pagination: { ...page, total: 1 } });
     vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({ items: [item], pagination: { ...page, limit: 20, total: 1 } });
     renderRoute(<KnowledgeBaseIndexPage />, "/admin/configuration/estimation", "/admin/configuration/estimation");
@@ -1499,9 +1499,11 @@ describe("AI estimator knowledge screens", () => {
     const card = title.closest("article")!;
     expect(within(card).getAllByRole("heading")).toHaveLength(1);
     expect(within(card).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
-    expect(within(card).getAllByRole("button")).toEqual([
-      within(card).getByRole("button", { name: "More actions for Wall panelling" })
-    ]);
+    const rename = within(card).getByRole("button", { name: "Edit Main Line name for Wall panelling" });
+    const more = within(card).getByRole("button", { name: "More actions for Wall panelling" });
+    expect(rename).toHaveClass("knowledge-rename-pen");
+    expect(rename.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    expect(within(card).getAllByRole("button")).toEqual([rename, more]);
     expect(card.querySelector("dl")).toBeNull();
     expect(within(card).queryByText("Draft")).not.toBeInTheDocument();
     expect(within(card).queryByText(item.description!)).not.toBeInTheDocument();

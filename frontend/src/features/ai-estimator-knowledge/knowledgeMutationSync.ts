@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
+import { estimationCatalogueKeys } from "../leads/estimationCatalogueApi";
 import { projectProcurementKeys } from "../procurement/projectProcurementApi";
 import { vendorSuggestionKeys } from "../procurement/vendorSuggestionsApi";
 import type {
@@ -97,6 +98,15 @@ export function commitKnowledgeMainLineMutation(
       ...current,
       items: renameMainLineInItems(current.items, item),
       ...(current.allItems ? { allItems: renameMainLineInItems(current.allItems, item) } : {})
+    } : current
+  );
+  queryClient.setQueriesData<KnowledgeMainLineListResponse>(
+    { queryKey: knowledgeQueryKeys.mainLineLists() },
+    (current) => current ? {
+      ...current,
+      items: current.items.map((entry) => entry.id === item.mainLineId
+        ? { ...entry, name: item.mainLineName, version: item.version, updatedAt: item.updatedAt }
+        : entry)
     } : current
   );
 }
@@ -216,7 +226,26 @@ export async function refreshKnowledgeSubBasketCatalog(
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts(basketId) }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.histories() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.activationReviews() }, { throwOnError: true }),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }, { throwOnError: true })
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }, { throwOnError: true })
+  ]);
+  if (results.some((result) => result.status === "rejected")) {
+    throw new Error("Some catalog lists could not refresh.");
+  }
+}
+
+/** A committed rename stays visible even if a dependent read fails. */
+export async function refreshKnowledgeMainLineCatalog(queryClient: QueryClient): Promise<void> {
+  const results = await Promise.allSettled([
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists() }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.items() }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketDeletionImpacts() }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts() }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.histories() }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.activationReviews() }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }, { throwOnError: true })
   ]);
   if (results.some((result) => result.status === "rejected")) {
     throw new Error("Some catalog lists could not refresh.");

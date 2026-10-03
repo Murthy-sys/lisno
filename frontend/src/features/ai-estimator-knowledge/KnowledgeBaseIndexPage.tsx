@@ -50,6 +50,9 @@ import { KnowledgeBasketManagementDialog } from "./KnowledgeBasketManagementDial
 import { CreateKnowledgeItemDialog } from "./CreateKnowledgeItemDialog";
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
 import { KnowledgeIndexItemCard } from "./KnowledgeIndexItemCard";
+import { KnowledgeMainLineNameDialog } from "./KnowledgeMainLineNameDialog";
+import { KnowledgeRenamePenButton } from "./KnowledgeRenamePenButton";
+import { KnowledgeSubBasketEditor } from "./KnowledgeSubBasketDialogs";
 import type { CatalogState } from "./knowledgeIndexPresentation";
 import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
 import { KnowledgeLifecycleDialog } from "./KnowledgeLifecycleDialogs";
@@ -60,7 +63,8 @@ import type {
   KnowledgeItemStatus,
   KnowledgeMaster,
   KnowledgeMasterType,
-  KnowledgePermanentDeleteBasketResult
+  KnowledgePermanentDeleteBasketResult,
+  KnowledgeSubBasket
 } from "./knowledgeTypes";
 import "./ai-estimator-knowledge.css";
 import "./knowledge-configuration-ui.css";
@@ -113,6 +117,8 @@ export function KnowledgeBaseIndexPage() {
   const [basketManagerOpen, setBasketManagerOpen] = useState(false);
   const [basketEditor, setBasketEditor] = useState<KnowledgeBasket | null>(null);
   const [basketDelete, setBasketDelete] = useState<KnowledgeBasket | null>(null);
+  const [subBasketEditor, setSubBasketEditor] = useState<{ basket: KnowledgeBasket; subBasket: KnowledgeSubBasket } | null>(null);
+  const [mainLineEditorItem, setMainLineEditorItem] = useState<KnowledgeItemListItem | null>(null);
   const [itemDialogOpen, setItemDialogOpen] = useState(false);
   const [temporaryBasketId, setTemporaryBasketId] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
@@ -122,6 +128,8 @@ export function KnowledgeBaseIndexPage() {
   /* Component state only: the safety notice returns on the next visit. */
   const [noticeDismissed, setNoticeDismissed] = useState(false);
   const manageBasketsButtonRef = useRef<HTMLButtonElement>(null);
+  const subBasketEditFocusRef = useRef<HTMLButtonElement>(null);
+  const mainLineEditFocusRef = useRef<HTMLButtonElement>(null);
   const filterCountDescriptionId = useId();
 
   const canCreate = hasFrontendPermission(
@@ -287,6 +295,23 @@ export function KnowledgeBaseIndexPage() {
   function closeBasketManager() {
     setBasketManagerOpen(false);
     returnFocusToBasketManagerButton();
+  }
+
+  function renderItemCard(item: KnowledgeItemListItem) {
+    return <KnowledgeIndexItemCard
+      key={item.id}
+      item={item}
+      uoms={masters.uoms}
+      priorities={masters.priorities}
+      catalogState={cardCatalogState}
+      onOpen={() => navigate(`/admin/configuration/estimation/items/${encodeURIComponent(item.mainLineId)}`)}
+      onEditName={auth.user?.role === "super_admin" && canUpdate && !itemsQuery.isError && item.status !== "archived"
+        ? (trigger) => {
+            mainLineEditFocusRef.current = trigger;
+            setMainLineEditorItem(item);
+          }
+        : undefined}
+    />;
   }
 
   return (
@@ -496,9 +521,13 @@ export function KnowledgeBaseIndexPage() {
           Refreshing knowledge items…
         </p>
       ) : null}
+      {itemsQuery.isError && itemsQuery.data ? <InlineMessage tone="warning" role="alert" title="Knowledge items could not refresh">
+        Showing the last loaded items. Retry to load current names before editing.
+        <Button type="button" variant="quiet" onClick={() => void itemsQuery.refetch()}>Retry knowledge items</Button>
+      </InlineMessage> : null}
       {itemsQuery.isPending ? (
         <PageState state="loading" message="Loading knowledge items…" />
-      ) : itemsQuery.isError ? (
+      ) : itemsQuery.isError && !itemsQuery.data ? (
         <PageState
           state="error"
           message={errorMessage(itemsQuery.error)}
@@ -526,12 +555,15 @@ export function KnowledgeBaseIndexPage() {
             const expanded = !collapsedBaskets.includes(basketId);
             const panelId = `knowledge-basket-panel-${basketId}`;
             const subBasketQuery = subBasketQueries[groupIndex];
+            const basketRecord = basketsQuery.data?.items.find(({ id }) => id === basketId);
+            const catalogSubBaskets = subBasketQuery?.data?.items ?? [];
             const subBasketNames = new Map<string, string>();
-            if (!hasActiveFilters) for (const subBasket of subBasketQuery?.data?.items ?? []) {
+            if (!hasActiveFilters) for (const subBasket of catalogSubBaskets) {
               subBasketNames.set(subBasket.id, subBasket.name);
             }
             for (const item of group.items) if (item.subBasketId) {
-              if (!subBasketNames.has(item.subBasketId)) subBasketNames.set(item.subBasketId, item.subBasketName ?? "Unavailable Sub-Basket");
+              if (!subBasketNames.has(item.subBasketId)) subBasketNames.set(item.subBasketId,
+                catalogSubBaskets.find(({ id }) => id === item.subBasketId)?.name ?? item.subBasketName ?? "Unavailable Sub-Basket");
             }
             const directItems = group.items.filter((item) => !item.subBasketId);
             const directKey = `direct:${basketId}`;
@@ -607,22 +639,32 @@ export function KnowledgeBaseIndexPage() {
                 {subBasketQuery?.isError ? <InlineMessage tone="warning" role="alert">Sub-Baskets could not be loaded. Known items remain available. <Button type="button" variant="quiet" onClick={() => void subBasketQuery.refetch()}>Retry Sub-Baskets</Button></InlineMessage> : null}
                 {Array.from(subBasketNames, ([subBasketId, subBasketName]) => {
                   const subItems = group.items.filter((item) => item.subBasketId === subBasketId);
+                  const subBasketRecord = catalogSubBaskets.find(({ id, basketId: parentId }) => id === subBasketId && parentId === basketId);
                   const subExpanded = hasActiveFilters || expandedSubBaskets.includes(subBasketId);
                   const subPanelId = `knowledge-sub-basket-panel-${subBasketId}`;
                   return <section key={subBasketId} className="knowledge-sub-basket" data-expanded={subExpanded || undefined}>
                     <div className="knowledge-sub-basket__header">
-                      <h3><button type="button" className="knowledge-sub-basket__toggle" aria-expanded={subExpanded} aria-controls={subPanelId} onClick={() => toggleSubBasket(subBasketId)}><ChevronDown aria-hidden="true" /><span>{subBasketName}</span></button></h3>
+                      <div className="knowledge-sub-basket__name">
+                        <h3><button type="button" className="knowledge-sub-basket__toggle" aria-expanded={subExpanded} aria-controls={subPanelId} onClick={() => toggleSubBasket(subBasketId)}><ChevronDown aria-hidden="true" /><span>{subBasketName}</span></button></h3>
+                        {auth.user?.role === "super_admin" && canUpdate && !basketsQuery.isError && !subBasketQuery?.isError && basketRecord?.status !== "archived" && basketRecord && subBasketRecord ? <KnowledgeRenamePenButton
+                          label={`Edit Sub-Basket name for ${subBasketName}`}
+                          onClick={(event) => {
+                            subBasketEditFocusRef.current = event.currentTarget;
+                            setSubBasketEditor({ basket: basketRecord, subBasket: subBasketRecord });
+                          }}
+                        /> : null}
+                      </div>
                       <span className="knowledge-count-pill">{subItems.length} {subItems.length === 1 ? "item" : "items"} on this page</span>
                     </div>
                     <div id={subPanelId} className="knowledge-sub-basket__body" hidden={!subExpanded}>
-                      {subItems.length ? <div className="knowledge-item-grid">{subItems.map((item) => <KnowledgeIndexItemCard key={item.id} item={item} uoms={masters.uoms} priorities={masters.priorities} catalogState={cardCatalogState} onOpen={() => navigate(`/admin/configuration/estimation/items/${encodeURIComponent(item.mainLineId)}`)} />)}</div>
+                      {subItems.length ? <div className="knowledge-item-grid">{subItems.map(renderItemCard)}</div>
                         : <p>{!hasActiveFilters && total <= PAGE_SIZE ? "No items in this Sub-Basket yet." : "No items from this Sub-Basket on this page."}</p>}
                     </div>
                   </section>;
                 })}
                 {directItems.length ? <section className="knowledge-sub-basket" data-expanded={directExpanded || undefined}>
                   <div className="knowledge-sub-basket__header"><h3><button type="button" className="knowledge-sub-basket__toggle" aria-expanded={directExpanded} aria-controls={`knowledge-direct-items-${basketId}`} onClick={() => toggleSubBasket(directKey)}><ChevronDown aria-hidden="true" /><span>Items directly under Main Basket</span></button></h3><span className="knowledge-count-pill">{directItems.length} {directItems.length === 1 ? "item" : "items"} on this page</span></div>
-                  <div id={`knowledge-direct-items-${basketId}`} className="knowledge-sub-basket__body" hidden={!directExpanded}><div className="knowledge-item-grid">{directItems.map((item) => <KnowledgeIndexItemCard key={item.id} item={item} uoms={masters.uoms} priorities={masters.priorities} catalogState={cardCatalogState} onOpen={() => navigate(`/admin/configuration/estimation/items/${encodeURIComponent(item.mainLineId)}`)} />)}</div></div>
+                  <div id={`knowledge-direct-items-${basketId}`} className="knowledge-sub-basket__body" hidden={!directExpanded}><div className="knowledge-item-grid">{directItems.map(renderItemCard)}</div></div>
                 </section> : null}
                 {!subBasketQuery?.isPending && subBasketNames.size === 0 && directItems.length === 0 ? <p>No Sub-Baskets or items are available in this Main Basket.</p> : null}
               </div>
@@ -702,6 +744,27 @@ export function KnowledgeBaseIndexPage() {
           }}
         />
       ) : null}
+      {subBasketEditor ? <KnowledgeSubBasketEditor
+        basket={subBasketEditor.basket}
+        existing={subBasketEditor.subBasket}
+        fallbackFocusRef={subBasketEditFocusRef}
+        returnFocusRef={subBasketEditFocusRef}
+        onClose={() => setSubBasketEditor(null)}
+        onSaved={(saved) => {
+          setSubBasketEditor(null);
+          setAnnouncement(`Sub-Basket renamed to “${saved.name}”.`);
+        }}
+      /> : null}
+      {mainLineEditorItem ? <KnowledgeMainLineNameDialog
+        mainLineId={mainLineEditorItem.mainLineId}
+        listedName={mainLineEditorItem.mainLineName}
+        returnFocusRef={mainLineEditFocusRef}
+        onClose={() => setMainLineEditorItem(null)}
+        onSaved={(saved) => {
+          setMainLineEditorItem(null);
+          setAnnouncement(`Main Line renamed to “${saved.mainLineName}”.`);
+        }}
+      /> : null}
       {temporaryBasketId !== null && <CreateKnowledgeItemDialog itemType="temporary" initialBasketId={temporaryBasketId}
         canCreateBasket={canCreateBasketInline}
         onClose={() => setTemporaryBasketId(null)} onCreated={async (id) => {

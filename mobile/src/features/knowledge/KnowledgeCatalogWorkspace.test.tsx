@@ -3,7 +3,7 @@ import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { Platform } from "react-native";
 import type { ReactNode } from "react";
 import { createKnowledgeApi } from "../../../../shared/knowledge/knowledgeApi";
-import type { KnowledgeBasket } from "../../../../shared/knowledge/knowledgeTypes";
+import type { KnowledgeBasket, KnowledgeItemDetail, KnowledgeItemListItem, KnowledgeSubBasket } from "../../../../shared/knowledge/knowledgeTypes";
 import type { AuthenticatedSession } from "../../contracts/session";
 import { ApiError } from "../../core/http/apiClient";
 import { KnowledgeCatalogWorkspace, KnowledgeCreateItem } from "./KnowledgeCatalogWorkspace";
@@ -33,23 +33,46 @@ const del = jest.fn();
 const refresh = jest.fn(async () => undefined);
 const basket = { id: "basket-a", name: "Carpentry", description: null, displayOrder: 0, status: "active", version: 3, createdAt: "2026-09-25T00:00:00Z", updatedAt: "2026-09-25T00:00:00Z", createdById: "user-a", updatedById: "user-a" } satisfies KnowledgeBasket;
 const otherBasket = { ...basket, id: "basket-b", name: "Painting", version: 11 };
+const subBasket = { ...basket, basketId: basket.id, id: "sub-a", name: "Finishes", version: 7 } satisfies KnowledgeSubBasket;
+const catalogItem = {
+  ...basket, id: "line-record-a", mainLineId: "line-a", mainLineName: "Wall finish", basketId: basket.id, basketName: basket.name,
+  subBasketId: subBasket.id, subBasketName: subBasket.name, itemType: "main_line", completionRequired: false,
+  status: "draft", activeRevisionId: null, draftRevisionId: "revision-a", revisionNumber: 1, uomId: null, priorityId: null,
+  modeIds: [], surfaceIds: [], vendorIds: [], allowedActions: [], completeness: { percentage: 0, sections: [], blockers: [], warnings: [] }
+} satisfies KnowledgeItemListItem;
+const itemDetail = { ...catalogItem, version: 17, activeRevision: null, draftRevision: null, blockers: [], warnings: [] } satisfies KnowledgeItemDetail;
 const session = { user: { id: "user-a", role: "super_admin" }, authorization: { permissions: [] } } as unknown as AuthenticatedSession;
 function page(items: readonly unknown[], offset = 0, hasMore = false) { return { items, pagination: { total: hasMore ? items.length + 1 : items.length, limit: 100, offset, hasMore } }; }
+function serveCatalog({ baskets = [basket], subBaskets = [subBasket], items = [catalogItem], detail = itemDetail }: { baskets?: KnowledgeBasket[]; subBaskets?: KnowledgeSubBasket[]; items?: KnowledgeItemListItem[]; detail?: KnowledgeItemDetail } = {}) {
+  get.mockImplementation(async (path: string) => {
+    if (path.includes("/main-lines/")) return detail;
+    if (path.includes("/items?")) return page(items);
+    if (path.includes("/baskets?")) return page(baskets);
+    if (path.includes("/sub-baskets?")) {
+      const parentId = path.match(/\/baskets\/([^/]+)\/sub-baskets\?/)?.[1];
+      return page(subBaskets.filter(value => value.basketId === parentId));
+    }
+    return page([]);
+  });
+}
 function context(overrides: Partial<KnowledgeMobileContext> = {}): KnowledgeMobileContext {
   return { api: createKnowledgeApi({ get, post, patch, delete: del, put: jest.fn() }), key: (...parts) => ["test", "user-a", "knowledge", ...parts], scopeKey: "test:user-a:1:1", ready: true, canRead: true, canCreate: true, canUpdate: true, canLifecycle: true, canCreateClassification: true, canCorrectBaseline: true, canCreateQualityOptions: true, refresh, ...overrides };
 }
-async function mount(element: ReactNode) {
+async function mount(element: ReactNode, onClient?: (client: QueryClient) => void) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false, gcTime: 0 } } });
+  onClient?.(client);
   return render(<QueryClientProvider client={client}>{element}</QueryClientProvider>);
 }
 beforeEach(() => {
   jest.clearAllMocks();
+  refresh.mockImplementation(async () => undefined);
   get.mockImplementation(async (path: string) => path.includes("sub-baskets") ? page([]) : path.includes("/baskets?") ? page([basket]) : page([]));
   post.mockResolvedValue({ mainLineId: "new-item" });
   patch.mockResolvedValue({ ...basket, version: 4 });
   del.mockResolvedValue({ deleted: true });
   jest.mocked(useKnowledgeContext).mockReturnValue(context());
 });
+afterEach(() => jest.restoreAllMocks());
 
 async function chooseMenu(view: Awaited<ReturnType<typeof mount>>, label: string) {
   const dismissed = view.getByTestId("configuration-context-menu").props.onDismiss;
@@ -58,14 +81,235 @@ async function chooseMenu(view: Awaited<ReturnType<typeof mount>>, label: string
 }
 
 describe("Native Configuration catalog", () => {
+  it("renames an empty Sub-Basket from its own heading and retains its expanded state", async () => {
+    const empty = { ...subBasket, id: "sub-empty", name: "Empty group", version: 9 };
+    serveCatalog({ subBaskets: [subBasket, empty] });
+    patch.mockResolvedValue({ ...empty, name: "Prepared group", version: 10 });
+    const view = await mount(<KnowledgeCatalogWorkspace session={session} />);
+    await fireEvent.press(await view.findByRole("button", { name: "Expand Sub-Basket Empty group" }));
+    expect(view.getByText("No items on this page.")).toBeTruthy();
+    await fireEvent.press(view.getByRole("button", { name: "Edit Sub-Basket name: Empty group in Carpentry" }));
+    expect(view.getByLabelText("Name").props.value).toBe("Empty group");
+    expect(view.getByText("Main basket: Carpentry")).toBeTruthy();
+    expect(view.getByRole("button", { name: "Save name" })).toBeDisabled();
+    await fireEvent.changeText(view.getByLabelText("Name"), "  Prepared group  ");
+    await fireEvent.press(view.getByRole("button", { name: "Save name" }));
+    await waitFor(() => expect(patch).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/baskets/basket-a/sub-baskets/sub-empty", { expectedVersion: 9, name: "Prepared group", managementContext: "configuration" }));
+    expect(await view.findByRole("button", { name: "Collapse Sub-Basket Prepared group" })).toBeTruthy();
+    expect(view.getByRole("button", { name: "Edit Sub-Basket name: Prepared group in Carpentry" })).toBeTruthy();
+    expect(patch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a committed empty Sub-Basket visible if its actual catalog refetch fails", async () => {
+    let current = { ...subBasket, id: "sub-empty", name: "Empty group", version: 9 };
+    let failSubBasketLoad = false;
+    get.mockImplementation(async (path: string) => {
+      if (path.includes("/sub-baskets?")) {
+        if (failSubBasketLoad) throw new Error("Sub-Basket reload failed");
+        return page([current]);
+      }
+      if (path.includes("/baskets?")) return page([basket]);
+      return page([]);
+    });
+    patch.mockImplementation(async () => {
+      current = { ...current, name: "Prepared group", version: 10 };
+      failSubBasketLoad = true;
+      return current;
+    });
+    let client!: QueryClient;
+    const view = await mount(<KnowledgeCatalogWorkspace session={session} />, value => { client = value; });
+    refresh.mockImplementation(async () => {
+      await client.invalidateQueries({ queryKey: ["test", "user-a", "knowledge", "sub-baskets", basket.id, "catalog-index"] });
+    });
+    await fireEvent.press(await view.findByRole("button", { name: "Expand Sub-Basket Empty group" }));
+    await fireEvent.press(view.getByRole("button", { name: "Edit Sub-Basket name: Empty group in Carpentry" }));
+    await fireEvent.changeText(view.getByLabelText("Name"), "Prepared group");
+    await fireEvent.press(view.getByRole("button", { name: "Save name" }));
+    expect(await view.findByRole("button", { name: "Collapse Sub-Basket Prepared group" })).toBeTruthy();
+    expect(await view.findByRole("button", { name: "Retry Sub-Baskets in Carpentry" })).toBeTruthy();
+    expect(view.queryByRole("button", { name: "Edit Sub-Basket name: Prepared group in Carpentry" })).toBeNull();
+    expect(await view.findByText("Name saved")).toBeTruthy();
+    failSubBasketLoad = false;
+    await fireEvent.press(view.getByRole("button", { name: "Retry Sub-Baskets in Carpentry" }));
+    expect(await view.findByRole("button", { name: "Edit Sub-Basket name: Prepared group in Carpentry" })).toBeTruthy();
+    expect(view.getByRole("button", { name: "Collapse Sub-Basket Prepared group" })).toBeTruthy();
+    expect(patch).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the selected parent ID for same-named Sub-Baskets and permits an inactive parent", async () => {
+    const inactiveParent = { ...otherBasket, status: "inactive" as const };
+    const sameName = { ...subBasket, id: "sub-b", basketId: inactiveParent.id, version: 21 };
+    serveCatalog({ baskets: [basket, inactiveParent], subBaskets: [subBasket, sameName], items: [] });
+    patch.mockResolvedValue({ ...sameName, name: "Fine painting", version: 22 });
+    const view = await mount(<KnowledgeCatalogWorkspace session={session} />);
+    await fireEvent.press(await view.findByRole("button", { name: "Expand Painting" }));
+    await fireEvent.press(await view.findByRole("button", { name: "Edit Sub-Basket name: Finishes in Painting" }));
+    expect(view.getByText("Main basket: Painting")).toBeTruthy();
+    await fireEvent.changeText(view.getByLabelText("Name"), "Fine painting");
+    await fireEvent.press(view.getByRole("button", { name: "Save name" }));
+    await waitFor(() => expect(patch).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/baskets/basket-b/sub-baskets/sub-b", { expectedVersion: 21, name: "Fine painting", managementContext: "configuration" }));
+  });
+
+  it("hides Sub-Basket rename without a verified record, on archived parents, or without update permission", async () => {
+    serveCatalog({ baskets: [{ ...basket, status: "archived" }] });
+    let view = await mount(<KnowledgeCatalogWorkspace session={session} />);
+    await view.findByRole("button", { name: "Expand Sub-Basket Finishes" });
+    expect(view.queryByRole("button", { name: "Edit Sub-Basket name: Finishes in Carpentry" })).toBeNull();
+    await view.unmount();
+
+    jest.mocked(useKnowledgeContext).mockReturnValue(context({ canUpdate: false }));
+    serveCatalog();
+    view = await mount(<KnowledgeCatalogWorkspace session={session} />);
+    await view.findByRole("button", { name: "Expand Sub-Basket Finishes" });
+    expect(view.queryByRole("button", { name: "Edit Sub-Basket name: Finishes in Carpentry" })).toBeNull();
+    await view.unmount();
+
+    jest.mocked(useKnowledgeContext).mockReturnValue(context());
+    serveCatalog();
+    get.mockImplementation(async (path: string) => path.includes("/sub-baskets?") ? Promise.reject(new Error("Catalog offline")) : path.includes("/baskets?") ? page([basket]) : path.includes("/items?") ? page([catalogItem]) : page([]));
+    view = await mount(<KnowledgeCatalogWorkspace session={session} />);
+    await view.findByRole("button", { name: "Retry Sub-Baskets in Carpentry" });
+    expect(view.queryByRole("button", { name: "Edit Sub-Basket name: Finishes in Carpentry" })).toBeNull();
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it.each([["main_line", "draft"], ["main_line", "active"], ["temporary", "draft"]] as const)("renames a %s item in %s status from its pen using current detail", async (itemType, status) => {
+    const row = { ...catalogItem, itemType, status };
+    const detail = { ...itemDetail, itemType, status };
+    serveCatalog({ items: [row], detail });
+    patch.mockResolvedValue({ ...detail, mainLineName: "Updated finish", version: 18 });
+    const view = await mount(<KnowledgeCatalogWorkspace session={session} />);
+    await fireEvent.press(await view.findByRole("button", { name: "Expand Sub-Basket Finishes" }));
+    await fireEvent.press(view.getByRole("button", { name: "Edit Main Line name: Wall finish in Carpentry" }));
+    expect((await view.findByLabelText("Name")).props.value).toBe("Wall finish");
+    expect(get).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/main-lines/line-a");
+    expect(view.getByRole("button", { name: "Save name" })).toBeDisabled();
+    await fireEvent.changeText(view.getByLabelText("Name"), "Updated finish");
+    await fireEvent.press(view.getByRole("button", { name: "Save name" }));
+    await waitFor(() => expect(patch).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/main-lines/line-a", { expectedVersion: 17, name: "Updated finish" }));
+    expect(await view.findByRole("button", { name: "Open Updated finish" })).toBeTruthy();
+    expect(view.getByRole("button", { name: "Collapse Sub-Basket Finishes" })).toBeTruthy();
+  });
+
+  it("keeps the saved name visible and offers refresh if reloading fails after the PATCH", async () => {
+    serveCatalog();
+    patch.mockResolvedValue({ ...itemDetail, mainLineName: "Updated finish", version: 18 });
+    refresh.mockRejectedValueOnce(new Error("Offline"));
+    const view = await mount(<KnowledgeCatalogWorkspace session={session} />);
+    await fireEvent.press(await view.findByRole("button", { name: "Expand Sub-Basket Finishes" }));
+    await fireEvent.press(view.getByRole("button", { name: "Edit Main Line name: Wall finish in Carpentry" }));
+    await fireEvent.changeText(await view.findByLabelText("Name"), "Updated finish");
+    await fireEvent.press(view.getByRole("button", { name: "Save name" }));
+    expect(await view.findByRole("button", { name: "Open Updated finish" })).toBeTruthy();
+    expect(await view.findByText("Name saved")).toBeTruthy();
+    await fireEvent.press(view.getByRole("button", { name: "Refresh Configuration" }));
+    await waitFor(() => expect(view.queryByText("Name saved")).toBeNull());
+    expect(patch).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains a Main Line draft across duplicate and version errors, then requires current-version review", async () => {
+    serveCatalog();
+    patch.mockRejectedValueOnce(new ApiError(409, "DUPLICATE_IDENTITY", "Name already exists"))
+      .mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Changed elsewhere"))
+      .mockResolvedValueOnce({ ...itemDetail, mainLineName: "Existing finish", version: 24 });
+    const view = await mount(<KnowledgeCatalogWorkspace session={session} />);
+    await fireEvent.press(await view.findByRole("button", { name: "Expand Sub-Basket Finishes" }));
+    await fireEvent.press(view.getByRole("button", { name: "Edit Main Line name: Wall finish in Carpentry" }));
+    await fireEvent.changeText(await view.findByLabelText("Name"), "Existing finish");
+    await fireEvent.press(view.getByRole("button", { name: "Save name" }));
+    expect(await view.findByText("Name already exists")).toBeTruthy();
+    expect(view.getByLabelText("Name").props.value).toBe("Existing finish");
+    expect(view.getByRole("button", { name: "Save name" })).not.toBeDisabled();
+    await fireEvent.press(view.getByRole("button", { name: "Save name" }));
+    expect(await view.findByText(/This record changed elsewhere/)).toBeTruthy();
+    expect(view.getByRole("button", { name: "Save name" })).toBeDisabled();
+    expect(patch).toHaveBeenCalledTimes(2);
+    get.mockImplementation(async (path: string) => path.includes("/main-lines/line-a") ? { ...itemDetail, mainLineName: "Other saved finish", version: 23 } : path.includes("/items?") ? page([catalogItem]) : path.includes("/baskets?") ? page([basket]) : path.includes("/sub-baskets?") ? page([subBasket]) : page([]));
+    await fireEvent.press(view.getByRole("button", { name: "Load current" }));
+    expect(await view.findByText("Current saved name: Other saved finish")).toBeTruthy();
+    expect(view.getByText("Current version: 23")).toBeTruthy();
+    expect(view.getByLabelText("Name").props.value).toBe("Existing finish");
+    expect(view.getByRole("button", { name: "Save name" })).toBeDisabled();
+    expect(patch).toHaveBeenCalledTimes(2);
+    await fireEvent.press(view.getByRole("button", { name: "Use current version" }));
+    expect(view.getByRole("button", { name: "Save name" })).not.toBeDisabled();
+    await fireEvent.press(view.getByRole("button", { name: "Save name" }));
+    await waitFor(() => expect(patch).toHaveBeenLastCalledWith("/admin/ai-estimator-knowledge/main-lines/line-a", { expectedVersion: 23, name: "Existing finish" }));
+    expect(patch).toHaveBeenCalledTimes(3);
+  });
+
+  it("recovers a Sub-Basket version conflict by loading its exact parent-scoped record", async () => {
+    serveCatalog();
+    patch.mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Changed elsewhere"))
+      .mockResolvedValueOnce({ ...subBasket, name: "My finishes", version: 13 });
+    const view = await mount(<KnowledgeCatalogWorkspace session={session} />);
+    await fireEvent.press(await view.findByRole("button", { name: "Edit Sub-Basket name: Finishes in Carpentry" }));
+    await fireEvent.changeText(view.getByLabelText("Name"), "My finishes");
+    await fireEvent.press(view.getByRole("button", { name: "Save name" }));
+    expect(await view.findByText(/This record changed elsewhere/)).toBeTruthy();
+    expect(view.getByRole("button", { name: "Save name" })).toBeDisabled();
+    expect(patch).toHaveBeenCalledTimes(1);
+    let currentUnavailable = true;
+    get.mockImplementation(async (path: string) => {
+      if (path.includes("/sub-baskets?")) {
+        if (currentUnavailable) throw new Error("Sub-Basket catalog offline");
+        return page([{ ...subBasket, name: "Someone else's finishes", version: 12 }]);
+      }
+      if (path.includes("/items?")) return page([catalogItem]);
+      if (path.includes("/baskets?")) return page([basket]);
+      return page([]);
+    });
+    await fireEvent.press(view.getByRole("button", { name: "Load current" }));
+    expect(await view.findByText("Sub-Basket catalog offline")).toBeTruthy();
+    expect(view.getByRole("button", { name: "Save name" })).toBeDisabled();
+    expect(patch).toHaveBeenCalledTimes(1);
+    currentUnavailable = false;
+    await fireEvent.press(view.getByRole("button", { name: "Load current" }));
+    expect(await view.findByText("Current saved name: Someone else's finishes")).toBeTruthy();
+    expect(view.getByText("Current version: 12")).toBeTruthy();
+    expect(view.getByLabelText("Name").props.value).toBe("My finishes");
+    expect(view.getByRole("button", { name: "Save name" })).toBeDisabled();
+    await fireEvent.press(view.getByRole("button", { name: "Use current version" }));
+    await fireEvent.press(view.getByRole("button", { name: "Save name" }));
+    await waitFor(() => expect(patch).toHaveBeenLastCalledWith("/admin/ai-estimator-knowledge/baskets/basket-a/sub-baskets/sub-a", { expectedVersion: 12, name: "My finishes", managementContext: "configuration" }));
+    expect(patch).toHaveBeenCalledTimes(2);
+  });
+
+  it("requires authoritative Main Line detail and hides archived item rename", async () => {
+    serveCatalog({ items: [{ ...catalogItem, status: "archived" }] });
+    let view = await mount(<KnowledgeCatalogWorkspace session={session} />);
+    await fireEvent.press(await view.findByRole("button", { name: "Expand Sub-Basket Finishes" }));
+    expect(view.queryByRole("button", { name: "Edit Main Line name: Wall finish in Carpentry" })).toBeNull();
+    expect(view.getByRole("button", { name: "Open Wall finish" })).toBeTruthy();
+    await view.unmount();
+
+    serveCatalog();
+    let detailFails = true;
+    get.mockImplementation(async (path: string) => {
+      if (path.includes("/main-lines/")) { if (detailFails) throw new Error("Detail offline"); return itemDetail; }
+      if (path.includes("/items?")) return page([catalogItem]);
+      if (path.includes("/baskets?")) return page([basket]);
+      if (path.includes("/sub-baskets?")) return page([subBasket]);
+      return page([]);
+    });
+    view = await mount(<KnowledgeCatalogWorkspace session={session} />);
+    await fireEvent.press(await view.findByRole("button", { name: "Expand Sub-Basket Finishes" }));
+    await fireEvent.press(view.getByRole("button", { name: "Edit Main Line name: Wall finish in Carpentry" }));
+    expect(await view.findByText("Item unavailable")).toBeTruthy();
+    expect(patch).not.toHaveBeenCalled();
+    detailFails = false;
+    await fireEvent.press(view.getByRole("button", { name: "Retry item" }));
+    expect((await view.findByLabelText("Name")).props.value).toBe("Wall finish");
+  });
+
   it("starts with the first basket expanded and edits the chosen basket by its own ID and version", async () => {
     get.mockImplementation(async (path: string) => path.includes("/baskets?") ? page([basket, otherBasket]) : page([]));
     const view = await mount(<KnowledgeCatalogWorkspace session={session} />);
     await view.findByRole("button", { name: "Collapse Carpentry" });
     expect(view.getByRole("button", { name: "Expand Painting" })).toBeTruthy();
     await fireEvent.press(view.getByRole("button", { name: "Actions for Painting" }));
-    expect(view.getAllByRole("menuitem").map(node => node.props.accessibilityLabel)).toEqual(["Edit main line", "Add estimation item", "Add temporary item", "Delete main line"]);
-    await chooseMenu(view, "Edit main line");
+    expect(view.getAllByRole("menuitem").map(node => node.props.accessibilityLabel)).toEqual(["Edit main basket", "Add estimation item", "Add temporary item", "Delete main basket"]);
+    await chooseMenu(view, "Edit main basket");
     expect(view.getByLabelText("Name").props.value).toBe("Painting");
     await fireEvent.changeText(view.getByLabelText("Name"), "Wall painting");
     await fireEvent.press(view.getByRole("button", { name: "Save changes" }));
@@ -90,7 +334,7 @@ describe("Native Configuration catalog", () => {
     get.mockImplementation(async (path: string) => path.includes("/basket-b/deletion-impact") ? { basketId: "basket-b", basketName: "Painting", version: 13, mainLineCount: 2, subBasketCount: 1, historicalReferenceCount: 3, vendorReferenceCount: 0 } : path.includes("/baskets?") ? page([basket, otherBasket]) : page([]));
     const view = await mount(<KnowledgeCatalogWorkspace session={session} />);
     await fireEvent.press(await view.findByRole("button", { name: "Actions for Painting" }));
-    await chooseMenu(view, "Delete main line");
+    await chooseMenu(view, "Delete main basket");
     await view.findByText("Deletion impact");
     expect(del).not.toHaveBeenCalled();
     expect(view.getByRole("button", { name: "Permanently delete" })).toBeDisabled();

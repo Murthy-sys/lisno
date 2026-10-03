@@ -5,6 +5,7 @@ import {
   commitKnowledgeMainLineMutation,
   commitKnowledgeMainLineRemoval,
   commitKnowledgeSubBasketMutation,
+  refreshKnowledgeMainLineCatalog,
   refreshKnowledgeSubBasketCatalog,
   syncKnowledgeBasketMutation,
   syncKnowledgeBasketDeletion,
@@ -17,6 +18,7 @@ import {
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { projectProcurementKeys } from "../procurement/projectProcurementApi";
 import { vendorSuggestionKeys } from "../procurement/vendorSuggestionsApi";
+import { estimationCatalogueKeys } from "../leads/estimationCatalogueApi";
 import type {
   KnowledgeCompleteness,
   KnowledgeItemDetail,
@@ -153,6 +155,20 @@ describe("knowledge mutation cache synchronization", () => {
     keys.forEach((key) => expect(client.getQueryState(key)?.isInvalidated).toBe(true));
     expect(client.getQueryData(["item-draft"])).toEqual({ vendorId: "vendor-one", price: "150" });
     expect(client.getQueryState(["item-draft"])?.isInvalidated).toBe(false);
+  });
+  it("invalidates the live estimation catalogue after either name changes", async () => {
+    const client = queryClient();
+    const unrelatedKey = ["saved-estimate-snapshot"];
+    client.setQueryData(estimationCatalogueKeys.ready, { items: [{ name: "Old current label" }] });
+    client.setQueryData(unrelatedKey, { name: "Historical label" });
+
+    await refreshKnowledgeSubBasketCatalog(client, "basket-1");
+    expect(client.getQueryState(estimationCatalogueKeys.ready)?.isInvalidated).toBe(true);
+    client.setQueryData(estimationCatalogueKeys.ready, { items: [{ name: "First current label" }] });
+    await refreshKnowledgeMainLineCatalog(client);
+    expect(client.getQueryState(estimationCatalogueKeys.ready)?.isInvalidated).toBe(true);
+    expect(client.getQueryData(unrelatedKey)).toEqual({ name: "Historical label" });
+    client.clear();
   });
   it("refreshes temporary Main Line references after source edits, lifecycle changes and deletion without invalidating other drafts", async () => {
     const client = queryClient();
@@ -347,6 +363,7 @@ describe("knowledge mutation cache synchronization", () => {
     const client = queryClient();
     const subBasketKey = [...knowledgeQueryKeys.subBasketLists("basket-1"), "catalog"] as const;
     const itemListKey = knowledgeQueryKeys.itemList({ limit: 100, offset: 0 });
+    const mainLineListKey = knowledgeQueryKeys.mainLineList("basket-1", { limit: 100, offset: 0 });
     const itemKey = knowledgeQueryKeys.item("line-1");
     const sectionKey = knowledgeQueryKeys.section("source", "revision-1", "recommendations");
     const relationshipItems = [
@@ -363,6 +380,10 @@ describe("knowledge mutation cache synchronization", () => {
       allItems: relationshipItems,
       pagination: { limit: 100, offset: 0, total: 2, hasMore: false }
     });
+    client.setQueryData(mainLineListKey, {
+      items: [{ id: "line-1", name: "Lights Supply", version: 1 }, { id: "other-line", name: "Keep this name", version: 3 }],
+      pagination: { limit: 100, offset: 0, total: 2, hasMore: false }
+    });
     client.setQueryData(itemKey, { ...actor, mainLineId: "line-1", mainLineName: "Lights Supply", basketId: "basket-1", subBasketId: "sub-1", subBasketName: "Functional Lights", version: 1 });
     client.setQueryData(sectionKey, { payload: { budgetAlterations: [{ targetSubBasketId: "sub-1", reason: "Keep this draft" }] } });
 
@@ -377,6 +398,8 @@ describe("knowledge mutation cache synchronization", () => {
       .toMatchObject([{ mainLineName: "Ceiling spotlights" }, { linkedMainLines: [{ mainLineName: "Ceiling spotlights" }] }]);
     expect(client.getQueryData<{ allItems: Array<{ mainLineName: string; linkedMainLines?: Array<{ mainLineName: string }> }> }>(itemListKey)?.allItems)
       .toMatchObject([{ mainLineName: "Ceiling spotlights" }, { linkedMainLines: [{ mainLineName: "Ceiling spotlights" }] }]);
+    expect(client.getQueryData<{ items: Array<{ name: string; version: number }> }>(mainLineListKey)?.items)
+      .toMatchObject([{ name: "Ceiling spotlights", version: 2 }, { name: "Keep this name", version: 3 }]);
 
     commitKnowledgeMainLineRemoval(client, "line-1");
     expect(client.getQueryData<{ items: Array<{ mainLineId: string; linkedMainLines?: unknown[] }> }>(itemListKey)?.items)

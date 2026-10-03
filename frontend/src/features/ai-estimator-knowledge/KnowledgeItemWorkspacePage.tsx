@@ -27,11 +27,11 @@ import {
   listKnowledgeBaskets,
   listKnowledgeItems,
   listKnowledgeMasters,
-  updateKnowledgeMainLine,
   updateKnowledgeSection
 } from "./knowledgeApi";
 import { KnowledgeLifecycleDialog, type KnowledgeLifecycleAction } from "./KnowledgeLifecycleDialogs";
 import { KnowledgeMasterEditorDialog } from "./KnowledgeMasterEditorDialog";
+import { KnowledgeMainLineNameDialog } from "./KnowledgeMainLineNameDialog";
 import { KnowledgeSurfaceEditorDialog } from "./KnowledgeSurfaceEditorDialog";
 import { KnowledgeBasketQualityPanel, type KnowledgeBasketQualityPanelHandle, type KnowledgeQualitySaveCommandState } from "./KnowledgeBasketQualityPanel";
 import { KnowledgeModePanel, type KnowledgeModePanelHandle } from "./KnowledgeModePanel";
@@ -721,8 +721,7 @@ export function KnowledgeItemWorkspacePage() {
       ) : null}
       {lifecycleAction ? <KnowledgeLifecycleDialog action={lifecycleAction} blockers={lifecycleAction === "activate" ? item.blockers : []} warnings={lifecycleAction === "activate" ? item.warnings : []} reason={lifecycleReason} onReasonChange={setLifecycleReason} onClose={() => { setLifecycleAction(null); lifecycleMutation.reset(); }} onConfirm={() => lifecycleMutation.mutate({ action: lifecycleAction, target: item })} busy={lifecycleMutation.isPending} error={lifecycleError} /> : null}
       {command ? <KnowledgeCommandDialog kind={command} reason={commandReason} duplicateName={duplicateName} onReasonChange={setCommandReason} onNameChange={setDuplicateName} onClose={() => { setCommand(null); commandMutation.reset(); }} onConfirm={() => commandMutation.mutate({ kind: command, target: item })} busy={commandMutation.isPending} error={commandError} /> : null}
-      {mainLineEditorOpen ? <MainLineEditorDialog item={item} onClose={() => setMainLineEditorOpen(false)} onSaved={async (updated) => {
-        await syncKnowledgeLifecycleMutation(queryClient, updated);
+      {mainLineEditorOpen ? <KnowledgeMainLineNameDialog item={item} onClose={() => setMainLineEditorOpen(false)} onSaved={(updated) => {
         setMainLineEditorOpen(false);
         setAnnouncement(`Main Line renamed to “${updated.mainLineName}”.`);
       }} /> : null}
@@ -745,42 +744,6 @@ function WorkspaceActions({ item, canCreate, canLifecycle, onCommand, onLifecycl
     ? "Review activation"
     : "Review and activate";
   return <>{canLifecycle && item.allowedActions.includes("review_and_activate") ? <Button variant={item.blockers.length > 0 ? "secondary" : "success"} leadingIcon={<ShieldCheck />} onClick={() => onLifecycle("activate")}>{activationLabel}</Button> : null}{canCreate && item.allowedActions.includes("create_revision") ? <Button leadingIcon={<Plus />} onClick={() => onCommand("revision")}>Create revision</Button> : null}{canCreate && item.allowedActions.includes("duplicate") ? <Button variant="secondary" leadingIcon={<Copy />} onClick={() => onCommand("duplicate")}>Duplicate</Button> : null}{canLifecycle && item.allowedActions.includes("deactivate") ? <Button variant="destructive-outline" onClick={() => onLifecycle("deactivate")}>Deactivate</Button> : null}{canLifecycle && item.allowedActions.includes("archive") ? <Button variant="destructive-outline" leadingIcon={<Trash2 />} onClick={() => onLifecycle("archive")}>Delete</Button> : null}</>;
-}
-
-function MainLineEditorDialog({ item, onClose, onSaved }: {
-  readonly item: KnowledgeItemDetail;
-  readonly onClose: () => void;
-  readonly onSaved: (item: KnowledgeItemDetail) => Promise<void>;
-}) {
-  const [name, setName] = useState(item.mainLineName);
-  const trimmedName = name.trim();
-  const mutation = useMutation({
-    mutationFn: () => updateKnowledgeMainLine(item.mainLineId, {
-      expectedVersion: item.version,
-      name: trimmedName
-    }),
-    onSuccess: onSaved
-  });
-  const error = mutation.error instanceof ApiError && mutation.error.code === "VERSION_CONFLICT"
-    ? "This Main Line changed elsewhere. Close this dialog, review the latest name, and try again."
-    : mutation.error?.message ?? null;
-
-  return (
-    <Dialog title="Edit Main Line" eyebrow="Estimation configuration" description="Update the name shown throughout this Main Basket." onClose={onClose} busy={mutation.isPending}>
-      <form className="knowledge-dialog-form" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
-        <div className="knowledge-dialog-body">
-          {error ? <InlineMessage tone="error" role="alert">{error}</InlineMessage> : null}
-          <Field id="main-line-name" label="Main Line name" required>
-            {(props) => <Input {...props} autoFocus value={name} onChange={(event) => setName(event.target.value)} />}
-          </Field>
-        </div>
-        <div className="knowledge-dialog-actions">
-          <Button type="button" variant="destructive-outline" onClick={onClose}>Cancel</Button>
-          <Button type="submit" busy={mutation.isPending} disabled={!trimmedName || trimmedName === item.mainLineName}>Save Main Line</Button>
-        </div>
-      </form>
-    </Dialog>
-  );
 }
 
 function KnowledgeCommandDialog({ kind, reason, duplicateName, onReasonChange, onNameChange, onClose, onConfirm, busy, error }: {

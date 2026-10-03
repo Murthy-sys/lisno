@@ -25,8 +25,9 @@ interface KnowledgeBasketCarouselProps {
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly onOpenItem: (id: string) => void;
-  readonly onItemMenu: (item: KnowledgeItemListItem, anchor: KnowledgeMenuAnchor) => void;
+  readonly onEditItem?: (item: KnowledgeItemListItem) => void;
   readonly onBasketMenu?: (anchor: KnowledgeMenuAnchor) => void;
+  readonly onEditSubBasket?: (subBasket: KnowledgeSubBasket) => void;
   readonly uoms: readonly KnowledgeMaster[];
   readonly priorities: readonly KnowledgeMaster[];
   readonly catalogState: CatalogState;
@@ -39,31 +40,32 @@ const TRACK_INSET = 12;
 // The catalog API has no item image field. This bundled room is decorative artwork.
 const DECORATIVE_ROOM = require("../../../assets/brand/project-detail-interior.jpg");
 
-function Icon({ name, size = 18 }: { readonly name: "stack" | "down" | "previous" | "next" | "more"; readonly size?: number }) {
+function Icon({ name, size = 18 }: { readonly name: "stack" | "down" | "previous" | "next" | "more" | "pen"; readonly size?: number }) {
   return <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={colors.ink} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden accessible={false}>
     {name === "stack" ? <><Path d="m3 7 9-5 9 5-9 5-9-5Z" /><Path d="m3 12 9 5 9-5M3 17l9 5 9-5" /></> : null}
     {name === "down" ? <Path d="m7 10 5 5 5-5" /> : null}
     {name === "previous" ? <Path d="m14 7-5 5 5 5" /> : null}
     {name === "next" ? <Path d="m10 7 5 5-5 5" /> : null}
+    {name === "pen" ? <Path d="m4 16 11-11 4 4L8 20l-5 1 1-5Zm9-9 4 4" /> : null}
     {name === "more" ? <><Circle cx="12" cy="5" r="1" fill={colors.ink} stroke="none" /><Circle cx="12" cy="12" r="1" fill={colors.ink} stroke="none" /><Circle cx="12" cy="19" r="1" fill={colors.ink} stroke="none" /></> : null}
   </Svg>;
 }
 
-function MenuTrigger({ label, onOpen, compact = false }: { readonly label: string; readonly onOpen: (anchor: KnowledgeMenuAnchor) => void; readonly compact?: boolean }) {
+function MenuTrigger({ label, onOpen }: { readonly label: string; readonly onOpen: (anchor: KnowledgeMenuAnchor) => void }) {
   const ref = useRef<View>(null);
   return <Pressable ref={ref} accessibilityRole="button" accessibilityLabel={label} accessibilityHint="Opens actions" onPress={() => {
     const trigger = ref.current;
     if (!trigger) return;
     trigger.measureInWindow((x, y, width, height) => onOpen({ x, y, width, height, trigger }));
-  }} style={compact ? s.itemMenu : s.basketMenu}>
-    <Icon name="more" size={compact ? 14 : 17} />
+  }} style={s.basketMenu}>
+    <Icon name="more" size={17} />
   </Pressable>;
 }
 
-function ItemCard({ item, onOpen, onMenu, uoms, priorities, catalogState }: {
+function ItemCard({ item, onOpen, onEdit, uoms, priorities, catalogState }: {
   readonly item: KnowledgeItemListItem;
   readonly onOpen: (id: string) => void;
-  readonly onMenu: KnowledgeBasketCarouselProps["onItemMenu"];
+  readonly onEdit?: (item: KnowledgeItemListItem) => void;
   readonly uoms: readonly KnowledgeMaster[];
   readonly priorities: readonly KnowledgeMaster[];
   readonly catalogState: CatalogState;
@@ -86,7 +88,7 @@ function ItemCard({ item, onOpen, onMenu, uoms, priorities, catalogState }: {
       </View>
       <Text numberOfLines={1} style={s.metadata}>{sections ? `${sections.complete}/${sections.applicable} · ` : ""}{unit}</Text>
     </Pressable>
-    <MenuTrigger label={`Actions for ${item.mainLineName}`} compact onOpen={anchor => onMenu(item, anchor)} />
+    {onEdit && item.status !== "archived" ? <Pressable accessibilityRole="button" accessibilityLabel={`Edit Main Line name: ${item.mainLineName} in ${item.basketName}`} accessibilityHint="Opens name editor" onPress={() => onEdit(item)} style={s.itemEdit}><Icon name="pen" size={16} /></Pressable> : null}
   </View>;
 }
 
@@ -94,18 +96,20 @@ function nearestOffset(offsets: readonly number[], x: number) {
   return offsets.reduce((closest, value, index) => Math.abs(value - x) < Math.abs(offsets[closest]! - x) ? index : closest, 0);
 }
 
-export function KnowledgeBasketCarousel({ basketId, name, items, subBaskets = [], subBasketsLoading = false, subBasketsError = false, onRetrySubBaskets, filtered = false, expanded, onToggle, onOpenItem, onItemMenu, onBasketMenu, uoms, priorities, catalogState, isLoading = false }: KnowledgeBasketCarouselProps) {
+export function KnowledgeBasketCarousel({ basketId, name, items, subBaskets = [], subBasketsLoading = false, subBasketsError = false, onRetrySubBaskets, filtered = false, expanded, onToggle, onOpenItem, onEditItem, onBasketMenu, onEditSubBasket, uoms, priorities, catalogState, isLoading = false }: KnowledgeBasketCarouselProps) {
   const track = useRef<ScrollView>(null);
   const scrollX = useRef(0);
   const [width, setWidth] = useState(0);
   const [position, setPosition] = useState(0);
   const [expandedGroupId, setExpandedGroupId] = useState<string | null>("direct");
   const groups = useMemo(() => {
-    const byId = new Map<string, { id: string; name: string; items: KnowledgeItemListItem[] }>();
-    if (!filtered) for (const group of subBaskets) byId.set(group.id, { id: group.id, name: group.name, items: [] });
+    const byId = new Map<string, { id: string; name: string; subBasket: KnowledgeSubBasket | undefined; items: KnowledgeItemListItem[] }>();
+    const records = new Map(subBaskets.map(group => [group.id, group]));
+    if (!filtered) for (const group of subBaskets) byId.set(group.id, { id: group.id, name: group.name, subBasket: group, items: [] });
     for (const item of items) {
       const id = item.subBasketId || "direct";
-      const group = byId.get(id) ?? { id, name: item.subBasketName || "Items directly under Main Basket", items: [] };
+      const record = records.get(id);
+      const group = byId.get(id) ?? { id, name: record?.name ?? item.subBasketName ?? "Items directly under Main Basket", subBasket: record, items: [] as KnowledgeItemListItem[] };
       group.items.push(item);
       byId.set(id, group);
     }
@@ -152,15 +156,14 @@ export function KnowledgeBasketCarousel({ basketId, name, items, subBaskets = []
       {subBasketsLoading ? <Text style={s.empty}>Loading Sub-Baskets…</Text> : null}
       {subBasketsError ? <Pressable accessibilityRole="button" accessibilityLabel={`Retry Sub-Baskets in ${name}`} onPress={onRetrySubBaskets} style={s.groupHeader}><Text style={s.empty}>Sub-Baskets unavailable. Retry.</Text></Pressable> : null}
       {groups.map(group => <View key={group.id} style={s.group}>
-        <Pressable accessibilityRole="button" accessibilityLabel={`${expandedGroupId === group.id ? "Collapse" : "Expand"} ${group.id === "direct" ? group.name : `Sub-Basket ${group.name}`}`} accessibilityHint={`${group.items.length} items on this page`} accessibilityState={{ expanded: expandedGroupId === group.id }} onPress={() => setExpandedGroupId(current => current === group.id ? null : group.id)} style={s.groupHeader}>
+        <View style={s.groupRow}><Pressable accessibilityRole="button" accessibilityLabel={`${expandedGroupId === group.id ? "Collapse" : "Expand"} ${group.id === "direct" ? group.name : `Sub-Basket ${group.name}`}`} accessibilityHint={`${group.items.length} items on this page`} accessibilityState={{ expanded: expandedGroupId === group.id }} onPress={() => setExpandedGroupId(current => current === group.id ? null : group.id)} style={s.groupHeader}>
           <Icon name={expandedGroupId === group.id ? "down" : "next"} size={16} />
-          <Text style={s.groupName}>{group.name}</Text>
-          <Text style={s.count}>{group.items.length} on page</Text>
-        </Pressable>
+          <Text numberOfLines={1} style={s.groupName}>{group.name}</Text>
+        </Pressable>{onEditSubBasket && group.subBasket ? <Pressable accessibilityRole="button" accessibilityLabel={`Edit Sub-Basket name: ${group.name} in ${name}`} accessibilityHint="Opens name editor" onPress={() => onEditSubBasket(group.subBasket!)} style={s.groupEdit}><Icon name="pen" size={16} /></Pressable> : null}<Text style={s.groupCount}>{group.items.length} on page</Text></View>
         {expandedGroupId === group.id ? group.items.length ? <>
       <View style={s.carousel}>
         <ScrollView ref={track} testID={`basket-carousel-${basketId}-${group.id}`} horizontal showsHorizontalScrollIndicator={false} onLayout={event => setWidth(event.nativeEvent.layout.width)} onScroll={onScroll} scrollEventThrottle={32} snapToOffsets={offsets} decelerationRate="fast" contentContainerStyle={s.track}>
-          {visibleItems.map(item => <ItemCard key={item.mainLineId} item={item} onOpen={onOpenItem} onMenu={onItemMenu} uoms={uoms} priorities={priorities} catalogState={catalogState} />)}
+          {visibleItems.map(item => <ItemCard key={item.mainLineId} item={item} onOpen={onOpenItem} {...(onEditItem ? { onEdit: onEditItem } : {})} uoms={uoms} priorities={priorities} catalogState={catalogState} />)}
         </ScrollView>
         {offsets.length > 1 ? <>
           <Pressable accessibilityRole="button" accessibilityLabel={`Previous items in ${name}`} accessibilityState={{ disabled: position === 0 }} disabled={position === 0} onPress={() => moveTo(position - 1)} style={[s.arrow, s.previous, position === 0 && s.disabled]}><View style={s.arrowCircle}><Icon name="previous" size={16} /></View></Pressable>
@@ -185,15 +188,18 @@ const s = StyleSheet.create({
   count: { fontFamily: fonts.medium, fontSize: 10, lineHeight: 16, color: colors.inkMuted, paddingHorizontal: 6, paddingVertical: 2, backgroundColor: colors.surfaceMuted, borderRadius: 4 },
   basketMenu: { width: 44, minHeight: 44, alignItems: "center", justifyContent: "center" },
   group: { marginHorizontal: 8, marginBottom: 6, borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
-  groupHeader: { minHeight: 42, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
-  groupName: { flex: 1, minWidth: 0, color: colors.ink, fontFamily: fonts.medium, fontSize: 13 },
+  groupRow: { flexDirection: "row", alignItems: "center" },
+  groupHeader: { flexShrink: 1, minWidth: 0, minHeight: 44, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 12 },
+  groupName: { flexShrink: 1, minWidth: 0, color: colors.ink, fontFamily: fonts.medium, fontSize: 13 },
+  groupEdit: { width: 44, minHeight: 44, justifyContent: "center", alignItems: "center" },
+  groupCount: { fontFamily: fonts.medium, fontSize: 10, lineHeight: 16, color: colors.inkMuted, paddingHorizontal: 6, paddingVertical: 2, backgroundColor: colors.surfaceMuted, borderRadius: 4, marginLeft: "auto", marginRight: 8 },
   carousel: { position: "relative" },
   track: { paddingHorizontal: TRACK_INSET, gap: CARD_GAP, paddingBottom: 4 },
   card: { width: CARD_WIDTH, minHeight: 170, backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: 5 },
   cardContent: { padding: 8, flex: 1 },
   thumbnail: { width: "100%", height: 66, borderRadius: 3, marginBottom: 7 },
   itemTitle: { fontFamily: fonts.semibold, fontSize: 11.5, lineHeight: 16, minHeight: 32, paddingRight: 38, color: colors.ink },
-  itemMenu: { position: "absolute", top: 76, right: 0, width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  itemEdit: { position: "absolute", top: 76, right: 0, width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   itemState: { fontFamily: fonts.regular, fontSize: 10, lineHeight: 15, color: colors.inkMuted, marginTop: 1 },
   temporary: { alignSelf: "flex-start", maxWidth: "100%", marginTop: 1, paddingHorizontal: 4, borderRadius: 2, backgroundColor: colors.surfaceMuted },
   temporaryLabel: { fontFamily: fonts.medium, fontSize: 9, lineHeight: 15, color: colors.ink },
