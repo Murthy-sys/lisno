@@ -1,0 +1,37 @@
+# Estimator recommendation reference alert: task plan
+
+Date: 2026-10-04
+Status: Revised task plan approved by the user and executed locally in Mode A on 2026-10-04
+Approved revised specification: [Estimator recommendation alert based on the supplied reference](../specs/2026-10-04-estimator-recommendation-reference-alert-design.md), approved by the user on 2026-10-04
+
+## Delivery boundary
+
+Replace the current wide right-side recommendation slide-out with the approved **compact centered modal**, retaining the reference-style single-target alert card. Preserve the compact in-page entry alert, configured add-on semantics, guarded selection, and the automatic source-uncheck rule. The earlier presentation and `automaticDismissal` prop wiring are already present in the uncommitted worktree; this plan covers the user's placement and density correction plus integrated verification. This is a frontend-only change; no recommendation API, finance, persistence, migration, dependency, or deployment work is planned.
+
+The worktree is already dirty from prior approved recommendation work. Before editing, record `git status --short` and inspect the current diff/content of each assigned target. Preserve all existing changes and unrelated files. The plan and specification remain separate durable documents.
+
+## Dependency-ordered tasks
+
+1. **Freeze the revised modal contract and baseline.** Inspect the current uncommitted `EstimatorRecommendations` component/tests, recommendation CSS, and workspace integration tests before writers start. Use the shared `frontend/src/components/ui/Dialog.tsx` primitive, conditionally mounted while `open`; it already supplies a centered overlay, focus containment/return, backdrop and Escape handling. Keep `onClose`, `onSelect`, and the wired `automaticDismissal` prop unchanged. Set an explicit eyebrow because Dialog otherwise defaults to “Designer workflow.” Owner: primary integrator. Acceptance: the Dialog remains accessible, only one visible card header and close control appear, and all close routes still reach the existing workspace handler.
+2. **Move the alert card into a compact modal.** In `frontend/src/features/leads/EstimatorRecommendations.tsx`, replace the `Drawer` wrapper with conditional `Dialog` rendering while retaining the card's single-target navigation, configured reason, guarded Add, Not now, X, selected/refetch feedback, and exceptional states. Hide the primitive's generic visible header only within this recommendation instance, or use it without duplicating the card header. Remove the stale drawer `aria-controls` reference from the in-page Review button. Update `frontend/src/features/leads/EstimatorRecommendations.test.tsx` for the centered Dialog and focus/close behavior. Owner in the already selected Mode A: presentation agent; ownership includes only those two files. Acceptance: the card is a modal, not an edge drawer, and every eligible main-line target remains reachable.
+3. **Make the card visually compact.** Update recommendation-scoped selectors in `frontend/src/styles/estimator-dashboard.css`, including a scoped override for `.ui-dialog.modal` containing recommendation content; do not edit shared Dialog or global modal styles. Target a centered 520–560 px maximum desktop width, 16–20 px padding, smaller heading/body/label/action typography, 44 px controls, no shadow, and a two-column comparison that stacks at narrow widths. Keep supplemental guidance brief or collapsible and constrain height for 390 px. Owner in Mode A: same presentation agent as task 2. Acceptance: no full-screen sheet, side slide, clipping, or horizontal overflow at desktop and 390 px.
+4. **Reconcile integrated interaction tests.** Update `frontend/src/features/leads/LeadEstimateRecommendations.test.tsx` for the Dialog's accessible name, backdrop, Escape, custom X, Not now, Add, focus return, automatic rollback, manual Review, unrelated-room preservation, and multiple-target navigation. Preserve the current `LeadEstimateWorkspace.tsx` and `ConfiguredEstimateBuilder.tsx` mutation and dismissal logic unless a concrete regression requires a small fix owned by the primary integrator. Owner in Mode A: separate workflow-test agent; in Mode B: primary thread. Acceptance: explicit selection is room-scoped; closing without a linked choice unchecks only applicable newly checked sources; manual close preserves them.
+5. **Integrate and verify.** Primary integrator reviews the complete diff and resolves test/contract discrepancies after writers finish. Run focused `EstimatorRecommendations.test.tsx`, `LeadEstimateRecommendations.test.tsx`, `LeadEstimateWorkspace.test.tsx`, and `roomRecommendations.test.ts`, then frontend typecheck and build. Perform rendered desktop and 390 px interaction/accessibility checks on the synthetic estimator page, including centered placement, compact size, keyboard focus, actions, close routes, long labels, and no overflow or console/network errors. Run `git diff --check` and `git status --short`; report exact checks and any unrun broader suites. A read-only integrity reviewer and final verification runner may inspect the integrated result in Mode A after writers finish.
+
+## Parallel work and ownership
+
+The user already selected Mode A for this alert; that choice persists for the revised implementation. Once task 1 fixes the Dialog presentation contract, tasks 2 plus 3 can run as one presentation slice while task 4 runs as a separate integration-test slice. These slices edit disjoint files. The primary integrator owns any necessary cross-file fix and final reconciliation. A read-only integrity check follows implementation, and final verification follows any fixes.
+
+## Acceptance trace
+
+- **Reference composition and compact centered placement:** tasks 2 and 3; component assertions plus rendered desktop/mobile review.
+- **Truthful configured relationship and multiple targets:** task 2; focused tests for POP ceiling to painting and lights, optional wording, deduplication, Sub Basket children, and navigation.
+- **Selection and dismissal:** tasks 2 and 4; component and workspace interaction tests, including automatic versus manual close and failure/stale guards.
+- **Exceptional states and accessibility:** tasks 2, 3, and 5; focused state tests and keyboard/responsive visual checks.
+- **Repository preservation:** task 1 and task 5; scoped diff review and hygiene commands.
+
+## Execution record
+
+The recommendation card now uses the shared centered Dialog with a compact, scoped presentation. The workspace's existing automatic dismissal safeguard and guarded Add path remain in place. An integrity review identified and resolved stale advice in exceptional states and a duplicate banner landmark.
+
+Final integrated verification passed 83/83 focused frontend tests across the recommendation, workspace, and rule helper suites, plus frontend typecheck, frontend build, and `git diff --check`. Synthetic browser checks at 1280×720 and 390×844 showed a centered modal, contained focus, no horizontal overflow, and no console errors. The accessibility scan reported no violations; it marked some contrast nodes inconclusive against the overlay, so the actual text/background pairs were checked separately and exceed 4.5:1. The complete frontend and backend test suites and live-data save flow were not run for this presentation revision. No deployment, production mutation, staging, or commit was performed.

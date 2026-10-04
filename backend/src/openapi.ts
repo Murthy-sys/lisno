@@ -220,6 +220,7 @@ const operationsWithoutBodies = new Set<string>([
 
 const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "GET /estimation/catalogue": "EstimatorCataloguePage",
+  "GET /estimation/catalogue/recommendations": "EstimatorCatalogueRecommendationRead",
   "GET /client/estimates": "ClientEstimateReviewList",
   "POST /client/estimates/:estimateId/decision": "ClientEstimateReviewItem",
   ...CHAT_RESPONSE_SCHEMAS,
@@ -345,6 +346,7 @@ const storedAttachmentContentTypes = [
 
 const operationSummaries: Readonly<Record<string, string>> = {
   "GET /estimation/catalogue": "Read the estimator Main Basket catalogue",
+  "GET /estimation/catalogue/recommendations": "Read selected catalogue Main Line recommendations",
   "GET /health": "Check API health",
   "GET /procurement/vendor-kpis/:vendorId": "Read vendor profile and KPI assessments",
   "PUT /procurement/vendor-kpis/:vendorId/procurement": "Save Procurement's official vendor assessment",
@@ -585,6 +587,15 @@ const queryParametersByOperation: Readonly<
     { name: "includeReadyNonActive", in: "query", required: false,
       schema: { type: "string", enum: ["true", "false"], default: "false" },
       description: "Opt in to Draft and Inactive items with complete Overview and Mode tabs. Omit for the Active-only catalogue." }
+  ],
+  "GET /estimation/catalogue/recommendations": [
+    { name: "mainLineIds", in: "query", required: true, style: "form", explode: false,
+      schema: { type: "array", minItems: 1, maxItems: 50, uniqueItems: true,
+        items: { type: "string", minLength: 1, maxLength: 240, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$" } },
+      description: "Comma-separated distinct Main Line IDs selected in the active estimator room." },
+    { name: "includeReadyNonActive", in: "query", required: false,
+      schema: { type: "string", enum: ["true", "false"], default: "false" },
+      description: "Use the same Draft and Inactive readiness policy as the opted-in estimator catalogue." }
   ],
   "GET /client/estimates/:estimateId/design-plan-documents": [{
     name: "roundId", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 200 },
@@ -2254,6 +2265,53 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         pagination: { $ref: "#/components/schemas/Pagination" },
         ineligibleLineCount: { type: "integer", minimum: 0, description: "Queried Main Lines or temporary items omitted from this page because they lack eligible hierarchy, source revision, readiness where required, or UOM." }
       }
+    },
+    EstimatorCatalogueRecommendationChild: {
+      type: "object", additionalProperties: false,
+      required: ["mainLineId", "available", "completionRequired", "revisionId", "revisionVersion", "itemVersion"],
+      properties: { mainLineId: { type: "string" }, available: { type: "boolean", enum: [true] },
+        completionRequired: { type: "boolean" }, revisionId: { type: "string" },
+        revisionVersion: { type: "integer", minimum: 1 }, itemVersion: { type: "integer", minimum: 1 } }
+    },
+    EstimatorCatalogueRecommendationRule: {
+      type: "object", additionalProperties: false,
+      required: ["id", "requirement", "reason", "targetKind", "targetBasketId", "targetSubBasketId",
+        "targetMainLineId", "available", "completionRequired", "targetRevisionId",
+        "targetRevisionVersion", "targetItemVersion"],
+      properties: {
+        id: { type: "string" }, requirement: { type: "string", enum: ["must", "can"] },
+        reason: { type: "string" }, targetKind: { type: "string", enum: ["main_line", "sub_basket"] },
+        targetBasketId: { type: "string" }, targetSubBasketId: { type: "string", nullable: true },
+        targetMainLineId: { type: "string", nullable: true }, available: { type: "boolean" },
+        completionRequired: { type: "boolean" },
+        targetRevisionId: { type: "string", nullable: true },
+        targetRevisionVersion: { type: "integer", minimum: 1, nullable: true },
+        targetItemVersion: { type: "integer", minimum: 1, nullable: true },
+        children: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueRecommendationChild" },
+          description: "Eligible child identities for a whole Sub-Basket target only. No unavailable child identities or names are returned." },
+        unavailableChildCount: { type: "integer", minimum: 0,
+          description: "Whole Sub-Basket children omitted by current catalogue eligibility, without their identities." }
+      }
+    },
+    EstimatorCatalogueRecommendationGuidance: {
+      type: "object", additionalProperties: false, required: ["id", "name", "reason"],
+      properties: { id: { type: "string" }, name: { type: "string" }, reason: { type: "string" } }
+    },
+    EstimatorCatalogueRecommendationSource: {
+      type: "object", additionalProperties: false,
+      required: ["mainLineId", "available", "revisionId", "revisionVersion", "itemVersion", "rules", "guidance"],
+      properties: {
+        mainLineId: { type: "string" }, available: { type: "boolean" },
+        revisionId: { type: "string", nullable: true }, revisionVersion: { type: "integer", minimum: 1, nullable: true },
+        itemVersion: { type: "integer", minimum: 1, nullable: true },
+        rules: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueRecommendationRule" } },
+        guidance: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueRecommendationGuidance" } }
+      }
+    },
+    EstimatorCatalogueRecommendationRead: {
+      type: "object", additionalProperties: false, required: ["sources"],
+      properties: { sources: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueRecommendationSource" },
+        description: "One result per requested Main Line ID, in request order; unavailable sources reveal no Configuration content." } }
     },
     LegacyEstimateLineInput: {
       type: "object",

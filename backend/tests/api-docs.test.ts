@@ -42,6 +42,24 @@ describe("OpenAPI and Swagger UI", () => {
     expect(schemas.ClientEstimateSnapshot).toHaveProperty(
       "properties.lineItems.items.properties.sourceItemVersion.minimum", 1
     );
+    const recommendations = paths["/estimation/catalogue/recommendations"]!.get!;
+    expect(recommendations["x-lisno-permission"]).toBe("estimation.catalogue.read");
+    expect(recommendations.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "mainLineIds", in: "query", required: true,
+        schema: expect.objectContaining({ minItems: 1, maxItems: 50, uniqueItems: true }) }),
+      expect.objectContaining({ name: "includeReadyNonActive", in: "query",
+        schema: expect.objectContaining({ default: "false" }) })
+    ]));
+    expect(recommendations.responses["2XX"].content["application/json"].schema.properties.data.$ref)
+      .toBe("#/components/schemas/EstimatorCatalogueRecommendationRead");
+    expect(schemas.EstimatorCatalogueRecommendationRule).not.toHaveProperty("properties.targetType");
+    expect(schemas.EstimatorCatalogueRecommendationSource).not.toHaveProperty("properties.name");
+    expect(schemas.EstimatorCatalogueRecommendationRule!.required).toEqual(expect.arrayContaining([
+      "targetRevisionId", "targetRevisionVersion", "targetItemVersion"
+    ]));
+    expect(schemas.EstimatorCatalogueRecommendationChild!.required).toEqual(expect.arrayContaining([
+      "revisionId", "revisionVersion", "itemVersion"
+    ]));
   });
 
   it("documents procurement approval, vendor handoff, Client review and final completion contracts", () => {
@@ -806,7 +824,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 319 routes without versioning paths twice", () => {
+  it("contains all 320 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -815,7 +833,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 17);
-    expect(operationCount).toBe(319);
+    expect(operationCount).toBe(320);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);

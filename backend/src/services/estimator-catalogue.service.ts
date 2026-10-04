@@ -1,5 +1,6 @@
 import type mongoose from "mongoose";
 
+import { normalizeKnowledgeBudgetAlterationTarget } from "../domain/ai-estimator-knowledge-recommendation.js";
 import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../models/AiEstimatorKnowledgeMainLine.js";
@@ -53,20 +54,47 @@ type ResolvedEstimatorCatalogueLine = {
 const order = (left: { displayOrder: number; id: string }, right: { displayOrder: number; id: string }) =>
   left.displayOrder - right.displayOrder || left.id.localeCompare(right.id);
 
+type RecommendationRule = {
+  id: string;
+  requirement: "must" | "can";
+  reason: string;
+  targetKind: "main_line" | "sub_basket";
+  targetBasketId: string;
+  targetSubBasketId: string | null;
+  targetMainLineId: string | null;
+  available: boolean;
+  completionRequired: boolean;
+  targetRevisionId: string | null;
+  targetRevisionVersion: number | null;
+  targetItemVersion: number | null;
+  children?: { mainLineId: string; available: true; completionRequired: boolean;
+    revisionId: string; revisionVersion: number; itemVersion: number }[];
+  unavailableChildCount?: number;
+};
+
+type SavedRecommendationRule = Omit<RecommendationRule,
+  "available" | "completionRequired" | "targetRevisionId" | "targetRevisionVersion" | "targetItemVersion" |
+  "children" | "unavailableChildCount"> & { targetType: "catalog" | "temporary" | null };
+
+type RecommendationGuidance = { id: string; name: string; reason: string };
+
+export interface EstimatorCatalogueRecommendationSource {
+  mainLineId: string;
+  available: boolean;
+  revisionId: string | null;
+  revisionVersion: number | null;
+  itemVersion: number | null;
+  rules: RecommendationRule[];
+  guidance: RecommendationGuidance[];
+}
+
 /** Only the combined in-house base rate is projected; source cost details stay in Configuration. */
 export async function listEstimatorCatalogue(
   actor: PublicUser,
   pagination: { limit: number; offset: number },
   includeReadyNonActive = false
 ) {
-  if (actor.role !== "estimator_sales" && actor.role !== "super_admin") {
-    throw new ApiError(403, "FORBIDDEN", "You are not authorized to read the estimator catalogue.");
-  }
-  const activeActor = await UserModel.exists({ _id: actor.id, role: actor.role, active: true });
-  if (!activeActor) throw new ApiError(403, "FORBIDDEN", "Your account is no longer active.");
-  if (actor.role === "super_admin" && await UserModel.countDocuments({ role: "super_admin", active: true }) !== 1) {
-    throw new ApiError(409, "SOLE_SUPER_ADMIN_REQUIRED", "Exactly one active Super Admin is required.");
-  }
+  await assertCatalogueReadActor(actor);
 
   const [baskets, total] = await Promise.all([
     AiEstimatorKnowledgeBasketModel.find({ status: "active" })
@@ -130,6 +158,193 @@ export async function listEstimatorCatalogue(
     pagination: { ...pagination, total, hasMore: pagination.offset + items.length < total },
     ineligibleLineCount
   };
+}
+
+/** Return only selected source relationships, using the catalogue's exact revision and eligibility policy. */
+export async function listEstimatorCatalogueRecommendations(
+  actor: PublicUser,
+  mainLineIds: readonly string[],
+  includeReadyNonActive = false
+): Promise<{ sources: EstimatorCatalogueRecommendationSource[] }> {
+  await assertCatalogueReadActor(actor);
+  const sourceRaw = await AiEstimatorKnowledgeMainLineModel.find({
+    _id: { $in: mainLineIds },
+    status: includeReadyNonActive ? { $in: ["active", "draft", "inactive"] } : "active"
+  }).select({ _id: 1, basketId: 1, subBasketId: 1, name: 1, displayOrder: 1,
+    itemType: 1, status: 1, version: 1, activeRevisionId: 1, draftRevisionId: 1 }).lean().exec();
+  const sources = await eligibleCatalogueLines(sourceRaw);
+  const revisions = [...new Set([...sources.values()].map((line) => line.revisionId))];
+  const sections = revisions.length === 0 ? [] : await AiEstimatorKnowledgeSectionModel.find({
+    revisionId: { $in: revisions }, sectionKey: "recommendations"
+  }).select({ revisionId: 1, mainLineId: 1, payload: 1 }).lean().exec();
+  const sectionByRevision = new Map(sections.map((section) => [String(section.revisionId), section]));
+  const rulesBySource = new Map<string, SavedRecommendationRule[]>();
+  const guidanceBySource = new Map<string, RecommendationGuidance[]>();
+  for (const [id, line] of sources) {
+    const section = sectionByRevision.get(line.revisionId);
+    if (!section || String(section.mainLineId) !== id) continue;
+    const payload = asObject(section.payload);
+    rulesBySource.set(id, Array.isArray(payload?.budgetAlterations)
+      ? payload.budgetAlterations.flatMap(parseAddedRecommendationRule) : []);
+    guidanceBySource.set(id, Array.isArray(payload?.recommendations)
+      ? payload.recommendations.flatMap(parseRecommendationGuidance) : []);
+  }
+  const allRules = [...rulesBySource.values()].flat();
+  const directIds = [...new Set(allRules.flatMap((rule) => rule.targetMainLineId ? [rule.targetMainLineId] : []))];
+  const groupIds = [...new Set(allRules.flatMap((rule) => rule.targetKind === "sub_basket" && rule.targetSubBasketId
+    ? [rule.targetSubBasketId] : []))];
+  const groupBasketIds = [...new Set(allRules.flatMap((rule) => rule.targetKind === "sub_basket"
+    ? [rule.targetBasketId] : []))];
+  const groupIdSet = new Set(groupIds);
+  const [directRaw, groupRaw, groupSubBaskets] = await Promise.all([
+    directIds.length
+      ? AiEstimatorKnowledgeMainLineModel.find({ _id: { $in: directIds } })
+        .select({ _id: 1, basketId: 1, subBasketId: 1, name: 1, displayOrder: 1,
+          itemType: 1, status: 1, version: 1, activeRevisionId: 1, draftRevisionId: 1 }).lean().exec()
+      : Promise.resolve([]),
+    groupIds.length
+      ? AiEstimatorKnowledgeMainLineModel.find({
+          basketId: { $in: groupBasketIds }, subBasketId: { $in: groupIds }
+        }).select({ _id: 1, basketId: 1, subBasketId: 1, name: 1, displayOrder: 1,
+          itemType: 1, status: 1, version: 1, activeRevisionId: 1, draftRevisionId: 1 }).lean().exec()
+      : Promise.resolve([]),
+    groupIds.length
+      ? AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: groupIds } })
+          .select({ _id: 1, basketId: 1 }).lean().exec()
+      : Promise.resolve([])
+  ]);
+  const targetRaw = [...new Map([...directRaw, ...groupRaw].map((line) => [String(line._id), line])).values()];
+  const eligibleTargets = await eligibleCatalogueLines(targetRaw.filter((line) =>
+    line.status === "active" || (includeReadyNonActive && (line.status === "draft" || line.status === "inactive"))));
+  const groupById = new Map(groupSubBaskets.map((group) => [String(group._id), group]));
+  const rawChildrenByGroup = new Map<string, typeof targetRaw>();
+  for (const raw of groupRaw) {
+    const groupId = raw.subBasketId == null ? null : String(raw.subBasketId);
+    if (!groupId || !groupIdSet.has(groupId) ||
+      String(raw.basketId) !== String(groupById.get(groupId)?.basketId)) continue;
+    const children = rawChildrenByGroup.get(groupId) ?? [];
+    children.push(raw);
+    rawChildrenByGroup.set(groupId, children);
+  }
+  return { sources: mainLineIds.map((mainLineId) => {
+    const source = sources.get(mainLineId);
+    if (!source) return { mainLineId, available: false, revisionId: null, revisionVersion: null,
+      itemVersion: null, rules: [], guidance: [] };
+    return {
+      mainLineId, available: true, revisionId: source.revisionId,
+      revisionVersion: source.revisionVersion, itemVersion: source.itemVersion,
+      rules: (rulesBySource.get(mainLineId) ?? []).map((rule): RecommendationRule => {
+        if (rule.targetKind === "main_line") {
+          const target = eligibleTargets.get(rule.targetMainLineId!);
+          const available = Boolean(target && target.basketId === rule.targetBasketId &&
+            target.subBasketId === rule.targetSubBasketId &&
+            (target.itemType === "temporary" ? "temporary" : "catalog") === rule.targetType);
+          return { ...withoutTargetType(rule), available,
+            completionRequired: available && target?.itemType === "temporary",
+            targetRevisionId: available ? target!.revisionId : null,
+            targetRevisionVersion: available ? target!.revisionVersion : null,
+            targetItemVersion: available ? target!.itemVersion : null };
+        }
+        const groupId = rule.targetSubBasketId!;
+        const group = groupById.get(groupId);
+        if (!group || String(group.basketId) !== rule.targetBasketId) {
+          return { ...withoutTargetType(rule), available: false, completionRequired: true,
+            targetRevisionId: null, targetRevisionVersion: null, targetItemVersion: null,
+            children: [], unavailableChildCount: 0 };
+        }
+        const rawChildren = rawChildrenByGroup.get(groupId) ?? [];
+        const children = rawChildren.flatMap((raw) => {
+          const child = eligibleTargets.get(String(raw._id));
+          return child && child.basketId === rule.targetBasketId && child.subBasketId === groupId
+            ? [{ mainLineId: child.mainLineId, available: true as const,
+                completionRequired: child.itemType === "temporary", revisionId: child.revisionId,
+                revisionVersion: child.revisionVersion, itemVersion: child.itemVersion }] : [];
+        }).sort((left, right) => {
+          const first = eligibleTargets.get(left.mainLineId)!;
+          const second = eligibleTargets.get(right.mainLineId)!;
+          return order(first, second);
+        });
+        const unavailableChildCount = rawChildren.length - children.length;
+        return { ...withoutTargetType(rule), available: children.length > 0,
+          completionRequired: children.length === 0 || unavailableChildCount > 0 ||
+            children.some((child) => child.completionRequired),
+          targetRevisionId: null, targetRevisionVersion: null, targetItemVersion: null,
+          children, unavailableChildCount };
+      }),
+      guidance: guidanceBySource.get(mainLineId) ?? []
+    };
+  }) };
+}
+
+async function assertCatalogueReadActor(actor: PublicUser): Promise<void> {
+  if (actor.role !== "estimator_sales" && actor.role !== "super_admin") {
+    throw new ApiError(403, "FORBIDDEN", "You are not authorized to read the estimator catalogue.");
+  }
+  const activeActor = await UserModel.exists({ _id: actor.id, role: actor.role, active: true });
+  if (!activeActor) throw new ApiError(403, "FORBIDDEN", "Your account is no longer active.");
+  if (actor.role === "super_admin" && await UserModel.countDocuments({ role: "super_admin", active: true }) !== 1) {
+    throw new ApiError(409, "SOLE_SUPER_ADMIN_REQUIRED", "Exactly one active Super Admin is required.");
+  }
+}
+
+async function eligibleCatalogueLines(rawLines: Parameters<typeof projectLines>[0]): Promise<Map<string, EstimatorCatalogueLine>> {
+  if (rawLines.length === 0) return new Map();
+  const basketIds = [...new Set(rawLines.map((line) => String(line.basketId)))];
+  const subBasketIds = [...new Set(rawLines.flatMap((line) => line.subBasketId ? [String(line.subBasketId)] : []))];
+  const [baskets, subBaskets, projected] = await Promise.all([
+    AiEstimatorKnowledgeBasketModel.find({ _id: { $in: basketIds }, status: "active" })
+      .select({ _id: 1 }).lean().exec(),
+    AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: subBasketIds } })
+      .select({ _id: 1, basketId: 1 }).lean().exec(),
+    projectLines(rawLines)
+  ]);
+  const activeBasketIds = new Set(baskets.map((basket) => String(basket._id)));
+  const subBasketById = new Map(subBaskets.map((subBasket) => [String(subBasket._id), String(subBasket.basketId)]));
+  for (const [id, line] of projected) {
+    if (!activeBasketIds.has(line.basketId) ||
+      (line.subBasketId !== null && subBasketById.get(line.subBasketId) !== line.basketId)) projected.delete(id);
+  }
+  return projected;
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function parseAddedRecommendationRule(value: unknown): SavedRecommendationRule[] {
+  const row = asObject(value);
+  if (!row || row.active !== true || row.trigger !== "added" || row.action !== "add" ||
+    (row.requirement !== "must" && row.requirement !== "can")) return [];
+  const target = normalizeKnowledgeBudgetAlterationTarget(row);
+  if (!target || typeof row.id !== "string" || !row.id || typeof row.reason !== "string" || !row.reason.trim() ||
+    typeof row.targetBasketId !== "string" || !row.targetBasketId) return [];
+  if (target.targetKind === "sub_basket") {
+    if (typeof row.targetSubBasketId !== "string" || !row.targetSubBasketId || row.targetMainLineId !== null || row.targetType !== null) return [];
+    return [{ id: row.id, requirement: row.requirement, reason: row.reason,
+      targetKind: "sub_basket", targetBasketId: row.targetBasketId,
+      targetSubBasketId: row.targetSubBasketId, targetMainLineId: null, targetType: null }];
+  }
+  if (typeof row.targetMainLineId !== "string" || !row.targetMainLineId ||
+    (row.targetSubBasketId !== null && typeof row.targetSubBasketId !== "string") ||
+    (row.targetType !== "catalog" && row.targetType !== "temporary")) return [];
+  return [{ id: row.id, requirement: row.requirement, reason: row.reason,
+    targetKind: "main_line", targetBasketId: row.targetBasketId,
+    targetSubBasketId: row.targetSubBasketId, targetMainLineId: row.targetMainLineId,
+    targetType: row.targetType }];
+}
+
+function parseRecommendationGuidance(value: unknown): RecommendationGuidance[] {
+  const row = asObject(value);
+  return row?.active === true && typeof row.id === "string" && row.id &&
+    typeof row.name === "string" && row.name.trim()
+    ? [{ id: row.id, name: row.name, reason: typeof row.reason === "string" ? row.reason : "" }] : [];
+}
+
+function withoutTargetType(rule: SavedRecommendationRule): Omit<RecommendationRule,
+  "available" | "completionRequired" | "targetRevisionId" | "targetRevisionVersion" |
+  "targetItemVersion" | "children" | "unavailableChildCount"> {
+  const { targetType: _targetType, ...projected } = rule;
+  return projected;
 }
 
 /** Resolve only newly selected rows in the save transaction; saved snapshots never re-resolve. */

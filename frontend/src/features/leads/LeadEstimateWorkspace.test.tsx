@@ -246,8 +246,8 @@ describe("LeadEstimateWorkspace", () => {
       <Link to="/estimator-sales/leads/lead-b/estimate">Next lead</Link>
       <Routes><Route path="/estimator-sales/leads/:leadId/estimate" element={<LeadEstimateWorkspace />} /></Routes>
     </MemoryRouter>);
-    expect(await screen.findByText("Wardrobe carcass")).toBeVisible();
-    expect(screen.getByRole("region", { name: "Saved items unavailable in current Configuration" })).toBeVisible();
+    const unavailableSaved = await screen.findByRole("region", { name: "Saved items unavailable in current Configuration" });
+    expect(within(unavailableSaved).getByText("Wardrobe carcass")).toBeVisible();
     await user.click(screen.getByRole("link", { name: "Next lead" }));
     expect(await screen.findByRole("heading", { name: "Configure estimate" })).toBeVisible();
     expect(screen.queryByText("Wardrobe carcass")).not.toBeInTheDocument();

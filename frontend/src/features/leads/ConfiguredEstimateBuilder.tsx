@@ -1,10 +1,12 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 
 import ceilingImage from "../../assets/project-card-default.jpg";
 import interiorImage from "../../assets/projects-living-room.webp";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
 import { configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredQuantityUnits, parseSellingRate, type ConfiguredLineDraft } from "./configuredEstimate";
+import { EstimatorRecommendations, type RecommendationReadState } from "./EstimatorRecommendations";
+import type { RoomRecommendationView, RecommendedLineTarget } from "./roomRecommendations";
 
 interface Room {
   id: string;
@@ -34,7 +36,11 @@ const itemCount = (count: number) => `${count} ${count === 1 ? "item" : "items"}
 
 export function ConfiguredEstimateBuilder({
   rooms, activeRoomId, onSelectRoom, catalogue, selectedMainBasketIds, lines,
-  onUpdateLine, onRefreshAvailableItems, refreshingAvailableItems, roomTotal, moneyPaise, editable
+  onUpdateLine, onRefreshAvailableItems, refreshingAvailableItems, roomTotal, moneyPaise, editable,
+  recommendationSourceCount = 0, recommendationState = "ready", recommendationView = null,
+  recommendationDialogOpen = false, automaticDismissal = false,
+  onOpenRecommendations = () => {}, onCloseRecommendations = () => {},
+  onRetryRecommendations = () => {}, onSelectRecommendedLine = () => false
 }: {
   rooms: readonly Room[];
   activeRoomId: string;
@@ -49,13 +55,26 @@ export function ConfiguredEstimateBuilder({
   roomIcons: Record<string, LucideIcon>;
   moneyPaise: (value: number) => string;
   editable: boolean;
+  recommendationSourceCount?: number;
+  recommendationState?: RecommendationReadState;
+  recommendationView?: RoomRecommendationView | null;
+  recommendationDialogOpen?: boolean;
+  automaticDismissal?: boolean;
+  onOpenRecommendations?: () => void;
+  onCloseRecommendations?: () => void;
+  onRetryRecommendations?: () => void;
+  onSelectRecommendedLine?: (target: RecommendedLineTarget) => boolean | void;
 }) {
   const [search, setSearch] = useState("");
+  const recommendationFallbackFocusRef = useRef<HTMLInputElement>(null);
   const [basketFilter, setBasketFilter] = useState("all");
   const [railView, setRailView] = useState<"section" | "selected">("section");
   const selectedCount = lines.filter((line) => line.included).length;
   const visibleRooms = railView === "selected" ? rooms.filter((room) => lines.some((line) => line.roomId === room.id && line.included)) : rooms;
   const activeRoom = visibleRooms.find((room) => room.id === activeRoomId) ?? visibleRooms[0];
+  useEffect(() => {
+    if (activeRoom && activeRoom.id !== activeRoomId) onSelectRoom(activeRoom.id);
+  }, [activeRoom?.id, activeRoomId, onSelectRoom]);
   const roomLines = lines.filter((line) => line.roomId === activeRoom?.id);
   const mainBasketRefs = useRef<Map<string, HTMLElement>>(new Map());
   const [collapsedBasketIds, setCollapsedBasketIds] = useState<Set<string>>(() => new Set());
@@ -117,10 +136,27 @@ export function ConfiguredEstimateBuilder({
     else next.add(id);
     return next;
   });
+  const selectRecommendedLine = (target: RecommendedLineTarget) => {
+    const accepted = onSelectRecommendedLine(target);
+    if (accepted === false) return false;
+    setSearch("");
+    setBasketFilter("all");
+    setCollapsedBasketIds((current) => {
+      const next = new Set(current);
+      next.delete(target.basketId);
+      return next;
+    });
+    if (target.subBasketId) setCollapsedSubBasketIds((current) => {
+      const next = new Set(current);
+      next.delete(`${target.basketId}:${target.subBasketId}`);
+      return next;
+    });
+    return accepted;
+  };
 
   return <div className="configured-estimate-builder">
     <div className="configured-estimate-builder__toolbar">
-      <label className="configured-estimate-builder__search"><BuilderGlyph name="search" /><span className="sr-only">Search estimate items</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search items, materials, or keywords..." /></label>
+      <label className="configured-estimate-builder__search"><BuilderGlyph name="search" /><span className="sr-only">Search estimate items</span><input ref={recommendationFallbackFocusRef} type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search items, materials, or keywords..." /></label>
       <label className="configured-estimate-builder__filter"><BuilderGlyph name="section" /><span className="sr-only">Filter Main Baskets</span><select value={basketFilter} onChange={(event) => setBasketFilter(event.target.value)}><option value="all">All Sections</option>{catalogue.items.filter((basket) => selectedMainBasketIds.has(basket.id)).map((basket) => <option key={basket.id} value={basket.id}>{basket.name}</option>)}</select><BuilderGlyph name="chevron" /></label>
       <button type="button" className="configured-estimate-builder__refresh" aria-label="Refresh available items" disabled={refreshingAvailableItems} onClick={onRefreshAvailableItems}><BuilderGlyph name="refresh" />{refreshingAvailableItems ? "Refreshing…" : "Refresh items"}</button>
     </div>
@@ -138,6 +174,14 @@ export function ConfiguredEstimateBuilder({
       {unavailableSaved.length ? <button type="button" onClick={() => jumpToBasket("saved-items")}>Saved items</button> : null}
       {unavailableNew.length ? <button type="button" onClick={() => jumpToBasket("unavailable-selections")}>Unavailable selections</button> : null}
     </nav>
+      {activeRoom ? <EstimatorRecommendations
+        roomName={activeRoom.label} sourceCount={activeRoom.id === activeRoomId ? recommendationSourceCount : 0}
+        state={recommendationState} view={recommendationView} editable={editable}
+        open={recommendationDialogOpen} automaticDismissal={automaticDismissal}
+        onOpen={onOpenRecommendations} onClose={onCloseRecommendations}
+        fallbackFocusRef={recommendationFallbackFocusRef}
+        onRetry={onRetryRecommendations} onRefresh={onRefreshAvailableItems} onSelect={selectRecommendedLine}
+      /> : null}
       <div className="configured-estimate-builder__baskets">
         {catalogueGroups.map((basket) => <section
           key={basket.id}

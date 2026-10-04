@@ -48,6 +48,22 @@ const estimatorCatalogue: EstimationCatalogueBasket[] = [
   },
   { id: "basket-empty", name: "Building Material", displayOrder: 4, subBaskets: [], directTemporaryItems: [] }
 ];
+const recommendationCatalogue: EstimationCatalogueBasket[] = estimatorCatalogue.map((basket) => ({
+  ...basket,
+  directTemporaryItems: (basket.directTemporaryItems ?? []).map((line) => ({ ...line, itemVersion: line.itemVersion ?? 1, revisionVersion: line.revisionVersion ?? 1 })),
+  subBaskets: basket.subBaskets.map((subBasket) => ({
+    ...subBasket,
+    mainLines: subBasket.mainLines.map((line) => ({
+      ...line, itemVersion: line.itemVersion ?? 1, revisionVersion: line.revisionVersion ?? 1,
+      ...(line.id === "line-paint" ? { name: "False ceiling painting", itemStatus: "active" as const, revisionStatus: "active" as const } : {})
+    })),
+    temporaryItems: (subBasket.temporaryItems ?? []).map((line) => ({ ...line, itemVersion: line.itemVersion ?? 1, revisionVersion: line.revisionVersion ?? 1 }))
+  }))
+}));
+const recommendationSources = recommendationCatalogue.flatMap((basket) => [
+  ...(basket.directTemporaryItems ?? []),
+  ...basket.subBaskets.flatMap((subBasket) => [...subBasket.mainLines, ...(subBasket.temporaryItems ?? [])])
+]);
 const qaRequestTotals = { netPaise: 60000000, gstPaise: 10800000, totalPaise: 70800000 };
 const qaRequestSectionTotals = [{ sectionId: "LIVING", label: "Living room and dining", totals: qaRequestTotals }];
 const qaRequestVendorTotals = [{ vendorId: "vendor-qa", code: "VEN-QA", name: "Synthetic Interior Works", terms: "Deliver and install at the project site.", totals: qaRequestTotals }];
@@ -111,6 +127,8 @@ function zeroAggregates(value: unknown): unknown {
 export function enterpriseDataFor(path: string, params: URLSearchParams, scenario: EnterpriseScenario): unknown {
   const empty = scenario.state === "empty";
   const estimatorReady = new URLSearchParams(scenario.route.split("?")[1]).get("qaEstimator") === "ready";
+  const recommendationReady = new URLSearchParams(scenario.route.split("?")[1]).get("qaRecommendations") === "ready";
+  const recommendationCompletionReady = new URLSearchParams(scenario.route.split("?")[1]).get("qaRecommendationCompletion") === "ready";
   const list = <T,>(rows: readonly T[]): T[] => empty ? [] : [...rows];
   const page = <T,>(rows: readonly T[]) => {
     const filtered = list(rows).filter((row) => !params.get("search") || JSON.stringify(row).toLowerCase().includes(params.get("search")!.toLowerCase()));
@@ -185,7 +203,39 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (path === "/leads/lead-1") return lead;
   if (path === "/leads/lead-1/activities") return page([{ id: "activity-1", leadId: lead.id, actorId: lead.ownerId, type: "meeting", note: "Reviewed kitchen and living room measurements with the client.", occurredAt: lead.updatedAt, createdAt: lead.updatedAt }]);
   if (path === "/leads/lead-1/estimate") return empty || estimatorReady ? null : estimate;
-  if (path === "/estimation/catalogue") return { ...page(estimatorReady ? estimatorCatalogue : []), ineligibleLineCount: estimatorReady ? 1 : 0 };
+  if (path === "/estimation/catalogue/recommendations") return { sources: (params.get("mainLineIds") ?? "").split(",").filter(Boolean).map((mainLineId) => {
+    const source = recommendationSources.find((line) => line.mainLineId === mainLineId);
+    if (!source || !estimatorReady) return { mainLineId, available: false, revisionId: null, revisionVersion: null, itemVersion: null, rules: [], guidance: [] };
+    return {
+      mainLineId, available: true, revisionId: source.revisionId,
+      revisionVersion: source.revisionVersion ?? 1, itemVersion: source.itemVersion ?? 1,
+      rules: recommendationReady && mainLineId === "item-false-ceiling" ? [{
+        id: "qa-rule-ceiling-paint", requirement: "must", reason: "Painting protects and finishes the new false ceiling surface.",
+        targetKind: "main_line", targetBasketId: "basket-paint", targetSubBasketId: "sub-paint", targetMainLineId: "line-paint",
+        targetRevisionId: "revision-paint", targetRevisionVersion: 1, targetItemVersion: 1,
+        available: true, completionRequired: false
+      }, ...(recommendationCompletionReady ? [{
+        id: "qa-rule-paint-touchup", requirement: "can", reason: "Allow for a final paint touch-up after fixture installation.",
+        targetKind: "main_line", targetBasketId: "basket-paint", targetSubBasketId: "sub-paint", targetMainLineId: "item-paint-touchup",
+        targetRevisionId: "revision-paint-touchup", targetRevisionVersion: 1, targetItemVersion: 1,
+        available: true, completionRequired: true
+      }, {
+        id: "qa-rule-paint-group", requirement: "can", reason: "Review every decorative paint item around the finished ceiling.",
+        targetKind: "sub_basket", targetBasketId: "basket-paint", targetSubBasketId: "sub-paint", targetMainLineId: null,
+        targetRevisionId: null, targetRevisionVersion: null, targetItemVersion: null,
+        available: true, completionRequired: true,
+        children: [
+          { mainLineId: "line-paint", available: true, completionRequired: false, revisionId: "revision-paint", revisionVersion: 1, itemVersion: 1 },
+          { mainLineId: "item-paint-touchup", available: true, completionRequired: true, revisionId: "revision-paint-touchup", revisionVersion: 1, itemVersion: 1 }
+        ],
+        unavailableChildCount: 0
+      }] : [])] : [],
+      guidance: recommendationReady && mainLineId === "item-false-ceiling"
+        ? [{ id: "qa-guidance-ceiling", name: "Coordinate ceiling services", reason: "Confirm fixture cutouts before closing the ceiling." }]
+        : []
+    };
+  }) };
+  if (path === "/estimation/catalogue") return { ...page(estimatorReady ? (recommendationReady ? recommendationCatalogue : estimatorCatalogue) : []), ineligibleLineCount: estimatorReady ? 1 : 0 };
   if (path === "/estimates") return list([estimate]);
   if (/^\/estimates\/(estimate-1|estimate-aurora-villa|estimate-aurora-studio)\/design-uploads$/.test(path)) return empty ? { uploads: [], pages: [], drawings: [], revisions: [] } : drawing.extractedWorkspace(path.split("/")[2]);
   if (/^\/estimates\/(estimate-1|estimate-aurora-villa|estimate-aurora-studio)\/design-plan-documents$/.test(path)) return { manifestHash: `synthetic-${path.split("/")[2]}`, readyForSubmission: false, documents: [], reviewRoundId: null };
