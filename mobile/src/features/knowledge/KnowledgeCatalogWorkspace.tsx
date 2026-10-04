@@ -1,8 +1,8 @@
-import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 import { RefreshControl, ScrollView, View } from "react-native";
 import type { KnowledgeListParams } from "../../../../shared/knowledge/knowledgeApi";
-import type { KnowledgeBasket, KnowledgeItemStatus, KnowledgeMaster, KnowledgeMasterType } from "../../../../shared/knowledge/knowledgeTypes";
+import type { KnowledgeBasket, KnowledgeItemDetail, KnowledgeItemListItem, KnowledgeItemListResponse, KnowledgeItemStatus, KnowledgeMaster, KnowledgeMasterType, KnowledgeSubBasket } from "../../../../shared/knowledge/knowledgeTypes";
 import type { AuthenticatedSession } from "../../contracts/session";
 import { Button, Field, StateView } from "../../ui/primitives";
 import { KnowledgeBasketDeletion, KnowledgeBasketEditor, KnowledgeCatalogManagement } from "./KnowledgeCatalogManagement";
@@ -15,6 +15,7 @@ import { useScreenBack } from "../../navigation/useScreenBack";
 import { KnowledgeCatalogHeader, type KnowledgeCatalogAction } from "./KnowledgeCatalogHeader";
 import { KnowledgeBasketCarousel } from "./KnowledgeBasketCarousel";
 import { KnowledgeCatalogMenu, type KnowledgeMenuAction, type KnowledgeMenuAnchor } from "./KnowledgeCatalogMenu";
+import { KnowledgeMainLineRename, KnowledgeSubBasketRename } from "./KnowledgeCatalogRename";
 
 const PAGE_SIZE = 20;
 const FILTER_TYPES = ["uoms", "vendors", "priorities", "surfaces", "modes"] as const;
@@ -35,6 +36,7 @@ export function KnowledgeCatalogWorkspace({ session }: KnowledgeCatalogWorkspace
 
 function KnowledgeCatalogContent({ session, context }: KnowledgeCatalogWorkspaceProps & { readonly context: KnowledgeMobileContext }) {
   const back = useScreenBack();
+  const client = useQueryClient();
   const [search, setSearch] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
@@ -42,8 +44,12 @@ function KnowledgeCatalogContent({ session, context }: KnowledgeCatalogWorkspace
   const [filterOpen, setFilterOpen] = useState(false);
   const [offset, setOffset] = useState(0);
   const [expandedBaskets, setExpandedBaskets] = useState<Readonly<Record<string, boolean>>>({});
-  const [menu, setMenu] = useState<{ kind: "basket" | "item"; id: string; anchor: KnowledgeMenuAnchor } | null>(null);
+  const [menu, setMenu] = useState<{ id: string; anchor: KnowledgeMenuAnchor } | null>(null);
   const [editingBasket, setEditingBasket] = useState<KnowledgeBasket | null>(null);
+  const [editingSubBasket, setEditingSubBasket] = useState<{ parent: KnowledgeBasket; subBasket: KnowledgeSubBasket } | null>(null);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [renameNotice, setRenameNotice] = useState<string | null>(null);
+  const renameRefreshKey = useRef<readonly unknown[] | null>(null);
   const [deletingBasket, setDeletingBasket] = useState<KnowledgeBasket | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [createItem, setCreateItem] = useState<{ itemType: "main_line" | "temporary"; basketId: string } | null>(null);
@@ -74,18 +80,41 @@ function KnowledgeCatalogContent({ session, context }: KnowledgeCatalogWorkspace
     }
   }, [items.isSuccess, items.isFetching, items.data, offset]);
   const firstBasketId = groups.keys().next().value;
-  const menuBasket = menu?.kind === "basket" ? baskets.data?.find(basket => basket.id === menu.id) : undefined;
-  const menuItem = menu?.kind === "item" ? items.data?.items.find(item => item.mainLineId === menu.id) : undefined;
+  const menuBasket = menu ? baskets.data?.find(basket => basket.id === menu.id) : undefined;
   const menuActions: KnowledgeMenuAction[] = [];
   if (context.ready && context.canRead && menuBasket) {
-    if (context.canUpdate && menuBasket.status !== "archived") menuActions.push({ id: "edit", label: "Edit main line", icon: "edit", onPress: () => setEditingBasket(menuBasket) });
+    if (context.canUpdate && menuBasket.status !== "archived") menuActions.push({ id: "edit", label: "Edit main basket", icon: "edit", onPress: () => setEditingBasket(menuBasket) });
     if (context.canCreate && menuBasket.status === "active") {
       menuActions.push({ id: "add", label: "Add estimation item", icon: "add", onPress: () => setCreateItem({ itemType: "main_line", basketId: menuBasket.id }) });
       menuActions.push({ id: "temporary", label: "Add temporary item", icon: "temporary", onPress: () => setCreateItem({ itemType: "temporary", basketId: menuBasket.id }) });
     }
-    if (context.canLifecycle) menuActions.push({ id: "delete", label: "Delete main line", icon: "delete", destructive: true, onPress: () => setDeletingBasket(menuBasket) });
+    if (context.canLifecycle) menuActions.push({ id: "delete", label: "Delete main basket", icon: "delete", destructive: true, onPress: () => setDeletingBasket(menuBasket) });
   }
-  if (context.ready && context.canRead && menuItem) menuActions.push({ id: "open", label: "Open item", icon: "open", onPress: () => setSelectedId(menuItem.mainLineId) });
+  async function refreshRenamedCatalog() {
+    try {
+      await context.refresh();
+      if (client.getQueryState(context.key("catalog", params))?.status === "error" || (renameRefreshKey.current && client.getQueryState(renameRefreshKey.current)?.status === "error")) throw new Error("The latest catalog could not be loaded.");
+      setRenameNotice(null);
+      renameRefreshKey.current = null;
+    } catch {
+      setRenameNotice("Name saved. Refresh Configuration to load the latest catalog.");
+    }
+  }
+  function subBasketSaved(parent: KnowledgeBasket, saved: KnowledgeSubBasket) {
+    client.setQueryData<readonly KnowledgeSubBasket[]>(context.key("sub-baskets", parent.id, "catalog-index"), current => current?.map(value => value.id === saved.id ? saved : value));
+    client.setQueriesData<KnowledgeItemListResponse>({ queryKey: context.key("catalog") }, current => current ? { ...current, items: current.items.map(value => value.basketId === parent.id && value.subBasketId === saved.id ? { ...value, subBasketName: saved.name } : value) } : current);
+    client.setQueriesData<KnowledgeItemDetail>({ queryKey: context.key("detail") }, current => current && current.basketId === parent.id && current.subBasketId === saved.id ? { ...current, subBasketName: saved.name } : current);
+    renameRefreshKey.current = context.key("sub-baskets", parent.id, "catalog-index");
+    setEditingSubBasket(null);
+    void refreshRenamedCatalog();
+  }
+  function mainLineSaved(saved: KnowledgeItemDetail) {
+    client.setQueryData(context.key("detail", saved.mainLineId), saved);
+    client.setQueriesData<KnowledgeItemListResponse>({ queryKey: context.key("catalog") }, current => current ? { ...current, items: current.items.map(value => value.mainLineId === saved.mainLineId ? { ...value, mainLineName: saved.mainLineName, version: saved.version, updatedAt: saved.updatedAt } : value) } : current);
+    renameRefreshKey.current = null;
+    setEditingItemId(null);
+    void refreshRenamedCatalog();
+  }
   if (selectedId) return <KnowledgeItemWorkspace session={session} mainLineId={selectedId} onBack={() => setSelectedId(null)} onOpenItem={setSelectedId} />;
   const apply = () => { setAppliedSearch(search.trim()); setAppliedFilters({ ...filters }); setOffset(0); setFilterOpen(false); };
   function openAction(action: KnowledgeCatalogAction) {
@@ -106,6 +135,7 @@ function KnowledgeCatalogContent({ session, context }: KnowledgeCatalogWorkspace
     {items.isPending ? <KnowledgeText>Loading configuration…</KnowledgeText> : null}
     {items.isError ? <StateView title="Configuration unavailable" message={catalogError(items.error)} actionLabel="Retry configuration" onAction={() => void items.refetch()} /> : null}
     {baskets.isError ? <StateView title="Main baskets unavailable" message="Some basket actions are unavailable until the catalog loads." actionLabel="Retry main baskets" onAction={() => void baskets.refetch()} /> : null}
+    {renameNotice ? <StateView title="Name saved" message={renameNotice} actionLabel="Refresh Configuration" onAction={() => void refreshRenamedCatalog()} /> : null}
     <View style={{ gap: 8 }}>
       {groupEntries.map(([basketId, group], index) => {
         const expanded = expandedBaskets[basketId] ?? basketId === firstBasketId;
@@ -113,15 +143,19 @@ function KnowledgeCatalogContent({ session, context }: KnowledgeCatalogWorkspace
         const canManage = context.ready && group.basket && ((context.canCreate && group.basket.status === "active") || (context.canUpdate && group.basket.status !== "archived") || context.canLifecycle);
         return <KnowledgeBasketCarousel key={basketId} basketId={basketId} name={group.name} items={group.items} subBaskets={subBaskets?.data ?? []} subBasketsLoading={subBaskets?.isPending ?? false} subBasketsError={subBaskets?.isError ?? false} onRetrySubBaskets={() => { void subBaskets?.refetch(); }} filtered={filtered} expanded={expanded}
           onToggle={() => setExpandedBaskets(current => ({ ...current, [basketId]: !expanded }))}
-          onOpenItem={setSelectedId} onItemMenu={(item, anchor) => setMenu({ kind: "item", id: item.mainLineId, anchor })}
-          {...(canManage ? { onBasketMenu: (anchor: KnowledgeMenuAnchor) => setMenu({ kind: "basket", id: basketId, anchor }) } : {})}
+          onOpenItem={setSelectedId}
+          {...(context.ready && context.canUpdate ? { onEditItem: (item: KnowledgeItemListItem) => setEditingItemId(item.mainLineId) } : {})}
+          {...(canManage ? { onBasketMenu: (anchor: KnowledgeMenuAnchor) => setMenu({ id: basketId, anchor }) } : {})}
+          {...(context.canUpdate && group.basket && group.basket.status !== "archived" && subBaskets?.isSuccess ? { onEditSubBasket: (subBasket: KnowledgeSubBasket) => setEditingSubBasket({ parent: group.basket!, subBasket }) } : {})}
           uoms={masters.data?.uoms ?? []} priorities={masters.data?.priorities ?? []} catalogState={catalogState} isLoading={items.isPending} />;
       })}
     </View>
     {items.isSuccess && !groups.size ? <StateView title="No matching items" message="Try another search or clear your filters." /> : null}
     {items.data ? <><KnowledgeText>{items.data.pagination.total ? `Showing ${offset + 1}–${offset + items.data.items.length} of ${items.data.pagination.total}` : "No items"}</KnowledgeText><View style={s.row}><Button label="Previous page" variant="secondary" disabled={offset === 0 || items.isFetching} onPress={() => setOffset(current => Math.max(0, current - PAGE_SIZE))} /><Button label="Next page" variant="secondary" disabled={!items.data.pagination.hasMore || items.isFetching} onPress={() => setOffset(current => current + PAGE_SIZE)} /></View></> : null}
-    {menu && menuActions.length > 0 ? <KnowledgeCatalogMenu key={`${menu.kind}:${menu.id}`} name={menuBasket?.name ?? menuItem?.mainLineName ?? "Configuration"} anchor={menu.anchor} actions={menuActions} onClose={() => setMenu(null)} /> : null}
+    {menu && menuActions.length > 0 ? <KnowledgeCatalogMenu key={`basket:${menu.id}`} name={menuBasket?.name ?? "Configuration"} anchor={menu.anchor} actions={menuActions} onClose={() => setMenu(null)} /> : null}
     {editingBasket ? <KnowledgeBasketEditor context={context} basket={editingBasket} onClose={() => setEditingBasket(null)} onSaved={() => { setEditingBasket(null); void baskets.refetch(); }} /> : null}
+    {editingSubBasket ? <KnowledgeSubBasketRename context={context} parent={editingSubBasket.parent} subBasket={editingSubBasket.subBasket} onClose={() => setEditingSubBasket(null)} onSaved={saved => subBasketSaved(editingSubBasket.parent, saved)} /> : null}
+    {editingItemId ? <KnowledgeMainLineRename context={context} mainLineId={editingItemId} onClose={() => setEditingItemId(null)} onSaved={mainLineSaved} /> : null}
     {deletingBasket ? <KnowledgeBasketDeletion context={context} basket={deletingBasket} onClose={() => setDeletingBasket(null)} onDeleted={() => { setDeletingBasket(null); setOffset(0); void baskets.refetch(); void items.refetch(); }} /> : null}
     {filterOpen ? <KnowledgeModal title="Configuration filters" onClose={() => setFilterOpen(false)}>
       <KnowledgeSelect label="Main basket" value={filters.basketId} placeholder="All main baskets" options={(baskets.data ?? []).map(value => ({ value: value.id, label: value.name }))} disabled={!baskets.isSuccess} onChange={value => setFilters(current => ({ ...current, basketId: value }))} />

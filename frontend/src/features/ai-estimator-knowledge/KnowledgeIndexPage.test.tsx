@@ -4,14 +4,17 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "../../api/client";
 import { KnowledgeBaseIndexPage } from "./KnowledgeBaseIndexPage";
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
 import * as knowledgeApi from "./knowledgeApi";
 import type {
   KnowledgeBasket,
+  KnowledgeItemDetail,
   KnowledgeItemListItem,
   KnowledgeMaster,
-  KnowledgeMasterType
+  KnowledgeMasterType,
+  KnowledgeSubBasket
 } from "./knowledgeTypes";
 
 const authState = vi.hoisted(() => ({
@@ -53,7 +56,10 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     listKnowledgeBaskets: vi.fn(),
     listKnowledgeSubBaskets: vi.fn(),
     listKnowledgeMasters: vi.fn(),
-    getKnowledgeBasketDeletionImpact: vi.fn()
+    getKnowledgeBasketDeletionImpact: vi.fn(),
+    getKnowledgeItem: vi.fn(),
+    updateKnowledgeMainLine: vi.fn(),
+    updateKnowledgeSubBasket: vi.fn()
   };
 });
 
@@ -150,6 +156,21 @@ const pipework = listItem({
   priorityId: lowPriority.id,
   completeness: { percentage: 90, sections: [], blockers: [], warnings: [] }
 });
+
+function detail(item: KnowledgeItemListItem, overrides: Partial<KnowledgeItemDetail> = {}): KnowledgeItemDetail {
+  return {
+    ...item,
+    activeRevision: null,
+    draftRevision: null,
+    blockers: [],
+    warnings: [],
+    ...overrides
+  };
+}
+
+function subBasket(basket: KnowledgeBasket, id: string, name: string, version: number): KnowledgeSubBasket {
+  return { ...actor, id, name, basketId: basket.id, displayOrder: 0, version };
+}
 
 function mockMasters(catalogs: Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>) {
   vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => {
@@ -548,5 +569,290 @@ describe("Knowledge Base index page", () => {
     await user.click(screen.getByRole("menuitem", { name: "Open item" }));
 
     expect(await screen.findByRole("heading", { name: "Workspace for line-pipes" })).toBeVisible();
+  });
+
+  it("renames an empty Sub-Basket by its parent and version while preserving the hierarchy", async () => {
+    const user = userEvent.setup();
+    const populated = subBasket(carpentry, "sub-populated", "Panel finishes", 3);
+    const empty = subBasket(carpentry, "sub-empty", "Shared name", 7);
+    const otherParent = subBasket(plumbing, "sub-plumbing", "Shared name", 12);
+    let carpentryGroups = [populated, empty];
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({
+      items: [
+        { ...panelling, subBasketId: populated.id, subBasketName: populated.name },
+        { ...pipework, subBasketId: otherParent.id, subBasketName: otherParent.name }
+      ],
+      pagination: { ...pagination, limit: 20, total: 2 }
+    });
+    vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockImplementation(async (basketId) => {
+      const items = basketId === carpentry.id ? carpentryGroups : [otherParent];
+      return { items, pagination: { ...pagination, total: items.length } };
+    });
+    vi.mocked(knowledgeApi.updateKnowledgeSubBasket).mockImplementation(async (_basketId, _subBasketId, input) => {
+      const renamed = { ...empty, name: input.name, version: 8 };
+      carpentryGroups = [populated, renamed];
+      return renamed;
+    });
+    renderIndex();
+
+    await screen.findByRole("heading", { level: 2, name: "Carpentry" });
+    const panel = basketPanel("Carpentry");
+    const action = await within(panel).findByRole("button", { name: "Edit Sub-Basket name for Shared name" });
+    expect(action).toHaveClass("knowledge-rename-pen");
+    expect(action.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    expect(action).toHaveTextContent("");
+    expect(action.closest(".knowledge-sub-basket__name")).toContainElement(within(panel).getByRole("button", { name: "Shared name" }));
+    expect(within(panel).getByRole("heading", { level: 3, name: "Shared name" })).toBeVisible();
+    expect(within(panel).getByRole("button", { name: "Edit Sub-Basket name for Panel finishes" })).toBeVisible();
+    await user.click(action);
+    const editor = screen.getByRole("dialog", { name: "Edit Sub-Basket name" });
+    expect(editor).toHaveTextContent("Carpentry");
+    const name = within(editor).getByRole("textbox", { name: "Sub-Basket name" });
+    expect(name).toHaveValue("Shared name");
+    expect(within(editor).getByRole("button", { name: "Save name" })).toBeDisabled();
+    await user.clear(name);
+    await user.type(name, "Empty finishes");
+    await user.click(within(editor).getByRole("button", { name: "Save name" }));
+
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSubBasket).toHaveBeenCalledWith(
+      carpentry.id, empty.id, { expectedVersion: 7, name: "Empty finishes", managementContext: "configuration" }
+    ));
+    expect(await within(panel).findByRole("button", { name: "Empty finishes" })).toBeVisible();
+    expect(within(basketPanel("Plumbing")).getByRole("button", { name: "Shared name" })).toBeVisible();
+    expect(knowledgeApi.updateKnowledgeSubBasket).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "Edit Sub-Basket name for Empty finishes" })).toHaveFocus());
+  });
+
+  it("does not rename a Sub-Basket from a copied item label when its catalog fails", async () => {
+    const user = userEvent.setup();
+    const group = subBasket(carpentry, "sub-finish", "Paint finishes", 4);
+    let unavailable = true;
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({
+      items: [{ ...panelling, subBasketId: group.id, subBasketName: group.name }],
+      pagination: { ...pagination, limit: 20, total: 1 }
+    });
+    vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockImplementation(async (basketId) => {
+      if (basketId === carpentry.id && unavailable) throw new Error("Catalog unavailable");
+      return { items: basketId === carpentry.id ? [group] : [], pagination: { ...pagination, total: basketId === carpentry.id ? 1 : 0 } };
+    });
+    renderIndex();
+
+    await screen.findByRole("button", { name: "Paint finishes" });
+    expect(screen.queryByRole("button", { name: "Edit Sub-Basket name for Paint finishes" })).not.toBeInTheDocument();
+    unavailable = false;
+    await user.click(screen.getByRole("button", { name: "Retry Sub-Baskets" }));
+    expect(await screen.findByRole("button", { name: "Edit Sub-Basket name for Paint finishes" })).toBeVisible();
+    expect(knowledgeApi.updateKnowledgeSubBasket).not.toHaveBeenCalled();
+  });
+
+  it("keeps a committed Sub-Basket rename safe when catalog refresh fails", async () => {
+    const user = userEvent.setup();
+    let group = subBasket(carpentry, "sub-empty", "Old group", 5);
+    let reads = 0;
+    vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockImplementation(async (basketId) => {
+      if (basketId !== carpentry.id) return { items: [], pagination };
+      reads += 1;
+      if (reads === 2) throw new Error("Refresh unavailable");
+      return { items: [group], pagination: { ...pagination, total: 1 } };
+    });
+    vi.mocked(knowledgeApi.updateKnowledgeSubBasket).mockImplementation(async (_basketId, _id, input) => {
+      group = { ...group, name: input.name, version: 6 };
+      return group;
+    });
+    renderIndex();
+
+    await user.click(await screen.findByRole("button", { name: "Edit Sub-Basket name for Old group" }));
+    const editor = screen.getByRole("dialog", { name: "Edit Sub-Basket name" });
+    const name = within(editor).getByRole("textbox", { name: "Sub-Basket name" });
+    await user.clear(name);
+    await user.type(name, "New group");
+    await user.click(within(editor).getByRole("button", { name: "Save name" }));
+    expect(await within(editor).findByText("Sub-Basket saved")).toBeVisible();
+    expect(name).toHaveValue("New group");
+    expect(knowledgeApi.updateKnowledgeSubBasket).toHaveBeenCalledTimes(1);
+    await user.click(within(editor).getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog", { name: "Edit Sub-Basket name" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New group" })).toBeVisible();
+    expect(screen.getByText("Sub-Baskets could not be loaded. Known items remain available.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Edit Sub-Basket name for New group" })).not.toBeInTheDocument();
+    expect(knowledgeApi.updateKnowledgeSubBasket).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Retry Sub-Baskets" }));
+    expect(await screen.findByRole("button", { name: "Edit Sub-Basket name for New group" })).toBeVisible();
+    expect(knowledgeApi.updateKnowledgeSubBasket).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads authoritative Main Line detail before renaming an Active temporary item", async () => {
+    const user = userEvent.setup();
+    const temporary = listItem({ id: "temporary-1", mainLineId: "temporary-1", mainLineName: "Site covering", itemType: "temporary", status: "active", version: 2 });
+    let current = detail(temporary, { version: 11 });
+    let listed = temporary;
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockImplementation(async () => ({ items: [listed], pagination: { ...pagination, limit: 20, total: 1 } }));
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockImplementation(async () => current);
+    vi.mocked(knowledgeApi.updateKnowledgeMainLine).mockImplementation(async (_id, input) => {
+      if (!input.name) throw new Error("A name is required for this test.");
+      current = { ...current, mainLineName: input.name, version: 12 };
+      listed = { ...listed, mainLineName: input.name, version: 12 };
+      return current;
+    });
+    renderIndex();
+
+    const titleLink = await screen.findByRole("link", { name: "Site covering" });
+    titleLink.focus();
+    await user.tab();
+    const edit = screen.getByRole("button", { name: "Edit Main Line name for Site covering" });
+    expect(edit).toHaveFocus();
+    expect(edit).toHaveClass("knowledge-rename-pen");
+    expect(edit.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    expect(edit.closest(".knowledge-index-card__name")).toContainElement(titleLink);
+    expect(within(itemCard("Site covering")).getByRole("heading", { level: 3, name: "Site covering" })).toBeVisible();
+    await user.keyboard("{Enter}");
+    await screen.findByRole("textbox", { name: "Main Line name" });
+    const editor = screen.getByRole("dialog", { name: "Edit Main Line" });
+    expect(knowledgeApi.getKnowledgeItem).toHaveBeenCalledWith(temporary.mainLineId);
+    expect(editor).toHaveTextContent("Main Basket: Carpentry");
+    const name = within(editor).getByRole("textbox", { name: "Main Line name" });
+    expect(name).toHaveValue("Site covering");
+    expect(within(editor).getByRole("button", { name: "Save Main Line" })).toBeDisabled();
+    await user.clear(name);
+    await user.type(name, "Finished site covering");
+    await user.click(within(editor).getByRole("button", { name: "Save Main Line" }));
+
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeMainLine).toHaveBeenCalledWith(
+      temporary.mainLineId, { expectedVersion: 11, name: "Finished site covering" }
+    ));
+    const link = await screen.findByRole("link", { name: "Finished site covering" });
+    expect(link).toHaveAttribute("href", "/admin/configuration/estimation/items/temporary-1");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Edit Main Line name for Finished site covering" })).toHaveFocus());
+  });
+
+  it("keeps the Main Line draft through duplicate and version conflicts without automatic resubmission", async () => {
+    const user = userEvent.setup();
+    let current = detail(panelling, { version: 4 });
+    let listed = panelling;
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockImplementation(async () => ({ items: [listed], pagination: { ...pagination, limit: 20, total: 1 } }));
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockImplementation(async () => current);
+    vi.mocked(knowledgeApi.updateKnowledgeMainLine)
+      .mockRejectedValueOnce(new ApiError(409, "DUPLICATE_IDENTITY", "That name is already used."))
+      .mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Changed elsewhere."))
+      .mockImplementation(async (_id, input) => {
+        if (!input.name) throw new Error("A name is required for this test.");
+        current = { ...current, mainLineName: input.name, version: 7 };
+        listed = { ...listed, mainLineName: input.name, version: 7 };
+        return current;
+      });
+    renderIndex();
+
+    await screen.findByRole("link", { name: "Wall panelling" });
+    await user.click(screen.getByRole("button", { name: "Edit Main Line name for Wall panelling" }));
+    await screen.findByRole("textbox", { name: "Main Line name" });
+    const editor = screen.getByRole("dialog", { name: "Edit Main Line" });
+    const name = within(editor).getByRole("textbox", { name: "Main Line name" });
+    await user.clear(name);
+    await user.type(name, "Entered title");
+    await user.click(within(editor).getByRole("button", { name: "Save Main Line" }));
+    expect(await within(editor).findByRole("alert")).toHaveTextContent("That name is already used.");
+    expect(name).toHaveValue("Entered title");
+    await user.click(within(editor).getByRole("button", { name: "Save Main Line" }));
+    expect(await within(editor).findByText("Main Line changed")).toBeVisible();
+    expect(within(editor).getByRole("button", { name: "Save Main Line" })).toBeDisabled();
+    expect(knowledgeApi.updateKnowledgeMainLine).toHaveBeenCalledTimes(2);
+    current = { ...current, mainLineName: "Another title", version: 6 };
+    await user.click(within(editor).getByRole("button", { name: "Load current Main Line" }));
+    expect(await within(editor).findByText(/Current saved name:/)).toHaveTextContent("Another title");
+    expect(name).toHaveValue("Entered title");
+    await user.click(within(editor).getByRole("button", { name: "Save Main Line" }));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeMainLine).toHaveBeenLastCalledWith(
+      panelling.mainLineId, { expectedVersion: 6, name: "Entered title" }
+    ));
+  });
+
+  it("requires a successful Main Line detail load and distinguishes a saved name from failed refresh", async () => {
+    const user = userEvent.setup();
+    let current = detail(panelling);
+    let listed = panelling;
+    let listReads = 0;
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockImplementation(async () => {
+      listReads += 1;
+      if (listReads === 2) throw new Error("Refresh unavailable");
+      return { items: [listed], pagination: { ...pagination, limit: 20, total: 1 } };
+    });
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockRejectedValueOnce(new Error("Detail unavailable")).mockImplementation(async () => current);
+    vi.mocked(knowledgeApi.updateKnowledgeMainLine).mockImplementation(async (_id, input) => {
+      if (!input.name) throw new Error("A name is required for this test.");
+      current = { ...current, mainLineName: input.name, version: 3 };
+      listed = { ...listed, mainLineName: input.name, version: 3 };
+      return current;
+    });
+    renderIndex();
+
+    await screen.findByRole("link", { name: "Wall panelling" });
+    await user.click(screen.getByRole("button", { name: "Edit Main Line name for Wall panelling" }));
+    const editor = await screen.findByRole("dialog", { name: "Edit Main Line" });
+    expect(await within(editor).findByText("Detail unavailable")).toBeVisible();
+    expect(knowledgeApi.updateKnowledgeMainLine).not.toHaveBeenCalled();
+    await user.click(within(editor).getByRole("button", { name: "Retry Main Line" }));
+    await screen.findByRole("textbox", { name: "Main Line name" });
+    const loadedEditor = screen.getByRole("dialog", { name: "Edit Main Line" });
+    const name = within(loadedEditor).getByRole("textbox", { name: "Main Line name" });
+    await user.clear(name);
+    await user.type(name, "Updated panelling");
+    await user.click(within(loadedEditor).getByRole("button", { name: "Save Main Line" }));
+    expect(await within(loadedEditor).findByText("Main Line saved")).toBeVisible();
+    expect(name).toHaveValue("Updated panelling");
+    expect(within(loadedEditor).queryByRole("button", { name: "Save Main Line" })).not.toBeInTheDocument();
+    expect(knowledgeApi.updateKnowledgeMainLine).toHaveBeenCalledTimes(1);
+    await user.click(within(loadedEditor).getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog", { name: "Edit Main Line" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Updated panelling" })).toBeVisible();
+    expect(screen.getByText("Knowledge items could not refresh")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Edit Main Line name for Updated panelling" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "More actions for Updated panelling" }));
+    expect(screen.getAllByRole("menuitem")).toHaveLength(1);
+    expect(screen.getByRole("menuitem", { name: "Open item" })).toBeVisible();
+    expect(knowledgeApi.updateKnowledgeMainLine).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Retry knowledge items" }));
+    expect(await screen.findByRole("link", { name: "Updated panelling" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Edit Main Line name for Updated panelling" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "More actions for Updated panelling" }));
+    expect(screen.getAllByRole("menuitem")).toHaveLength(1);
+    expect(knowledgeApi.updateKnowledgeMainLine).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides rename for unauthorized or archived records and allows an inactive parent", async () => {
+    const activeGroup = subBasket({ ...carpentry, status: "inactive" }, "sub-inactive", "Inactive parent child", 4);
+    vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [{ ...carpentry, status: "inactive" }, plumbing], pagination: { ...pagination, total: 2 } });
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({ items: [
+      { ...panelling, status: "archived", subBasketId: activeGroup.id, subBasketName: activeGroup.name }, pipework
+    ], pagination: { ...pagination, limit: 20, total: 2 } });
+    vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockImplementation(async (basketId) => ({
+      items: basketId === carpentry.id ? [activeGroup] : [], pagination: { ...pagination, total: basketId === carpentry.id ? 1 : 0 }
+    }));
+    const view = renderIndex();
+
+    const subEdit = await screen.findByRole("button", { name: "Edit Sub-Basket name for Inactive parent child" });
+    expect(subEdit).toBeVisible();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Inactive parent child" }));
+    expect(screen.queryByRole("button", { name: "Edit Main Line name for Wall panelling" })).not.toBeInTheDocument();
+    view.unmount();
+    authState.update = false;
+    renderIndex();
+    expect(screen.queryByRole("button", { name: "Edit Sub-Basket name for Inactive parent child" })).not.toBeInTheDocument();
+    await screen.findByRole("button", { name: "More actions for Concealed pipework" });
+    expect(screen.queryByRole("button", { name: "Edit Main Line name for Concealed pipework" })).not.toBeInTheDocument();
+  });
+
+  it("hides Sub-Basket rename when its loaded Main Basket is archived", async () => {
+    const archived = { ...carpentry, status: "archived" as const };
+    const group = subBasket(archived, "sub-archived", "Archived group", 4);
+    vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [archived], pagination: { ...pagination, total: 1 } });
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({
+      items: [{ ...panelling, subBasketId: group.id, subBasketName: group.name }],
+      pagination: { ...pagination, limit: 20, total: 1 }
+    });
+    vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockResolvedValue({ items: [group], pagination: { ...pagination, total: 1 } });
+    renderIndex();
+
+    await screen.findByRole("button", { name: "Archived group" });
+    expect(screen.queryByRole("button", { name: "Edit Sub-Basket name for Archived group" })).not.toBeInTheDocument();
   });
 });

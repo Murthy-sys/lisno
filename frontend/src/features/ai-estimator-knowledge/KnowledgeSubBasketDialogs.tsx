@@ -24,10 +24,11 @@ type SubBasketCreationRecovery =
   | { readonly kind: "idle" | "checking" | "unresolved" | "absent" }
   | { readonly kind: "match"; readonly group: KnowledgeSubBasket };
 
-export function KnowledgeSubBasketEditor({ basket, existing, fallbackFocusRef, onClose, onSaved }: {
+export function KnowledgeSubBasketEditor({ basket, existing, fallbackFocusRef, returnFocusRef, onClose, onSaved }: {
   readonly basket: KnowledgeBasket;
   readonly existing?: KnowledgeSubBasket;
   readonly fallbackFocusRef: RefObject<HTMLElement | null>;
+  readonly returnFocusRef?: RefObject<HTMLElement | null>;
   readonly onClose: () => void;
   readonly onSaved: (subBasket: KnowledgeSubBasket) => void;
 }) {
@@ -36,6 +37,7 @@ export function KnowledgeSubBasketEditor({ basket, existing, fallbackFocusRef, o
   const inputRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(existing?.name ?? "");
   const [version, setVersion] = useState(existing?.version ?? 1);
+  const [currentName, setCurrentName] = useState(existing?.name ?? "");
   const [saved, setSaved] = useState<KnowledgeSubBasket | null>(null);
   const [refreshError, setRefreshError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
@@ -94,6 +96,7 @@ export function KnowledgeSubBasketEditor({ basket, existing, fallbackFocusRef, o
       const current = catalog.items.find(({ id }) => id === existing.id);
       if (!current) throw new Error("This Sub-Basket is no longer available. Close the editor and refresh the catalog.");
       setVersion(current.version);
+      setCurrentName(current.name);
       setConflict(false);
       setConflictNotice(`Current saved name: “${current.name}”. Your entered name is unchanged. Review it before saving again.`);
       mutation.reset();
@@ -119,7 +122,9 @@ export function KnowledgeSubBasketEditor({ basket, existing, fallbackFocusRef, o
   });
   const busy = mutation.isPending || refreshing || recovery.kind === "checking";
   const recoveryLocked = recovery.kind === "unresolved" || recovery.kind === "match";
-  const canSave = Boolean(name.trim()) && !saved && !conflict && !busy && !recoveryLocked;
+  const canSave = Boolean(name.trim()) && name.trim().length <= 240
+    && (!existing || name.trim() !== currentName)
+    && !saved && !conflict && !busy && !recoveryLocked;
 
   return <ContextPanel
     title={existing ? "Edit Sub-Basket name" : "Add Sub-Basket"}
@@ -127,7 +132,7 @@ export function KnowledgeSubBasketEditor({ basket, existing, fallbackFocusRef, o
     description="This catalog change saves immediately. A newly added Sub-Basket can remain empty until you add an item."
     onClose={onClose} busy={busy} width="medium" className="knowledge-context-panel"
     dirty={!saved && name !== (existing?.name ?? "")}
-    initialFocusRef={inputRef} fallbackFocusRef={fallbackFocusRef}
+    initialFocusRef={inputRef} returnFocusRef={returnFocusRef} fallbackFocusRef={fallbackFocusRef}
     footer={({ requestClose }) => <div className="knowledge-dialog-actions">
       <Button variant={saved ? "quiet" : "destructive-outline"} onClick={requestClose}>{saved ? "Done" : "Cancel"}</Button>
       {saved ? <Button variant="secondary" busy={busy} onClick={() => void refreshSaved(saved)}>Retry catalog refresh</Button>

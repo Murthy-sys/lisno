@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { getEstimationCatalogue } from "./estimationCatalogueApi";
+import { getEstimationCatalogue, getEstimationCatalogueRecommendations } from "./estimationCatalogueApi";
 
 describe("estimator catalogue API", () => {
   it("reads every page before presenting the configured hierarchy", async () => {
@@ -55,5 +55,22 @@ describe("estimator catalogue API", () => {
       items: [], pagination: { limit: 100, offset: 0, total: 1, hasMore: true }, ineligibleLineCount: 0
     } }));
     await expect(getEstimationCatalogue()).rejects.toThrow("pagination did not advance");
+  });
+
+  it("reads selected recommendation sources in sorted batches of at most 50", async () => {
+    const requests: string[][] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      expect(url.pathname).toMatch(/\/estimation\/catalogue\/recommendations$/);
+      expect(url.searchParams.get("includeReadyNonActive")).toBe("true");
+      const ids = url.searchParams.get("mainLineIds")?.split(",") ?? [];
+      requests.push(ids);
+      return Response.json({ data: { sources: ids.map((mainLineId) => ({ mainLineId, available: true, revisionId: `revision-${mainLineId}`, revisionVersion: 1, itemVersion: 1, rules: [], guidance: [] })) } });
+    });
+    const ids = Array.from({ length: 51 }, (_, index) => `line-${String(index).padStart(2, "0")}`);
+    const result = await getEstimationCatalogueRecommendations([...ids].reverse().concat(ids[0]!));
+    expect(requests.map((item) => item.length)).toEqual([50, 1]);
+    expect(requests.flat()).toEqual(ids);
+    expect(result.sources.map((item) => item.mainLineId)).toEqual(ids);
   });
 });

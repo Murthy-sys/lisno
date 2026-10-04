@@ -114,7 +114,9 @@ describe("Budget Alterations", () => {
     expect(within(line).queryByRole("option", { name: /POP False Ceiling|Temporary|Cabinet/ })).not.toBeInTheDocument();
     await user.selectOptions(screen.getByRole("combobox", { name: "Sub Basket" }), sub.id);
     await user.selectOptions(line, "lights");
-    await user.type(screen.getByRole("textbox", { name: "Why is this change needed?" }), String(rule.reason));
+    const reason = screen.getByRole("textbox", { name: "Why is this change needed?" });
+    expect(reason).toHaveAccessibleDescription(expect.stringContaining("For enabled addition rules, Estimator/Sales shows this reason when the source item is selected."));
+    await user.type(reason, String(rule.reason));
     expect(screen.getByLabelText("Scope change summary")).toHaveTextContent("If POP False Ceiling is removed from scope, Ceiling COB Lights must be removed.");
     expect(budgetAlterationIssues(change.mock.lastCall![0], "source")).toEqual([]);
     const result = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });

@@ -1,0 +1,38 @@
+# Task plan: Plain-language estimator recommendation alert
+
+Date: 2026-10-03  
+Status: Implemented and verified locally in Mode A on 2026-10-04  
+Approved specification: [Plain-language estimator recommendation alert](../specs/2026-10-03-estimator-plain-language-recommendation-alert-design.md), approved by the user on 2026-10-03.
+
+## Baseline and ownership
+
+The current in-page alert in `EstimatorRecommendations.tsx` shows a generic title and pending count. The same component already flattens and deduplicates eligible targets for the right-side slide-out; each target retains source IDs, source names, configured reasons, and required/optional status. This change uses those derived lines for short alert copy and does not change the slide-out's selection or dismissal contract.
+
+Before a writer starts, capture `git status --short` and the existing per-target diffs or copies for `EstimatorRecommendations.tsx`, `EstimatorRecommendations.test.tsx`, and recommendation-scoped rules in `estimator-dashboard.css`. All three already contain approved uncommitted work. Preserve that work and every unrelated dirty path. One frontend owner holds this dependent slice in Mode A; the primary agent integrates and verifies. In Mode B, the primary agent owns the same files. No backend, parent-state, builder, shared Drawer, fixture, or mapping file is assigned for behavior changes unless a concrete defect forces the primary agent to reconcile scope with the approved specification.
+
+## Dependency-ordered tasks
+
+| Task | Depends on | Owner and affected area | Deliverable and acceptance evidence |
+| --- | --- | --- | --- |
+| 1. Protect baseline and settle message mapping | Approved plan and execution-mode choice | Primary agent; read-only work | Record dirty paths and target diffs. Confirm the current deduplicated target list, source-reason priority, loading/selected feedback, and Review action. Choose a required source reason for a “needed” sentence when one target has both required and optional sources; otherwise choose an optional source for “Consider.” AC 1–3. |
+| 2. Render the plain-language alert | Task 1 | One frontend owner: `EstimatorRecommendations.tsx` and only recommendation-scoped CSS | Replace the generic primary alert count with the first pending target–source sentence. Order required ahead of optional, then use stable existing order for ties. Add a compact `+N more recommendations` cue; keep Review, focus, drawer content, and exceptional state controls. Avoid a mandatory claim for optional-only connections. AC 1–3. |
+| 3. Focused regression tests | Task 2; same frontend owner | `EstimatorRecommendations.test.tsx` | Cover configured source/target text, required vs optional, mixed-priority duplicate sources, more-count based on distinct eligible targets, next pending sentence after Select, all-selected state, and loading/error/unavailable/read-only/guidance states. Preserve drawer dismissal/focus and no-completion-copy assertions. AC 1–4. |
+| 4. Integrated review and final checks | Tasks 2–3 | Primary agent; in Mode A an `integrity_reviewer` followed by a `verification_runner` when proportionate | Review the final diff against the baseline; confirm stable-ID/room mapping, no source or target mutation from message rendering, and no accidental change to automatic dismissal. Run focused tests, frontend typecheck/build, rendered desktop and 390 px interaction/accessibility/overflow checks, `git diff --check`, and final dirty-path review. AC 1–4. |
+
+The presentation and its tests are one dependent slice, so no parallel implementation writer should edit them. Read-only review can occur after the writer finishes. Tests run during editing are provisional; final verification runs on the integrated worktree.
+
+## Acceptance and verification map
+
+1. **Concrete sentence:** A configured required POP false-ceiling → false-ceiling-painting rule yields “False ceiling painting is needed for POP false ceiling.” from current catalogue/source data. An optional-only rule says “Consider … for …”. No relationship text is hardcoded by category name.
+2. **Compact and accurate:** The alert prioritizes a required pending target, counts remaining distinct eligible targets, then advances after Select. A target recommended by multiple sources remains one action; the named source matches the chosen required/optional wording. Selected, unavailable, stale, failed, forbidden, historical, guidance-only, and read-only states do not promise invalid selection.
+3. **Existing workflow preserved:** Review opens the right slide-out with all configured reasons. Explicit Select remains active-room scoped; auto-open dismissal without a linked selection still unchecks its newly selected source, while manual Review dismissal does not. Counts, totals, save, and finance paths remain unchanged.
+4. **Rendered quality and hygiene:** At desktop and 390 px, the short sentence wraps clearly without overflow, Review and keyboard focus work, accessible text matches visible meaning, and no Configuration completion label appears. The focused component/integration tests, frontend typecheck/build, `git diff --check`, and status review pass.
+
+Verification starts with `frontend/src/features/leads/EstimatorRecommendations.test.tsx` and `LeadEstimateRecommendations.test.tsx`, then frontend typecheck and build. Broaden only for a concrete regression. Use the synthetic enterprise estimator QA route for rendered checks; it does not persist estimates. No dependency, migration, backend/API change, production write, external delivery, commit, push, or deployment is included. There is no repository lint script.
+
+## Implementation and verification outcome
+
+- The alert headline now names the current eligible target and the configured source. Required targets take precedence; a mixed-priority target chooses a source whose own rule is required before using “is needed.” Optional relationships say “Consider.” The remaining count is based on deduplicated eligible targets and uses singular/plural copy. No source or target mapping, Drawer selection callback, dismissal rule, backend/API, saved estimate, or finance calculation changed.
+- The independent integrity review found no confirmed defect. Two integration assertions still expected the earlier count-only alert; the frontend owner updated them before final verification. The fresh final run passed **36/36 focused frontend tests** across `EstimatorRecommendations.test.tsx` and `LeadEstimateRecommendations.test.tsx`, frontend typecheck, frontend build, and `git diff --check`. The build retained Vite's existing warning for chunks over 500 kB and generated ignored `frontend/dist/` output. The final dirty-path set matched `/tmp/lisno-plain-alert-baseline/status.txt` exactly.
+- Synthetic estimator browser QA at 1280 × 720 and 390 × 844 confirmed the configured required sentence, next optional sentence after Select, singular more-count, keyboard Review, slide-out focus return, automatic Escape rollback, room-scoped source/target selection, no horizontal overflow, no Configuration completion wording, and no recorded application errors or failed fixture requests. Axe found zero violations at both widths; five existing non-text quantity-stepper minus buttons had inconclusive color-contrast checks. Screenshots and logs are in `/tmp/lisno-plain-alert-qa/.playwright-cli`.
+- Full frontend/backend suites, backend replica-set/OCR checks, migrations, and a live backend save were not run for this frontend presentation change. The synthetic fixture does not persist estimates. There is no lint script. No dependency, production mutation, external delivery, commit, push, or deployment occurred.

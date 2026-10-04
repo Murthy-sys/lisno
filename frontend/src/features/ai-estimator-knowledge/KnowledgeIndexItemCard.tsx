@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 
 import { Button } from "../../components/ui/Button";
 import { ProgressBar } from "../../components/ui/ProgressBar";
+import { KnowledgeRenamePenButton } from "./KnowledgeRenamePenButton";
 import {
   priorityDisplay,
   sectionSummary,
@@ -18,12 +19,13 @@ export interface KnowledgeIndexItemCardProps {
   readonly priorities: readonly KnowledgeMaster[];
   readonly catalogState: CatalogState;
   readonly onOpen: () => void;
+  readonly onEditName?: (trigger: HTMLButtonElement | null) => void;
 }
 
 function KnowledgeIndexMenu({ name, onOpen }: { name: string; onOpen: () => void }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
-  const item = useRef<HTMLButtonElement>(null);
+  const openItem = useRef<HTMLButtonElement>(null);
   const container = useRef<HTMLDivElement>(null);
   const id = useId();
 
@@ -34,7 +36,7 @@ function KnowledgeIndexMenu({ name, onOpen }: { name: string; onOpen: () => void
 
   useEffect(() => {
     if (!open) return;
-    item.current?.focus();
+    openItem.current?.focus();
     function outside(event: PointerEvent) {
       if (!container.current?.contains(event.target as Node)) dismiss();
     }
@@ -53,7 +55,7 @@ function KnowledgeIndexMenu({ name, onOpen }: { name: string; onOpen: () => void
           dismiss();
         } else if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
           event.preventDefault();
-          item.current?.focus();
+          openItem.current?.focus();
         }
       }}
     >
@@ -77,7 +79,7 @@ function KnowledgeIndexMenu({ name, onOpen }: { name: string; onOpen: () => void
       {open ? (
         <div className="knowledge-index-menu__items" role="menu" aria-label={`Actions for ${name}`} id={id}>
           <button
-            ref={item}
+            ref={openItem}
             type="button"
             role="menuitem"
             onClick={() => {
@@ -93,7 +95,7 @@ function KnowledgeIndexMenu({ name, onOpen }: { name: string; onOpen: () => void
   );
 }
 
-export function KnowledgeIndexItemCard({ item, uoms, priorities, catalogState, onOpen }: KnowledgeIndexItemCardProps) {
+export function KnowledgeIndexItemCard({ item, uoms, priorities, catalogState, onOpen, onEditName }: KnowledgeIndexItemCardProps) {
   const temporary = item.itemType === "temporary";
   const badgeId = `temporary-kind-${item.id}`;
   const badgeTitle = item.completionRequired ? "Temporary item · Must be completed" : "Temporary item";
@@ -109,15 +111,21 @@ export function KnowledgeIndexItemCard({ item, uoms, priorities, catalogState, o
           <div className="knowledge-index-card__thumb" aria-hidden="true">
             <Layers aria-hidden="true" />
           </div>
-          <h3>
-            <Link
-              className="knowledge-item-link"
-              to={`/admin/configuration/estimation/items/${encodeURIComponent(item.mainLineId)}`}
-              aria-describedby={temporary ? badgeId : undefined}
-            >
-              {item.mainLineName}
-            </Link>
-          </h3>
+          <div className="knowledge-index-card__name">
+            <h3>
+              <Link
+                className="knowledge-item-link"
+                to={`/admin/configuration/estimation/items/${encodeURIComponent(item.mainLineId)}`}
+                aria-describedby={temporary ? badgeId : undefined}
+              >
+                {item.mainLineName}
+              </Link>
+            </h3>
+            {onEditName ? <KnowledgeRenamePenButton
+              label={`Edit Main Line name for ${item.mainLineName}`}
+              onClick={(event) => onEditName(event.currentTarget)}
+            /> : null}
+          </div>
           <KnowledgeIndexMenu name={item.mainLineName} onOpen={onOpen} />
         </div>
         {temporary ? (

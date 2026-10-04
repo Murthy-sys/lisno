@@ -676,11 +676,19 @@
   min-inline-size: 0;
 }
 
-.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card__title h3 {
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card__name {
+  display: flex;
+  align-items: center;
   flex: 1 1 auto;
+  gap: 2px;
+  min-inline-size: 0;
+  min-block-size: 44px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card__title h3 {
+  flex: 0 1 auto;
   min-inline-size: 0;
   margin: 0;
-  padding-block-start: 4px;
   color: var(--kx-ink);
   font: inherit;
   font-family: var(--font-interface);
@@ -690,11 +698,38 @@
 }
 
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card .knowledge-item-link {
-  display: inline;
+  display: block;
+  flex: 0 1 auto;
+  min-inline-size: 0;
   min-block-size: 0;
+  overflow-wrap: anywhere;
   border-radius: 4px;
   color: var(--kx-ink);
   text-decoration: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-rename-pen {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 44px;
+  inline-size: 44px;
+  block-size: 44px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--kx-ink);
+  cursor: pointer;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-rename-pen svg {
+  inline-size: 18px;
+  block-size: 18px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-rename-pen:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -3px;
 }
 
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card .knowledge-item-link:hover {
@@ -1020,16 +1055,35 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   padding: 12px 8px;
   background: var(--role-surface-muted, #f5f5f0);
 }
 
-.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__header h3 { margin: 0; font-size: 15px; }
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__header .knowledge-count-pill {
+  margin-inline-start: auto;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__name {
+  display: inline-flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__header h3 {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  margin: 0;
+  font-size: 15px;
+}
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__toggle {
   display: inline-flex;
   align-items: center;
+  flex: 0 1 auto;
   gap: 10px;
+  min-inline-size: 0;
+  min-block-size: 44px;
   border: 0;
   padding: 4px;
   background: transparent;
@@ -1038,6 +1092,7 @@
   text-align: start;
   cursor: pointer;
 }
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__toggle span { overflow-wrap: anywhere; }
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__toggle:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__toggle svg { inline-size: 17px; block-size: 17px; transition: transform 160ms ease; }
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket[data-expanded] .knowledge-sub-basket__toggle svg { transform: rotate(180deg); }
@@ -1046,5 +1101,6 @@
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__body > p { margin: 0; color: var(--color-text-muted); }
 @media (max-width: 640px) {
   .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__header { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__header .knowledge-count-pill { margin-inline-start: 0; }
   .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__body { padding-inline: 8px; }
 }

@@ -972,7 +972,7 @@ function BudgetAlterationRow({ row, index, mainLineId, mainLineName, baskets, it
       returnFocusRef={catalogReturnFocusRef}
       fallbackFocusRef={targetKind === "main_line" ? selectedItemHeadingRef : subItemsHeadingRef}
     /> : null}
-    <Field id={`${id}-reason`} label="Why is this change needed?" required error={error("reason")}>
+    <Field id={`${id}-reason`} label="Why is this change needed?" hint="For enabled addition rules, Estimator/Sales shows this reason when the source item is selected." required error={error("reason")}>
       {(control) => <Textarea {...control} rows={2} value={text("reason")} maxLength={4000} disabled={readOnly || basketBusy}
         placeholder="Explain the design impact, dependency or budget choice."
         onChange={(event) => set("reason", event.target.value)} />}

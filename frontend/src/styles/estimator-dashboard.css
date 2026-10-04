@@ -1103,8 +1103,6 @@
   width: 100%; border: 0; padding: .95rem 1.1rem; background: transparent;
   color: inherit; font: inherit; text-align: left; cursor: pointer;
 }
-.configured-estimate-basket__toggle::before { content: "−"; font-size: 1.2rem; font-weight: 400; line-height: 1; }
-.configured-estimate-basket__toggle[aria-expanded="false"]::before { content: "+"; }
 .configured-estimate-basket__toggle:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: -3px; }
 .configured-estimate-basket__toggle strong { color: var(--color-text-strong); font-size: .9rem; white-space: nowrap; }
 .configured-estimate-basket > [hidden] { display: none; }
@@ -1281,6 +1279,79 @@
 .configured-estimate-builder__rooms button > svg { width: 14px; height: 14px; transform: rotate(-90deg); }
 .configured-estimate-builder__rail-empty { margin: 0; padding: 12px; color: var(--est-muted, #5b6883); font-size: 12px; }
 .configured-estimate-builder__content { display: grid; align-content: start; gap: 10px; min-width: 0; container-type: inline-size; }
+.estimator-recommendations { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px 16px; min-width: 0; padding: 13px 16px; border: 1px solid #c9e1d3; border-radius: 5px; background: #f1f8f3; color: #17213c; font-family: "Poppins", sans-serif; }
+.estimator-recommendations__alert-copy { min-width: 0; }
+.estimator-recommendations__eyebrow { margin: 0 0 3px; color: #176b42; font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+.estimator-recommendations h2 { margin: 0; font-size: 15px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
+.estimator-recommendations__summary { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin: 5px 0 0; color: #4d596e; font-size: 11px; line-height: 1.4; }
+.estimator-recommendations__unavailable-count { display: inline-block; padding: 1px 6px; border: 1px solid #d8d2c3; color: #605736; font-size: 10px; font-weight: 700; }
+.estimator-recommendations__review { min-height: 44px; padding: 7px 15px; border: 1px solid #1d6843; border-radius: 4px; background: #1d6843; color: #fff; font: 700 11px/1.35 "Poppins", sans-serif; cursor: pointer; }
+.modal-layer:has(.estimator-recommendations__detail) { align-items: center; justify-items: center; padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom)); }
+.ui-dialog.modal:has(.estimator-recommendations__detail) { width: min(100%, 34rem); max-height: calc(100dvh - 24px); overflow-y: auto; border: 1px solid #c9e1d3; border-radius: 5px; background: #f3faf5; box-shadow: none; color: #17213c; font-family: "Poppins", sans-serif; }
+.ui-dialog.modal:has(.estimator-recommendations__detail) > .ui-dialog__header { position: absolute; width: 1px; height: 1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.estimator-recommendations__detail { min-width: 0; }
+.estimator-recommendations__detail:focus-visible { outline: 2px solid #1d6843; outline-offset: -3px; }
+.estimator-recommendations__card-header { display: grid; grid-template-columns: 40px minmax(0, 1fr) 44px; align-items: start; gap: 10px; padding: 17px 18px 13px; }
+.estimator-recommendations__marker { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: #20784e; color: #fff; font: 400 23px/1 "Poppins", sans-serif; }
+.estimator-recommendations__card-heading { display: grid; gap: 5px; min-width: 0; }
+.estimator-recommendations__title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 9px; min-width: 0; }
+.estimator-recommendations__title-row h3 { margin: 0; color: #17213c; font: 700 17px/1.28 "Poppins", sans-serif; overflow-wrap: anywhere; }
+.estimator-recommendations__card-badge { padding: 4px 7px; border-radius: 3px; background: #d9efe0; color: #17623e; font-size: 10px; font-weight: 700; line-height: 1.3; white-space: normal; }
+.estimator-recommendations__card-heading > p { margin: 0; color: #4d596e; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.estimator-recommendations__card-close { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: #596474; font: 400 25px/1 Arial, sans-serif; cursor: pointer; }
+.estimator-recommendations__card-content { display: grid; gap: 11px; padding: 0 18px 18px; }
+.estimator-recommendations__navigation { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; color: #4d596e; font-size: 11px; font-weight: 600; }
+.estimator-recommendations__navigation > div { display: flex; gap: 7px; }
+.estimator-recommendations__navigation button { min-height: 44px; padding: 6px 10px; border: 1px solid #a9cbb8; border-radius: 3px; background: #f7fbf8; color: #1b633d; font: 700 10px/1.2 "Poppins", sans-serif; cursor: pointer; }
+.estimator-recommendations__comparison { display: grid; grid-template-columns: minmax(0, 1fr) 23px minmax(0, 1fr); align-items: center; min-width: 0; padding: 12px; border: 1px solid #c9e1d3; border-radius: 5px; background: #f8fcf8; }
+.estimator-recommendations__compared-item { display: grid; align-content: start; gap: 7px; min-width: 0; }
+.estimator-recommendations__compared-item--recommended { height: 100%; padding-left: 10px; border-left: 1px solid #d5e8da; }
+.estimator-recommendations__comparison-label { color: #4d596e; font-size: 11px; font-weight: 600; line-height: 1.3; }
+.estimator-recommendations__compared-item--recommended .estimator-recommendations__comparison-label { color: #17623e; font-weight: 700; }
+.estimator-recommendations__item-identity { display: grid; grid-template-columns: 42px minmax(0, 1fr); align-items: center; gap: 8px; min-width: 0; }
+.estimator-recommendations__item-tile { display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid #d8e1d4; border-radius: 4px; background: #e8ebe3; color: #4b634f; font-size: 18px; font-weight: 700; }
+.estimator-recommendations__item-identity strong { color: #17213c; font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
+.estimator-recommendations__addition-cue { color: #476f55; font-size: 19px; font-weight: 400; text-align: center; }
+.estimator-recommendations__reason, .estimator-recommendations__other-sources, .estimator-recommendations__context { margin: 0; color: #4d596e; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.estimator-recommendations__reason { color: #2e3c4d; }
+.estimator-recommendations__context { color: #5c665f; }
+.estimator-recommendations__card-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.estimator-recommendations__card-actions button { min-height: 44px; padding: 8px 12px; border: 1px solid #1d6843; border-radius: 4px; background: #1d6843; color: #fff; font: 700 12px/1.35 "Poppins", sans-serif; cursor: pointer; }
+.estimator-recommendations__card-actions .estimator-recommendations__not-now { border-color: #a9cbb8; background: #f8fcf8; color: #17213c; }
+.estimator-recommendations__card-actions button:disabled { cursor: not-allowed; opacity: .48; }
+.estimator-recommendations__state { margin: 0; padding: 12px 18px; color: #39445b; font-size: 12px; line-height: 1.5; }
+.estimator-recommendations__state p { margin: 0 0 8px; }
+.estimator-recommendations__state button,
+.estimator-recommendations__complete button { min-height: 44px; padding: 8px 13px; border: 1px solid #1d6843; border-radius: 3px; background: #1d6843; color: #fff; font: 700 11px/1.35 "Poppins", sans-serif; cursor: pointer; }
+.estimator-recommendations__review:focus-visible,
+.estimator-recommendations__state button:focus-visible,
+.estimator-recommendations__card-close:focus-visible,
+.estimator-recommendations__navigation button:focus-visible,
+.estimator-recommendations__card-actions button:focus-visible,
+.estimator-recommendations__history summary:focus-visible,
+.estimator-recommendations__guidance summary:focus-visible { outline: 2px solid #123a1d; outline-offset: 3px; }
+.estimator-recommendations__history { padding: 11px 18px; border-top: 1px solid #d7e9da; color: #5b6170; font-size: 11px; line-height: 1.45; }
+.estimator-recommendations__history summary, .estimator-recommendations__guidance summary { width: fit-content; color: #17623e; font-size: 11px; font-weight: 700; cursor: pointer; }
+.estimator-recommendations__history p { margin: 8px 0 5px; }
+.estimator-recommendations__history ul { margin: 0; padding-left: 18px; }
+.estimator-recommendations__unavailable { border-top: 1px solid #d7e9da; }
+.estimator-recommendations__guidance { padding: 11px 18px; border-top: 1px solid #d7e9da; }
+.estimator-recommendations__guidance ul { display: grid; gap: 8px; margin: 9px 0 0; padding: 0; list-style: none; }
+.estimator-recommendations__guidance li { display: grid; gap: 2px; color: #4d596e; font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+.estimator-recommendations__guidance strong { color: #26354b; }
+@media (max-width: 560px) {
+  .estimator-recommendations__card-header { grid-template-columns: 36px minmax(0, 1fr) 44px; gap: 8px; padding: 15px 16px 12px; }
+  .estimator-recommendations__marker { width: 36px; height: 36px; font-size: 21px; }
+  .estimator-recommendations__title-row h3 { font-size: 16px; }
+  .estimator-recommendations__card-content { gap: 10px; padding: 0 16px 16px; }
+  .estimator-recommendations__comparison { grid-template-columns: minmax(0, 1fr); gap: 9px; padding: 13px; }
+  .estimator-recommendations__addition-cue { font-size: 20px; line-height: 1; }
+  .estimator-recommendations__compared-item--recommended { padding: 13px 0 0; border-left: 0; border-top: 1px solid #d5e8da; }
+  .estimator-recommendations__state, .estimator-recommendations__history, .estimator-recommendations__guidance { padding-left: 16px; padding-right: 16px; }
+}
+@media (max-width: 340px) {
+  .estimator-recommendations__card-actions { grid-template-columns: minmax(0, 1fr); }
+}
 .configured-estimate-builder__jump { gap: 8px; padding: 0; }
 .configured-estimate-builder__jump button { display: flex; align-items: center; gap: 10px; min-width: 175px; min-height: 48px; padding: 6px 11px; border: 1px solid #cad8cc; border-radius: 5px; background: #f8faf7; color: var(--est-ink, #101a3e); text-align: left; }
 .configured-estimate-builder__jump button[data-tone="paint"] { border-color: #e2dce2; background: #fbf9fa; }
@@ -1294,11 +1365,10 @@
 .configured-estimate-basket > header { border-color: var(--est-line, #dce1e8); background: #faf9f6; }
 .configured-estimate-basket > header h2 { color: var(--est-ink, #101a3e); font-size: 15px; }
 .configured-estimate-basket__toggle { grid-template-columns: 27px minmax(0, 1fr) auto auto 14px; gap: 11px; min-height: 43px; padding: 7px 15px; }
-.configured-estimate-basket__toggle::before { content: none; }
 .configured-estimate-basket__toggle > svg:first-child { width: 23px; height: 23px; color: #15572b; }
 .configured-estimate-basket__toggle > svg:last-child { width: 15px; height: 15px; transition: transform 150ms ease; transform: rotate(180deg); }
 .configured-estimate-basket__toggle[aria-expanded="false"] > svg:last-child { transform: rotate(0); }
-.configured-estimate-basket > header .configured-estimate-basket__toggle > span { font-size: 15px; font-weight: 700; }
+.configured-estimate-basket > header .configured-estimate-basket__toggle > span { min-width: 0; font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
 .configured-estimate-basket__toggle small,
 .configured-estimate-sub-basket__toggle small,
 .configured-estimate-sub-basket__heading small { color: #4d5b78; font-size: 10px; font-weight: 500; white-space: nowrap; }
@@ -1361,6 +1431,8 @@
 @container (max-width: 650px) {
   .configured-estimate-line { grid-template-columns: minmax(0, 1fr); }
   .configured-estimate-line__fields { margin-left: 60px; }
+  .estimator-recommendations { grid-template-columns: minmax(0, 1fr); }
+  .estimator-recommendations__review { justify-self: start; }
 }
 @media (max-width: 880px) {
   .ui-app-shell[data-role] .estimate-workspace--item-view .estimate-workspace__header { grid-template-columns: minmax(0, 1fr) 190px; gap: 12px; }
@@ -1387,6 +1459,7 @@
   .configured-estimate-line__fields { margin-left: 60px; }
 }
 @media (max-width: 430px) {
+  .estimator-recommendations__review { width: 100%; }
   .ui-app-shell[data-role] .estimate-workspace--item-view .estimate-workspace__header { grid-template-columns: minmax(0, 1fr); }
   .ui-app-shell[data-role] .estimate-workspace--item-view .estimate-workspace__summary { grid-row: 2; width: 100%; min-height: 57px; }
   .estimate-workspace--item-view .project-chat-navigation { grid-row: 3; }

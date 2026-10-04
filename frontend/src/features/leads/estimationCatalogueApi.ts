@@ -58,10 +58,64 @@ export interface EstimationCatalogue {
   readyNonActiveSupported?: boolean;
 }
 
+export interface EstimationRecommendationChild {
+  mainLineId: string;
+  available: true;
+  completionRequired: boolean;
+  revisionId: string;
+  revisionVersion: number;
+  itemVersion: number;
+}
+
+export interface EstimationRecommendationRule {
+  id: string;
+  requirement: "must" | "can";
+  reason: string;
+  targetKind: "main_line" | "sub_basket";
+  targetBasketId: string;
+  targetSubBasketId: string | null;
+  targetMainLineId: string | null;
+  targetRevisionId: string | null;
+  targetRevisionVersion: number | null;
+  targetItemVersion: number | null;
+  available: boolean;
+  completionRequired: boolean;
+  children?: EstimationRecommendationChild[];
+  unavailableChildCount?: number;
+}
+
+export interface EstimationRecommendationSource {
+  mainLineId: string;
+  available: boolean;
+  revisionId: string | null;
+  revisionVersion: number | null;
+  itemVersion: number | null;
+  rules: EstimationRecommendationRule[];
+  guidance: Array<{ id: string; name: string; reason: string }>;
+}
+
+export interface EstimationCatalogueRecommendations {
+  sources: EstimationRecommendationSource[];
+}
+
 export const estimationCatalogueKeys = {
   all: ["estimation", "catalogue"] as const,
-  ready: ["estimation", "catalogue", "include-ready-non-active"] as const
+  ready: ["estimation", "catalogue", "include-ready-non-active"] as const,
+  recommendations: ["estimation", "catalogue", "recommendations"] as const,
+  recommendationSources: (sources: readonly string[]) => ["estimation", "catalogue", "recommendations", sources] as const
 };
+
+export async function getEstimationCatalogueRecommendations(mainLineIds: readonly string[]): Promise<EstimationCatalogueRecommendations> {
+  const ids = [...new Set(mainLineIds)].sort();
+  if (!ids.length) return { sources: [] };
+  const chunks: string[][] = [];
+  for (let index = 0; index < ids.length; index += 50) chunks.push(ids.slice(index, index + 50));
+  const pages = await Promise.all(chunks.map((chunk) => apiClient.get<EstimationCatalogueRecommendations>(
+    `/estimation/catalogue/recommendations?${new URLSearchParams({ mainLineIds: chunk.join(","), includeReadyNonActive: "true" })}`,
+    { showGlobalLoader: false }
+  )));
+  return { sources: pages.flatMap((page) => page.sources) };
+}
 
 export async function getEstimationCatalogue(options: { includeReadyNonActive?: boolean } = {}): Promise<EstimationCatalogue> {
   const items: EstimationCatalogueBasket[] = [];

@@ -1,4 +1,5 @@
 import { fireEvent, render } from "@testing-library/react-native";
+import { StyleSheet } from "react-native";
 import type { KnowledgeItemListItem, KnowledgeMaster, KnowledgeSubBasket } from "../../../../shared/knowledge/knowledgeTypes";
 import { KnowledgeBasketCarousel } from "./KnowledgeBasketCarousel";
 
@@ -18,7 +19,7 @@ const item: KnowledgeItemListItem = {
   completeness: { percentage: 50, sections: ["overview", "pricing", "quantity-margin", "scope", "recommendations", "quality"].map((sectionKey, index) => ({ sectionKey, state: index < 2 ? "complete" : "not_configured", findings: [] })) as KnowledgeItemListItem["completeness"]["sections"], blockers: [], warnings: [] }
 };
 const priority: KnowledgeMaster = { ...actor, id: "priority-a", masterType: "priorities", code: "HIGH", name: "High priority", description: null, displayOrder: 0, status: "active", semanticTier: "high" };
-const props = { basketId: "basket-a", name: "POP / Gypsum", items: [item], expanded: true, onToggle: jest.fn(), onOpenItem: jest.fn(), onItemMenu: jest.fn(), onBasketMenu: jest.fn(), uoms: [], priorities: [priority], catalogState: "ready" as const };
+const props = { basketId: "basket-a", name: "POP / Gypsum", items: [item], expanded: true, onToggle: jest.fn(), onOpenItem: jest.fn(), onEditItem: jest.fn(), onBasketMenu: jest.fn(), uoms: [], priorities: [priority], catalogState: "ready" as const };
 beforeEach(() => jest.clearAllMocks());
 async function expandSubBasket(view: Awaited<ReturnType<typeof render>>) {
   await fireEvent.press(view.getByRole("button", { name: "Expand Sub-Basket sub1" }));
@@ -53,6 +54,40 @@ it("shows every Sub-Basket before its items, including an empty Sub-Basket", asy
   expect(view.queryByText("No items on this page.")).toBeNull();
 });
 
+it("offers a touch-sized rename only for a verified Sub-Basket record and keeps its group open after a name change", async () => {
+  const record: KnowledgeSubBasket = { ...actor, basketId: "basket-a", id: "sub-a", name: "sub1", displayOrder: 0 };
+  const onEditSubBasket = jest.fn();
+  const items = [item, ...[1, 2, 3].map(index => ({ ...item, mainLineId: `line-${index}`, mainLineName: `Item ${index}` }))];
+  const view = await render(<KnowledgeBasketCarousel {...props} items={items} subBaskets={[record]} onEditSubBasket={onEditSubBasket} />);
+  const action = view.getByRole("button", { name: "Edit Sub-Basket name: sub1 in POP / Gypsum" });
+  expect(StyleSheet.flatten(action.props.style).minHeight).toBeGreaterThanOrEqual(44);
+  expect(StyleSheet.flatten(action.props.style).width).toBeGreaterThanOrEqual(44);
+  expect(view.queryByText("Edit name")).toBeNull();
+  await fireEvent.press(action);
+  expect(onEditSubBasket).toHaveBeenCalledWith(record);
+  await expandSubBasket(view);
+  await fireEvent(view.getByTestId("basket-carousel-basket-a-sub-a"), "layout", { nativeEvent: { layout: { width: 200, height: 138, x: 0, y: 0 } } });
+  await fireEvent.press(view.getByRole("button", { name: "Next items in POP / Gypsum" }));
+  expect(view.getByLabelText("POP / Gypsum, carousel position 2 of 4")).toBeTruthy();
+  await view.rerender(<KnowledgeBasketCarousel {...props} items={items} subBaskets={[{ ...record, name: "Renamed" }]} onEditSubBasket={onEditSubBasket} />);
+  expect(view.getByRole("button", { name: "Collapse Sub-Basket Renamed" })).toBeTruthy();
+  expect(view.getByLabelText("POP / Gypsum, carousel position 2 of 4")).toBeTruthy();
+  expect(view.getByRole("button", { name: "Open Plain False Ceiling" })).toBeTruthy();
+  await view.rerender(<KnowledgeBasketCarousel {...props} items={items} subBaskets={[]} filtered onEditSubBasket={onEditSubBasket} />);
+  expect(view.queryByRole("button", { name: "Edit Sub-Basket name: sub1 in POP / Gypsum" })).toBeNull();
+});
+
+it("hides the Main Line pen for archived items or when editing is unavailable", async () => {
+  const archived = await render(<KnowledgeBasketCarousel {...props} items={[{ ...item, status: "archived" }]} />);
+  await expandSubBasket(archived);
+  expect(archived.queryByRole("button", { name: "Edit Main Line name: Plain False Ceiling in POP / Gypsum" })).toBeNull();
+  await archived.unmount();
+  const { onEditItem: _onEditItem, ...readOnlyProps } = props;
+  const readOnly = await render(<KnowledgeBasketCarousel {...readOnlyProps} />);
+  await expandSubBasket(readOnly);
+  expect(readOnly.queryByRole("button", { name: "Edit Main Line name: Plain False Ceiling in POP / Gypsum" })).toBeNull();
+});
+
 it("shows server completeness, configured tab counts and catalog values without inventing metadata", async () => {
   const view = await render(<KnowledgeBasketCarousel {...props} />);
   await expandSubBasket(view);
@@ -65,11 +100,14 @@ it("shows server completeness, configured tab counts and catalog values without 
   expect(view.getByRole("button", { name: "Collapse POP / Gypsum" }).props.accessibilityHint).toBe("1 item on this page");
 });
 
-it("opens measured item and basket menus independently from opening or collapsing the item", async () => {
+it("opens the item name editor and measured basket menu independently from the item", async () => {
   const view = await render(<KnowledgeBasketCarousel {...props} />);
   await expandSubBasket(view);
-  await fireEvent.press(view.getByRole("button", { name: "Actions for Plain False Ceiling" }));
-  expect(props.onItemMenu).toHaveBeenCalledWith(item, expect.objectContaining({ x: 120, y: 260, width: 44, height: 44, trigger: expect.anything() }));
+  const edit = view.getByRole("button", { name: "Edit Main Line name: Plain False Ceiling in POP / Gypsum" });
+  expect(StyleSheet.flatten(edit.props.style).height).toBeGreaterThanOrEqual(44);
+  expect(StyleSheet.flatten(edit.props.style).width).toBeGreaterThanOrEqual(44);
+  await fireEvent.press(edit);
+  expect(props.onEditItem).toHaveBeenCalledWith(item);
   await fireEvent.press(view.getByRole("button", { name: "Actions for POP / Gypsum" }));
   expect(props.onBasketMenu).toHaveBeenCalledWith(expect.objectContaining({ x: 120, y: 260, width: 44, height: 44 }));
   expect(props.onOpenItem).not.toHaveBeenCalled();

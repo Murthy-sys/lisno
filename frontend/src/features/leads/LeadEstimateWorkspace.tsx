@@ -15,7 +15,8 @@ import { estimateBuilderSections } from "./estimateBuilderCatalogue";
 import { EstimateBuilder, type BuilderLine, type BuilderRoom, type BuilderSection } from "./EstimateBuilder";
 import { ConfiguredEstimateBuilder } from "./ConfiguredEstimateBuilder";
 import { buildConfiguredLines, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredQuantityUnits, parseSellingRate, restoreConfiguredLine, type ConfiguredLineDraft } from "./configuredEstimate";
-import { estimationCatalogueKeys, getEstimationCatalogue, type EstimationCatalogueBasket } from "./estimationCatalogueApi";
+import { estimationCatalogueKeys, getEstimationCatalogue, getEstimationCatalogueRecommendations, type EstimationCatalogueBasket } from "./estimationCatalogueApi";
+import { buildRoomRecommendations, partitionRoomRecommendationSources, recommendationSourceIdentity, type RecommendationDecision, type RecommendedLineTarget } from "./roomRecommendations";
 import { EstimateDeliveryStatus } from "./EstimateDeliveryStatus";
 import { EstimateClientFeedback } from "./EstimateClientFeedback";
 import { EstimatePlanChangeRequests } from "./EstimatePlanChangeRequests";
@@ -107,6 +108,13 @@ function TabIcon({ tab }: { tab: EstimateTab }) {
   return <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{tab === "builder" ? <><rect x="5" y="5" width="14" height="16" rx="1" /><path d="M9 5V3h6v2M9 10h6M9 14h6M9 18h4" /></> : tab === "summary" ? <><path d="M4 20V11M9 20V5M14 20v-8M19 20V8M3 20h18" /></> : tab === "proposal" ? <><path d="M6 2h9l4 4v16H6zM15 2v5h4M9 11h7M9 15h7M9 19h5" /></> : <circle cx="12" cy="12" r="8" />}</svg>;
 }
 type EstimateTab = "configure" | "builder" | "summary" | "proposal";
+type PendingRecommendationSource = { roomId: string; lineKey: string; sourceMainLineId: string; sourceIdentity: string; sequence: number };
+type AutomaticRecommendationContext = {
+  roomId: string;
+  sources: PendingRecommendationSource[];
+  decisions: RecommendationDecision[];
+  catalogueUpdatedAt: number;
+};
 type RoomDraft = { id: string; typeId: string; label: string; icon: string; sqft: number; length: number | null; width: number | null };
 type LineDraft = { id: string; catalogueId: string; sectionId: string; sectionLabel: string; roomName: string; specification: string; options: readonly string[]; unit: string; rate: number; quantity: number; included: boolean };
 type BuilderRow = {
@@ -135,6 +143,32 @@ const publicationNotice = (
   review: EstimateClientReviewSummary | null | undefined
 ) => review ? `${portalCopy} ${deliveryCopy[review.deliveryStatus]}.` : portalCopy;
 
+function recommendedTargetIdentity(roomId: string, target: RecommendedLineTarget): string {
+  return JSON.stringify([roomId, target.mainLineId, target.basketId, target.subBasketId]);
+}
+
+function sourceHasSelectedRecommendation(
+  sourceMainLineId: string,
+  roomId: string,
+  decisions: readonly RecommendationDecision[],
+  currentLines: readonly ConfiguredLineDraft[],
+  selectedDuringSlideOut: ReadonlySet<string>
+): boolean {
+  const included = new Set(currentLines.map((line) => recommendedTargetIdentity(roomId, {
+    mainLineId: line.mainLineId, basketId: line.mainBasketId, subBasketId: line.subBasketId
+  })));
+  return decisions.some((decision) => {
+    if (!decision.available || !decision.reasons.some((reason) => reason.sourceId === sourceMainLineId)) return false;
+    const targets = decision.kind === "main_line"
+      ? decision.target ? [decision.target] : []
+      : decision.children.map((child) => child.target);
+    return targets.some((target) => {
+      const identity = recommendedTargetIdentity(roomId, target);
+      return included.has(identity) || selectedDuringSlideOut.has(identity);
+    });
+  });
+}
+
 export function LeadEstimateWorkspace() {
   const { leadId = "" } = useParams();
   return <LeadEstimateWorkspaceForLead key={leadId} leadId={leadId} />;
@@ -162,11 +196,24 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   const [lines, setLines] = useState<LineDraft[]>([]);
   const [configuredLines, setConfiguredLines] = useState<ConfiguredLineDraft[]>([]);
   const [activeRoomId, setActiveRoomId] = useState("");
+  const [recommendationDialogOpen, setRecommendationDialogOpen] = useState(false);
+  const [pendingRecommendationSources, setPendingRecommendationSources] = useState<PendingRecommendationSource[]>([]);
+  const automaticRecommendationContext = useRef<AutomaticRecommendationContext | null>(null);
+  const selectedDuringSlideOut = useRef(new Set<string>());
+  const recommendationSequence = useRef(0);
+  const recommendationContext = useRef({ roomId: activeRoomId, tab });
   const [notice, setNotice] = useState("");
   const [retryError, setRetryError] = useState("");
   const skipSavedHydrationFor = useRef<EstimateDraft | null>(null);
+  const cancelRecommendationOpening = () => {
+    setPendingRecommendationSources([]);
+    automaticRecommendationContext.current = null;
+    selectedDuringSlideOut.current.clear();
+    setRecommendationDialogOpen(false);
+  };
 
   useEffect(() => {
+    cancelRecommendationOpening();
     const draft = saved.data;
     if (draft && draft === skipSavedHydrationFor.current) {
       skipSavedHydrationFor.current = null;
@@ -222,6 +269,33 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   const totals = { subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: (subtotalPaise + gstPaise) / 100 };
   const selectedLines = lines.filter((line) => line.included);
   const selectedConfiguredLines = configuredLines.filter((line) => line.included);
+  const recommendationSourcePartition = useMemo(() => catalogue.data
+    ? partitionRoomRecommendationSources({ catalogue: catalogue.data, lines: configuredLines, roomId: activeRoomId })
+    : { current: [], historical: [], outdatedDraft: false }, [catalogue.data, configuredLines, activeRoomId]);
+  const recommendationSources = recommendationSourcePartition.current;
+  const recommendationSourceIds = [...new Set(recommendationSources.map((line) => line.mainLineId))];
+  const recommendationIdentity = recommendationSources.map(recommendationSourceIdentity).sort();
+  const recommendations = useQuery({
+    queryKey: estimationCatalogueKeys.recommendationSources(recommendationIdentity),
+    queryFn: () => getEstimationCatalogueRecommendations(recommendationSourceIds),
+    enabled: tab === "builder" && configuredMode && Boolean(catalogue.data) && !catalogue.isError && recommendationSourceIds.length > 0,
+    staleTime: 60_000,
+    retry: false
+  });
+  const recommendationView = useMemo(() => catalogue.data && (recommendations.data || !recommendationSourceIds.length)
+    ? buildRoomRecommendations({ catalogue: catalogue.data, lines: configuredLines, roomId: activeRoomId,
+      recommendations: recommendations.data ?? { sources: [] } })
+    : null, [catalogue.data, configuredLines, activeRoomId, recommendations.data, recommendationSourceIds.length]);
+  const recommendationState = catalogue.isError && catalogue.error instanceof ApiError && catalogue.error.status === 403
+    ? "forbidden" as const
+    : !catalogue.data || catalogue.isError || recommendationView?.stale
+      ? "stale" as const
+      : !recommendationSourceIds.length
+        ? "ready" as const
+        : recommendations.isError
+        ? recommendations.error instanceof ApiError && recommendations.error.status === 403 ? "forbidden" as const : "error" as const
+        : recommendations.isPending || recommendations.isFetching || catalogue.isFetching
+          ? "loading" as const : "ready" as const;
   const incompleteSelectedConfiguredLines = selectedConfiguredLines.filter((line) => configuredLineAmountPaise(line) === null);
   const hasIncompleteConfiguredTotal = incompleteSelectedConfiguredLines.length > 0;
   const invalidSelectedAmountCount = incompleteSelectedConfiguredLines.filter((line) => parseSellingRate(line.rateInput).kind !== "blank").length;
@@ -239,6 +313,54 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     ? configuredLines.filter((line) => (line.included || line.persistedId) && (line.itemType === "temporary" || line.subBasketId === null))
     : [];
   const editable = !saved.data || ["draft", "designer_changes_requested", "client_changes_requested"].includes(saved.data.status);
+  useEffect(() => {
+    const previous = recommendationContext.current;
+    recommendationContext.current = { roomId: activeRoomId, tab };
+    if (previous.roomId !== activeRoomId || previous.tab !== tab) {
+      setRecommendationDialogOpen(false);
+      setPendingRecommendationSources([]);
+      automaticRecommendationContext.current = null;
+      selectedDuringSlideOut.current.clear();
+    }
+  }, [activeRoomId, tab]);
+
+  useEffect(() => {
+    if (!automaticRecommendationContext.current) return;
+    if (!editable || catalogue.isError || catalogue.isFetching ||
+      recommendationState === "stale" || recommendationState === "error" || recommendationState === "forbidden" ||
+      catalogue.dataUpdatedAt !== automaticRecommendationContext.current.catalogueUpdatedAt) {
+      automaticRecommendationContext.current = null;
+      selectedDuringSlideOut.current.clear();
+    }
+  }, [editable, catalogue.isError, catalogue.isFetching, catalogue.dataUpdatedAt, recommendationState]);
+
+  useEffect(() => {
+    if (!pendingRecommendationSources.length) return;
+    if (tab !== "builder" || !editable || !activeRoomId) {
+      setPendingRecommendationSources([]);
+      return;
+    }
+    const activeEvents = pendingRecommendationSources.filter((event) => event.roomId === activeRoomId &&
+      recommendationSources.some((source) => source.key === event.lineKey &&
+        source.mainLineId === event.sourceMainLineId && recommendationSourceIdentity(source) === event.sourceIdentity));
+    if (activeEvents.length !== pendingRecommendationSources.length) setPendingRecommendationSources(activeEvents);
+    if (!activeEvents.length || recommendationState === "loading") return;
+    const actionableEvents = recommendationState === "ready" && recommendationView ? activeEvents.filter((event) =>
+      recommendationView.decisions.some((decision) => decision.available &&
+        decision.reasons.some((reason) => reason.sourceId === event.sourceMainLineId) &&
+        (decision.kind === "main_line"
+          ? Boolean(decision.target && !decision.selected)
+          : decision.children.some((child) => !child.selected)))) : [];
+    if (actionableEvents.length && recommendationView) {
+      automaticRecommendationContext.current = {
+        roomId: activeRoomId, sources: actionableEvents, decisions: recommendationView.decisions,
+        catalogueUpdatedAt: catalogue.dataUpdatedAt
+      };
+      selectedDuringSlideOut.current.clear();
+      setRecommendationDialogOpen(true);
+    }
+    setPendingRecommendationSources([]);
+  }, [activeRoomId, catalogue.dataUpdatedAt, editable, pendingRecommendationSources, recommendationSources, recommendationState, recommendationView, tab]);
   const draftInput = (): EstimateDraftInput => ({
     propertyType: propertyType || lead.data?.propertyType || "",
     rooms, scopes: lines.length ? Array.from(enabledSections) : [],
@@ -260,6 +382,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     ]
   });
   const refreshSubmittedEstimate = (estimate: EstimateDraft, submittedLeadId: string) => {
+    if (submittedLeadId === leadId) cancelRecommendationOpening();
     queryClient.setQueryData<EstimateDraft>(leadKeys.estimate(submittedLeadId), (current) => ({
       ...estimate,
       clientFeedback: estimate.clientFeedback === undefined ? current?.clientFeedback : estimate.clientFeedback
@@ -275,6 +398,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     ]);
   };
   const rememberDraftSave = (estimate: EstimateDraft, submittedLeadId: string) => {
+    if (submittedLeadId === leadId) cancelRecommendationOpening();
     const cached = queryClient.setQueryData<EstimateDraft>(leadKeys.estimate(submittedLeadId), (current) => ({
       ...estimate, clientFeedback: estimate.clientFeedback === undefined ? current?.clientFeedback : estimate.clientFeedback
     }));
@@ -297,7 +421,10 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   };
   const save = useMutation({
     mutationFn: () => saveLeadEstimate(leadId, draftInput()),
-    onMutate: () => setNotice(""),
+    onMutate: () => {
+      cancelRecommendationOpening();
+      setNotice("");
+    },
     onSuccess: (estimate) => {
       rememberDraftSave(estimate, leadId);
       submit.reset();
@@ -315,6 +442,10 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
       const draft = await saveLeadEstimate(submittedLeadId, draftInput());
       rememberDraftSave(draft, submittedLeadId);
       return { estimate: await submitLeadEstimate(submittedLeadId), submittedLeadId };
+    },
+    onMutate: () => {
+      cancelRecommendationOpening();
+      setNotice("");
     },
     onSuccess: ({ estimate, submittedLeadId }) => {
       save.reset();
@@ -365,7 +496,11 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     }
   });
   const refreshAvailableItems = async () => {
+    setPendingRecommendationSources([]);
+    automaticRecommendationContext.current = null;
+    selectedDuringSlideOut.current.clear();
     const result = await catalogue.refetch();
+    if (result.isSuccess) await queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.recommendations });
     if (result.isSuccess && [save.error, submit.error].some((error) =>
       error instanceof ApiError && error.code === "ESTIMATE_CATALOGUE_CHANGED"
     )) {
@@ -432,7 +567,48 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     setTab("builder");
   };
   const updateLine = (id: string, change: Partial<LineDraft>) => setLines((current) => current.map((line) => line.id === id ? { ...line, ...change } : line));
-  const updateConfiguredLine = (key: string, change: Partial<ConfiguredLineDraft>) => setConfiguredLines((current) => current.map((line) => line.key === key ? { ...line, ...change } : line));
+  const updateConfiguredLine = (key: string, change: Partial<ConfiguredLineDraft>) => {
+    const line = configuredLines.find((item) => item.key === key);
+    if (change.included === true && line && !line.included && !line.sourceMissing && line.roomId === activeRoomId &&
+      tab === "builder" && editable) {
+      setNotice("");
+      setPendingRecommendationSources((current) => current.some((event) => event.lineKey === line.key)
+        ? current : [...current, {
+          roomId: line.roomId, lineKey: line.key, sourceMainLineId: line.mainLineId,
+          sourceIdentity: recommendationSourceIdentity(line), sequence: ++recommendationSequence.current
+        }]);
+    }
+    if (change.included === false && line?.included) {
+      setPendingRecommendationSources((current) => current.filter((event) => event.lineKey !== line.key));
+      if (automaticRecommendationContext.current?.sources.some((event) => event.lineKey === line.key)) {
+        automaticRecommendationContext.current = null;
+        selectedDuringSlideOut.current.clear();
+      }
+    }
+    setConfiguredLines((current) => current.map((item) => item.key === key ? { ...item, ...change } : item));
+  };
+  const selectRecommendedLine = (target: RecommendedLineTarget) => {
+    if (!editable || !catalogue.data || catalogue.isError || catalogue.isFetching ||
+      recommendationState !== "ready" || !activeRoomId || !recommendationView) return false;
+    const permitted = recommendationView.decisions.some((decision) => decision.available && (
+      decision.kind === "main_line"
+        ? decision.target?.mainLineId === target.mainLineId && decision.target.basketId === target.basketId && decision.target.subBasketId === target.subBasketId
+        : decision.children.some((child) => child.target.mainLineId === target.mainLineId && child.target.basketId === target.basketId && child.target.subBasketId === target.subBasketId)
+    ));
+    if (!permitted) return false;
+    const nextBasketIds = new Set(selectedMainBasketIds);
+    nextBasketIds.add(target.basketId);
+    setSelectedMainBasketIds(nextBasketIds);
+    setConfiguredLines((previous) => buildConfiguredLines(catalogue.data, rooms, nextBasketIds, previous).map((line) =>
+      line.roomId === activeRoomId && line.mainLineId === target.mainLineId && !line.sourceMissing &&
+      line.mainBasketId === target.basketId && line.subBasketId === target.subBasketId
+        ? { ...line, included: true } : line
+    ));
+    if (automaticRecommendationContext.current) {
+      selectedDuringSlideOut.current.add(recommendedTargetIdentity(activeRoomId, target));
+    }
+    return true;
+  };
   const roomTotalPaise = (roomId: string) => {
     const room = rooms.find((item) => item.id === roomId);
     const legacy = lines.filter((line) => line.roomName === room?.label && line.included).reduce((sum, line) => sum + Math.round(line.quantity * line.rate) * 100, 0);
@@ -532,6 +708,59 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
       roomIcons={roomIcons}
       moneyPaise={moneyPaise}
       editable={editable}
+      recommendationSourceCount={recommendationSources.length + recommendationSourcePartition.historical.length + Number(recommendationSourcePartition.outdatedDraft)}
+      recommendationState={recommendationState}
+      recommendationView={recommendationView}
+      recommendationDialogOpen={recommendationDialogOpen}
+      automaticDismissal={Boolean(recommendationDialogOpen && automaticRecommendationContext.current?.roomId === activeRoomId)}
+      onOpenRecommendations={() => {
+        setPendingRecommendationSources([]);
+        automaticRecommendationContext.current = null;
+        selectedDuringSlideOut.current.clear();
+        setRecommendationDialogOpen(true);
+      }}
+      onCloseRecommendations={() => {
+        const context = automaticRecommendationContext.current;
+        const successfulTargets = new Set(selectedDuringSlideOut.current);
+        automaticRecommendationContext.current = null;
+        selectedDuringSlideOut.current.clear();
+        setRecommendationDialogOpen(false);
+        setPendingRecommendationSources([]);
+        if (!context || context.roomId !== activeRoomId || tab !== "builder" || !editable ||
+          !catalogue.data || catalogue.isError || catalogue.isFetching ||
+          catalogue.dataUpdatedAt !== context.catalogueUpdatedAt ||
+          recommendationState === "stale" || recommendationState === "error" || recommendationState === "forbidden") return;
+
+        const currentSources = partitionRoomRecommendationSources({
+          catalogue: catalogue.data, lines: configuredLines, roomId: context.roomId
+        }).current;
+        const currentDecisions = recommendationState === "ready" && recommendationView
+          ? recommendationView.decisions : context.decisions;
+        const toUncheck = context.sources.filter((event) =>
+          currentSources.some((line) => line.key === event.lineKey && line.mainLineId === event.sourceMainLineId &&
+            recommendationSourceIdentity(line) === event.sourceIdentity) &&
+          currentDecisions.some((decision) => decision.available && decision.reasons.some((reason) =>
+            reason.sourceId === event.sourceMainLineId) &&
+            (decision.kind === "main_line" ? Boolean(decision.target) : decision.children.length > 0)) &&
+          !sourceHasSelectedRecommendation(event.sourceMainLineId, context.roomId, currentDecisions,
+            currentSources, successfulTargets)
+        );
+        if (!toUncheck.length) return;
+        const sourceKeys = new Set(toUncheck.map((event) => event.lineKey));
+        setConfiguredLines((current) => current.map((line) =>
+          sourceKeys.has(line.key) && line.roomId === context.roomId && line.included &&
+          toUncheck.some((event) => event.lineKey === line.key &&
+            event.sourceMainLineId === line.mainLineId && event.sourceIdentity === recommendationSourceIdentity(line))
+            ? { ...line, included: false } : line
+        ));
+        const sourceName = currentSources.find((line) => line.key === toUncheck[0]?.lineKey)?.mainLineName;
+        const roomName = rooms.find((room) => room.id === context.roomId)?.label ?? "this room";
+        setNotice(toUncheck.length === 1
+          ? `Removed ${sourceName ?? "the newly checked item"} from ${roomName} because no related item was selected.`
+          : `Removed ${toUncheck.length} newly checked items from ${roomName} because no related item was selected for them.`);
+      }}
+      onRetryRecommendations={() => void recommendations.refetch()}
+      onSelectRecommendedLine={selectRecommendedLine}
     /></> : null}
     {tab === "builder" && lines.length ? <section aria-label="Earlier catalogue items"><h2>Earlier catalogue items</h2><EstimateBuilder
       rooms={builderRooms}
