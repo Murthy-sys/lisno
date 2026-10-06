@@ -10,7 +10,10 @@ import { FinanceEntryDocumentModel } from "../src/models/FinanceEntryDocument.js
 import { FinanceLedgerEntryModel } from "../src/models/FinanceLedgerEntry.js";
 import { ProjectFinanceBucketModel } from "../src/models/ProjectFinanceBucket.js";
 import { ProjectModel } from "../src/models/Project.js";
+import { ProjectPurchaseOrderModel } from "../src/models/ProjectPurchaseOrder.js";
+import { ProjectPurchaseOrderRevisionModel } from "../src/models/ProjectPurchaseOrderRevision.js";
 import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
+import { ProcurementBasketAwardModel, ProcurementBasketAwardRevisionModel } from "../src/models/ProcurementBasketTender.js";
 import { ProcurementReceiptCleanupJobModel } from "../src/models/ProcurementReceiptCleanupJob.js";
 import { ProcurementReceiptReconciliationJobModel } from "../src/models/ProcurementReceiptReconciliationJob.js";
 import { UserModel } from "../src/models/User.js";
@@ -270,6 +273,84 @@ describe("Procurement approved-item workspace and receipt ledger", () => {
       PROJECT_ID,
       posted.entry.id
     )).resolves.toMatchObject({ bytes: RECEIPT });
+  });
+
+  it("links recorded cost to an issued tender order and milestone without counting a replay twice", async () => {
+    await seedIssuedTenderOrder();
+    const storage = new MemoryStorage();
+    const service = procurementService(storage);
+    const linked = {
+      ...expenseInput(),
+      purchaseOrderId: "purchase-order-linked",
+      paymentMilestoneId: "advance"
+    };
+
+    const posted = await service.postExpense(procurementActor(), PROJECT_ID, linked, receiptUpload());
+    expect(posted).toMatchObject({ replayed: false, entry: {
+      purchaseOrderId: linked.purchaseOrderId,
+      paymentMilestoneId: linked.paymentMilestoneId,
+      amountPaise: 125_000
+    }, bucket: { directSpendPaise: 125_000, recordedCostPaise: 125_000 } });
+    expect(await FinanceLedgerEntryModel.findById(posted.entry.id).lean()).toMatchObject({
+      purchaseOrderId: linked.purchaseOrderId,
+      paymentMilestoneId: linked.paymentMilestoneId
+    });
+    const replay = await service.postExpense(procurementActor(), PROJECT_ID, linked, receiptUpload());
+    expect(replay).toMatchObject({ replayed: true, entry: { id: posted.entry.id,
+      purchaseOrderId: linked.purchaseOrderId, paymentMilestoneId: linked.paymentMilestoneId } });
+    expect(await FinanceLedgerEntryModel.countDocuments({ projectId: PROJECT_ID })).toBe(1);
+    expect(await ProjectFinanceBucketModel.findOne({ projectId: PROJECT_ID }).lean())
+      .toMatchObject({ directSpendPaise: 125_000 });
+    const finance = createProjectFinanceService({ now: () => NOW, storage });
+    expect((await finance.listEntries(superAdminActor(), PROJECT_ID, { limit: 20, offset: 0 })).items[0])
+      .toMatchObject({ id: posted.entry.id, purchaseOrderId: linked.purchaseOrderId,
+        paymentMilestoneId: linked.paymentMilestoneId });
+    expect((await service.listProjects(procurementActor()))[0]?.sections[0]?.items[0]?.expenses[0])
+      .toMatchObject({ id: posted.entry.id, purchaseOrderId: linked.purchaseOrderId });
+
+    await expect(service.postExpense(procurementActor(), PROJECT_ID,
+      { ...linked, paymentMilestoneId: "mobilisation" }, receiptUpload()))
+      .rejects.toMatchObject({ code: "FINANCE_ENTRY_IDEMPOTENCY_CONFLICT" });
+    await expect(service.postExpense(procurementActor(), PROJECT_ID,
+      { ...linked, purchaseOrderId: null }, receiptUpload()))
+      .rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(await FinanceLedgerEntryModel.countDocuments({ projectId: PROJECT_ID })).toBe(1);
+  });
+
+  it("rejects cross-project, wrong-line, and absent-milestone order links before ledger posting", async () => {
+    await seedIssuedTenderOrder();
+    const storage = new MemoryStorage();
+    const service = procurementService(storage);
+    const linked = { ...expenseInput(), purchaseOrderId: "purchase-order-linked",
+      paymentMilestoneId: "advance" };
+    const invalid = [
+      { ...linked, purchaseOrderId: "purchase-order-other", idempotencyKey: "expense-cross-project" },
+      { ...linked, purchaseOrderId: "purchase-order-manual", idempotencyKey: "expense-manual-order" },
+      { ...linked, paymentMilestoneId: "unknown", idempotencyKey: "expense-unknown-milestone" },
+      { ...linked, sourceLineItemKey: ELECTRICAL_LINE_ID, idempotencyKey: "expense-wrong-source-line" }
+    ];
+    await ProjectPurchaseOrderModel.collection.insertOne({ _id: "purchase-order-other", projectId: "other-project",
+      status: "approved", cancelledAt: null, tenderAwardId: "award-other",
+      approvedRevisionId: "revision-other", estimateId: ESTIMATE_ID, estimateVersion: 1,
+      estimateReviewRoundId: ROUND_ID });
+    await ProjectPurchaseOrderModel.collection.insertOne({ _id: "purchase-order-manual", projectId: PROJECT_ID,
+      status: "approved", cancelledAt: null, tenderAwardId: null,
+      approvedRevisionId: "revision-manual", estimateId: ESTIMATE_ID, estimateVersion: 1,
+      estimateReviewRoundId: ROUND_ID });
+    for (const expense of invalid) {
+      await expect(service.postExpense(procurementActor(), PROJECT_ID, expense, receiptUpload()))
+        .rejects.toMatchObject({ code: "PROCUREMENT_EXPENSE_ORDER_CONFLICT" });
+    }
+    expect(await FinanceLedgerEntryModel.countDocuments({ projectId: PROJECT_ID })).toBe(0);
+    expect(await ProjectFinanceBucketModel.findOne({ projectId: PROJECT_ID }).lean())
+      .toMatchObject({ directSpendPaise: 0 });
+    expect(storage.files.size).toBe(0);
+
+    await ProjectPurchaseOrderModel.collection.updateOne({ _id: linked.purchaseOrderId },
+      { $set: { status: "cancelled", cancelledAt: NOW } });
+    await expect(service.postExpense(procurementActor(), PROJECT_ID,
+      { ...linked, idempotencyKey: "expense-cancelled-order" }, receiptUpload()))
+      .rejects.toMatchObject({ code: "PROCUREMENT_EXPENSE_ORDER_CONFLICT" });
   });
 
   it.each([
@@ -1041,6 +1122,31 @@ function receiptUpload() {
     mimeType: "image/jpeg" as const,
     sizeBytes: RECEIPT.length
   };
+}
+
+async function seedIssuedTenderOrder() {
+  await ProjectPurchaseOrderModel.collection.insertOne({
+    _id: "purchase-order-linked", projectId: PROJECT_ID, status: "approved", cancelledAt: null,
+    tenderAwardId: "award-linked", approvedRevisionId: "revision-linked", approvedRevision: 1,
+    estimateId: ESTIMATE_ID, estimateVersion: 1, estimateReviewRoundId: ROUND_ID,
+    vendorId: "vendor-linked"
+  });
+  await ProjectPurchaseOrderRevisionModel.collection.insertOne({
+    _id: "revision-linked", orderId: "purchase-order-linked", projectId: PROJECT_ID,
+    tenderAwardId: "award-linked", revision: 1, estimateId: ESTIMATE_ID,
+    estimateVersion: 1, estimateReviewRoundId: ROUND_ID,
+    lines: [{ sourceSectionId: "CA", sourceLineItemKey: CARPENTRY_LINE_ID }]
+  });
+  await ProcurementBasketAwardModel.collection.insertOne({
+    _id: "award-linked", projectId: PROJECT_ID, status: "issued",
+    issuedPurchaseOrderId: "purchase-order-linked", currentProposalRevisionId: "proposal-linked",
+    boqRevisionId: "boq-linked"
+  });
+  await ProcurementBasketAwardRevisionModel.collection.insertOne({
+    _id: "proposal-linked", awardId: "award-linked", projectId: PROJECT_ID,
+    boqRevisionId: "boq-linked", vendorId: "vendor-linked",
+    milestones: [{ id: "advance", name: "Advance", basisPoints: 2_000, amountPaise: 125_000 }]
+  });
 }
 
 async function createFixture() {

@@ -38,6 +38,7 @@ const projectWorkflowTaskSchema = new Schema(
     },
     progress: { type: Number, required: true, default: 0, min: 0, max: 100 },
     version: { type: Number, required: true, default: 1, min: 1 },
+    awardApprovalEpoch: { type: Number, default: 0, min: 0, validate: Number.isSafeInteger },
     openedAt: { type: Date, required: true },
     /*
      * Both feed the shared KPI. They default to null so rows created before

@@ -14,7 +14,7 @@ interface Review {
   version: number;
   roomName: string;
   itemName: string;
-  scopeType: string;
+  scopeType: string | null;
   description: string;
   sectionLabel: string;
   note: string;
@@ -102,7 +102,7 @@ export function ClientVendorWorkReview({ projectId }: { projectId: string }) {
     {feedback ? <p role="status" className="client-work-review__feedback">{feedback}</p> : null}
     {reviews.isFetching && reviews.data ? <p role="status">Refreshing submitted work…</p> : null}
     <div className="client-work-review__list">{items.map(review => <article key={review.id} className="client-work-review__item">
-      <div className="client-work-review__item-head"><div><p>{review.roomName} · {review.sectionLabel || review.scopeType.replaceAll("_", " ")}</p><h3>{review.itemName}</h3></div><span className={`client-work-review__status client-work-review__status--${review.status}`}>{review.status === "pending" ? "Review requested" : review.status === "approved" ? "Approved" : "Changes requested"}</span></div>
+      <div className="client-work-review__item-head"><div><p>{review.roomName} · {review.sectionLabel || review.scopeType?.replaceAll("_", " ") || "Not specified"}</p><h3>{review.itemName}</h3></div><span className={`client-work-review__status client-work-review__status--${review.status}`}>{review.status === "pending" ? "Review requested" : review.status === "approved" ? "Approved" : "Changes requested"}</span></div>
       <p>{review.description}</p>
       <dl><div><dt>Submitted</dt><dd>{new Date(review.submittedAt).toLocaleDateString("en-IN")}</dd></div><div><dt>Round</dt><dd>{review.round}</dd></div><div><dt>Progress</dt><dd>{review.progress}%</dd></div></dl>
       {review.note ? <blockquote>{review.note}</blockquote> : null}

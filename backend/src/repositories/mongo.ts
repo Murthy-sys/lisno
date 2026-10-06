@@ -3965,8 +3965,12 @@ function mapProject(document: PlainDocument): ProjectRecord {
       ? document.assignedDesignerIds.map(String)
       : [],
     managerId: document.managerId == null ? null : String(document.managerId),
+    programManagerId: document.programManagerId == null ? null : String(document.programManagerId),
+    procurementIdentityVersion: Number(document.procurementIdentityVersion ?? 1),
     status: document.status,
     location: document.location,
+    cityName: document.cityName ?? null,
+    cityKey: document.cityKey ?? null,
     plannedStartAt: iso(document.plannedStartAt),
     plannedEndAt: iso(document.plannedEndAt),
     actualStartAt: nullableIso(document.actualStartAt),
@@ -3986,7 +3990,8 @@ function leadActivityForMongo(input: LeadActivityRecord): PlainDocument {
   return { ...input, id: undefined, occurredAt: date(input.occurredAt), createdAt: date(input.createdAt) };
 }
 function mapLead(document: PlainDocument): LeadRecord {
-  return { id: idOf(document), projectId: document.projectId == null ? null : String(document.projectId), ownerId: document.ownerId, clientName: document.clientName, clientEmail: document.clientEmail, clientMobile: document.clientMobile, projectName: document.projectName, location: document.location, propertyType: document.propertyType, budgetMin: document.budgetMin ?? null, budgetMax: document.budgetMax ?? null, source: document.source, stage: document.stage, nextAction: document.nextAction, nextActionAt: iso(document.nextActionAt), builder: document.builder ?? null, areaSqft: document.areaSqft ?? null, targetHandoverAt: nullableIso(document.targetHandoverAt), notes: document.notes ?? null, latestActivityAt: nullableIso(document.latestActivityAt), createdAt: iso(document.createdAt), updatedAt: iso(document.updatedAt) };
+  return { id: idOf(document), projectId: document.projectId == null ? null : String(document.projectId), ownerId: document.ownerId, clientName: document.clientName, clientEmail: document.clientEmail, clientMobile: document.clientMobile, projectName: document.projectName, location: document.location,
+    cityName: document.cityName ?? null, cityKey: document.cityKey ?? null, propertyType: document.propertyType, budgetMin: document.budgetMin ?? null, budgetMax: document.budgetMax ?? null, source: document.source, stage: document.stage, nextAction: document.nextAction, nextActionAt: iso(document.nextActionAt), builder: document.builder ?? null, areaSqft: document.areaSqft ?? null, targetHandoverAt: nullableIso(document.targetHandoverAt), notes: document.notes ?? null, latestActivityAt: nullableIso(document.latestActivityAt), createdAt: iso(document.createdAt), updatedAt: iso(document.updatedAt) };
 }
 function mapLeadActivity(document: PlainDocument): LeadActivityRecord {
   return { id: idOf(document), leadId: document.leadId, actorId: document.actorId, type: document.type, note: document.note, occurredAt: iso(document.occurredAt), createdAt: iso(document.createdAt) };

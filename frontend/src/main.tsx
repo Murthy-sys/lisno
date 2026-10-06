@@ -7,6 +7,7 @@ import {
 } from "./auth/passwordResetTokenVault";
 import { captureVendorKpiTokenBeforeRouterMount } from "./features/procurement/vendorKpiTokenVault";
 import { captureVendorInductionTokenBeforeRouterMount } from "./features/procurement/vendorInductionTokenVault";
+import { captureVendorBoqTokenBeforeRouterMount } from "./features/procurement/vendorBoqTokenVault";
 import "./styles/index.css";
 import "./styles/brand.css";
 import "./styles/role-themes.css";
@@ -21,6 +22,7 @@ import "./styles/designer-home.css";
 capturePasswordResetTokenBeforeRouterMount();
 captureVendorKpiTokenBeforeRouterMount();
 captureVendorInductionTokenBeforeRouterMount();
+captureVendorBoqTokenBeforeRouterMount();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

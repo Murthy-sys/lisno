@@ -24,17 +24,17 @@ import { VendorAllocationBaseline } from "./VendorAllocationBaseline";
 const uncertainResponse = (error: unknown) => !(error instanceof ApiError) || error.status >= 500 || error.status < 400 || error.status === 408;
 const denied = (error: unknown) => error instanceof ApiError && (error.status === 401 || error.status === 403);
 
-export function ProcurementVendorEditor({ existing, canCreateBasket, canUpdate, canCorrectBaseline, onClose, onSaved }: {
-  existing?: KnowledgeMaster; canCreateBasket: boolean; canUpdate: boolean; canCorrectBaseline: boolean; onClose: () => void; onSaved: (vendor: KnowledgeMaster) => void;
+export function ProcurementVendorEditor({ existing, canCreateBasket, canRequestMainBasket = false, canUpdate, canCorrectBaseline, onClose, onSaved }: {
+  existing?: KnowledgeMaster; canCreateBasket: boolean; canRequestMainBasket?: boolean; canUpdate: boolean; canCorrectBaseline: boolean; onClose: () => void; onSaved: (vendor: KnowledgeMaster) => void;
 }) {
   const query = useQuery({ queryKey: knowledgeQueryKeys.vendorDetail(existing?.id ?? "new"), queryFn: ({ signal }) => getVendorDetail(existing!.id, signal), enabled: Boolean(existing), gcTime: 0, refetchOnWindowFocus: false });
   if (denied(query.error)) return <ContextPanel title="Vendor details" eyebrow="Procurement" onClose={onClose} width="wide"><PageState state="error" message="You do not have permission to view this vendor." /></ContextPanel>;
   if (existing && !query.data) return <ContextPanel title="Vendor details" eyebrow="Procurement" onClose={onClose} width="wide"><PageState state={query.isError ? "error" : "loading"} message={query.isError ? procurementError(query.error, "Vendor details could not be loaded.") : "Loading vendor details…"} action={query.isError ? { label: "Retry vendor details", onAction: () => void query.refetch() } : undefined} /></ContextPanel>;
-  return <VendorForm initial={query.data} canCreateBasket={canCreateBasket} canUpdate={canUpdate} canCorrectBaseline={canCorrectBaseline} onClose={onClose} onSaved={onSaved} accessError={query.isError} />;
+  return <VendorForm initial={query.data} canCreateBasket={canCreateBasket} canRequestMainBasket={canRequestMainBasket} canUpdate={canUpdate} canCorrectBaseline={canCorrectBaseline} onClose={onClose} onSaved={onSaved} accessError={query.isError} />;
 }
 
-function VendorForm({ initial, canCreateBasket, canUpdate, canCorrectBaseline, onClose, onSaved, accessError }: {
-  initial?: ProcurementVendorDetail; canCreateBasket: boolean; canUpdate: boolean; canCorrectBaseline: boolean; onClose: () => void; onSaved: (vendor: KnowledgeMaster) => void; accessError: boolean;
+function VendorForm({ initial, canCreateBasket, canRequestMainBasket, canUpdate, canCorrectBaseline, onClose, onSaved, accessError }: {
+  initial?: ProcurementVendorDetail; canCreateBasket: boolean; canRequestMainBasket: boolean; canUpdate: boolean; canCorrectBaseline: boolean; onClose: () => void; onSaved: (vendor: KnowledgeMaster) => void; accessError: boolean;
 }) {
   const id = useId();
   const client = useQueryClient();
@@ -177,7 +177,7 @@ function VendorForm({ initial, canCreateBasket, canUpdate, canCorrectBaseline, o
         <VendorProfileFields draft={draft} errors={errors} existing={Boolean(base)} disabled={readOnly} onChange={change}
           certificateField={<VendorMsmeCertificateField certificate={base?.msmeCertificate} upload={certificate} error={errors.msmeCertificate} readOnly={readOnly} onSelect={(file) => { certificate.select(file); pendingCommand.current = null; save.reset(); retry.reset(); setErrors((previous) => ({ ...previous, msmeCertificate: "" })); }} />} />
         <PanelSection className="vendor-profile__section vendor-profile__section--baskets" icon={<Layers aria-hidden="true" />} title="Procurement Classification" description="Select categories from the configuration.">
-          <VendorBasketFields mainBasketIds={draft.mainBasketIds} subBasketIds={draft.subBasketIds} original={base?.procurementSummary} errors={errors} canCreate={canCreateBasket && !readOnly} disabled={blocked && !readOnly} readOnly={readOnly} onBusyChange={setNestedBusy} onDraftChange={setNestedDraft} onCatalogBlockedChange={setCatalogBlocked} onChange={(main, sub) => {
+          <VendorBasketFields mainBasketIds={draft.mainBasketIds} subBasketIds={draft.subBasketIds} original={base?.procurementSummary} errors={errors} vendorName={draft.name} vendorId={base?.id} canCreate={canCreateBasket && !readOnly} canRequestMainBasket={canRequestMainBasket && !readOnly} disabled={blocked && !readOnly} readOnly={readOnly} onBusyChange={setNestedBusy} onDraftChange={setNestedDraft} onCatalogBlockedChange={setCatalogBlocked} onChange={(main, sub) => {
             setDraft((previous) => ({ ...previous, mainBasketIds: main, subBasketIds: sub }));
             setErrors((previous) => ({ ...previous, mainBasketIds: "", subBasketIds: "" }));
             pendingCommand.current = null;

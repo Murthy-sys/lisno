@@ -96,6 +96,8 @@ export interface FinanceLedgerEntryDto {
   reference: string | null;
   sourceSectionId: string | null;
   sourceLineItemKey: string | null;
+  purchaseOrderId: string | null;
+  paymentMilestoneId: string | null;
   /*
    * Presentation labels for the two lineage identifiers above. Clients render
    * these; the identifiers stay in the payload for reconciliation only.
@@ -1063,7 +1065,7 @@ async function requireFinanceActor(
   return { id: String(stored._id), role: stored.role };
 }
 
-async function requireFinanceProjectAccess(
+export async function requireFinanceProjectAccess(
   actor: { id: string; role: "finance_head" | "super_admin" },
   projectId: string,
   session?: ClientSession
@@ -2073,6 +2075,8 @@ export function financeEntryDto(
     reference: nullableString(entry.reference),
     sourceSectionId,
     sourceLineItemKey,
+    purchaseOrderId: nullableString(entry.purchaseOrderId),
+    paymentMilestoneId: nullableString(entry.paymentMilestoneId),
     sourceSectionLabel: sourceSectionId === null
       ? null
       : configuredSectionLabel?.trim() || projectWorkflowSectionLabel(sourceSectionId),

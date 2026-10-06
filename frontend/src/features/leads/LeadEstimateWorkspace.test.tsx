@@ -1,5 +1,5 @@
 import { screen, waitFor, within } from "@testing-library/react";
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { EstimateClientReviewSummary } from "../../api/types";
 import { renderWithQuery } from "../../test/render";
 import { LeadEstimateWorkspace } from "./LeadEstimateWorkspace";
-import { retryEstimateClientEmail, type EstimateDraft, type EstimateStatus } from "./leadsApi";
+import { leadKeys, retryEstimateClientEmail, type EstimateDraft, type EstimateStatus } from "./leadsApi";
 import { clientKeys } from "../client/clientApi";
 import { estimateWorkflowKeys } from "../estimates/estimateWorkflowApi";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
@@ -196,9 +196,10 @@ function installWorkspaceHarness(options: WorkspaceHarnessOptions) {
   };
 }
 
-function renderWorkspace() {
+function renderWorkspace(extra?: React.ReactNode) {
   return renderWithQuery(
     <MemoryRouter initialEntries={["/estimator-sales/leads/lead-1/estimate"]}>
+      {extra}
       <Routes>
         <Route
           path="/estimator-sales/leads/:leadId/estimate"
@@ -207,6 +208,11 @@ function renderWorkspace() {
       </Routes>
     </MemoryRouter>
   );
+}
+
+function RefetchSavedEstimate() {
+  const queryClient = useQueryClient();
+  return <button type="button" onClick={() => void queryClient.invalidateQueries({ queryKey: leadKeys.estimate("lead-1") })}>Refetch saved estimate</button>;
 }
 
 describe("LeadEstimateWorkspace", () => {
@@ -252,6 +258,66 @@ describe("LeadEstimateWorkspace", () => {
     expect(await screen.findByRole("heading", { name: "Configure estimate" })).toBeVisible();
     expect(screen.queryByText("Wardrobe carcass")).not.toBeInTheDocument();
     expect(screen.queryByText("Master Bedroom")).not.toBeInTheDocument();
+  });
+
+  it("refreshes a saved Main Line from Configuration without losing estimate inputs", async () => {
+    const storedLine = {
+      id: "saved-paint", source: "configuration", catalogueId: "line-paint", roomId: "room-living", roomName: "Living & Dining",
+      mainBasketId: "basket-paint", mainBasketName: "Painting", subBasketId: "sub-paint", subBasketName: "Interior",
+      mainLineId: "line-paint", mainLineName: "Old painting", revisionId: "revision-one", uomId: "uom-sqft", uomCode: "SQFT",
+      uomName: "sq ft", uomDecimalScale: 2, unit: "sq ft", specification: null, rate: 80, ratePaise: 8000,
+      quantity: 2, included: true, amount: 160, amountPaise: 16000, classification: "special"
+    };
+    const stored = {
+      id: "estimate-paint", version: 2, propertyType: "2BHK", rooms: [{ id: "room-living", label: "Living & Dining", typeId: "living", icon: "", sqft: 200, length: null, width: null }],
+      scopes: [], selectedMainBasketIds: ["basket-paint"], selectedMainBasketClassifications: [{ mainBasketId: "basket-paint", classification: "special" }],
+      lineItems: [storedLine], subtotal: 160, gst: 28.8, total: 188.8, status: "draft", approvalRequired: false
+    };
+    let catalogueVersion = 1;
+    let savedReads = 0;
+    const saves: Array<Record<string, unknown>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/leads/lead-1") && method === "GET") return response(leadFixture);
+      if (url.endsWith("/leads/lead-1/estimate") && method === "GET") {
+        savedReads += 1;
+        return response(catalogueVersion === 1 ? stored : { ...stored, lineItems: [{ ...storedLine,
+          mainLineName: "Updated painting", revisionId: "revision-two" }] });
+      }
+      if (url.includes("/estimation/catalogue?") && method === "GET") return response({
+        items: [{ id: "basket-paint", name: "Painting", displayOrder: 1, subBaskets: [{ id: "sub-paint", basketId: "basket-paint", name: "Interior", displayOrder: 1,
+          mainLines: [{ id: "line-paint", mainLineId: "line-paint", basketId: "basket-paint", subBasketId: "sub-paint", name: catalogueVersion === 1 ? "Old painting" : "Updated painting", displayOrder: 1,
+            revisionId: catalogueVersion === 1 ? "revision-one" : "revision-two", inHouseBaseRatePaise: catalogueVersion === 1 ? 7500 : 9500,
+            uom: { id: "uom-sqft", code: "SQFT", name: "sq ft", decimalScale: 2 } }] }] }],
+        pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0
+      });
+      if (url.endsWith("/leads/lead-1/estimate") && method === "PUT") {
+        saves.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return response({ ...stored, version: 3 });
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    const user = userEvent.setup();
+    renderWorkspace(<RefetchSavedEstimate />);
+    expect(await screen.findByRole("checkbox", { name: /Old painting/ })).toBeChecked();
+    await user.clear(screen.getByRole("textbox", { name: /Selling rate.*Old painting/ }));
+    await user.type(screen.getByRole("textbox", { name: /Selling rate.*Old painting/ }), "82");
+    catalogueVersion = 2;
+    await user.click(screen.getByRole("button", { name: "Refetch saved estimate" }));
+    await waitFor(() => expect(savedReads).toBe(2));
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Old painting/ })).toHaveValue("82");
+    await user.click(screen.getAllByRole("button", { name: "Refresh available items" })[0]!);
+    expect(await screen.findByRole("checkbox", { name: /Updated painting/ })).toBeChecked();
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Updated painting/ })).toHaveValue("82");
+    expect(screen.getByRole("spinbutton", { name: /Quantity.*Updated painting/ })).toHaveValue(2);
+    expect(screen.getByRole("radio", { name: /Special item type for Painting, Interior, Updated painting/ })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(saves).toHaveLength(1));
+    expect(saves[0]!.lineItems).toEqual(expect.arrayContaining([expect.objectContaining({
+      id: "saved-paint", mainLineId: "line-paint", revisionId: "revision-two", quantity: 2,
+      classification: "special", ratePaise: 8200
+    })]));
   });
 
   it("builds a new estimate from configured baskets, keeps blank rates incomplete, and saves exact paise", async () => {
@@ -309,6 +375,8 @@ describe("LeadEstimateWorkspace", () => {
     await user.click(screen.getByRole("option", { name: "Living & Dining" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
     await user.click(screen.getByRole("checkbox", { name: /Joinery/ }));
+    expect(screen.getByRole("radio", { name: "Standard item type for Main Basket Joinery" })).toBeChecked();
+    await user.click(screen.getByRole("radio", { name: "Special item type for Main Basket Joinery" }));
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
 
     expect(screen.getByRole("region", { name: "Joinery" })).toBeVisible();
@@ -316,6 +384,15 @@ describe("LeadEstimateWorkspace", () => {
     expect(screen.getByRole("textbox", { name: /Selling rate.*Wardrobe carcass/ })).toHaveAccessibleName(/sq ft/);
     expect(screen.queryByText("False ceiling")).not.toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: /Wardrobe carcass/ }));
+    expect(screen.getByRole("radio", { name: /Special item type for Joinery, Wardrobes, Wardrobe carcass in Living & Dining/ })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Back to Asha Shah" }));
+    await user.click(screen.getByRole("radio", { name: "Standard item type for Main Basket Joinery" }));
+    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    expect(screen.getByRole("radio", { name: /Special item type for Joinery, Wardrobes, Wardrobe carcass in Living & Dining/ })).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: /Wardrobe carcass/ }));
+    expect(screen.queryByRole("radio", { name: /Special item type for Joinery, Wardrobes, Wardrobe carcass in Living & Dining/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: /Wardrobe carcass/ }));
+    expect(screen.getByRole("radio", { name: /Special item type for Joinery, Wardrobes, Wardrobe carcass in Living & Dining/ })).toBeChecked();
     expect(screen.getByText("Rate required")).toBeVisible();
     expect(screen.getByRole("button", { name: "Submit estimate" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Save draft" }));
@@ -323,9 +400,10 @@ describe("LeadEstimateWorkspace", () => {
     expect((saves[0]!.lineItems as Array<Record<string, unknown>>)[0]).toMatchObject({
       source: "configuration", catalogueId: "line-carcass", mainBasketId: "basket-joinery",
       subBasketId: "sub-wardrobes", mainLineId: "line-carcass", revisionId: "revision-3",
-      uomId: "uom-sqft", ratePaise: null, quantity: 1, included: true
+      uomId: "uom-sqft", ratePaise: null, quantity: 1, included: true, classification: "special"
     });
     expect(saves[0]!.selectedMainBasketIds).toEqual(["basket-joinery"]);
+    expect(saves[0]!.selectedMainBasketClassifications).toEqual([{ mainBasketId: "basket-joinery", classification: "standard" }]);
     expect(await screen.findByText("Estimate draft saved.")).toBeVisible();
     expect(estimateGets).toBe(1);
 
@@ -352,6 +430,7 @@ describe("LeadEstimateWorkspace", () => {
     expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Reload saved estimate (discard edits)" }));
     await waitFor(() => expect(screen.getByRole("textbox", { name: /Selling rate.*Wardrobe carcass/ })).toHaveValue("80.05"));
+    expect(screen.getByRole("radio", { name: /Special item type for Joinery, Wardrobes, Wardrobe carcass in Living & Dining/ })).toBeChecked();
     expect(estimateGets).toBe(2);
 
     conflictOnNextSave = false;
@@ -380,7 +459,12 @@ describe("LeadEstimateWorkspace", () => {
       if (url.includes("/estimation/catalogue?") && method === "GET") return response(catalogue);
       if (url.endsWith("/leads/lead-1/estimate") && method === "PUT") {
         savedInput = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        return response({ ...savedInput, id: "estimate-pop", version: 1, status: "draft",
+        const submittedLine = (savedInput.lineItems as Array<Record<string, unknown>>)[0]!;
+        return response({ ...savedInput, lineItems: [{ ...submittedLine, id: "saved-pop",
+          mainBasketName: "POP / Gypsum", subBasketName: "NA", mainLineName: "POP false ceiling",
+          uomCode: "SQFT", uomName: "sq ft", uomDecimalScale: 2, unit: "sq ft",
+          rate: 1050, amount: 1050, amountPaise: 105_000 }],
+          id: "estimate-pop", version: 1, status: "draft",
           approvalRequired: false, subtotal: 1050, gst: 189, total: 1239 });
       }
       throw new Error(`Unexpected request: ${method} ${url}`);
@@ -572,6 +656,10 @@ describe("LeadEstimateWorkspace", () => {
     screen.getByRole("checkbox", { name: /General Items/ }).focus();
     await user.keyboard(" ");
     expect(screen.getByRole("checkbox", { name: /General Items/ })).toBeChecked();
+    const emptyBasketSpecial = screen.getByRole("radio", { name: "Special item type for Main Basket General Items" });
+    emptyBasketSpecial.focus();
+    await user.keyboard(" ");
+    expect(emptyBasketSpecial).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
     expect(screen.getByRole("region", { name: "Miscellaneous" })).toBeVisible();
     expect(screen.getByText("No available items in this Sub Basket.")).toBeVisible();
@@ -580,11 +668,13 @@ describe("LeadEstimateWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(saves).toHaveLength(1));
     expect(saves[0]!.selectedMainBasketIds).toEqual(["basket-empty"]);
+    expect(saves[0]!.selectedMainBasketClassifications).toEqual([{ mainBasketId: "basket-empty", classification: "special" }]);
     expect(saves[0]!.lineItems).toEqual([]);
 
     await user.click(screen.getByRole("button", { name: "Back to Asha Shah" }));
     expect(screen.getByRole("checkbox", { name: /General Items/ })).toBeChecked();
     await user.click(screen.getByRole("checkbox", { name: /Painting/ }));
+    expect(screen.getByRole("radio", { name: "Standard item type for Main Basket Painting" })).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
     expect(screen.getByRole("region", { name: "Direct items in Painting" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Decorative paints" })).toBeVisible();
@@ -593,6 +683,9 @@ describe("LeadEstimateWorkspace", () => {
     expect(screen.getByText(/Inactive source$/)).toBeVisible();
     await user.click(screen.getByRole("checkbox", { name: /Site protection/ }));
     await user.click(screen.getByRole("checkbox", { name: /Finish sample/ }));
+    expect(screen.getByRole("radio", { name: /Standard item type for Painting, Site protection in Living & Dining/ })).toBeChecked();
+    await user.click(screen.getByRole("radio", { name: /Special item type for Painting, Site protection in Living & Dining/ }));
+    expect(screen.getByRole("radio", { name: /Standard item type for Painting, Decorative paints, Finish sample in Living & Dining/ })).toBeChecked();
     expect(screen.getByRole("button", { name: "Submit estimate" })).toBeDisabled();
     await user.type(screen.getByRole("textbox", { name: /Selling rate.*Site protection/ }), "80.05");
     await user.type(screen.getByRole("textbox", { name: /Selling rate.*Finish sample/ }), "11");
@@ -602,12 +695,16 @@ describe("LeadEstimateWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(saves).toHaveLength(2));
     expect(saves[1]!.selectedMainBasketIds).toEqual(["basket-empty", "basket-paint"]);
+    expect(saves[1]!.selectedMainBasketClassifications).toEqual([
+      { mainBasketId: "basket-empty", classification: "special" },
+      { mainBasketId: "basket-paint", classification: "standard" }
+    ]);
     expect(saves[1]!.lineItems).toEqual(expect.arrayContaining([
-      expect.objectContaining({ source: "configuration", itemType: "temporary", mainLineId: "temporary-direct", subBasketId: null, revisionId: "revision-direct", itemVersion: 9, revisionVersion: 4, uomId: "uom-sqft", ratePaise: 8005, quantity: 1.25 }),
-      expect.objectContaining({ source: "configuration", itemType: "temporary", mainLineId: "temporary-grouped", subBasketId: "sub-paint", revisionId: "revision-grouped", itemVersion: 11, revisionVersion: 8, uomId: "uom-each", ratePaise: 1100, quantity: 1 })
+      expect.objectContaining({ source: "configuration", itemType: "temporary", classification: "special", mainLineId: "temporary-direct", subBasketId: null, revisionId: "revision-direct", itemVersion: 9, revisionVersion: 4, uomId: "uom-sqft", ratePaise: 8005, quantity: 1.25 }),
+      expect.objectContaining({ source: "configuration", itemType: "temporary", classification: "standard", mainLineId: "temporary-grouped", subBasketId: "sub-paint", revisionId: "revision-grouped", itemVersion: 11, revisionVersion: 8, uomId: "uom-each", ratePaise: 1100, quantity: 1 })
     ]));
-    expect(await screen.findByText(/Draft source at save$/)).toBeVisible();
-    expect(screen.getByText(/Inactive source at save$/)).toBeVisible();
+    expect(await screen.findByText(/^Draft source$/)).toBeVisible();
+    expect(screen.getByText(/^Inactive source$/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Proposal" }));
     expect(screen.getByText(/Painting · Temporary item · 1.25 sq ft/)).toBeVisible();
     expect(screen.getByText(/Painting \/ Decorative paints · Temporary item/)).toBeVisible();
@@ -618,10 +715,12 @@ describe("LeadEstimateWorkspace", () => {
     expect(screen.getByRole("checkbox", { name: /Finish sample/ })).toBeChecked();
     expect(screen.getByRole("textbox", { name: /Selling rate.*Site protection/ })).toHaveValue("80.05");
     expect(screen.getByRole("textbox", { name: /Selling rate.*Finish sample/ })).toHaveValue("11");
+    expect(screen.getByRole("radio", { name: /Special item type for Painting, Site protection in Living & Dining/ })).toBeChecked();
 
     await user.click(screen.getByRole("button", { name: "Back to Asha Shah" }));
     expect(screen.getByRole("checkbox", { name: /Painting/ })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: /General Items/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Special item type for Main Basket General Items" })).toBeChecked();
     await user.click(screen.getByRole("checkbox", { name: /Painting/ }));
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
     const unselected = screen.getByRole("region", { name: "Saved items from unselected Main Baskets" });
@@ -634,8 +733,8 @@ describe("LeadEstimateWorkspace", () => {
     await waitFor(() => expect(saves).toHaveLength(3));
     expect(saves[2]!.selectedMainBasketIds).toEqual(["basket-empty"]);
     expect(saves[2]!.lineItems).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "saved-0", itemType: "temporary", subBasketId: null, included: false, ratePaise: 8005 }),
-      expect.objectContaining({ id: "saved-1", itemType: "temporary", subBasketId: "sub-paint", included: false, ratePaise: 1100 })
+      expect.objectContaining({ id: "saved-0", itemType: "temporary", classification: "special", subBasketId: null, included: false, ratePaise: 8005 }),
+      expect.objectContaining({ id: "saved-1", itemType: "temporary", classification: "standard", subBasketId: "sub-paint", included: false, ratePaise: 1100 })
     ]));
     expect((saves[2]!.lineItems as Array<Record<string, unknown>>).every((line) => !("itemVersion" in line) && !("revisionVersion" in line))).toBe(true);
 
@@ -645,6 +744,8 @@ describe("LeadEstimateWorkspace", () => {
     expect(screen.getByRole("checkbox", { name: /Site protection/ })).toBeEnabled();
     expect(screen.getByRole("checkbox", { name: /Site protection/ })).not.toBeChecked();
     expect(screen.getByRole("textbox", { name: /Selling rate.*Site protection/ })).toHaveValue("80.05");
+    await user.click(screen.getByRole("checkbox", { name: /Site protection/ }));
+    expect(screen.getByRole("radio", { name: /Special item type for Painting, Site protection in Living & Dining/ })).toBeChecked();
   });
 
   it("distinguishes a denied catalogue from a failed request that can be retried", async () => {
@@ -681,6 +782,8 @@ describe("LeadEstimateWorkspace", () => {
     renderWorkspace();
     expect(await screen.findByRole("checkbox", { name: /Painting/ })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: /Painting/ })).toBeDisabled();
+    expect(screen.getByText("Item type:")).toHaveTextContent("Item type: Standard");
+    expect(screen.queryByRole("radio", { name: /item type for Main Basket Painting/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue to item selection" })).toBeDisabled();
   });
 
@@ -836,13 +939,14 @@ describe("LeadEstimateWorkspace", () => {
     expect(screen.getByRole("checkbox", { name: /Cove in Gypsum/ })).toBeChecked();
     expect(screen.getByRole("textbox", { name: /Selling rate.*Cove in Gypsum/ })).toHaveValue("20");
     expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
-    expect(screen.getByText(/UOM changed from Running foot to Square foot/)).toHaveTextContent("revision");
-    await user.click(screen.getByRole("button", { name: "Use updated source for Cove in Gypsum in Living & Dining" }));
+    expect(screen.getByText(/Unit changed from Running foot to Square foot/)).toBeVisible();
+    await user.clear(screen.getByRole("spinbutton", { name: /Quantity \(Square foot\).*Cove in Gypsum/ }));
+    await user.type(screen.getByRole("spinbutton", { name: /Quantity \(Square foot\).*Cove in Gypsum/ }), "1");
     expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(saves).toHaveLength(2));
     expect((saves[1]!.lineItems as Array<Record<string, unknown>>)[0]).toMatchObject({ revisionId: "revision-cove-next", itemVersion: 5, revisionVersion: 3, uomId: "uom-sqft", ratePaise: 2000 });
-    expect(await screen.findByText(/Draft source at save/)).toBeVisible();
+    expect(await screen.findByText(/^Draft source$/)).toBeVisible();
   });
 
   it("separates a missing new selection from saved unavailable items and blocks its first save", async () => {
@@ -881,7 +985,7 @@ describe("LeadEstimateWorkspace", () => {
     expect(within(unavailable).getByRole("checkbox", { name: /Cove in Gypsum/ })).toBeChecked();
     expect(screen.queryByRole("region", { name: "Saved items unavailable in current Configuration" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
-    expect(screen.getByText(/A selected item is no longer available for a new estimate line/)).toBeVisible();
+    expect(screen.getByText(/A Main Line is no longer available in Configuration/)).toBeVisible();
     await user.click(within(unavailable).getByRole("checkbox", { name: /Cove in Gypsum/ }));
     expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
     expect(saveRequests).toBe(0);

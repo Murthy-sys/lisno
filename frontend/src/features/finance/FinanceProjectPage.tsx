@@ -6,6 +6,7 @@ import { hasFrontendPermission } from "../../auth/authorization";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { FinanceProjectWorkflowControl } from "./FinanceProjectWorkflowControl";
 import { ProjectFinancePanel } from "./ProjectFinancePanel";
+import { FinanceWorkOrderAssessments } from "./FinanceWorkOrderAssessments";
 
 export function FinanceProjectPage() {
   const { projectId = "" } = useParams();
@@ -27,6 +28,8 @@ export function FinanceProjectPage() {
       />
       <ProjectChatNavigation projectId={projectId} overviewTo={`/finance/projects/${projectId}`} overviewLabel="Finance" />
       <ProjectFinancePanel projectId={projectId} />
+      {auth.user?.role === "finance_head" && hasFrontendPermission(auth.authorization, "finance.vendor_invoice.manage")
+        ? <FinanceWorkOrderAssessments projectId={projectId} /> : null}
       {canControlWorkflow ? <FinanceProjectWorkflowControl projectId={projectId} /> : null}
     </section>
   );

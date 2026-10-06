@@ -10,13 +10,14 @@ import {
 } from "../src/domain/roles.js";
 
 describe("canonical role catalog", () => {
-  it("exposes the exact seventeen canonical role codes", () => {
+  it("exposes the exact eighteen canonical role codes", () => {
     expect(ROLE_CODES).toEqual([
       "super_admin",
       "admin",
       "estimator_sales",
       "designer",
       "procurement",
+      "program_manager",
       "finance_head",
       "site_manager",
       "worker_electrician",
@@ -39,6 +40,7 @@ describe("canonical role catalog", () => {
       estimator_sales: "Sales",
       designer: "Designer",
       procurement: "Procurement",
+      program_manager: "Program Manager",
       finance_head: "Finance Manager",
       site_manager: "Site Manager",
       worker_electrician: "Electrician",
@@ -67,6 +69,7 @@ describe("canonical role catalog", () => {
       "estimator_sales",
       "designer",
       "procurement",
+      "program_manager",
       "finance_head",
       "site_manager",
       ...WORKER_ROLES

@@ -1,0 +1,25 @@
+# Estimator recommendation deselection task plan
+
+Specification: [Remove recommendation-selected lines when their source is deselected](../specs/2026-10-05-estimator-recommendation-deselection-design.md).
+
+## Boundaries and contract
+
+- This changes editable Estimator estimate selection only. Do not edit Configuration recommendation rules, catalogue data, Procurement, client-approved history, permissions, or unrelated UI.
+- `recommendationSourceMainLineIds?: string[]` is the agreed optional configured estimate-line field in the request, stored line, and editable draft response. It contains distinct, included source Main Line IDs in the target's room. Missing on a new or historical line means independent/manual selection. An omitted field on an existing persisted line retains its saved origin until server cleanup; an explicit empty array marks manual selection.
+- Deselecting a source unchecks a recommendation-only target when no included recorded source remains, including transitively. Manual selections and targets with another included source stay included. Excluded lines retain their editable quantity/rate. Totals use the final included flags through existing paise calculation.
+- Preserve the already dirty estimate route/model and frontend workspace diffs. Capture the current per-target diff before assigning writers. No seed, migration, commit, deployment, or live data mutation.
+
+## Dependency-ordered tasks
+
+1. **Baseline and contract check (parent, read-only before writers).** Save the initial dirty-path set and relevant diffs; inspect the current estimate PUT validation, persistence/response path, client draft restoration, recommendation selection/deselection handlers, and existing tests. Confirm the optional field name, omission semantics, and exact test fixtures with both owners. Acceptance: no unrelated change is overwritten and frontend/backend use one contract.
+2. **Estimate persistence and canonical cleanup (backend owner).** Own `backend/src/routes/estimates.ts`, `backend/src/models/Estimate.ts`, and focused estimate-route/replica tests. Accept and validate optional origin IDs only on configured lines; preserve saved origin when an existing line omits it; reject duplicate, self, unknown, or cross-room source IDs; apply iterative room-scoped cleanup to included flags and origin before amount/GST calculation and storage. Keep the current estimate version/CAS, authorization, saved line IDs, and locked-status behavior. Acceptance: AC2 and AC4; stale/older clients cannot save an orphaned recommendation target or its amount.
+3. **Estimator selection and draft hydration (frontend owner; may run alongside task 2 once task 1 settles the contract).** Own `frontend/src/features/leads/LeadEstimateWorkspace.tsx`, `configuredEstimate.ts`, `leadsApi.ts`, and focused frontend tests. Record current source IDs when the slide-out selects a target; distinguish manual checkbox selection; cascade deselection for a source line or Main Basket in the same room; preserve origin on catalogue refresh, save response, and draft reload. Keep current recommendation availability/version guards and automatic slide-out dismissal. Acceptance: AC1–AC3 and the frontend portion of AC4–AC5.
+4. **Cross-stack integration (parent after both writers).** Compare request, response, persisted origin, and include/amount semantics; reconcile older-client omission and explicitly empty origin; inspect final target diffs for unrelated changes. Run a read-only integrity review of room isolation, manual/shared targets, recursive cleanup, CAS, and amount reconciliation. Fix confirmed findings within assigned ownership before final verification.
+5. **Final verification (verification runner after integration fixes, or parent in Mode B).** Run focused backend estimate-route/replica tests and frontend recommendation/workspace/configured-line tests; add test cases for shared and chained targets, manual selection, saved draft reload, stale-client omission, invalid/cross-room source, and locked estimate. Run backend/frontend typechecks and builds, `git diff --check`, and `git status --short`. Check rendered desktop/phone interactions and keyboard/accessibility for source deselection and slide-out close. Report exact checks, any unrun browser check, and remaining limitations. Acceptance: every specification criterion has evidence.
+
+## Ownership and parallel work if Mode A is selected
+
+- Backend implementer owns only `backend/` estimate API/model/tests in task 2; it does not edit frontend or Configuration services.
+- Frontend implementer owns only `frontend/src/features/leads/` estimate selection/types/tests in task 3; it does not edit backend or Configuration screens.
+- Parent owns the specification, this plan, cross-stack contract, integration, and final reconciliation. Agents are not alone in the worktree; each must preserve existing dirty edits and other writers' work.
+- Tasks 2 and 3 are independent after task 1. Integrity review follows both writers, and final verification follows any integrity fixes.

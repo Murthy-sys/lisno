@@ -1,0 +1,41 @@
+- generic [ref=e2]:
+  - main [ref=e3]:
+    - link "Skip to sign in" [ref=e4] [cursor=pointer]:
+      - /url: "#login-form"
+    - img "Lisno" [ref=e5]
+    - paragraph [aria-hidden]: Spacesfor a bettertomorrow
+    - generic [ref=e7]:
+      - region "Lisno design operations" [ref=e8]:
+        - heading "From first sketch to final handoff." [level=1] [ref=e9]
+        - paragraph [ref=e10]: Keep every project, decision, deadline, and approved design moving in one shared workspace.
+        - paragraph [ref=e12]: Clear ownership. Timely reviews. Beautiful outcomes.
+      - generic [ref=e14]:
+        - heading "Welcome to Lisno" [level=2] [ref=e15]
+        - paragraph [ref=e16]: Sign in to continue
+        - generic [ref=e17]:
+          - generic [ref=e18]: Email address
+          - textbox "Email address" [active] [ref=e20]
+        - generic [ref=e21]:
+          - generic [ref=e22]: Password
+          - generic [ref=e23]:
+            - textbox "Password" [ref=e24]
+            - button "Show password" [ref=e25] [cursor=pointer]
+        - generic [ref=e29]:
+          - generic [ref=e30]:
+            - checkbox "Remember me" [checked] [ref=e31]
+            - text: Remember me
+          - link "Forgot password?" [ref=e32] [cursor=pointer]:
+            - /url: /forgot-password
+        - button "Sign In" [ref=e33] [cursor=pointer]
+        - status "Sign-in status" [ref=e34]
+        - paragraph [ref=e35]:
+          - text: New to Lisno?
+          - link "Create an account" [ref=e36] [cursor=pointer]:
+            - /url: /signup
+    - paragraph [aria-hidden]:
+      - generic: Spaces
+      - generic: "|People"
+      - generic: "|Ideas"
+      - generic: "|Better Living"
+  - status "Application announcements" [ref=e37]
+  - region "Notifications"

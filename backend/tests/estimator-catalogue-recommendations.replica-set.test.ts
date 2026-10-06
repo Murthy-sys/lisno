@@ -294,7 +294,7 @@ describe("estimator catalogue recommendations", { timeout: 30_000 }, () => {
     await request(server).get(`${endpoint}?mainLineIds=source-ceiling`).set(bearer("estimator")).expect(403);
   });
 
-  it("chooses the active revision over an unfinished draft and hides a stale recommendation section", async () => {
+  it("uses the saved draft recommendations for an active Main Line", async () => {
     await recommendations("source-ceiling", [rule("paint", "target-paint", "basket-paint", "sub-paint")]);
     await AiEstimatorKnowledgeMainLineModel.collection.updateOne({ _id: "source-ceiling" },
       { $set: { draftRevisionId: "revision-source-ceiling-pending" }, $inc: { version: 1 } });
@@ -304,14 +304,25 @@ describe("estimator catalogue recommendations", { timeout: 30_000 }, () => {
     } as never);
     await AiEstimatorKnowledgeSectionModel.collection.insertOne({
       _id: "recommendations-pending", mainLineId: "source-ceiling", revisionId: "revision-source-ceiling-pending",
-      sectionKey: "recommendations", payload: { budgetAlterations: [
+      sectionKey: "recommendations", applicability: "configured", payload: { budgetAlterations: [
         rule("unpublished", "target-light", "basket-light", "sub-light")
       ] }
+    } as never);
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({
+      _id: "overview-pending", mainLineId: "source-ceiling", revisionId: "revision-source-ceiling-pending",
+      sectionKey: "overview", payload: { uomId: "uom-ea" }
     } as never);
     const response = await request(app()).get(`${endpoint}?mainLineIds=source-ceiling&includeReadyNonActive=true`)
       .set(bearer("estimator")).expect(200);
     expect(response.body.data.sources[0]).toMatchObject({
-      revisionId: "revision-source-ceiling", itemVersion: 3, rules: [{ id: "paint" }]
+      revisionId: "revision-source-ceiling-pending", itemVersion: 3, rules: [{ id: "unpublished" }]
+    });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "recommendations-pending" },
+      { $set: { applicability: "not_applicable" } });
+    const disabled = await request(app()).get(`${endpoint}?mainLineIds=source-ceiling&includeReadyNonActive=true`)
+      .set(bearer("estimator")).expect(200);
+    expect(disabled.body.data.sources[0]).toMatchObject({
+      revisionId: "revision-source-ceiling-pending", rules: [], guidance: []
     });
   });
 });

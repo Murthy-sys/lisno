@@ -44,6 +44,30 @@ function LiveBuilder({ initialLines, editable = true, availableCatalogue = catal
 }
 
 describe("ConfiguredEstimateBuilder", () => {
+  it("provides separate keyboard radio groups for included Main Lines and temporary items, then displays read-only types", async () => {
+    const user = userEvent.setup();
+    const initialLines = buildConfiguredLines(catalogue, rooms, new Set(["basket-pop"]), [])
+      .map((line) => ({ ...line, included: true, classification: line.itemType === "temporary" ? "special" as const : undefined }));
+    const view = render(<LiveBuilder initialLines={initialLines} />);
+    const pop = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
+    const cove = screen.getByText("Cove in Gypsum").closest(".configured-estimate-line") as HTMLElement;
+    const popStandard = within(pop).getByRole("radio", { name: /Standard item type for POP \/ Gypsum, NA, POP false ceiling in Living & Dining/ });
+    const coveSpecial = within(cove).getByRole("radio", { name: /Special item type for POP \/ Gypsum, NA, Cove in Gypsum in Living & Dining/ });
+    expect(popStandard).toBeChecked();
+    expect(coveSpecial).toBeChecked();
+    popStandard.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(within(pop).getByRole("radio", { name: /Special item type for POP \/ Gypsum, NA, POP false ceiling in Living & Dining/ })).toBeChecked();
+    expect(coveSpecial).toBeChecked();
+
+    view.rerender(<LiveBuilder key="classification-read-only" initialLines={initialLines} editable={false} />);
+    const readOnlyPop = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
+    const readOnlyCove = screen.getByText("Cove in Gypsum").closest(".configured-estimate-line") as HTMLElement;
+    expect(within(readOnlyPop).getByText("Item type:")).toHaveTextContent("Item type: Standard");
+    expect(within(readOnlyCove).getByText("Item type:")).toHaveTextContent("Item type: Special");
+    expect(within(readOnlyPop).queryByRole("radio")).not.toBeInTheDocument();
+  });
+
   it("previews each UOM's quantity times price while unchecked and changes only selected subtotals", async () => {
     const user = userEvent.setup();
     const initialLines = buildConfiguredLines(catalogue, rooms, new Set(["basket-pop"]), [])
@@ -131,6 +155,8 @@ describe("ConfiguredEstimateBuilder", () => {
     expect(within(readOnlyRow).getByRole("spinbutton", { name: /Quantity \(sq ft\) for/ })).toBeDisabled();
     expect(within(readOnlyRow).getByRole("textbox", { name: /Selling rate \(₹\/sq ft\) for/ })).toBeDisabled();
     expect(within(readOnlyRow).getByRole("checkbox", { name: /POP false ceiling/ })).toBeDisabled();
+    expect(within(readOnlyRow).getByText("Item type:")).toHaveTextContent("Item type: Standard");
+    expect(within(readOnlyRow).queryByRole("radio")).not.toBeInTheDocument();
     expect(within(readOnlyRow).getByRole("button", { name: /Increase quantity for/ })).toBeDisabled();
   });
 

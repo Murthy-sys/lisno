@@ -1,0 +1,166 @@
+- generic [ref=f1e2]:
+  - generic [ref=f1e3]:
+    - link "Skip to main content" [ref=f1e4] [cursor=pointer]:
+      - /url: "#main-content"
+    - complementary "Application sidebar" [ref=f1e5]:
+      - generic [ref=f1e6]:
+        - generic [ref=f1e7]:
+          - img "Lisno" [ref=f1e8]
+          - generic [ref=f1e9]: INTERIOR WORKSPACE
+        - navigation "Primary navigation" [ref=f1e10]:
+          - generic [ref=f1e11]:
+            - button "Procurement" [expanded] [ref=f1e12] [cursor=pointer]
+            - group "Procurement sections" [ref=f1e20]:
+              - link "Projects" [ref=f1e21] [cursor=pointer]:
+                - /url: /procurement
+              - link "Vendors" [ref=f1e25] [cursor=pointer]:
+                - /url: /procurement/vendors
+          - link "My access requests" [ref=f1e30] [cursor=pointer]:
+            - /url: /access-requests/mine
+          - link "Home" [ref=f1e36] [cursor=pointer]:
+            - /url: /home
+    - banner "Workspace tools" [ref=f1e40]:
+      - generic [ref=f1e41]:
+        - button "View daily critical tasks" [ref=f1e42] [cursor=pointer]:
+          - generic [ref=f1e43]: Critical tasks
+        - button "Notifications" [ref=f1e46] [cursor=pointer]
+        - button "Synthetic workspace reviewer" [ref=f1e51] [cursor=pointer]:
+          - generic [aria-hidden] [ref=f1e52]: SW
+          - generic [ref=f1e53]:
+            - generic [ref=f1e54]: Synthetic workspace reviewer
+            - generic [ref=f1e55]: Procurement
+    - main [ref=f1e58]:
+      - region [ref=f1e59]:
+        - generic [ref=f1e60]:
+          - link "Back to projects" [ref=f1e62] [cursor=pointer]:
+            - /url: /procurement
+          - generic [ref=f1e63]:
+            - generic [ref=f1e64]: Project procurement
+            - heading "Aurora Villa" [level=1] [ref=f1e66]
+            - paragraph [ref=f1e67]: Plan each main basket, compare vendor BOQs and issue approved work orders.
+        - button "Project status" [ref=f1e68] [cursor=pointer]
+        - region "Project baskets" [ref=f1e72]:
+          - navigation "Procurement breadcrumb" [ref=f1e73]:
+            - button "Projects" [ref=f1e74] [cursor=pointer]
+            - generic [aria-hidden] [ref=f1e75]: /
+            - button "Aurora Villa" [ref=f1e76] [cursor=pointer]
+            - generic [aria-hidden] [ref=f1e100]: /
+            - strong [ref=f1e101]: Carpentry
+          - button "← Back to main baskets" [ref=f1e102] [cursor=pointer]
+          - generic [ref=f1e103]:
+            - region [ref=f1e104]:
+              - generic [ref=f1e106]:
+                - paragraph [ref=f1e107]: Approved scope
+                - heading "Carpentry" [level=2] [ref=f1e108]
+                - paragraph [ref=f1e109]: Aurora Villa
+              - table [ref=f1e111]:
+                - caption [ref=f1e112]: Included approved source lines for Carpentry
+                - rowgroup [ref=f1e118]:
+                  - row [ref=f1e119]:
+                    - columnheader "Item / description" [ref=f1e120]
+                    - columnheader "Qty" [ref=f1e121]
+                    - columnheader "Base amount" [ref=f1e122]
+                    - columnheader "Total" [ref=f1e123]
+                - rowgroup [ref=f1e124]:
+                  - row [ref=f1e210]:
+                    - rowheader [ref=f1e126]:
+                      - strong [ref=f1e127]: Wardrobe plywood and laminate
+                    - cell "80 sq ft" [ref=f1e128]
+                    - cell [ref=f1e211]:
+                      - generic [ref=f1e212]:
+                        - generic [ref=f1e213]: Base amount for Wardrobe plywood and laminate (₹/sq ft)
+                        - textbox "Base amount for Wardrobe plywood and laminate (₹/sq ft)" [active] [ref=f1e214]: "12.50"
+                        - generic [ref=f1e215]:
+                          - button "Save" [ref=f1e216] [cursor=pointer]
+                          - button "Cancel" [ref=f1e217] [cursor=pointer]
+                    - cell "₹1,100.00" [ref=f1e133]
+                - rowgroup [ref=f1e134]:
+                  - row [ref=f1e135]:
+                    - rowheader [ref=f1e136]:
+                      - strong [ref=f1e137]: Bedside table finishing
+                    - cell "2 nos" [ref=f1e138]
+                    - cell "₹100.00 Edit base amount for Bedside table finishing" [ref=f1e139]:
+                      - generic [ref=f1e140]:
+                        - generic [ref=f1e141]: ₹100.00
+                        - button "Edit base amount for Bedside table finishing" [ref=f1e142] [cursor=pointer]: Edit
+                    - cell "₹250.00" [ref=f1e143]
+              - generic [ref=f1e144]:
+                - generic [ref=f1e145]: Total
+                - strong [ref=f1e146]: ₹1,350.00
+            - region "Vendor enquiry for Aurora Villa" [ref=f1e147]:
+              - heading "Vendor enquiry" [level=2] [ref=f1e148]
+              - navigation "Vendor enquiry progress" [ref=f1e149]:
+                - list [ref=f1e150]:
+                  - listitem [ref=f1e151]:
+                    - button [ref=f1e152] [cursor=pointer]:
+                      - generic [aria-hidden] [ref=f1e153]: "1"
+                      - strong [ref=f1e154]: Enquiry
+                  - listitem [ref=f1e155]:
+                    - button [disabled] [ref=f1e156]:
+                      - generic [aria-hidden] [ref=f1e157]: "2"
+                      - strong [ref=f1e158]: Bids
+                  - listitem [ref=f1e159]:
+                    - button [disabled] [ref=f1e160]:
+                      - generic [aria-hidden] [ref=f1e161]: "3"
+                      - strong [ref=f1e162]: Comparison
+                  - listitem [ref=f1e163]:
+                    - button [disabled] [ref=f1e164]:
+                      - generic [aria-hidden] [ref=f1e165]: "4"
+                      - strong [ref=f1e166]: Awarded
+              - generic [ref=f1e167]:
+                - region [ref=f1e168]:
+                  - generic [ref=f1e169]:
+                    - generic [ref=f1e170]:
+                      - paragraph [ref=f1e171]: Enquiry · Select and send
+                      - heading "Choose vendors" [level=3] [ref=f1e172]
+                      - paragraph [ref=f1e173]: Eligible vendors receive the same confirmed BOQ through separate invitations.
+                    - generic [ref=f1e174]: "Project city: Bengaluru"
+                  - generic [ref=f1e175]:
+                    - generic [ref=f1e176]:
+                      - text: Search vendors
+                      - searchbox "Search vendors" [ref=f1e177]
+                    - generic [ref=f1e178]:
+                      - text: City
+                      - combobox "City" [ref=f1e179]:
+                        - option "All cities" [selected]
+                        - option "Project city"
+                        - option "Other cities"
+                        - option "City unknown"
+                  - generic [ref=f1e180]:
+                    - generic [ref=f1e181]:
+                      - generic [ref=f1e182]:
+                        - checkbox "Sharma Interiors VEN-J01 · Bengaluru · same city" [ref=f1e183]
+                        - generic [ref=f1e184]:
+                          - strong [ref=f1e185]: Sharma Interiors
+                          - generic [ref=f1e186]: VEN-J01 · Bengaluru · same city
+                      - generic [ref=f1e187]: KPI 86.0
+                      - button "Edit city" [ref=f1e188] [cursor=pointer]
+                    - generic [ref=f1e189]:
+                      - generic [ref=f1e190]:
+                        - checkbox "Decor Masters VEN-F02 · Mysuru · outside city" [ref=f1e191]
+                        - generic [ref=f1e192]:
+                          - strong [ref=f1e193]: Decor Masters
+                          - generic [ref=f1e194]: VEN-F02 · Mysuru · outside city
+                      - generic [ref=f1e195]: KPI 55.0
+                      - button "Edit city" [ref=f1e196] [cursor=pointer]
+                  - generic [ref=f1e197]:
+                    - generic [ref=f1e198]: 1–2 of 2 vendors
+                    - generic [ref=f1e199]:
+                      - button "Previous" [disabled] [ref=f1e200]
+                      - button "Next" [disabled] [ref=f1e201]
+                  - generic [ref=f1e202]:
+                    - paragraph [ref=f1e203]: 0 vendors selected
+                    - button "Send BOQ to selected vendors" [disabled] [ref=f1e204]
+                  - paragraph [ref=f1e205]: Create and save the vendor-facing BOQ draft before sending invitations.
+                - group [ref=f1e206]:
+                  - generic "Create vendor-facing BOQ Required before sending invitations" [ref=f1e207] [cursor=pointer]:
+                    - text: Create vendor-facing BOQ
+                    - generic [ref=f1e208]: Required before sending invitations
+              - paragraph [ref=f1e209]: "Approved estimate for this basket: ₹2,500.00 before GST. Vendor payable values appear only after bids are submitted."
+        - region "Earlier procurement work" [ref=f1e94]:
+          - group [ref=f1e95]:
+            - generic "History and open purchase requests" [ref=f1e96] [cursor=pointer]
+          - group [ref=f1e97]:
+            - generic "Existing vendor work progress" [ref=f1e98] [cursor=pointer]
+  - status "Application announcements" [ref=f1e99]
+  - region "Notifications"

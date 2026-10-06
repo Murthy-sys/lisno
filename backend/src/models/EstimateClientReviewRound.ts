@@ -43,6 +43,7 @@ const estimateClientReviewLineItemSchema = new Schema(
     id: { type: String, default: null, immutable: true },
     source: { type: String, enum: ["legacy", "configuration"], default: undefined, immutable: true },
     itemType: { type: String, enum: ["main_line", "temporary"], default: undefined, immutable: true },
+    classification: { type: String, enum: ["standard", "special"], default: undefined, immutable: true },
     catalogueId: { type: String, required: true, immutable: true },
     roomId: { type: String, default: undefined, immutable: true },
     roomName: { type: String, required: true, immutable: true },
@@ -121,11 +122,16 @@ estimateClientReviewLineItemSchema.pre("validate", function validateFrozenLine()
   }
 });
 
+const selectedMainBasketClassificationSchema = new Schema({
+  mainBasketId: { type: String, required: true, immutable: true },
+  classification: { type: String, enum: ["standard", "special"], required: true, immutable: true }
+}, { _id: false, strict: "throw" });
+
 const estimateClientReviewSnapshotSchema = new Schema(
   {
     clientName: { type: String, required: true, immutable: true },
     projectName: { type: String, required: true, immutable: true },
-    location: { type: String, required: true, immutable: true },
+    location: { type: String, immutable: true },
     propertyType: { type: String, required: true, immutable: true },
     lineItems: {
       type: [estimateClientReviewLineItemSchema],
@@ -138,12 +144,29 @@ const estimateClientReviewSnapshotSchema = new Schema(
     subtotalPaise: { type: Number, default: undefined, immutable: true, validate: safeIntegerValidator },
     gstPaise: { type: Number, default: undefined, immutable: true, validate: safeIntegerValidator },
     totalPaise: { type: Number, default: undefined, immutable: true, validate: safeIntegerValidator },
-    selectedMainBasketIds: { type: [String], default: undefined, immutable: true }
+    selectedMainBasketIds: { type: [String], default: undefined, immutable: true },
+    selectedMainBasketClassifications: {
+      type: [selectedMainBasketClassificationSchema], default: undefined, immutable: true
+    }
   },
   { _id: false, strict: "throw" }
 );
 
 estimateClientReviewSnapshotSchema.pre("validate", function validateFrozenTotals() {
+  if (typeof this.get("location") !== "string") {
+    this.invalidate("location", "Published snapshot location must be a string.");
+  }
+  const classifications = this.get("selectedMainBasketClassifications") as
+    Array<{ mainBasketId: string }> | undefined;
+  if (classifications !== undefined) {
+    const selectedIds = this.get("selectedMainBasketIds") as string[] | undefined;
+    const classifiedIds = classifications.map((entry) => entry.mainBasketId);
+    if (!selectedIds || classifiedIds.length !== selectedIds.length ||
+      new Set(classifiedIds).size !== classifiedIds.length ||
+      classifiedIds.some((id) => !selectedIds.includes(id))) {
+      this.invalidate("selectedMainBasketClassifications", "Published basket classifications must match selected Main Baskets.");
+    }
+  }
   const lines = this.get("lineItems") as Array<{ source?: string }> | undefined;
   if (!lines?.some((line) => line.source === "configuration")) return;
   const subtotalPaise = this.get("subtotalPaise");

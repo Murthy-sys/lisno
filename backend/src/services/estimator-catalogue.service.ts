@@ -1,5 +1,6 @@
 import type mongoose from "mongoose";
 
+import { selectCurrentMainLineRevision } from "../domain/ai-estimator-knowledge-current-revision.js";
 import { normalizeKnowledgeBudgetAlterationTarget } from "../domain/ai-estimator-knowledge-recommendation.js";
 import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
@@ -176,13 +177,13 @@ export async function listEstimatorCatalogueRecommendations(
   const revisions = [...new Set([...sources.values()].map((line) => line.revisionId))];
   const sections = revisions.length === 0 ? [] : await AiEstimatorKnowledgeSectionModel.find({
     revisionId: { $in: revisions }, sectionKey: "recommendations"
-  }).select({ revisionId: 1, mainLineId: 1, payload: 1 }).lean().exec();
+  }).select({ revisionId: 1, mainLineId: 1, applicability: 1, payload: 1 }).lean().exec();
   const sectionByRevision = new Map(sections.map((section) => [String(section.revisionId), section]));
   const rulesBySource = new Map<string, SavedRecommendationRule[]>();
   const guidanceBySource = new Map<string, RecommendationGuidance[]>();
   for (const [id, line] of sources) {
     const section = sectionByRevision.get(line.revisionId);
-    if (!section || String(section.mainLineId) !== id) continue;
+    if (!section || String(section.mainLineId) !== id || section.applicability !== "configured") continue;
     const payload = asObject(section.payload);
     rulesBySource.set(id, Array.isArray(payload?.budgetAlterations)
       ? payload.budgetAlterations.flatMap(parseAddedRecommendationRule) : []);
@@ -347,23 +348,27 @@ function withoutTargetType(rule: SavedRecommendationRule): Omit<RecommendationRu
   return projected;
 }
 
-/** Resolve only newly selected rows in the save transaction; saved snapshots never re-resolve. */
+/** Resolve current Configuration values for Main Lines on reads and estimate saves. */
 export async function resolveEstimatorCatalogueLines(
   mainLineIds: readonly string[],
-  session: mongoose.ClientSession
+  session?: mongoose.ClientSession
 ): Promise<Map<string, ResolvedEstimatorCatalogueLine>> {
   if (mainLineIds.length === 0) return new Map();
-  const rawLines = await AiEstimatorKnowledgeMainLineModel.find({
+  const rawLineQuery = AiEstimatorKnowledgeMainLineModel.find({
     _id: { $in: [...new Set(mainLineIds)] }, status: { $in: ["active", "draft", "inactive"] }
   }).select({ _id: 1, basketId: 1, subBasketId: 1, name: 1, displayOrder: 1, itemType: 1,
-    status: 1, version: 1, activeRevisionId: 1, draftRevisionId: 1 })
-    .session(session).lean().exec();
+    status: 1, version: 1, activeRevisionId: 1, draftRevisionId: 1 });
+  if (session) rawLineQuery.session(session);
+  const rawLines = await rawLineQuery.lean().exec();
   const basketIds = [...new Set(rawLines.map((line) => String(line.basketId)))];
   const subBasketIds = [...new Set(rawLines.filter((line) => line.subBasketId).map((line) => String(line.subBasketId)))];
-  const baskets = await AiEstimatorKnowledgeBasketModel.find({ _id: { $in: basketIds }, status: "active" })
-    .select({ _id: 1, name: 1 }).session(session).lean().exec();
-  const subBaskets = await AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: subBasketIds } })
-    .select({ _id: 1, basketId: 1, name: 1 }).session(session).lean().exec();
+  const basketQuery = AiEstimatorKnowledgeBasketModel.find({ _id: { $in: basketIds }, status: "active" })
+    .select({ _id: 1, name: 1 });
+  const subBasketQuery = AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: subBasketIds } })
+    .select({ _id: 1, basketId: 1, name: 1 });
+  if (session) { basketQuery.session(session); subBasketQuery.session(session); }
+  const baskets = await basketQuery.lean().exec();
+  const subBaskets = await subBasketQuery.lean().exec();
   const lines = await projectLines(rawLines, session);
   const basketById = new Map(baskets.map((basket) => [String(basket._id), String(basket.name)]));
   const subBasketById = new Map(subBaskets.map((subBasket) => [String(subBasket._id), subBasket]));
@@ -391,13 +396,13 @@ async function projectLines(
   session?: mongoose.ClientSession
 ): Promise<Map<string, EstimatorCatalogueLine>> {
   const candidates = rawLines.filter((line) => {
-    if (!sourceRevisionFor(line) || !Number.isSafeInteger(line.version) || Number(line.version) < 1) return false;
+    if (!selectCurrentMainLineRevision(line) || !Number.isSafeInteger(line.version) || Number(line.version) < 1) return false;
     const realSubBasket = typeof line.subBasketId === "string" && line.subBasketId.length > 0;
     if (line.itemType === "temporary") return line.subBasketId == null || realSubBasket;
     return (line.itemType == null || line.itemType === "main_line") && realSubBasket;
   });
   if (candidates.length === 0) return new Map();
-  const revisionIds = [...new Set(candidates.map((line) => sourceRevisionFor(line)!.id))];
+  const revisionIds = [...new Set(candidates.map((line) => selectCurrentMainLineRevision(line)!.id))];
   const revisionQuery = AiEstimatorKnowledgeRevisionModel.find({ _id: { $in: revisionIds } })
     .select({ _id: 1, mainLineId: 1, status: 1, version: 1, completeness: 1 });
   const overviewQuery = AiEstimatorKnowledgeSectionModel.find({
@@ -405,7 +410,7 @@ async function projectLines(
   }).select({ revisionId: 1, mainLineId: 1, payload: 1 });
   const advancedQuery = AiEstimatorKnowledgeSectionModel.find({
     revisionId: { $in: revisionIds }, sectionKey: "advanced"
-  }).select({ revisionId: 1, mainLineId: 1,
+  }).select({ revisionId: 1, mainLineId: 1, applicability: 1,
     "payload.modeCalculations.in_house_labor.baseRatePaise": 1,
     "payload.modeCalculations.in_house_material.baseRatePaise": 1,
     "payload.modeCalculations.in_house.baseRatePaise": 1 });
@@ -427,7 +432,8 @@ async function projectLines(
   for (const advanced of advancedSections) {
     const revisionId = String(advanced.revisionId);
     const revision = revisionById.get(revisionId);
-    if (!revision || String(revision.mainLineId) !== String(advanced.mainLineId)) continue;
+    if (!revision || String(revision.mainLineId) !== String(advanced.mainLineId) ||
+      advanced.applicability !== "configured") continue;
     inHouseBaseRateByRevision.set(revisionId, inHouseBaseRatePaise(advanced.payload));
   }
   const uomQuery = AiEstimatorKnowledgeUomModel.find({
@@ -439,7 +445,7 @@ async function projectLines(
   const projected = new Map<string, EstimatorCatalogueLine>();
   for (const raw of candidates) {
     const id = String(raw._id);
-    const source = sourceRevisionFor(raw)!;
+    const source = selectCurrentMainLineRevision(raw)!;
     const revisionId = source.id;
     const revision = revisionById.get(revisionId);
     const uomId = uomIdByRevision.get(revisionId);
@@ -483,25 +489,6 @@ function inHouseBaseRatePaise(payload: unknown): number | null {
     return Number.isSafeInteger(combined) ? combined : null;
   }
   return baseRate(scopes.in_house);
-}
-
-function sourceRevisionFor(line: {
-  status?: unknown; activeRevisionId?: unknown; draftRevisionId?: unknown;
-}): { id: string; status: "draft" | "active" } | null {
-  if (line.status === "active") {
-    return typeof line.activeRevisionId === "string" && line.activeRevisionId
-      ? { id: line.activeRevisionId, status: "active" } : null;
-  }
-  if (line.status === "draft" ||
-    (line.status === "inactive" && line.draftRevisionId !== null && line.draftRevisionId !== undefined)) {
-    return typeof line.draftRevisionId === "string" && line.draftRevisionId
-      ? { id: line.draftRevisionId, status: "draft" } : null;
-  }
-  if (line.status === "inactive") {
-    return typeof line.activeRevisionId === "string" && line.activeRevisionId
-      ? { id: line.activeRevisionId, status: "active" } : null;
-  }
-  return null;
 }
 
 function hasReadyOverviewAndMode(completeness: unknown): boolean {

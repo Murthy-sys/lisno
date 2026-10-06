@@ -3,12 +3,14 @@ import mongoose, { type ClientSession } from "mongoose";
 import type { ZodType } from "zod";
 import {
   purchaseOrderRequestDecisionSchema, purchaseOrderRequestQuerySchema, purchaseOrderRequestQuoteSchema, purchaseOrderRequestSubmitSchema,
-  type PurchaseOrderRequestDecisionInput, type PurchaseOrderRequestLine, type PurchaseOrderRequestQuery,
+  type PurchaseOrderRequestDecisionInput, type PurchaseOrderRequestLine, type PurchaseOrderRequestModeSnapshot, type PurchaseOrderRequestQuery,
   type PurchaseOrderRequestQuoteInput, type PurchaseOrderRequestSectionTotal, type PurchaseOrderRequestSubmitInput,
   type PurchaseOrderRequestTotals, type PurchaseOrderRequestVendorTotal
 } from "../domain/project-purchase-order-request.js";
 import { calculatePurchaseOrderLine, calculatePurchaseOrderTotals, type ApprovedPurchaseOrderLine } from "../domain/project-purchase-order.js";
 import { MAX_FINANCE_AMOUNT_PAISE } from "../domain/project-finance.js";
+import type { PurchaseOrderModeResolution } from "../domain/project-purchase-order-mode.js";
+import type { ProjectPurchaseOrderPreparationDto } from "../domain/project-purchase-order-preparation.js";
 import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeVendorModel } from "../models/AiEstimatorKnowledgeVendor.js";
 import { ProjectModel } from "../models/Project.js";
@@ -24,6 +26,7 @@ import { assertPurchaseOrderAllocations } from "./procurement-vendor-allocation.
 import { assertProcurementProjectAccess, procurementItemSourceSnapshot } from "./procurement.service.js";
 import { buildProjectPurchaseOrderPreparation } from "./project-purchase-order-preparation.service.js";
 import { cutOverProjectAuthority, type PurchaseOrderApprovalHook } from "./project-purchase-order.service.js";
+import { assertNoIssuedBasketSourceOverlap } from "./project-purchase-order-tender-overlap.js";
 import { vendorActivation } from "./vendor-readiness.service.js";
 import { assertCompletionReviewAllowsOrderChanges } from "./site-completion-fence.js";
 
@@ -54,7 +57,8 @@ export interface PurchaseOrderRequestDto {
   decisions: Array<{ id: string; revisionId: string; revision: number; decision: string; actorId: string; reason: string | null; budgetOverrideReason: string | null; decidedAt: string }>;
   revisions: Array<{ id: string; revision: number; submittedAt: string; submittedById: string; preparationDigest: string;
     approvedEstimatePaise: number; committedPaise: number; committedGstPaise: number; committedTotalPaise: number; remainingPaise: number;
-    lines: PurchaseOrderRequestLine[]; sectionTotals: PurchaseOrderRequestSectionTotal[]; vendorTotals: PurchaseOrderRequestVendorTotal[]; totals: PurchaseOrderRequestTotals }>;
+    lines: PurchaseOrderRequestLine[]; modeSnapshotStatus: "captured" | "historical_unavailable"; modeSnapshots: PurchaseOrderRequestModeSnapshot[];
+    sectionTotals: PurchaseOrderRequestSectionTotal[]; vendorTotals: PurchaseOrderRequestVendorTotal[]; totals: PurchaseOrderRequestTotals }>;
   createdAt: string;
   updatedAt: string;
 }
@@ -69,6 +73,7 @@ export interface PurchaseOrderRequestQuoteDto {
   committedTotalPaise: number;
   remainingPaise: number;
   lines: PurchaseOrderRequestLine[];
+  modeSnapshots: PurchaseOrderRequestModeSnapshot[];
   sectionTotals: PurchaseOrderRequestSectionTotal[];
   vendorTotals: PurchaseOrderRequestVendorTotal[];
   totals: PurchaseOrderRequestTotals;
@@ -109,7 +114,7 @@ export function createProjectPurchaseOrderRequestService(input: { audit: AuditSe
     quote(actor, projectId, value) {
       return tx(actor, "procurement", projectId, async session => {
         const fields = validate(purchaseOrderRequestQuoteSchema, value);
-        return buildRequestQuote(projectId, fields, session);
+        return buildRequestQuote(projectId, fields, session, now());
       });
     },
     list(actor, projectId, value) {
@@ -163,7 +168,10 @@ export function createProjectPurchaseOrderRequestService(input: { audit: AuditSe
           "The approved estimate changed after this request was returned. Start a new project request for the new estimate source.");
         const project = await ProjectModel.findOne({ _id: projectId, status: "active" }).select({ name: 1 }).session(session).lean();
         if (!project) throw new ApiError(409, "PURCHASE_ORDER_PROJECT_NOT_ACTIVE", "This project is no longer active.");
-        const preparation = await buildProjectPurchaseOrderPreparation(projectId, session) as Row;
+        // Effective price and tax references use submission time. Delivery target dates
+        // do not represent the date the commercial order is placed.
+        const referenceAsOf = now();
+        const preparation = await buildProjectPurchaseOrderPreparation(projectId, session, { at: referenceAsOf }) as Row;
         if (preparation.digest !== fields.expectedPreparationDigest) throw new ApiError(409, "PURCHASE_ORDER_PREPARATION_CONFLICT", "Procurement items or the approved estimate changed. Refresh the order preparation.");
         if (!preparation.estimateSource || preparation.estimateSource.estimateId !== source.estimateId ||
           preparation.estimateSource.estimateVersion !== source.estimateVersion ||
@@ -213,10 +221,11 @@ export function createProjectPurchaseOrderRequestService(input: { audit: AuditSe
         if (vendorTerms.size !== vendorIds.size || [...vendorTerms.keys()].some(id => !vendorIds.has(id))) throw new ApiError(400, "VALIDATION_ERROR", "Vendor terms must match the selected vendors exactly.", { vendorTerms: "Remove unmatched vendor terms." });
         for (const vendorId of [...vendorIds].sort()) await requireActiveVendor(vendorId, session);
         const totals = calculatePurchaseOrderTotals(lines);
+        const modeSnapshots = buildModeSnapshots(preparation as ProjectPurchaseOrderPreparationDto, lines, fields.lines, referenceAsOf);
         const sectionTotals = groupSectionTotals(lines, preparation.sections as Row[]);
         const vendorTotals = groupVendorTotals(lines, vendorTerms);
         if (vendorTotals.some(vendor => lines.filter(line => line.vendorId === vendor.vendorId).length > 100)) throw new ApiError(400, "PURCHASE_ORDER_VENDOR_LINE_LIMIT", "A vendor order can contain at most 100 lines.");
-        const timestamp = now();
+        const timestamp = referenceAsOf;
         await cutOverProjectAuthority(projectId, actor.id, timestamp, input.audit, session);
         const requestId = existing ? String(existing._id) : `purchase-order-request-${randomUUID()}`;
         const revision = existing ? Number(existing.revision) + 1 : 1;
@@ -225,7 +234,7 @@ export function createProjectPurchaseOrderRequestService(input: { audit: AuditSe
           estimateId: source.estimateId, estimateVersion: source.estimateVersion, estimateReviewRoundId: source.estimateReviewRoundId,
           preparationDigest: preparation.digest, approvedEstimatePaise: preparation.approvedEstimatePaise,
           committedPaise: preparation.committedPaise, committedGstPaise: preparation.committedGstPaise,
-          committedTotalPaise: preparation.committedTotalPaise, lines, totals, sectionTotals, vendorTotals,
+          committedTotalPaise: preparation.committedTotalPaise, lines, modeSnapshots, totals, sectionTotals, vendorTotals,
           submittedAt: timestamp, submittedById: actor.id, idempotencyKey: fields.idempotencyKey, requestDigest }], { session });
         const receipt = { idempotencyKey: fields.idempotencyKey, requestDigest, revisionId, recordedAt: timestamp };
         if (existing) {
@@ -288,11 +297,21 @@ export function createProjectPurchaseOrderRequestService(input: { audit: AuditSe
         const timestamp = now();
         const approvedOrderIds: string[] = [];
         if (fields.decision === "approve") {
+          const recoveredSnapshots = (Array.isArray(revision.modeSnapshots) ? revision.modeSnapshots : [])
+            .filter((snapshot: Row) => snapshot.mode?.decision?.integrityBasis);
+          if (recoveredSnapshots.length && (!fields.reason || fields.reason.trim().length < 10)) {
+            throw new ApiError(400, "PURCHASE_ORDER_RECOVERY_APPROVAL_REASON_REQUIRED",
+              "Explain why the current saved Configuration values are acceptable before approving this request.",
+              { reason: "Give a separate Super Admin reason of at least 10 characters." });
+          }
           const source = await procurementItemSourceSnapshot(String(request.projectId), session, true);
           if (source.estimateId !== request.estimateId || source.estimateVersion !== request.estimateVersion ||
             source.estimateReviewRoundId !== request.estimateReviewRoundId) sourceConflict();
-          const preparation = await buildProjectPurchaseOrderPreparation(String(request.projectId), session) as Row;
+          const preparation = await buildProjectPurchaseOrderPreparation(String(request.projectId), session, {
+            at: timestamp, digestVersion: Array.isArray(revision.modeSnapshots) ? "current" : "legacy"
+          }) as Row;
           if (preparation.digest !== revision.preparationDigest) throw new ApiError(409, "PURCHASE_ORDER_PREPARATION_CONFLICT", "Procurement items changed after submission. Request changes before approval.");
+          assertRecoveredSnapshotsCurrent(recoveredSnapshots, preparation as ProjectPurchaseOrderPreparationDto);
           const lines = revision.lines as PurchaseOrderRequestLine[];
           const manual = await manualOrderItems(String(request.projectId), session);
           if (manual.open.size || lines.some(line => manual.approved.has(line.procurementItemId))) throw new ApiError(409, "PURCHASE_ORDER_MANUAL_OVERLAP", "An individual purchase order now overlaps this project request.");
@@ -309,6 +328,8 @@ export function createProjectPurchaseOrderRequestService(input: { audit: AuditSe
           const fence = await ProjectModel.findOneAndUpdate({ _id: request.projectId, status: "active" },
             { $inc: { purchaseOrderApprovalEpoch: 1 } }, { session, returnDocument: "after", runValidators: true, timestamps: false }).lean();
           if (!fence) throw new ApiError(409, "PURCHASE_ORDER_PROJECT_NOT_ACTIVE", "A purchase-order request can be approved only for an active project.");
+          await assertNoIssuedBasketSourceOverlap(String(request.projectId),
+            lines.map(line => line.sourceLineItemKey), session);
           const approvedEstimatePaise = checkedPaise(source.lineItems.reduce((sum, line) => sum + BigInt(line.amountPaise), 0n));
           const existingOrders = await ProjectPurchaseOrderModel.find({ projectId: request.projectId, approvedRevisionId: { $ne: null }, cancelledAt: null })
             .select({ approvedNetPaise: 1 }).session(session).lean() as Row[];
@@ -379,11 +400,12 @@ export function createProjectPurchaseOrderRequestService(input: { audit: AuditSe
   };
 }
 
-async function buildRequestQuote(projectId: string, fields: PurchaseOrderRequestQuoteInput, session: ClientSession): Promise<PurchaseOrderRequestQuoteDto> {
+async function buildRequestQuote(projectId: string, fields: PurchaseOrderRequestQuoteInput, session: ClientSession,
+  referenceAsOf: Date): Promise<PurchaseOrderRequestQuoteDto> {
   const source = await procurementItemSourceSnapshot(projectId, session);
   const project = await ProjectModel.findOne({ _id: projectId, status: "active" }).select({ _id: 1 }).session(session).lean();
   if (!project) throw new ApiError(409, "PURCHASE_ORDER_PROJECT_NOT_ACTIVE", "This project is no longer active.");
-  const preparation = await buildProjectPurchaseOrderPreparation(projectId, session) as Row;
+  const preparation = await buildProjectPurchaseOrderPreparation(projectId, session, { at: referenceAsOf }) as Row;
   if (preparation.digest !== fields.expectedPreparationDigest) throw new ApiError(409, "PURCHASE_ORDER_PREPARATION_CONFLICT", "Procurement items or the approved estimate changed. Refresh the order preparation.");
   if (!preparation.estimateSource || preparation.estimateSource.estimateId !== source.estimateId ||
       preparation.estimateSource.estimateVersion !== source.estimateVersion ||
@@ -434,15 +456,133 @@ async function buildRequestQuote(projectId: string, fields: PurchaseOrderRequest
   if (terms.size !== vendorIds.size || [...terms.keys()].some(id => !vendorIds.has(id))) throw new ApiError(400, "VALIDATION_ERROR",
     "Vendor terms must match the selected vendors exactly.", { vendorTerms: "Remove unmatched vendor terms." });
   const vendorTotals = groupVendorTotals(lines, terms);
+  const modeSnapshots = buildModeSnapshots(preparation as ProjectPurchaseOrderPreparationDto, lines, fields.lines, referenceAsOf);
   if (vendorTotals.some(vendor => lines.filter(line => line.vendorId === vendor.vendorId).length > 100)) throw new ApiError(400,
     "PURCHASE_ORDER_VENDOR_LINE_LIMIT", "A vendor order can contain at most 100 lines.");
   return { projectId, preparationDigest: preparation.digest, estimateSource: { estimateId: source.estimateId,
     estimateVersion: source.estimateVersion, estimateReviewRoundId: source.estimateReviewRoundId },
     approvedEstimatePaise: preparation.approvedEstimatePaise, committedPaise: preparation.committedPaise,
     committedGstPaise: preparation.committedGstPaise, committedTotalPaise: preparation.committedTotalPaise,
-    remainingPaise: preparation.remainingPaise, lines,
+    remainingPaise: preparation.remainingPaise, lines, modeSnapshots,
     sectionTotals: groupSectionTotals(lines, preparation.sections as Row[]), vendorTotals,
     totals: calculatePurchaseOrderTotals(lines) };
+}
+
+/**
+ * Freeze one configured benchmark per approved source line. Commercial child
+ * amounts remain the only vendor payable values, even when one line has several
+ * children or the mode calculation represents an internal selling price.
+ */
+function buildModeSnapshots(preparation: ProjectPurchaseOrderPreparationDto,
+  lines: readonly PurchaseOrderRequestLine[], selectedLines: PurchaseOrderRequestQuoteInput["lines"],
+  referenceAsOf: Date): PurchaseOrderRequestModeSnapshot[] {
+  const sourceLines = new Map(preparation.estimateLines.map(line => [line.key, line]));
+  if (sourceLines.size !== preparation.estimateLines.length) sourceConflict();
+  const selectedById = new Map(selectedLines.map((line, index) => [line.procurementItemId, { line, index }]));
+  const bySource = new Map<string, PurchaseOrderRequestLine[]>();
+  for (const line of lines) {
+    const group = bySource.get(line.sourceLineItemKey) ?? [];
+    group.push(line);
+    bySource.set(line.sourceLineItemKey, group);
+  }
+  const snapshots: PurchaseOrderRequestModeSnapshot[] = [];
+  for (const sourceLine of preparation.estimateLines) {
+    const children = bySource.get(sourceLine.key);
+    if (!children?.length) continue;
+    if (!sourceLine.included || sourceLine.amountPaise === null || sourceLine.amountPaise <= 0 ||
+      children.some(child => !sourceLine.itemIds.includes(child.procurementItemId))) sourceConflict();
+    const mode = sourceLine.mode;
+    if (!mode || (mode.state !== "ready" && mode.state !== "exception") || !mode.decision ||
+      (mode.state === "ready" && (!mode.preview || !mode.decision.mode || !mode.revision || !mode.uom)) ||
+      (mode.state === "exception" && !mode.decision.exceptionReason)) {
+      throw new ApiError(409, "PURCHASE_ORDER_MODE_NOT_READY", "Confirm a saved mode or a documented historical exception for each included estimate line before ordering.");
+    }
+    if (mode.state === "ready") assertCurrentRecoveredMode(mode);
+    const actualChildren = children.map(child => {
+      const selected = selectedById.get(child.procurementItemId);
+      if (!selected) sourceConflict();
+      const reference = mode.priceReferences[child.procurementItemId];
+      const matchesReference = reference?.state === "ready" && reference.unitPricePaise === child.unitPricePaise &&
+        reference.gstBasisPoints === child.gstBasisPoints;
+      const commercialExceptionReason = selected.line.commercialExceptionReason?.trim() || null;
+      if (!matchesReference && !commercialExceptionReason) {
+        throw new ApiError(400, "PURCHASE_ORDER_COMMERCIAL_EXCEPTION_REQUIRED",
+          "Document the agreed vendor rate and tax when they cannot be verified against one saved price and tax version.",
+          { [`lines.${selected.index}.commercialExceptionReason`]: "Give a reason for the agreed rate or GST." });
+      }
+      return { procurementItemId: child.procurementItemId, vendorId: child.vendorId,
+        quantityMilliUnits: child.quantityMilliUnits, unitPricePaise: child.unitPricePaise,
+        gstBasisPoints: child.gstBasisPoints, allocatedWorkPaise: child.allocatedWorkPaise,
+        netPaise: child.netPaise, gstPaise: child.gstPaise, totalPaise: child.totalPaise,
+        commercialExceptionReason };
+    });
+    const actualTotals = calculatePurchaseOrderTotals(children);
+    const selectedPriceReferences = Object.fromEntries(children.flatMap(child => {
+      const reference = mode.priceReferences[child.procurementItemId];
+      return reference ? [[child.procurementItemId, reference] as const] : [];
+    }));
+    snapshots.push({ sourceLineItemKey: sourceLine.key, source: sourceLine.source,
+      roomId: sourceLine.roomId, roomName: sourceLine.roomName,
+      mainBasketId: sourceLine.mainBasketId, mainBasketName: sourceLine.mainBasketName,
+      subBasketId: sourceLine.subBasketId, subBasketName: sourceLine.subBasketName,
+      mainLineId: sourceLine.mainLineId, mainLineName: sourceLine.mainLineName,
+      approvedQuantity: sourceLine.quantity, approvedUnit: sourceLine.unit,
+      approvedAmountPaise: sourceLine.amountPaise, referenceAsOf: referenceAsOf.toISOString(),
+      mode: { ...mode, priceReferences: selectedPriceReferences }, actualChildren, actualTotals,
+      actualNetMinusConfiguredCostPaise: mode.preview ? actualTotals.netPaise - mode.preview.adjustedCostPaise : null });
+  }
+  if (snapshots.reduce((sum, snapshot) => sum + snapshot.actualChildren.length, 0) !== lines.length) sourceConflict();
+  return snapshots;
+}
+
+function assertCurrentRecoveredMode(mode: PurchaseOrderModeResolution): void {
+  const basis = mode.decision?.integrityBasis;
+  const integrity = mode.integrity;
+  if (!basis && !integrity) return;
+  if (mode.state !== "ready" || !basis || basis.kind !== "observed_unverified" ||
+      !integrity || integrity.status !== "mismatch" || !mode.preview || !mode.decision ||
+      !mode.decision.mode || mode.preview.mode !== mode.decision.mode ||
+      !mode.revision || !/^[a-f0-9]{64}$/u.test(basis.activatedDigest) ||
+      !/^[a-f0-9]{64}$/u.test(basis.observedDigest) ||
+      basis.activatedDigest !== integrity.activatedDigest ||
+      basis.activatedDigest !== mode.revision.contentDigest ||
+      basis.activatedDigest !== mode.decision.revisionDigest ||
+      basis.observedDigest !== integrity.observedDigest ||
+      typeof basis.reason !== "string" || basis.reason.trim().length < 10 ||
+      typeof basis.actorId !== "string" || !basis.actorId ||
+      typeof basis.acknowledgedAt !== "string" || !basis.acknowledgedAt) {
+    throw new ApiError(409, "PURCHASE_ORDER_MODE_INTEGRITY_CONFLICT",
+      "The acknowledged Configuration values changed. Review and save this mode again before ordering.");
+  }
+}
+
+function assertRecoveredSnapshotsCurrent(snapshots: readonly Row[],
+  preparation: ProjectPurchaseOrderPreparationDto): void {
+  if (!snapshots.length) return;
+  const currentByKey = new Map(preparation.estimateLines.map(line => [line.key, line.mode]));
+  for (const snapshot of snapshots) {
+    const frozen = snapshot.mode as PurchaseOrderModeResolution;
+    assertCurrentRecoveredMode(frozen);
+    const current = currentByKey.get(String(snapshot.sourceLineItemKey));
+    if (!current || current.state !== "ready") {
+      throw new ApiError(409, "PURCHASE_ORDER_PREPARATION_CONFLICT",
+        "The acknowledged Configuration values changed after submission. Request changes before approval.");
+    }
+    assertCurrentRecoveredMode(current);
+    const originalDecision = frozen.decision;
+    const latestDecision = current.decision;
+    const original = originalDecision?.integrityBasis;
+    const latest = latestDecision?.integrityBasis;
+    if (!originalDecision || !latestDecision || !original || !latest ||
+        originalDecision.id !== latestDecision.id || originalDecision.version !== latestDecision.version ||
+        originalDecision.mode !== latestDecision.mode ||
+        original.activatedDigest !== latest.activatedDigest || original.observedDigest !== latest.observedDigest ||
+        original.reason !== latest.reason || original.actorId !== latest.actorId ||
+        original.acknowledgedAt !== latest.acknowledgedAt) {
+      throw new ApiError(409, "PURCHASE_ORDER_PREPARATION_CONFLICT",
+        "The acknowledged Configuration values changed after submission. Request changes before approval.");
+    }
+  }
 }
 
 function sameRequestSource(request: Row, source: { estimateId: string; estimateVersion: number; estimateReviewRoundId: string | null }): boolean {
@@ -522,6 +662,8 @@ function requestDto(request: Row, revisions: Row[]): PurchaseOrderRequestDto {
     revisions: revisions.map(revision => ({ id: String(revision._id), revision: Number(revision.revision),
       submittedAt: new Date(revision.submittedAt).toISOString(), submittedById: String(revision.submittedById),
       preparationDigest: String(revision.preparationDigest), lines: revision.lines as PurchaseOrderRequestLine[],
+      modeSnapshotStatus: Array.isArray(revision.modeSnapshots) ? "captured" as const : "historical_unavailable" as const,
+      modeSnapshots: Array.isArray(revision.modeSnapshots) ? revision.modeSnapshots as PurchaseOrderRequestModeSnapshot[] : [],
       approvedEstimatePaise: Number(revision.approvedEstimatePaise), committedPaise: Number(revision.committedPaise),
       committedGstPaise: Number(revision.committedGstPaise), committedTotalPaise: Number(revision.committedTotalPaise),
       remainingPaise: Number(revision.approvedEstimatePaise) - Number(revision.committedPaise),

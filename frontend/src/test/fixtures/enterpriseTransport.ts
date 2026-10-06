@@ -1,7 +1,9 @@
 import { tokenStorage } from "../../api/client";
 import { ROLE_CODES, type Role, type PermissionCode } from "../../api/authorization-contract";
 import { authorizationFor } from "../authFixtures";
-import { enterpriseDataFor } from "./enterpriseRoutes";
+import { enterpriseDataFor, enterpriseProcurementQuoteFor, enterpriseStandardBasketForRates,
+  type EnterpriseProjectRate } from "./enterpriseRoutes";
+import type { SaveBasketBaseRateInput, SavedBasketBaseRate } from "../../features/procurement/procurementBasketApi";
 import type { KnowledgePreviewRequest } from "../../features/ai-estimator-knowledge/knowledgeApi";
 import type { KnowledgePreview } from "../../features/ai-estimator-knowledge/knowledgeTypes";
 
@@ -139,6 +141,8 @@ async function jsonBody(input: RequestInfo | URL, init?: RequestInit): Promise<u
 
 export function installEnterpriseTransport(scenario: EnterpriseScenario) {
   const requests: EnterpriseRequest[] = [];
+  const projectRates = new Map<string, EnterpriseProjectRate>();
+  const savedRateRequests = new Map<string, { signature: string; response: SavedBasketBaseRate }>();
   const originals = { fetch: window.fetch, get: tokenStorage.get, set: tokenStorage.set, clear: tokenStorage.clear, open: XMLHttpRequest.prototype.open, send: XMLHttpRequest.prototype.send, setRequestHeader: XMLHttpRequest.prototype.setRequestHeader, abort: XMLHttpRequest.prototype.abort };
   const publicRoute = /^\/(login|signup|forgot-password|reset-password|accept-invitation)(?:\?|$)/.test(scenario.route);
   let token: string | null = publicRoute ? null : "synthetic-enterprise-session";
@@ -162,6 +166,8 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
     const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
     const path = url.pathname.replace(/^\/api\/v1(?=\/|$)/, "");
     const inHouseReady = new URL(scenario.route, window.location.origin).searchParams.get("qaInHouse") === "ready";
+    const procurementModesReady = new URL(scenario.route, window.location.origin).searchParams.get("qaProcurementModes") === "ready";
+    const standardBasketReady = new URL(scenario.route, window.location.origin).searchParams.get("qaStandardBasket") === "ready";
     if (method === "POST" && path === "/admin/ai-estimator-knowledge/preview" && inHouseReady) {
       try {
         const data = inHousePreview(await jsonBody(input, init) as KnowledgePreviewRequest);
@@ -172,6 +178,48 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
         return failure(422, "INVALID_BASIS_POINTS", error instanceof Error ? error.message : "Synthetic In-house preview failed.");
       }
     }
+    if (method === "POST" && path === "/procurement/projects/project-one/purchase-order-requests/quote" && procurementModesReady && scenario.state === "populated") {
+      try {
+        const data = enterpriseProcurementQuoteFor(await jsonBody(input, init));
+        log(method, path, 200);
+        return Response.json({ data });
+      } catch (error) {
+        log(method, path, 422);
+        return failure(422, "INVALID_SYNTHETIC_QUOTE", error instanceof Error ? error.message : "Synthetic procurement quote failed.");
+      }
+    }
+    if (method === "PUT" && path === "/procurement/projects/project-one/baskets/basket-carpentry/base-rate" &&
+      standardBasketReady && scenario.state === "populated") {
+      let body: SaveBasketBaseRateInput;
+      try { body = await jsonBody(input, init) as SaveBasketBaseRateInput; }
+      catch { log(method, path, 422); return failure(422, "INVALID_PROJECT_RATE", "Enter a valid project Base amount."); }
+      if (scenario.role !== "procurement") { log(method, path, 403); return failure(403, "FORBIDDEN", "Procurement access is required."); }
+      const current = enterpriseStandardBasketForRates(projectRates);
+      const line = current.lines.find((item) => item.sourceLineItemKey === body.sourceLineItemKey);
+      const sourceMatches = body.expectedEstimateSource?.estimateId === current.estimateSource.estimateId &&
+        body.expectedEstimateSource.estimateVersion === current.estimateSource.estimateVersion &&
+        body.expectedEstimateSource.estimateReviewRoundId === current.estimateSource.estimateReviewRoundId;
+      if (!line || !sourceMatches || !body.idempotencyKey || !Number.isSafeInteger(body.expectedVersion) ||
+        body.baseRatePaise !== null && (!Number.isSafeInteger(body.baseRatePaise) || body.baseRatePaise < 0 || body.baseRatePaise > 9_000_000_000_000)) {
+        log(method, path, 422); return failure(422, "INVALID_PROJECT_RATE", "Enter a valid project Base amount.");
+      }
+      const signature = JSON.stringify(body);
+      const replay = savedRateRequests.get(body.idempotencyKey);
+      if (replay) {
+        if (replay.signature !== signature) { log(method, path, 409); return failure(409, "IDEMPOTENCY_CONFLICT", "This save request was already used for a different amount."); }
+        log(method, path, 200); return Response.json({ data: replay.response });
+      }
+      if (body.expectedPreparationDigest !== current.preparationDigest || body.expectedVersion !== line.projectRate.version) {
+        log(method, path, 409); return failure(409, "PROJECT_RATE_VERSION_CONFLICT", "The basket amount changed. Refresh the basket.");
+      }
+      const projectRate = { version: line.projectRate.version + 1, overridePaise: body.baseRatePaise };
+      projectRates.set(line.sourceLineItemKey, projectRate);
+      const response: SavedBasketBaseRate = { projectId: current.projectId, mainBasketId: current.id,
+        estimateSource: current.estimateSource, sourceLineItemKey: line.sourceLineItemKey, projectRate };
+      savedRateRequests.set(body.idempotencyKey, { signature, response });
+      log(method, path, 200);
+      return Response.json({ data: response });
+    }
     if (method !== "GET") { log(method, path, 422); return failure(422, "SYNTHETIC_MUTATION_FAILURE", "Synthetic QA: the change was not saved. Your values remain available to review."); }
     if (path === "/auth/me") { log(method, path, 200); return Response.json({ data: { id: scenario.role === "designer" ? "user-designer-ananya" : `${scenario.role}-1`, name: "Synthetic workspace reviewer", email: "reviewer@lisno.example", role: scenario.role } }); }
     if (path === "/auth/authorization") {
@@ -179,7 +227,7 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
       const permissions = scenario.state === "denied" ? ["identity.self.read", "identity.authorization.read"] as const : [...new Set([...base.permissions, ...(extraPermissions[scenario.role] ?? [])])];
       log(method, path, 200); return Response.json({ data: authorizationFor(scenario.role, permissions) });
     }
-    const data = enterpriseDataFor(path, url.searchParams, scenario);
+    const data = enterpriseDataFor(path, url.searchParams, scenario, projectRates);
     if (data === undefined) { log(method, path, 501, true); return failure(501, "UNEXPECTED_QA_REQUEST", `No synthetic response registered for ${path}.`); }
     if (scenario.state === "loading") { log(method, path, 0); return new Promise<Response>((_resolve, reject) => { const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined); if (signal?.aborted) reject(new DOMException("Aborted", "AbortError")); signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true }); }); }
     if (scenario.state === "error") { log(method, path, 503); return failure(503, "SYNTHETIC_UNAVAILABLE", "Synthetic QA: this information could not be loaded."); }

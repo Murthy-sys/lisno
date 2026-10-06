@@ -1,7 +1,8 @@
 import { ROLE_CODES, OPERATIONAL_ROLES, type Role } from "../../api/authorization-contract";
 import type { Lead, ProjectWorkflowTask, UserInvitationItem, ProjectFinanceBucket } from "../../api/types";
 import { superAdminDashboardOverviewFixture, superAdminDashboardProjectsPageFixture, superAdminDashboardWorkforcePageFixture } from "../../features/admin/dashboard/dashboardFixtures";
-import type { ProjectPurchaseOrderRequest, PurchaseOrder } from "../../features/procurement/purchaseOrderApi";
+import type { ProjectPurchaseOrderRequest, PurchaseOrder, PurchaseOrderPreparation, PurchaseOrderRequestQuote, PurchaseOrderRequestLineInput, PurchaseOrderTotals } from "../../features/procurement/purchaseOrderApi";
+import type { ProcurementBasketDetail, ProcurementVendorCandidate } from "../../features/procurement/procurementBasketApi";
 import type { EnterpriseScenario } from "./enterpriseTransport";
 import * as admin from "./enterpriseAdminData";
 import * as users from "./enterpriseUsersData";
@@ -75,6 +76,7 @@ const qaPendingPurchaseRequest: ProjectPurchaseOrderRequest = {
   totals: qaRequestTotals, sectionTotals: qaRequestSectionTotals, vendorTotals: qaRequestVendorTotals,
   approvedOrderIds: [], decisions: [], revisions: [{
     id: "request-revision-qa-two", revision: 2, submittedAt: "2026-10-01T00:00:00.000Z", submittedById: "buyer-qa",
+    modeSnapshotStatus: "historical_unavailable", modeSnapshots: [],
     preparationDigest: "a".repeat(64), approvedEstimatePaise: 90000000, committedPaise: 40000000,
     committedGstPaise: 0, committedTotalPaise: 40000000, remainingPaise: 50000000,
     totals: qaRequestTotals, sectionTotals: qaRequestSectionTotals, vendorTotals: qaRequestVendorTotals,
@@ -112,6 +114,268 @@ const qaPendingIndividualOrder: PurchaseOrder = {
   }],
   createdAt: "2026-09-30T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z"
 };
+const qaProcurementModePreparation: PurchaseOrderPreparation = {
+  projectId: "project-one", estimateSource: { estimateId: "estimate-one", estimateVersion: 4, estimateReviewRoundId: "review-synthetic-one" },
+  approvedEstimatePaise: 375_000, committedPaise: 0, committedGstPaise: 0, committedTotalPaise: 0, remainingPaise: 375_000,
+  orderDefaults: { targetDate: "2026-11-30", deliveryLocation: "Synthetic project site" },
+  digest: "f".repeat(64), netPaise: 170_000, itemCount: 2, readyItemCount: 2, blockers: [],
+  sections: [{ id: "CA", label: "Carpentry", roomName: "Living Room and Bedroom", estimatedPaise: 300_000, netPaise: 170_000, items: [{
+    id: "purchase-item-wood", version: 2, sourceSectionId: "CA", sourceLineItemKey: "living-room:CA01", roomName: "Living Room",
+    itemName: "Wardrobe plywood and laminate", brand: "Synthetic timber", uom: { id: "uom-sqft", code: "sq ft", name: "Square feet", decimalScale: 2, status: "active" },
+    vendor: { id: "vendor-wood", code: "VEN-WOOD", name: "Synthetic Joinery Works", status: "active", vendorType: "execution" },
+    plannedOrderQuantityMilliUnits: 1000, pricePaise: 120_000, allocatedWorkPaise: 150_000, plannedLineNetPaise: 120_000, blockers: []
+  }, {
+    id: "purchase-item-bedside", version: 1, sourceSectionId: "CA", sourceLineItemKey: "bedroom:CA02", roomName: "Bedroom",
+    itemName: "Bedside table", brand: "Synthetic finish", uom: { id: "uom-nos", code: "nos", name: "Number", decimalScale: 0, status: "active" },
+    vendor: { id: "vendor-furniture", code: "VEN-FURN", name: "Synthetic Furniture Workshop", status: "active", vendorType: "supplier" },
+    plannedOrderQuantityMilliUnits: 2000, pricePaise: 25_000, allocatedWorkPaise: 60_000, plannedLineNetPaise: 50_000, blockers: []
+  }] }, { id: "EL", label: "Electrical", roomName: "Living Room", estimatedPaise: 75_000, netPaise: 0, items: [] },
+  { id: "PA", label: "Painting", roomName: "Bedroom", estimatedPaise: 0, netPaise: 0, items: [] }],
+  estimateLines: [{
+    key: "living-room:CA01", included: true, source: "configuration", itemType: "main_line", roomId: "room-living", roomName: "Living Room",
+    mainBasketId: "basket-carpentry", mainBasketName: "Carpentry", subBasketId: "sub-joinery", subBasketName: "Joinery",
+    mainLineId: "main-wardrobe", mainLineName: "Wardrobe plywood and laminate", quantity: "80", unit: "sq ft", amountPaise: 250_000,
+    itemIds: ["purchase-item-wood"], mode: {
+      state: "ready", options: [{ key: "pmc", label: "PMC" }],
+      decision: { id: "decision-wood", version: 2, sourceLineItemKey: "living-room:CA01", mode: "pmc", quantity: "80", discountBps: 0,
+        markupBasis: "starting", exceptionReason: null, revisionId: "revision-wood", revisionDigest: "synthetic-wood-digest", updatedAt: "2026-10-01T00:00:00.000Z" },
+      preview: { formulaVersion: "mode-calculation-v1", mode: "pmc", quantity: "80", quantityScale: 2, baseCostPaise: 100_000,
+        adjustedCostPaise: 110_000, lowQuantityImpactPaise: 10_000, sellingPaise: 137_500, finalVendorChargesPaise: null, floorSellingPaise: null,
+        marginBps: 2000, appliedImpactBps: 1000, discountBps: 0, discountAmountPaise: 0, quantityRule: null,
+        procurementQuantitySuggestion: "82", settings: { scopes: [{ scope: "pmc", source: "scoped", baseRatePaise: 1250,
+          lowQuantityLimit: "100", impactBps: 1000, minimumMarkupBps: 1000, startingMarkupBps: 2000 }],
+          configuredMarginBps: 2000, markupBasis: "starting" }, components: [] },
+      issues: [], revision: { id: "revision-wood", version: 2, status: "active", contentDigest: "synthetic-wood-digest" },
+      uom: { id: "uom-sqft", code: "sq ft", decimalScale: 2 }, priceReferences: { "purchase-item-wood": {
+        state: "ready", priceVersionId: "price-wood", priceVersionNumber: 2, taxVersionId: "tax-wood", taxVersionNumber: 1,
+        unitPricePaise: 120_000, gstBasisPoints: 1800, treatment: "exclusive", effectiveFrom: "2026-01-01", effectiveTo: null, issues: []
+      } }
+    }
+  }, {
+    key: "bedroom:CA02", included: true, source: "legacy", itemType: "main_line", roomId: "room-bedroom", roomName: "Bedroom",
+    mainBasketId: "basket-furniture", mainBasketName: "Furniture", subBasketId: "sub-bedroom", subBasketName: "Bedroom furniture",
+    mainLineId: null, mainLineName: "Bedside table", quantity: "2", unit: "nos", amountPaise: 50_000,
+    itemIds: ["purchase-item-bedside"], mode: { state: "exception", options: [],
+      decision: { id: "decision-bedside", version: 1, sourceLineItemKey: "bedroom:CA02", mode: null, quantity: null,
+        discountBps: 0, markupBasis: "starting", exceptionReason: "Approved historical line has no saved configuration",
+        revisionId: null, revisionDigest: null, updatedAt: "2026-10-01T00:00:00.000Z" },
+      preview: null, issues: [], revision: null, uom: null, priceReferences: {} }
+  }, {
+    key: "living-room:EL01", included: true, source: "legacy", itemType: "main_line", roomId: "room-living", roomName: "Living Room",
+    mainBasketId: "basket-electrical", mainBasketName: "Electrical", subBasketId: "sub-switches", subBasketName: "Switches",
+    mainLineId: null, mainLineName: "Modular switch set", quantity: "3", unit: "set", amountPaise: 75_000, itemIds: [], mode: null
+  }, {
+    key: "living-room:CA00", included: true, source: "legacy", itemType: "temporary", roomId: "room-living", roomName: "Living Room",
+    mainBasketId: "basket-carpentry", mainBasketName: "Carpentry", subBasketId: "sub-provisional", subBasketName: "Provisional",
+    mainLineId: null, mainLineName: "Zero-value provisional allowance", quantity: "1", unit: "lot", amountPaise: 0, itemIds: [], mode: null
+  }, {
+    key: "bedroom:PA01", included: true, source: "legacy", itemType: "temporary", roomId: "room-bedroom", roomName: "Bedroom",
+    mainBasketId: "basket-paint", mainBasketName: "Painting", subBasketId: "sub-paint", subBasketName: "Allowance",
+    mainLineId: null, mainLineName: "Zero-value paint allowance", quantity: "1", unit: "lot", amountPaise: 0, itemIds: [], mode: null
+  }]
+};
+const qaDefaultProcurementPreparation: PurchaseOrderPreparation = {
+  ...qaProcurementModePreparation,
+  digest: "e".repeat(64), netPaise: 0, itemCount: 0, readyItemCount: 0,
+  sections: qaProcurementModePreparation.sections.map((section) => ({ ...section, netPaise: 0, items: [] })),
+  estimateLines: qaProcurementModePreparation.estimateLines.map((line) => ({
+    ...line, source: "legacy", mainLineId: null, itemIds: [], mode: null
+  }))
+};
+const qaMismatchMode = qaProcurementModePreparation.estimateLines[0]!.mode!;
+const qaProcurementModeMismatchPreparation: PurchaseOrderPreparation = {
+  ...qaProcurementModePreparation,
+  netPaise: 0, itemCount: 0, readyItemCount: 0,
+  sections: qaProcurementModePreparation.sections.map((section) => ({ ...section, netPaise: 0, items: [] })),
+  estimateLines: qaProcurementModePreparation.estimateLines.map((line, index) => index === 0 ? {
+    ...line, itemIds: [], mode: {
+      ...qaMismatchMode, state: "unavailable", options: [], decision: null, preview: null, priceReferences: {},
+      availability: ["pmc", "sub_vendor", "in_house"].map((key) => ({ key: key as "pmc" | "sub_vendor" | "in_house",
+        label: key === "pmc" ? "PMC" : key === "sub_vendor" ? "Sub-Vendor" : "In-house",
+        available: false, issues: [{ code: "PINNED_DIGEST_MISMATCH", message: "Review current saved values." }] })),
+      issues: [{ code: "PINNED_DIGEST_MISMATCH", message: "The saved Configuration content does not match its activated digest." }],
+      integrity: { status: "mismatch", activatedDigest: "a".repeat(64), observedDigest: "b".repeat(64),
+        candidateAvailability: [
+          { key: "pmc", label: "PMC", available: true, issues: [] },
+          { key: "sub_vendor", label: "Sub-Vendor", available: true, issues: [] },
+          { key: "in_house", label: "In-house", available: false,
+            issues: [{ code: "MODE_NOT_CONFIGURED", message: "In-house is not configured for this line." }] }
+        ] }
+    }
+  } : line)
+};
+
+const qaCompactBasket: ProcurementBasketDetail = {
+  id: "basket-carpentry", name: "Carpentry", projectId: "project-one",
+  classification: "special", automaticSubVendor: false, boqReady: true, standardCost: null,
+  estimateSource: qaProcurementModePreparation.estimateSource,
+  preparationDigest: qaProcurementModePreparation.digest,
+  includedLineCount: 2, readyLineCount: 2, approvedEstimatePaise: 250_000,
+  baseCostPaise: 120_000, adjustedCostPaise: 135_000, workingTotalPaise: 170_000,
+  workingTotalComplete: true, committedNetPaise: 0, state: "ready",
+  lines: [{
+    sourceLineItemKey: "living-room:CA01", roomId: "room-living", roomName: "Living Room",
+    subBasketId: "sub-joinery", subBasketName: "Joinery", mainLineId: "main-wardrobe",
+    mainLineName: "Wardrobe plywood and laminate", approvedQuantity: "80", approvedUnit: "sq ft",
+    approvedAmountPaise: 200_000, included: true, source: "configuration",
+    baseUnitRatePaise: 1_250, projectRate: { version: 0, overridePaise: null }, standardCost: null,
+    mode: qaProcurementModePreparation.estimateLines[0]!.mode!
+  }, {
+    sourceLineItemKey: "bedroom:CA02", roomId: "room-bedroom", roomName: "Bedroom",
+    subBasketId: "sub-bedroom", subBasketName: "Bedroom furniture", mainLineId: "main-bedside",
+    mainLineName: "Bedside table finishing", approvedQuantity: "2", approvedUnit: "nos",
+    approvedAmountPaise: 50_000, included: true, source: "configuration",
+    baseUnitRatePaise: 10_000, projectRate: { version: 0, overridePaise: null }, standardCost: null,
+    mode: { ...qaProcurementModePreparation.estimateLines[0]!.mode!,
+      decision: { ...qaProcurementModePreparation.estimateLines[0]!.mode!.decision!, sourceLineItemKey: "bedroom:CA02", quantity: "2" },
+      preview: { ...qaProcurementModePreparation.estimateLines[0]!.mode!.preview!, quantity: "2",
+        baseCostPaise: 20_000, adjustedCostPaise: 25_000, lowQuantityImpactPaise: 5_000, sellingPaise: 32_500 },
+      uom: { id: "uom-nos", code: "nos", decimalScale: 0 }
+    }
+  }]
+};
+const qaStandardBasket: ProcurementBasketDetail = {
+  ...qaCompactBasket,
+  classification: "standard",
+  automaticSubVendor: true,
+  boqReady: true,
+  readyLineCount: 1,
+  baseCostPaise: 30_000,
+  adjustedCostPaise: 37_500,
+  workingTotalPaise: 46_875,
+  workingTotalComplete: false,
+  state: "partial",
+  standardCost: { totalPaise: 135_000, complete: true, provisional: true, pricedLineCount: 2 },
+  lines: [{
+    ...qaCompactBasket.lines[0]!,
+    baseUnitRatePaise: 1_250,
+    standardCost: { state: "suggested", mode: "sub_vendor", calculationQuantity: "80",
+      baseRates: [{ scope: "sub_vendor", ratePaise: 1_250 }], baseCostPaise: 100_000,
+      adjustedCostPaise: 110_000, issues: [] },
+    mode: { ...qaCompactBasket.lines[0]!.mode!, state: "selection_required", decision: null, preview: null,
+      options: [{ key: "sub_vendor", label: "Sub-vendor" }],
+      availability: [{ key: "sub_vendor", label: "Sub-vendor", available: true, issues: [] }] }
+  }, {
+    ...qaCompactBasket.lines[1]!,
+    baseUnitRatePaise: 10_000,
+    standardCost: { state: "suggested", mode: "sub_vendor", calculationQuantity: "2",
+      baseRates: [{ scope: "sub_vendor", ratePaise: 10_000 }], baseCostPaise: 20_000,
+      adjustedCostPaise: 25_000, issues: [] },
+    mode: { ...qaCompactBasket.lines[1]!.mode!,
+      decision: { ...qaCompactBasket.lines[1]!.mode!.decision!, quantity: "3" },
+      preview: { ...qaCompactBasket.lines[1]!.mode!.preview!, quantity: "3",
+        baseCostPaise: 30_000, adjustedCostPaise: 37_500, lowQuantityImpactPaise: 7_500, sellingPaise: 46_875,
+        settings: { ...qaCompactBasket.lines[1]!.mode!.preview!.settings,
+          scopes: [{ scope: "pmc", source: "scoped", baseRatePaise: 10_000,
+            lowQuantityLimit: "5", impactBps: 2_500, minimumMarkupBps: 1_000, startingMarkupBps: 2_000 }] } }
+    }
+  }]
+};
+export type EnterpriseProjectRate = { version: number; overridePaise: number | null };
+
+export function enterpriseStandardBasketForRates(rates: ReadonlyMap<string, EnterpriseProjectRate>): ProcurementBasketDetail {
+  const lines = qaStandardBasket.lines.map((line) => {
+    const projectRate = rates.get(line.sourceLineItemKey) ?? { version: 0, overridePaise: null };
+    const baseUnitRatePaise = projectRate.overridePaise ?? line.baseUnitRatePaise!;
+    const originalCost = line.standardCost!;
+    const baseCostPaise = BigInt(baseUnitRatePaise) * BigInt(line.approvedQuantity);
+    const adjustedCostPaise = (baseCostPaise * BigInt(originalCost.adjustedCostPaise!) +
+      BigInt(originalCost.baseCostPaise!) / 2n) / BigInt(originalCost.baseCostPaise!);
+    return { ...line, projectRate, baseUnitRatePaise,
+      standardCost: { ...originalCost, baseRates: [{ scope: "sub_vendor" as const, ratePaise: baseUnitRatePaise }],
+        baseCostPaise: Number(baseCostPaise), adjustedCostPaise: Number(adjustedCostPaise) } };
+  });
+  const version = [...rates.values()].reduce((sum, rate) => sum + rate.version, 0);
+  const baseCostPaise = lines.reduce((sum, line) => sum + line.standardCost!.baseCostPaise!, 0);
+  const totalPaise = lines.reduce((sum, line) => sum + line.standardCost!.adjustedCostPaise!, 0);
+  return { ...qaStandardBasket, lines, baseCostPaise, adjustedCostPaise: totalPaise,
+    standardCost: { ...qaStandardBasket.standardCost!, totalPaise },
+    preparationDigest: version === 0 ? qaStandardBasket.preparationDigest : version.toString(16).padStart(64, "0") };
+}
+const qaConfigurationMismatch = { code: "PINNED_DIGEST_MISMATCH",
+  message: "The saved Configuration content does not match its activated digest." };
+const qaUnverifiedBasket: ProcurementBasketDetail = {
+  ...qaStandardBasket,
+  lines: qaStandardBasket.lines.map((line, index) => index === 0 ? {
+    ...line,
+    standardCost: { ...line.standardCost!, state: "observed_unverified" as const,
+      issues: [qaConfigurationMismatch] },
+    mode: { ...line.mode!, state: "unavailable" as const, options: [], preview: null,
+      issues: [qaConfigurationMismatch],
+      availability: [{ key: "sub_vendor" as const, label: "Sub-vendor", available: false,
+        issues: [qaConfigurationMismatch] }],
+      integrity: { status: "mismatch" as const, activatedDigest: "a".repeat(64),
+        observedDigest: "b".repeat(64), candidateAvailability: [{ key: "sub_vendor" as const,
+          label: "Sub-vendor", available: true, issues: [] }] } }
+  } : line)
+};
+const qaCompactVendors: ProcurementVendorCandidate[] = [{
+  vendorId: "vendor-joinery", code: "VEN-J01", name: "Sharma Interiors", contactEmail: "sharma@example.test",
+  kpiScoreBps: 8600, city: { name: "Bengaluru", key: "bengaluru" }, cityVersion: 1,
+  cityMatch: "same_city", eligible: true, blockers: []
+}, {
+  vendorId: "vendor-finish", code: "VEN-F02", name: "Decor Masters", contactEmail: "decor@example.test",
+  kpiScoreBps: 5500, city: { name: "Mysuru", key: "mysuru" }, cityVersion: 1,
+  cityMatch: "outside_city", eligible: true, blockers: []
+}];
+
+function qaQuoteTotals(netPaise: number, gstBasisPoints: number): PurchaseOrderTotals {
+  const gstPaise = Math.round(netPaise * gstBasisPoints / 10_000);
+  return { netPaise, gstPaise, totalPaise: netPaise + gstPaise };
+}
+
+export function enterpriseProcurementQuoteFor(body: unknown): PurchaseOrderRequestQuote {
+  const input = body as { expectedPreparationDigest?: unknown; lines?: PurchaseOrderRequestLineInput[];
+    vendorTerms?: Array<{ vendorId: string; terms: string }> };
+  const prepared = qaProcurementModePreparation;
+  const items = prepared.sections.flatMap((section) => section.items);
+  if (input?.expectedPreparationDigest !== prepared.digest || !Array.isArray(input.lines) || input.lines.length !== items.length ||
+    !Array.isArray(input.vendorTerms) || input.vendorTerms.length !== items.length) throw new Error("Synthetic QA quote does not match prepared items.");
+  const terms = new Map(input.vendorTerms.map((entry) => [entry.vendorId, entry.terms]));
+  const quoteLines = items.map((item) => {
+    const selected = input.lines!.find((entry) => entry.procurementItemId === item.id);
+    const line = prepared.estimateLines.find((candidate) => candidate.key === item.sourceLineItemKey)!;
+    const reference = line.mode?.priceReferences?.[item.id];
+    if (!selected || selected.expectedVersion !== item.version || !Number.isInteger(selected.gstBasisPoints) ||
+      selected.gstBasisPoints < 0 || selected.gstBasisPoints > 10_000 || !terms.get(item.vendor!.id)?.trim()) {
+      throw new Error("Synthetic QA quote needs current child versions, explicit GST and vendor terms.");
+    }
+    if ((!reference || reference.state !== "ready" || reference.unitPricePaise !== item.pricePaise || reference.gstBasisPoints !== selected.gstBasisPoints) &&
+      (selected.commercialExceptionReason?.trim().length ?? 0) < 10) throw new Error("Explain the agreed price or tax exception before quoting.");
+    return { id: `quote-${item.id}`, procurementItemId: item.id, procurementItemVersion: item.version,
+      quantityMilliUnits: item.plannedOrderQuantityMilliUnits!, unitPricePaise: item.pricePaise, gstBasisPoints: selected.gstBasisPoints,
+      scopeType: selected.scopeType, description: selected.description, targetDate: selected.targetDate,
+      deliveryLocation: selected.deliveryLocation, ...qaQuoteTotals(item.plannedLineNetPaise!, selected.gstBasisPoints),
+      vendorId: item.vendor!.id, vendorCode: item.vendor!.code, vendorName: item.vendor!.name, allocatedWorkPaise: item.allocatedWorkPaise!,
+      sectionLabel: "Carpentry", sourceSectionId: item.sourceSectionId!, sourceLineItemKey: item.sourceLineItemKey!,
+      roomName: item.roomName!, itemName: item.itemName, brand: item.brand, uomCode: item.uom.code,
+      commercialExceptionReason: selected.commercialExceptionReason?.trim() || null };
+  });
+  const sum = (lines: typeof quoteLines): PurchaseOrderTotals => lines.reduce((total, line) => ({
+    netPaise: total.netPaise + line.netPaise, gstPaise: total.gstPaise + line.gstPaise, totalPaise: total.totalPaise + line.totalPaise
+  }), { netPaise: 0, gstPaise: 0, totalPaise: 0 });
+  const totals = sum(quoteLines);
+  const modeSnapshots = prepared.estimateLines.filter((line) => line.itemIds.length > 0).map((line) => {
+    const children = quoteLines.filter((child) => child.sourceLineItemKey === line.key);
+    const actualTotals = sum(children);
+    const { key, source, roomId, roomName, mainBasketId, mainBasketName, subBasketId, subBasketName, mainLineId, mainLineName } = line;
+    return { sourceLineItemKey: key, source, roomId, roomName, mainBasketId, mainBasketName, subBasketId, subBasketName,
+      mainLineId, mainLineName, approvedQuantity: line.quantity, approvedUnit: line.unit, approvedAmountPaise: line.amountPaise!,
+      referenceAsOf: "2026-10-04", mode: line.mode!, actualChildren: children.map((child) => ({
+        procurementItemId: child.procurementItemId, vendorId: child.vendorId, quantityMilliUnits: child.quantityMilliUnits,
+        unitPricePaise: child.unitPricePaise, gstBasisPoints: child.gstBasisPoints, allocatedWorkPaise: child.allocatedWorkPaise,
+        netPaise: child.netPaise, gstPaise: child.gstPaise, totalPaise: child.totalPaise,
+        commercialExceptionReason: child.commercialExceptionReason
+      })), actualTotals, actualNetMinusConfiguredCostPaise: line.mode?.preview
+        ? actualTotals.netPaise - line.mode.preview.adjustedCostPaise : null };
+  });
+  return { projectId: prepared.projectId, preparationDigest: prepared.digest, estimateSource: prepared.estimateSource,
+    approvedEstimatePaise: prepared.approvedEstimatePaise, committedPaise: 0, committedGstPaise: 0, committedTotalPaise: 0,
+    remainingPaise: prepared.remainingPaise, lines: quoteLines, modeSnapshots,
+    sectionTotals: [{ sectionId: "CA", label: "Carpentry", totals }],
+    vendorTotals: items.map((item) => ({ vendorId: item.vendor!.id, code: item.vendor!.code, name: item.vendor!.name,
+      terms: terms.get(item.vendor!.id)!, totals: sum(quoteLines.filter((line) => line.vendorId === item.vendor!.id)) })), totals };
+}
 const team = [
   { user: { id: "designer-1", name: "Ananya Rao", email: "ananya@lisno.example" }, activeProjectCount: 2, workload: 24, overdueCount: 1, yellowRiskCount: 2, pendingEvaluation: true, kpi: { score: 84, components: designer.components }, projects: designer.projects.map((p) => ({ ...p, progress: 45 })), tasks: designer.kpiTasks },
   { user: { id: "designer-2", name: "Kabir Shah", email: "kabir@lisno.example" }, activeProjectCount: 1, workload: 12, overdueCount: 0, yellowRiskCount: 1, pendingEvaluation: false, kpi: { score: 79, components: designer.components }, projects: [], tasks: [] }
@@ -124,11 +388,20 @@ function zeroAggregates(value: unknown): unknown {
   return value;
 }
 
-export function enterpriseDataFor(path: string, params: URLSearchParams, scenario: EnterpriseScenario): unknown {
+export function enterpriseDataFor(path: string, params: URLSearchParams, scenario: EnterpriseScenario,
+  projectRates: ReadonlyMap<string, EnterpriseProjectRate> = new Map()): unknown {
   const empty = scenario.state === "empty";
   const estimatorReady = new URLSearchParams(scenario.route.split("?")[1]).get("qaEstimator") === "ready";
   const recommendationReady = new URLSearchParams(scenario.route.split("?")[1]).get("qaRecommendations") === "ready";
   const recommendationCompletionReady = new URLSearchParams(scenario.route.split("?")[1]).get("qaRecommendationCompletion") === "ready";
+  const procurementModesReady = new URLSearchParams(scenario.route.split("?")[1]).get("qaProcurementModes") === "ready";
+  const procurementModesMismatch = new URLSearchParams(scenario.route.split("?")[1]).get("qaProcurementModes") === "mismatch";
+  const compactBasketReady = new URLSearchParams(scenario.route.split("?")[1]).get("qaCompactBasket") === "ready";
+  const standardBasketReady = new URLSearchParams(scenario.route.split("?")[1]).get("qaStandardBasket") === "ready";
+  const standardBasketUnverified = new URLSearchParams(scenario.route.split("?")[1]).get("qaStandardBasket") === "unverified";
+  const syntheticBasketReady = compactBasketReady || standardBasketReady || standardBasketUnverified;
+  const visibleCompactBasket = standardBasketUnverified ? qaUnverifiedBasket : standardBasketReady
+    ? enterpriseStandardBasketForRates(projectRates) : qaCompactBasket;
   const list = <T,>(rows: readonly T[]): T[] => empty ? [] : [...rows];
   const page = <T,>(rows: readonly T[]) => {
     const filtered = list(rows).filter((row) => !params.get("search") || JSON.stringify(row).toLowerCase().includes(params.get("search")!.toLowerCase()));
@@ -193,6 +466,11 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (/^\/designers\/[^/]+\/summary$/.test(path)) return team.find((t) => t.user.id === path.split("/")[2]) ?? team[0];
   if (/^\/(evaluations\/[^/]+|designers\/[^/]+\/audit)$/.test(path)) return page([]);
   if (path === "/client/project-summaries") return page(client.summaries);
+  if (path === "/clients/projects/project-villa/site-completion") return {
+    projectId: "project-villa", projectStatus: "active", version: 1, progress: 0,
+    note: "", status: "draft", currentRound: 0, canSubmit: false,
+    needsReverification: false, blockers: [], review: null
+  };
   if (path === "/client/latest-approved-versions") return list([drawing.approvedDocument]);
   if (path === "/client/estimates") return list([{ ...estimate, projectId: "project-villa", status: "client_approved", designPlanStatus: "ready_for_client", designPlanVersion: 1, rooms: [{ id: "room-living", label: "Living Room" }], scopes: ["EL"], lineItems: [{ catalogueId: "EL01", roomName: "Living Room", specification: "Lighting point", unit: "point", quantity: 6, rate: 200, amount: 1200, included: true }], lead: { ...lead, _id: lead.id, projectName: "Aurora Villa" } }]);
   if (path === "/client/estimates/estimate-1/design-drawings") return empty ? { uploads: [], pages: [], drawings: [], revisions: [], readiness: { ready: false, total: 0, approved: 0, awaitingReview: 0, changesRequested: 0 } } : drawing.clientDrawingWorkspace("estimate-1");
@@ -249,6 +527,43 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
     return path.endsWith("/entries") ? page(financeLedgerFor(bucket)) : bucket;
   }
   if (path === "/procurement/projects") return list([procurement.procurementProject]);
+  if (path === "/procurement/projects/project-one/baskets") return syntheticBasketReady ? {
+    projectId: "project-one", estimateSource: visibleCompactBasket.estimateSource,
+    baskets: [{ id: visibleCompactBasket.id, name: visibleCompactBasket.name,
+      classification: visibleCompactBasket.classification, automaticSubVendor: visibleCompactBasket.automaticSubVendor,
+      boqReady: visibleCompactBasket.boqReady, standardCost: visibleCompactBasket.standardCost,
+      includedLineCount: visibleCompactBasket.includedLineCount,
+      readyLineCount: visibleCompactBasket.readyLineCount, approvedEstimatePaise: visibleCompactBasket.approvedEstimatePaise,
+      baseCostPaise: visibleCompactBasket.baseCostPaise, adjustedCostPaise: visibleCompactBasket.adjustedCostPaise,
+      workingTotalPaise: visibleCompactBasket.workingTotalPaise, workingTotalComplete: visibleCompactBasket.workingTotalComplete,
+      committedNetPaise: visibleCompactBasket.committedNetPaise, state: visibleCompactBasket.state }]
+  } : {
+    projectId: "project-one", estimateSource: qaProcurementModePreparation.estimateSource,
+    baskets: empty ? [] : [{ id: "basket-carpentry", name: "Carpentry", includedLineCount: 2,
+      classification: "special", automaticSubVendor: false, boqReady: false, standardCost: null,
+      readyLineCount: procurementModesReady ? 1 : 0, approvedEstimatePaise: 250_000,
+      baseCostPaise: procurementModesReady ? 100_000 : 0,
+      adjustedCostPaise: procurementModesReady ? 110_000 : 0,
+      workingTotalPaise: 0, workingTotalComplete: false, committedNetPaise: 0, state: "partial" }]
+  };
+  if (syntheticBasketReady && path === "/procurement/projects/project-one/baskets/basket-carpentry") return visibleCompactBasket;
+  if (syntheticBasketReady && path === "/procurement/projects/project-one/baskets/basket-carpentry/enquiries") return [];
+  if (syntheticBasketReady && path === "/procurement/projects/project-one/baskets/basket-carpentry/vendor-candidates") {
+    const city = params.get("city") ?? "all";
+    const search = (params.get("q") ?? "").trim().toLocaleLowerCase();
+    const filtered = qaCompactVendors.filter((vendor) => (city === "all" || vendor.cityMatch === city) &&
+      (vendor.name.toLocaleLowerCase().includes(search) || vendor.code.toLocaleLowerCase().includes(search)));
+    const offset = Number(params.get("offset") ?? 0);
+    const limit = Number(params.get("limit") ?? 50);
+    return { projectCity: { name: "Bengaluru", key: "bengaluru" }, items: filtered.slice(offset, offset + limit),
+      matchingVendorCount: filtered.length, blockedReasonCounts: {}, total: filtered.length, limit, offset };
+  }
+  if (path === "/procurement/projects/project-one/purchase-order-preparation") return !empty && procurementModesMismatch
+    ? qaProcurementModeMismatchPreparation : (procurementModesReady || syntheticBasketReady) && !empty
+      ? qaProcurementModePreparation : qaDefaultProcurementPreparation;
+  if (path === "/procurement/projects/project-one/purchase-order-requests") return {
+    items: [], total: 0, limit: Number(params.get("limit") ?? 50), offset: Number(params.get("offset") ?? 0)
+  };
   if (/^\/procurement\/projects\/[^/]+\/items$/.test(path)) return { items: [], total: 0, limit: Number(params.get("limit") ?? 20), offset: Number(params.get("offset") ?? 0) };
   if (/^\/procurement\/projects\/[^/]+\/purchase-orders$/.test(path)) return { items: [], total: 0, limit: Number(params.get("limit") ?? 50), offset: Number(params.get("offset") ?? 0) };
   if (/^\/procurement\/projects\/[^/]+\/purchase-order-commitments$/.test(path)) return { approvedEstimatePaise: 375_000, committedPaise: 0, committedGstPaise: 0, committedTotalPaise: 0, remainingPaise: 375_000 };

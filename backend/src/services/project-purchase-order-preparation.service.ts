@@ -5,19 +5,26 @@ import { approvedEstimateAmountPaiseIsActionable } from "../domain/workflow-esti
 import { calculatePurchaseOrderLine } from "../domain/project-purchase-order.js";
 import type {
   ProjectPurchaseOrderPreparationDto, PurchaseOrderPreparationBlocker,
-  PurchaseOrderPreparationItem, PurchaseOrderPreparationSection
+  PurchaseOrderPreparationEstimateLine, PurchaseOrderPreparationItem, PurchaseOrderPreparationSection
 } from "../domain/project-purchase-order-preparation.js";
+import type { PurchaseOrderModeResolution, PurchaseOrderModeStandardSuggestion } from "../domain/project-purchase-order-mode.js";
 import { MAX_FINANCE_AMOUNT_PAISE } from "../domain/project-finance.js";
 import { projectWorkflowSectionLabel } from "../domain/project-workflow.js";
 import { ApiError } from "../middleware/errors.js";
+import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
+import { AiEstimatorKnowledgeSubBasketModel } from "../models/AiEstimatorKnowledgeSubBasket.js";
 import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
 import { AiEstimatorKnowledgeVendorModel } from "../models/AiEstimatorKnowledgeVendor.js";
 import { ProjectProcurementItemModel } from "../models/ProjectProcurementItem.js";
 import { ProjectModel } from "../models/Project.js";
 import { ProjectPurchaseOrderModel } from "../models/ProjectPurchaseOrder.js";
 import { ProjectPurchaseOrderRevisionModel } from "../models/ProjectPurchaseOrderRevision.js";
+import { ProcurementBasketBaseRateModel } from "../models/ProcurementBasketBaseRate.js";
+import { DEFAULT_PROCUREMENT_BASKET_PROJECT_RATE, type ProcurementBasketProjectRate } from "../domain/procurement-basket-base-rate.js";
 import type { PublicUser } from "./auth.service.js";
-import { assertProcurementProjectAccess, procurementItemSourceSnapshot } from "./procurement.service.js";
+import { assertProcurementProjectAccess, procurementItemSourceSnapshot,
+  type ApprovedProcurementSourceLine } from "./procurement.service.js";
+import { resolvePurchaseOrderModes } from "./project-purchase-order-mode.service.js";
 import { vendorActivations } from "./vendor-readiness.service.js";
 
 type Row = Record<string, any>;
@@ -39,7 +46,8 @@ export function createProjectPurchaseOrderPreparationService(): ProjectPurchaseO
 }
 
 /** Canonical source, readiness, and amount view. Call only inside an already authorized snapshot transaction. */
-export async function buildProjectPurchaseOrderPreparation(projectId: string, session: ClientSession): Promise<ProjectPurchaseOrderPreparationDto> {
+export async function buildProjectPurchaseOrderPreparation(projectId: string, session: ClientSession,
+  options: { at?: Date; digestVersion?: "current" | "legacy" } = {}): Promise<ProjectPurchaseOrderPreparationDto> {
   if (!session.inTransaction()) throw new Error("Purchase order preparation requires an active transaction.");
   const source = await procurementItemSourceSnapshot(projectId, session);
   const project = await ProjectModel.findById(projectId).select({ plannedEndAt: 1, location: 1 }).session(session).lean();
@@ -49,12 +57,26 @@ export async function buildProjectPurchaseOrderPreparation(projectId: string, se
     deliveryLocation: String(project.location ?? "").trim() || null };
   const estimateSource = { estimateId: source.estimateId, estimateVersion: source.estimateVersion,
     estimateReviewRoundId: source.estimateReviewRoundId };
-  const sourceLines = new Map(source.lineItems.map((line) => [line.key, line]));
+  const sourceLines = new Map(source.allLineItems.map((line) => [line.key, line]));
+  const configuredLines = options.digestVersion === "legacy" ? [] : source.allLineItems.filter(
+    (line) => line.source === "configuration");
+  const basketIds = [...new Set(configuredLines.flatMap((line) => line.mainBasketId ? [line.mainBasketId] : []))];
+  const subBasketIds = [...new Set(configuredLines.flatMap((line) => line.subBasketId ? [line.subBasketId] : []))];
+  const basketRows = basketIds.length ? await AiEstimatorKnowledgeBasketModel.find({ _id: { $in: basketIds } })
+    .select({ _id: 1, name: 1 }).session(session).lean() : [];
+  const subBasketRows = subBasketIds.length ? await AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: subBasketIds } })
+    .select({ _id: 1, basketId: 1, name: 1 }).session(session).lean() : [];
+  const currentBasketNames = new Map(basketRows.map((row) => [String(row._id), String(row.name)]));
+  const currentSubBasketNames = new Map(subBasketRows.map((row) => [String(row._id),
+    { basketId: String(row.basketId), name: String(row.name) }]));
+  const itemIdsByLine = new Map<string, string[]>();
   const sectionsById = new Map<string, PurchaseOrderPreparationSection>();
   for (const line of source.lineItems) {
+    const label = line.source === "configuration" && line.mainBasketId
+      ? currentBasketNames.get(line.mainBasketId) ?? line.sectionLabel
+      : projectWorkflowSectionLabel(line.sectionId);
     const section = sectionsById.get(line.sectionId) ?? {
-      id: line.sectionId, label: projectWorkflowSectionLabel(line.sectionId),
-      roomName: projectWorkflowSectionLabel(line.sectionId), estimatedPaise: 0, netPaise: 0, items: []
+      id: line.sectionId, label, roomName: label, estimatedPaise: 0, netPaise: 0, items: []
     };
     section.estimatedPaise = sumPaise([section.estimatedPaise, line.amountPaise]);
     sectionsById.set(line.sectionId, section);
@@ -62,14 +84,54 @@ export async function buildProjectPurchaseOrderPreparation(projectId: string, se
   const approvedEstimatePaise = sumPaise(source.lineItems.map((line) => line.amountPaise));
 
   const rows = await ProjectProcurementItemModel.find({ projectId, removedAt: null }).sort({ _id: 1 }).session(session).lean();
+  const projectRateRows = options.digestVersion === "legacy" ? [] : await ProcurementBasketBaseRateModel.find({
+    projectId, estimateId: source.estimateId, estimateVersion: source.estimateVersion,
+    estimateReviewRoundId: source.estimateReviewRoundId
+  }).select({ mainBasketId: 1, sourceLineItemKey: 1, overridePaise: 1, version: 1 }).session(session).lean();
+  const projectRates = new Map<string, ProcurementBasketProjectRate>();
+  for (const row of projectRateRows) {
+    const sourceLine = sourceLines.get(String(row.sourceLineItemKey));
+    if (!sourceLine || sourceLine.mainBasketId !== row.mainBasketId ||
+      source.mainBasketClassifications[row.mainBasketId] !== "standard") continue;
+    projectRates.set(String(row.sourceLineItemKey), { version: Number(row.version),
+      overridePaise: row.overridePaise == null ? null : Number(row.overridePaise) });
+  }
+  const standardSuggestions = new Map<string, PurchaseOrderModeStandardSuggestion>();
+  const currentMainLineNames = new Map<string, string>();
+  // Historical pending requests were submitted before mode decisions existed.
+  // Rebuild their original digest without reading newer Configuration state.
+  const modeResolutions = options.digestVersion === "legacy" ? new Map<string, PurchaseOrderModeResolution>()
+    : await resolvePurchaseOrderModes(projectId, source, session, {
+      at: options.at,
+      standardSuggestionSink: standardSuggestions,
+      currentMainLineNameSink: currentMainLineNames,
+      projectRates,
+      children: rows.map((row) => ({ id: String(row._id), sourceLineItemKey: row.sourceLineItemKey ?? null,
+        vendorId: row.vendorId == null ? null : String(row.vendorId), uomId: String(row.uomId) }))
+    });
   const actionableRows = rows.flatMap((row) => {
     let itemSource: ReturnType<typeof storedProcurementSource>;
     try { itemSource = storedProcurementSource(row); } catch { sourceConflict(); }
     const line = itemSource ? sourceLines.get(itemSource.sourceLineItemKey) : undefined;
     if (itemSource && (itemSource.estimateId !== source.estimateId || itemSource.estimateVersion !== source.estimateVersion ||
       itemSource.estimateReviewRoundId !== source.estimateReviewRoundId || !line || line.sectionId !== itemSource.sourceSectionId)) sourceConflict();
-    return line && !approvedEstimateAmountPaiseIsActionable(line.amountPaise) ? [] : [{ row, itemSource, line }];
+    if (line) itemIdsByLine.set(line.key, [...(itemIdsByLine.get(line.key) ?? []), String(row._id)]);
+    return line && (!line.included || line.amountPaise === null || !approvedEstimateAmountPaiseIsActionable(line.amountPaise))
+      ? [] : [{ row, itemSource, line }];
   });
+  const estimateLines = source.allLineItems.map((line) => preparationEstimateLine(line,
+    itemIdsByLine.get(line.key) ?? [], modeResolutions.get(line.key) ?? null,
+    source.mainBasketClassifications[line.mainBasketId ?? ""] ?? "standard",
+    Object.hasOwn(source.mainBasketClassifications, line.mainBasketId ?? ""), standardSuggestions.get(line.key) ?? null,
+    projectRates.get(line.key) ?? DEFAULT_PROCUREMENT_BASKET_PROJECT_RATE,
+    line.mainLineId ? currentMainLineNames.get(line.mainLineId) ?? null : null,
+    line.source === "configuration" && line.mainBasketId ? currentBasketNames.get(line.mainBasketId) ?? null : null,
+    line.source === "configuration" && line.subBasketId && line.mainBasketId &&
+      currentSubBasketNames.get(line.subBasketId)?.basketId === line.mainBasketId
+      ? currentSubBasketNames.get(line.subBasketId)?.name ?? null : null));
+  const currentLabelsByKey = new Map(estimateLines.map((line) => [line.key, {
+    mainBasketName: line.mainBasketName, subBasketName: line.subBasketName, mainLineName: line.mainLineName
+  }]));
   const uomRows = await AiEstimatorKnowledgeUomModel.find({ _id: { $in: [...new Set(actionableRows.map(({ row }) => row.uomId))] } })
     .select({ _id: 1, status: 1, decimalScale: 1 }).session(session).lean();
   const uoms = new Map(uomRows.map((row) => [String(row._id), row]));
@@ -144,6 +206,18 @@ export async function buildProjectPurchaseOrderPreparation(projectId: string, se
     if (plannedLineNetPaise !== null && allocation !== null && plannedLineNetPaise > allocation) {
       block("ALLOCATION_INSUFFICIENT", "The planned amount before GST exceeds this item's recorded vendor allocation.");
     }
+    if (options.digestVersion !== "legacy" && line && overlap?.code !== "ALREADY_ORDERED") {
+      const mode = modeResolutions.get(line.key);
+      if (line.source === "configuration" && mode?.revision?.status === "draft") {
+        block("MODE_REVISION_NOT_ACTIVE", "Activate the current saved Configuration before sending vendor work for this line.");
+      } else if (!mode || (mode.state !== "ready" && mode.state !== "exception")) {
+        const issue = mode?.issues[0];
+        block(mode?.state === "selection_required" ? "MODE_SELECTION_REQUIRED" : "MODE_UNAVAILABLE",
+          issue?.message ?? (mode?.state === "selection_required"
+            ? "Select and confirm a saved Configuration mode for this estimate line."
+            : "The approved Configuration mode is unavailable. Record a reasoned manual exception for a historical line."));
+      }
+    }
     const item: PurchaseOrderPreparationItem = {
       id, version: Number(row.version), sourceSectionId: itemSource?.sourceSectionId ?? null,
       sourceLineItemKey: itemSource?.sourceLineItemKey ?? null, roomName: line?.roomName ?? null,
@@ -177,17 +251,73 @@ export async function buildProjectPurchaseOrderPreparation(projectId: string, se
   }
   if (actionableRows.length === 0) blockers.push({ code: "NO_ITEMS", message: "Add procurement items before sending a purchase order request." });
   const netPaise = sections.some((section) => section.netPaise === null) ? null : sumPaise(sections.map((section) => section.netPaise!));
+  const digestSourceLines = options.digestVersion === "legacy"
+    ? [...source.lineItems].sort((left, right) => left.key.localeCompare(right.key))
+      .map(({ key, sectionId, roomName, amountPaise }) => ({ key, sectionId, roomName, amountPaise }))
+    : [...source.allLineItems].sort((left, right) => left.key.localeCompare(right.key))
+      .map((line) => {
+        const itemIds = itemIdsByLine.get(line.key) ?? [];
+        const eligibleIds = itemIds.filter((id) => overlaps.get(id)?.code !== "ALREADY_ORDERED");
+        const currentLabels = currentLabelsByKey.get(line.key);
+        const labelsChanged = line.source === "configuration" && currentLabels && (
+          currentLabels.mainBasketName !== (line.mainBasketName ?? line.sectionLabel) ||
+          currentLabels.subBasketName !== (line.subBasketName ?? null) ||
+          currentLabels.mainLineName !== (line.mainLineName ?? line.specification));
+        return { line, ...(labelsChanged ? { currentLabels } : {}),
+          mode: eligibleIds.length ? digestMode(modeResolutions.get(line.key) ?? null, new Set(eligibleIds)) : null,
+          itemIds: [...itemIds].sort() };
+      });
   const digest = createHash("sha256").update(JSON.stringify({ projectId, estimateSource, orderDefaults,
-    sourceLines: [...source.lineItems].sort((left, right) => left.key.localeCompare(right.key))
-      .map(({ key, sectionId, roomName, amountPaise }) => ({ key, sectionId, roomName, amountPaise })),
+    sourceLines: digestSourceLines,
     items: digestItems, manualOrders: orders.map((order) => ({ id: String(order._id), status: String(order.status),
       approvedRevisionId: order.approvedRevisionId ?? null, draftItemIds: (order.draftLines ?? []).map((line: Row) => String(line.procurementItemId)).sort() }))
       .sort((left, right) => left.id.localeCompare(right.id)),
     commitments: { committedPaise, committedGstPaise, committedTotalPaise }
   })).digest("hex");
   return { projectId, orderDefaults, estimateSource, approvedEstimatePaise, committedPaise, committedGstPaise,
-    committedTotalPaise, remainingPaise: approvedEstimatePaise - committedPaise, sections,
+    committedTotalPaise, remainingPaise: approvedEstimatePaise - committedPaise, estimateLines, sections,
     netPaise, itemCount: actionableRows.length, readyItemCount, blockers, digest };
+}
+
+function preparationEstimateLine(line: ApprovedProcurementSourceLine, itemIds: string[],
+  mode: PurchaseOrderModeResolution | null, mainBasketClassification: "standard" | "special",
+  mainBasketClassificationExplicit: boolean,
+  standardSuggestion: PurchaseOrderModeStandardSuggestion | null,
+  projectRate: ProcurementBasketProjectRate,
+  currentMainLineName: string | null,
+  currentBasketName: string | null,
+  currentSubBasketName: string | null): PurchaseOrderPreparationEstimateLine {
+  return {
+    key: line.key, included: line.included, source: line.source === "configuration" ? "configuration" : "legacy",
+    ...(line.itemType ? { itemType: line.itemType } : {}),
+    mainBasketClassification, mainBasketClassificationExplicit,
+    roomId: line.roomId ?? null, roomName: line.roomName,
+    mainBasketId: line.mainBasketId ?? line.sectionId,
+    mainBasketName: currentBasketName ?? line.mainBasketName ?? line.sectionLabel,
+    subBasketId: line.subBasketId ?? null, subBasketName: currentSubBasketName ?? line.subBasketName ?? null,
+    mainLineId: line.mainLineId ?? null, mainLineName: currentMainLineName ?? line.mainLineName ?? line.specification,
+    quantity: String(line.quantity), unit: line.unit, amountPaise: line.amountPaise,
+    itemIds: [...itemIds], mode,
+    projectRate,
+    ...(standardSuggestion ? { standardSuggestion } : {})
+  };
+}
+
+function digestMode(mode: PurchaseOrderModeResolution | null, eligibleIds: ReadonlySet<string>): Record<string, unknown> | null {
+  if (!mode) return null;
+  return {
+    state: mode.state, options: mode.options, issues: mode.issues,
+    decision: mode.decision,
+    ...(mode.integrity ? { integrity: { status: mode.integrity.status,
+      activatedDigest: mode.integrity.activatedDigest, observedDigest: mode.integrity.observedDigest } } : {}),
+    // A published revision can move from active to superseded when another
+    // revision is activated. Its verified content digest remains the same.
+    revision: mode.revision ? { id: mode.revision.id, contentDigest: mode.revision.contentDigest,
+      ...(mode.revision.status === "draft" ? { status: mode.revision.status, version: mode.revision.version } : {}) } : null,
+    uom: mode.uom, preview: mode.preview,
+    priceReferences: Object.fromEntries(Object.entries(mode.priceReferences)
+      .filter(([id]) => eligibleIds.has(id)).sort(([left], [right]) => left.localeCompare(right)))
+  };
 }
 
 function sumPaise(values: readonly number[]): number {

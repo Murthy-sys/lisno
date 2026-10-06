@@ -47,6 +47,7 @@ import { syncKnowledgeBasketDeletion, syncKnowledgeBasketMutation } from "./know
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { KNOWLEDGE_ITEM_STATUS_LABELS } from "./knowledgePresentation";
 import { KnowledgeBasketManagementDialog } from "./KnowledgeBasketManagementDialog";
+import { KnowledgeBasketRequestReview } from "./KnowledgeBasketRequestReview";
 import { CreateKnowledgeItemDialog } from "./CreateKnowledgeItemDialog";
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
 import { KnowledgeIndexItemCard } from "./KnowledgeIndexItemCard";
@@ -115,6 +116,7 @@ export function KnowledgeBaseIndexPage() {
   const [offset, setOffset] = useState(0);
   const [basketDialogOpen, setBasketDialogOpen] = useState(false);
   const [basketManagerOpen, setBasketManagerOpen] = useState(false);
+  const [basketRequestsOpen, setBasketRequestsOpen] = useState(false);
   const [basketEditor, setBasketEditor] = useState<KnowledgeBasket | null>(null);
   const [basketDelete, setBasketDelete] = useState<KnowledgeBasket | null>(null);
   const [subBasketEditor, setSubBasketEditor] = useState<{ basket: KnowledgeBasket; subBasket: KnowledgeSubBasket } | null>(null);
@@ -332,6 +334,15 @@ export function KnowledgeBaseIndexPage() {
             </Button>
             {canManageBaskets ? (
               <Button
+                variant="secondary"
+                aria-expanded={basketRequestsOpen}
+                onClick={() => setBasketRequestsOpen((open) => !open)}
+              >
+                Main Basket requests
+              </Button>
+            ) : null}
+            {canManageBaskets ? (
+              <Button
                 ref={manageBasketsButtonRef}
                 variant="secondary"
                 leadingIcon={<ListTree />}
@@ -369,6 +380,7 @@ export function KnowledgeBaseIndexPage() {
       {noticeDismissed ? null : (
         <KnowledgeSafetyNotice onDismiss={dismissNotice} />
       )}
+      {canManageBaskets && basketRequestsOpen ? <KnowledgeBasketRequestReview /> : null}
       {announcement ? (
         <p className="sr-only" role="status">
           {announcement}
@@ -993,7 +1005,7 @@ function BasketDeletionImpactSummary({ impact }: {
           <dd>{impact.subBasketCount ?? 0}</dd>
         </div>
         <div>
-          <dt>References removed elsewhere</dt>
+          <dt>References in other configurations</dt>
           <dd>{impact.historicalReferenceCount}</dd>
         </div>
       </dl>
@@ -1008,9 +1020,9 @@ function BasketDeletionImpactSummary({ impact }: {
         </p>
         {impact.historicalReferenceCount > 0 ? (
           <p>
-            {impact.historicalReferenceCount} {plural(impact.historicalReferenceCount, "exclusion or dependency", "exclusions and dependencies")} in other
-            configurations point at this basket. {plural(impact.historicalReferenceCount, "It", "They")} will be removed so
-            nothing is left pointing at something that no longer exists.
+            {impact.historicalReferenceCount} {plural(impact.historicalReferenceCount, "reference", "references")} in other
+            configurations point at this basket. Draft references will be removed. Active and superseded revisions
+            keep their history and show the deleted target as unavailable.
           </p>
         ) : null}
         <p>A Super Admin can add this basket again afterwards; nothing is restored with it.</p>

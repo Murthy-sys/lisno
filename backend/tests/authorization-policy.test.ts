@@ -134,6 +134,7 @@ const ADDITIONAL_ROWS = {
   design_head: [2, 5, 9, 11, ...range(14, 23), ...range(26, 29), 38, 39, ...range(61, 65)],
   client: [2, 3, 5, 24, ...range(26, 27), 29, ...range(36, 39), ...range(45, 48), ...range(54, 60), ...range(82, 84)],
   procurement: [17, 18, 88, 89, 90],
+  program_manager: [],
   finance_head: [17, 18, 88, 89, 90],
   site_manager: [17, 18, 88, 89, 90],
   worker_electrician: [17, 18],
@@ -231,6 +232,8 @@ describe("authorization policy", () => {
           !VENDOR_KPI_PERMISSIONS.includes(permission as never) &&
           !VENDOR_INDUCTION_PERMISSIONS.includes(permission as never) &&
           !PROCUREMENT_FULFILLMENT_PERMISSIONS.includes(permission as never) &&
+          !["projects.procurement_identity.manage", "finance.vendor_invoice.manage", "procurement.vendor_city.manage",
+            "procurement.work_order_approval.read", "procurement.work_order_approval.decide"].includes(permission) &&
           permission !== "projects.design_workflow.read" &&
           permission !== "estimation.design_upload.delete" &&
           permission !== "estimation.catalogue.read" &&
@@ -261,8 +264,8 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(165);
-    expect(new Set(PERMISSION_CODES).size).toBe(165);
+    expect(PERMISSION_CODES).toHaveLength(170);
+    expect(new Set(PERMISSION_CODES).size).toBe(170);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
@@ -279,10 +282,23 @@ describe("authorization policy", () => {
   it("gives every role scoped chat operations and restricts participant management", () => {
     for (const role of ROLE_CODES) {
       for (const permission of ["chat.read", "chat.send", "chat.issue", "chat.read_state"] as const) {
-        expect(hasPermission(role, permission), `${role} ${permission}`).toBe(role !== "vendor");
+        expect(hasPermission(role, permission), `${role} ${permission}`).toBe(role !== "vendor" && role !== "program_manager");
       }
       expect(hasPermission(role, "chat.participants.manage"), role).toBe(["admin", "super_admin"].includes(role));
     }
+  });
+
+  it("keeps work-order authority scoped to the new approver role and assigned staff roles", () => {
+    for (const role of ROLE_CODES) {
+      expect(hasPermission(role, "projects.procurement_identity.manage"), role).toBe(["admin", "super_admin"].includes(role));
+      expect(hasPermission(role, "procurement.vendor_city.manage"), role).toBe(["procurement", "super_admin"].includes(role));
+      expect(hasPermission(role, "finance.vendor_invoice.manage"), role).toBe(["finance_head", "super_admin"].includes(role));
+      for (const permission of ["procurement.work_order_approval.read", "procurement.work_order_approval.decide"] as const)
+        expect(hasPermission(role, permission), `${role} ${permission}`).toBe(
+          ["site_manager", "designer", "procurement", "finance_head", "super_admin"].includes(role));
+    }
+    expect(hasPermission("program_manager", "projects.list")).toBe(false);
+    expect(hasPermission("program_manager", "projects.read")).toBe(false);
   });
 
   it("restricts reusable Quality Control option creation to Super Admin", () => {
@@ -547,7 +563,18 @@ describe("authorization policy", () => {
       "project_procurement_item_updated",
       "project_purchase_order_created", "project_purchase_order_updated", "project_purchase_order_submitted",
       "project_purchase_order_decided", "project_purchase_order_amended", "project_purchase_order_cancelled",
+      "project_purchase_order_mode_decision_saved",
       "project_purchase_order_request_submitted", "project_purchase_order_request_decided",
+      "project_program_manager_assigned", "project_city_confirmed", "procurement_vendor_city_confirmed",
+      "procurement_basket_enquiry_created", "procurement_basket_base_rate_saved",
+      "procurement_basket_enquiry_updated", "procurement_basket_boq_sent", "procurement_basket_boq_dispatch_requested",
+      "procurement_basket_invitation_batch_requested",
+      "procurement_basket_invitation_sent", "procurement_basket_invitation_failed", "procurement_basket_invitation_resend_requested",
+      "procurement_basket_invitation_whatsapp_share_intent", "procurement_basket_bid_submitted",
+      "procurement_basket_counteroffer_requested", "procurement_basket_award_created", "procurement_basket_award_updated",
+      "procurement_basket_award_withdrawn",
+      "procurement_basket_award_submitted", "procurement_basket_award_decided", "procurement_basket_work_order_issued",
+      "procurement_basket_invoice_assessed", "procurement_basket_work_order_share_intent",
       "vendor_work_progress_updated", "vendor_work_media_uploaded", "vendor_work_submitted",
       "client_vendor_work_decided", "project_scope_exception_recorded",
       "project_completion_authority_changed", "project_completion_recorded",
@@ -558,6 +585,9 @@ describe("authorization policy", () => {
 
   it("registers only bounded AI Estimator Knowledge audit action names", () => {
     expect(AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS).toEqual([
+      "vendor_basket_request_created",
+      "vendor_basket_request_fulfilled",
+      "vendor_basket_request_rejected",
       "ai_estimator_knowledge_basket_created",
       "ai_estimator_knowledge_sub_basket_created",
       "ai_estimator_knowledge_sub_basket_updated",

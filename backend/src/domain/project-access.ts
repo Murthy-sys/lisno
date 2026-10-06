@@ -15,6 +15,7 @@ type ProjectAccessRecord = {
   initiatingDesignerId: string | null;
   assignedDesignerIds: string[];
   managerId: string | null;
+  programManagerId?: string | null;
 };
 
 export function grantCanSupplyProjectModuleScope(
@@ -52,6 +53,8 @@ export function legacyRelationshipAllows(
       );
     case "design_manager":
       return project.managerId === user.id;
+    case "program_manager":
+      return module === "projects" && project.programManagerId === user.id;
     default:
       return false;
   }

@@ -1,0 +1,136 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - link "Skip to main content" [ref=e4] [cursor=pointer]:
+      - /url: "#main-content"
+    - banner "Workspace tools" [ref=e40]:
+      - generic [ref=e195]:
+        - button "Open navigation" [ref=e196] [cursor=pointer]
+        - img "Lisno" [ref=e200]
+      - generic [ref=e41]:
+        - button "View daily critical tasks" [ref=e68] [cursor=pointer]:
+          - generic [ref=e69]: Critical tasks
+        - button "Notifications" [ref=e42] [cursor=pointer]
+        - button "Synthetic workspace reviewer" [ref=e47] [cursor=pointer]:
+          - generic [aria-hidden] [ref=e48]: SW
+    - main [ref=e54]:
+      - region [ref=e72]:
+        - generic [ref=e73]:
+          - link "Back to projects" [ref=e58] [cursor=pointer]:
+            - /url: /procurement
+          - generic [ref=e59]:
+            - generic [ref=e60]: Project procurement
+            - heading "Aurora Villa" [level=1] [ref=e74]
+            - paragraph [ref=e63]: Plan each main basket, compare vendor BOQs and issue approved work orders.
+        - button "Project status" [ref=e75] [cursor=pointer]
+        - region "Project baskets" [ref=e79]:
+          - navigation "Procurement breadcrumb" [ref=e80]:
+            - button "Projects" [ref=e81] [cursor=pointer]
+            - generic [aria-hidden] [ref=e82]: /
+            - button "Aurora Villa" [ref=e83] [cursor=pointer]
+            - generic [aria-hidden] [ref=e101]: /
+            - strong [ref=e102]: Carpentry
+          - button "← Back to main baskets" [ref=e103] [cursor=pointer]
+          - generic [ref=e104]:
+            - region [ref=e105]:
+              - generic [ref=e107]:
+                - paragraph [ref=e108]: Approved scope
+                - heading "Carpentry" [level=2] [ref=e109]
+                - paragraph [ref=e110]: Aurora Villa
+              - table [ref=e112]:
+                - caption [ref=e113]: Included approved source lines for Carpentry
+                - rowgroup [ref=e119]:
+                  - row [ref=e120]:
+                    - columnheader "Item / description" [ref=e121]
+                    - columnheader "Qty" [ref=e122]
+                    - columnheader "Base amount" [ref=e123]
+                    - columnheader "Total" [ref=e124]
+                - rowgroup [ref=e125]:
+                  - row [ref=e126]:
+                    - rowheader [ref=e127]:
+                      - strong [ref=e128]: Wardrobe plywood and laminate
+                      - button "Review mode for Wardrobe plywood and laminate" [ref=e130] [cursor=pointer]: Review mode
+                    - cell "80 sq ft" [ref=e131]
+                    - cell "₹12.50" [ref=e132]
+                    - cell "₹1,100.00" [ref=e133]
+                - rowgroup [ref=e134]:
+                  - row [ref=e135]:
+                    - rowheader [ref=e136]:
+                      - strong [ref=e137]: Bedside table finishing
+                      - button "Review mode for Bedside table finishing" [ref=e139] [cursor=pointer]: Review mode
+                    - cell "2 nos" [ref=e140]
+                    - cell "₹100.00" [ref=e141]
+                    - cell "₹250.00" [ref=e142]
+              - generic [ref=e143]:
+                - generic [ref=e144]: Total
+                - strong [ref=e145]: ₹1,350.00
+            - region "Vendor enquiry for Aurora Villa" [ref=e146]:
+              - heading "Vendor enquiry" [level=2] [ref=e147]
+              - navigation "Vendor enquiry progress" [ref=e148]:
+                - list [ref=e149]:
+                  - listitem [ref=e150]:
+                    - button [ref=e151] [cursor=pointer]:
+                      - generic [aria-hidden] [ref=e152]: "1"
+                      - strong [ref=e153]: Enquiry
+                  - listitem [ref=e154]:
+                    - button [disabled] [ref=e155]:
+                      - generic [aria-hidden] [ref=e156]: "2"
+                      - strong [ref=e157]: Bids
+                  - listitem [ref=e158]:
+                    - button [disabled] [ref=e159]:
+                      - generic [aria-hidden] [ref=e160]: "3"
+                      - strong [ref=e161]: Comparison
+                  - listitem [ref=e162]:
+                    - button [disabled] [ref=e163]:
+                      - generic [aria-hidden] [ref=e164]: "4"
+                      - strong [ref=e165]: Awarded
+              - region [ref=e167]:
+                - heading "Choose vendors" [level=3] [ref=e168]
+                - generic [ref=e169]:
+                  - text: Search vendors
+                  - searchbox "Search vendors" [ref=e170]
+                - generic [ref=e171]:
+                  - generic [ref=e172]:
+                    - generic [ref=e173]:
+                      - checkbox "Sharma Interiors VEN-J01 · Bengaluru" [checked] [ref=e174]
+                      - generic [ref=e175]:
+                        - strong [ref=e176]: Sharma Interiors
+                        - generic [ref=e177]: VEN-J01 · Bengaluru
+                    - generic [ref=e178]: KPI 86.0
+                  - generic [ref=e179]:
+                    - generic [ref=e180]:
+                      - checkbox "Decor Masters VEN-F02 · Mysuru" [ref=e181]
+                      - generic [ref=e182]:
+                        - strong [ref=e183]: Decor Masters
+                        - generic [ref=e184]: VEN-F02 · Mysuru
+                    - generic [ref=e185]: KPI 55.0
+                - generic [ref=e186]:
+                  - generic [ref=e187]: 1–2 of 2 eligible vendors
+                  - generic [ref=e188]:
+                    - button "Previous" [disabled] [ref=e189]
+                    - button "Next" [disabled] [ref=e190]
+                - paragraph [ref=e201]: "Selected: Sharma Interiors"
+                - region "Complete BOQ details" [ref=e202]:
+                  - heading "Complete BOQ details" [level=3] [ref=e203]
+                  - paragraph [ref=e204]: Only missing vendor-facing fields are requested. Approved descriptions and quantities are fixed.
+                  - group "Wardrobe plywood and laminate · 80 sq ft" [ref=e205]:
+                    - generic [ref=e207]:
+                      - text: Scope for Wardrobe plywood and laminate
+                      - combobox "Scope for Wardrobe plywood and laminate" [active] [ref=e208]:
+                        - option "Select scope" [selected]
+                        - option "Supply"
+                        - option "Execution"
+                        - option "Supply and execution"
+                  - group "Bedside table finishing · 2 nos" [ref=e209]:
+                    - generic [ref=e211]:
+                      - text: Scope for Bedside table finishing
+                      - combobox "Scope for Bedside table finishing" [ref=e212]:
+                        - option "Select scope" [selected]
+                        - option "Supply"
+                        - option "Execution"
+                        - option "Supply and execution"
+                - alert [ref=e213]: Complete the required BOQ details, then use Send bid invitations again.
+                - generic [ref=e191]:
+                  - paragraph [ref=e192]: 1 vendor selected
+                  - button "Send bid invitations" [ref=e193] [cursor=pointer]
+  - status "Application announcements" [ref=e67]
+  - region "Notifications"

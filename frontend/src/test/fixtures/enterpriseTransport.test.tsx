@@ -50,6 +50,65 @@ describe("synthetic enterprise route harness", () => {
     expect(document.body.textContent).not.toMatch(/Unexpected Application Error|Synthetic QA render failed|Cannot read properties/);
     expect(document.querySelector("main")).toBeTruthy();
   });
+  it("serves default procurement reads while keeping configured modes opt-in", async () => {
+    transport = installEnterpriseTransport({ route: "/procurement/projects/project-one", role: "procurement", state: "populated" });
+    const defaultPreparation = (await (await fetch("/api/v1/procurement/projects/project-one/purchase-order-preparation")).json()).data;
+    const defaultRequests = (await (await fetch("/api/v1/procurement/projects/project-one/purchase-order-requests?limit=50&offset=0")).json()).data;
+    expect(defaultPreparation).toMatchObject({ projectId: "project-one", itemCount: 0, readyItemCount: 0, netPaise: 0 });
+    expect(defaultPreparation.estimateLines).toHaveLength(5);
+    expect(defaultPreparation.estimateLines.every((line: { itemIds: string[]; mode: unknown }) => line.itemIds.length === 0 && line.mode === null)).toBe(true);
+    expect(defaultRequests).toEqual({ items: [], total: 0, limit: 50, offset: 0 });
+    expect(transport.requests.every((request) => request.status === 200 && !request.unexpected)).toBe(true);
+
+    transport.restore();
+    transport = installEnterpriseTransport({ route: "/procurement/projects/project-one?qaProcurementModes=ready", role: "procurement", state: "populated" });
+    const readyPreparation = (await (await fetch("/api/v1/procurement/projects/project-one/purchase-order-preparation")).json()).data;
+    expect(readyPreparation).toMatchObject({ projectId: "project-one", itemCount: 2, readyItemCount: 2, netPaise: 170000 });
+    expect(readyPreparation.estimateLines).toHaveLength(5);
+    expect(readyPreparation.estimateLines[0].mode.preview).toMatchObject({ mode: "pmc", finalVendorChargesPaise: null });
+    expect(readyPreparation.estimateLines[1].mode.state).toBe("exception");
+    expect(transport.requests).toEqual([{ method: "GET", path: "/procurement/projects/project-one/purchase-order-preparation", status: 200, unexpected: false }]);
+  });
+  it("saves and clears only the populated Standard basket's synthetic project rate", async () => {
+    const route = "/procurement/projects/project-one?qaStandardBasket=ready";
+    const path = "/api/v1/procurement/projects/project-one/baskets/basket-carpentry";
+    transport = installEnterpriseTransport({ route, role: "procurement", state: "populated" });
+    const initial = (await (await fetch(path)).json()).data;
+    expect(initial.standardCost.totalPaise).toBe(135_000);
+    expect(initial.lines[0]).toMatchObject({ baseUnitRatePaise: 1_250, projectRate: { version: 0, overridePaise: null } });
+    const save = (body: object) => fetch(`${path}/base-rate`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const input = { sourceLineItemKey: "living-room:CA01", baseRatePaise: 1_500, expectedVersion: 0,
+      expectedEstimateSource: initial.estimateSource, expectedPreparationDigest: initial.preparationDigest, idempotencyKey: "rate-one" };
+    const saved = await save(input);
+    expect(saved.status).toBe(200);
+    expect((await saved.json()).data).toMatchObject({ projectId: "project-one", mainBasketId: "basket-carpentry",
+      sourceLineItemKey: input.sourceLineItemKey, projectRate: { version: 1, overridePaise: 1_500 } });
+    const updated = (await (await fetch(path)).json()).data;
+    expect(updated.lines[0]).toMatchObject({ baseUnitRatePaise: 1_500,
+      projectRate: { version: 1, overridePaise: 1_500 }, standardCost: { baseCostPaise: 120_000, adjustedCostPaise: 132_000 } });
+    expect(updated.standardCost.totalPaise).toBe(157_000);
+    expect(updated.preparationDigest).not.toBe(initial.preparationDigest);
+    const list = (await (await fetch("/api/v1/procurement/projects/project-one/baskets")).json()).data;
+    expect(list.baskets[0].standardCost.totalPaise).toBe(157_000);
+    const stale = await save({ ...input, idempotencyKey: "rate-stale" });
+    expect(stale.status).toBe(409);
+    const cleared = await save({ ...input, baseRatePaise: null, expectedVersion: 1,
+      expectedPreparationDigest: updated.preparationDigest, idempotencyKey: "rate-clear" });
+    expect(cleared.status).toBe(200);
+    expect((await cleared.json()).data.projectRate).toEqual({ version: 2, overridePaise: null });
+    const afterClear = (await (await fetch(path)).json()).data;
+    expect(afterClear.lines[0]).toMatchObject({ baseUnitRatePaise: 1_250, projectRate: { version: 2, overridePaise: null } });
+    expect(afterClear.standardCost.totalPaise).toBe(135_000);
+    const replay = await save(input);
+    expect(replay.status).toBe(200);
+    expect((await replay.json()).data.projectRate).toEqual({ version: 1, overridePaise: 1_500 });
+    expect(((await (await fetch(path)).json()).data).standardCost.totalPaise).toBe(135_000);
+    expect(transport.requests.filter((request) => request.unexpected)).toEqual([]);
+
+    transport.restore();
+    transport = installEnterpriseTransport({ route, role: "procurement", state: "mutation-error" });
+    expect((await save(input)).status).toBe(422);
+  });
   it("opens the designer drawing with the protected image and saved annotation geometry", async () => {
     mount("/designer/design-plans", "designer");
     await userEvent.click(await screen.findByRole("button", { name: "Preview" }));

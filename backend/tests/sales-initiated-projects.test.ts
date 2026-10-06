@@ -27,7 +27,10 @@ function setup() {
   seed.users.push(
     { ...manager, id: "selected-manager", name: "A Selected Manager", email: "selected@example.com", emailNormalized: "selected@example.com", title: "Sales Manager" },
     { ...manager, id: "inactive-manager", name: "Inactive Manager", email: "inactive@example.com", emailNormalized: "inactive@example.com", active: false },
-    { ...manager, id: "vendor-sales-access-fixture", name: "Vendor access fixture", email: "vendor-sales-access@example.com", emailNormalized: "vendor-sales-access@example.com", role: "vendor", vendorId: "vendor-sales-access-fixture", accountKind: "standard" }
+    { ...manager, id: "vendor-sales-access-fixture", name: "Vendor access fixture", email: "vendor-sales-access@example.com", emailNormalized: "vendor-sales-access@example.com", role: "vendor", vendorId: "vendor-sales-access-fixture", accountKind: "standard" },
+    { ...manager, id: "program-manager-sales-access-fixture", name: "Program Manager access fixture",
+      email: "program-manager-sales-access@example.com", emailNormalized: "program-manager-sales-access@example.com",
+      role: "program_manager", accountKind: "standard" }
   );
   seed.projects = [];
   seed.leads = [];
@@ -42,6 +45,23 @@ function setup() {
 }
 
 describe("Sales-initiated projects", () => {
+  it("creates a Sales-owned lead without location or budgets and preserves its manager grant", async () => {
+    const { repository, app } = setup();
+    const { location: _location, budgetMin: _minimum, budgetMax: _maximum, ...withoutHiddenFields } = input;
+    const response = await request(app).post("/api/v1/admin/projects")
+      .set("Authorization", bearer()).send(withoutHiddenFields).expect(201);
+    await expect(repository.findProjectById(response.body.data.id)).resolves.toMatchObject({
+      location: "", clientAddress: "", assignedEstimatorId: "user-estimator-sales"
+    });
+    await expect(repository.findLeadById(response.body.data.lead.id)).resolves.toMatchObject({
+      location: "", budgetMin: null, budgetMax: null, ownerId: "user-estimator-sales"
+    });
+    await expect(repository.listActiveProjectAccessGrants("selected-manager", "projects"))
+      .resolves.toEqual([expect.objectContaining({
+        projectId: response.body.data.id, grantedById: "user-estimator-sales", source: "admin_initiator"
+      })]);
+  });
+
   it("owns the linked lead as the authenticated estimator and scopes client representation to the selected manager", async () => {
     const { repository, app } = setup();
     const response = await request(app).post("/api/v1/admin/projects")

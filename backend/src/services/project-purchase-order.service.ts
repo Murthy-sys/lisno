@@ -25,25 +25,31 @@ import type { PublicUser } from "./auth.service.js";
 import { assertProcurementProjectAccess, procurementItemSourceSnapshot } from "./procurement.service.js";
 import { vendorActivation } from "./vendor-readiness.service.js";
 import { assertPurchaseOrderAllocations } from "./procurement-vendor-allocation.service.js";
+import { assertNoIssuedBasketSourceOverlap } from "./project-purchase-order-tender-overlap.js";
 import { assertCompletionReviewAllowsOrderChanges } from "./site-completion-fence.js";
 
 type Row = Record<string, any>;
 type Source = Awaited<ReturnType<typeof procurementItemSourceSnapshot>>;
 type Scope = "procurement" | "super_admin";
 type Page<T> = { items: T[]; total: number; limit: number; offset: number };
+type PurchaseOrderLineTermsDto = { scopeType: PurchaseOrderLineInput["scopeType"] | null;
+  targetDate: string | null; deliveryLocation: string | null };
+type ApprovedPurchaseOrderLineDto = Omit<ApprovedPurchaseOrderLine, keyof PurchaseOrderLineTermsDto> & PurchaseOrderLineTermsDto;
 
 export interface PurchaseOrderDto {
   id: string;
   orderNumber: string;
   projectId: string;
   projectRequestId: string | null;
+  tenderAwardId: string | null;
   vendor: { id: string; code: string; name: string };
   status: string;
   version: number;
   revision: number;
   estimateSource: { estimateId: string; estimateVersion: number; estimateReviewRoundId: string | null };
-  terms: string;
-  draftLines: Array<PurchaseOrderLineInput & { id: string; procurementItemVersion: number; netPaise: number; gstPaise: number; totalPaise: number }>;
+  terms: string | null;
+  draftLines: Array<Omit<PurchaseOrderLineInput, keyof PurchaseOrderLineTermsDto> & PurchaseOrderLineTermsDto &
+    { id: string; procurementItemVersion: number; netPaise: number; gstPaise: number; totalPaise: number }>;
   draftTotals: { netPaise: number; gstPaise: number; totalPaise: number };
   submittedRevisionId: string | null;
   approvedRevisionId: string | null;
@@ -51,7 +57,7 @@ export interface PurchaseOrderDto {
   approvedGstPaise: number | null;
   approvedTotalPaise: number | null;
   decisions: Array<{ id: string; revisionId: string; revision: number; decision: string; actorId: string; reason: string | null; budgetOverrideReason: string | null; decidedAt: string }>;
-  revisions: Array<{ id: string; revision: number; submittedAt: string; submittedById: string; terms: string; lines: ApprovedPurchaseOrderLine[]; totals: { netPaise: number; gstPaise: number; totalPaise: number } }>;
+  revisions: Array<{ id: string; revision: number; submittedAt: string; submittedById: string; terms: string | null; lines: ApprovedPurchaseOrderLineDto[]; totals: { netPaise: number; gstPaise: number; totalPaise: number } }>;
   createdAt: string;
   updatedAt: string;
 }
@@ -63,8 +69,8 @@ export interface VendorPurchaseOrderDto {
   vendor: { id: string; code: string; name: string };
   revision: number;
   approvedAt: string;
-  terms: string;
-  lines: ApprovedPurchaseOrderLine[];
+  terms: string | null;
+  lines: ApprovedPurchaseOrderLineDto[];
   totals: { netPaise: number; gstPaise: number; totalPaise: number };
 }
 
@@ -185,6 +191,7 @@ export function createProjectPurchaseOrderService(input: { audit: AuditService; 
       return tx(actor, "procurement", projectId, async (session) => {
         const fields = validate(purchaseOrderUpdateSchema, value);
         const order = await requireOrder(projectId, orderId, session);
+        if (order.tenderAwardId) throw new ApiError(409, "PURCHASE_ORDER_TENDER_MANAGED", "This order is managed by its basket award.");
         const requestDigest = digest(fields);
         if (hasReceipt(order, "update", fields.idempotencyKey, requestDigest)) return detail(projectId, orderId, session);
         await assertCompletionReviewAllowsOrderChanges(projectId, session);
@@ -210,6 +217,7 @@ export function createProjectPurchaseOrderService(input: { audit: AuditService; 
       return tx(actor, "procurement", projectId, async (session) => {
         const fields = validate(purchaseOrderSubmitSchema, value);
         const order = await requireOrder(projectId, orderId, session);
+        if (order.tenderAwardId) throw new ApiError(409, "PURCHASE_ORDER_TENDER_MANAGED", "This order is managed by its basket award.");
         const requestDigest = digest(fields);
         if (hasReceipt(order, "submit", fields.idempotencyKey, requestDigest)) return detail(projectId, orderId, session);
         await assertCompletionReviewAllowsOrderChanges(projectId, session);
@@ -243,6 +251,7 @@ export function createProjectPurchaseOrderService(input: { audit: AuditService; 
       return tx(actor, "super_admin", projectId, async (session) => {
         const fields = validate(purchaseOrderDecisionSchema, value);
         const order = await requireOrder(projectId, orderId, session);
+        if (order.tenderAwardId) throw new ApiError(409, "PURCHASE_ORDER_TENDER_MANAGED", "A basket award cannot be approved through the individual purchase-order queue.");
         const requestDigest = digest(fields);
         const previous = order.decisions.find((entry: Row) => entry.idempotencyKey === fields.idempotencyKey);
         if (previous) {
@@ -266,6 +275,8 @@ export function createProjectPurchaseOrderService(input: { audit: AuditService; 
           const approvalFence = await ProjectModel.findOneAndUpdate({ _id: projectId, status: "active" },
             { $inc: { purchaseOrderApprovalEpoch: 1 } }, { session, returnDocument: "after", runValidators: true, timestamps: false }).lean();
           if (!approvalFence) throw new ApiError(409, "PURCHASE_ORDER_PROJECT_NOT_ACTIVE", "A purchase order can be approved only for an active project.");
+          await assertNoIssuedBasketSourceOverlap(projectId,
+            revision.lines.map((line: Row) => String(line.sourceLineItemKey)), session);
           const budgetPaise = procurementBudgetPaise(source);
           const others = await ProjectPurchaseOrderModel.find({ projectId, _id: { $ne: orderId }, approvedRevisionId: { $ne: null }, cancelledAt: null })
             .select({ approvedNetPaise: 1 }).session(session).lean();
@@ -293,6 +304,7 @@ export function createProjectPurchaseOrderService(input: { audit: AuditService; 
       return tx(actor, "procurement", projectId, async (session) => {
         const fields = validate(purchaseOrderAmendSchema, value);
         const order = await requireOrder(projectId, orderId, session);
+        if (order.tenderAwardId) throw new ApiError(409, "PURCHASE_ORDER_TENDER_MANAGED", "Change this work through its basket award.");
         if (order.projectRequestId) throw new ApiError(409, "PURCHASE_ORDER_REQUEST_AMENDMENT_BLOCKED", "This order belongs to an approved project request and cannot be amended as an individual order.");
         const requestDigest = digest(fields);
         if (hasReceipt(order, "amend", fields.idempotencyKey, requestDigest)) return detail(projectId, orderId, session);
@@ -314,6 +326,7 @@ export function createProjectPurchaseOrderService(input: { audit: AuditService; 
       return tx(actor, "super_admin", projectId, async (session) => {
         const fields = validate(purchaseOrderCancelSchema, value);
         const order = await requireOrder(projectId, orderId, session);
+        if (order.tenderAwardId) throw new ApiError(409, "PURCHASE_ORDER_TENDER_MANAGED", "A basket work order requires vendor-work reconciliation before cancellation.");
         const requestDigest = digest(fields);
         if (hasReceipt(order, "cancel", fields.idempotencyKey, requestDigest)) return detail(projectId, orderId, session);
         await assertCompletionReviewAllowsOrderChanges(projectId, session);
@@ -360,8 +373,10 @@ export function createProjectPurchaseOrderService(input: { audit: AuditService; 
         if (!revision || !order.approvedAt) throw new ApiError(409, "PURCHASE_ORDER_APPROVAL_CONFLICT", "The approved purchase order is inconsistent.");
         return { id: orderId, orderNumber: String(order.orderNumber), projectId: String(order.projectId),
           vendor: { id: String(order.vendorId), code: String(revision.vendorCode), name: String(revision.vendorName) },
-          revision: Number(revision.revision), approvedAt: new Date(order.approvedAt).toISOString(), terms: String(revision.terms),
-          lines: revision.lines as ApprovedPurchaseOrderLine[],
+          revision: Number(revision.revision), approvedAt: new Date(order.approvedAt).toISOString(), terms: revision.terms ?? null,
+          lines: (revision.lines as Row[]).map(line => ({ ...line,
+            scopeType: line.scopeType ?? null, targetDate: line.targetDate ?? null,
+            deliveryLocation: line.deliveryLocation ?? null })) as ApprovedPurchaseOrderLineDto[],
           totals: { netPaise: Number(revision.netPaise), gstPaise: Number(revision.gstPaise), totalPaise: Number(revision.totalPaise) } };
       }, { readConcern: { level: "snapshot" }, readPreference: "primary" });
     }
@@ -491,14 +506,16 @@ async function audit(service: AuditService, actorId: string, action: Parameters<
 function orderDto(order: Row, revisions: readonly Row[]): PurchaseOrderDto {
   return { id: String(order._id), orderNumber: String(order.orderNumber), projectId: String(order.projectId),
     projectRequestId: order.projectRequestId == null ? null : String(order.projectRequestId),
+    tenderAwardId: order.tenderAwardId == null ? null : String(order.tenderAwardId),
     vendor: { id: String(order.vendorId), code: String(order.vendorCode), name: String(order.vendorName) },
     status: String(order.status), version: Number(order.version), revision: Number(order.revision),
     estimateSource: { estimateId: String(order.estimateId), estimateVersion: Number(order.estimateVersion), estimateReviewRoundId: order.estimateReviewRoundId ?? null },
-    terms: String(order.terms),
+    terms: order.terms ?? null,
     draftLines: order.draftLines.map((line: Row) => ({ id: line.id, procurementItemId: line.procurementItemId,
       procurementItemVersion: line.procurementItemVersion, quantityMilliUnits: line.quantityMilliUnits,
-      unitPricePaise: line.unitPricePaise, gstBasisPoints: line.gstBasisPoints, scopeType: line.scopeType,
-      description: line.description, targetDate: line.targetDate, deliveryLocation: line.deliveryLocation,
+      unitPricePaise: line.unitPricePaise, gstBasisPoints: line.gstBasisPoints,
+      scopeType: line.scopeType ?? null, description: line.description,
+      targetDate: line.targetDate ?? null, deliveryLocation: line.deliveryLocation ?? null,
       ...calculatePurchaseOrderLine(line as PurchaseOrderLineInput) })),
     draftTotals: { netPaise: Number(order.draftNetPaise), gstPaise: Number(order.draftGstPaise), totalPaise: Number(order.draftTotalPaise) },
     submittedRevisionId: order.submittedRevisionId ?? null, approvedRevisionId: order.approvedRevisionId ?? null,
@@ -509,7 +526,9 @@ function orderDto(order: Row, revisions: readonly Row[]): PurchaseOrderDto {
       budgetOverrideReason: decision.budgetOverrideReason ?? null, decidedAt: new Date(decision.decidedAt).toISOString() })),
     revisions: revisions.map(revision => ({ id: String(revision._id), revision: Number(revision.revision),
       submittedAt: new Date(revision.submittedAt).toISOString(), submittedById: String(revision.submittedById),
-      terms: String(revision.terms), lines: revision.lines as ApprovedPurchaseOrderLine[],
+      terms: revision.terms ?? null, lines: (revision.lines as Row[]).map(line => ({ ...line,
+        scopeType: line.scopeType ?? null, targetDate: line.targetDate ?? null,
+        deliveryLocation: line.deliveryLocation ?? null })) as ApprovedPurchaseOrderLineDto[],
       totals: { netPaise: Number(revision.netPaise), gstPaise: Number(revision.gstPaise), totalPaise: Number(revision.totalPaise) } })),
     createdAt: new Date(order.createdAt).toISOString(), updatedAt: new Date(order.updatedAt).toISOString() };
 }

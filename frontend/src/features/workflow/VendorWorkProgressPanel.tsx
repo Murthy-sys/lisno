@@ -12,9 +12,9 @@ interface Work {
   sectionLabel: string;
   roomName: string;
   itemName: string;
-  scopeType: string;
+  scopeType: string | null;
   description: string;
-  targetDate: string;
+  targetDate: string | null;
   status: string;
   progress: number;
   displayProgress: number;
@@ -60,8 +60,8 @@ export function VendorWorkProgressPanel({ projectId, projectName }: { projectId:
     <div className="vendor-progress__heading"><div><p>Site execution</p><h2 id={`vendor-progress-${projectId}`}>{projectName ? `${projectName} work sections` : "Work sections"}</h2></div><div><span>{tasks.length} section{tasks.length === 1 ? "" : "s"}</span><button type="button" onClick={() => void progress.refetch()} disabled={progress.isFetching}>Refresh</button></div></div>
     <p className="vendor-progress__owner">Pending with: <strong>{progress.data?.pendingOwner === "super_admin" ? "Super Admin" : progress.data?.pendingOwner === "client" ? "Client" : progress.data?.pendingOwner === "site_manager" ? "Site Manager" : progress.data?.pendingOwner === "vendor" ? "Vendor" : "No current owner"}</strong></p>
     <div className="vendor-progress__list">{tasks.map(task => <article key={task.id} className="vendor-progress__task">
-      <div><p>{task.roomName} · {task.sectionLabel}</p><h3>{task.itemName}</h3><span>{task.scopeType.replaceAll("_", " ")}</span></div>
-      <dl><div><dt>Status</dt><dd>{task.status.replaceAll("_", " ")}</dd></div><div><dt>Progress</dt><dd>{task.displayProgress}%{task.progressSource === "site_manager" ? " · Site Manager verified" : ""}</dd></div><div><dt>Target</dt><dd>{task.targetDate}</dd></div><div><dt>Images</dt><dd>{task.imageCount}</dd></div></dl>
+      <div><p>{task.roomName} · {task.sectionLabel}</p><h3>{task.itemName}</h3><span>{task.scopeType?.replaceAll("_", " ") ?? "Not specified"}</span></div>
+      <dl><div><dt>Status</dt><dd>{task.status.replaceAll("_", " ")}</dd></div><div><dt>Progress</dt><dd>{task.displayProgress}%{task.progressSource === "site_manager" ? " · Site Manager verified" : ""}</dd></div><div><dt>Target</dt><dd>{task.targetDate ?? "Not specified"}</dd></div><div><dt>Images</dt><dd>{task.imageCount}</dd></div></dl>
       {task.note ? <p className="vendor-progress__note">Vendor update: {task.note}</p> : null}
       {task.requestedChangeReason ? <p className="vendor-progress__change">Client requested: {task.requestedChangeReason}</p> : null}
       {task.imageIds?.length ? <button type="button" onClick={() => setViewing({ task, index: 0 })}>View images ({task.imageIds.length})</button> : null}

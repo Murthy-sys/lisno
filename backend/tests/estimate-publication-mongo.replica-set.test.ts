@@ -7,6 +7,12 @@ import {
 } from "../src/domain/estimate-client-review.js";
 import { ApiError } from "../src/middleware/errors.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
+import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
+import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnowledgeMainLine.js";
+import { AiEstimatorKnowledgeRevisionModel } from "../src/models/AiEstimatorKnowledgeRevision.js";
+import { AiEstimatorKnowledgeSectionModel } from "../src/models/AiEstimatorKnowledgeSection.js";
+import { AiEstimatorKnowledgeSubBasketModel } from "../src/models/AiEstimatorKnowledgeSubBasket.js";
+import { AiEstimatorKnowledgeUomModel } from "../src/models/AiEstimatorKnowledgeUom.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { EstimateClientResponseProofModel } from "../src/models/EstimateClientResponseProof.js";
 import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
@@ -16,6 +22,7 @@ import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
 import { UserModel } from "../src/models/User.js";
 import { createMongoRepository } from "../src/repositories/mongo.js";
 import { createAuditService, type AuditService } from "../src/services/audit.service.js";
+import { createAdminProjectService } from "../src/services/admin-project.service.js";
 import type { PublicUser } from "../src/services/auth.service.js";
 import type {
   EstimateClientReviewStorage,
@@ -295,6 +302,52 @@ async function seedPublication(overrides: Partial<{
   return { projectId, leadId, estimateId, estimateVersion };
 }
 
+async function seedConfiguredPublication() {
+  const fixture = await seedPublication({ total: 118 });
+  await AiEstimatorKnowledgeBasketModel.collection.insertOne({
+    _id: "publication-basket", name: "Painting", displayOrder: 1, status: "active",
+    version: 1, dependencyEpoch: 0, updatedAt: BASE_TIME
+  } as never);
+  await AiEstimatorKnowledgeSubBasketModel.collection.insertOne({
+    _id: "publication-sub-basket", basketId: "publication-basket", name: "Walls", displayOrder: 1,
+    version: 1, dependencyEpoch: 0, updatedAt: BASE_TIME
+  } as never);
+  await AiEstimatorKnowledgeUomModel.collection.insertOne({
+    _id: "publication-uom", code: "SQFT", name: "Square feet", decimalScale: 0, status: "active",
+    version: 1, dependencyEpoch: 0, updatedAt: BASE_TIME
+  } as never);
+  await AiEstimatorKnowledgeMainLineModel.collection.insertOne({
+    _id: "publication-main-line", basketId: "publication-basket", subBasketId: "publication-sub-basket",
+    name: "Wall painting", displayOrder: 1, itemType: "main_line", status: "active", version: 1,
+    dependencyEpoch: 0, activeRevisionId: "publication-revision", draftRevisionId: null
+  } as never);
+  await AiEstimatorKnowledgeRevisionModel.collection.insertOne({
+    _id: "publication-revision", mainLineId: "publication-main-line", status: "active", version: 1,
+    completeness: { percentage: 100, sections: [] }
+  } as never);
+  await AiEstimatorKnowledgeSectionModel.collection.insertOne({
+    _id: "publication-overview", mainLineId: "publication-main-line", revisionId: "publication-revision",
+    sectionKey: "overview", payload: { uomId: "publication-uom" }
+  } as never);
+  await EstimateModel.updateOne({ _id: fixture.estimateId }, { $set: {
+    selectedMainBasketIds: ["publication-basket"],
+    lineItems: [{
+      id: "publication-estimate-line", source: "configuration", itemType: "main_line",
+      classification: "standard", catalogueId: "publication-main-line", roomId: "room-one",
+      roomName: "Living Room", mainBasketId: "publication-basket", subBasketId: "publication-sub-basket",
+      mainLineId: "publication-main-line", revisionId: "publication-revision",
+      sourceItemStatus: "active", sourceRevisionStatus: "active", sourceItemVersion: 1,
+      sourceRevisionVersion: 1, uomId: "publication-uom", uomCode: "SQFT", uomDecimalScale: 0,
+      mainBasketName: "Painting", subBasketName: "Walls", mainLineName: "Wall painting",
+      uomName: "Square feet", specification: null, unit: "Square feet", ratePaise: 10_000,
+      rate: 100, quantity: 1, included: true, amountPaise: 10_000, amount: 100
+    }],
+    subtotal: 100, gst: 18, total: 118,
+    subtotalPaise: 10_000, gstPaise: 1_800, totalPaise: 11_800
+  } });
+  return fixture;
+}
+
 function createHarness(input: {
   storage: EstimateClientReviewStorage;
   mailer: EstimateMailer;
@@ -357,6 +410,230 @@ async function selectedRound(roundId: string) {
 }
 
 describe("Estimate publication and delivery on a Mongo replica set", () => {
+  it.each([
+    ["draft", []],
+    ["draft", ["source-false-ceiling"]],
+    ["ready_for_client", []],
+    ["ready_for_client", ["source-false-ceiling"]]
+  ] as const)("publishes configured %s lines with draft recommendation origins %j", async (estimateStatus, recommendationSourceMainLineIds) => {
+    const fixture = await seedConfiguredPublication();
+    await LeadModel.updateOne({ _id: fixture.leadId }, { $set: { location: "", budgetMin: null, budgetMax: null } });
+    await ProjectModel.updateOne({ _id: fixture.projectId }, { $set: { location: "", clientAddress: "" } });
+    await EstimateModel.updateOne({ _id: fixture.estimateId }, { $set: {
+      status: estimateStatus, "lineItems.0.recommendationSourceMainLineIds": [...recommendationSourceMainLineIds]
+    } });
+    const original = await EstimateModel.findById(fixture.estimateId).lean();
+    const { recommendationSourceMainLineIds: _origins, ...frozenFields } = original!.lineItems[0]!;
+    const storage = createReviewStorage();
+    const mail = createSequencedMailer();
+    const harness = createHarness({ storage: storage.storage, mailer: mail.mailer, now: () => new Date(BASE_TIME) });
+    const published = await harness.publication.publishEstimateToClient({ ...publicationInput(fixture), expectedStatus: estimateStatus });
+    expect(await EstimateClientReviewRoundModel.countDocuments({ estimateId: fixture.estimateId })).toBe(1);
+    const frozen = await selectedRound(published.clientReview.id);
+    expect(frozen).toMatchObject({ deliveryStatus: "sent", estimateSnapshot: { location: "", subtotalPaise: 10_000, gstPaise: 1_800, totalPaise: 11_800 } });
+    expect(frozen!.estimateSnapshot.lineItems).toEqual([frozenFields]);
+    expect(frozen!.estimateSnapshot.lineItems[0]).not.toHaveProperty("recommendationSourceMainLineIds");
+    const saved = await EstimateModel.findById(fixture.estimateId).lean();
+    expect(saved).toMatchObject({ status: "sent_to_client", lineItems: [{ recommendationSourceMainLineIds: [...recommendationSourceMainLineIds] }] });
+    expect(saved!.lineItems).toEqual(original!.lineItems);
+    expect(storage.saved).toHaveLength(1);
+    expect(storage.objects.size).toBe(1);
+    expect(storage.deleted).toHaveLength(0);
+    expect(mail.calls).toHaveLength(1);
+    expect((await AuditEventModel.find().lean()).map(({ action }) => action).sort()).toEqual([
+      "estimate_client_response_task_assigned", "estimate_client_review_published", "estimate_email_delivery_sent"
+    ]);
+  });
+
+  it.each(["draft", "ready_for_client"] as const)("publishes and approves a %s estimate after initiation without location or budgets", async (estimateStatus) => {
+    const fixture = await seedPublication({ estimateStatus });
+    const repository = createMongoRepository();
+    const audit = createAuditService(repository);
+    const initiated = await createAdminProjectService(repository, audit, () => new Date(BASE_TIME)).initiate(ESTIMATOR, {
+      clientName: CLIENT.name, clientEmail: CLIENT.email, clientMobile: "9000000000",
+      projectName: "Project without location", propertyType: "villa", nextAction: "Prepare estimate",
+      nextActionAt: BASE_TIME.toISOString(), salesManagerId: ADMIN.id
+    });
+    const leadId = initiated.lead!.id;
+    await EstimateModel.updateOne({ _id: fixture.estimateId }, { $set: { leadId, projectId: initiated.id } });
+    expect(await ProjectModel.findById(initiated.id).lean()).toMatchObject({ location: "", clientAddress: "" });
+    expect(await LeadModel.findById(leadId).lean()).toMatchObject({ location: "", budgetMin: null, budgetMax: null });
+
+    const storage = createReviewStorage();
+    const mail = createSequencedMailer();
+    const harness = createHarness({ storage: storage.storage, mailer: mail.mailer, audit, now: () => new Date(BASE_TIME) });
+    const input = { ...publicationInput(fixture), leadId, expectedStatus: estimateStatus };
+    const published = await harness.publication.publishEstimateToClient(input);
+    await expect(harness.publication.publishEstimateToClient(input))
+      .rejects.toMatchObject({ code: "ESTIMATE_PUBLICATION_CONFLICT", status: 409 });
+    expect(await EstimateModel.findById(fixture.estimateId).lean()).toMatchObject({
+      status: "sent_to_client", projectId: initiated.id, version: fixture.estimateVersion
+    });
+    expect(await EstimateClientReviewRoundModel.countDocuments({ estimateId: fixture.estimateId })).toBe(1);
+    const frozen = await selectedRound(published.clientReview.id);
+    expect(frozen).toMatchObject({
+      projectId: initiated.id, leadId, sendGeneration: 1, deliveryStatus: "sent",
+      estimateSnapshot: { location: "", projectName: "Project without location" }
+    });
+    expect(harness.pdfInputs).toHaveLength(1);
+    expect(harness.pdfInputs[0]!.lead.location).toBe("");
+    expect(storage.saved).toHaveLength(1);
+    expect(storage.deleted).toHaveLength(0);
+    expect(storage.objects.size).toBe(1);
+    expect(mail.calls).toHaveLength(1);
+    expect(mail.attachments).toEqual([storage.objects.get(String(frozen!.pdfStorageReference))]);
+    for (const action of ["estimate_client_response_task_assigned", "estimate_client_review_published", "estimate_email_delivery_sent"]) {
+      expect(await AuditEventModel.countDocuments({ action })).toBe(1);
+    }
+    const decision = createEstimateDecisionService({
+      audit, reviews: harness.reviews,
+      estimateDesigns: { async approvalReadinessForDecision() { throw new Error("Commercial approval does not require design readiness."); } },
+      now: () => new Date(BASE_TIME)
+    });
+    await decision.decide({
+      estimateId: fixture.estimateId, round: { id: published.clientReview.id, expectedVersion: published.clientReview.version },
+      decision: "approve", note: "", context: { source: "client_portal", actor: CLIENT, proof: null }
+    });
+    expect(await EstimateModel.findById(fixture.estimateId).lean()).toMatchObject({ status: "client_approved", projectId: initiated.id });
+    expect(await ProjectModel.countDocuments({ _id: initiated.id })).toBe(1);
+    expect(await ProjectModel.findById(initiated.id).lean()).toMatchObject({ location: "", clientAddress: "" });
+    expect((await selectedRound(published.clientReview.id))?.estimateSnapshot.location).toBe("");
+  });
+
+  it("freezes configured classifications in the published round independently of item type and money", async () => {
+    const fixture = await seedPublication({ total: 197.10, estimateStatus: "ready_for_client" });
+    const selectedMainBasketClassifications = [
+      { mainBasketId: "basket-a", classification: "special" },
+      { mainBasketId: "basket-b", classification: "standard" },
+      { mainBasketId: "basket-c", classification: "special" }
+    ];
+    await EstimateModel.updateOne({ _id: fixture.estimateId }, { $set: {
+      selectedMainBasketIds: ["basket-a", "basket-b", "basket-c"],
+      selectedMainBasketClassifications,
+      lineItems: [
+        {
+          id: "estimate-line-temporary", source: "configuration", itemType: "temporary",
+          classification: "special", catalogueId: "temporary-a", roomId: "room-one",
+          roomName: "Living room", specification: null, unit: "nos", rate: 70.03,
+          ratePaise: 7_003, quantity: 1, included: true, amount: 70.03, amountPaise: 7_003,
+          mainBasketId: "basket-a", subBasketId: null, mainLineId: "temporary-a",
+          revisionId: "revision-temporary-a", uomId: "uom-nos", mainBasketName: "Painting",
+          subBasketName: null, mainLineName: "Special coating", uomName: "Number"
+        },
+        {
+          id: "estimate-line-main", source: "configuration", itemType: "main_line",
+          classification: "standard", catalogueId: "main-b", roomId: "room-two",
+          roomName: "Bedroom", specification: null, unit: "sqft", rate: 48.5,
+          ratePaise: 4_850, quantity: 2, included: true, amount: 97, amountPaise: 9_700,
+          mainBasketId: "basket-b", subBasketId: "sub-b", mainLineId: "main-b",
+          revisionId: "revision-main-b", uomId: "uom-sqft", mainBasketName: "Joinery",
+          subBasketName: "Cabinets", mainLineName: "Main Line", uomName: "Square feet"
+        }
+      ],
+      subtotal: 167.03, gst: 30.07, total: 197.10,
+      subtotalPaise: 16_703, gstPaise: 3_007, totalPaise: 19_710
+    } });
+    const storage = createReviewStorage();
+    const harness = createHarness({ storage: storage.storage, mailer: createSequencedMailer().mailer,
+      now: () => new Date(BASE_TIME) });
+    const published = await harness.publication.publishEstimateToClient({
+      ...publicationInput(fixture), expectedStatus: "ready_for_client"
+    });
+    const frozen = await selectedRound(published.clientReview.id);
+    expect(frozen?.estimateSnapshot).toMatchObject({
+      selectedMainBasketClassifications,
+      lineItems: [
+        { id: "estimate-line-temporary", itemType: "temporary", classification: "special", amountPaise: 7_003 },
+        { id: "estimate-line-main", itemType: "main_line", classification: "standard", amountPaise: 9_700 }
+      ],
+      subtotalPaise: 16_703, gstPaise: 3_007, totalPaise: 19_710
+    });
+    const detail = await harness.reviews.detail(ADMIN, published.clientReview.id);
+    expect(detail.estimateSnapshot.selectedMainBasketClassifications).toEqual(selectedMainBasketClassifications);
+    expect(detail.estimateSnapshot.lineItems.map((line) => line.classification)).toEqual(["special", "standard"]);
+    await EstimateModel.updateOne({ _id: fixture.estimateId }, { $set: {
+      "selectedMainBasketClassifications.0.classification": "standard",
+      "lineItems.0.classification": "standard"
+    } });
+    expect((await selectedRound(published.clientReview.id))?.estimateSnapshot).toMatchObject({
+      selectedMainBasketClassifications,
+      lineItems: [{ classification: "special" }, { classification: "standard" }]
+    });
+  });
+
+  it("fences current configured masters and Main Line while publishing a draft estimate", async () => {
+    const fixture = await seedConfiguredPublication();
+    const storage = createReviewStorage();
+    const mail = createSequencedMailer();
+    const harness = createHarness({ storage: storage.storage, mailer: mail.mailer,
+      now: () => new Date(BASE_TIME) });
+    const published = await harness.publication.publishEstimateToClient(publicationInput(fixture));
+    expect(published.estimate).toMatchObject({ status: "sent_to_client" });
+    expect((await selectedRound(published.clientReview.id))?.estimateSnapshot.lineItems[0]).toMatchObject({
+      mainLineId: "publication-main-line", revisionId: "publication-revision", mainLineName: "Wall painting"
+    });
+    const line = await AiEstimatorKnowledgeMainLineModel.findById("publication-main-line").lean();
+    expect(line).toMatchObject({ version: 1, dependencyEpoch: 1 });
+    for (const [model, id] of [
+      [AiEstimatorKnowledgeBasketModel, "publication-basket"],
+      [AiEstimatorKnowledgeSubBasketModel, "publication-sub-basket"],
+      [AiEstimatorKnowledgeUomModel, "publication-uom"]
+    ] as const) {
+      const master = await model.findById(id).lean();
+      expect(master).toMatchObject({ version: 1, dependencyEpoch: 1, updatedAt: BASE_TIME });
+    }
+    expect(mail.calls).toHaveLength(1);
+  });
+
+  it("rejects a Configuration edit after PDF preflight and removes the unused snapshot", async () => {
+    const fixture = await seedConfiguredPublication();
+    const storage = createReviewStorage(1);
+    const mail = createSequencedMailer();
+    const harness = createHarness({ storage: storage.storage, mailer: mail.mailer,
+      now: () => new Date(BASE_TIME) });
+    const pending = harness.publication.publishEstimateToClient(publicationInput(fixture))
+      .catch((error: unknown) => error);
+    await storage.savesReached;
+    await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: "publication-main-line" }, {
+      $set: { name: "Updated wall painting" }, $inc: { version: 1 }
+    });
+    storage.releaseSaves();
+    const error = await pending;
+    expectApiError(error, "ESTIMATE_CONFIGURATION_CHANGED", 409);
+    expect(await EstimateClientReviewRoundModel.countDocuments()).toBe(0);
+    expect(await EstimateModel.findById(fixture.estimateId).lean()).toMatchObject({
+      status: "draft", version: fixture.estimateVersion
+    });
+    expect(storage.saved).toHaveLength(1);
+    expect(storage.deleted).toEqual(storage.saved);
+    expect(storage.objects.size).toBe(0);
+    expect(mail.calls).toHaveLength(0);
+  });
+
+  it("rejects a concurrent UOM rename after PDF preflight before freezing the review", async () => {
+    const fixture = await seedConfiguredPublication();
+    const storage = createReviewStorage(1);
+    const mail = createSequencedMailer();
+    const harness = createHarness({ storage: storage.storage, mailer: mail.mailer,
+      now: () => new Date(BASE_TIME) });
+    const pending = harness.publication.publishEstimateToClient(publicationInput(fixture))
+      .catch((error: unknown) => error);
+    await storage.savesReached;
+    await AiEstimatorKnowledgeUomModel.updateOne({ _id: "publication-uom" }, {
+      $set: { name: "Renamed square feet" }, $inc: { version: 1 }
+    });
+    storage.releaseSaves();
+    const error = await pending;
+    expectApiError(error, "ESTIMATE_CONFIGURATION_CHANGED", 409);
+    expect(await EstimateClientReviewRoundModel.countDocuments()).toBe(0);
+    expect(await EstimateModel.findById(fixture.estimateId).lean()).toMatchObject({
+      status: "draft", version: fixture.estimateVersion
+    });
+    expect(storage.deleted).toEqual(storage.saved);
+    expect(storage.objects.size).toBe(0);
+    expect(mail.calls).toHaveLength(0);
+  });
+
   it("keeps one publication, task, snapshot, compatibility effect, and mail under a simultaneous duplicate submit", async () => {
     const fixture = await seedPublication();
     const storage = createReviewStorage(2);
@@ -396,7 +673,8 @@ describe("Estimate publication and delivery on a Mongo replica set", () => {
       estimateVersion: fixture.estimateVersion,
       assignedAdminId: ADMIN.id,
       status: "pending",
-      deliveryStatus: "sent"
+      deliveryStatus: "sent",
+      estimateSnapshot: { location: "Bengaluru" }
     });
     expect(storage.saved).toHaveLength(2);
     expect(storage.deleted).toHaveLength(1);

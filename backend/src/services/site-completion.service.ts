@@ -42,7 +42,8 @@ function reviewDto(row: Row): SiteCompletionReviewDto {
     status: row.status, progress: Number(row.progress), note: String(row.note), submittedAt: new Date(row.submittedAt).toISOString(),
     sections: row.sections.map((section: Row) => ({ assignmentId: String(section.assignmentId),
       sourceSectionId: String(section.sourceSectionId), sectionLabel: String(section.sectionLabel),
-      roomName: String(section.roomName), itemName: String(section.itemName), scopeType: String(section.scopeType),
+      roomName: String(section.roomName), itemName: String(section.itemName),
+      scopeType: section.scopeType == null ? "Not specified" : String(section.scopeType),
       imageIds: section.imageIds.map(String) })),
     decision: row.decision ? { decision: row.decision.decision, reason: row.decision.reason ?? null,
       decidedAt: new Date(row.decision.decidedAt).toISOString() } : null };
@@ -88,7 +89,9 @@ async function snapshot(projectId: string, session: ClientSession): Promise<Site
       .select({ _id: 1 }).sort({ uploadedAt: 1, _id: 1 }).session(session).lean();
     sections.push({ assignmentId: String(assignment._id), sourceSectionId: String(assignment.sourceSectionId),
       sectionLabel: projectWorkflowSectionLabel(String(assignment.sourceSectionId)), roomName: String(assignment.roomName),
-      itemName: String(assignment.itemName), scopeType: String(assignment.scopeType), imageIds: images.map(image => String(image._id)) });
+      itemName: String(assignment.itemName),
+      scopeType: assignment.scopeType == null ? "Not specified" : String(assignment.scopeType),
+      imageIds: images.map(image => String(image._id)) });
   }
   return sections;
 }

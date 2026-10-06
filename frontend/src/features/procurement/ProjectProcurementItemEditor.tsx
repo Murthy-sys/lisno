@@ -26,6 +26,7 @@ import {
 import { procurementError, rupeesToPaise } from "./procurementPresentation";
 import { ProcurementVendorField } from "./ProcurementVendorField";
 import { procurementKeys } from "./procurementApi";
+import { purchaseOrderKeys } from "./purchaseOrderApi";
 
 interface Props {
   projectId: string;
@@ -92,8 +93,11 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
     onSuccess: async (saved) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: projectProcurementKeys.lists(projectId) }),
-        queryClient.invalidateQueries({ queryKey: ["procurement", "purchase-order-preparation", projectId] }),
-        queryClient.invalidateQueries({ queryKey: ["procurement", "purchase-order-requests", projectId] }),
+        queryClient.invalidateQueries({ queryKey: purchaseOrderKeys.preparation(projectId) }),
+        queryClient.invalidateQueries({ queryKey: purchaseOrderKeys.requests(projectId) }),
+        queryClient.invalidateQueries({ queryKey: purchaseOrderKeys.pendingRequests }),
+        queryClient.invalidateQueries({ queryKey: purchaseOrderKeys.project(projectId) }),
+        queryClient.invalidateQueries({ queryKey: purchaseOrderKeys.commitments(projectId) }),
         queryClient.invalidateQueries({ queryKey: projectStatusKeys.project(projectId) }),
         queryClient.invalidateQueries({ queryKey: procurementKeys.projects }),
         queryClient.invalidateQueries({ queryKey: dashboardKeys.all })
@@ -142,7 +146,6 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
     ? (BigInt(previewPricePaise) * BigInt(previewQuantity) + 500n) / 1000n : null;
   const previewNetPaise = previewNetBig !== null && previewNetBig > 0n && previewNetBig <= BigInt(Number.MAX_SAFE_INTEGER)
     ? Number(previewNetBig) : null;
-  const previewGstPaise = previewNetPaise === null ? null : Number((BigInt(previewNetPaise) * 1800n + 5000n) / 10000n);
 
   function change(key: keyof typeof draft, value: string) {
     setDraft((previous) => ({ ...previous, [key]: value }));
@@ -262,19 +265,13 @@ export function ProjectProcurementItemEditor({ projectId, projectName, item, onC
             hint={`Enter up to ${selectedUom?.decimalScale ?? 3} decimal places.`}>
             {(props) => <Input {...props} type="text" inputMode="decimal" value={draft.quantity} maxLength={16} onChange={(event) => change("quantity", event.target.value)} placeholder="0" />}
           </Field>
-          <dl className="project-procurement-items__amount-preview" aria-label="Planned order amount at 18 percent GST">
+          <dl className="project-procurement-items__amount-preview" aria-label="Planned order amount before GST">
             <div><dt>Planned amount, before GST</dt><dd>{previewNetPaise === null ? "Enter price and quantity" : formatPaise(previewNetPaise)}</dd></div>
-            <div><dt>GST (18%)</dt><dd>{previewGstPaise === null ? "—" : formatPaise(previewGstPaise)}</dd></div>
-            <div><dt>Planned amount, with GST</dt><dd>{previewNetPaise === null || previewGstPaise === null ? "—" : formatPaise(previewNetPaise + previewGstPaise)}</dd></div>
           </dl>
           {vendor ? <Field id="procurement-item-allocation" label="Allocated work (INR)" required={!baseItem || vendor.id !== baseItem.vendor?.id || baseItem.allocatedWorkPaise != null} error={errors.allocatedWorkPaise}
-            hint={baseItem?.allocatedWorkPaise == null && vendor.id === baseItem?.vendor?.id ? "Not recorded. Leave unchanged for unrelated edits. Missing historical values must be corrected by Super Admin before new unverified work is allocated." : "This item's allowed vendor work must cover order quantity × unit price plus GST. The vendor limit applies across all projects."}>
+            hint={baseItem?.allocatedWorkPaise == null && vendor.id === baseItem?.vendor?.id ? "Not recorded. Leave unchanged for unrelated edits. Missing historical values must be corrected by Super Admin before new unverified work is allocated." : "This item's allowed vendor work must cover the final order amount including the GST confirmed during purchase order review. The vendor limit applies across all projects."}>
             {(props) => <Input {...props} inputMode="decimal" value={draft.allocation} maxLength={20} onChange={(event) => change("allocation", event.target.value)} placeholder={baseItem?.allocatedWorkPaise == null && vendor.id === baseItem?.vendor?.id ? "Not recorded" : "0.00"} />}
           </Field> : null}
-          {vendor && previewNetPaise !== null && previewGstPaise !== null ? <Button type="button" variant="quiet" onClick={() => {
-            const totalPaise = previewNetPaise + previewGstPaise;
-            change("allocation", `${Math.floor(totalPaise / 100)}.${String(totalPaise % 100).padStart(2, "0")}`);
-          }}>Use planned amount with GST for allocated work</Button> : null}
         </fieldset>
       </form>
     </ContextPanel>

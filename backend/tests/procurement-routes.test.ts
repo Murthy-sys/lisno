@@ -191,6 +191,40 @@ describe("procurement routes", () => {
     );
   });
 
+  it("accepts an order and milestone together and rejects a partial link", async () => {
+    const { app, service, result } = setup();
+    await request(app)
+      .post("/api/v1/procurement/projects/project-1/expenses")
+      .set("Authorization", bearer("procurement"))
+      .field("sourceLineItemKey", "Living Room::CA01")
+      .field("amountPaise", "125000")
+      .field("incurredAt", "2026-08-26T09:00:00.000Z")
+      .field("description", "Plywood purchase")
+      .field("vendor", "Woodworks")
+      .field("reference", "INV-101")
+      .field("purchaseOrderId", "purchase-order-1")
+      .field("paymentMilestoneId", "advance")
+      .field("idempotencyKey", "procurement-linked-request")
+      .attach("receipt", JPEG, { filename: "receipt.jpg", contentType: "image/jpeg" })
+      .expect(201, { data: result });
+    expect(service.postExpense).toHaveBeenCalledWith(PROCUREMENT, "project-1",
+      expect.objectContaining({ purchaseOrderId: "purchase-order-1", paymentMilestoneId: "advance" }),
+      expect.anything());
+
+    await request(app)
+      .post("/api/v1/procurement/projects/project-1/expenses")
+      .set("Authorization", bearer("procurement"))
+      .field("sourceLineItemKey", "Living Room::CA01")
+      .field("amountPaise", "125000")
+      .field("incurredAt", "2026-08-26T09:00:00.000Z")
+      .field("description", "Plywood purchase")
+      .field("purchaseOrderId", "purchase-order-1")
+      .field("idempotencyKey", "procurement-partial-link")
+      .attach("receipt", JPEG, { filename: "receipt.jpg", contentType: "image/jpeg" })
+      .expect(400);
+    expect(service.postExpense).toHaveBeenCalledTimes(1);
+  });
+
   it("returns an unscoped 404 before rejecting or buffering an invalid receipt", async () => {
     const { app, service } = setup();
     service.preflightProject.mockRejectedValueOnce(

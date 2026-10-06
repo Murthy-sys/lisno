@@ -94,6 +94,23 @@ const financeLedgerEntrySchema = new Schema(
       default: null,
       immutable: true
     },
+    purchaseOrderId: {
+      type: String,
+      ref: "ProjectPurchaseOrder",
+      trim: true,
+      minlength: 1,
+      maxlength: 500,
+      default: null,
+      immutable: true
+    },
+    paymentMilestoneId: {
+      type: String,
+      trim: true,
+      minlength: 1,
+      maxlength: 500,
+      default: null,
+      immutable: true
+    },
     idempotencyKey: {
       type: String,
       required: true,
@@ -165,6 +182,12 @@ financeLedgerEntrySchema.pre("validate", function validateEntryState() {
       "Overheads cannot be classified as direct project expenses."
     );
   }
+  const purchaseOrderId = this.get("purchaseOrderId");
+  const paymentMilestoneId = this.get("paymentMilestoneId");
+  if ((purchaseOrderId === null) !== (paymentMilestoneId === null) ||
+    (purchaseOrderId !== null && (type !== "direct_spend" || expenseClass !== "procurement"))) {
+    this.invalidate("purchaseOrderId", "Order and payment milestone linkage must describe one Procurement expense.");
+  }
 });
 
 financeLedgerEntrySchema.index(
@@ -173,6 +196,7 @@ financeLedgerEntrySchema.index(
 );
 financeLedgerEntrySchema.index({ bucketId: 1, incurredAt: -1, _id: -1 });
 financeLedgerEntrySchema.index({ projectId: 1, type: 1, status: 1, incurredAt: -1 });
+financeLedgerEntrySchema.index({ projectId: 1, purchaseOrderId: 1, status: 1 });
 
 export const FinanceLedgerEntryModel =
   models.FinanceLedgerEntry ??

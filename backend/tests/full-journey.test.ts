@@ -1011,8 +1011,11 @@ describe("complete cross-role journey", () => {
       assignedEstimatorId: "user-estimator-sales",
       assignedDesignerIds: [],
       managerId: null,
+      programManagerId: null,
       status: "planning",
       location: "Pune",
+      cityName: null,
+      cityKey: null,
       plannedStartAt: expect.any(Date),
       plannedEndAt: expect.any(Date)
     }]);

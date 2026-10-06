@@ -21,6 +21,7 @@ const expectedRoles = [
   "estimator_sales",
   "designer",
   "procurement",
+  "program_manager",
   "finance_head",
   "site_manager",
   "worker_electrician",
@@ -88,18 +89,22 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-10-01.vendor-procurement.v1"
+      "2026-10-05.procurement-basket-work-orders.v1"
     );
   });
 
-  it("publishes all 165 unique permissions in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(165);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(165);
+  it("publishes all 170 unique permissions in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(170);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(170);
     expect(PERMISSION_CODES).toContain("chat.action_types.manage");
     expect(PERMISSION_CODES).toContain("chat.project_name.manage");
     expect(PERMISSION_CODES).toContain("estimation.design_upload.delete");
     expect(PERMISSION_CODES).toContain("estimation.catalogue.read");
     expect(PERMISSION_CODES).toContain("projects.initiate");
+    expect(PERMISSION_CODES).toContain("projects.procurement_identity.manage");
+    expect(PERMISSION_CODES).toContain("procurement.vendor_city.manage");
+    expect(PERMISSION_CODES).toContain("procurement.work_order_approval.decide");
+    expect(PERMISSION_CODES).toContain("finance.vendor_invoice.manage");
     expect(PERMISSION_CODES).toContain("organization.estimators.read");
     const identityMutationIndex = PERMISSION_CODES.indexOf(
       "identity.users.update"
@@ -111,13 +116,14 @@ describe("frontend authorization contract", () => {
       ...invitationPermissions,
       "access_request.create"
     ]);
-    expect(PERMISSION_CODES.slice(-57)).toEqual([
+    expect(PERMISSION_CODES.slice(-61)).toEqual([
       "access_request.review.read",
       "access_request.review.decide",
       "project_access_grant.revoke",
       "execution.worker_assignment.override",
       ...procurementPermissions,
       ...projectFinancePermissions,
+      "finance.vendor_invoice.manage",
       "workflow.tasks.read",
       "workflow.tasks.update",
       "ai_estimator_knowledge.configuration.read",
@@ -130,6 +136,7 @@ describe("frontend authorization contract", () => {
       "chat.action_types.manage", "chat.project_name.manage",
       "procurement.items.read", "procurement.items.manage",
       "procurement.purchase_orders.read", "procurement.purchase_orders.manage", "procurement.purchase_orders.approve",
+      "procurement.work_order_approval.read", "procurement.work_order_approval.decide", "procurement.vendor_city.manage",
       "procurement.vendor_work.read", "procurement.vendor_work.update", "procurement.vendor_work.media.read", "procurement.vendor_work.media.upload",
       "procurement.client_work.read", "procurement.client_work.decide", "procurement.progress.read", "procurement.site_completion.manage", "procurement.project_completion.decide",
       "procurement.vendors.read", "procurement.vendors.create",
@@ -175,8 +182,8 @@ describe("frontend authorization contract", () => {
     ).toEqual(projectFinancePermissions);
   });
 
-  it("keeps the protected frontend registry at exactly 42 routes", () => {
-    expect(ROUTE_REGISTRY).toHaveLength(42);
+  it("keeps the protected frontend registry at exactly 43 routes", () => {
+    expect(ROUTE_REGISTRY).toHaveLength(43);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).toEqual(
       expect.arrayContaining([
         "/project-messages", "/projects/:projectId/messages",
@@ -214,6 +221,7 @@ describe("frontend authorization contract", () => {
       "estimator_sales",
       "designer",
       "procurement",
+      "program_manager",
       "finance_head",
       "site_manager",
       "worker_electrician",
@@ -233,6 +241,7 @@ describe("frontend authorization contract", () => {
       estimator_sales: "Sales",
       designer: "Designer",
       procurement: "Procurement",
+      program_manager: "Program Manager",
       finance_head: "Finance Manager",
       site_manager: "Site Manager",
       worker_electrician: "Electrician",

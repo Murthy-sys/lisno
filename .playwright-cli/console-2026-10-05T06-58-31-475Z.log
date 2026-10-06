@@ -1,0 +1,12 @@
+[    2768ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4178/node_modules/.vite/deps/react-dom_client.js?v=adda7613:20102
+[   40650ms] [LOG] [vite] server connection lost. Polling for restart... @ http://127.0.0.1:4178/@vite/client:963
+[   41436ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4178/node_modules/.vite/deps/react-dom_client.js?v=adda7613:20102
+[ 1214766ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4178/node_modules/.vite/deps/react-dom_client.js?v=adda7613:20102
+[ 1242236ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4178/node_modules/.vite/deps/react-dom_client.js?v=adda7613:20102
+[ 1340581ms] [WARNING] Couldn't load preload assets:  ProgressEvent @ http://127.0.0.1:4178/node_modules/.vite/deps/axe-core.js?v=adda7613:29228
+[ 1488324ms] [LOG] [vite] server connection lost. Polling for restart... @ http://127.0.0.1:4178/@vite/client:963
+[ 1489028ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4178/node_modules/.vite/deps/react-dom_client.js?v=adda7613:20102
+[ 1597742ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4178/node_modules/.vite/deps/react-dom_client.js?v=adda7613:20102
+[ 1614321ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4178/node_modules/.vite/deps/react-dom_client.js?v=adda7613:20102
+[ 1653601ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4178/node_modules/.vite/deps/react-dom_client.js?v=adda7613:20102
+[ 1721256ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4178/node_modules/.vite/deps/react-dom_client.js?v=adda7613:20102

@@ -21,6 +21,7 @@ import {
 import { adminProjectKeys, getAdminProject } from "./adminProjectsApi";
 import { AdminDetailSection } from "./AdminDetailSection";
 import { DesignAssignmentPanel } from "./DesignAssignmentPanel";
+import { ProcurementProjectIdentityPanel } from "./ProcurementProjectIdentityPanel";
 import { WorkerAssignmentPanel } from "./WorkerAssignmentPanel";
 import { ProjectFinancePanel } from "../finance/ProjectFinancePanel";
 import { ProjectWorkflowSnapshot } from "../finance/FinanceProjectWorkflowControl";
@@ -69,6 +70,10 @@ export function AdminProjectDetailPage() {
   const canReadFinance = hasFrontendPermission(
     auth.authorization,
     "finance.bucket.read"
+  );
+  const canManageProcurementIdentity = hasFrontendPermission(
+    auth.authorization,
+    "projects.procurement_identity.manage"
   );
 
   if (projectQuery.isPending) return <PageState state="loading" message="Loading project details…" />;
@@ -199,6 +204,7 @@ export function AdminProjectDetailPage() {
       ) : null}
       {canAssignWorkers ? <ProjectWorkflowSnapshot project={project} /> : null}
       <DesignAssignmentPanel project={project} />
+      {canManageProcurementIdentity ? <ProcurementProjectIdentityPanel projectId={project.id} /> : null}
       {canAssignWorkers ? <WorkerAssignmentPanel project={project} /> : null}
       {project.estimate?.clientReview ? (
         <AdminDetailSection

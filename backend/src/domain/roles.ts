@@ -6,6 +6,7 @@ export const ROLE_CODES = [
   "estimator_sales",
   "designer",
   "procurement",
+  "program_manager",
   "finance_head",
   "site_manager",
   "worker_electrician",
@@ -29,6 +30,7 @@ export const ROLE_LABELS = {
   estimator_sales: "Sales",
   designer: "Designer",
   procurement: "Procurement",
+  program_manager: "Program Manager",
   finance_head: "Finance Manager",
   site_manager: "Site Manager",
   worker_electrician: "Electrician",
@@ -59,6 +61,7 @@ export const OPERATIONAL_ROLES = [
   "estimator_sales",
   "designer",
   "procurement",
+  "program_manager",
   "finance_head",
   "site_manager",
   ...WORKER_ROLES

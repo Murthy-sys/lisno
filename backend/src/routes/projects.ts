@@ -1,6 +1,7 @@
 import { DESIGN_STAGE_TYPES } from "../domain/design-workflow.js";
 import { Router } from "express";
 import { z } from "zod";
+import { cityNameSchema } from "../domain/procurement-city.js";
 
 import { emailSchema } from "../domain/email.js";
 import { authenticate } from "../middleware/auth.js";
@@ -25,6 +26,7 @@ const projectSchema = z
     assignedDesignerIds: z.array(z.string().trim().min(1)).min(1),
     managerId: z.string().trim().min(1),
     location: z.string().trim().min(1),
+    cityName: cityNameSchema.nullable().optional(),
     plannedStartAt: isoDateTime,
     plannedEndAt: isoDateTime
   })

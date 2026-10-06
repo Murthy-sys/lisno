@@ -1,5 +1,13 @@
 import { ProcurementVendorCertificateUploadModel, ProcurementVendorCertificateCleanupModel } from "./ProcurementVendorCertificateUpload.js";
 import { ProcurementVendorSaveCommandModel } from "./ProcurementVendorSaveCommand.js";
+import { ProcurementVendorCityModel } from "./ProcurementVendorCity.js";
+import { ProcurementBasketEnquiryModel, ProcurementBasketBoqRevisionModel, ProcurementBasketInvitationModel,
+  ProcurementBasketWhatsAppAccessModel,
+  ProcurementBasketBidModel, ProcurementBasketCounterofferModel, ProcurementBasketInvitationBatchModel, ProcurementBasketAwardModel,
+  ProcurementBasketAwardRevisionModel, ProcurementBasketAwardApprovalModel } from "./ProcurementBasketTender.js";
+import { ProcurementBasketInvoiceAssessmentModel,
+  ProcurementBasketInvoiceAssessmentRevisionModel } from "./ProcurementBasketInvoiceAssessment.js";
+import { ProcurementBasketBaseRateModel, ProcurementBasketBaseRateReceiptModel } from "./ProcurementBasketBaseRate.js";
 import { ProjectProcurementItemModel } from "./ProjectProcurementItem.js";
 import { ChatNotificationModel } from "./ChatNotification.js";
 import { prepareEstimateClientReviewIndexes } from "./EstimateClientReviewRound.js";
@@ -20,6 +28,7 @@ import { UserInvitationModel } from "./UserInvitation.js";
 import { PasswordResetRequestModel } from "./PasswordResetRequest.js";
 import { AiEstimatorKnowledgeSubBasketModel } from "./AiEstimatorKnowledgeSubBasket.js";
 import { AiEstimatorKnowledgeBasketModel } from "./AiEstimatorKnowledgeBasket.js";
+import { VendorBasketRequestModel } from "./VendorBasketRequest.js";
 import { AiEstimatorKnowledgeMainLineModel } from "./AiEstimatorKnowledgeMainLine.js";
 import { AiEstimatorKnowledgeModeModel } from "./AiEstimatorKnowledgeMode.js";
 import { AiEstimatorKnowledgePriceVersionModel } from "./AiEstimatorKnowledgePriceVersion.js";
@@ -56,6 +65,7 @@ export async function initializeApplicationIndexes(): Promise<void> {
   await ProcurementReceiptCleanupJobModel.init();
   await ProcurementReceiptReconciliationJobModel.init();
   await AiEstimatorKnowledgeBasketModel.init();
+  await VendorBasketRequestModel.init();
   await AiEstimatorKnowledgeSubBasketModel.init();
   await AiEstimatorKnowledgeMainLineModel.init();
   await AiEstimatorKnowledgeRevisionModel.init();
@@ -73,6 +83,14 @@ export async function initializeApplicationIndexes(): Promise<void> {
   await ProcurementVendorCertificateUploadModel.init();
   await ProcurementVendorCertificateCleanupModel.init();
   await ProcurementVendorSaveCommandModel.init();
+  await ProcurementVendorCityModel.init();
+  await ProcurementBasketBaseRateModel.init();
+  await ProcurementBasketBaseRateReceiptModel.init();
+  for (const model of [ProcurementBasketEnquiryModel, ProcurementBasketBoqRevisionModel, ProcurementBasketInvitationModel,
+    ProcurementBasketWhatsAppAccessModel,
+    ProcurementBasketBidModel, ProcurementBasketCounterofferModel, ProcurementBasketInvitationBatchModel, ProcurementBasketAwardModel,
+    ProcurementBasketAwardRevisionModel, ProcurementBasketAwardApprovalModel,
+    ProcurementBasketInvoiceAssessmentModel, ProcurementBasketInvoiceAssessmentRevisionModel]) await model.init();
   await AiEstimatorKnowledgeTaxRuleModel.init();
   await AiEstimatorKnowledgeTaxVersionModel.init();
   await AiEstimatorKnowledgePriorityModel.init();

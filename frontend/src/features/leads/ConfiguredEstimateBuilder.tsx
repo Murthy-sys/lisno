@@ -75,7 +75,13 @@ export function ConfiguredEstimateBuilder({
   useEffect(() => {
     if (activeRoom && activeRoom.id !== activeRoomId) onSelectRoom(activeRoom.id);
   }, [activeRoom?.id, activeRoomId, onSelectRoom]);
-  const roomLines = lines.filter((line) => line.roomId === activeRoom?.id);
+  const roomLines = lines.filter((line) => line.roomId === activeRoom?.id && (railView !== "selected" || line.included));
+  const visibleBaskets = catalogue.items.filter((basket) => selectedMainBasketIds.has(basket.id) &&
+    (railView !== "selected" || roomLines.some((line) => line.mainBasketId === basket.id && !line.sourceMissing)));
+  const visibleBasketFilter = visibleBaskets.some((basket) => basket.id === basketFilter) ? basketFilter : "all";
+  useEffect(() => {
+    if (basketFilter !== visibleBasketFilter) setBasketFilter(visibleBasketFilter);
+  }, [basketFilter, visibleBasketFilter]);
   const mainBasketRefs = useRef<Map<string, HTMLElement>>(new Map());
   const [collapsedBasketIds, setCollapsedBasketIds] = useState<Set<string>>(() => new Set());
   const [collapsedSubBasketIds, setCollapsedSubBasketIds] = useState<Set<string>>(() => new Set());
@@ -87,8 +93,8 @@ export function ConfiguredEstimateBuilder({
     : moneyPaise(matchingLines.reduce((sum, line) => sum + (configuredLineAmountPaise(line) ?? 0), 0));
   const roomAmountLabel = (roomId: string) => lines.some((line) => line.roomId === roomId && configuredLineAmountPaise(line) === null)
     ? "Incomplete" : moneyPaise(roomTotal(roomId));
-  const catalogueGroups = (activeRoom ? catalogue.items : []).filter((basket) => selectedMainBasketIds.has(basket.id))
-    .filter((basket) => basketFilter === "all" || basketFilter === basket.id)
+  const catalogueGroups = (activeRoom ? visibleBaskets : [])
+    .filter((basket) => visibleBasketFilter === "all" || visibleBasketFilter === basket.id)
     .map((basket) => {
       const directLines = roomLines.filter((line) => line.mainBasketId === basket.id && line.itemType === "temporary" && line.subBasketId === null && !line.sourceMissing);
       const subBaskets = basket.subBaskets.map((subBasket) => ({
@@ -157,7 +163,7 @@ export function ConfiguredEstimateBuilder({
   return <div className="configured-estimate-builder">
     <div className="configured-estimate-builder__toolbar">
       <label className="configured-estimate-builder__search"><BuilderGlyph name="search" /><span className="sr-only">Search estimate items</span><input ref={recommendationFallbackFocusRef} type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search items, materials, or keywords..." /></label>
-      <label className="configured-estimate-builder__filter"><BuilderGlyph name="section" /><span className="sr-only">Filter Main Baskets</span><select value={basketFilter} onChange={(event) => setBasketFilter(event.target.value)}><option value="all">All Sections</option>{catalogue.items.filter((basket) => selectedMainBasketIds.has(basket.id)).map((basket) => <option key={basket.id} value={basket.id}>{basket.name}</option>)}</select><BuilderGlyph name="chevron" /></label>
+      <label className="configured-estimate-builder__filter"><BuilderGlyph name="section" /><span className="sr-only">Filter Main Baskets</span><select value={visibleBasketFilter} onChange={(event) => setBasketFilter(event.target.value)}><option value="all">All Sections</option>{visibleBaskets.map((basket) => <option key={basket.id} value={basket.id}>{basket.name}</option>)}</select><BuilderGlyph name="chevron" /></label>
       <button type="button" className="configured-estimate-builder__refresh" aria-label="Refresh available items" disabled={refreshingAvailableItems} onClick={onRefreshAvailableItems}><BuilderGlyph name="refresh" />{refreshingAvailableItems ? "Refreshing…" : "Refresh items"}</button>
     </div>
     {refreshingAvailableItems ? <p role="status" className="configured-estimate-builder__status">Refreshing available items…</p> : null}
@@ -169,7 +175,7 @@ export function ConfiguredEstimateBuilder({
       </aside>
       <div className="configured-estimate-builder__content">
     <nav aria-label="Jump to Main Basket" className="configured-estimate-builder__jump">
-      {catalogue.items.filter((basket) => selectedMainBasketIds.has(basket.id)).map((basket) => <button type="button" key={basket.id} data-tone={/paint/i.test(basket.name) ? "paint" : "default"} onClick={() => jumpToBasket(basket.id)}><BuilderGlyph name={basketGlyph(basket.name)} /><span><strong>{basket.name}</strong><small>{itemCount(roomLines.filter((line) => line.mainBasketId === basket.id && !line.sourceMissing).length)} · {basketSubtotalLabel(basket.id)}</small></span></button>)}
+      {visibleBaskets.map((basket) => <button type="button" key={basket.id} data-tone={/paint/i.test(basket.name) ? "paint" : "default"} onClick={() => jumpToBasket(basket.id)}><BuilderGlyph name={basketGlyph(basket.name)} /><span><strong>{basket.name}</strong><small>{itemCount(roomLines.filter((line) => line.mainBasketId === basket.id && !line.sourceMissing).length)} · {basketSubtotalLabel(basket.id)}</small></span></button>)}
       {unselected.length ? <button type="button" onClick={() => jumpToBasket("unselected-items")}>Unselected saved items</button> : null}
       {unavailableSaved.length ? <button type="button" onClick={() => jumpToBasket("saved-items")}>Saved items</button> : null}
       {unavailableNew.length ? <button type="button" onClick={() => jumpToBasket("unavailable-selections")}>Unavailable selections</button> : null}
@@ -261,17 +267,13 @@ function ConfiguredLineRow({ line, editable, onUpdateLine, moneyPaise }: {
   const [menuOpen, setMenuOpen] = useState(false);
   const rate = parseSellingRate(line.rateInput);
   const amount = configuredLinePreviewAmountPaise(line);
-  const amountTooLarge = amount === null && rate.kind === "value"
+  const amountTooLarge = !line.uomNeedsQuantityReview && amount === null && rate.kind === "value"
     && configuredQuantityUnits(line.quantity, line.uomDecimalScale, true) !== null;
   const quantityInvalid = configuredQuantityUnits(line.quantity, line.uomDecimalScale, line.included) === null;
   const rateRequired = line.included && rate.kind === "blank";
   const rateInvalid = rate.kind === "invalid";
   const label = `${line.mainBasketName}${line.subBasketName ? `, ${line.subBasketName}` : ""}, ${line.mainLineName} in ${line.roomName}`;
   const sourceStatus = line.persistedId ? line.sourceItemStatus : line.itemStatus;
-  const sourceReview = line.sourceReview;
-  const uomReview = sourceReview?.changedFields.includes("UOM")
-    ? ` UOM changed from ${sourceReview.previousUomName} to ${sourceReview.currentUomName}.${sourceReview.previousUomDecimalScale !== sourceReview.currentUomDecimalScale ? ` Precision changed from ${sourceReview.previousUomDecimalScale} to ${sourceReview.currentUomDecimalScale} decimal places.` : ""}`
-    : "";
   const inputId = `rate-${encodeURIComponent(line.key)}`;
   const step = 10 ** -line.uomDecimalScale;
   const changeQuantity = (direction: -1 | 1) => {
@@ -282,8 +284,12 @@ function ConfiguredLineRow({ line, editable, onUpdateLine, moneyPaise }: {
   return <div className={`configured-estimate-line${line.included ? " configured-estimate-line--included" : ""}`}>
     <label className="configured-estimate-line__choice">
       <span className="configured-estimate-line__thumb"><img src={/ceiling|cove|gypsum/i.test(line.mainLineName) ? ceilingImage : interiorImage} alt="" loading="lazy" /><input type="checkbox" checked={line.included} disabled={!editable} onChange={(event) => onUpdateLine(line.key, { included: event.target.checked })} /></span>
-      <span className="configured-estimate-line__copy"><strong>{line.mainLineName}</strong><small>{line.uomName}</small>{sourceStatus === "draft" || sourceStatus === "inactive" ? <small className="configured-estimate-line__source">{sourceStatus === "draft" ? "Draft" : "Inactive"} source{line.persistedId ? " at save" : ""}</small> : null}</span>
+      <span className="configured-estimate-line__copy"><strong>{line.mainLineName}</strong><small>{line.uomName}</small>{sourceStatus === "draft" || sourceStatus === "inactive" ? <small className="configured-estimate-line__source">{sourceStatus === "draft" ? "Draft" : "Inactive"} source</small> : null}</span>
     </label>
+    {line.included && editable ? <fieldset className="estimate-classification configured-estimate-line__classification" aria-label={`Item type for ${label}`}>
+      <legend>Item type</legend>
+      {(["standard", "special"] as const).map((value) => <label key={value}><input type="radio" name={`line-classification-${line.key}`} value={value} checked={(line.classification ?? "standard") === value} aria-label={`${value === "standard" ? "Standard" : "Special"} item type for ${label}`} onChange={() => onUpdateLine(line.key, { classification: value })} /><span>{value === "standard" ? "Standard" : "Special"}</span></label>)}
+    </fieldset> : !editable && (line.included || line.persistedId) ? <p className="configured-estimate-line__classification-readonly">Item type: <strong>{line.classification === "special" ? "Special" : "Standard"}</strong></p> : null}
     <div className="configured-estimate-line__fields">
       <label className="configured-estimate-line__quantity"><span>Quantity ({line.uomName})</span><span className="configured-estimate-line__stepper"><button type="button" aria-label={`Decrease quantity for ${label}`} disabled={!editable || !Number.isFinite(line.quantity) || line.quantity <= (line.included ? step : 0)} onClick={() => changeQuantity(-1)}>−</button><input type="number" min={line.included ? step : 0} step={step} value={Number.isFinite(line.quantity) ? line.quantity : ""} disabled={!editable} aria-label={`Quantity (${line.uomName}) for ${label}`} aria-invalid={quantityInvalid || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined} onChange={(event) => onUpdateLine(line.key, { quantity: event.target.value === "" ? Number.NaN : Number(event.target.value) })} /><button type="button" aria-label={`Increase quantity for ${label}`} disabled={!editable} onClick={() => changeQuantity(1)}>+</button></span></label>
       <label className="configured-estimate-line__rate" htmlFor={inputId}><span aria-hidden="true">Price (₹/{line.uomName})</span><span className="sr-only">Selling rate (₹/{line.uomName}) for {label}</span><input id={inputId} type="text" inputMode="decimal" value={line.rateInput} disabled={!editable} aria-label={`Selling rate (₹/${line.uomName}) for ${label}`} aria-invalid={rateInvalid || rateRequired || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : rateInvalid || rateRequired ? `${inputId}-message` : undefined} onChange={(event) => onUpdateLine(line.key, { rateInput: event.target.value })} /></label>
@@ -293,9 +299,6 @@ function ConfiguredLineRow({ line, editable, onUpdateLine, moneyPaise }: {
     {rateRequired || rateInvalid ? <p id={`${inputId}-message`} className="configured-estimate-line__message">{rateRequired ? "Rate required" : "Enter a non-negative rate with up to two decimal places."}</p> : null}
     {quantityInvalid ? <p className="configured-estimate-line__message">Quantity must match {line.uomName} precision.</p> : null}
     {amountTooLarge ? <p id={`${inputId}-amount-overflow`} className="configured-estimate-line__message">Amount too large for this quantity and price.</p> : null}
-    {sourceReview && !line.persistedId && !line.sourceMissing ? <div className="configured-estimate-line__review">
-      <p role="alert">This item changed in Configuration ({sourceReview.changedFields.join(", ")}).{uomReview} Check the quantity and selling rate for the updated source.</p>
-      <button type="button" className="button button--secondary" disabled={!editable} onClick={() => onUpdateLine(line.key, { sourceReview: undefined })}>Use updated source for {line.mainLineName} in {line.roomName}</button>
-    </div> : null}
+    {line.uomNeedsQuantityReview && !line.sourceMissing ? <p className="configured-estimate-line__message" role="alert">Unit changed{line.previousUomName ? ` from ${line.previousUomName}` : ""} to {line.uomName}. Re-enter the quantity for this unit.</p> : null}
   </div>;
 }

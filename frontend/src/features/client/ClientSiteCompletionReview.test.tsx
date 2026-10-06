@@ -18,6 +18,15 @@ const pending = () => ({
 });
 
 describe("ClientSiteCompletionReview", () => {
+  it("shows an unspecified scope in a completion review", async () => {
+    const current = pending();
+    server.use(http.get("/api/v1/clients/projects/project-a/site-completion", () => HttpResponse.json({
+      data: { ...current, review: { ...current.review, sections: [{ ...current.review.sections[0], scopeType: null }] } }
+    })));
+    renderWithQuery(<ClientSiteCompletionReview projectId="project-a" />);
+    expect(await screen.findByText("Not specified")).toBeVisible();
+  });
+
   it("enables Client acceptance after Site Manager submission and closes the review after acceptance", async () => {
     let current = pending();
     const decisions: Array<Record<string, unknown>> = [];

@@ -1,4 +1,4 @@
-import { act, screen, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { http, HttpResponse } from "msw";
@@ -181,6 +181,16 @@ function installProcurementSession(projects: ProcurementProject[] = [procurement
     })),
     http.get("/api/v1/procurement/projects", () => HttpResponse.json({ data: projects })),
     http.get("/api/v1/procurement/projects/:projectId/items", () => HttpResponse.json({ data: { items: [], total: 0, limit: 20, offset: 0 } })),
+    http.get("/api/v1/procurement/projects/project-one/baskets", () => HttpResponse.json({ data: {
+      projectId: "project-one", estimateSource: { estimateId: "estimate-one", estimateVersion: 4, estimateReviewRoundId: null },
+      baskets: []
+    } })),
+    http.get("/api/v1/procurement/projects/project-one/purchase-order-requests", () => HttpResponse.json({ data: { items: [], total: 0, limit: 50, offset: 0 } })),
+    http.get("/api/v1/procurement/projects/project-one/purchase-orders", () => HttpResponse.json({ data: { items: [], total: 0, limit: 50, offset: 0 } })),
+    http.get("/api/v1/procurement/projects/project-one/purchase-order-commitments", () => HttpResponse.json({ data: {
+      approvedEstimatePaise: 375_000, committedPaise: 0, committedGstPaise: 0, committedTotalPaise: 0, remainingPaise: 375_000
+    } })),
+    http.get("/api/v1/procurement/vendors", () => HttpResponse.json({ data: { items: [], total: 0, limit: 20, offset: 0 } })),
     http.get("/api/v1/workflow-tasks", () => HttpResponse.json({ data: [] })),
     http.get("/api/v1/kpis/users/:userId", () => HttpResponse.json({
       error: { code: "KPI_UNAVAILABLE", message: "KPI unavailable" }
@@ -275,62 +285,40 @@ describe("ProcurementWorkspace", () => {
 });
 
 describe("ProcurementProjectPage", () => {
-  it.each(["error", "removed", "invalid"] as const)("preserves an open draft and blocks saving when the project refresh is %s", async (state) => {
+  it("hides retained project details if access is revoked during refresh", async () => {
     installProcurementSession();
-    server.use(
-      http.get("/api/v1/procurement/uoms", () => HttpResponse.json({ data: [{ id: "uom-one", code: "nos", name: "Numbers" }] })),
-      http.get("/api/v1/procurement/vendors", () => HttpResponse.json({ data: { items: [], total: 0, limit: 20, offset: 0 } }))
-    );
-    const user = userEvent.setup();
     const { queryClient } = renderApp(["/procurement/projects/project-one"]);
-    await user.click(await screen.findByRole("button", { name: "Add item under Bedside table — Bedroom" }));
-    const editor = await screen.findByRole("dialog", { name: "Add procurement item" });
-    await user.type(within(editor).getByRole("textbox", { name: "Item name" }), "Keep this draft");
-    await within(editor).findByRole("option", { name: "nos — Numbers" });
-    server.use(http.get("/api/v1/procurement/projects", () => state === "error"
-      ? HttpResponse.json({ error: { code: "PROCUREMENT_APPROVAL_SOURCE_CONFLICT", message: "The approved estimate changed." } }, { status: 409 })
-      : HttpResponse.json({ data: state === "removed" ? [] : [{ ...procurementProject, sections: [{ ...procurementProject.sections[0], estimatedAmountPaise: 1 }] }] })));
+    expect(await screen.findByRole("heading", { name: "Aurora Villa" })).toBeVisible();
+    expect(await screen.findByRole("region", { name: "Project baskets" })).toBeVisible();
+
+    server.use(http.get("/api/v1/procurement/projects", () => HttpResponse.json({
+      error: { code: "FORBIDDEN", message: "Project access was revoked." }
+    }, { status: 403 })));
     await act(async () => { await queryClient.invalidateQueries({ queryKey: procurementKeys.projects }); });
-    expect(screen.getByRole("dialog", { name: "Add procurement item" })).toBe(editor);
-    expect(within(editor).getByRole("textbox", { name: "Item name" })).toHaveValue("Keep this draft");
-    expect(await within(editor).findByText(/Your entries are preserved/)).toBeVisible();
-    expect(within(editor).getByRole("button", { name: "Add item" })).toBeDisabled();
-    expect(screen.queryByRole("region", { name: "Procurement items" })).not.toBeInTheDocument();
+
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Aurora Villa" })).not.toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "Project procurement" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Project baskets" })).not.toBeInTheDocument();
   });
 
-  it("keeps project items and the Add item form without estimate purchases, including on reopen", async () => {
+  it("shows the Main Basket workspace without the two removed sections", async () => {
     installProcurementSession();
-    server.use(
-      http.get("/api/v1/procurement/uoms", () => HttpResponse.json({ data: [{ id: "uom-one", code: "nos", name: "Numbers" }] })),
-      http.get("/api/v1/procurement/vendors", () => HttpResponse.json({ data: { items: [], total: 0, limit: 20, offset: 0 } }))
-    );
     const user = userEvent.setup();
     renderApp(["/procurement/projects/project-one"]);
 
-    const items = await screen.findByRole("region", { name: "Procurement items" });
-    expect(within(items).getByRole("heading", { name: "Bedside table" })).toBeVisible();
-    expect(within(items).getByRole("heading", { name: "Zero-value provisional allowance" })).toBeVisible();
-    expect(within(items).getByText("₹500.00")).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "Approved-estimate purchases" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("article", { name: "Aurora Villa procurement detail" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Record purchase|Preview receipt|Carpentry/i })).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Main baskets" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Project baskets" })).toBeVisible();
+    expect(screen.queryByText("History and open purchase requests")).not.toBeInTheDocument();
+    expect(screen.queryByText("Existing vendor work progress")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Estimate items and modes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Earlier procurement work" })).not.toBeInTheDocument();
     await expectNoAxeViolations();
 
-    const add = within(items).getByRole("button", { name: "Add item under Bedside table — Bedroom" });
-    await user.click(add);
-    const editor = await screen.findByRole("dialog", { name: "Add procurement item" });
-    expect(within(editor).getByRole("textbox", { name: "Item name" })).toBeVisible();
-    expect(within(editor).getByRole("textbox", { name: "Brand" })).toBeVisible();
-    expect(await within(editor).findByRole("option", { name: "nos — Numbers" })).toBeInTheDocument();
-    expect(within(editor).getByRole("textbox", { name: "Price (INR)" })).toBeVisible();
-    await expectNoAxeViolations();
-    await user.click(within(editor).getByRole("button", { name: "Cancel" }));
-    expect(add).toHaveFocus();
-
-    await user.click(screen.getByRole("link", { name: "Back to approved projects" }));
+    await user.click(screen.getByRole("link", { name: "Back to projects" }));
     await user.click(await screen.findByRole("link", { name: "View procurement items for Aurora Villa" }));
-    expect(await screen.findByRole("region", { name: "Procurement items" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: /Record purchase/i })).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Main baskets" })).toBeVisible();
+    expect(screen.queryByText("History and open purchase requests")).not.toBeInTheDocument();
+    expect(screen.queryByText("Existing vendor work progress")).not.toBeInTheDocument();
   });
 
   it("reports a project that is not available for procurement", async () => {

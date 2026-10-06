@@ -17,8 +17,9 @@ describe("published Client estimate presentation", () => {
       ...snapshot, subtotal: 121.25, gst: 21.83, total: 143.08,
       subtotalPaise: 12_125, gstPaise: 2_183, totalPaise: 14_308,
       selectedMainBasketIds: ["basket-lower"],
+      selectedMainBasketClassifications: [{ mainBasketId: "basket-lower", classification: "special" }],
       lineItems: [{
-        id: "configured-line", source: "configuration", catalogueId: "main-line-lower",
+        id: "configured-line", source: "configuration", classification: "standard", catalogueId: "main-line-lower",
         roomId: "original-room", roomName: "Room A", specification: null,
         unit: "sqft", rate: 48.5, ratePaise: 4_850, quantity: 2.5,
         included: true, amount: 121.25, amountPaise: 12_125,
@@ -33,13 +34,33 @@ describe("published Client estimate presentation", () => {
       { ...round, estimateSnapshot: configured });
     expect(result).toMatchObject({
       subtotalPaise: 12_125, totalPaise: 14_308,
-      lineItems: [{ mainBasketName: "Original basket", mainLineName: "Original console" }],
-      publishedReview: { snapshot: { lineItems: [{ mainLineId: "main-line-lower" }] } }
+      selectedMainBasketClassifications: [{ mainBasketId: "basket-lower", classification: "special" }],
+      lineItems: [{ mainBasketName: "Original basket", mainLineName: "Original console", classification: "standard" }],
+      publishedReview: { snapshot: {
+        selectedMainBasketClassifications: [{ mainBasketId: "basket-lower", classification: "special" }],
+        lineItems: [{ mainLineId: "main-line-lower", classification: "standard" }]
+      } }
     });
     for (const field of ["sourceItemStatus", "sourceRevisionStatus", "sourceItemVersion", "sourceRevisionVersion"]) {
       expect(result?.lineItems[0]).not.toHaveProperty(field);
       expect(result?.publishedReview?.snapshot.lineItems[0]).not.toHaveProperty(field);
     }
+    const historical = presentClientEstimate(actor, estimate, lead, { ...round,
+      estimateSnapshot: {
+        ...configured, selectedMainBasketClassifications: undefined,
+        lineItems: [{ ...configured.lineItems[0], classification: undefined }]
+      }
+    });
+    expect(historical).toMatchObject({
+      selectedMainBasketClassifications: [{ mainBasketId: "basket-lower", classification: "standard" }],
+      publishedReview: { snapshot: { lineItems: [{ classification: "standard" }] } }
+    });
+    expect(presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: {
+      ...configured, selectedMainBasketClassifications: [
+        { mainBasketId: "basket-lower", classification: "special" },
+        { mainBasketId: "basket-lower", classification: "standard" }
+      ]
+    } })).toMatchObject({ reviewSourceIssue: "missing_snapshot", publishedReview: null });
   });
   it("reads a direct temporary item from its frozen basket path and rejects an ordinary null parent", () => {
     const direct = {

@@ -1,10 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
 import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../../api/client";
+import { server } from "../../test/server";
 import { KnowledgeBaseIndexPage } from "./KnowledgeBaseIndexPage";
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
 import * as knowledgeApi from "./knowledgeApi";
@@ -245,6 +247,19 @@ beforeEach(() => {
 });
 
 describe("Knowledge Base index page", () => {
+  it("opens Main Basket request review from Configuration", async () => {
+    server.use(http.get("/api/v1/admin/ai-estimator-knowledge/basket-requests", () =>
+      HttpResponse.json({ data: { items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false } } })));
+    const user = userEvent.setup();
+    renderIndex();
+    const trigger = screen.getByRole("button", { name: "Main Basket requests" });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("region", { name: "Main Basket requests" })).not.toBeInTheDocument();
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByText("No pending Main Basket requests.")).toBeVisible();
+  });
+
   it("scopes the page root to the index modifier", async () => {
     const { container } = renderIndex();
 

@@ -307,8 +307,12 @@ export interface ProjectRecord {
   assignedEstimatorId: string | null;
   assignedDesignerIds: string[];
   managerId: string | null;
+  programManagerId?: string | null;
+  procurementIdentityVersion?: number;
   status: ProjectStatus;
   location: string;
+  cityName?: string | null;
+  cityKey?: string | null;
   plannedStartAt: string;
   plannedEndAt: string;
   actualStartAt: string | null;
@@ -326,6 +330,8 @@ export interface LeadRecord {
   clientMobile: string;
   projectName: string;
   location: string;
+  cityName?: string | null;
+  cityKey?: string | null;
   propertyType: string;
   budgetMin: number | null;
   budgetMax: number | null;

@@ -3,6 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { estimationCatalogueKeys } from "../leads/estimationCatalogueApi";
 import { projectProcurementKeys } from "../procurement/projectProcurementApi";
+import { procurementBasketKeys } from "../procurement/procurementBasketApi";
 import { vendorSuggestionKeys } from "../procurement/vendorSuggestionsApi";
 import type {
   KnowledgeBasket,
@@ -227,7 +228,9 @@ export async function refreshKnowledgeSubBasketCatalog(
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.histories() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.activationReviews() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }, { throwOnError: true }),
-    queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }, { throwOnError: true })
+    queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
+    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
   ]);
   if (results.some((result) => result.status === "rejected")) {
     throw new Error("Some catalog lists could not refresh.");
@@ -245,7 +248,9 @@ export async function refreshKnowledgeMainLineCatalog(queryClient: QueryClient):
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.histories() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.activationReviews() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }, { throwOnError: true }),
-    queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }, { throwOnError: true })
+    queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
+    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
   ]);
   if (results.some((result) => result.status === "rejected")) {
     throw new Error("Some catalog lists could not refresh.");
@@ -316,7 +321,10 @@ export async function syncKnowledgeBasketMutation(
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketDeletionImpacts() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts(basket.id) }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists() }, { throwOnError: true }),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }, { throwOnError: true })
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }),
+    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
+    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
   ]);
   if (refreshed.some((result) => result.status === "rejected")) throw new Error("The basket was saved, but some catalog lists could not refresh.");
 }
@@ -425,7 +433,10 @@ export async function invalidateKnowledgeSectionMutation(
     queryClient.invalidateQueries({
       queryKey: knowledgeQueryKeys.activationReviews()
     }),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() })
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }),
+    queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }),
+    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
+    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
   ]);
 }
 
@@ -477,7 +488,10 @@ export async function syncKnowledgeBasketDeletion(
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.items() }, { throwOnError: true }),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }, { throwOnError: true })
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }),
+    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
+    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
   ]);
   if (refreshed.some((result) => result.status === "rejected")) throw new Error("The basket was deleted, but some catalog lists could not refresh.");
 }
@@ -513,7 +527,10 @@ export async function syncKnowledgeMainLineDeletion(
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists() }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.histories() }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.activationReviews() }),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() })
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }),
+    queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }),
+    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
+    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
   ]);
 }
 
@@ -537,7 +554,10 @@ export async function syncKnowledgeLifecycleMutation(
     queryClient.invalidateQueries({
       queryKey: knowledgeQueryKeys.activationReviews()
     }),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() })
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }),
+    queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }),
+    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
+    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
   ]);
 }
 
@@ -549,6 +569,11 @@ export async function syncKnowledgeMasterMutation(
   if (master) commitKnowledgeMasterCatalogMutation(queryClient, master);
 
   await Promise.allSettled([
+    ...(masterType === "uoms" || masterType === "modes" ? [
+      queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }),
+      queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
+      queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
+    ] : []),
     ...(masterType === "vendors" ? [
       queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.vendorDetails() }),
       queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketDeletionImpacts() }),

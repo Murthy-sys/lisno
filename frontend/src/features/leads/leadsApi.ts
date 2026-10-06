@@ -33,9 +33,12 @@ export interface LegacyEstimateLineInput {
   included: boolean;
 }
 
+export type EstimateClassification = "standard" | "special";
+
 export interface ConfiguredEstimateLineInput {
   source: "configuration";
   itemType?: "main_line" | "temporary";
+  classification?: EstimateClassification;
   id?: string;
   catalogueId: string;
   roomId: string;
@@ -43,6 +46,7 @@ export interface ConfiguredEstimateLineInput {
   mainBasketId: string;
   subBasketId: string | null;
   mainLineId: string;
+  recommendationSourceMainLineIds?: string[];
   revisionId: string;
   itemVersion?: number;
   revisionVersion?: number;
@@ -67,6 +71,9 @@ export interface ConfiguredEstimateLine extends Omit<ConfiguredEstimateLineInput
   sourceRevisionStatus?: "draft" | "active";
   sourceItemVersion?: number;
   sourceRevisionVersion?: number;
+  configurationUomChanged?: boolean;
+  configurationSourceUnavailable?: boolean;
+  previousUomName?: string;
   unit: string;
   specification: null;
   rate: number | null;
@@ -87,6 +94,7 @@ export interface EstimateDraftInput {
   rooms: Array<Record<string, unknown>>;
   scopes: string[];
   selectedMainBasketIds?: string[];
+  selectedMainBasketClassifications?: Array<{ mainBasketId: string; classification: EstimateClassification }>;
   expectedVersion?: number;
   lineItems: EstimateLineInput[];
 }

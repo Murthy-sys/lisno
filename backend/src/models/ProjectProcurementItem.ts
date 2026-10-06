@@ -20,6 +20,8 @@ const schema = new Schema({
   estimateReviewRoundId: { type: String, default: null, maxlength: 500 },
   sourceSectionId: { type: String, default: null, maxlength: 500 },
   sourceLineItemKey: { type: String, default: null, maxlength: 500 },
+  tenderAwardId: { type: String, default: null, immutable: true },
+  tenderBoqLineId: { type: String, default: null, immutable: true },
   itemName: { type: String, required: true, maxlength: 200 },
   itemNameNormalized: { type: String, required: true, maxlength: 400 },
   brand: { type: String, required: true, maxlength: 200 },
@@ -65,5 +67,7 @@ schema.index(PROJECT_PROCUREMENT_SOURCE_INDEX_KEY, { unique: true, name: PROJECT
   partialFilterExpression: { removedAt: null } });
 schema.index({ projectId: 1, itemNameNormalized: 1, brandNormalized: 1, _id: 1 });
 schema.index({ vendorId: 1, allocatedWorkPaise: 1, allocationTrackingVersion: 1, _id: 1 }, { name: "project_procurement_vendor_allocation" });
+schema.index({ tenderAwardId: 1, tenderBoqLineId: 1 }, { unique: true,
+  partialFilterExpression: { tenderAwardId: { $type: "string" }, tenderBoqLineId: { $type: "string" } } });
 
 export const ProjectProcurementItemModel = models.ProjectProcurementItem ?? model("ProjectProcurementItem", schema);

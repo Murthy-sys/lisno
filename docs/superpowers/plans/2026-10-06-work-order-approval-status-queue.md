@@ -1,0 +1,48 @@
+# Direct award approval and automatic work order issue: task plan
+
+Spec: [simple work order issue and payment schedule](../specs/2026-10-06-work-order-approval-status-queue-design.md).
+
+## Modal presentation implementation
+
+1. Primary: reuse Dialog with optional scoped class hooks, replace the local drawer presentation, and manage the brief closing transition with cleanup and reduced-motion support. Preserve existing award mutations and values.
+2. Frontend owner, parallel: implement scoped modal layout/motion CSS and focused interaction tests. Own only procurementBasket.css and ProcurementBasketComparison.test.tsx; primary owns Dialog.tsx and ProcurementBasketComparison.tsx.
+3. Integrate, run existing Dialog/award tests and frontend typecheck/build, and inspect the actual local modal at desktop and narrow widths. No live issue action is clicked. Baseline copies are in `/tmp/lisno-award-modal-baseline`.
+
+Completed: 42/42 Dialog and award tests, frontend typecheck/build, and `git diff --check` passed. Browser checks used the real component with isolated synthetic data at 1728px and 390px widths: centered bounds, no horizontal overflow, footer visible, keyboard End reaches the final payment row, and Escape returns focus to Award. Review caught the inherited mobile bottom alignment; scoped `place-items: center` fixes it. Temporary preview files were removed and browser viewport restored. No backend edits, dependency additions, deployment or live order submission. Vite retains its existing large-chunk warning.
+
+## Latest correction execution
+
+The latest user correction supersedes the general single-submit behavior below for Procurement-only awards strictly below ₹50,000. Continue under the existing Mode A authorization.
+
+1. Backend owner removes mandatory nonrecommended-vendor reason checks in the award service, preserves historical optional values, and adds focused replica regression coverage. Use the user-requested Procurement-only authority for new or revised gross awards below ₹50,000, including over-budget quotes; preserve monetary snapshots and enforce the corresponding condition at issue. Keep old frozen approval requirements until revision. No new API is introduced.
+2. Frontend owner removes the recommendation reason field and only the drawer's Frozen quotation table. A direct-issue action for eligible small proposals chains existing save, submit, Procurement decision, and issue APIs with stable request keys and partial-failure recovery. Existing pending legacy proposals can complete through their authorized issue endpoint after approval. Preserve higher-value approval gates and the stored requirements on old frozen proposals until revised.
+3. Primary owner integrates and verifies the correction with focused rendered and replica tests, typechecks/builds, a live read-only drawer check, integrity review, and final verification. The live user order is not submitted as part of QA.
+
+Backend and frontend files are disjoint. Scoped before-edit copies are in `/tmp/lisno-direct-award-correction-baseline`. Preserve all prior dirty/untracked work; no commit, deployment, seed, or live data mutation.
+
+### Correction verification completed
+
+- Backend focused domain/tender/issue tests: 85 passed. Frontend Comparison rendered tests: 14 passed, including the direct issue and retry interactions; axe excludes color contrast.
+- Backend and frontend typechecks and production builds passed. `git diff --check` passed. Vite retains its existing large-chunk warning.
+- Read-only browser verification on the user's actual ₹141.60 nonrecommended, over-budget bid confirmed the reason field and Frozen quotation section are absent and **Issue work order & lock payment** is enabled. The live issue action was not clicked.
+- Integrated integrity review found no actionable defect. No deployment, commit, migration, or live order mutation. Full unrelated suites and mobile browser checks were not run for this correction.
+
+## Contract and ownership
+
+- The existing payment-row chips, Procurement-only `<= 5_000_000` paise tier, higher-amount required roles, revision-bound approval queue, issue guards, and optional basket-award terms remain in place. This revision removes the **Prepare award → Submit for approvals → Issue work order** sequence from the normal UI path.
+- Clicking **Award** continues to open the drawer with vendor, gross amount, server-calculated schedule, and selectable chips. One **Send for approvals** action creates or updates the proposal, then submits it through the current validated API with `autoIssueOnApproval: true`. Omitting that optional flag preserves older API callers' manual issue flow. If the save succeeds and submit fails, the drawer reuses the saved draft and offers the same action to retry. A chip click alone creates no task.
+- Record the authorized Procurement submitter on the current proposal/award revision. After the last required approval commits, a server-owned finalizer uses that authority and the existing transactional issue service. Preserve its source, bid, budget, authorization, version/CAS, idempotency, and one-commitment checks. The decision actor never acquires Procurement issue permission. The audit trail distinguishes the submitter, final approval, and automated issue trigger.
+- An issue failure leaves the award `ready_to_issue`, keeps the approvals, and exposes a safe blocker plus a Procurement-only retry. A process interruption may leave the same recoverable state. A retry uses deterministic idempotency for that proposal revision; it cannot create a duplicate order. Historical `ready_to_issue` awards use the same recovery path without backfill.
+- **Backend owner:** award model/service, approval decision route orchestration, basket issue service, affected DTO/OpenAPI/authorization inventory, and focused replica-set tests. **Frontend owner:** `ProcurementBasketComparison.tsx`, basket award API types, relevant CSS and rendered tests. The primary agent owns the cross-layer contract, existing dirty-diff reconciliation, and integration.
+- The target files are already dirty or untracked. Preserve earlier chip, terms, and unrelated edits. No staging, commit, deployment, live data change, or migration.
+
+## Dependency-ordered tasks
+
+1. **Freeze the delta contract (primary; read-only).** Capture initial status and per-target diffs. Trace current award create/update/submit, queue decision, and issue transaction. Specify `submittedById`, final-approval trigger metadata, safe issue blocker DTO, deterministic issue key, and the legacy `ready_to_issue` recovery rule. Keep existing route permissions and financial amounts. Acceptance: backend/frontend share one pending/issued/blocked state contract, with no invented approval state. Covers AC2–AC5, AC7.
+2. **Automate final issue (backend owner, after task 1).** Save the authorized submitter on submit. After a final required approval commits, attempt the existing issue transaction using server-resolved Procurement authority and the same proposal revision. Preserve explicit audit attribution, all issue guards, and idempotency. Persist a safe issue blocker if finalization fails; retain `ready_to_issue` and approvals. Let authorized Procurement retry through the existing issue operation, including older ready awards. Clear the blocker on success. Add replica-set tests for low/high amounts, budget override, rejection, stale source, inactive submitter, failure/retry, replay and concurrent final approvals/issues, and exactly one order/commitment with two unequal projects. Acceptance: final approval issues automatically in the normal case; failures never claim issuance or erase approvals. Covers AC2–AC5, AC7.
+3. **Collapse the drawer to one action (frontend owner, after task 1; parallel with task 2).** Keep **Award** opening the existing drawer and its payment rows/chips. Replace Prepare and separate Submit with **Send for approvals** that saves and submits in sequence, refreshes the server award, and retries a saved draft safely after partial failure. Remove the routine final Issue button. Show server-backed pending and issued states; show a Procurement-only retry when the server reports approved but issue blocked. Preserve bid revision, reason, designer, and reviewer validation. Add rendered tests for first award, saved draft retry, changed chips, `<= ₹50,000`, higher amount, rejection, blocked issue, keyboard, and accessibility. Acceptance: one user action creates the correct tasks, and no empty Work order terms or per-line details fields return. Covers AC1–AC4, AC6–AC7.
+4. **Integrate and verify (primary, after writers).** Reconcile DTO/OpenAPI fields, query invalidation, approval queue removal after issue, and legacy `ready_to_issue` recovery. Run focused backend domain/replica tests, frontend rendered tests, authorization/OpenAPI tests, both typechecks/builds, rendered desktop/mobile checks, `git diff --check`, and final status. Perform an integrity review of approval identity, finances, CAS, idempotency, and blocked-state recovery before final verification. Acceptance: every spec criterion has evidence; no duplicate issue and no unrelated work overwritten. Covers AC1–AC7.
+
+## Parallel work
+
+After task 1, backend task 2 and frontend task 3 can run on non-overlapping files. Backend owns award/issue persistence and route behavior; frontend owns the drawer and client API. The primary agent owns contract decisions and shared documentation. In Mode A, run an integrity reviewer after both writers, then a verification runner on the integrated tree. In Mode B, the primary agent performs those reviews and checks sequentially.

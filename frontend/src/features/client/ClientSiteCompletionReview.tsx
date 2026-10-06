@@ -48,7 +48,7 @@ export function ClientSiteCompletionReview({ projectId }: { projectId: string })
     <p>{review.note}</p>
     {review.status !== "pending" ? <p role="status">{current?.projectStatus === "completed" ? "Project completed. No further action is needed." : review.status === "approved" ? "You accepted this completion. Super Admin will close the project." : "You requested changes. The Site Manager will submit an updated completion."}</p> : null}
     <div className="client-site-completion__sections">{review.sections.map(section => <article key={section.assignmentId}>
-      <div><small>{section.roomName} · {section.sectionLabel}</small><h3>{section.itemName}</h3><span>{section.scopeType.replaceAll("_", " ")}</span></div>
+      <div><small>{section.roomName} · {section.sectionLabel}</small><h3>{section.itemName}</h3><span>{section.scopeType?.replaceAll("_", " ") ?? "Not specified"}</span></div>
       {section.imageIds.length ? <button type="button" onClick={() => setViewing({ section, index: 0 })}>View images ({section.imageIds.length})</button> : <span>No images supplied</span>}
     </article>)}</div>
     {pending ? <div className="client-site-completion__actions"><button type="button" disabled={decision.isPending} onClick={() => decision.mutate("approve")}>Accept completion</button><button type="button" disabled={decision.isPending} onClick={() => setRequestingChanges(true)}>Request changes</button></div> : null}

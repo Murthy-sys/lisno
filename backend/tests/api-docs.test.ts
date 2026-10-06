@@ -39,8 +39,21 @@ describe("OpenAPI and Swagger UI", () => {
     ]));
     expect(schemas.ConfiguredEstimateLineInput).toHaveProperty("properties.itemVersion.minimum", 1);
     expect(schemas.ConfiguredEstimateLineInput).toHaveProperty("properties.revisionVersion.minimum", 1);
+    expect(schemas.ConfiguredEstimateLineInput).toHaveProperty(
+      "properties.classification.enum", ["standard", "special"]
+    );
+    expect(schemas.EstimateInput).toHaveProperty(
+      "properties.selectedMainBasketClassifications.items.properties.classification.enum",
+      ["standard", "special"]
+    );
     expect(schemas.ClientEstimateSnapshot).toHaveProperty(
       "properties.lineItems.items.properties.sourceItemVersion.minimum", 1
+    );
+    expect(schemas.ClientEstimateSnapshot).toHaveProperty(
+      "properties.lineItems.items.properties.classification.enum", ["standard", "special"]
+    );
+    expect(schemas.ClientEstimateSnapshot).toHaveProperty(
+      "properties.selectedMainBasketClassifications.items.required", ["mainBasketId", "classification"]
     );
     const recommendations = paths["/estimation/catalogue/recommendations"]!.get!;
     expect(recommendations["x-lisno-permission"]).toBe("estimation.catalogue.read");
@@ -90,6 +103,35 @@ describe("OpenAPI and Swagger UI", () => {
     expect(schemas.ProjectPurchaseOrderCommitments!.properties.approvedEstimatePaise.description).toContain("before GST");
     expect(schemas.ProjectCompletionSummary!.properties.readyForCompletion).toEqual({ type: "boolean" });
   });
+  it("documents the read-only procurement mode preview and its calculation stages", () => {
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const schemas = componentSchemas();
+    const preview = paths["/procurement/projects/{projectId}/purchase-order-mode-previews"]!.post!;
+    expect(preview["x-lisno-permission"]).toBe("procurement.purchase_orders.manage");
+    expect(preview.requestBody.content["application/json"].schema.$ref)
+      .toBe("#/components/schemas/ProjectPurchaseOrderModePreviewInput");
+    expect(preview.responses["2XX"].content["application/json"].schema.properties.data.$ref)
+      .toBe("#/components/schemas/ProjectPurchaseOrderModeDraftPreview");
+    expect(schemas.ProjectPurchaseOrderModePreviewInput!.required).toEqual([
+      "estimateSource", "sourceLineItemKey", "expectedVersion", "mode", "quantity", "discountBps", "markupBasis"
+    ]);
+    expect(schemas.ProjectPurchaseOrderModeDecisionSave).toHaveProperty("properties.expectedEstimateSource", schemas.ProjectPurchaseOrderModePreviewInput!.properties.estimateSource);
+    expect(schemas.ProjectPurchaseOrderModeDecisionSave).toHaveProperty("properties.expectedRevisionDigest.nullable", true);
+    expect(schemas.ProjectPurchaseOrderModeDecisionSave!.required).toContain("expectedEstimateSource");
+    expect(schemas.ProjectPurchaseOrderModePreviewInput).toHaveProperty("properties.expectedObservedDigest.pattern", "^[a-f0-9]{64}$");
+    expect(schemas.ProjectPurchaseOrderModePreviewInput!.required).not.toContain("expectedObservedDigest");
+    expect(schemas.ProjectPurchaseOrderModeDecisionSave).toHaveProperty("properties.recovery.properties.acknowledge.enum", [true]);
+    expect(schemas.ProjectPurchaseOrderModeDecisionSave!.required).not.toContain("recovery");
+    expect(schemas.ProjectPurchaseOrderModeDecision).toHaveProperty("properties.integrityBasis.$ref", "#/components/schemas/ProjectPurchaseOrderModeIntegrityBasis");
+    expect(schemas.ProjectPurchaseOrderModeDecision!.required).not.toContain("integrityBasis");
+    expect(schemas.ProjectPurchaseOrderModeResolution).toHaveProperty("properties.integrity.$ref", "#/components/schemas/ProjectPurchaseOrderModeIntegrity");
+    expect(schemas.ProjectPurchaseOrderModeResolution!.required).not.toContain("integrity");
+    expect(schemas.ProjectPurchaseOrderModeCalculationStage!.required).toEqual(expect.arrayContaining([
+      "baseRatePaise", "baseSubtotalPaise", "lowQuantityLimit", "configuredImpactBps", "thresholdMet",
+      "appliedImpactBps", "adjustedUnitRatePaise", "adjustedCostPaise", "marginBps",
+      "sellingBeforeDiscountPaise", "discountBasisPaise", "floorSellingPaise", "sellingPaise"
+    ]));
+  });
   it("documents the participant-only status response without source records", () => {
     const schemas = componentSchemas();
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
@@ -98,6 +140,75 @@ describe("OpenAPI and Swagger UI", () => {
     expect(schemas.ProjectStatusSummary!.required).toContain("pendingActions");
     expect(Object.keys(schemas.ProjectPendingAction!.properties.people.items.properties)).toEqual(["id", "name", "role"]);
     for (const field of ["estimate", "total", "proof", "email", "notes"]) expect(schemas.ProjectStatusSummary!.properties).not.toHaveProperty(field);
+  });
+  it("documents Standard basket cost separately from saved mode and vendor BOQ payloads", () => {
+    const schemas = componentSchemas();
+    expect(schemas.ProcurementBasketSummary).toHaveProperty("properties.classification.enum", ["standard", "special"]);
+    expect(schemas.ProcurementBasketSummary).toHaveProperty("properties.automaticSubVendor.type", "boolean");
+    expect(schemas.ProcurementBasketSummary).toHaveProperty("properties.boqReady.type", "boolean");
+    expect(schemas.ProcurementBasketSummary).toHaveProperty("properties.standardCost.properties.totalPaise.nullable", true);
+    expect(schemas.ProcurementBasketSummary!.required).toContain("standardCost");
+    expect(schemas.ProcurementBasketDetail).toHaveProperty("properties.lines.items.properties.standardCost.properties.state.enum",
+      ["suggested", "observed_unverified", "saved", "unavailable"]);
+    expect(schemas.ProcurementBasketDetail).toHaveProperty("properties.lines.items.properties.standardCost.properties.baseRates.items.properties.ratePaise.type", "integer");
+    expect(schemas.ProcurementBasketDetail).toHaveProperty("properties.lines.items.properties.standardCost.properties.baseCostPaise.nullable", true);
+    expect(schemas.ProcurementBasketDetail).toHaveProperty("properties.lines.items.properties.baseUnitRatePaise.nullable", true);
+    expect(schemas.ProcurementBasketDetail).toHaveProperty("properties.lines.items.properties.projectRate.properties.overridePaise.nullable", true);
+    expect(schemas.ProjectPurchaseOrderPreparationEstimateLine).toHaveProperty("properties.projectRate.properties.version.minimum", 0);
+    expect(schemas.ProjectPurchaseOrderPreparationEstimateLine).toHaveProperty("properties.mainBasketClassification.enum",
+      ["standard", "special"]);
+    expect(schemas.ProjectPurchaseOrderPreparationEstimateLine).toHaveProperty("properties.mainBasketClassificationExplicit.type", "boolean");
+    expect(schemas.ProjectPurchaseOrderPreparationEstimateLine!.required).toContain("mainBasketClassificationExplicit");
+    expect(schemas.ProjectPurchaseOrderPreparationEstimateLine).toHaveProperty("properties.standardSuggestion.properties.preview.$ref",
+      "#/components/schemas/ProjectPurchaseOrderModeStandardCostPreview");
+    expect(schemas.ProjectPurchaseOrderModeStandardCostPreview!.properties).not.toHaveProperty("sellingPaise");
+    expect(schemas.ProjectPurchaseOrderModeResolution!.properties).not.toHaveProperty("standardSuggestion");
+    expect(schemas.ProcurementBasketPublicBoq!.properties).not.toHaveProperty("standardCost");
+    expect(schemas.ProcurementBasketPublicBoq!.properties).not.toHaveProperty("projectRate");
+  });
+  it("documents the project-only Base amount write with procurement authorization", () => {
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const schemas = componentSchemas();
+    const operation = paths["/procurement/projects/{projectId}/baskets/{basketId}/base-rate"]!.put!;
+    expect(operation["x-lisno-permission"]).toBe("procurement.purchase_orders.manage");
+    expect(operation.requestBody.content["application/json"].schema.$ref)
+      .toBe("#/components/schemas/ProcurementBasketBaseRateSave");
+    expect(operation.responses["2XX"].content["application/json"].schema.properties.data.$ref)
+      .toBe("#/components/schemas/ProcurementBasketBaseRateSaved");
+    expect(schemas.ProcurementBasketBaseRateSave!.required).toContain("expectedPreparationDigest");
+    expect(schemas.ProcurementBasketBaseRateSave).toHaveProperty("properties.baseRatePaise.nullable", true);
+  });
+  it("documents terms-free BOQ invitations, manual WhatsApp sharing, and optional award line terms", () => {
+    const schemas = componentSchemas();
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    expect(schemas.ProcurementBasketBoqLineInput!.required).toEqual(["sourceLineItemKey"]);
+    expect(schemas.ProcurementBasketPublicBoq!.properties.lines.items.required)
+      .not.toContain("scopeType");
+    expect(schemas.ProcurementBasketAwardCreate!.required).not.toContain("lineTerms");
+    expect(schemas.ProcurementBasketAwardUpdate!.required).not.toContain("lineTerms");
+    expect(schemas.ProcurementBasketAwardCreate!.properties.lineTerms.items.required).toEqual(["boqLineId"]);
+    const operation = paths["/procurement/projects/{projectId}/baskets/{basketId}/enquiries/{enquiryId}/invitations/{vendorId}/whatsapp-share-intent"]!.post!;
+    expect(operation["x-lisno-permission"]).toBe("procurement.purchase_orders.manage");
+    expect(operation.responses["2XX"].content["application/json"].schema.properties.data.$ref)
+      .toBe("#/components/schemas/ProcurementBasketWhatsAppShareResult");
+    expect(schemas.ProcurementBasketWhatsAppShareResult!.required).toContain("expiresAt");
+    expect(schemas.ProcurementBasketWhatsAppShareResult)
+      .toHaveProperty("properties.expiresAt.format", "date-time");
+  });
+  it("documents basket-wide sent invitation batches and their per-vendor result", () => {
+    const schemas = componentSchemas();
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const root = "/procurement/projects/{projectId}/baskets/{basketId}/enquiries/{enquiryId}/invitation-batches";
+    expect(paths[`${root}/preview`]!.post!["x-lisno-permission"]).toBe("procurement.purchase_orders.manage");
+    expect(paths[root]!.post!.requestBody.content["application/json"].schema.$ref)
+      .toBe("#/components/schemas/ProcurementBasketInvitationBatchSubmitInput");
+    expect(paths[root]!.post!.responses["2XX"].content["application/json"].schema.properties.data.$ref)
+      .toBe("#/components/schemas/ProcurementBasketInvitationBatchResult");
+    expect(schemas.ProcurementBasketVendorSelection!.oneOf).toHaveLength(2);
+    expect(schemas.ProcurementBasketInvitationBatchPreview!.required)
+      .toContain("requiresReason");
+    expect(schemas.ProcurementBasketInvitationBatchResult!.required)
+      .toContain("results");
   });
   it("binds Client estimate decisions and PDF downloads to the published review", () => {
     const schemas = componentSchemas();
@@ -472,6 +583,14 @@ describe("OpenAPI and Swagger UI", () => {
     const schemas = componentSchemas();
     const initiation = schemas.AdminProjectInitiationRequest!;
     expect(initiation.required).not.toContain("estimatorId");
+    expect(initiation.required).not.toContain("location");
+    expect(initiation.required).not.toContain("budgetMin");
+    expect(initiation.required).not.toContain("budgetMax");
+    expect(initiation.properties).toMatchObject({
+      location: { type: "string", minLength: 1 },
+      budgetMin: { type: "number", minimum: 0 },
+      budgetMax: { type: "number", minimum: 0 }
+    });
     expect(initiation.properties).toMatchObject({
       estimatorId: { type: "string", description: expect.stringContaining("Required for Sales Manager") },
       salesManagerId: { type: "string", description: expect.stringContaining("Required for Sales") }
@@ -824,7 +943,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 320 routes without versioning paths twice", () => {
+  it("contains all 365 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -832,8 +951,8 @@ describe("OpenAPI and Swagger UI", () => {
       0
     );
 
-    expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 17);
-    expect(operationCount).toBe(320);
+    expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 19);
+    expect(operationCount).toBe(365);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -843,7 +962,7 @@ describe("OpenAPI and Swagger UI", () => {
     const knowledgeOperations = HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability, key }) => availability === "ai_estimator_knowledge" && !key.includes("/procurement/vendor-kpis") && !key.includes("/procurement/vendor-inductions")
     );
-    expect(knowledgeOperations).toHaveLength(63);
+    expect(knowledgeOperations).toHaveLength(67);
 
     for (const registered of knowledgeOperations) {
       const { method, path } = splitHumanOperationKey(registered.key);

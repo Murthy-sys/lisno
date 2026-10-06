@@ -399,6 +399,40 @@ describe("Admin project Mongo transactions", () => {
     }
   );
 
+  it.each(["admin", "estimator_sales"] as const)("persists absent location and budgets through %s initiation", async (role) => {
+    await Promise.all([
+      insertUser("mongo-admin", "admin"),
+      insertUser("mongo-estimator", "estimator_sales")
+    ]);
+    const repository = createMongoRepository();
+    const app = createApp({ repository, auth, clock });
+    const { location: _location, budgetMin: _minimum, budgetMax: _maximum, estimatorId: _estimator, ...compactInput } = input;
+    const actorId = role === "admin" ? "mongo-admin" : "mongo-estimator";
+    const assignment = role === "admin" ? { estimatorId: "mongo-estimator" } : { salesManagerId: "mongo-admin" };
+    const created = await request(app).post("/api/v1/admin/projects")
+      .set("Authorization", bearer(actorId, role))
+      .send({ ...compactInput, ...assignment, cityName: "Pune" }).expect(201);
+    const projectId = created.body.data.id;
+    expect(await ProjectModel.findById(projectId).lean()).toMatchObject({
+      clientAddress: "", location: "", assignedEstimatorId: "mongo-estimator", cityName: "Pune", cityKey: "pune"
+    });
+    expect(await LeadModel.findById(created.body.data.lead.id).lean()).toMatchObject({
+      projectId, ownerId: "mongo-estimator", location: "", budgetMin: null, budgetMax: null,
+      cityName: "Pune", cityKey: "pune", nextActionAt: new Date(input.nextActionAt)
+    });
+    expect(await ProjectAccessGrantModel.find({ projectId }).lean()).toEqual([expect.objectContaining({
+      userId: "mongo-admin", grantedById: actorId, source: "admin_initiator", active: true
+    })]);
+    const audits = await AuditEventModel.find().lean();
+    expect(audits).toHaveLength(3);
+    expect(audits.every(({ actorId: recordedActor }) => recordedActor === actorId)).toBe(true);
+    // Reload and save through Mongoose validation, as later project/lead updates do.
+    await (await ProjectModel.findById(projectId))!.save();
+    await (await LeadModel.findById(created.body.data.lead.id))!.save();
+    await expect(repository.findProjectById(projectId)).resolves.toMatchObject({ location: "", clientAddress: "" });
+    await expect(repository.findLeadById(created.body.data.lead.id)).resolves.toMatchObject({ budgetMin: null, budgetMax: null });
+  });
+
   it("commits one scoped project, grant, linked lead, and allowlisted audit trail", async () => {
     await Promise.all([
       insertUser("mongo-admin", "admin"),
@@ -414,6 +448,12 @@ describe("Admin project Mongo transactions", () => {
       lead: { stage: "new_lead" }
     });
     const projectId = created.body.data.id;
+    expect(await ProjectModel.findById(projectId).lean()).toMatchObject({
+      location: input.location, clientAddress: input.location
+    });
+    expect(await LeadModel.findById(created.body.data.lead.id).lean()).toMatchObject({
+      location: input.location, budgetMin: input.budgetMin, budgetMax: input.budgetMax
+    });
     expect(await ProjectModel.countDocuments({ _id: projectId })).toBe(1);
     expect(await ProjectAccessGrantModel.countDocuments({
       projectId, userId: "mongo-admin", module: "projects",

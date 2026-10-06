@@ -7,6 +7,7 @@ import {
   type SendGridMessage,
   type SendGridSdk
 } from "../src/services/sendgrid-transport.js";
+import { createSendGridProcurementBasketBoqMailer } from "../src/services/procurement-basket-boq-mailer.js";
 import { MailDeliveryError } from "../src/services/smtp-transport.js";
 
 const config = {
@@ -91,6 +92,22 @@ describe("SendGrid Web API transport", () => {
     expect(sdk.setTimeout).toHaveBeenCalledWith(config.deliveryTimeoutMs);
     expect(sdk.send).toHaveBeenCalledOnce();
     expect(sdk.send).toHaveBeenCalledWith(message);
+  });
+
+  it("preflights BOQ mail with SendGrid sandbox mode and no vendor recipient", async () => {
+    const sdk = createSdk(async () => [{ statusCode: 200 }, {}]);
+    const transport = createIsolatedSendGridTransport(config, sdk);
+    const mailer = createSendGridProcurementBasketBoqMailer(config, transport);
+    if (mailer.deliveryKind !== "external") throw new Error("Expected an external BOQ mailer.");
+
+    await expect(mailer.preflight()).resolves.toBeUndefined();
+    expect(sdk.send).toHaveBeenCalledOnce();
+    expect(sdk.send).toHaveBeenCalledWith(expect.objectContaining({
+      from: message.from,
+      to: message.from,
+      mailSettings: { sandboxMode: { enable: true } }
+    }));
+    expect(JSON.stringify(sdk.send.mock.calls[0]?.[0])).not.toContain("recipient@example.test");
   });
 
   it.each([

@@ -25,6 +25,7 @@ import { createAiEstimatorKnowledgeReferenceService } from "../src/services/ai-e
 import type { PublicUser } from "../src/services/auth.service.js";
 import { createProjectProcurementService } from "../src/services/project-procurement.service.js";
 import { createProjectPurchaseOrderPreparationService } from "../src/services/project-purchase-order-preparation.service.js";
+import { createProjectPurchaseOrderModeDecisionService } from "../src/services/project-purchase-order-mode.service.js";
 import { procurementVendorAllocationTotals } from "../src/services/procurement-vendor-allocation.service.js";
 import { procurementItemSourceSnapshot } from "../src/services/procurement.service.js";
 import { projectCompletionScopeLabel } from "../src/services/project-completion.service.js";
@@ -82,6 +83,14 @@ describe("project purchase order preparation", () => {
       allocatedWorkPaise: 500_000, pricePaise: 101, plannedOrderQuantityMilliUnits: 1_250 });
     await service.create(other, "project-b", { ...fields, estimateId: "estimate-project-b", vendorId: vendor.id,
       allocatedWorkPaise: 500_000, pricePaise: 333, plannedOrderQuantityMilliUnits: 2_000 });
+    const modeDecisions = createProjectPurchaseOrderModeDecisionService({ audit, now: () => now });
+    for (const [projectId, buyer] of [["project-a", actor], ["project-b", other]] as const) {
+      await modeDecisions.save(buyer, projectId, { sourceLineItemKey: "line-first", expectedVersion: 0,
+        expectedEstimateSource: { estimateId: `estimate-${projectId}`, estimateVersion: 1,
+          estimateReviewRoundId: `round-${projectId}` },
+        idempotencyKey: `legacy-mode-${projectId}`, mode: null, quantity: null, discountBps: 0,
+        markupBasis: "starting", exceptionReason: "This approved legacy line has no saved Configuration revision." });
+    }
     const first = await preparation.get(actor, "project-a");
     const second = await preparation.get(other, "project-b");
     expect(first).toMatchObject({ approvedEstimatePaise: 1_000_000, netPaise: 126, itemCount: 1,

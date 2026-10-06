@@ -23,12 +23,17 @@ const procurementExpenseSchema = z.object({
   description: z.string().trim().min(1).max(1_000),
   vendor: optionalMultipartText(200),
   reference: optionalMultipartText(200),
+  purchaseOrderId: optionalMultipartText(500),
+  paymentMilestoneId: optionalMultipartText(500),
   idempotencyKey: z.string().trim().min(8).max(128)
-}).strict();
+}).strict().refine(
+  (value) => Boolean(value.purchaseOrderId) === Boolean(value.paymentMilestoneId),
+  { path: ["paymentMilestoneId"], message: "Purchase order and payment milestone must be supplied together." }
+);
 
 const receiptUploadOptions = {
   fieldName: "receipt",
-  maxFields: 7,
+  maxFields: 9,
   allowedDetectedMimeTypes: new Set(FINANCE_DOCUMENT_MIME_TYPES),
   fieldErrorKey: "receipt",
   allowedTypeMessage: "Choose a PDF, JPEG, PNG, or WebP receipt."

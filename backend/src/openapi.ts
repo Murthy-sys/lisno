@@ -5,6 +5,11 @@ import { VENDOR_SUGGESTION_SCHEMAS, VENDOR_SUGGESTION_REQUESTS, VENDOR_SUGGESTIO
 import { PROJECT_PROCUREMENT_SCHEMAS, PROJECT_PROCUREMENT_REQUESTS, PROJECT_PROCUREMENT_RESPONSES, PROJECT_PROCUREMENT_ITEM_QUERY_PARAMETERS } from "./openapi/project-procurement.js";
 import { PROJECT_PURCHASE_ORDER_SCHEMAS, PROJECT_PURCHASE_ORDER_REQUESTS, PROJECT_PURCHASE_ORDER_RESPONSES, PROJECT_PURCHASE_ORDER_QUERY_PARAMETERS } from "./openapi/project-purchase-orders.js";
 import { PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS, PROJECT_PURCHASE_ORDER_REQUEST_REQUESTS, PROJECT_PURCHASE_ORDER_REQUEST_RESPONSES, PROJECT_PURCHASE_ORDER_REQUEST_QUERY_PARAMETERS } from "./openapi/project-purchase-order-requests.js";
+import { PROCUREMENT_BASKET_TENDER_SCHEMAS, PROCUREMENT_BASKET_TENDER_REQUESTS, PROCUREMENT_BASKET_TENDER_RESPONSES } from "./openapi/procurement-basket-tender.js";
+import { PROCUREMENT_BASKET_OPERATION_SCHEMAS, PROCUREMENT_BASKET_OPERATION_REQUESTS, PROCUREMENT_BASKET_OPERATION_RESPONSES,
+  PROCUREMENT_BASKET_OPERATION_QUERIES } from "./openapi/procurement-basket-operations.js";
+import { VENDOR_BASKET_REQUEST_SCHEMAS, VENDOR_BASKET_REQUEST_BODIES, VENDOR_BASKET_REQUEST_RESPONSES,
+  VENDOR_BASKET_REQUEST_QUERIES } from "./openapi/vendor-basket-requests.js";
 import { VENDOR_WORK_SCHEMAS, VENDOR_WORK_REQUESTS, VENDOR_WORK_RESPONSES, VENDOR_WORK_QUERY_PARAMETERS } from "./openapi/vendor-work.js";
 import { PROJECT_COMPLETION_SCHEMAS, PROJECT_COMPLETION_REQUESTS, PROJECT_COMPLETION_RESPONSES, PROJECT_COMPLETION_QUERY_PARAMETERS } from "./openapi/project-completion.js";
 import { SITE_COMPLETION_SCHEMAS, SITE_COMPLETION_REQUESTS, SITE_COMPLETION_RESPONSES } from "./openapi/site-completion.js";
@@ -127,6 +132,9 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   ...PROJECT_PROCUREMENT_REQUESTS,
   ...PROJECT_PURCHASE_ORDER_REQUESTS,
   ...PROJECT_PURCHASE_ORDER_REQUEST_REQUESTS,
+  ...PROCUREMENT_BASKET_TENDER_REQUESTS,
+  ...PROCUREMENT_BASKET_OPERATION_REQUESTS,
+  ...VENDOR_BASKET_REQUEST_BODIES,
   ...VENDOR_WORK_REQUESTS,
   ...PROJECT_COMPLETION_REQUESTS,
   ...SITE_COMPLETION_REQUESTS,
@@ -215,7 +223,8 @@ const operationsWithoutBodies = new Set<string>([
   "POST /design-versions/:versionId/retry-extraction",
   "POST /design-versions/:versionId/submit-sections",
   "POST /internal/extraction-jobs/claim",
-  "POST /internal/extraction-jobs/:jobId/heartbeat"
+  "POST /internal/extraction-jobs/:jobId/heartbeat",
+  "POST /procurement/projects/:projectId/baskets/:basketId/awards/:awardId/share-intent"
 ]);
 
 const responseSchemaByOperation: Readonly<Record<string, string>> = {
@@ -227,6 +236,9 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   ...PROJECT_PROCUREMENT_RESPONSES,
   ...PROJECT_PURCHASE_ORDER_RESPONSES,
   ...PROJECT_PURCHASE_ORDER_REQUEST_RESPONSES,
+  ...PROCUREMENT_BASKET_TENDER_RESPONSES,
+  ...PROCUREMENT_BASKET_OPERATION_RESPONSES,
+  ...VENDOR_BASKET_REQUEST_RESPONSES,
   ...VENDOR_WORK_RESPONSES,
   ...PROJECT_COMPLETION_RESPONSES,
   ...SITE_COMPLETION_RESPONSES,
@@ -292,7 +304,8 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
 const pdfOperations = new Set<string>([
   "GET /estimates/:estimateId/pdf",
   "GET /client/estimates/:estimateId/pdf",
-  "GET /admin/estimate-client-response-tasks/:roundId/pdf"
+  "GET /admin/estimate-client-response-tasks/:roundId/pdf",
+  "GET /procurement/projects/:projectId/baskets/:basketId/awards/:awardId/work-order.pdf"
 ]);
 
 const imageOperations = new Set<string>([
@@ -634,6 +647,8 @@ const queryParametersByOperation: Readonly<
     { name: "effectiveStatus", in: "query", required: false, schema: { type: "string", enum: ["active"] }, description: "When active, return only vendors eligible for new procurement assignment, filtering before total and pagination." }
   ],
   "GET /procurement/projects/:projectId/items": PROJECT_PROCUREMENT_ITEM_QUERY_PARAMETERS,
+  ...PROCUREMENT_BASKET_OPERATION_QUERIES,
+  ...VENDOR_BASKET_REQUEST_QUERIES,
   "GET /procurement/projects/:projectId/purchase-orders": PROJECT_PURCHASE_ORDER_QUERY_PARAMETERS,
   "GET /procurement/projects/:projectId/purchase-order-requests": PROJECT_PURCHASE_ORDER_REQUEST_QUERY_PARAMETERS,
   "GET /admin/purchase-orders/pending": PROJECT_PURCHASE_ORDER_QUERY_PARAMETERS,
@@ -1014,6 +1029,18 @@ addOperation(paths, "/vendor-induction/submit", "POST", publicOperation("POST /v
   tags: ["Vendor induction"],
   requestBody: requestBodiesByOperation["POST /vendor-induction/submit"],
   responses: publicJsonResponses("VendorInductionSubmissionReceipt", ["400", "404", "409", "410", "429", "500"])
+}));
+
+addOperation(paths, "/vendor-boq/inspect", "POST", publicOperation("POST /vendor-boq/inspect", {
+  tags: ["Procurement"],
+  requestBody: requestBodiesByOperation["POST /vendor-boq/inspect"],
+  responses: publicJsonResponses("ProcurementBasketPublicBoq", ["400", "404", "409", "410", "429", "500"])
+}));
+
+addOperation(paths, "/vendor-boq/submit", "POST", publicOperation("POST /vendor-boq/submit", {
+  tags: ["Procurement"],
+  requestBody: requestBodiesByOperation["POST /vendor-boq/submit"],
+  responses: publicJsonResponses("ProcurementBasketBidReceipt", ["400", "404", "409", "410", "429", "500"])
 }));
 
 addWorkerOperations(paths);
@@ -1527,6 +1554,9 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     ...PROJECT_PROCUREMENT_SCHEMAS,
     ...PROJECT_PURCHASE_ORDER_SCHEMAS,
     ...PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS,
+    ...PROCUREMENT_BASKET_TENDER_SCHEMAS,
+    ...PROCUREMENT_BASKET_OPERATION_SCHEMAS,
+    ...VENDOR_BASKET_REQUEST_SCHEMAS,
     ...VENDOR_WORK_SCHEMAS,
     ...PROJECT_COMPLETION_SCHEMAS,
     ...SITE_COMPLETION_SCHEMAS,
@@ -2026,17 +2056,17 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     AdminProjectInitiationRequest: {
       type: "object",
       additionalProperties: false,
-      required: ["clientName", "clientEmail", "clientMobile", "projectName", "location", "propertyType", "budgetMin", "budgetMax", "nextAction", "nextActionAt"],
+      required: ["clientName", "clientEmail", "clientMobile", "projectName", "propertyType", "nextAction", "nextActionAt"],
       description: "Sales must select salesManagerId; the authenticated actor owns the sales lead. Sales Manager and Super Admin must select estimatorId and cannot supply salesManagerId.",
       properties: {
         clientName: { type: "string", minLength: 1 },
         clientEmail: { type: "string", format: "email" },
         clientMobile: { type: "string", minLength: 1 },
         projectName: { type: "string", minLength: 1 },
-        location: { type: "string", minLength: 1 },
+        location: { type: "string", minLength: 1, description: "Optional legacy location. When omitted, project location and client address are stored as empty strings." },
         propertyType: { type: "string", minLength: 1 },
-        budgetMin: { type: "number", minimum: 0 },
-        budgetMax: { type: "number", minimum: 0, description: "Must be greater than or equal to budgetMin." },
+        budgetMin: { type: "number", minimum: 0, description: "Optional legacy budget bound. Stored as null when omitted." },
+        budgetMax: { type: "number", minimum: 0, description: "Optional legacy budget bound. Stored as null when omitted. Must be greater than or equal to budgetMin when both are supplied." },
         nextAction: { type: "string", minLength: 1 },
         nextActionAt: dateTime,
         estimatorId: { ...id, description: "Required for Sales Manager and Super Admin. For Sales, omit or supply only your own ID." },
@@ -2159,6 +2189,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
             amount: { type: "number", minimum: 0, nullable: true }, amountPaise: { type: "integer", minimum: 0, nullable: true },
             mainBasketId: { type: "string" }, subBasketId: { type: "string", nullable: true }, mainLineId: { type: "string" },
             itemType: { type: "string", enum: ["main_line", "temporary"], description: "Absent on historical configured lines, which are Main Lines." },
+            classification: { type: "string", enum: ["standard", "special"], description: "Estimator-selected item classification. Absent historical values display as Standard; this does not change price calculations." },
             revisionId: { type: "string" }, uomId: { type: "string" }, mainBasketName: { type: "string" },
             sourceItemStatus: { type: "string", enum: ["draft", "active", "inactive"] },
             sourceRevisionStatus: { type: "string", enum: ["draft", "active"] },
@@ -2168,7 +2199,11 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         } },
         subtotal: { type: "number", minimum: 0 }, gst: { type: "number", minimum: 0 }, total: { type: "number", minimum: 0 },
         subtotalPaise: { type: "integer", minimum: 0 }, gstPaise: { type: "integer", minimum: 0 },
-        totalPaise: { type: "integer", minimum: 0 }, selectedMainBasketIds: { type: "array", items: { type: "string" } }
+        totalPaise: { type: "integer", minimum: 0 }, selectedMainBasketIds: { type: "array", items: { type: "string" } },
+        selectedMainBasketClassifications: { type: "array", items: { type: "object", additionalProperties: false,
+          required: ["mainBasketId", "classification"], properties: {
+            mainBasketId: { type: "string" }, classification: { type: "string", enum: ["standard", "special"] }
+          } }, description: "Estimator-selected classification for each selected Main Basket. Absent historical values display as Standard." }
       }
     },
     ClientPublishedEstimateReview: {
@@ -2336,6 +2371,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         catalogueId: { type: "string" }, roomId: { type: "string" }, roomName: { type: "string" },
         mainBasketId: { type: "string" }, subBasketId: { type: "string", nullable: true }, mainLineId: { type: "string" },
         itemType: { type: "string", enum: ["main_line", "temporary"], default: "main_line", description: "Optional for older clients; Main Lines require a real Sub Basket. Only temporary items may have null Sub Basket." },
+        classification: { type: "string", enum: ["standard", "special"], description: "Estimator-selected type. Omission preserves a saved value or defaults a new line to Standard." },
         revisionId: { type: "string" }, uomId: { type: "string" },
         itemVersion: { type: "integer", minimum: 1, description: "Required with revisionVersion for a new Draft or Inactive item; checked when provided for Active items." },
         revisionVersion: { type: "integer", minimum: 1, description: "Required with itemVersion for a new Draft or Inactive item; checked when provided for Active items." },
@@ -2359,6 +2395,10 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         rooms: { type: "array", items: { type: "object", additionalProperties: true } },
         scopes: { type: "array", items: { type: "string" } },
         selectedMainBasketIds: { type: "array", uniqueItems: true, items: { type: "string" } },
+        selectedMainBasketClassifications: { type: "array", items: { type: "object", additionalProperties: false,
+          required: ["mainBasketId", "classification"], properties: {
+            mainBasketId: { type: "string", minLength: 1 }, classification: { type: "string", enum: ["standard", "special"] }
+          } }, description: "When supplied, contains exactly one classification for every selected Main Basket. Omission preserves saved classifications or defaults new baskets to Standard." },
         expectedVersion: { type: "integer", minimum: 1, description: "Required when updating an existing configured estimate or selected Main Baskets. Rejects stale draft saves." },
         lineItems: { type: "array", items: { $ref: "#/components/schemas/EstimateLineInput" } }
       }

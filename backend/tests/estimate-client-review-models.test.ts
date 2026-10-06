@@ -105,11 +105,24 @@ describe("EstimateClientReviewRound persistence model", () => {
     vi.restoreAllMocks();
   });
 
+  it.each(["", "Bengaluru"])("preserves the supplied snapshot location %j", async (location) => {
+    const document = round({ estimateSnapshot: { ...snapshot(), location } });
+    await expect(document.validate()).resolves.toBeUndefined();
+    expect(document.toObject().estimateSnapshot.location).toBe(location);
+    expect(EstimateClientReviewRoundModel.schema.path("estimateSnapshot.location").options.immutable).toBe(true);
+  });
+
+  it.each([undefined, null])("rejects an absent snapshot location %s", async (location) => {
+    await expect(round({ estimateSnapshot: { ...snapshot(), location } }).validate())
+      .rejects.toThrow(/location/);
+  });
+
   it("freezes configured basket identity, labels and exact paise in a published snapshot", async () => {
     const configured = {
       ...snapshot(),
       lineItems: [{
         id: "line-configured", source: "configuration", catalogueId: "ml-lower-case",
+        classification: "special",
         roomId: "room-a", roomName: "Living Room", specification: null,
         unit: "sqft", rate: 48.5, ratePaise: 4_850, quantity: 2.5,
         included: true, amount: 121.25, amountPaise: 12_125,
@@ -121,16 +134,36 @@ describe("EstimateClientReviewRound persistence model", () => {
       }],
       subtotal: 121.25, gst: 21.83, total: 143.08,
       subtotalPaise: 12_125, gstPaise: 2_183, totalPaise: 14_308,
-      selectedMainBasketIds: ["basket-a"]
+      selectedMainBasketIds: ["basket-a"],
+      selectedMainBasketClassifications: [{ mainBasketId: "basket-a", classification: "standard" }]
     };
     const document = round({ estimateSnapshot: configured });
     await expect(document.validate()).resolves.toBeUndefined();
     expect(document.toObject().estimateSnapshot).toMatchObject(configured);
+    const historical = round({ estimateSnapshot: {
+      ...configured, selectedMainBasketClassifications: undefined,
+      lineItems: [{ ...configured.lineItems[0], classification: undefined }]
+    } });
+    await expect(historical.validate()).resolves.toBeUndefined();
+    expect(historical.toObject().estimateSnapshot).not.toHaveProperty("selectedMainBasketClassifications");
+    expect(historical.toObject().estimateSnapshot.lineItems[0]).not.toHaveProperty("classification");
     await expect(round({ estimateSnapshot: {
       ...configured,
       lineItems: [{ ...configured.lineItems[0], rate: null, ratePaise: null }]
     } }).validate()).rejects.toThrow();
     await expect(round({ estimateSnapshot: { ...configured, totalPaise: 14_309 } }).validate()).rejects.toThrow();
+    for (const selectedMainBasketClassifications of [
+      [{ mainBasketId: "basket-a", classification: "custom" }],
+      [{ mainBasketId: "basket-a", classification: "standard" }, { mainBasketId: "basket-a", classification: "special" }],
+      [{ mainBasketId: "basket-other", classification: "special" }]
+    ]) {
+      await expect(round({ estimateSnapshot: {
+        ...configured, selectedMainBasketClassifications
+      } }).validate()).rejects.toThrow();
+    }
+    await expect(round({ estimateSnapshot: {
+      ...configured, lineItems: [{ ...configured.lineItems[0], classification: "custom" }]
+    } }).validate()).rejects.toThrow();
     for (const changed of [
       { sourceItemStatus: "archived" },
       { sourceRevisionStatus: "unknown" },
@@ -148,7 +181,7 @@ describe("EstimateClientReviewRound persistence model", () => {
 
   it("preserves direct and grouped temporary parents while rejecting inconsistent configured snapshots", async () => {
     const configuredLine = {
-      id: "temporary-line", source: "configuration", itemType: "temporary",
+      id: "temporary-line", source: "configuration", itemType: "temporary", classification: "special",
       catalogueId: "temporary-a", roomId: "room-a", roomName: "Living Room",
       specification: null, unit: "nos", rate: 70.03, ratePaise: 7_003,
       quantity: 1, included: true, amount: 70.03, amountPaise: 7_003,
@@ -163,7 +196,7 @@ describe("EstimateClientReviewRound persistence model", () => {
     const direct = round({ estimateSnapshot: configured });
     await expect(direct.validate()).resolves.toBeUndefined();
     expect(direct.toObject().estimateSnapshot.lineItems[0]).toMatchObject({
-      itemType: "temporary", subBasketId: null, subBasketName: null, amountPaise: 7_003
+      itemType: "temporary", classification: "special", subBasketId: null, subBasketName: null, amountPaise: 7_003
     });
     for (const field of ["sourceItemStatus", "sourceRevisionStatus", "sourceItemVersion", "sourceRevisionVersion"]) {
       expect(direct.toObject().estimateSnapshot.lineItems[0]).not.toHaveProperty(field);

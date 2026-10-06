@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import type { TaskStatus, TaskRisk } from "../contracts/domain.js";
 
 import { normalizeEmail } from "../domain/email.js";
+import { confirmedCity } from "../domain/procurement-city.js";
 import { AuthorizationConfigurationError } from "../domain/authorization.js";
 import { currentHumanOperation } from "../domain/operation-context.js";
 import { ApiError } from "../middleware/errors.js";
@@ -44,6 +45,7 @@ export interface CreateProjectInput {
   assignedDesignerIds: string[];
   managerId: string;
   location: string;
+  cityName?: string | null;
   plannedStartAt: string;
   plannedEndAt: string;
 }
@@ -447,6 +449,7 @@ export function createProjectService(
         );
       }
       const timestamp = clock().toISOString();
+      const city = confirmedCity(input.cityName);
       const emailNormalized = normalizeEmail(input.clientEmail);
       return repository.runInTransaction(async (transaction) => {
         await transaction.coordinateAuthorizationMutation();
@@ -475,8 +478,11 @@ export function createProjectService(
           assignedEstimatorId: null,
           assignedDesignerIds,
           managerId: manager.id,
+          programManagerId: null,
           status: "planning",
           location: input.location,
+          cityName: city?.name ?? null,
+          cityKey: city?.key ?? null,
           plannedStartAt: input.plannedStartAt,
           plannedEndAt: input.plannedEndAt,
           actualStartAt: null,
@@ -492,7 +498,7 @@ export function createProjectService(
             entityType: "project",
             entityId: project.id,
             occurredAt: timestamp,
-            newValues: { name: project.name, status: project.status }
+            newValues: { name: project.name, status: project.status, ...(city ? { cityName: city.name, cityKey: city.key } : {}) }
           },
           transaction
         );

@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 
 import { ApiError } from "../middleware/errors.js";
+import { confirmedCity } from "../domain/procurement-city.js";
 import type { AppRepository, LeadActivityRecord, LeadFilters, LeadRecord, PageResult, PaginationInput } from "../repositories/types.js";
 import type { PublicUser } from "./auth.service.js";
 import type { AuditService } from "./audit.service.js";
 import { forbidden, requireActor, type Clock } from "./workflow.js";
 
 export interface CreateLeadInput {
-  clientName: string; clientEmail: string; clientMobile: string; projectName: string; location: string; propertyType: string;
+  clientName: string; clientEmail: string; clientMobile: string; projectName: string; location: string; cityName?: string | null; propertyType: string;
   budgetMin?: number | null; budgetMax?: number | null; source: string; nextAction: string; nextActionAt: string;
   builder?: string | null; areaSqft?: number | null; targetHandoverAt?: string | null; notes?: string | null;
 }
@@ -28,6 +29,7 @@ const LINKED_IDENTITY_FIELDS = [
   "clientMobile",
   "projectName",
   "location",
+  "cityName",
   "source"
 ] as const;
 
@@ -77,13 +79,22 @@ export function createLeadService(repository: AppRepository, audit: AuditService
       await requireEstimator(repository, actor);
       const now = clock().toISOString();
       const fields = clean(input) as CreateLeadInput;
-      const record: LeadRecord = { id: `lead-${randomUUID()}`, ownerId: actor.id, projectId: null, ...fields, budgetMin: fields.budgetMin ?? null, budgetMax: fields.budgetMax ?? null, builder: fields.builder ?? null, areaSqft: fields.areaSqft ?? null, targetHandoverAt: fields.targetHandoverAt ?? null, notes: fields.notes ?? null, stage: "new_lead", latestActivityAt: null, createdAt: now, updatedAt: now };
-      return repository.runInTransaction(async (tx) => { const lead = await tx.createLead(record); await audit.append({ actorId: actor.id, action: "lead_created", entityType: "lead", entityId: lead.id, occurredAt: now, newValues: { stage: lead.stage } }, tx); return lead; });
+      const city = confirmedCity(fields.cityName);
+      const record: LeadRecord = { id: `lead-${randomUUID()}`, ownerId: actor.id, projectId: null, ...fields,
+        cityName: city?.name ?? null, cityKey: city?.key ?? null, budgetMin: fields.budgetMin ?? null, budgetMax: fields.budgetMax ?? null,
+        builder: fields.builder ?? null, areaSqft: fields.areaSqft ?? null, targetHandoverAt: fields.targetHandoverAt ?? null,
+        notes: fields.notes ?? null, stage: "new_lead", latestActivityAt: null, createdAt: now, updatedAt: now };
+      return repository.runInTransaction(async (tx) => { const lead = await tx.createLead(record); await audit.append({ actorId: actor.id, action: "lead_created", entityType: "lead", entityId: lead.id, occurredAt: now, newValues: { stage: lead.stage, cityName: city?.name ?? null, cityKey: city?.key ?? null } }, tx); return lead; });
     },
     async update(actor, leadId, input) {
       const current = await owned(actor, leadId); const now = clock().toISOString();
       assertLinkedIdentityIsUnchanged(current, input);
-      return repository.runInTransaction(async (tx) => { const lead = await tx.updateLead(leadId, { ...clean(input), stage: input.stage, updatedAt: now }); await audit.append({ actorId: actor.id, action: "lead_updated", entityType: "lead", entityId: leadId, occurredAt: now, oldValues: { stage: current.stage }, newValues: { stage: lead.stage } }, tx); return lead; });
+      const city = input.cityName === undefined ? undefined : confirmedCity(input.cityName);
+      return repository.runInTransaction(async (tx) => { const lead = await tx.updateLead(leadId, { ...clean(input),
+        ...(city !== undefined ? { cityName: city?.name ?? null, cityKey: city?.key ?? null } : {}), stage: input.stage, updatedAt: now });
+        await audit.append({ actorId: actor.id, action: "lead_updated", entityType: "lead", entityId: leadId, occurredAt: now,
+          oldValues: { stage: current.stage, cityName: current.cityName ?? null },
+          newValues: { stage: lead.stage, cityName: lead.cityName ?? null } }, tx); return lead; });
     },
     async listActivities(actor, leadId) { await findLeadForReader(actor, leadId); return repository.listLeadActivities(leadId); },
     async addActivity(actor, leadId, input) {

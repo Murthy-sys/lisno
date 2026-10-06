@@ -1,5 +1,5 @@
 import type { EstimationCatalogue, EstimationCatalogueBasket, EstimationCatalogueMainLine, EstimationCatalogueSubBasket, EstimationCatalogueTemporaryItem } from "./estimationCatalogueApi";
-import type { ConfiguredEstimateLine } from "./leadsApi";
+import type { ConfiguredEstimateLine, EstimateClassification } from "./leadsApi";
 
 export interface ConfiguredEstimateRoom {
   id: string;
@@ -15,9 +15,11 @@ export interface ConfiguredLineDraft {
   mainBasketId: string;
   mainBasketName: string;
   itemType: "main_line" | "temporary";
+  classification?: EstimateClassification;
   subBasketId: string | null;
   subBasketName: string | null;
   mainLineId: string;
+  recommendationSourceMainLineIds?: string[];
   mainLineName: string;
   revisionId: string;
   itemStatus?: "draft" | "active" | "inactive";
@@ -36,17 +38,35 @@ export interface ConfiguredLineDraft {
   rateInput: string;
   included: boolean;
   sourceMissing: boolean;
-  sourceReview?: {
-    changedFields: string[];
-    previousUomName: string;
-    previousUomDecimalScale: number;
-    currentUomName: string;
-    currentUomDecimalScale: number;
-  };
+  uomNeedsQuantityReview?: boolean;
+  previousUomName?: string;
 }
 
 export function configuredLineKey(roomId: string, mainLineId: string): string {
   return JSON.stringify([roomId, mainLineId]);
+}
+
+export function deselectConfiguredRecommendationSources(
+  lines: readonly ConfiguredLineDraft[],
+  sourceKeys: ReadonlySet<string>
+): ConfiguredLineDraft[] {
+  let next = lines.map((line) => sourceKeys.has(line.key) && line.included
+    ? { ...line, included: false, recommendationSourceMainLineIds: [] }
+    : line);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const included = new Set(next.filter((line) => line.included).map((line) => line.key));
+    next = next.map((line) => {
+      if (!line.included || !line.recommendationSourceMainLineIds?.length) return line;
+      const sources = line.recommendationSourceMainLineIds.filter((id) =>
+        included.has(configuredLineKey(line.roomId, id)));
+      if (sources.length === line.recommendationSourceMainLineIds.length) return line;
+      changed = true;
+      return { ...line, included: sources.length > 0, recommendationSourceMainLineIds: sources };
+    });
+  }
+  return next;
 }
 
 export function formatRateInput(ratePaise: number | null): string {
@@ -78,6 +98,7 @@ export function configuredLineAmountPaise(line: ConfiguredLineDraft): number | n
 }
 
 export function configuredLinePreviewAmountPaise(line: ConfiguredLineDraft): number | null {
+  if (line.uomNeedsQuantityReview) return null;
   const rate = parseSellingRate(line.rateInput);
   if (rate.kind !== "value") return null;
   const units = configuredQuantityUnits(line.quantity, line.uomDecimalScale, true);
@@ -107,9 +128,11 @@ export function restoreConfiguredLine(line: ConfiguredEstimateLine): ConfiguredL
     mainBasketId: line.mainBasketId,
     mainBasketName: line.mainBasketName,
     itemType: line.itemType ?? "main_line",
+    classification: line.classification ?? "standard",
     subBasketId: line.subBasketId,
     subBasketName: line.subBasketName,
     mainLineId: line.mainLineId,
+    recommendationSourceMainLineIds: line.recommendationSourceMainLineIds,
     mainLineName: line.mainLineName,
     revisionId: line.revisionId,
     sourceItemStatus: line.sourceItemStatus,
@@ -122,7 +145,9 @@ export function restoreConfiguredLine(line: ConfiguredEstimateLine): ConfiguredL
     quantity: line.quantity,
     rateInput: formatRateInput(line.ratePaise),
     included: line.included,
-    sourceMissing: true
+    sourceMissing: true,
+    uomNeedsQuantityReview: line.configurationUomChanged === true,
+    previousUomName: line.configurationUomChanged === true ? line.previousUomName ?? line.uomName : undefined
   };
 }
 
@@ -163,23 +188,12 @@ function newLine(
   };
 }
 
-function sourceChanges(previous: ConfiguredLineDraft, current: ConfiguredLineDraft): string[] {
-  const changes: string[] = [];
-  if (previous.revisionId !== current.revisionId) changes.push("revision");
-  if (previous.itemVersion !== current.itemVersion || previous.revisionVersion !== current.revisionVersion) changes.push("source version");
-  if (previous.uomId !== current.uomId || previous.uomDecimalScale !== current.uomDecimalScale || previous.uomName !== current.uomName) changes.push("UOM");
-  if (previous.mainBasketId !== current.mainBasketId || previous.subBasketId !== current.subBasketId) changes.push("basket location");
-  if (previous.itemType !== current.itemType) changes.push("item type");
-  if (previous.itemStatus !== current.itemStatus || previous.revisionStatus !== current.revisionStatus) changes.push("source status");
-  if (previous.inHouseBaseRatePaise !== current.inHouseBaseRatePaise) changes.push("In-house base rate");
-  return changes;
-}
-
 export function buildConfiguredLines(
   catalogue: EstimationCatalogue,
   rooms: readonly ConfiguredEstimateRoom[],
   selectedMainBasketIds: ReadonlySet<string>,
-  previous: readonly ConfiguredLineDraft[]
+  previous: readonly ConfiguredLineDraft[],
+  preservePersisted = false
 ): ConfiguredLineDraft[] {
   const prior = new Map(previous.map((line) => [line.key, line]));
   const next = rooms.flatMap((room) => catalogue.items
@@ -193,31 +207,36 @@ export function buildConfiguredLines(
     ].map((fresh) => {
       const saved = prior.get(fresh.key);
       if (!saved) return fresh;
-      if (saved.persistedId) return { ...saved, sourceMissing: saved.mainBasketId !== fresh.mainBasketId || saved.subBasketId !== fresh.subBasketId || saved.itemType !== fresh.itemType };
-      const changes = sourceChanges(saved, fresh);
-      const existingReview = saved.sourceReview;
+      if (preservePersisted && saved.persistedId) return {
+        ...saved,
+        sourceMissing: saved.mainBasketId !== fresh.mainBasketId ||
+          saved.subBasketId !== fresh.subBasketId || saved.itemType !== fresh.itemType
+      };
+      const uomChanged = saved.uomId !== fresh.uomId;
       const previousBaseRateInput = formatRateInput(saved.inHouseBaseRatePaise ?? null);
-      const rateWasEdited = saved.rateInput !== previousBaseRateInput;
-      const needsReview = changes.length > 0 && (saved.included || rateWasEdited || saved.quantity !== 1 || Boolean(existingReview));
+      const rateWasEdited = Boolean(saved.persistedId) || saved.rateInput !== previousBaseRateInput;
       return {
         ...fresh,
+        persistedId: saved.persistedId,
         quantity: saved.quantity,
         rateInput: rateWasEdited ? saved.rateInput : fresh.rateInput,
         included: saved.included,
-        sourceReview: needsReview ? {
-          changedFields: [...new Set([...(existingReview?.changedFields ?? []), ...changes])],
-          previousUomName: existingReview?.previousUomName ?? saved.uomName,
-          previousUomDecimalScale: existingReview?.previousUomDecimalScale ?? saved.uomDecimalScale,
-          currentUomName: fresh.uomName,
-          currentUomDecimalScale: fresh.uomDecimalScale
-        } : existingReview
+        recommendationSourceMainLineIds: saved.recommendationSourceMainLineIds,
+        classification: saved.classification,
+        sourceItemStatus: fresh.itemStatus,
+        sourceRevisionStatus: fresh.revisionStatus,
+        sourceItemVersion: fresh.itemVersion,
+        sourceRevisionVersion: fresh.revisionVersion,
+        sourceMissing: saved.mainBasketId !== fresh.mainBasketId || saved.subBasketId !== fresh.subBasketId || saved.itemType !== fresh.itemType,
+        uomNeedsQuantityReview: Boolean(saved.uomNeedsQuantityReview || uomChanged),
+        previousUomName: uomChanged ? saved.uomName : saved.previousUomName
       };
     })));
   const seen = new Set(next.map((line) => line.key));
   const roomIds = new Set(rooms.map((room) => room.id));
   for (const line of previous) {
     if (!seen.has(line.key) && roomIds.has(line.roomId) && (line.persistedId || line.included ||
-      line.rateInput !== formatRateInput(line.inHouseBaseRatePaise ?? null) || line.quantity !== 1)) {
+      line.classification !== undefined || line.rateInput !== formatRateInput(line.inHouseBaseRatePaise ?? null) || line.quantity !== 1)) {
       next.push({ ...line, sourceMissing: true });
     }
   }

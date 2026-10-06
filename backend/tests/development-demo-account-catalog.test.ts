@@ -48,7 +48,7 @@ describe("development demo account catalog", () => {
         authorizedClientIds
       }))
     );
-    expect(DEVELOPMENT_DEMO_ACCOUNTS.map(({ role }) => role)).toEqual(ROLE_CODES.filter((role) => role !== "vendor"));
+    expect(DEVELOPMENT_DEMO_ACCOUNTS.map(({ role }) => role)).toEqual(ROLE_CODES.filter((role) => role !== "vendor" && role !== "program_manager"));
     expect(new Set(DEVELOPMENT_DEMO_ACCOUNTS.map(({ id }) => id)).size).toBe(16);
     expect(new Set(DEVELOPMENT_DEMO_ACCOUNTS.map(({ emailNormalized }) => emailNormalized)).size).toBe(16);
     expect(DEVELOPMENT_DEMO_ACCOUNTS.find(({ id }) => id === "user-designer-ananya")).toMatchObject({

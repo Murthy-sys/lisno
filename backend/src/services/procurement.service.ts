@@ -25,7 +25,13 @@ import { FinanceLedgerEntryModel } from "../models/FinanceLedgerEntry.js";
 import { LeadModel } from "../models/Lead.js";
 import { ProjectFinanceBucketModel } from "../models/ProjectFinanceBucket.js";
 import { ProjectModel } from "../models/Project.js";
+import { ProjectPurchaseOrderModel } from "../models/ProjectPurchaseOrder.js";
+import { ProjectPurchaseOrderRevisionModel } from "../models/ProjectPurchaseOrderRevision.js";
 import { ProjectWorkflowTaskModel } from "../models/ProjectWorkflowTask.js";
+import {
+  ProcurementBasketAwardModel,
+  ProcurementBasketAwardRevisionModel
+} from "../models/ProcurementBasketTender.js";
 import { ProcurementReceiptCleanupJobModel } from "../models/ProcurementReceiptCleanupJob.js";
 import { ProcurementReceiptReconciliationJobModel } from "../models/ProcurementReceiptReconciliationJob.js";
 import { UserModel } from "../models/User.js";
@@ -53,6 +59,8 @@ export interface ProcurementExpenseInput {
   description: string;
   vendor?: string | null;
   reference?: string | null;
+  purchaseOrderId?: string | null;
+  paymentMilestoneId?: string | null;
   idempotencyKey: string;
 }
 
@@ -673,7 +681,7 @@ export interface ProcurementService {
   ): Promise<FinanceDocumentDownload>;
 }
 
-interface ApprovedProcurementSnapshot {
+export interface ApprovedProcurementSnapshot {
   estimateId: string;
   estimateVersion: number;
   estimateReviewRoundId: string | null;
@@ -687,25 +695,42 @@ interface ApprovedProcurementSnapshot {
   gstPaise: number;
   totalPaise: number;
   lineItems: ApprovedProcurementLine[];
+  allLineItems: ApprovedProcurementSourceLine[];
+  mainBasketClassifications: Record<string, "standard" | "special">;
 }
 
-interface ApprovedProcurementLine {
+export interface ApprovedProcurementSourceLine {
   key: string;
   sectionId: string;
   sectionLabel: string;
   source?: "legacy" | "configuration";
   itemType?: "main_line" | "temporary";
   catalogueId: string;
+  roomId?: string;
   mainBasketId?: string;
   mainBasketName?: string;
   subBasketId?: string | null;
   mainLineId?: string;
   mainLineName?: string;
   subBasketName?: string | null;
+  revisionId?: string;
+  sourceItemStatus?: "draft" | "active" | "inactive";
+  sourceRevisionStatus?: "draft" | "active" | "superseded";
+  sourceItemVersion?: number;
+  sourceRevisionVersion?: number;
+  uomId?: string;
+  uomCode?: string;
+  uomDecimalScale?: number;
   roomName: string;
   specification: string;
   unit: string;
   quantity: number;
+  included: boolean;
+  amountPaise: number | null;
+}
+
+export interface ApprovedProcurementLine extends ApprovedProcurementSourceLine {
+  included: true;
   amountPaise: number;
 }
 
@@ -722,6 +747,8 @@ interface NormalizedProcurementExpense {
   description: string;
   vendor: string | null;
   reference: string | null;
+  purchaseOrderId: string | null;
+  paymentMilestoneId: string | null;
   idempotencyKey: string;
 }
 
@@ -1015,6 +1042,8 @@ async function postProcurementExpenseInTransaction(
       };
     }
 
+    await requireExpenseOrderLineage(projectId, resolved.snapshot, line, input, session);
+
     const nextDirectSpendPaise = safeAddFinanceAmounts(
       Number(bucket.directSpendPaise ?? 0),
       input.amountPaise,
@@ -1048,6 +1077,8 @@ async function postProcurementExpenseInTransaction(
       reference: input.reference,
       sourceSectionId: line.sectionId,
       sourceLineItemKey: line.key,
+      purchaseOrderId: input.purchaseOrderId,
+      paymentMilestoneId: input.paymentMilestoneId,
       idempotencyKey: input.idempotencyKey,
       status: "posted",
       version: 1,
@@ -1117,6 +1148,10 @@ async function postProcurementExpenseInTransaction(
         estimateVersion: resolved.snapshot.estimateVersion,
         sourceSectionId: line.sectionId,
         sourceLineItemKey: line.key,
+        ...(input.purchaseOrderId === null ? {} : {
+          purchaseOrderId: input.purchaseOrderId,
+          paymentMilestoneId: input.paymentMilestoneId
+        }),
         supportingDocumentId: documentId,
         supportingDocumentMimeType: receipt.mimeType,
         supportingDocumentSize: receipt.sizeBytes
@@ -1405,7 +1440,7 @@ async function approvedProcurementSnapshot(
   return approvedProcurementSnapshotFromRows(estimate, approvedRounds);
 }
 
-function approvedProcurementSnapshotFromRows(
+export function approvedProcurementSnapshotFromRows(
   estimate: Row,
   approvedRounds: readonly Row[]
 ): ApprovedProcurementSnapshot {
@@ -1423,10 +1458,14 @@ function approvedProcurementSnapshotFromRows(
     ) procurementLineageConflict();
     throw error;
   }
-  const lineItems = approvedSnapshotLines(
+  const allLineItems = approvedSnapshotLines(
     approval.snapshot.lineItems,
     String(estimate._id),
     approval.estimateVersion
+  );
+  const mainBasketClassifications = approvedMainBasketClassifications(approval.snapshot);
+  const lineItems = allLineItems.filter(
+    (line): line is ApprovedProcurementLine => line.included && line.amountPaise !== null
   );
   return {
     estimateId: String(estimate._id),
@@ -1441,8 +1480,29 @@ function approvedProcurementSnapshotFromRows(
     subtotalPaise: approval.baseline.approvedSubtotalPaise,
     gstPaise: approval.baseline.approvedGstPaise,
     totalPaise: approval.baseline.approvedContractTotalPaise,
-    lineItems
+    lineItems,
+    allLineItems,
+    mainBasketClassifications
   };
+}
+
+function approvedMainBasketClassifications(snapshot: Row): Record<string, "standard" | "special"> {
+  const value: unknown = snapshot.selectedMainBasketClassifications;
+  if (value === undefined || value === null) return {};
+  if (!Array.isArray(value) || !Array.isArray(snapshot.selectedMainBasketIds)) procurementLineageConflict();
+  const selectedIds = snapshot.selectedMainBasketIds.map((entry: unknown) => requiredStoredText(entry));
+  if (new Set(selectedIds).size !== selectedIds.length || value.length !== selectedIds.length) procurementLineageConflict();
+  const selected = new Set(selectedIds);
+  const classifications: Record<string, "standard" | "special"> = Object.create(null);
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") procurementLineageConflict();
+    const basketId = requiredStoredText((entry as Row).mainBasketId);
+    const classification = (entry as Row).classification;
+    if (!selected.has(basketId) || Object.hasOwn(classifications, basketId) ||
+      (classification !== "standard" && classification !== "special")) procurementLineageConflict();
+    classifications[basketId] = classification;
+  }
+  return classifications;
 }
 
 function syntheticProcurementTask(estimate: Row, projectId: string): Row {
@@ -1467,14 +1527,14 @@ function approvedSnapshotLines(
   value: unknown,
   estimateId: string,
   estimateVersion: number
-): ApprovedProcurementLine[] {
+): ApprovedProcurementSourceLine[] {
   if (!Array.isArray(value)) procurementLineageConflict();
-  const lines = value.map((line: Row, index: number) => ({ line, index }))
-    .filter(({ line }) => line?.included === true)
-    .map(({ line, index }) => {
+  const lines = value.map((line: Row, index: number) => {
     const configured = line.source === "configuration";
     const catalogueId = configured ? requiredStoredText(line.catalogueId) : requiredStoredText(line.catalogueId).toUpperCase();
     const roomName = requiredStoredText(line.roomName);
+    if (typeof line.included !== "boolean") procurementLineageConflict();
+    const included = line.included;
     let key: string;
     try {
       key = approvedEstimateLineItemKey({
@@ -1490,8 +1550,22 @@ function approvedSnapshotLines(
     if (!Number.isFinite(quantity) || quantity < 0) procurementLineageConflict();
     const sectionId = configured ? requiredStoredText(line.mainBasketId) : catalogueId.slice(0, 2) || "OTHER";
     const sectionLabel = configured ? requiredStoredText(line.mainBasketName) : projectWorkflowSectionLabel(sectionId);
-    if (configured && (!configuredEstimateParentIsValid(line) || requiredStoredText(line.mainLineId) !== catalogueId ||
-      !Number.isSafeInteger(line.amountPaise) || Number(line.amountPaise) < 0)) procurementLineageConflict();
+    if (configured && (!configuredEstimateParentIsValid(line) || requiredStoredText(line.mainLineId) !== catalogueId)) {
+      procurementLineageConflict();
+    }
+    const roomId = configured ? requiredStoredText(line.roomId) : optionalStoredText(line.roomId);
+    const revisionId = configured ? optionalStoredText(line.revisionId) : undefined;
+    const uomId = configured ? optionalStoredText(line.uomId) : undefined;
+    const uomCode = configured ? optionalStoredText(line.uomCode) : undefined;
+    const sourceItemStatus = configured ? optionalStoredEnum(line.sourceItemStatus, ["draft", "active", "inactive"] as const) : undefined;
+    const sourceRevisionStatus = configured ? optionalStoredEnum(line.sourceRevisionStatus, ["draft", "active", "superseded"] as const) : undefined;
+    const sourceItemVersion = configured ? optionalStoredPositiveInteger(line.sourceItemVersion) : undefined;
+    const sourceRevisionVersion = configured ? optionalStoredPositiveInteger(line.sourceRevisionVersion) : undefined;
+    const uomDecimalScale = configured ? optionalStoredScale(line.uomDecimalScale) : undefined;
+    const amountPaise = configured
+      ? optionalStoredAmountPaise(line.amountPaise)
+      : line.amount == null ? null : storedRupeesToPaise(line.amount);
+    if (included && amountPaise === null) procurementLineageConflict();
     const subBasketName = configured
       ? line.subBasketName === null ? null : requiredStoredText(line.subBasketName)
       : undefined;
@@ -1503,13 +1577,25 @@ function approvedSnapshotLines(
       ...(configured ? {
         source: "configuration" as const,
         ...(line.itemType === undefined ? {} : { itemType: line.itemType as "main_line" | "temporary" }),
+        roomId,
         mainBasketId: sectionId,
         mainBasketName: sectionLabel,
         subBasketId: line.subBasketId === null ? null : requiredStoredText(line.subBasketId),
         mainLineId: catalogueId,
         mainLineName,
-        subBasketName
-      } : {}),
+        subBasketName,
+        ...(revisionId === undefined ? {} : { revisionId }),
+        ...(sourceItemStatus === undefined ? {} : { sourceItemStatus }),
+        ...(sourceRevisionStatus === undefined ? {} : { sourceRevisionStatus }),
+        ...(sourceItemVersion === undefined ? {} : { sourceItemVersion }),
+        ...(sourceRevisionVersion === undefined ? {} : { sourceRevisionVersion }),
+        ...(uomId === undefined ? {} : { uomId }),
+        ...(uomCode === undefined ? {} : { uomCode }),
+        ...(uomDecimalScale === undefined ? {} : { uomDecimalScale })
+      } : {
+        ...(roomId === undefined ? {} : { roomId }),
+        ...(line.source === "legacy" ? { source: "legacy" as const } : {})
+      }),
       catalogueId,
       roomName,
       specification: configured
@@ -1517,7 +1603,8 @@ function approvedSnapshotLines(
         : requiredStoredText(line.specification),
       unit: requiredStoredText(line.unit),
       quantity,
-      amountPaise: configured ? Number(line.amountPaise) : storedRupeesToPaise(line.amount)
+      included,
+      amountPaise
     };
   });
   if (firstDuplicate(lines.map((line) => line.key))) {
@@ -1651,6 +1738,8 @@ function requireMatchingProcurementReplay(
     nullableText(entry.reference) !== input.reference ||
     nullableText(entry.sourceSectionId) !== line.sectionId ||
     nullableText(entry.sourceLineItemKey) !== line.key ||
+    nullableText(entry.purchaseOrderId) !== input.purchaseOrderId ||
+    nullableText(entry.paymentMilestoneId) !== input.paymentMilestoneId ||
     !document ||
     String(document.sha256) !== receipt.sha256 ||
     String(document.mimeType) !== receipt.mimeType ||
@@ -1662,6 +1751,66 @@ function requireMatchingProcurementReplay(
       "This idempotency key was already used for a different finance entry."
     );
   }
+}
+
+async function requireExpenseOrderLineage(
+  projectId: string,
+  snapshot: ApprovedProcurementSnapshot,
+  line: ApprovedProcurementLine,
+  input: NormalizedProcurementExpense,
+  session: ClientSession
+): Promise<void> {
+  if (input.purchaseOrderId === null || input.paymentMilestoneId === null) return;
+  const order = await ProjectPurchaseOrderModel.findOne({
+    _id: input.purchaseOrderId,
+    projectId,
+    status: "approved",
+    cancelledAt: null,
+    tenderAwardId: { $type: "string" },
+    approvedRevisionId: { $type: "string" },
+    estimateId: snapshot.estimateId,
+    estimateVersion: snapshot.estimateVersion,
+    estimateReviewRoundId: snapshot.estimateReviewRoundId
+  }).session(session).lean();
+  if (!order) expenseOrderConflict();
+  const awardId = String(order.tenderAwardId);
+  const revision = await ProjectPurchaseOrderRevisionModel.findOne({
+    _id: order.approvedRevisionId,
+    orderId: order._id,
+    projectId,
+    tenderAwardId: awardId,
+    revision: order.approvedRevision,
+    estimateId: snapshot.estimateId,
+    estimateVersion: snapshot.estimateVersion,
+    estimateReviewRoundId: snapshot.estimateReviewRoundId
+  }).session(session).lean();
+  const award = await ProcurementBasketAwardModel.findOne({
+    _id: awardId,
+    projectId,
+    status: "issued",
+    issuedPurchaseOrderId: order._id
+  }).session(session).lean();
+  if (!revision || !award || !Array.isArray(revision.lines) ||
+    !revision.lines.some((candidate: Row) =>
+      candidate.sourceLineItemKey === line.key && candidate.sourceSectionId === line.sectionId)) {
+    expenseOrderConflict();
+  }
+  const proposal = await ProcurementBasketAwardRevisionModel.findOne({
+    _id: award.currentProposalRevisionId,
+    awardId,
+    projectId,
+    boqRevisionId: award.boqRevisionId,
+    vendorId: order.vendorId
+  }).session(session).lean();
+  if (!proposal || !Array.isArray(proposal.milestones) ||
+    proposal.milestones.filter((milestone: Row) => milestone.id === input.paymentMilestoneId).length !== 1) {
+    expenseOrderConflict();
+  }
+}
+
+function expenseOrderConflict(): never {
+  throw new ApiError(409, "PROCUREMENT_EXPENSE_ORDER_CONFLICT",
+    "The purchase order or payment milestone does not match this approved expense source.");
 }
 
 function requireProcurementDocumentLineage(
@@ -1752,6 +1901,11 @@ function normalizeExpenseInput(
   if (Number.isNaN(incurredAt.getTime())) {
     throw validationError("incurredAt", "Enter a valid incurred date and time.");
   }
+  const purchaseOrderId = optionalText(input.purchaseOrderId, "purchaseOrderId", 500);
+  const paymentMilestoneId = optionalText(input.paymentMilestoneId, "paymentMilestoneId", 500);
+  if ((purchaseOrderId === null) !== (paymentMilestoneId === null)) {
+    throw validationError("paymentMilestoneId", "Purchase order and payment milestone must be supplied together.");
+  }
   return {
     sourceLineItemKey: requiredText(
       input.sourceLineItemKey,
@@ -1763,6 +1917,8 @@ function normalizeExpenseInput(
     description: requiredText(input.description, "description", 1_000),
     vendor: optionalText(input.vendor, "vendor", 200),
     reference: optionalText(input.reference, "reference", 200),
+    purchaseOrderId,
+    paymentMilestoneId,
     idempotencyKey: requiredText(
       input.idempotencyKey,
       "idempotencyKey",
@@ -2247,6 +2403,37 @@ function storedRupeesToPaise(value: unknown): number {
 function requiredStoredText(value: unknown): string {
   if (typeof value !== "string" || !value.trim()) procurementLineageConflict();
   return value.trim();
+}
+
+function optionalStoredText(value: unknown): string | undefined {
+  return value == null ? undefined : requiredStoredText(value);
+}
+
+function optionalStoredEnum<const T extends string>(
+  value: unknown,
+  options: readonly T[]
+): T | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "string" || !options.includes(value as T)) procurementLineageConflict();
+  return value as T;
+}
+
+function optionalStoredPositiveInteger(value: unknown): number | undefined {
+  if (value == null) return undefined;
+  if (!Number.isSafeInteger(value) || Number(value) < 1) procurementLineageConflict();
+  return Number(value);
+}
+
+function optionalStoredScale(value: unknown): number | undefined {
+  if (value == null) return undefined;
+  if (!Number.isSafeInteger(value) || Number(value) < 0 || Number(value) > 3) procurementLineageConflict();
+  return Number(value);
+}
+
+function optionalStoredAmountPaise(value: unknown): number | null {
+  if (value == null) return null;
+  if (!Number.isSafeInteger(value) || Number(value) < 0) procurementLineageConflict();
+  return Number(value);
 }
 
 function requiredText(

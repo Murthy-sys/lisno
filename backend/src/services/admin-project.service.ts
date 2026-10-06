@@ -2,6 +2,7 @@ import { createProjectDesignWorkflow } from "../domain/design-workflow.js";
 import { randomUUID } from "node:crypto";
 
 import { normalizeEmail } from "../domain/email.js";
+import { confirmedCity } from "../domain/procurement-city.js";
 import { ApiError } from "../middleware/errors.js";
 import type {
   AdminProjectListInput,
@@ -22,10 +23,11 @@ export interface InitiateAdminProjectInput {
   clientEmail: string;
   clientMobile: string;
   projectName: string;
-  location: string;
+  location?: string;
+  cityName?: string | null;
   propertyType: string;
-  budgetMin: number;
-  budgetMax: number;
+  budgetMin?: number;
+  budgetMax?: number;
   nextAction: string;
   nextActionAt: string;
   estimatorId?: string;
@@ -123,6 +125,7 @@ export function createAdminProjectService(
         }
 
         const occurredAt = clock();
+        const city = confirmedCity(input.cityName);
         const timestamp = occurredAt.toISOString();
         const plannedEndAt = new Date(occurredAt);
         plannedEndAt.setUTCDate(plannedEndAt.getUTCDate() + 90);
@@ -136,13 +139,16 @@ export function createAdminProjectService(
           clientEmail: input.clientEmail,
           clientEmailNormalized: emailNormalized,
           clientMobile: input.clientMobile,
-          clientAddress: input.location,
+          clientAddress: input.location ?? "",
           initiatingDesignerId: null,
           assignedEstimatorId: estimator.id,
           assignedDesignerIds: [],
           managerId: null,
+          programManagerId: null,
           status: "planning",
-          location: input.location,
+          location: input.location ?? "",
+          cityName: city?.name ?? null,
+          cityKey: city?.key ?? null,
           plannedStartAt: timestamp,
           plannedEndAt: plannedEndAt.toISOString(),
           actualStartAt: null,
@@ -170,10 +176,12 @@ export function createAdminProjectService(
           clientEmail: input.clientEmail,
           clientMobile: input.clientMobile,
           projectName: input.projectName,
-          location: input.location,
+          location: input.location ?? "",
+          cityName: city?.name ?? null,
+          cityKey: city?.key ?? null,
           propertyType: input.propertyType,
-          budgetMin: input.budgetMin,
-          budgetMax: input.budgetMax,
+          budgetMin: input.budgetMin ?? null,
+          budgetMax: input.budgetMax ?? null,
           source: "admin_project",
           stage: "new_lead",
           nextAction: input.nextAction,
@@ -193,7 +201,7 @@ export function createAdminProjectService(
           entityType: "project",
           entityId: createdProject.id,
           occurredAt: timestamp,
-          newValues: { status: "planning", assignedEstimatorId: estimator.id }
+          newValues: { status: "planning", assignedEstimatorId: estimator.id, ...(city ? { cityName: city.name, cityKey: city.key } : {}) }
         }, transaction);
         await audit.append({
           actorId: initiator.id,

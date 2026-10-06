@@ -951,6 +951,7 @@ function mapSnapshot(row: Row): EstimateClientReviewSnapshot {
         ...common,
         source: "configuration" as const,
         ...(lineItem.itemType === undefined ? {} : { itemType: stringField(lineItem, "itemType") as "main_line" | "temporary" }),
+        classification: lineItem.classification === "special" ? "special" as const : "standard" as const,
         specification: null,
         rate: lineItem.rate === null ? null : numberField(lineItem, "rate"),
         amount: lineItem.amount === null ? null : numberField(lineItem, "amount"),
@@ -986,7 +987,14 @@ function mapSnapshot(row: Row): EstimateClientReviewSnapshot {
     ...(row.subtotalPaise === undefined ? {} : { subtotalPaise: numberField(row, "subtotalPaise") }),
     ...(row.gstPaise === undefined ? {} : { gstPaise: numberField(row, "gstPaise") }),
     ...(row.totalPaise === undefined ? {} : { totalPaise: numberField(row, "totalPaise") }),
-    ...(Array.isArray(row.selectedMainBasketIds) ? { selectedMainBasketIds: row.selectedMainBasketIds.map(String) } : {})
+    ...(Array.isArray(row.selectedMainBasketIds) ? {
+      selectedMainBasketIds: row.selectedMainBasketIds.map(String),
+      selectedMainBasketClassifications: row.selectedMainBasketIds.map((id) => ({
+        mainBasketId: String(id),
+        classification: arrayField(row, "selectedMainBasketClassifications").some((entry) =>
+          entry.mainBasketId === String(id) && entry.classification === "special") ? "special" as const : "standard" as const
+      }))
+    } : {})
   };
 }
 

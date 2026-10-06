@@ -432,7 +432,9 @@ describe("project finance lifecycle and ledger", () => {
       createProject(overdueProjectId, "Overdue Residence", {
         plannedEndAt: new Date("2026-08-20T09:00:00.000Z")
       }),
-      createProject(pendingDesignProjectId, "Pending Design Residence")
+      createProject(pendingDesignProjectId, "Pending Design Residence", {
+        approvedMoney: { subtotalRupees: 500_000, gstRupees: 90_000, totalRupees: 590_000 }
+      })
     ]);
     await mongoose.connection.transaction(async (session) => {
       await ensurePendingProjectFinanceBucket(
@@ -440,7 +442,8 @@ describe("project finance lifecycle and ledger", () => {
         session
       );
       await ensurePendingProjectFinanceBucket(
-        approvedBudgetInput(pendingDesignProjectId),
+        { ...approvedBudgetInput(pendingDesignProjectId), approvedSubtotalRupees: 500_000,
+          approvedGstRupees: 90_000, approvedContractTotalRupees: 590_000 },
         session
       );
       await openProjectFinanceBucket({
@@ -485,6 +488,11 @@ describe("project finance lifecycle and ledger", () => {
       10_000,
       "portfolio-procurement-entry"
     );
+    await seedHistoricalProcurementExpense(
+      pendingDesignProjectId,
+      21_000,
+      "portfolio-second-procurement-entry"
+    );
     await service.postEntry(superAdminActor(), overdueProjectId, {
       ...common,
       type: "direct_spend",
@@ -520,20 +528,20 @@ describe("project finance lifecycle and ledger", () => {
     expect(page.total).toBe(2);
     expect(page.summary).toEqual({
       projectCount: 2,
-      approvedContractTotalPaise: 236_000_000,
-      approvedGstPaise: 36_000_000,
-      approvedSubtotalPaise: 200_000_000,
-      targetProfitPaise: 40_000_000,
-      costBudgetPaise: 160_000_000,
-      procurementCostPaise: 10_000,
+      approvedContractTotalPaise: 177_000_000,
+      approvedGstPaise: 27_000_000,
+      approvedSubtotalPaise: 150_000_000,
+      targetProfitPaise: 30_000_000,
+      costBudgetPaise: 120_000_000,
+      procurementCostPaise: 31_000,
       employeePaymentPaise: 20_000,
       otherExpensePaise: 5_000,
-      directSpendPaise: 35_000,
+      directSpendPaise: 56_000,
       overheadPaise: 3_000,
-      recordedCostPaise: 38_000,
-      remainingBudgetPaise: 159_962_000,
-      currentProfitPaise: 199_962_000,
-      currentMarginBps: 9_998,
+      recordedCostPaise: 59_000,
+      remainingBudgetPaise: 119_941_000,
+      currentProfitPaise: 149_941_000,
+      currentMarginBps: 9_996,
       overBudgetProjectCount: 0,
       overdueProjectCount: 1,
       lateCompletedProjectCount: 0,
@@ -550,6 +558,9 @@ describe("project finance lifecycle and ledger", () => {
         deadlineStatus: "overdue",
         overdueTaskCount: 1
       });
+    await expect(service.getBucket(superAdminActor(), pendingDesignProjectId))
+      .resolves.toMatchObject({ approvedSubtotalPaise: 50_000_000,
+        procurementCostPaise: 21_000, recordedCostPaise: 21_000 });
     await expect(service.getBucket(superAdminActor(), pendingDesignProjectId))
       .resolves.toMatchObject({ status: "pending_design" });
   });

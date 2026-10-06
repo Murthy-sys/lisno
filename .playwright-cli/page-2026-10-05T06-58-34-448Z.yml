@@ -1,0 +1,56 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - link "Skip to main content" [ref=e4] [cursor=pointer]:
+        - /url: "#main-content"
+      - complementary "Application sidebar" [ref=e5]:
+        - generic [ref=e6]:
+          - generic [ref=e7]:
+            - img "Lisno" [ref=e8]
+            - generic [ref=e9]: INTERIOR WORKSPACE
+          - navigation "Primary navigation" [ref=e10]:
+            - generic [ref=e11]:
+              - button "Procurement" [expanded] [ref=e12] [cursor=pointer]
+              - group "Procurement sections" [ref=e20]:
+                - link "Projects" [ref=e21] [cursor=pointer]:
+                  - /url: /procurement
+                - link "Vendors" [ref=e25] [cursor=pointer]:
+                  - /url: /procurement/vendors
+            - link "My access requests" [ref=e30] [cursor=pointer]:
+              - /url: /access-requests/mine
+            - link "Home" [ref=e36] [cursor=pointer]:
+              - /url: /home
+      - banner "Workspace tools" [ref=e40]:
+        - generic [ref=e41]:
+          - button "View daily critical tasks" [ref=e42] [cursor=pointer]:
+            - generic [ref=e43]: Critical tasks
+          - button "Notifications" [ref=e46] [cursor=pointer]
+          - button "Synthetic workspace reviewer" [ref=e51] [cursor=pointer]:
+            - generic [aria-hidden] [ref=e52]: SW
+            - generic [ref=e53]:
+              - generic [ref=e54]: Synthetic workspace reviewer
+              - generic [ref=e55]: Procurement
+      - main [ref=e58]:
+        - region [ref=e59]:
+          - generic [ref=e60]:
+            - link "Back to projects" [ref=e62] [cursor=pointer]:
+              - /url: /procurement
+            - generic [ref=e63]:
+              - generic [ref=e64]: Project procurement
+              - heading "Aurora Villa" [level=1] [ref=e66]
+              - paragraph [ref=e67]: Plan each main basket, compare vendor BOQs and issue approved work orders.
+          - button "Project status" [ref=e68] [cursor=pointer]
+          - region "Project baskets" [ref=e72]:
+            - navigation "Procurement breadcrumb" [ref=e73]:
+              - button "Projects" [disabled] [ref=e74]
+              - generic [aria-hidden] [ref=e75]: /
+              - button "Aurora Villa" [disabled] [ref=e76]
+          - region "Earlier procurement work" [ref=e80]:
+            - group [ref=e81]:
+              - generic "History and open purchase requests" [ref=e82] [cursor=pointer]
+            - group [ref=e83]:
+              - generic "Existing vendor work progress" [ref=e84] [cursor=pointer]
+    - status "Application announcements" [ref=e85]
+    - region "Notifications"
+  - status "Content status":
+    - generic: Loading approved main baskets…

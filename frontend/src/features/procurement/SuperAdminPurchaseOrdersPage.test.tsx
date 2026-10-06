@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
 import { SuperAdminPurchaseOrdersPage } from "./SuperAdminPurchaseOrdersPage";
-import type { PurchaseOrder } from "./purchaseOrderApi";
+import type { PurchaseOrder, PurchaseOrderRequestModeSnapshot } from "./purchaseOrderApi";
 
 vi.mock("../../auth/AuthProvider", () => ({
   useAuth: () => ({ authorization: { role: "super_admin", permissions: ["procurement.purchase_orders.approve"] } })
@@ -39,7 +39,7 @@ const projectRequest = {
   approvedOrderIds: [], decisions: [], revisions: [{
     id: "request-revision-two", revision: 2, submittedAt: "2026-10-01T00:00:00.000Z", submittedById: "buyer-one",
     preparationDigest: "a".repeat(64), approvedEstimatePaise: 900000, committedPaise: 400000, committedGstPaise: 0,
-    committedTotalPaise: 400000, remainingPaise: 500000,
+    committedTotalPaise: 400000, remainingPaise: 500000, modeSnapshotStatus: "historical_unavailable", modeSnapshots: [],
     totals: { netPaise: 600000, gstPaise: 108000, totalPaise: 708000 },
     sectionTotals: [
       { sectionId: "KIT", label: "Kitchen", totals: { netPaise: 400000, gstPaise: 72000, totalPaise: 472000 } },
@@ -67,6 +67,52 @@ const projectRequest = {
   createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z"
 };
 
+const modeSnapshot: PurchaseOrderRequestModeSnapshot = {
+  sourceLineItemKey: "estimate-line-one", source: "configuration",
+  roomId: "room-kitchen", roomName: "Kitchen", mainBasketId: "basket-cabinetry", mainBasketName: "Cabinetry",
+  subBasketId: "sub-cabinets", subBasketName: "Base cabinets", mainLineId: "main-cabinet", mainLineName: "Kitchen cabinetry",
+  approvedQuantity: "2", approvedUnit: "sq ft", approvedAmountPaise: 500000, referenceAsOf: "2026-10-01T00:00:00.000Z",
+  mode: {
+    state: "ready", options: [{ key: "pmc", label: "PMC" }],
+    decision: { id: "decision-one", version: 3, sourceLineItemKey: "estimate-line-one", mode: "pmc", quantity: "2",
+      discountBps: 0, markupBasis: "starting", exceptionReason: null, revisionId: "configuration-revision-one",
+      revisionDigest: "b".repeat(64), updatedAt: "2026-09-30T00:00:00.000Z" },
+    preview: { formulaVersion: "v1", mode: "pmc", quantity: "2", quantityScale: 0, baseCostPaise: 240000,
+      adjustedCostPaise: 250000, lowQuantityImpactPaise: 10000, sellingPaise: 320000, finalVendorChargesPaise: null, floorSellingPaise: 280000,
+      marginBps: 2800, appliedImpactBps: 400, discountBps: 0, discountAmountPaise: 0,
+      quantityRule: null, procurementQuantitySuggestion: "2", components: [],
+      settings: { scopes: [{ scope: "pmc", source: "scoped", baseRatePaise: 120000, lowQuantityLimit: "3",
+        impactBps: 400, minimumMarkupBps: 1200, startingMarkupBps: 2800 }], configuredMarginBps: 2800, markupBasis: "starting" } },
+    issues: [], revision: { id: "configuration-revision-one", version: 4, status: "active", contentDigest: "b".repeat(64) },
+    uom: { id: "uom-sqft", code: "sq ft", decimalScale: 0 }, priceReferences: {
+      "item-one": { state: "ready", priceVersionId: "price-one", priceVersionNumber: 2, taxVersionId: "tax-one",
+        taxVersionNumber: 1, unitPricePaise: 300000, gstBasisPoints: 1800, treatment: "exclusive",
+        effectiveFrom: "2026-09-01T00:00:00.000Z", effectiveTo: null, issues: [] },
+      "item-three": { state: "ready", priceVersionId: "price-three", priceVersionNumber: 1, taxVersionId: "tax-one",
+        taxVersionNumber: 1, unitPricePaise: 100000, gstBasisPoints: 1800, treatment: "exclusive",
+        effectiveFrom: "2026-09-01T00:00:00.000Z", effectiveTo: null, issues: [] }
+    }
+  },
+  actualChildren: [
+    { procurementItemId: "item-one", vendorId: "vendor-one", quantityMilliUnits: 1000, unitPricePaise: 300000,
+      gstBasisPoints: 1800, allocatedWorkPaise: 400000, netPaise: 300000, gstPaise: 54000, totalPaise: 354000,
+      commercialExceptionReason: null },
+    { procurementItemId: "item-three", vendorId: "vendor-one", quantityMilliUnits: 1000, unitPricePaise: 100000,
+      gstBasisPoints: 1800, allocatedWorkPaise: 100000, netPaise: 100000, gstPaise: 18000, totalPaise: 118000,
+      commercialExceptionReason: null }
+  ],
+  actualTotals: { netPaise: 400000, gstPaise: 72000, totalPaise: 472000 }, actualNetMinusConfiguredCostPaise: 150000
+};
+
+const capturedRequest = { ...projectRequest, revisions: projectRequest.revisions.map((revision) => ({
+  ...revision, modeSnapshotStatus: "captured", modeSnapshots: [modeSnapshot],
+  lines: [{ ...revision.lines[0], quantityMilliUnits: 1000, unitPricePaise: 300000, netPaise: 300000,
+    gstPaise: 54000, totalPaise: 354000, allocatedWorkPaise: 400000 },
+    { ...revision.lines[0], id: "line-three", procurementItemId: "item-three", itemName: "Cabinet fitting",
+      quantityMilliUnits: 1000, unitPricePaise: 100000, netPaise: 100000, gstPaise: 18000, totalPaise: 118000,
+      allocatedWorkPaise: 100000 }, revision.lines[1]]
+})) };
+
 beforeEach(() => {
   vi.stubGlobal("crypto", { randomUUID: () => "key-12345678" });
   server.use(
@@ -77,6 +123,127 @@ beforeEach(() => {
 });
 
 describe("Super Admin purchase order approval", () => {
+  it("preserves a negative frozen Sub-Vendor balance as signed internal evidence", async () => {
+    const subVendorSnapshot: PurchaseOrderRequestModeSnapshot = { ...modeSnapshot, mode: { ...modeSnapshot.mode,
+      options: [{ key: "sub_vendor", label: "Sub-Vendor" }],
+      decision: { ...modeSnapshot.mode.decision!, mode: "sub_vendor" },
+      preview: { ...modeSnapshot.mode.preview!, mode: "sub_vendor", finalVendorChargesPaise: -6123 } } };
+    const request = { ...capturedRequest, revisions: capturedRequest.revisions.map((revision) => ({
+      ...revision, modeSnapshots: [subVendorSnapshot]
+    })) };
+    server.use(http.get("/api/v1/admin/purchase-order-requests/pending", () => HttpResponse.json({ data: {
+      items: [request], total: 1, limit: 50, offset: 0
+    } })));
+    const user = userEvent.setup();
+    renderWithQuery(<SuperAdminPurchaseOrdersPage />);
+    await user.click(await screen.findByRole("button", { name: /Aurora Villa/ }));
+    const review = screen.getByRole("form", { name: "Review Aurora Villa purchase order request" });
+    const reconciliation = within(review).getByRole("article", { name: "Kitchen cabinetry mode and vendor reconciliation" });
+    expect(within(reconciliation).getByText("Configured Sub-Vendor balance (signed)").parentElement).toHaveTextContent("-₹61.23");
+    expect(within(reconciliation).getByText("Actual vendor net").parentElement).toHaveTextContent("₹4,000.00");
+  });
+
+  it("shows one frozen configured benchmark beside the total of two actual vendor children", async () => {
+    server.use(http.get("/api/v1/admin/purchase-order-requests/pending", () => HttpResponse.json({ data: {
+      items: [capturedRequest], total: 1, limit: 50, offset: 0
+    } })));
+    const user = userEvent.setup();
+    renderWithQuery(<SuperAdminPurchaseOrdersPage />);
+    await user.click(await screen.findByRole("button", { name: /Aurora Villa/ }));
+    const review = screen.getByRole("form", { name: "Review Aurora Villa purchase order request" });
+    const reconciliation = within(review).getByRole("article", { name: "Kitchen cabinetry mode and vendor reconciliation" });
+    expect(within(reconciliation).getByText("Configured cost benchmark").parentElement).toHaveTextContent("₹2,500.00");
+    expect(within(reconciliation).getAllByText("₹2,500.00")).toHaveLength(1);
+    expect(within(reconciliation).getByText("Approved customer estimate").parentElement).toHaveTextContent("₹5,000.00");
+    expect(within(reconciliation).getByText("Actual vendor net").parentElement).toHaveTextContent("₹4,000.00");
+    expect(within(reconciliation).getByText("Actual GST").parentElement).toHaveTextContent("₹720.00");
+    expect(within(reconciliation).getByText("Actual vendor gross").parentElement).toHaveTextContent("₹4,720.00");
+    expect(within(reconciliation).getByText("Vendor net − configured cost").parentElement).toHaveTextContent("₹1,500.00");
+    await user.click(within(reconciliation).getByText("Calculation, source and vendor line evidence"));
+    expect(within(reconciliation).getByRole("heading", { name: "Saved mode settings" })).toBeVisible();
+    expect(within(reconciliation).getByText(/Low quantity limit 3/)).toBeVisible();
+    expect(within(reconciliation).getByText("Cabinet fitting")).toBeVisible();
+    expect(within(reconciliation).getByText(/Price version 2/)).toBeVisible();
+    expect(within(reconciliation).getByText(/Price version 1/)).toBeVisible();
+    expect((await axe.run(review, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  });
+
+  it("shows unverified saved values and requires a separate approval reason", async () => {
+    const decisions: unknown[] = [];
+    const recoveredSnapshot: PurchaseOrderRequestModeSnapshot = { ...modeSnapshot, mode: { ...modeSnapshot.mode,
+      integrity: { status: "mismatch", activatedDigest: "b".repeat(64), observedDigest: "c".repeat(64),
+        candidateAvailability: [{ key: "pmc", label: "PMC", available: true, issues: [] }] },
+      decision: { ...modeSnapshot.mode.decision!, integrityBasis: { kind: "observed_unverified",
+        activatedDigest: "b".repeat(64), observedDigest: "c".repeat(64),
+        reason: "The current saved PMC rate was checked against the supplier scope.",
+        actorId: "buyer-one", acknowledgedAt: "2026-10-01T00:00:00.000Z" } }
+    } };
+    const request = { ...capturedRequest, revisions: capturedRequest.revisions.map((item) => ({
+      ...item, modeSnapshots: [recoveredSnapshot]
+    })) };
+    server.use(
+      http.get("/api/v1/admin/purchase-order-requests/pending", () => HttpResponse.json({ data: {
+        items: [request], total: 1, limit: 50, offset: 0
+      } })),
+      http.post("/api/v1/admin/purchase-order-requests/request-project-one/decision", async ({ request: call }) => {
+        decisions.push(await call.json());
+        return HttpResponse.json({ data: { ...request, status: "approved", version: 5 } });
+      })
+    );
+    const user = userEvent.setup();
+    renderWithQuery(<SuperAdminPurchaseOrdersPage />);
+    await user.click(await screen.findByRole("button", { name: /Aurora Villa/ }));
+    const form = screen.getByRole("form", { name: "Review Aurora Villa purchase order request" });
+    expect(within(form).getByText(/current saved Configuration values that could not be verified/)).toBeVisible();
+    const reconciliation = within(form).getByRole("article", { name: "Kitchen cabinetry mode and vendor reconciliation" });
+    expect(within(reconciliation).getByText("Unverified saved Configuration values")).toBeVisible();
+    expect(within(reconciliation).getByText(/current saved PMC rate was checked/)).toBeVisible();
+    await user.type(within(form).getByRole("textbox", { name: "Budget override reason" }), "Client approved the additional supplier cost");
+    await user.click(within(form).getByRole("button", { name: "Approve all vendor orders" }));
+    expect(decisions).toHaveLength(0);
+    expect(within(form).getByRole("textbox", { name: "Unverified configuration approval reason" })).toBeInvalid();
+    await user.type(within(form).getByRole("textbox", { name: "Unverified configuration approval reason" }), "I reviewed the saved PMC calculation and buyer's reason");
+    await user.click(within(form).getByRole("button", { name: "Approve all vendor orders" }));
+    await waitFor(() => expect(decisions).toHaveLength(1));
+    expect(decisions[0]).toMatchObject({ decision: "approve",
+      reason: "I reviewed the saved PMC calculation and buyer's reason",
+      budgetOverrideReason: "Client approved the additional supplier cost" });
+  });
+
+  it("labels historical evidence as uncaptured and does not infer a mode from vendor lines", async () => {
+    server.use(http.get("/api/v1/admin/purchase-order-requests/pending", () => HttpResponse.json({ data: {
+      items: [projectRequest], total: 1, limit: 50, offset: 0
+    } })));
+    const user = userEvent.setup();
+    renderWithQuery(<SuperAdminPurchaseOrdersPage />);
+    await user.click(await screen.findByRole("button", { name: /Aurora Villa/ }));
+    const review = screen.getByRole("form", { name: "Review Aurora Villa purchase order request" });
+    expect(within(review).getByText("Mode and price evidence was not captured for this historical revision.")).toBeVisible();
+    expect(within(review).queryByText("Configured cost benchmark")).not.toBeInTheDocument();
+  });
+
+  it("surfaces missing price references and manual commercial reasons on the frozen line", async () => {
+    const exceptionSnapshot: PurchaseOrderRequestModeSnapshot = { ...modeSnapshot,
+      mode: { ...modeSnapshot.mode, state: "exception", decision: { ...modeSnapshot.mode.decision!, exceptionReason: "No current specification rate" },
+        priceReferences: { ...modeSnapshot.mode.priceReferences,
+          "item-three": { state: "unavailable", priceVersionId: null, priceVersionNumber: null, taxVersionId: null,
+            taxVersionNumber: null, unitPricePaise: null, gstBasisPoints: null, treatment: null, effectiveFrom: null,
+            effectiveTo: null, issues: [{ code: "missing_price", message: "No effective vendor price version" }] } } },
+      actualChildren: [modeSnapshot.actualChildren[0], { ...modeSnapshot.actualChildren[1], commercialExceptionReason: "Supplier quoted an alternate finish" }]
+    };
+    server.use(http.get("/api/v1/admin/purchase-order-requests/pending", () => HttpResponse.json({ data: {
+      items: [{ ...capturedRequest, revisions: capturedRequest.revisions.map((revision) => ({ ...revision,
+        modeSnapshots: [exceptionSnapshot] })) }], total: 1, limit: 50, offset: 0
+    } })));
+    const user = userEvent.setup();
+    renderWithQuery(<SuperAdminPurchaseOrdersPage />);
+    await user.click(await screen.findByRole("button", { name: /Aurora Villa/ }));
+    const reconciliation = screen.getByRole("article", { name: "Kitchen cabinetry mode and vendor reconciliation" });
+    expect(within(reconciliation).getByText("Price or tax reference: No effective vendor price version")).toBeVisible();
+    expect(within(reconciliation).getByText("Manual exception: No current specification rate")).toBeVisible();
+    expect(within(reconciliation).getByText("Manual exception: Supplier quoted an alternate finish")).toBeVisible();
+  });
+
   it("returns focus to each queue row when its review is closed", async () => {
     server.use(http.get("/api/v1/admin/purchase-order-requests/pending", () => HttpResponse.json({ data: {
       items: [projectRequest], total: 1, limit: 50, offset: 0

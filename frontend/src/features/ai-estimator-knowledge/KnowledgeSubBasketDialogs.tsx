@@ -298,12 +298,13 @@ export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocu
               : impact ? <div className="knowledge-basket-delete__impact">
                 <dl>
                   <div><dt>Items deleted with it</dt><dd>{impact.mainLineCount}</dd></div>
-                  <div><dt>References removed elsewhere</dt><dd>{impact.referenceCount}</dd></div>
+                  <div><dt>References in other configurations</dt><dd>{impact.referenceCount}</dd></div>
                 </dl>
                 {(impact.vendorReferenceCount ?? 0) > 0 ? <InlineMessage tone="error" title="Permanent deletion is blocked">{impact.vendorReferenceCount} retained vendors reference this Sub Basket. Reassign their classification before deleting it.</InlineMessage> : null}
                 <InlineMessage tone="warning" title="This action cannot be undone">
                   {impact.mainLineCount ? "All items in this Sub-Basket, their revisions, sections and price versions will be deleted." : "This Sub-Basket is empty. Deleting it removes the group itself."}
-                  {" "}References to this group and its items will be removed. Its Main Basket and sibling groups remain.
+                  {" "}Draft references to this group and its items will be removed. Active and superseded revisions keep
+                  their history and show deleted targets as unavailable. Its Main Basket and sibling groups remain.
                 </InlineMessage>
               </div> : null}
             {conflict ? <InlineMessage tone="warning" title="Deletion impact changed">

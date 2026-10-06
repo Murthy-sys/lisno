@@ -111,16 +111,14 @@ async function fillForm(user: ReturnType<typeof userEvent.setup>, select = true)
     "Client email": "asha@example.com",
     Mobile: "+91 90000 00000",
     "Project / property name": "Asha home",
-    Location: "Pune",
-    "Property type": "3BHK",
-    "Minimum budget": "800000",
-    "Maximum budget": "1200000",
     "Next action": "Schedule site visit",
-    "Next action date": "2026-08-25T10:30"
   } as const;
   for (const [name, value] of Object.entries(fields)) {
     await user.type(screen.getByLabelText(requiredLabel(name)), value);
   }
+  await user.selectOptions(screen.getByRole("combobox", { name: "Property type" }), "3BHK");
+  await user.click(screen.getByRole("button", { name: "Next action date" }));
+  await user.click(screen.getByRole("button", { name: "Today" }));
   if (select) await selectEstimator(user);
 }
 
@@ -137,17 +135,16 @@ describe("AdminProjectInitiationDialog", () => {
       "Client email",
       "Mobile",
       "Project / property name",
-      "Location",
       "Property type",
-      "Minimum budget",
-      "Maximum budget",
       "Next action",
-      "Next action date",
       "Sales"
     ]) {
       expect(within(dialog).getByLabelText(requiredLabel(name))).toBeRequired();
     }
-    for (const name of ["Source", "Lead source", "Builder", "Area", "Target handover", "Notes"]) {
+    expect(screen.getByRole("button", { name: "Next action date" })).toHaveAttribute("aria-required", "true");
+    expect(screen.queryByLabelText("Next action time")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("combobox", { name: "Property type" })).getAllByRole("option").map((option) => option.textContent)).toEqual(["Select property type", "1BHK", "2BHK", "2.5BHK", "3BHK", "3.5BHK", "4BHK", "Villa", "Penthouse", "Studio", "Duplex"]);
+    for (const name of ["Location", "Minimum budget", "Maximum budget", "Source", "Lead source", "Builder", "Area", "Target handover", "Notes"]) {
       expect(within(dialog).queryByLabelText(name)).not.toBeInTheDocument();
     }
   });
@@ -238,17 +235,39 @@ describe("AdminProjectInitiationDialog", () => {
       clientEmail: "asha@example.com",
       clientMobile: "+91 90000 00000",
       projectName: "Asha home",
-      location: "Pune",
       propertyType: "3BHK",
-      budgetMin: 800000,
-      budgetMax: 1200000,
       nextAction: "Schedule site visit",
       nextActionAt: expect.stringMatching(/Z$/),
       estimatorId: "estimator-1"
     });
     expect(body).not.toHaveProperty("source");
+    expect(body).not.toHaveProperty("location");
+    expect(body).not.toHaveProperty("budgetMin");
+    expect(body).not.toHaveProperty("budgetMax");
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    expect(body).toHaveProperty("nextActionAt", today.toISOString());
     release();
     expect(await screen.findByText("The Sales handoff is ready.")).toBeVisible();
+  });
+
+  it("captures a confirmed project city separately from the address", async () => {
+    let body: Record<string, unknown> | undefined;
+    server.use(
+      http.get("/api/v1/admin/estimators", () => HttpResponse.json(estimatorPage())),
+      http.post("/api/v1/admin/projects", async ({ request }) => {
+        body = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ data: createdProject }, { status: 201 });
+      })
+    );
+    const user = userEvent.setup();
+    renderDialog();
+    await fillForm(user);
+    const city = screen.getByRole("textbox", { name: "Project city" });
+    expect(city).not.toBeRequired();
+    await user.type(city, "  Pune  ");
+    await user.click(screen.getByRole("button", { name: "Initiate project" }));
+    await waitFor(() => expect(body).toMatchObject({ cityName: "Pune" }));
   });
 
   it("retains every value, renders field feedback, and focuses the first server-invalid control", async () => {
@@ -342,10 +361,7 @@ describe("AdminProjectInitiationDialog", () => {
       clientEmail: "asha@example.com",
       clientMobile: "+91 90000 00000",
       projectName: "Asha home",
-      location: "Pune",
       propertyType: "3BHK",
-      budgetMin: 800000,
-      budgetMax: 1200000,
       nextAction: "Schedule site visit",
       nextActionAt: expect.stringMatching(/Z$/),
       salesManagerId: "sales-manager-2"

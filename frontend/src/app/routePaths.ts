@@ -5,6 +5,7 @@ const roleHomePaths: Record<Role, string> = {
   admin: "/admin/projects",
   designer: "/designer",
   procurement: "/home",
+  program_manager: "/work-order-approvals",
   vendor: "/vendor",
   finance_head: "/home",
   site_manager: "/home",

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { cityNameSchema } from "../domain/procurement-city.js";
 
 import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
@@ -11,7 +12,7 @@ import type { LeadService } from "../services/lead.service.js";
 const stages = ["new_lead", "contacted", "site_visit", "design_meeting", "estimate_in_progress", "estimate_sent", "negotiation", "won", "lost"] as const;
 const activities = ["call", "whatsapp", "meeting", "email", "note"] as const;
 const nullableText = z.string().trim().min(1).nullable().optional();
-const leadFields = z.object({ clientName: z.string().trim().min(1), clientEmail: z.string().trim().email(), clientMobile: z.string().trim().min(1), projectName: z.string().trim().min(1), location: z.string().trim().min(1), propertyType: z.string().trim().min(1), budgetMin: z.number().nonnegative().nullable().optional(), budgetMax: z.number().nonnegative().nullable().optional(), source: z.string().trim().min(1), nextAction: z.string().trim().min(1), nextActionAt: z.string().datetime({ offset: true }), builder: nullableText, areaSqft: z.number().positive().nullable().optional(), targetHandoverAt: z.string().datetime({ offset: true }).nullable().optional(), notes: nullableText }).strict();
+const leadFields = z.object({ clientName: z.string().trim().min(1), clientEmail: z.string().trim().email(), clientMobile: z.string().trim().min(1), projectName: z.string().trim().min(1), location: z.string().trim().min(1), cityName: cityNameSchema.nullable().optional(), propertyType: z.string().trim().min(1), budgetMin: z.number().nonnegative().nullable().optional(), budgetMax: z.number().nonnegative().nullable().optional(), source: z.string().trim().min(1), nextAction: z.string().trim().min(1), nextActionAt: z.string().datetime({ offset: true }), builder: nullableText, areaSqft: z.number().positive().nullable().optional(), targetHandoverAt: z.string().datetime({ offset: true }).nullable().optional(), notes: nullableText }).strict();
 const budgetValid = (value: { budgetMin?: number | null; budgetMax?: number | null }) => value.budgetMin == null || value.budgetMax == null || value.budgetMax >= value.budgetMin;
 const createSchema = leadFields.refine(budgetValid, { path: ["budgetMax"], message: "Maximum budget must be at least the minimum budget." });
 const updateSchema = leadFields.partial().extend({ stage: z.enum(stages).optional() }).refine((value) => Object.keys(value).length > 0, { path: ["stage"], message: "Provide at least one lead change." }).refine(budgetValid, { path: ["budgetMax"], message: "Maximum budget must be at least the minimum budget." });

@@ -17,6 +17,7 @@ import {
 } from "./knowledgeMutationSync";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { projectProcurementKeys } from "../procurement/projectProcurementApi";
+import { procurementBasketKeys } from "../procurement/procurementBasketApi";
 import { vendorSuggestionKeys } from "../procurement/vendorSuggestionsApi";
 import { estimationCatalogueKeys } from "../leads/estimationCatalogueApi";
 import type {
@@ -80,6 +81,50 @@ function itemDetail(overrides: Partial<KnowledgeItemDetail> = {}): KnowledgeItem
 }
 
 describe("knowledge mutation cache synchronization", () => {
+  it("refreshes cached project basket prices after a Configuration save and activation", async () => {
+    const client = queryClient();
+    const listKey = procurementBasketKeys.list("project-one");
+    const detailKey = procurementBasketKeys.detail("project-one", "painting");
+    const catalogueKey = estimationCatalogueKeys.ready;
+    const anotherProject = procurementBasketKeys.detail("project-two", "painting");
+    const unrelated = ["procurement", "basket-enquiries", "project-one", "painting"] as const;
+    let configuredPaise = 7_500;
+    const list = vi.fn(async () => ({ basePaise: configuredPaise }));
+    const detail = vi.fn(async () => ({ basePaise: configuredPaise }));
+    const catalogue = vi.fn(async () => ({ lineId: "painting-line", basePaise: configuredPaise }));
+    const listOptions = { queryKey: listKey, queryFn: list, staleTime: 60_000 };
+    const detailOptions = { queryKey: detailKey, queryFn: detail, staleTime: 60_000 };
+    const catalogueOptions = { queryKey: catalogueKey, queryFn: catalogue, staleTime: 60_000 };
+    await Promise.all([client.fetchQuery(listOptions), client.fetchQuery(detailOptions), client.fetchQuery(catalogueOptions)]);
+    client.setQueryData(anotherProject, { basePaise: 7_500 });
+    client.setQueryData(unrelated, { version: 1 });
+    const stopList = new QueryObserver(client, listOptions).subscribe(() => {});
+    const stopDetail = new QueryObserver(client, detailOptions).subscribe(() => {});
+    const stopCatalogue = new QueryObserver(client, catalogueOptions).subscribe(() => {});
+    try {
+      configuredPaise = 8_000;
+      await syncKnowledgeSectionMutation(client, {
+        ...actor, id: "pricing-section", mainLineId: "painting-line", revisionId: "revision-one",
+        sectionKey: "pricing", applicability: "configured", version: 2, aggregateVersion: 3, payload: {}
+      });
+      expect(list).toHaveBeenCalledTimes(2);
+      expect(detail).toHaveBeenCalledTimes(2);
+      expect(catalogue).toHaveBeenCalledTimes(2);
+      expect(client.getQueryData(detailKey)).toEqual({ basePaise: 8_000 });
+      expect(client.getQueryData(catalogueKey)).toEqual({ lineId: "painting-line", basePaise: 8_000 });
+      expect(client.getQueryState(anotherProject)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(unrelated)?.isInvalidated).toBe(false);
+
+      configuredPaise = 9_000;
+      await syncKnowledgeLifecycleMutation(client, itemDetail({ mainLineId: "painting-line", status: "active" }));
+      expect(list).toHaveBeenCalledTimes(3);
+      expect(detail).toHaveBeenCalledTimes(3);
+      expect(catalogue).toHaveBeenCalledTimes(3);
+      expect(client.getQueryData(listKey)).toEqual({ basePaise: 9_000 });
+    } finally {
+      stopList(); stopDetail(); stopCatalogue(); client.clear();
+    }
+  });
   it("refreshes a fresh global vendor overview after a vendor mutation without changing unrelated catalogs", async () => {
     const client = queryClient();
     let overview = { totalVendors: 9, activeVendors: 7, underReviewVendors: 4 };
@@ -175,15 +220,21 @@ describe("knowledge mutation cache synchronization", () => {
     const targetKey = knowledgeQueryKeys.item("temporary-1");
     const otherKey = knowledgeQueryKeys.item("other-line");
     const draftKey = knowledgeQueryKeys.section("temporary-1", "revision-1", "advanced");
+    const projectListKey = procurementBasketKeys.list("project-one");
+    const projectDetailKey = procurementBasketKeys.detail("project-one", "painting");
     const seed = () => {
       client.setQueryData(targetKey, { itemType: "temporary", linkedMainLines: [{ mainLineId: "source" }] });
       client.setQueryData(otherKey, { itemType: "main_line" });
       client.setQueryData(draftKey, { payload: { modeDescription: "Keep this draft" } });
+      client.setQueryData(projectListKey, { configuredPrice: 7_500 });
+      client.setQueryData(projectDetailKey, { configuredPrice: 7_500 });
     };
     const assert = () => {
       expect(client.getQueryState(targetKey)?.isInvalidated).toBe(true);
       expect(client.getQueryState(otherKey)?.isInvalidated).toBe(false);
       expect(client.getQueryState(draftKey)?.isInvalidated).toBe(false);
+      expect(client.getQueryState(projectListKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(projectDetailKey)?.isInvalidated).toBe(true);
       expect(client.getQueryData(draftKey)).toEqual({ payload: { modeDescription: "Keep this draft" } });
     };
     seed();
@@ -231,6 +282,8 @@ describe("knowledge mutation cache synchronization", () => {
     client.setQueryData(knowledgeQueryKeys.mainLineLists(), []);
     client.setQueryData(knowledgeQueryKeys.items(), []);
     client.setQueryData(knowledgeQueryKeys.contexts(), {});
+    client.setQueryData(procurementBasketKeys.list("project-one"), { configuredPrice: 7_500 });
+    client.setQueryData(procurementBasketKeys.detail("project-one", "painting"), { configuredPrice: 7_500 });
     client.setQueryData(["unrelated"], { preserved: true });
 
     await syncKnowledgeBasketDeletion(client, "basket-1");
@@ -249,6 +302,8 @@ describe("knowledge mutation cache synchronization", () => {
     expect(client.getQueryState(knowledgeQueryKeys.mainLineLists())?.isInvalidated).toBe(true);
     expect(client.getQueryState(knowledgeQueryKeys.items())?.isInvalidated).toBe(true);
     expect(client.getQueryState(knowledgeQueryKeys.contexts())?.isInvalidated).toBe(true);
+    expect(client.getQueryState(procurementBasketKeys.list("project-one"))?.isInvalidated).toBe(true);
+    expect(client.getQueryState(procurementBasketKeys.detail("project-one", "painting"))?.isInvalidated).toBe(true);
     expect(client.getQueryState(["unrelated"])?.isInvalidated).toBe(false);
   });
 
@@ -521,7 +576,9 @@ describe("knowledge mutation cache synchronization", () => {
       knowledgeQueryKeys.subBasketDeletionImpacts("basket-1"),
       knowledgeQueryKeys.histories(),
       knowledgeQueryKeys.activationReviews(),
-      knowledgeQueryKeys.contexts()
+      knowledgeQueryKeys.contexts(),
+      procurementBasketKeys.list("project-one"),
+      procurementBasketKeys.detail("project-one", "painting")
     ];
     keys.forEach((key) => client.setQueryData(key, { cached: true }));
     client.setQueryData(["unrelated"], { preserved: true });
@@ -662,6 +719,22 @@ describe("knowledge mutation cache synchronization", () => {
       client.getQueryState(knowledgeQueryKeys.masterLists("uoms"))?.isInvalidated
     ).toBe(false);
     expect(client.getQueryState(knowledgeQueryKeys.contexts())?.isInvalidated).toBe(true);
+  });
+
+  it.each(["uoms", "modes"] as const)("refreshes project baskets after a %s Configuration master change", async (masterType) => {
+    const client = queryClient();
+    const listKey = procurementBasketKeys.list("project-one");
+    const detailKey = procurementBasketKeys.detail("project-one", "painting");
+    const enquiryKey = procurementBasketKeys.enquiries("project-one", "painting");
+    client.setQueryData(listKey, { configuredPrice: 7_500 });
+    client.setQueryData(detailKey, { configuredPrice: 7_500 });
+    client.setQueryData(enquiryKey, { version: 1 });
+
+    await syncKnowledgeMasterMutation(client, masterType);
+
+    expect(client.getQueryState(listKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(detailKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(enquiryKey)?.isInvalidated).toBe(false);
   });
 
   it("refreshes every Surface catalog consumer after create, edit, or lifecycle changes", async () => {

@@ -25,7 +25,7 @@ export interface AuthPayload {
 
 export type LeadStage = "new_lead" | "contacted" | "site_visit" | "design_meeting" | "estimate_in_progress" | "estimate_sent" | "negotiation" | "won" | "lost";
 export type LeadActivityType = "call" | "whatsapp" | "meeting" | "email" | "note";
-export interface Lead { id: string; projectId: string | null; ownerId: string; clientName: string; clientEmail: string; clientMobile: string; projectName: string; location: string; propertyType: string; budgetMin: number | null; budgetMax: number | null; source: string; stage: LeadStage; nextAction: string; nextActionAt: string; builder: string | null; areaSqft: number | null; targetHandoverAt: string | null; notes: string | null; latestActivityAt: string | null; createdAt: string; updatedAt: string; }
+export interface Lead { id: string; projectId: string | null; ownerId: string; clientName: string; clientEmail: string; clientMobile: string; projectName: string; location: string; cityName?: string | null; cityKey?: string | null; propertyType: string; budgetMin: number | null; budgetMax: number | null; source: string; stage: LeadStage; nextAction: string; nextActionAt: string; builder: string | null; areaSqft: number | null; targetHandoverAt: string | null; notes: string | null; latestActivityAt: string | null; createdAt: string; updatedAt: string; }
 export interface LeadActivity { id: string; leadId: string; actorId: string; type: LeadActivityType; note: string; occurredAt: string; createdAt: string; }
 
 export interface ClientSignupInput {
@@ -292,6 +292,7 @@ export interface EstimateClientReviewSnapshot {
     amountPaise?: number | null;
     mainBasketId?: string;
     itemType?: "main_line" | "temporary";
+    classification?: "standard" | "special";
     subBasketId?: string | null;
     mainLineId?: string;
     revisionId?: string;
@@ -308,6 +309,7 @@ export interface EstimateClientReviewSnapshot {
   gstPaise?: number;
   totalPaise?: number;
   selectedMainBasketIds?: string[];
+  selectedMainBasketClassifications?: Array<{ mainBasketId: string; classification: "standard" | "special" }>;
 }
 
 export interface ClientPublishedEstimateReview {
@@ -796,10 +798,11 @@ interface InitiateProjectFields {
   clientEmail: string;
   clientMobile: string;
   projectName: string;
-  location: string;
+  location?: string;
+  cityName?: string | null;
   propertyType: string;
-  budgetMin: number;
-  budgetMax: number;
+  budgetMin?: number;
+  budgetMax?: number;
   nextAction: string;
   nextActionAt: string;
 }

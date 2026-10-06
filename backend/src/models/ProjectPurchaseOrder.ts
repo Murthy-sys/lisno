@@ -9,10 +9,10 @@ const draftLineSchema = new Schema({
   quantityMilliUnits: { type: Number, required: true, min: 1, max: 1_000_000_000, validate: Number.isSafeInteger },
   unitPricePaise: { ...amount, min: 1 },
   gstBasisPoints: { type: Number, required: true, min: 0, max: 10_000, validate: Number.isSafeInteger },
-  scopeType: { type: String, required: true, enum: ["supply", "execution", "supply_and_execution"] },
+  scopeType: { type: String, enum: ["supply", "execution", "supply_and_execution"] },
   description: { type: String, required: true, maxlength: 2_000 },
-  targetDate: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/u },
-  deliveryLocation: { type: String, required: true, maxlength: 500 }
+  targetDate: { type: String, match: /^\d{4}-\d{2}-\d{2}$/u },
+  deliveryLocation: { type: String, maxlength: 500 }
 }, { _id: false, strict: "throw" });
 
 const decisionSchema = new Schema({
@@ -43,6 +43,7 @@ const schema = new Schema({
   projectId: { type: String, required: true, immutable: true, ref: "Project" },
   projectRequestId: { type: String, default: null, immutable: true },
   projectRequestRevisionId: { type: String, default: null, immutable: true },
+  tenderAwardId: { type: String, default: null, immutable: true },
   vendorId: { type: String, required: true, immutable: true, ref: "AiEstimatorKnowledgeVendor" },
   vendorCode: { type: String, required: true },
   vendorName: { type: String, required: true },
@@ -52,7 +53,7 @@ const schema = new Schema({
   status: { type: String, required: true, enum: ["draft", "pending_approval", "changes_requested", "rejected", "approved", "cancelled"] },
   version: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
   revision: { type: Number, required: true, min: 0, validate: Number.isSafeInteger },
-  terms: { type: String, required: true, maxlength: 4_000 },
+  terms: { type: String, default: null, maxlength: 4_000 },
   draftLines: { type: [draftLineSchema], required: true, validate: (value: unknown[]) => value.length > 0 && value.length <= 100 },
   draftNetPaise: amount,
   draftGstPaise: amount,
@@ -83,5 +84,6 @@ schema.index({ projectId: 1, createIdempotencyKey: 1 }, { unique: true });
 schema.index({ status: 1, updatedAt: -1, _id: 1 });
 schema.index({ projectId: 1, approvedRevisionId: 1, cancelledAt: 1 });
 schema.index({ projectRequestId: 1, projectRequestRevisionId: 1, vendorId: 1 }, { unique: true, partialFilterExpression: { projectRequestId: { $type: "string" } } });
+schema.index({ tenderAwardId: 1 }, { unique: true, partialFilterExpression: { tenderAwardId: { $type: "string" } } });
 
 export const ProjectPurchaseOrderModel = models.ProjectPurchaseOrder ?? model("ProjectPurchaseOrder", schema);

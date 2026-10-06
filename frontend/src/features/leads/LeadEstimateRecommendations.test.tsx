@@ -27,18 +27,47 @@ const revisions: Record<string, { revisionId: string; revisionVersion: number; i
   "line-light": { revisionId: "rev-light", revisionVersion: 1, itemVersion: 1 }
 };
 
-function installReads(failFirstRecommendation = false, savedEstimate: unknown = null, recommendationGate?: Promise<void>, sharedTarget = false, saveGate?: Promise<void>) {
+function installReads(failFirstRecommendation = false, savedEstimate: unknown = null, recommendationGate?: Promise<void>, sharedTarget = false, saveGate?: Promise<void>, echoDraftSave = false) {
   const calls: string[][] = [];
+  const savedInputs: Array<{ rooms: Array<{ id: string; label: string }>; selectedMainBasketIds: string[]; lineItems: Array<{
+    source: string; id?: string; roomId: string; roomName: string; mainLineId: string; mainBasketId: string;
+    subBasketId: string | null; included: boolean; quantity: number; ratePaise: number | null;
+    recommendationSourceMainLineIds?: string[]
+  }> }> = [];
+  let currentSavedEstimate = savedEstimate;
   let recommendationReads = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     if (url.endsWith("/leads/lead-1") && method === "GET") return response({ id: "lead-1", clientName: "Asha Shah", projectName: "Asha home", location: "Pune", propertyType: "2BHK" });
-    if (url.endsWith("/leads/lead-1/estimate") && method === "GET") return response(savedEstimate);
+    if (url.endsWith("/leads/lead-1/estimate") && method === "GET") return response(currentSavedEstimate);
     if (url.endsWith("/leads/lead-1/estimate") && method === "PUT") {
-      const input = JSON.parse(String(init?.body)) as { rooms: Array<{ id: string; label: string }>; selectedMainBasketIds: string[] };
+      const input = JSON.parse(String(init?.body)) as (typeof savedInputs)[number];
+      savedInputs.push(input);
       await saveGate;
       const draft = savedConfiguredEstimate("rev-pop");
+      if (echoDraftSave) {
+        currentSavedEstimate = {
+          ...draft, status: "draft", version: savedInputs.length,
+          rooms: input.rooms, selectedMainBasketIds: input.selectedMainBasketIds,
+          lineItems: input.lineItems.filter((line) => line.source === "configuration").map((line) => {
+            const basket = catalogue.items.find((item) => item.id === line.mainBasketId)!;
+            const subBasket = basket.subBaskets.find((item) => item.id === line.subBasketId)!;
+            const mainLine = subBasket.mainLines.find((item) => item.mainLineId === line.mainLineId)!;
+            const amountPaise = line.included ? Math.round((line.ratePaise ?? 0) * line.quantity) : 0;
+            return {
+              ...draft.lineItems[0], ...line, id: line.id ?? `saved-${line.mainLineId}`,
+              mainBasketName: basket.name, subBasketName: subBasket.name, mainLineName: mainLine.name,
+              revisionId: mainLine.revisionId, sourceItemVersion: mainLine.itemVersion,
+              sourceRevisionVersion: mainLine.revisionVersion, uomId: mainLine.uom.id,
+              uomCode: mainLine.uom.code, uomName: mainLine.uom.name, uomDecimalScale: mainLine.uom.decimalScale,
+              unit: mainLine.uom.name, rate: line.ratePaise === null ? null : line.ratePaise / 100,
+              amount: amountPaise / 100, amountPaise
+            };
+          })
+        };
+        return response(currentSavedEstimate);
+      }
       return response({ ...draft, status: "draft", version: 1, rooms: input.rooms,
         selectedMainBasketIds: input.selectedMainBasketIds,
         lineItems: [{ ...draft.lineItems[0], roomId: input.rooms[0]?.id, roomName: input.rooms[0]?.label }] });
@@ -60,7 +89,7 @@ function installReads(failFirstRecommendation = false, savedEstimate: unknown = 
     }
     throw new Error(`Unexpected request: ${method} ${url}`);
   });
-  return { calls };
+  return { calls, savedInputs };
 }
 
 function savedConfiguredEstimate(revisionId: string) {
@@ -96,6 +125,188 @@ async function openBuilder(user: ReturnType<typeof userEvent.setup>, additionalB
 }
 
 describe("estimator room recommendations", () => {
+  it("removes cascaded recommendations from Selected while an independent item remains", async () => {
+    const user = userEvent.setup();
+    installReads();
+    renderWorkspace();
+    await openBuilder(user, ["Lights"]);
+    await user.click(screen.getByRole("checkbox", { name: /False ceiling functional lights/ }));
+    await user.click(screen.getByRole("checkbox", { name: /POP false ceiling/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Recommendations for Living & Dining" });
+    await user.click(within(dialog).getByRole("button", { name: "Add False ceiling painting for Living & Dining" }));
+    await user.click(within(dialog).getByRole("button", { name: "Done" }));
+    const quantity = screen.getByRole("spinbutton", { name: /Quantity .* False ceiling painting/ });
+    await user.clear(quantity);
+    await user.type(quantity, "2");
+    await user.click(screen.getByRole("button", { name: "Selected (3)" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Filter Main Baskets" }), "basket-pop");
+    await user.click(screen.getByRole("checkbox", { name: /POP false ceiling/ }));
+    expect(screen.getByRole("combobox", { name: "Filter Main Baskets" })).toHaveValue("all");
+    expect(screen.getByRole("button", { name: "Selected (1)" })).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: /False ceiling functional lights/ })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: /POP false ceiling|False ceiling painting/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Painting" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "POP / Gypsum" })).not.toBeInTheDocument();
+    expect(screen.getByText("₹413 total")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "By Section" }));
+    expect(screen.getByRole("checkbox", { name: /False ceiling painting/ })).not.toBeChecked();
+    expect(screen.getByRole("spinbutton", { name: /Quantity .* False ceiling painting/ })).toHaveValue(2);
+  });
+
+  it("removes only recommendation-added scope when its source is unchecked", async () => {
+    const user = userEvent.setup();
+    installReads();
+    renderWorkspace();
+    await openBuilder(user);
+
+    const pop = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
+    await user.click(within(pop).getByRole("checkbox", { name: /POP false ceiling/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Recommendations for Living & Dining" });
+    await user.click(within(dialog).getByRole("button", { name: "Add False ceiling painting for Living & Dining" }));
+    await user.click(within(dialog).getByRole("button", { name: "Done" }));
+
+    const painting = within(screen.getByRole("region", { name: "Painting" }))
+      .getByText("False ceiling painting").closest(".configured-estimate-line") as HTMLElement;
+    const paintCheckbox = within(painting).getByRole("checkbox", { name: /False ceiling painting/ });
+    const paintingQuantity = within(painting).getByRole("spinbutton", { name: /Quantity .* False ceiling painting/ });
+    await user.clear(paintingQuantity);
+    await user.type(paintingQuantity, "2");
+    const sourceCheckbox = within(pop).getByRole("checkbox", { name: /POP false ceiling/ });
+    sourceCheckbox.focus();
+    expect(sourceCheckbox).toHaveFocus();
+    await user.keyboard(" ");
+
+    expect(paintCheckbox).not.toBeChecked();
+    expect(screen.getByText("₹0 total")).toBeVisible();
+    expect(screen.getByText(/0 selected line items/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Summary" }));
+    expect(screen.getByRole("heading", { name: "Estimate summary" })).toBeVisible();
+    expect(screen.getAllByText("0 selected items")).toHaveLength(2);
+    await user.click(screen.getByRole("button", { name: "Proposal" }));
+    expect(screen.queryByText("False ceiling painting")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Estimate Builder" }));
+    const returnedPainting = within(screen.getByRole("region", { name: "Painting" }))
+      .getByText("False ceiling painting").closest(".configured-estimate-line") as HTMLElement;
+    expect(within(returnedPainting).getByRole("spinbutton", { name: /Quantity .* False ceiling painting/ })).toHaveValue(2);
+    const manualPaintCheckbox = within(screen.getByRole("region", { name: "Painting" }))
+      .getByRole("checkbox", { name: /False ceiling painting/ });
+    const reselectedSourceCheckbox = within(screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement)
+      .getByRole("checkbox", { name: /POP false ceiling/ });
+    await user.click(manualPaintCheckbox);
+    expect(manualPaintCheckbox).toBeChecked();
+    await user.click(reselectedSourceCheckbox);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(reselectedSourceCheckbox);
+    expect(manualPaintCheckbox).toBeChecked();
+  });
+
+  it("keeps a manually selected target after its recommending source is removed", async () => {
+    const user = userEvent.setup();
+    installReads();
+    renderWorkspace();
+    await openBuilder(user, ["Painting"]);
+    const painting = within(screen.getByRole("region", { name: "Painting" }))
+      .getByText("False ceiling painting").closest(".configured-estimate-line") as HTMLElement;
+    const paintCheckbox = within(painting).getByRole("checkbox", { name: /False ceiling painting/ });
+    await user.click(paintCheckbox);
+    const pop = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
+    const popCheckbox = within(pop).getByRole("checkbox", { name: /POP false ceiling/ });
+    await user.click(popCheckbox);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(popCheckbox);
+    expect(paintCheckbox).toBeChecked();
+    expect(screen.getByText("₹295 total")).toBeVisible();
+  });
+
+  it("keeps a shared target until both recorded sources are unchecked", async () => {
+    const user = userEvent.setup();
+    let releaseRecommendation!: () => void;
+    const recommendationGate = new Promise<void>((resolve) => { releaseRecommendation = resolve; });
+    installReads(false, null, recommendationGate, true);
+    renderWorkspace();
+    await openBuilder(user);
+    const pop = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
+    const functional = screen.getByText("Functional Lights").closest(".configured-estimate-line") as HTMLElement;
+    const popCheckbox = within(pop).getByRole("checkbox", { name: /POP false ceiling/ });
+    const functionalCheckbox = within(functional).getByRole("checkbox", { name: /Functional Lights/ });
+    await user.click(popCheckbox);
+    await user.click(functionalCheckbox);
+    releaseRecommendation();
+    const dialog = await screen.findByRole("dialog", { name: "Recommendations for Living & Dining" });
+    await user.click(within(dialog).getByRole("button", { name: "Add False ceiling painting for Living & Dining" }));
+    await user.click(within(dialog).getByRole("button", { name: "Done" }));
+    const painting = within(screen.getByRole("region", { name: "Painting" }))
+      .getByText("False ceiling painting").closest(".configured-estimate-line") as HTMLElement;
+    const paintCheckbox = within(painting).getByRole("checkbox", { name: /False ceiling painting/ });
+    await user.click(popCheckbox);
+    expect(paintCheckbox).toBeChecked();
+    await user.click(functionalCheckbox);
+    expect(paintCheckbox).not.toBeChecked();
+    expect(screen.getByText("₹0 total")).toBeVisible();
+  });
+
+  it("cleans related items when a Main Basket is deselected and keeps its revealed Basket", async () => {
+    const user = userEvent.setup();
+    installReads();
+    renderWorkspace();
+    await openBuilder(user);
+    const pop = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
+    await user.click(within(pop).getByRole("checkbox", { name: /POP false ceiling/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Recommendations for Living & Dining" });
+    await user.click(within(dialog).getByRole("button", { name: "Add False ceiling painting for Living & Dining" }));
+    await user.click(within(dialog).getByRole("button", { name: "Done" }));
+
+    await user.click(screen.getByRole("button", { name: "Back to Asha Shah" }));
+    const popBasket = screen.getByRole("checkbox", { name: /POP \/ Gypsum/ });
+    const paintingBasket = screen.getByRole("checkbox", { name: /Painting/ });
+    await user.click(popBasket);
+    expect(paintingBasket).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    const painting = within(screen.getByRole("region", { name: "Painting" }))
+      .getByText("False ceiling painting").closest(".configured-estimate-line") as HTMLElement;
+    expect(within(painting).getByRole("checkbox", { name: /False ceiling painting/ })).not.toBeChecked();
+    expect(screen.getByText("₹0 total")).toBeVisible();
+  });
+
+  it("saves recommendation origin, restores it, and sends cleaned scope on the next save", async () => {
+    const user = userEvent.setup();
+    const { savedInputs } = installReads(false, null, undefined, false, undefined, true);
+    const view = renderWorkspace();
+    await openBuilder(user);
+    const pop = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
+    await user.click(within(pop).getByRole("checkbox", { name: /POP false ceiling/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Recommendations for Living & Dining" });
+    await user.click(within(dialog).getByRole("button", { name: "Add False ceiling painting for Living & Dining" }));
+    await user.click(within(dialog).getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    expect(await screen.findByText("Estimate draft saved.")).toBeVisible();
+    expect(savedInputs[0]?.lineItems.find((line) => line.mainLineId === "line-paint"))
+      .toMatchObject({ included: true, recommendationSourceMainLineIds: ["line-pop"] });
+
+    view.unmount();
+    renderWorkspace();
+    const restoredAdvice = await screen.findByRole("region", { name: "Recommendations for this room" });
+    await within(restoredAdvice).findByText("All related items selected.");
+    const restoredPop = await screen.findByText("POP false ceiling");
+    const popCheckbox = within(restoredPop.closest(".configured-estimate-line") as HTMLElement)
+      .getByRole("checkbox", { name: /POP false ceiling/ });
+    const painting = within(screen.getByRole("region", { name: "Painting" }))
+      .getByText("False ceiling painting").closest(".configured-estimate-line") as HTMLElement;
+    expect(within(painting).getByRole("checkbox", { name: /False ceiling painting/ })).toBeChecked();
+    expect(popCheckbox).toBeChecked();
+    expect(popCheckbox).toBeEnabled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(popCheckbox);
+    await waitFor(() => expect(within(screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement)
+      .getByRole("checkbox", { name: /POP false ceiling/ })).not.toBeChecked());
+    expect(within(screen.getByRole("region", { name: "Painting" }))
+      .getByRole("checkbox", { name: /False ceiling painting/ })).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(savedInputs).toHaveLength(2));
+    expect(savedInputs[1]?.lineItems.find((line) => line.mainLineId === "line-paint"))
+      .toMatchObject({ included: false, recommendationSourceMainLineIds: [] });
+  });
+
   it.each(["Not now", "Escape", "X", "Backdrop"])("unchecks only the new source after an automatic %s dismissal without a related selection", async (dismissal) => {
     const user = userEvent.setup();
     installReads();

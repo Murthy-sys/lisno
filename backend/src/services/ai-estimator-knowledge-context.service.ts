@@ -15,12 +15,15 @@ import {
 } from "../domain/ai-estimator-knowledge-calculation.js";
 import { calculateKnowledgeInHousePrice, calculateKnowledgeModePrice, calculateKnowledgePmcPrice, calculateKnowledgeSubVendorPrice } from "../domain/ai-estimator-knowledge-mode-calculation.js";
 import { buildKnowledgeConfigurationContext } from "../domain/ai-estimator-knowledge-configuration-context.js";
+import { selectCurrentMainLineRevision } from "../domain/ai-estimator-knowledge-current-revision.js";
+import { createKnowledgeRevisionDigest } from "../domain/ai-estimator-knowledge-completeness.js";
 import {
   AI_ESTIMATOR_KNOWLEDGE_MODE_FIELD_TYPES,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS,
   type KnowledgeDurationUnit,
   type KnowledgeExecutionSource,
   type KnowledgeModeKind,
+  type KnowledgeSectionApplicability,
   type KnowledgeSectionKey,
   type KnowledgeTaxTreatment
 } from "../domain/ai-estimator-knowledge.js";
@@ -168,8 +171,7 @@ async function resolveContext(
     await AiEstimatorKnowledgeMainLineModel.findOne({
       _id: input.mainLineId,
       basketId: input.mainBasketId,
-      status: "active",
-      activeRevisionId: { $ne: null }
+      status: { $in: ["active", "draft", "inactive"] }
     })
       .session(session)
       .lean()
@@ -177,7 +179,9 @@ async function resolveContext(
   );
   if (!mainLine) unresolvedCore();
 
-  const revisionId = requiredString(mainLine.activeRevisionId);
+  const currentRevision = selectCurrentMainLineRevision(mainLine);
+  if (!currentRevision) unresolvedCore();
+  const revisionId = currentRevision.id;
   const basketDocument = await AiEstimatorKnowledgeBasketModel.findOne({
     _id: input.mainBasketId,
     status: { $ne: "archived" }
@@ -185,7 +189,7 @@ async function resolveContext(
   const revisionDocument = await AiEstimatorKnowledgeRevisionModel.findOne({
     _id: revisionId,
     mainLineId: input.mainLineId,
-    status: "active"
+    status: currentRevision.status
   }).session(session).lean().exec();
   const sectionDocuments = await AiEstimatorKnowledgeSectionModel.find({
     mainLineId: input.mainLineId,
@@ -211,7 +215,9 @@ async function resolveContext(
 
   const projectedPayloads = new Map<KnowledgeSectionKey, Row>();
   for (const key of AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS) {
-    projectedPayloads.set(key, projectActiveSectionRows(key, payloadFor(sections.get(key))));
+    const section = sections.get(key);
+    projectedPayloads.set(key, section?.applicability === "configured"
+      ? projectActiveSectionRows(key, payloadFor(section)) : {});
   }
 
   const overview = projectedPayloads.get("overview")!;
@@ -327,7 +333,17 @@ async function resolveContext(
     if (key === "recommendations") await resolveBudgetAlterationTargets(contextSections[key] as Row, session);
   }
 
-  const contentDigest = requiredString(revision.contentDigest);
+  const contentDigest = currentRevision.status === "draft"
+    ? createKnowledgeRevisionDigest({
+        mainLineId: input.mainLineId,
+        revisionNumber: requiredInteger(revision.revisionNumber),
+        sections: [...sections.values()].map((section) => ({
+          sectionKey: requiredString(section.sectionKey) as KnowledgeSectionKey,
+          applicability: requiredString(section.applicability) as KnowledgeSectionApplicability,
+          payload: payloadFor(section)
+        }))
+      })
+    : requiredString(revision.contentDigest);
   if (basketQuality) {
     contextSections.quality = {
       parameters: await resolveQualityControlOptionNames(
@@ -792,14 +808,14 @@ async function resolveBudgetAlterationTargets(payload: Row, session: ClientSessi
   const basketIds = rules.flatMap((rule) => typeof rule.targetBasketId === "string" ? [rule.targetBasketId] : []);
   const [targets, subBaskets, subBasketChildren, activeBaskets] = await Promise.all([
     AiEstimatorKnowledgeMainLineModel.find({ _id: { $in: mainLineIds } })
-      .select({ _id: 1, name: 1, status: 1, itemType: 1, basketId: 1, subBasketId: 1, activeRevisionId: 1 })
+      .select({ _id: 1, name: 1, status: 1, itemType: 1, basketId: 1, subBasketId: 1, activeRevisionId: 1, draftRevisionId: 1 })
       .session(session).lean().exec(),
     AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: subBasketIds } })
       .select({ _id: 1, name: 1, basketId: 1 }).session(session).lean().exec(),
     AiEstimatorKnowledgeMainLineModel.find({
       subBasketId: { $in: subBasketIds },
       status: { $in: ["draft", "active"] }
-    }).select({ _id: 1, basketId: 1, subBasketId: 1, itemType: 1, status: 1, activeRevisionId: 1 }).session(session).lean().exec(),
+    }).select({ _id: 1, basketId: 1, subBasketId: 1, itemType: 1, status: 1, activeRevisionId: 1, draftRevisionId: 1 }).session(session).lean().exec(),
     AiEstimatorKnowledgeBasketModel.find({ _id: { $in: basketIds }, status: "active" })
       .select({ _id: 1 }).session(session).lean().exec()
   ]);
@@ -816,7 +832,7 @@ async function resolveBudgetAlterationTargets(payload: Row, session: ClientSessi
       const temporaryChildCount = children.filter((child) => child.itemType === "temporary").length;
       const availableChildCount = children.length;
       const hasIncompleteChild = children.some((child) => child.itemType === "temporary"
-        || child.status !== "active" || typeof child.activeRevisionId !== "string");
+        || selectCurrentMainLineRevision(child)?.status !== "active");
       return { ...rule, target: compatible ? {
         kind: "sub_basket", subBasketId, name: target.name, basketId: target.basketId,
         status: availableChildCount > 0 ? "available" : "unavailable",
@@ -835,7 +851,8 @@ async function resolveBudgetAlterationTargets(payload: Row, session: ClientSessi
       kind: "main_line", mainLineId: String(target._id), name: target.name,
       itemType: target.itemType === "temporary" ? "temporary" : "main_line",
       status: target.status, activeRevisionId: target.activeRevisionId ?? null,
-      completionRequired: target.itemType === "temporary"
+      completionRequired: target.itemType === "temporary" ||
+        selectCurrentMainLineRevision(target)?.status !== "active"
     } : { kind: "main_line", mainLineId: rule.targetMainLineId, status: "unavailable", activeRevisionId: null, completionRequired: rule.targetType === "temporary" } };
   });
 }

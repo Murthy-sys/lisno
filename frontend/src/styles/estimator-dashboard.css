@@ -1420,6 +1420,25 @@
 .configured-estimate-line__menu button:focus-visible { background: #eef4ec; }
 .configured-estimate-line__message,
 .configured-estimate-line__review { margin-left: 60px; font-size: 11px; }
+.estimate-classification {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: #586682;
+  font-size: 11px;
+}
+.estimate-classification legend { padding: 0; margin-bottom: 5px; font-weight: 600; }
+.estimate-classification label { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; margin-right: 15px; color: #172344; cursor: pointer; }
+.estimate-classification label:last-child { margin-right: 0; }
+.estimate-classification input[type="radio"] { width: 15px; height: 15px; min-height: 15px; margin: 0; accent-color: #255c35; }
+.estimate-classification input[type="radio"]:focus-visible { outline: 2px solid #255c35; outline-offset: 2px; }
+.configured-estimate-line__choice { grid-column: 1; grid-row: 1; }
+.configured-estimate-line__fields { grid-column: 2; grid-row: 1 / span 2; }
+.configured-estimate-line__classification,
+.configured-estimate-line__classification-readonly { grid-column: 1; grid-row: 2; margin: 0 0 3px 60px; }
+.configured-estimate-line__classification-readonly { color: #586682; font-size: 11px; }
+.configured-estimate-line__classification-readonly strong { color: #172344; }
 .configured-estimate-builder__empty { margin: 0; padding: 18px; border: 1px solid var(--est-line, #dce1e8); border-radius: 4px; background: #fff; color: var(--est-muted, #5b6883); font-size: 12px; }
 .ui-app-shell[data-role] .estimate-workspace--item-view .estimate-workspace__footer {
   border: 1px solid var(--est-line); border-radius: 4px; background: #f7f7f3; box-shadow: none;
@@ -1430,7 +1449,7 @@
 .ui-app-shell[data-role] .estimate-workspace--item-view .estimate-workspace__footer .button { box-shadow: none; }
 @container (max-width: 650px) {
   .configured-estimate-line { grid-template-columns: minmax(0, 1fr); }
-  .configured-estimate-line__fields { margin-left: 60px; }
+  .configured-estimate-line__fields { grid-column: 1; grid-row: 3; margin-left: 60px; }
   .estimator-recommendations { grid-template-columns: minmax(0, 1fr); }
   .estimator-recommendations__review { justify-self: start; }
 }
@@ -1456,7 +1475,7 @@
   .configured-estimate-builder__rooms { border-top: 1px solid var(--est-line, #dce1e8); }
   .configured-estimate-builder__rooms button:first-child { border-left: 0; }
   .configured-estimate-line { grid-template-columns: minmax(0, 1fr); padding-left: 12px; }
-  .configured-estimate-line__fields { margin-left: 60px; }
+  .configured-estimate-line__fields { grid-column: 1; grid-row: 3; margin-left: 60px; }
 }
 @media (max-width: 430px) {
   .estimator-recommendations__review { width: 100%; }
@@ -1796,6 +1815,15 @@
   border-color: #c8d7c5;
   background: #f0f4ed;
 }
+.estimate-workspace--configure-view .configured-estimate-chooser__item--selected:has(input:disabled) { opacity: 1; }
+.estimate-workspace--configure-view .configured-estimate-chooser__classification,
+.estimate-workspace--configure-view .configured-estimate-chooser__classification-readonly {
+  margin: 0;
+  padding: 0 10px 9px 61px;
+}
+.estimate-workspace--configure-view .configured-estimate-chooser__classification label span { display: inline; flex: none; }
+.estimate-workspace--configure-view .configured-estimate-chooser__classification-readonly { color: var(--estimate-configure-muted); font-size: 11px; }
+.estimate-workspace--configure-view .configured-estimate-chooser__classification-readonly strong { color: var(--estimate-configure-ink); }
 .estimate-workspace--configure-view .configured-estimate-chooser__item:focus-within { outline: none; }
 .estimate-workspace--configure-view .configured-estimate-chooser__row {
   display: grid;
@@ -1900,6 +1928,8 @@
   .estimate-workspace--configure-view .configured-estimate-chooser__selection { grid-column: 1; grid-row: 1; }
   .estimate-workspace--configure-view .configured-estimate-chooser__counts { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; padding-left: 50px; }
   .estimate-workspace--configure-view .configured-estimate-chooser__disclosure { grid-column: 2; grid-row: 1; }
+  .estimate-workspace--configure-view .configured-estimate-chooser__classification,
+  .estimate-workspace--configure-view .configured-estimate-chooser__classification-readonly { padding-left: 50px; }
 }
 @media (max-width: 640px) {
   .estimate-workspace--configure-view .estimate-configure-details__fields { grid-template-columns: minmax(0, 1fr); gap: 10px; }

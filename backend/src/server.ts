@@ -25,6 +25,7 @@ import { createSmtpVendorKpiMailer } from "./services/smtp-vendor-kpi-mailer.js"
 import { createSendGridVendorKpiMailer } from "./services/sendgrid-vendor-kpi-mailer.js";
 import { createSmtpVendorInductionMailer } from "./services/smtp-vendor-induction-mailer.js";
 import { createSendGridVendorInductionMailer } from "./services/sendgrid-vendor-induction-mailer.js";
+import { createSmtpProcurementBasketBoqMailer, createSendGridProcurementBasketBoqMailer } from "./services/procurement-basket-boq-mailer.js";
 import { createSmtpPasswordResetMailer } from "./services/smtp-password-reset-mailer.js";
 import {
   runProcurementReceiptCleanupJobs,
@@ -118,6 +119,11 @@ export async function startServer(
       : mailDelivery.kind === "sendgrid_web_api"
         ? createSendGridVendorInductionMailer(mailDelivery)
         : { deliveryKind: "disabled" as const };
+    const procurementBasketBoqMailer = mailDelivery.kind === "smtp"
+      ? createSmtpProcurementBasketBoqMailer(mailDelivery)
+      : mailDelivery.kind === "sendgrid_web_api"
+        ? createSendGridProcurementBasketBoqMailer(mailDelivery)
+        : { deliveryKind: "disabled" as const };
     const passwordResetMailer = mailDelivery.kind === "smtp"
       ? createSmtpPasswordResetMailer(mailDelivery)
       : mailDelivery.kind === "sendgrid_web_api"
@@ -136,6 +142,9 @@ export async function startServer(
     const clientPortalUrl = mailDelivery.kind !== "disabled"
       ? new URL("/client", mailDelivery.publicFrontendUrl).toString()
       : "http://localhost:5173/client";
+    const vendorPortalUrl = mailDelivery.kind !== "disabled"
+      ? new URL("/vendor", mailDelivery.publicFrontendUrl).toString()
+      : "http://localhost:5173/vendor";
     const storage = createLocalStorage(env.UPLOADS_DIR);
     app = appFactory({
       repository: repositoryFactory(),
@@ -147,6 +156,8 @@ export async function startServer(
       corsOrigins: env.CORS_ORIGIN,
       vendorKpiMailer,
       vendorInductionMailer,
+      procurementBasketBoqMailer,
+      vendorPortalUrl,
       storage,
       maxUploadBytes: Math.floor(env.MAX_UPLOAD_MB * 1024 * 1024),
       chatAttachmentPolicy: createProjectChatAttachmentPolicy({

@@ -1,0 +1,148 @@
+- generic [ref=f2e2]:
+  - generic [ref=f2e3]:
+    - link "Skip to main content" [ref=f2e4] [cursor=pointer]:
+      - /url: "#main-content"
+    - banner "Workspace tools" [ref=f2e5]:
+      - generic [ref=f2e6]:
+        - button "Open navigation" [ref=f2e7] [cursor=pointer]
+        - img "Lisno" [ref=f2e11]
+      - generic [ref=f2e12]:
+        - button "View daily critical tasks" [ref=f2e13] [cursor=pointer]:
+          - generic [ref=f2e14]: Critical tasks
+        - button "Notifications" [ref=f2e17] [cursor=pointer]
+        - button "Synthetic workspace reviewer" [ref=f2e22] [cursor=pointer]:
+          - generic [aria-hidden] [ref=f2e23]: SW
+    - main [ref=f2e24]:
+      - region [ref=f2e266]:
+        - button "Back to Asha Shah" [ref=f2e267]
+        - generic [ref=f2e29]:
+          - generic [ref=f2e30]:
+            - paragraph [ref=f2e31]: Estimate draft · Asha Shah
+            - heading "Select estimate items" [level=1] [ref=f2e270]
+            - paragraph [ref=f2e33]: Asha home — complete residence and terrace refurbishment · Pune
+          - button "Project status" [ref=f2e271] [cursor=pointer]
+          - generic [ref=f2e34]:
+            - strong [ref=f2e35]: ₹0
+            - generic [ref=f2e36]: Total including GST
+        - navigation "Estimate views" [ref=f2e278]:
+          - button "Estimate Builder" [pressed] [ref=f2e279]
+          - button "Summary" [ref=f2e283]
+          - button "Proposal" [ref=f2e286]
+        - generic [ref=f2e289]:
+          - generic [ref=f2e290]:
+            - generic [ref=f2e291]:
+              - generic [ref=f2e295]: Search estimate items
+              - searchbox "Search estimate items" [ref=f2e296]
+            - generic [ref=f2e297]:
+              - generic [ref=f2e300]: Filter Main Baskets
+              - combobox "Filter Main Baskets" [ref=f2e301] [cursor=pointer]:
+                - option "All Sections" [selected]
+                - option "POP / Gypsum"
+            - button "Refresh available items" [ref=f2e302] [cursor=pointer]: Refresh items
+          - generic [ref=f2e305]:
+            - complementary "Estimate sections" [ref=f2e306]:
+              - group "Room view" [ref=f2e307]:
+                - button "By Section" [pressed] [ref=f2e308]
+                - button "Selected (0)" [ref=f2e309]
+              - navigation "Rooms" [ref=f2e310]:
+                - button "Living & Dining 300 sqft · ₹0" [ref=f2e311]:
+                  - generic [ref=f2e315]:
+                    - strong [ref=f2e316]: Living & Dining
+                    - generic [ref=f2e317]: 300 sqft · ₹0
+            - generic [ref=f2e320]:
+              - navigation "Jump to Main Basket" [ref=f2e321]:
+                - button "POP / Gypsum 3 items · ₹0" [ref=f2e322]:
+                  - generic [ref=f2e325]:
+                    - strong [ref=f2e326]: POP / Gypsum
+                    - generic [ref=f2e327]: 3 items · ₹0
+              - region "POP / Gypsum" [ref=f2e329]:
+                - heading [level=2] [ref=f2e331]:
+                  - button "Collapse POP / Gypsum, subtotal ₹0" [expanded] [ref=f2e332] [cursor=pointer]:
+                    - generic [ref=f2e335]: POP / Gypsum
+                    - strong [ref=f2e336]: ₹0
+                - generic [ref=f2e339]:
+                  - region "Gypsum ceilings" [ref=f2e340]:
+                    - heading [level=3] [ref=f2e341]:
+                      - button "Gypsum ceilings ₹0" [expanded] [ref=f2e342]:
+                        - generic [ref=f2e345]: Gypsum ceilings
+                        - strong [ref=f2e346]: ₹0
+                    - generic [ref=f2e350]:
+                      - generic [ref=f2e351] [cursor=pointer]:
+                        - checkbox "Plain gypsum ceiling Square foot" [ref=f2e353]
+                        - generic [ref=f2e354]:
+                          - strong [ref=f2e355]: Plain gypsum ceiling
+                          - generic [ref=f2e356]: Square foot
+                      - generic [ref=f2e357]:
+                        - generic [ref=f2e358]:
+                          - generic [ref=f2e359]: Quantity (Square foot)
+                          - generic [ref=f2e360]:
+                            - button "Decrease quantity for POP / Gypsum, Gypsum ceilings, Plain gypsum ceiling in Living & Dining" [ref=f2e361]: −
+                            - spinbutton "Quantity (Square foot) for POP / Gypsum, Gypsum ceilings, Plain gypsum ceiling in Living & Dining" [ref=f2e362]: "1"
+                            - button "Increase quantity for POP / Gypsum, Gypsum ceilings, Plain gypsum ceiling in Living & Dining" [ref=f2e363]: +
+                        - generic [ref=f2e364]:
+                          - generic [aria-hidden] [ref=f2e365]: Price (₹/Square foot)
+                          - generic [ref=f2e366]: Selling rate (₹/Square foot) for POP / Gypsum, Gypsum ceilings, Plain gypsum ceiling in Living & Dining
+                          - textbox "Selling rate (₹/Square foot) for POP / Gypsum, Gypsum ceilings, Plain gypsum ceiling in Living & Dining" [ref=f2e367]: "950"
+                        - generic [ref=f2e368]:
+                          - generic [ref=f2e369]: Amount · Not included
+                          - status "Preview amount for POP / Gypsum, Gypsum ceilings, Plain gypsum ceiling in Living & Dining, not included in totals" [ref=f2e370]: ₹950
+                        - button "More options for Plain gypsum ceiling" [ref=f2e372]
+                  - region "NA" [ref=f2e377]:
+                    - heading [level=3] [ref=f2e378]:
+                      - button "NA ₹0" [expanded] [ref=f2e379]:
+                        - generic [ref=f2e382]: NA
+                        - strong [ref=f2e383]: ₹0
+                    - generic [ref=f2e386]:
+                      - generic [ref=f2e387]:
+                        - generic [ref=f2e388] [cursor=pointer]:
+                          - checkbox "Cove in Gypsum Running foot Draft source" [ref=f2e390]
+                          - generic [ref=f2e391]:
+                            - strong [ref=f2e392]: Cove in Gypsum
+                            - generic [ref=f2e393]: Running foot
+                            - generic [ref=f2e394]: Draft source
+                        - generic [ref=f2e395]:
+                          - generic [ref=f2e396]:
+                            - generic [ref=f2e397]: Quantity (Running foot)
+                            - generic [ref=f2e398]:
+                              - button "Decrease quantity for POP / Gypsum, NA, Cove in Gypsum in Living & Dining" [ref=f2e399]: −
+                              - spinbutton "Quantity (Running foot) for POP / Gypsum, NA, Cove in Gypsum in Living & Dining" [ref=f2e400]: "1"
+                              - button "Increase quantity for POP / Gypsum, NA, Cove in Gypsum in Living & Dining" [ref=f2e401]: +
+                          - generic [ref=f2e402]:
+                            - generic [aria-hidden] [ref=f2e403]: Price (₹/Running foot)
+                            - generic [ref=f2e404]: Selling rate (₹/Running foot) for POP / Gypsum, NA, Cove in Gypsum in Living & Dining
+                            - textbox "Selling rate (₹/Running foot) for POP / Gypsum, NA, Cove in Gypsum in Living & Dining" [ref=f2e405]: "50"
+                          - generic [ref=f2e406]:
+                            - generic [ref=f2e407]: Amount · Not included
+                            - status "Preview amount for POP / Gypsum, NA, Cove in Gypsum in Living & Dining, not included in totals" [ref=f2e408]: ₹50
+                          - button "More options for Cove in Gypsum" [ref=f2e410]
+                      - generic [ref=f2e415]:
+                        - generic [ref=f2e416] [cursor=pointer]:
+                          - checkbox "POP false ceiling Square foot Inactive source" [ref=f2e418]
+                          - generic [ref=f2e419]:
+                            - strong [ref=f2e420]: POP false ceiling
+                            - generic [ref=f2e421]: Square foot
+                            - generic [ref=f2e422]: Inactive source
+                        - generic [ref=f2e423]:
+                          - generic [ref=f2e424]:
+                            - generic [ref=f2e425]: Quantity (Square foot)
+                            - generic [ref=f2e426]:
+                              - button "Decrease quantity for POP / Gypsum, NA, POP false ceiling in Living & Dining" [ref=f2e427]: −
+                              - spinbutton "Quantity (Square foot) for POP / Gypsum, NA, POP false ceiling in Living & Dining" [ref=f2e428]: "1"
+                              - button "Increase quantity for POP / Gypsum, NA, POP false ceiling in Living & Dining" [ref=f2e429]: +
+                          - generic [ref=f2e430]:
+                            - generic [aria-hidden] [ref=f2e431]: Price (₹/Square foot)
+                            - generic [ref=f2e432]: Selling rate (₹/Square foot) for POP / Gypsum, NA, POP false ceiling in Living & Dining
+                            - textbox "Selling rate (₹/Square foot) for POP / Gypsum, NA, POP false ceiling in Living & Dining" [ref=f2e433]: "1050"
+                          - generic [ref=f2e434]:
+                            - generic [ref=f2e435]: Amount · Not included
+                            - status "Preview amount for POP / Gypsum, NA, POP false ceiling in Living & Dining, not included in totals" [ref=f2e436]: ₹1,050
+                          - button "More options for POP false ceiling" [ref=f2e438]
+        - generic [ref=f2e443]:
+          - generic [ref=f2e444]:
+            - strong [ref=f2e445]: ₹0 total
+            - generic [ref=f2e446]: 0 selected line items across 1 room · draft
+          - generic [ref=f2e447]:
+            - button "Save draft" [ref=f2e448] [cursor=pointer]
+            - button "Submit estimate" [disabled] [ref=f2e449]
+  - status "Application announcements" [ref=f2e139]
+  - region "Notifications"

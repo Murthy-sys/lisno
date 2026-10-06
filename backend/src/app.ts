@@ -8,8 +8,24 @@ import { createProjectPurchaseOrderRouter } from "./routes/project-purchase-orde
 import { createProjectPurchaseOrderService } from "./services/project-purchase-order.service.js";
 import { createProjectPurchaseOrderPreparationRouter } from "./routes/project-purchase-order-preparation.js";
 import { createProjectPurchaseOrderPreparationService } from "./services/project-purchase-order-preparation.service.js";
+import { createProjectPurchaseOrderModeDecisionRouter } from "./routes/project-purchase-order-mode-decisions.js";
+import { createProjectPurchaseOrderModeDecisionService } from "./services/project-purchase-order-mode.service.js";
 import { createProjectPurchaseOrderRequestRouter } from "./routes/project-purchase-order-requests.js";
 import { createProjectPurchaseOrderRequestService } from "./services/project-purchase-order-request.service.js";
+import { createProcurementBasketTenderRouter } from "./routes/procurement-basket-tender.js";
+import { createProcurementBasketService } from "./services/procurement-basket.service.js";
+import { createProcurementBasketBaseRateService } from "./services/procurement-basket-base-rate.service.js";
+import { createProcurementBasketBaseRateRouter } from "./routes/procurement-basket-base-rate.js";
+import { createProcurementBasketEnquiryService } from "./services/procurement-basket-enquiry.service.js";
+import { createProcurementBasketAwardService } from "./services/procurement-basket-award.service.js";
+import { createProjectPurchaseOrderBasketIssueService } from "./services/project-purchase-order-basket-issue.service.js";
+import type { ProcurementBasketBoqMailer } from "./services/procurement-basket-boq-mailer.js";
+import { createProcurementProjectIdentityRouter } from "./routes/procurement-project-identity.js";
+import { createProcurementProjectIdentityService } from "./services/procurement-project-identity.service.js";
+import { createProjectPurchaseOrderInvoiceAssessmentRouter } from "./routes/project-purchase-order-invoice-assessment.js";
+import { createProjectPurchaseOrderInvoiceAssessmentService } from "./services/project-purchase-order-invoice-assessment.service.js";
+import { createProjectPurchaseOrderBasketMonitorRouter } from "./routes/project-purchase-order-basket-monitor.js";
+import { createProjectPurchaseOrderBasketMonitorService } from "./services/project-purchase-order-basket-monitor.service.js";
 import { createProjectCompletionRouter } from "./routes/project-completion.js";
 import { createProjectCompletionService } from "./services/project-completion.service.js";
 import { createSiteCompletionRouter } from "./routes/site-completion.js";
@@ -113,6 +129,8 @@ import { createAiEstimatorKnowledgeContextService } from "./services/ai-estimato
 import { createAiEstimatorKnowledgeItemService } from "./services/ai-estimator-knowledge-item.service.js";
 import { createAiEstimatorKnowledgeQualityControlOptionService } from "./services/ai-estimator-knowledge-quality-control-option.service.js";
 import { createAiEstimatorKnowledgeReferenceService } from "./services/ai-estimator-knowledge-reference.service.js";
+import { createVendorBasketRequestService } from "./services/vendor-basket-request.service.js";
+import { createVendorBasketRequestRouter } from "./routes/vendor-basket-requests.js";
 import { createAccessRequestService } from "./services/access-request.service.js";
 import { createAdminProjectService } from "./services/admin-project.service.js";
 import { createSuperAdminDashboardService } from "./services/super-admin-dashboard.service.js";
@@ -189,6 +207,8 @@ export interface AppDependencies {
   invitationMailer?: InvitationMailer;
   vendorKpiMailer?: VendorKpiMailer;
   vendorInductionMailer?: VendorInductionMailer;
+  procurementBasketBoqMailer?: ProcurementBasketBoqMailer;
+  vendorPortalUrl?: string;
   allowDemoAccountExternalEmail?: boolean;
   invitationPublicRateLimit?: InvitationRateLimitOptions;
   invitationDeliveryRateLimit?: InvitationRateLimitOptions;
@@ -229,6 +249,7 @@ export function createApp(dependencies: AppDependencies) {
       qualityControlOptionValidator:
         aiEstimatorKnowledgeQualityControlOptionService
     });
+  const vendorBasketRequestService = createVendorBasketRequestService({ audit: auditService, now: clock });
   const aiEstimatorKnowledgeItemService = createAiEstimatorKnowledgeItemService({
     audit: auditService,
     now: clock
@@ -276,6 +297,8 @@ export function createApp(dependencies: AppDependencies) {
   });
   const vendorKpiPublicRateLimit = createInvitationPublicRateLimit({ maxAttempts: 30, clock: () => clock().getTime() });
   const vendorKpiDeliveryRateLimit = createInvitationDeliveryRateLimit({ maxAttempts: 10, clock: () => clock().getTime() });
+  const vendorBoqPublicRateLimit = createInvitationPublicRateLimit({ maxAttempts: 30, clock: () => clock().getTime() });
+  const vendorBoqDeliveryRateLimit = createInvitationDeliveryRateLimit({ maxAttempts: 10, clock: () => clock().getTime() });
   const vendorInductionPublicRateLimit = createInvitationPublicRateLimit({ maxAttempts: 30, clock: () => clock().getTime() });
   const vendorInductionDeliveryRateLimit = createInvitationDeliveryRateLimit({ maxAttempts: 10, clock: () => clock().getTime() });
   const passwordResetRateLimit = createPasswordResetRateLimit({
@@ -385,11 +408,26 @@ export function createApp(dependencies: AppDependencies) {
     now: clock
   });
   const projectPurchaseOrderPreparationService = createProjectPurchaseOrderPreparationService();
+  const projectPurchaseOrderModeDecisionService = createProjectPurchaseOrderModeDecisionService({ audit: auditService, now: clock });
   const projectPurchaseOrderRequestService = createProjectPurchaseOrderRequestService({
     audit: auditService,
     onApproved: onPurchaseOrderApproved,
     now: clock
   });
+  const procurementBasketService = createProcurementBasketService();
+  const procurementBasketBaseRateService = createProcurementBasketBaseRateService({ audit: auditService, now: clock });
+  const procurementBasketEnquiryService = createProcurementBasketEnquiryService({ audit: auditService,
+    mailer: dependencies.procurementBasketBoqMailer ?? { deliveryKind: "disabled" },
+    vendorBoqPublicUrl: new URL("/vendor-boq", dependencies.vendorPortalUrl ?? "http://localhost:5173/vendor").toString(),
+    now: clock });
+  const projectPurchaseOrderBasketIssueService = createProjectPurchaseOrderBasketIssueService({
+    audit: auditService, onApproved: onPurchaseOrderApproved, now: clock });
+  const procurementBasketAwardService = createProcurementBasketAwardService({ audit: auditService, now: clock,
+    onReadyToIssue: input => projectPurchaseOrderBasketIssueService.issueAutomatically(input).then(() => undefined) });
+  const procurementProjectIdentityService = createProcurementProjectIdentityService({ audit: auditService, now: clock });
+  const projectPurchaseOrderInvoiceAssessmentService = createProjectPurchaseOrderInvoiceAssessmentService({ audit: auditService, now: clock });
+  const projectPurchaseOrderBasketMonitorService = createProjectPurchaseOrderBasketMonitorService({ audit: auditService,
+    vendorPortalUrl: dependencies.vendorPortalUrl ?? "http://localhost:5173/vendor", now: clock });
   const projectCompletionService = createProjectCompletionService({ audit: auditService, now: clock });
   const siteCompletionService = createSiteCompletionService({ audit: auditService, now: clock });
   const procurementVendorBaselineService = createProcurementVendorBaselineService({ audit: auditService, now: clock });
@@ -537,6 +575,7 @@ export function createApp(dependencies: AppDependencies) {
     createSuperAdminDashboardRouter(authService, superAdminDashboardService)
   );
   app.use("/api/v1", createProcurementVendorCertificateRouter({ authService, certificateService: procurementVendorCertificateService, maxUploadBytes }));
+  app.use("/api/v1", createVendorBasketRequestRouter(authService, vendorBasketRequestService));
   app.use(
     "/api/v1",
     createAiEstimatorKnowledgeAdminRouter(authService, {
@@ -574,7 +613,15 @@ export function createApp(dependencies: AppDependencies) {
   app.use("/api/v1", createProcurementVendorPhotoRouter({ authService, photoService: procurementVendorPhotoService, maxUploadBytes }));
   app.use("/api/v1", createProjectPurchaseOrderRouter(authService, projectPurchaseOrderService));
   app.use("/api/v1", createProjectPurchaseOrderPreparationRouter(authService, projectPurchaseOrderPreparationService));
+  app.use("/api/v1", createProjectPurchaseOrderModeDecisionRouter(authService, projectPurchaseOrderModeDecisionService));
   app.use("/api/v1", createProjectPurchaseOrderRequestRouter(authService, projectPurchaseOrderRequestService));
+  app.use("/api/v1", createProcurementBasketBaseRateRouter(authService, procurementBasketBaseRateService));
+  app.use("/api/v1", createProcurementBasketTenderRouter(authService, procurementBasketService,
+    procurementBasketEnquiryService, procurementBasketAwardService, projectPurchaseOrderBasketIssueService,
+    vendorBoqPublicRateLimit, vendorBoqDeliveryRateLimit));
+  app.use("/api/v1", createProcurementProjectIdentityRouter(authService, procurementProjectIdentityService));
+  app.use("/api/v1", createProjectPurchaseOrderInvoiceAssessmentRouter(authService, projectPurchaseOrderInvoiceAssessmentService));
+  app.use("/api/v1", createProjectPurchaseOrderBasketMonitorRouter(authService, projectPurchaseOrderBasketMonitorService));
   app.use("/api/v1", createProjectCompletionRouter(authService, projectCompletionService));
   app.use("/api/v1", createSiteCompletionRouter(authService, siteCompletionService));
   app.use("/api/v1", createVendorWorkRouter(authService, vendorWorkService, maxUploadBytes));

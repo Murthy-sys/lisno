@@ -1,5 +1,12 @@
 import { ProcurementVendorCertificateUploadModel, ProcurementVendorCertificateCleanupModel } from "../src/models/ProcurementVendorCertificateUpload.js";
 import { ProcurementVendorSaveCommandModel } from "../src/models/ProcurementVendorSaveCommand.js";
+import { ProcurementVendorCityModel } from "../src/models/ProcurementVendorCity.js";
+import { ProcurementBasketEnquiryModel, ProcurementBasketBoqRevisionModel, ProcurementBasketInvitationModel,
+  ProcurementBasketBidModel, ProcurementBasketCounterofferModel, ProcurementBasketAwardModel,
+  ProcurementBasketAwardRevisionModel, ProcurementBasketAwardApprovalModel } from "../src/models/ProcurementBasketTender.js";
+import { ProcurementBasketInvoiceAssessmentModel,
+  ProcurementBasketInvoiceAssessmentRevisionModel } from "../src/models/ProcurementBasketInvoiceAssessment.js";
+import { ProcurementBasketBaseRateModel, ProcurementBasketBaseRateReceiptModel } from "../src/models/ProcurementBasketBaseRate.js";
 import { ProjectProcurementItemModel } from "../src/models/ProjectProcurementItem.js";
 import { ChatNotificationModel } from "../src/models/ChatNotification.js";
 import { ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel } from "../src/models/ProjectChat.js";
@@ -81,6 +88,7 @@ import { ProcurementReceiptCleanupJobModel } from "../src/models/ProcurementRece
 import { ProcurementReceiptReconciliationJobModel } from "../src/models/ProcurementReceiptReconciliationJob.js";
 import { AiEstimatorKnowledgeSubBasketModel } from "../src/models/AiEstimatorKnowledgeSubBasket.js";
 import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
+import { VendorBasketRequestModel } from "../src/models/VendorBasketRequest.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnowledgeMainLine.js";
 import { AiEstimatorKnowledgeModeModel } from "../src/models/AiEstimatorKnowledgeMode.js";
 import { AiEstimatorKnowledgePriceVersionModel } from "../src/models/AiEstimatorKnowledgePriceVersion.js";
@@ -499,6 +507,10 @@ describe("production server bootstrap", () => {
       events.push("ai-estimator-knowledge-basket-index");
       return AiEstimatorKnowledgeBasketModel as never;
     });
+    vi.spyOn(VendorBasketRequestModel, "init").mockImplementation(async () => {
+      events.push("vendor-basket-request-index");
+      return VendorBasketRequestModel as never;
+    });
     vi.spyOn(AiEstimatorKnowledgeSubBasketModel, "init").mockImplementation(async () => {
       events.push("ai-estimator-knowledge-sub-basket-index");
       return AiEstimatorKnowledgeSubBasketModel as never;
@@ -533,6 +545,13 @@ describe("production server bootstrap", () => {
       events.push(model.modelName + "-index"); return model as never;
     });
     for (const model of [ProcurementVendorCertificateUploadModel, ProcurementVendorCertificateCleanupModel, ProcurementVendorSaveCommandModel]) {
+      vi.spyOn(model, "init").mockImplementation(async () => { events.push(model.modelName + "-index"); return model as never; });
+    }
+    const basketModels = [ProcurementBasketEnquiryModel, ProcurementBasketBoqRevisionModel, ProcurementBasketInvitationModel,
+      ProcurementBasketBidModel, ProcurementBasketCounterofferModel, ProcurementBasketAwardModel,
+      ProcurementBasketAwardRevisionModel, ProcurementBasketAwardApprovalModel,
+      ProcurementBasketInvoiceAssessmentModel, ProcurementBasketInvoiceAssessmentRevisionModel];
+    for (const model of [ProcurementVendorCityModel, ProcurementBasketBaseRateModel, ProcurementBasketBaseRateReceiptModel, ...basketModels]) {
       vi.spyOn(model, "init").mockImplementation(async () => { events.push(model.modelName + "-index"); return model as never; });
     }
     vi.spyOn(AiEstimatorKnowledgeTaxRuleModel, "init").mockImplementation(async () => {
@@ -603,6 +622,7 @@ describe("production server bootstrap", () => {
       "procurement-receipt-cleanup-index",
       "procurement-receipt-reconciliation-index",
       "ai-estimator-knowledge-basket-index",
+      "vendor-basket-request-index",
       "ai-estimator-knowledge-sub-basket-index",
       "ai-estimator-knowledge-main-line-index",
       "ai-estimator-knowledge-revision-index",
@@ -614,6 +634,10 @@ describe("production server bootstrap", () => {
       "ProcurementVendorCertificateUpload-index",
       "ProcurementVendorCertificateCleanup-index",
       "ProcurementVendorSaveCommand-index",
+      ProcurementVendorCityModel.modelName + "-index",
+      ProcurementBasketBaseRateModel.modelName + "-index",
+      ProcurementBasketBaseRateReceiptModel.modelName + "-index",
+      ...basketModels.map(model => model.modelName + "-index"),
       "ai-estimator-knowledge-tax-rule-index",
       "ai-estimator-knowledge-tax-version-index",
       "ai-estimator-knowledge-priority-index",

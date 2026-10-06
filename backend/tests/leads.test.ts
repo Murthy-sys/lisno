@@ -239,6 +239,17 @@ function setupEstimateRouteCollaborators(actorOverride: Record<string, unknown> 
 }
 
 describe("lead API", () => {
+  it("stores Estimator-confirmed city separately from free-text location and permits correction before project linkage", async () => {
+    const token = await salesToken();
+    const created = await request(app).post("/api/v1/leads").set("Authorization", `Bearer ${token}`)
+      .send({ ...lead, clientEmail: "city-lead@example.test", cityName: "  Pune  " }).expect(201);
+    expect(created.body.data).toMatchObject({ location: "Bengaluru", cityName: "Pune", cityKey: "pune" });
+    const id = created.body.data.id as string;
+    const changed = await request(app).patch(`/api/v1/leads/${id}`).set("Authorization", `Bearer ${token}`)
+      .send({ cityName: "Mumbai" }).expect(200);
+    expect(changed.body.data).toMatchObject({ cityName: "Mumbai", cityKey: "mumbai" });
+  });
+
   it("creates, lists, updates and logs an owner activity", async () => {
     const token = await salesToken();
     const created = await request(app).post("/api/v1/leads").set("Authorization", `Bearer ${token}`).send(lead).expect(201);
@@ -729,6 +740,8 @@ describe("lead and owner-estimate route characterizations", () => {
         ownerId: "user-estimator-sales",
         projectId: null,
         ...CHARACTERIZATION_LEAD_BODY,
+        cityName: null,
+        cityKey: null,
         budgetMin: null,
         budgetMax: null,
         builder: null,
