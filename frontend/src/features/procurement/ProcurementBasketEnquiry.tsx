@@ -243,7 +243,7 @@ function BasketVendorPicker({ projectId, basketId, enquiry, boqEditable, allowSe
   const reasons = Object.entries(candidates.data?.blockedReasonCounts ?? {}).filter(([, count]) => count > 0);
   return <section className="procurement-basket__vendors" aria-labelledby="basket-vendors-title">
     <h3 id="basket-vendors-title" className="sr-only">Choose vendors</h3>
-    <label className="procurement-basket__search">Search vendors<input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0); }} placeholder="Name or code" /></label>
+    <label className="procurement-basket__search">Search vendors<span className="procurement-basket__search-field"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m15.5 15.5 5 5" /></svg><input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0); }} placeholder="Name or code" /></span></label>
     <div className="procurement-basket__selection-tools"><button type="button" disabled={basketCandidates.isPending || basketCandidates.isFetching || basketCandidates.isError || !basketCandidates.data?.total || sending}
       onClick={() => { setAllEligible(true); setExcludedVendorIds([]); setSelected([]); setMessage(null); }}>
       Select all eligible{basketCandidates.data ? ` (${basketCandidates.data.total})` : ""}</button>
@@ -263,7 +263,7 @@ function BasketVendorPicker({ projectId, basketId, enquiry, boqEditable, allowSe
             setLastResults(null);
             if (allEligible) setExcludedVendorIds((current) => event.target.checked ? current.filter((id) => id !== vendor.vendorId) : [...current, vendor.vendorId]);
             else setSelected((current) => event.target.checked ? current.some((item) => item.vendorId === vendor.vendorId) ? current : [...current, vendor] : current.filter((item) => item.vendorId !== vendor.vendorId));
-          }} /><span><strong>{vendor.name}</strong><small>{vendor.code} · {vendor.city?.name ?? "City unknown"}</small><small>{vendorParticipation(enquiry, vendor.vendorId)}</small>{checked && planned ? <small>Next: {invitationActionLabel[planned.action]}</small> : null}</span></label><span className="procurement-basket__vendor-kpi">KPI {vendor.kpiScoreBps === null ? "Unrated" : `${(vendor.kpiScoreBps / 100).toFixed(1)}`}</span></div>;
+          }} /><span><strong>{vendor.name}</strong><small>{vendor.code} · {vendor.city?.name ?? "City unknown"}</small><small className="procurement-basket__vendor-participation">{vendorParticipation(enquiry, vendor.vendorId)}</small>{checked && planned ? <small>Next: {invitationActionLabel[planned.action]}</small> : null}</span></label><span className="procurement-basket__vendor-summary">{vendor.eligible ? <span className="procurement-basket__vendor-eligibility">Eligible</span> : null}<span className="procurement-basket__vendor-kpi">KPI {vendor.kpiScoreBps === null ? "Unrated" : `${(vendor.kpiScoreBps / 100).toFixed(1)}`}</span></span></div>;
         })}</div><div className="procurement-basket__vendor-pages"><span>{offset + 1}–{offset + candidates.data.items.length} of {candidates.data.total} eligible vendors</span><div><button type="button" disabled={offset === 0 || candidates.isFetching} onClick={() => setOffset(Math.max(0, offset - candidates.data.limit))}>Previous</button><button type="button" disabled={offset + candidates.data.items.length >= candidates.data.total || candidates.isFetching} onClick={() => setOffset(offset + candidates.data.limit)}>Next</button></div></div></>}
     </>}
     {selectedCount > 0 ? <p className="procurement-basket__selected-vendors">{allEligible
@@ -487,6 +487,7 @@ export function ProcurementBasketEnquiry({ projectId, projectName, basket, froze
   return <section className="procurement-basket__enquiry" aria-label={`Vendor enquiry for ${projectName}`}>
     <h2 className="sr-only">Vendor enquiry</h2>
     {enquiries.isPending ? <PageState state="loading" message="Loading basket enquiries…" /> : enquiries.isError ? <PageState state="error" message={procurementError(enquiries.error, "Enquiries could not be loaded.")} action={{ label: "Try again", onAction: () => void enquiries.refetch() }} /> : <>
+      <div className="procurement-basket__enquiry-panel">
       <nav className="procurement-basket__stages" aria-label="Vendor enquiry progress"><ol>{["Enquiry", "Bids", "Comparison", "Awarded"].map((label, index) => <li key={label} data-state={index === stage ? "current" : index < stage ? "complete" : "upcoming"}><button type="button" aria-current={index === stage ? "step" : undefined} disabled={!stageAvailable[index]} onClick={() => goToStage(index)}><span aria-hidden="true">{index + 1}</span><strong>{label}</strong></button></li>)}</ol></nav>
       {sourceChanged ? <p role="alert" className="procurement-basket__error">The approved estimate changed. Refresh the basket before editing this enquiry. <button type="button" onClick={() => void refresh()}>Refresh basket</button></p> : null}
       {preparation.isError ? <p role="alert" className="procurement-basket__error">{procurementError(preparation.error, "The approved estimate could not be checked.")} <button type="button" onClick={() => void preparation.refetch()}>Retry estimate check</button></p> : preparation.isPending ? <p role="status" className="procurement-basket__directory-status">Checking the current approved estimate…</p> : null}
@@ -505,7 +506,8 @@ export function ProcurementBasketEnquiry({ projectId, projectName, basket, froze
         {staleSentBoq ? <p role="status" className="procurement-basket__notice">These responses belong to the previous frozen BOQ. Revise and resend before awarding.</p> : null}
         <ProcurementBasketComparison projectId={projectId} basketId={basket.id} enquiry={enquiry} frozen={paused || staleSentBoq} invitationBlocker={readinessReason} afterChange={refresh} />
       </div> : null}
-      {enquiry?.status === "issued" ? <div id={stageTargets[3]} className="procurement-basket__stage-content" tabIndex={-1}><ProcurementBasketMonitor projectId={projectId} basketId={basket.id} enquiry={enquiry} /></div> : null}
+      </div>
+      {enquiry?.status === "issued" ? <div id={stageTargets[3]} className="procurement-basket__stage-content procurement-basket__issued-stage" tabIndex={-1}><ProcurementBasketMonitor projectId={projectId} basketId={basket.id} enquiry={enquiry} /></div> : null}
       {earlierEnquiries.length ? <details className="procurement-basket__old-enquiries"><summary>Earlier enquiries ({earlierEnquiries.length})</summary><ul>{earlierEnquiries.map((item) => <EarlierEnquiry key={item.id} projectId={projectId} basketId={basket.id} enquiry={item} />)}</ul></details> : null}
     </>}
   </section>;

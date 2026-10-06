@@ -163,7 +163,7 @@ describe("Procurement basket workspace", () => {
     await user.click(await screen.findByRole("button", { name: /Painting.*approved estimate/i }));
     const table = await screen.findByRole("table", { name: "Included approved source lines for Painting" });
     const row = within(table).getByRole("rowheader", { name: "False Ceiling Painting in Royal Emulsion" }).closest("tr")!;
-    expect(within(table).getAllByRole("columnheader").map((heading) => heading.textContent)).toEqual(["Item / description", "Qty", "Base amount", "Total"]);
+    expect(within(table).getAllByRole("columnheader").map((heading) => heading.textContent)).toEqual(["Item / description", "Unit", "Qty", "Base amount", "Total"]);
     expect(within(row).getByText("₹75.00")).toBeVisible();
     expect(within(row).getByText("₹82.50")).toBeVisible();
 
@@ -254,7 +254,7 @@ describe("Procurement basket workspace", () => {
     expect(within(card).getByText("₹82.50")).toBeVisible();
     await user.click(card);
     const table = await screen.findByRole("table", { name: "Included approved source lines for Painting" });
-    expect(within(table).getAllByRole("columnheader").map((heading) => heading.textContent)).toEqual(["Item / description", "Qty", "Base amount", "Total"]);
+    expect(within(table).getAllByRole("columnheader").map((heading) => heading.textContent)).toEqual(["Item / description", "Unit", "Qty", "Base amount", "Total"]);
     const row = within(table).getByRole("rowheader", { name: "POP false ceiling" }).closest("tr")!;
     expect(within(row).getByText("₹75.00")).toBeVisible();
     expect(within(row).getByText("₹82.50")).toBeVisible();
@@ -450,7 +450,7 @@ describe("Procurement basket workspace", () => {
     expect(within(card).queryByText("partial")).not.toBeInTheDocument();
     await user.click(card);
     const scope = await screen.findByRole("table", { name: "Included approved source lines for Painting" });
-    expect(within(scope).getAllByRole("columnheader").map((heading) => heading.textContent)).toEqual(["Item / description", "Qty", "Base amount", "Total"]);
+    expect(within(scope).getAllByRole("columnheader").map((heading) => heading.textContent)).toEqual(["Item / description", "Unit", "Qty", "Base amount", "Total"]);
     expect(within(scope).getByText("₹70.00")).toBeVisible();
     expect(within(scope).getByText("₹150.00")).toBeVisible();
     expect(screen.queryByText("Low quantity impact")).not.toBeInTheDocument();
@@ -515,7 +515,8 @@ describe("Procurement basket workspace", () => {
     expect(within(scope).getAllByText("Unavailable")).toHaveLength(2);
     expect(within(scope).getByText("Pinned Sub-vendor scope is missing.")).toBeVisible();
     expect(screen.getAllByText("Pinned Sub-vendor scope is missing.")).toHaveLength(1);
-    expect(screen.getAllByText("Incomplete")).toHaveLength(1);
+    expect(screen.getByText("Incomplete", { selector: ".procurement-basket__scope-summary dd" })).toBeVisible();
+    expect(screen.getByText("Incomplete", { selector: ".procurement-basket__scope-total strong" })).toBeVisible();
     expect(screen.queryByRole("button", { name: /mode for Primer coat/u })).not.toBeInTheDocument();
     await user.click(await screen.findByRole("checkbox", { name: /Sharma Interiors/u }));
     await user.click(screen.getByRole("checkbox", { name: /Decor Masters/u }));
@@ -704,7 +705,8 @@ describe("Procurement basket workspace", () => {
     await user.click((await screen.findAllByRole("button", { name: /Painting.*approved estimate/i }))[0]!);
     expect(await screen.findByText("No priced approved source lines are available in this basket.")).toBeVisible();
     expect(screen.queryByRole("table", { name: "Included approved source lines for Painting" })).not.toBeInTheDocument();
-    expect(screen.getByText("₹0.00")).toBeVisible();
+    expect(screen.getByText("₹0.00", { selector: ".procurement-basket__scope-summary dd" })).toBeVisible();
+    expect(screen.getByText("₹0.00", { selector: ".procurement-basket__scope-total strong" })).toBeVisible();
   });
 
   it("keeps same-named baskets separate by ID and drills into one approved source", async () => {

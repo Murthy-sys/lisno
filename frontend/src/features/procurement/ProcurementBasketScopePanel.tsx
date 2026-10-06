@@ -43,13 +43,17 @@ export function ProcurementBasketScopePanel({ projectId, projectName, basket, fr
         <h2 id="procurement-basket-scope-title">{basket.name}</h2>
         <p>{projectName}</p>
       </div>
+      <dl className="procurement-basket__scope-summary">
+        <div><dt>Items</dt><dd>{includedLines.length}</dd></div>
+        <div><dt>Total amount</dt><dd>{total}</dd></div>
+      </dl>
     </header>
 
     {includedLines.length ? <div className="procurement-basket__scope-table-wrap">
       <table className="procurement-basket__scope-table">
         <caption>Included approved source lines for {basket.name}</caption>
-        <colgroup><col className="procurement-basket__scope-description-column" /><col className="procurement-basket__scope-quantity-column" /><col className="procurement-basket__scope-amount-column" /><col className="procurement-basket__scope-amount-column" /></colgroup>
-        <thead><tr><th scope="col">Item / description</th><th scope="col">Qty</th><th scope="col">Base amount</th><th scope="col">Total</th></tr></thead>
+        <colgroup><col className="procurement-basket__scope-description-column" /><col className="procurement-basket__scope-unit-column" /><col className="procurement-basket__scope-quantity-column" /><col className="procurement-basket__scope-amount-column" /><col className="procurement-basket__scope-amount-column" /></colgroup>
+        <thead><tr><th scope="col">Item / description</th><th scope="col">Unit</th><th scope="col">Qty</th><th scope="col">Base amount</th><th scope="col">Total</th></tr></thead>
         {includedLines.map((line) => {
           const modePreview = line.mode?.state === "ready" ? line.mode.preview : null;
           const lineCost = line.standardCost;
@@ -69,7 +73,8 @@ export function ProcurementBasketScopePanel({ projectId, projectName, basket, fr
                 {issue ? <small className="procurement-basket__scope-issue">{issue}</small> : null}
                 {!automaticSubVendor && line.mode ? <ProcurementBasketModeEditor projectId={projectId} basketId={basket.id} source={basket.estimateSource} line={line} classification={basket.classification} frozen={frozen} compact /> : null}
               </th>
-              <td>{calculationQuantity ?? line.approvedQuantity} <span className="procurement-basket__scope-uom">{line.mode?.uom?.name || line.approvedUnit}</span></td>
+              <td><span className="procurement-basket__scope-uom">{line.mode?.uom?.name || line.approvedUnit}</span></td>
+              <td>{calculationQuantity ?? line.approvedQuantity}</td>
               <td className="procurement-basket__scope-line-amount">{showRateEditor && line.source === "configuration" &&
                 line.standardCost?.mode === "sub_vendor" && line.standardCost.adjustedCostPaise !== null && baseAmount !== null
                 ? <ProcurementBasketBaseRateEditor projectId={projectId} basketId={basket.id}
@@ -83,6 +88,6 @@ export function ProcurementBasketScopePanel({ projectId, projectName, basket, fr
       </table>
     </div> : <p className="procurement-basket__scope-empty">No priced approved source lines are available in this basket.</p>}
 
-    <footer className="procurement-basket__scope-total"><span>Total</span><strong>{total}</strong></footer>
+    <footer className="procurement-basket__scope-total"><span>Total ({includedLines.length} items)</span><strong>{total}</strong></footer>
   </section>;
 }

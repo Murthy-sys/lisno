@@ -46,11 +46,15 @@
 .procurement-basket__card-values strong { color: var(--basket-ink); font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
 .procurement-basket__card-cost-state { color: #745b2e; font-size: 11px; line-height: 1.4; }
 .procurement-basket__back { margin-bottom: 15px; padding: 3px 0; border: 0; background: none; color: var(--basket-forest); font-size: 13px; font-weight: 700; }
-.procurement-basket__detail { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 14px; min-width: 0; }
+.procurement-basket__detail { display: flow-root; clear: both; min-width: 0; container: basket-detail / inline-size; }
 .procurement-basket__detail > * { min-width: 0; }
-@media (min-width: 1380px) {
-  .procurement-basket__detail { grid-template-columns: minmax(0, 1.17fr) minmax(0, .83fr); }
-  .procurement-basket__detail > .procurement-basket__stale { grid-column: 1 / -1; }
+.procurement-basket__detail > .procurement-basket__stale { margin-bottom: 16px; }
+.procurement-basket__detail > .procurement-basket__scope-panel { margin-bottom: 12px; }
+.procurement-basket__detail .procurement-basket__issued-stage { clear: both; padding-top: 8px; container: issued-package / inline-size; }
+@container basket-detail (min-width: 1060px) {
+  .procurement-basket__detail > .procurement-basket__scope-panel { float: left; width: calc(62% - 10px); margin-bottom: 0; }
+  .procurement-basket__detail > .procurement-basket__enquiry > .procurement-basket__enquiry-panel { float: right; width: calc(38% - 10px); }
+  .procurement-basket__detail > .procurement-basket__enquiry > .procurement-basket__issued-stage { float: left; clear: left; width: calc(62% - 10px); }
 }
 .procurement-basket__budget-note, .procurement-basket__stale { color: var(--basket-muted); font-size: 12px; line-height: 1.5; }
 .procurement-basket__stale { padding: 9px 12px; border: 1px solid #ceb987; background: #f7f1e2; color: #6a5327; }
@@ -348,3 +352,226 @@
 @media (max-width: 760px) { .procurement-basket__award-schedule li { grid-template-columns: minmax(0,1fr) auto auto; } .procurement-basket__award-schedule li .procurement-basket__reviewer-chips { grid-column: 1 / -1; } }
 @media (max-width: 760px) { .procurement-basket__monitor-schedule li { grid-template-columns: minmax(0,1fr) auto; } .procurement-basket__monitor-schedule li > .procurement-basket__reviewer-chips { grid-column: 1 / -1; } }
 @media (max-width: 580px) { .procurement-basket__vendor { flex-wrap: wrap; } .procurement-basket__vendor > label { flex-basis: 100%; } .procurement-basket__vendor-pages, .procurement-basket__city-editor { align-items: stretch; flex-direction: column; } }
+
+/* Current basket detail presentation; other procurement surfaces keep their layout. */
+.procurement-basket__monitor-symbol { display: none; }
+.procurement-project-page:has(.procurement-basket__detail) { gap: 4px; }
+.procurement-project-page:has(.procurement-basket__detail) > .ui-page-header {
+  margin-bottom: 0;
+  gap: 2px;
+}
+.procurement-project-page:has(.procurement-basket__detail) .ui-page-header__content { gap: 1px; }
+.procurement-project-page:has(.procurement-basket__detail) .ui-page-header__title { font-size: 22px; line-height: 1.2; letter-spacing: 0; }
+.procurement-project-page:has(.procurement-basket__detail) .ui-page-header__description { font-size: 12px; line-height: 1.3; letter-spacing: 0; }
+.procurement-project-page:has(.procurement-basket__detail) :is(.ui-page-header__breadcrumb, .ui-page-header__eyebrow) { font-size: 11px; line-height: 1.3; letter-spacing: 0; }
+.procurement-project-page:has(.procurement-basket__detail) > .project-chat-navigation { padding-block: 0; gap: 6px; justify-content: flex-start; }
+.procurement-project-page:has(.procurement-basket__detail) > .project-chat-navigation nav { margin-right: auto; gap: 6px; }
+.procurement-project-page:has(.procurement-basket__detail) > .project-chat-navigation nav a { min-height: 32px; padding: 5px 8px; font-size: 13px; line-height: 1.3; letter-spacing: 0; }
+.procurement-project-page:has(.procurement-basket__detail) > .project-chat-navigation :is(.project-status-button, .project-chat-priority) { min-height: 30px; padding: 4px 8px; font-size: 12px; line-height: 1.3; letter-spacing: 0; }
+.procurement-basket:has(.procurement-basket__detail) {
+  padding-block: 2px 8px;
+}
+.procurement-basket:has(.procurement-basket__detail) > .procurement-basket__breadcrumb {
+  display: inline-flex;
+  margin-right: 16px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  line-height: 1.3;
+  letter-spacing: 0;
+}
+.procurement-basket:has(.procurement-basket__detail) > .procurement-basket__back {
+  float: right;
+  margin-bottom: 4px;
+  font-size: 12px;
+  line-height: 1.3;
+  letter-spacing: 0;
+}
+.procurement-basket__detail > .procurement-basket__enquiry > .procurement-basket__old-enquiries {
+  clear: both;
+  margin-top: 8px;
+}
+.procurement-basket__detail .procurement-basket__issued-stage > .procurement-basket__monitor {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--basket-border);
+  border-radius: 4px;
+  background: var(--basket-surface);
+}
+.procurement-basket__issued-stage .procurement-basket__monitor-head {
+  gap: 10px;
+  padding: 8px 12px;
+  line-height: 1.25;
+  letter-spacing: 0;
+  background: #dfe7d7;
+  color: var(--workspace-ink, #30382b);
+}
+.procurement-basket__issued-stage .procurement-basket__monitor-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.procurement-basket__issued-stage .procurement-basket__monitor-heading > div {
+  min-width: 0;
+}
+.procurement-basket__issued-stage .procurement-basket__monitor-symbol {
+  display: grid;
+  place-items: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 32px;
+  border: 1px solid var(--workspace-muted, #626958);
+  border-radius: 3px;
+  color: var(--workspace-ink, #30382b);
+}
+.procurement-basket__issued-stage .procurement-basket__monitor-symbol svg {
+  width: 20px;
+  height: 24px;
+}
+.procurement-basket__detail .procurement-basket__issued-stage .procurement-basket__monitor-head .eyebrow {
+  color: var(--workspace-ink, #30382b);
+  font-size: 11px;
+  letter-spacing: 0;
+  line-height: 1.25;
+}
+.procurement-basket__detail .procurement-basket__issued-stage .procurement-basket__monitor-head h3 {
+  color: var(--workspace-ink, #30382b);
+  margin: 2px 0;
+  font-size: 16px;
+  line-height: 1.25;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+.procurement-basket__issued-stage .procurement-basket__monitor-head p:last-child {
+  color: var(--workspace-ink, #30382b);
+  font-size: 11px;
+}
+.procurement-basket__issued-stage .procurement-basket__monitor-head > strong {
+  flex-shrink: 0;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.procurement-basket__issued-stage .procurement-basket__monitor-tabs {
+  margin: 0 10px;
+}
+.procurement-basket__issued-stage .procurement-basket__monitor-tabs button {
+  min-height: 32px;
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+.procurement-basket__issued-stage .procurement-basket__monitor > [role="tabpanel"] {
+  padding: 8px 10px;
+}
+.procurement-basket__issued-stage .procurement-basket__monitor-panel {
+  gap: 6px;
+  padding: 0;
+  font-size: 12px;
+}
+.procurement-basket__issued-stage .procurement-basket__table-wrap {
+  border: 1px solid var(--basket-border);
+  border-radius: 3px;
+}
+.procurement-basket__issued-stage .procurement-basket__table-wrap table {
+  width: 100%;
+  min-width: 580px;
+  font-size: 12px;
+}
+.procurement-basket__issued-stage .procurement-basket__table-wrap :is(th, td) {
+  padding: 5px 8px;
+}
+.procurement-basket__issued-stage .procurement-basket__table-wrap thead th {
+  background: #e9ebe7;
+  color: #555f70;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+.procurement-basket__issued-stage .procurement-basket__table-wrap :is(th, td):not(:first-child) {
+  border-left: 1px solid var(--basket-border);
+  font-variant-numeric: tabular-nums;
+}
+.procurement-basket__issued-stage .procurement-basket__table-wrap tbody td:nth-child(n + 3) {
+  text-align: right;
+  white-space: nowrap;
+}
+.procurement-basket__issued-stage .procurement-basket__monitor-totals {
+  gap: 6px;
+  min-width: 0;
+}
+.procurement-basket__issued-stage .procurement-basket__monitor-totals > div {
+  min-width: 110px;
+  gap: 2px;
+  line-height: 1.3;
+  padding: 5px 8px;
+  border-radius: 3px;
+}
+.procurement-basket__issued-stage .procurement-basket__monitor-totals dt { font-size: 11px; }
+.procurement-basket__issued-stage .procurement-basket__monitor-totals dd {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.procurement-basket__issued-stage .procurement-basket__monitor-actions {
+  align-items: center;
+  gap: 8px;
+}
+.procurement-basket__issued-stage .procurement-basket__monitor-actions :is(button, a) {
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.3;
+  letter-spacing: 0;
+  text-align: center;
+}
+.procurement-basket__issued-stage .procurement-basket__monitor-actions svg {
+  flex: 0 0 19px;
+  width: 19px;
+  height: 19px;
+}
+@container issued-package (min-width: 800px) {
+  .procurement-basket__issued-stage .procurement-basket__monitor-panel:has(> .procurement-basket__monitor-actions):not(:has(> .procurement-basket__order-terms)) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: stretch;
+  }
+  .procurement-basket__issued-stage .procurement-basket__monitor-panel > .procurement-basket__table-wrap,
+  .procurement-basket__issued-stage .procurement-basket__monitor-panel > :is(.procurement-basket__error, .procurement-basket__notice) {
+    grid-column: 1 / -1;
+  }
+  .procurement-basket__issued-stage .procurement-basket__monitor-actions { flex-wrap: nowrap; }
+  .procurement-basket__issued-stage .procurement-basket__monitor-actions :is(button, a) { flex: 1; }
+}
+@container issued-package (max-width: 600px) {
+  .procurement-basket__issued-stage .procurement-basket__monitor-head {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+  .procurement-basket__issued-stage .procurement-basket__monitor-heading { gap: 8px; }
+  .procurement-basket__issued-stage .procurement-basket__monitor-head h3 { font-size: 16px; }
+  .procurement-basket__issued-stage .procurement-basket__monitor-head > strong { font-size: 18px; }
+  .procurement-basket__issued-stage .procurement-basket__monitor-tabs { margin: 0 10px; }
+  .procurement-basket__issued-stage .procurement-basket__monitor-tabs button {
+    flex-basis: 112px;
+    padding-inline: 8px;
+    font-size: 12px;
+  }
+  .procurement-basket__issued-stage .procurement-basket__monitor > [role="tabpanel"] { padding: 8px 10px; }
+  .procurement-basket__issued-stage .procurement-basket__monitor-actions { flex-direction: column; }
+  .procurement-basket__issued-stage .procurement-basket__monitor-totals > div { min-width: 130px; }
+}
+@media (max-width: 600px) {
+  .procurement-basket:has(.procurement-basket__detail) > .procurement-basket__back {
+    display: block;
+    float: none;
+  }
+}
+
+@media (pointer: coarse) {
+  .procurement-project-page:has(.procurement-basket__detail) > .project-chat-navigation :is(nav a, .project-status-button, .project-chat-priority),
+  .procurement-basket__issued-stage .procurement-basket__monitor-tabs button,
+  .procurement-basket__issued-stage .procurement-basket__monitor-actions :is(button, a) { min-height: 40px; }
+}

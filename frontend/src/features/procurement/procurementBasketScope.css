@@ -116,3 +116,124 @@
   .procurement-basket__scope-total { display: grid; gap: 8px; padding: 12px 13px; }
   .procurement-basket__scope-total strong { justify-self: start; font-size: 17px; text-align: left; white-space: nowrap; }
 }
+
+/* The reference treatment belongs only to the main-basket detail workspace. */
+.procurement-basket__detail .procurement-basket__scope-panel {
+  border-color: #d7dfd7;
+  border-radius: 4px;
+  background: #fafbf7;
+}
+.procurement-basket__detail .procurement-basket__scope-header {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  min-height: 60px;
+  padding: 8px 12px;
+  background: #dfe7d7;
+  color: var(--workspace-ink, #30382b);
+}
+.procurement-basket__detail .procurement-basket__scope-heading { flex: 1 1 160px; }
+.procurement-basket__detail .procurement-basket__scope-heading p:first-child {
+  color: var(--workspace-ink, #30382b);
+  font-size: 11px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+.procurement-basket .procurement-basket__detail .procurement-basket__scope-heading h2 {
+  color: var(--workspace-ink, #30382b);
+  margin: 2px 0;
+  font-size: 20px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+.procurement-basket__detail .procurement-basket__scope-heading p:last-child { display: none; }
+.procurement-basket__detail .procurement-basket__scope-summary {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  margin-left: auto;
+  text-align: right;
+}
+.procurement-basket__detail .procurement-basket__scope-summary > div {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding-left: 0;
+  border-left: 0;
+}
+.procurement-basket__detail .procurement-basket__scope-summary > div:first-child { display: none; }
+.procurement-basket__detail .procurement-basket__scope-summary dt {
+  order: 1;
+  color: var(--workspace-ink, #30382b);
+  font-size: 11px;
+  line-height: 1.25;
+}
+.procurement-basket__detail .procurement-basket__scope-summary dd {
+  margin: 0;
+  color: var(--workspace-ink, #30382b);
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.procurement-basket .procurement-basket__detail .procurement-basket__scope-table {
+  min-width: 620px;
+  font-size: 13px;
+  letter-spacing: 0;
+}
+.procurement-basket__detail .procurement-basket__scope-description-column { width: 40%; }
+.procurement-basket__detail .procurement-basket__scope-unit-column { width: 12%; }
+.procurement-basket__detail .procurement-basket__scope-quantity-column { width: 10%; }
+.procurement-basket__detail .procurement-basket__scope-amount-column { width: 19%; }
+.procurement-basket .procurement-basket__detail .procurement-basket__scope-table :is(th, td) {
+  padding: 8px 10px;
+  line-height: 1.3;
+  vertical-align: top;
+}
+.procurement-basket .procurement-basket__detail .procurement-basket__scope-table thead th {
+  padding: 7px 10px;
+  border-bottom: 1px solid #dce2dc;
+  background: #f0f2ee;
+  color: #47554c;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.procurement-basket .procurement-basket__detail .procurement-basket__scope-table :is(th, td):nth-child(2),
+.procurement-basket .procurement-basket__detail .procurement-basket__scope-table :is(th, td):nth-child(3) { text-align: center; }
+.procurement-basket__detail .procurement-basket__scope-source-row { border-bottom-color: #e0e5df; }
+.procurement-basket__detail .procurement-basket__scope-source-row th strong { font-size: 14px; line-height: 1.3; }
+.procurement-basket .procurement-basket__detail .procurement-basket__scope-source-row th small { margin-top: 6px; font-size: 11px; }
+.procurement-basket__detail .procurement-basket__scope-uom { color: #526157; }
+.procurement-basket__detail .procurement-basket__scope-line-amount { font-size: 14px; }
+.procurement-basket__detail .procurement-basket__scope-total {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+  padding: 8px 12px;
+  line-height: 1.25;
+  background: #edf3e9;
+  color: var(--basket-ink);
+}
+.procurement-basket__detail .procurement-basket__scope-total span { font-size: 13px; }
+.procurement-basket__detail .procurement-basket__scope-total strong { font-size: 17px; text-align: right; white-space: normal; }
+
+@media (max-width: 580px) {
+  .procurement-basket__detail .procurement-basket__scope-header { gap: 10px; padding: 8px 10px; }
+  .procurement-basket .procurement-basket__detail .procurement-basket__scope-heading h2 { font-size: 18px; }
+  .procurement-basket__detail .procurement-basket__scope-summary { gap: 10px; }
+  .procurement-basket__detail .procurement-basket__scope-summary > div { padding-left: 0; }
+  .procurement-basket__detail .procurement-basket__scope-summary > div:first-child { padding-left: 0; border-left: 0; }
+  .procurement-basket .procurement-basket__detail .procurement-basket__scope-table :is(th, td) { padding: 8px 10px; }
+  .procurement-basket .procurement-basket__detail .procurement-basket__scope-table thead th { padding: 7px 10px; }
+  .procurement-basket__detail .procurement-basket__scope-total { padding: 8px 10px; }
+  .procurement-basket__detail .procurement-basket__scope-total strong { font-size: 17px; }
+}
