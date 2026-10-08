@@ -277,139 +277,10 @@ export function createAiEstimatorKnowledgeItemService(
       const mainLineId = knowledgeId("main-line", uuid());
       await withItemCreationTransaction(async (session) => {
         const storedActor = await actorGuard.requireMutationActor(actor, session);
-        await coordinateMainLineBasketDependency(basketId, session);
-        const occurredAt = now();
-        let subBasketId = input.subBasketId ?? null;
-        let createdSubBasketOrder: number | null = null;
-        if (input.subBasketId !== undefined && input.subBasketName !== undefined) {
-          throw new ApiError(400, "VALIDATION_ERROR", "Provide either a Sub Basket name or ID, not both.");
-        }
-        const activeParent = await AiEstimatorKnowledgeBasketModel.exists({ _id: basketId, status: "active" }).session(session);
-        if (!activeParent) throw new ApiError(400, "VALIDATION_ERROR", "Select an active Main Basket.", { basketId: "Select an active Main Basket." });
-        if (input.subBasketName !== undefined) {
-          const subBasketName = typeof input.subBasketName === "string"
-            ? input.subBasketName.normalize("NFKC").trim().replace(/\s+/gu, " ") : "";
-          if (!subBasketName || subBasketName.length > AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT) {
-            throw new ApiError(400, "VALIDATION_ERROR", "Enter a Sub Basket name of up to 240 characters.", { subBasketName: "Enter a valid Sub Basket name." });
-          }
-          const nameNormalized = normalizeKnowledgeIdentity(subBasketName);
-          // The parent dependency write above serializes name resolution with
-          // other child creates and parent deletion in this same transaction.
-          const existing = await AiEstimatorKnowledgeSubBasketModel.findOne({ basketId, nameNormalized }).session(session).lean().exec();
-          if (existing) subBasketId = String(existing._id);
-          else {
-            subBasketId = knowledgeId("sub-basket", uuid());
-            createdSubBasketOrder = await allocateAiEstimatorKnowledgeDisplayOrder({
-              scope: `sub-baskets:${basketId}`, resourceModel: AiEstimatorKnowledgeSubBasketModel,
-              resourceFilter: { basketId }, session
-            });
-            await AiEstimatorKnowledgeSubBasketModel.create([{
-              _id: subBasketId, basketId, name: subBasketName, nameNormalized,
-              displayOrder: createdSubBasketOrder, version: 1,
-              createdById: storedActor.id, updatedById: storedActor.id,
-              createdAt: occurredAt, updatedAt: occurredAt
-            }], { session });
-          }
-        } else if (subBasketId !== null) {
-          const child = await AiEstimatorKnowledgeSubBasketModel.exists({ _id: subBasketId, basketId }).session(session);
-          if (!child) throw new ApiError(400, "VALIDATION_ERROR", "Select a Sub Basket belonging to the active Main Basket.", { subBasketId: "Sub Basket is unavailable for this Main Basket." });
-        }
-        if (subBasketId !== null) {
-          await advanceDirectSubBasketAggregate({
-            subBasketId,
-            basketId,
-            actorId: storedActor.id,
-            occurredAt,
-            session
-          });
-        }
-        const revisionId = knowledgeId("revision", uuid());
-        const completeness = emptyCompleteness(mainLineId, input.itemType);
-        const displayOrderTarget = {
-          scope: createAiEstimatorKnowledgeMainLineDisplayOrderScope(basketId),
-          resourceModel: AiEstimatorKnowledgeMainLineModel,
-          resourceFilter: { basketId },
-          session
-        };
-        const displayOrder = input.displayOrder === undefined
-          ? await allocateAiEstimatorKnowledgeDisplayOrder(displayOrderTarget)
-          : input.displayOrder;
-        if (input.displayOrder !== undefined) {
-          await observeExplicitAiEstimatorKnowledgeDisplayOrder({
-            ...displayOrderTarget,
-            displayOrder: input.displayOrder
-          });
-        }
-        await AiEstimatorKnowledgeMainLineModel.create(
-          [{
-            _id: mainLineId,
-            basketId,
-            subBasketId,
-            itemType: input.itemType ?? "main_line",
-            name: input.name,
-            nameNormalized: normalizeKnowledgeIdentity(input.name),
-            description: input.description ?? null,
-            displayOrder,
-            status: "draft",
-            activeRevisionId: null,
-            draftRevisionId: revisionId,
-            version: 1,
-            createdById: storedActor.id,
-            updatedById: storedActor.id,
-            createdAt: occurredAt,
-            updatedAt: occurredAt
-          }],
-          { session }
-        ).catch(rethrowMainLineIdentityConflict);
-        await AiEstimatorKnowledgeRevisionModel.create(
-          [{
-            _id: revisionId,
-            mainLineId,
-            revisionNumber: 1,
-            status: "draft",
-            sourceRevisionId: null,
-            contentDigest: null,
-            completeness,
-            version: 1,
-            createdById: storedActor.id,
-            updatedById: storedActor.id,
-            createdAt: occurredAt,
-            updatedAt: occurredAt
-          }],
-          { session }
-        );
-        await AiEstimatorKnowledgeSectionModel.insertMany(
-          AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map((sectionKey) => ({
-            _id: knowledgeId(`section-${sectionKey}`, uuid()),
-            mainLineId,
-            revisionId,
-            sectionKey,
-            applicability: input.itemType === "temporary" && !TEMPORARY_ITEM_SECTIONS.includes(sectionKey) ? "not_applicable" : "not_configured",
-            payload: {},
-            version: 1,
-            createdById: storedActor.id,
-            updatedById: storedActor.id,
-            createdAt: occurredAt,
-            updatedAt: occurredAt
-          })),
-          { session }
-        );
-        if (createdSubBasketOrder !== null) {
-          await dependencies.audit.appendInMongoTransaction({
-            actorId: storedActor.id, action: "ai_estimator_knowledge_sub_basket_created",
-            entityType: "ai_estimator_knowledge_sub_basket", entityId: subBasketId!,
-            occurredAt: occurredAt.toISOString(),
-            newValues: { basketId, displayOrder: createdSubBasketOrder, version: 2 }
-          }, session);
-        }
-        await dependencies.audit.appendInMongoTransaction({
-          actorId: storedActor.id,
-          action: "ai_estimator_knowledge_main_line_created",
-          entityType: "ai_estimator_knowledge_main_line",
-          entityId: mainLineId,
-          occurredAt: occurredAt.toISOString(),
-          newValues: { basketId, subBasketId, itemType: input.itemType ?? "main_line", revisionId, displayOrder, version: 1 }
-        }, session);
+        await createKnowledgeHierarchyInSession({
+          actorId: storedActor.id, basketId, input, mainLineId,
+          occurredAt: now(), session, uuid, audit: dependencies.audit
+        });
       });
       return getItemAfterMutation(actor, mainLineId, actorGuard);
     },
@@ -1557,6 +1428,165 @@ async function materializePriceCommands(input: {
     references.push({ operation: "reference", priceEntryId, priceVersionId: id });
   }
   return { ...compatiblePayload, priceEntries: references };
+}
+
+/** Reuses Configuration creation inside a caller-owned transaction. The caller
+ * must authorize the actor in this session before invoking this helper. Omitting
+ * a Main Line creates/resolves only the Sub Basket; no activation occurs here.
+ */
+export async function createKnowledgeHierarchyInSession(options: {
+  readonly actorId: string;
+  readonly basketId: string;
+  readonly input: Omit<KnowledgeMainLineInput, "name"> & { readonly name?: string };
+  readonly mainLineId: string | null;
+  readonly occurredAt: Date;
+  readonly session: ClientSession;
+  readonly uuid: () => string;
+  readonly audit: Pick<AuditService, "appendInMongoTransaction">;
+  readonly sourceRequestId?: string;
+}): Promise<{ readonly subBasketId: string | null; readonly mainLineId: string | null }> {
+  const { actorId, basketId, input, mainLineId, occurredAt, session, uuid, audit } = options;
+  if ((mainLineId === null) !== (input.name === undefined)) {
+    throw new Error("Main Line creation requires both its ID and name.");
+  }
+  const sourceContext = options.sourceRequestId ? { sourceRequestId: options.sourceRequestId } : {};
+  await coordinateMainLineBasketDependency(basketId, session);
+  let subBasketId = input.subBasketId ?? null;
+  let createdSubBasketOrder: number | null = null;
+  if (input.subBasketId !== undefined && input.subBasketName !== undefined) {
+    throw new ApiError(400, "VALIDATION_ERROR", "Provide either a Sub Basket name or ID, not both.");
+  }
+  const activeParent = await AiEstimatorKnowledgeBasketModel.exists({ _id: basketId, status: "active" }).session(session);
+  if (!activeParent) throw new ApiError(400, "VALIDATION_ERROR", "Select an active Main Basket.", { basketId: "Select an active Main Basket." });
+  if (input.subBasketName !== undefined) {
+    const subBasketName = typeof input.subBasketName === "string"
+      ? input.subBasketName.normalize("NFKC").trim().replace(/\s+/gu, " ") : "";
+    if (!subBasketName || subBasketName.length > AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT) {
+      throw new ApiError(400, "VALIDATION_ERROR", "Enter a Sub Basket name of up to 240 characters.", { subBasketName: "Enter a valid Sub Basket name." });
+    }
+    const nameNormalized = normalizeKnowledgeIdentity(subBasketName);
+    // The parent dependency write above serializes name resolution with
+    // other child creates and parent deletion in this same transaction.
+    const existing = await AiEstimatorKnowledgeSubBasketModel.findOne({ basketId, nameNormalized }).session(session).lean().exec();
+    if (existing) subBasketId = String(existing._id);
+    else {
+      subBasketId = knowledgeId("sub-basket", uuid());
+      createdSubBasketOrder = await allocateAiEstimatorKnowledgeDisplayOrder({
+        scope: `sub-baskets:${basketId}`, resourceModel: AiEstimatorKnowledgeSubBasketModel,
+        resourceFilter: { basketId }, session
+      });
+      await AiEstimatorKnowledgeSubBasketModel.create([{
+        _id: subBasketId, basketId, name: subBasketName, nameNormalized,
+        displayOrder: createdSubBasketOrder, version: 1,
+        createdById: actorId, updatedById: actorId,
+        createdAt: occurredAt, updatedAt: occurredAt
+      }], { session });
+    }
+  } else if (subBasketId !== null) {
+    const child = await AiEstimatorKnowledgeSubBasketModel.exists({ _id: subBasketId, basketId }).session(session);
+    if (!child) throw new ApiError(400, "VALIDATION_ERROR", "Select a Sub Basket belonging to the active Main Basket.", { subBasketId: "Sub Basket is unavailable for this Main Basket." });
+  }
+  let revisionId: string | null = null;
+  let displayOrder: number | null = null;
+  if (mainLineId !== null && input.name !== undefined) {
+    if (subBasketId !== null) {
+      await advanceDirectSubBasketAggregate({
+        subBasketId,
+        basketId,
+        actorId,
+        occurredAt,
+        session
+      });
+    }
+    revisionId = knowledgeId("revision", uuid());
+    const completeness = emptyCompleteness(mainLineId, input.itemType);
+    const displayOrderTarget = {
+      scope: createAiEstimatorKnowledgeMainLineDisplayOrderScope(basketId),
+      resourceModel: AiEstimatorKnowledgeMainLineModel,
+      resourceFilter: { basketId },
+      session
+    };
+    displayOrder = input.displayOrder === undefined
+      ? await allocateAiEstimatorKnowledgeDisplayOrder(displayOrderTarget)
+      : input.displayOrder;
+    if (input.displayOrder !== undefined) {
+      await observeExplicitAiEstimatorKnowledgeDisplayOrder({
+        ...displayOrderTarget,
+        displayOrder: input.displayOrder
+      });
+    }
+    await AiEstimatorKnowledgeMainLineModel.create(
+      [{
+        _id: mainLineId,
+        basketId,
+        subBasketId,
+        itemType: input.itemType ?? "main_line",
+        name: input.name,
+        nameNormalized: normalizeKnowledgeIdentity(input.name),
+        description: input.description ?? null,
+        displayOrder,
+        status: "draft",
+        activeRevisionId: null,
+        draftRevisionId: revisionId,
+        version: 1,
+        createdById: actorId,
+        updatedById: actorId,
+        createdAt: occurredAt,
+        updatedAt: occurredAt
+      }],
+      { session }
+    ).catch(rethrowMainLineIdentityConflict);
+    await AiEstimatorKnowledgeRevisionModel.create(
+      [{
+        _id: revisionId,
+        mainLineId,
+        revisionNumber: 1,
+        status: "draft",
+        sourceRevisionId: null,
+        contentDigest: null,
+        completeness,
+        version: 1,
+        createdById: actorId,
+        updatedById: actorId,
+        createdAt: occurredAt,
+        updatedAt: occurredAt
+      }],
+      { session }
+    );
+    await AiEstimatorKnowledgeSectionModel.insertMany(
+      AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map((sectionKey) => ({
+        _id: knowledgeId(`section-${sectionKey}`, uuid()),
+        mainLineId,
+        revisionId,
+        sectionKey,
+        applicability: input.itemType === "temporary" && !TEMPORARY_ITEM_SECTIONS.includes(sectionKey) ? "not_applicable" : "not_configured",
+        payload: {},
+        version: 1,
+        createdById: actorId,
+        updatedById: actorId,
+        createdAt: occurredAt,
+        updatedAt: occurredAt
+      })),
+      { session }
+    );
+  }
+  if (createdSubBasketOrder !== null) {
+    await audit.appendInMongoTransaction({
+      actorId, action: "ai_estimator_knowledge_sub_basket_created",
+      entityType: "ai_estimator_knowledge_sub_basket", entityId: subBasketId!,
+      occurredAt: occurredAt.toISOString(),
+      newValues: { basketId, displayOrder: createdSubBasketOrder, version: mainLineId === null ? 1 : 2, ...sourceContext }
+    }, session);
+  }
+  if (mainLineId !== null) await audit.appendInMongoTransaction({
+    actorId,
+    action: "ai_estimator_knowledge_main_line_created",
+    entityType: "ai_estimator_knowledge_main_line",
+    entityId: mainLineId,
+    occurredAt: occurredAt.toISOString(),
+    newValues: { basketId, subBasketId, itemType: input.itemType ?? "main_line", revisionId, displayOrder, version: 1, ...sourceContext }
+  }, session);
+  return { subBasketId, mainLineId };
 }
 
 async function requireFixedGstPolicy(input: {

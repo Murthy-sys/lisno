@@ -12,6 +12,8 @@ const vendorBasketRequestSchema = new Schema({
   status: { type: String, enum: ["pending", "fulfilled", "rejected"], required: true },
   version: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
   basketId: { type: String, ref: "AiEstimatorKnowledgeBasket", default: null },
+  subBasketId: { type: String, ref: "AiEstimatorKnowledgeSubBasket", default: null },
+  mainLineId: { type: String, ref: "AiEstimatorKnowledgeMainLine", default: null },
   reason: { type: String, default: null, maxlength: 1000 },
   idempotencyKey: { type: String, required: true, immutable: true },
   requestFingerprint: { type: String, required: true, immutable: true },

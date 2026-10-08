@@ -90,6 +90,7 @@ function installDashboardApi({
     if (path.startsWith("/admin/dashboard/projects?")) return projects as never;
     if (path.startsWith("/admin/dashboard/workforce?")) return superAdminDashboardWorkforcePageFixture as never;
     if (path === "/design-workflow/payment-confirmations") return [] as never;
+    if (path.startsWith("/admin/ai-estimator-knowledge/basket-requests?")) return { items: [], pagination: { total: 7, limit: 1, offset: 0, hasMore: true } } as never;
     throw new Error(`Unexpected dashboard request: ${path}`);
   });
 }
@@ -119,6 +120,27 @@ function deferred<T>() {
 }
 
 describe("Super Admin dashboard page", () => {
+  it("shows a permission-gated vendor approval queue and refreshes its count with the dashboard", async () => {
+    vi.mocked(useAuth).mockReturnValue({ user: { id: "super-admin-one", role: "super_admin" }, authorization: authorizationFor("super_admin", ["ai_estimator_knowledge.configuration.read"]) } as ReturnType<typeof useAuth>);
+    const read = installDashboardApi();
+    renderDashboard();
+    const count = await screen.findByLabelText("7 pending vendor classification requests");
+    expect(count).toBeVisible();
+    expect(screen.getByRole("link", { name: /Vendor classification requests/ })).toHaveAttribute("href", "/admin/configuration/estimation?basketRequests=pending");
+    const countReads = () => read.mock.calls.filter(([path]) => path.startsWith("/admin/ai-estimator-knowledge/basket-requests?")).length;
+    expect(countReads()).toBe(1);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Refresh dashboard" }));
+    await waitFor(() => expect(countReads()).toBe(2));
+  });
+
+  it("does not request or render the vendor approval count without Configuration read permission", async () => {
+    const read = installDashboardApi();
+    renderDashboard();
+    await screen.findByRole("heading", { name: "Organization overview" });
+    expect(screen.queryByRole("link", { name: /Vendor classification requests/ })).not.toBeInTheDocument();
+    expect(read.mock.calls.some(([path]) => path.startsWith("/admin/ai-estimator-knowledge/basket-requests?"))).toBe(false);
+  });
+
   it("uses stable UTC and semantic identities for executive ECharts transitions", () => {
     const activity = createRecordedCostActivityOption({
       trends: superAdminDashboardOverviewFixture.trends,

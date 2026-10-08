@@ -18,7 +18,7 @@ import {
   X
 } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
@@ -32,6 +32,7 @@ import { InlineMessage } from "../../components/ui/InlineMessage";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
 import { Surface } from "../../components/ui/Surface";
+import { useVendorBasketRequestCount } from "../procurement/useVendorBasketRequestCount";
 import {
   createKnowledgeBasket,
   getKnowledgeBasketDeletionImpact,
@@ -111,13 +112,15 @@ function errorMessage(error: Error | null): string {
 export function KnowledgeBaseIndexPage() {
   const auth = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState<FilterState>(emptyFilters);
   const [appliedFilters, setAppliedFilters] = useState<FilterState>(emptyFilters);
   const [offset, setOffset] = useState(0);
   const [basketDialogOpen, setBasketDialogOpen] = useState(false);
   const [basketManagerOpen, setBasketManagerOpen] = useState(false);
-  const [basketRequestsOpen, setBasketRequestsOpen] = useState(false);
+  const basketRequestsOpen = searchParams.get("basketRequests") === "pending";
   const [basketEditor, setBasketEditor] = useState<KnowledgeBasket | null>(null);
   const [basketDelete, setBasketDelete] = useState<KnowledgeBasket | null>(null);
   const [subBasketEditor, setSubBasketEditor] = useState<{ basket: KnowledgeBasket; subBasket: KnowledgeSubBasket } | null>(null);
@@ -157,6 +160,12 @@ export function KnowledgeBaseIndexPage() {
     "ai_estimator_knowledge.configuration.lifecycle"
   );
   const canManageBaskets = auth.user?.role === "super_admin" && (canCreate || canUpdate || canLifecycle);
+  const canReviewRequests = auth.user?.role === "super_admin" && hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.read");
+  const requestCount = useVendorBasketRequestCount(canReviewRequests);
+  const requestCountId = useId();
+  const requestCountLabel = requestCount.isError
+    ? requestCount.data === undefined ? "Count unavailable" : `${requestCount.data} pending (refresh failed)`
+    : requestCount.isPending ? "Loading count…" : `${requestCount.data} pending`;
   const canCreateBasketInline = auth.user?.role === "super_admin" && canCreate;
   const request = { ...appliedFilters, limit: PAGE_SIZE, offset };
   const itemsQuery = useQuery({
@@ -413,14 +422,24 @@ export function KnowledgeBaseIndexPage() {
             >
               Manage reusable values
             </Button>
-            {canManageBaskets ? (
+            {canReviewRequests ? (
+              <>
               <Button
                 variant="secondary"
+                aria-label="Main Basket requests"
+                aria-describedby={requestCountId}
                 aria-expanded={basketRequestsOpen}
-                onClick={() => setBasketRequestsOpen((open) => !open)}
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams);
+                  if (basketRequestsOpen) next.delete("basketRequests");
+                  else next.set("basketRequests", "pending");
+                  setSearchParams(next);
+                }}
               >
-                Main Basket requests
+                Main Basket requests · <span id={requestCountId}>{requestCountLabel}</span>
               </Button>
+              {requestCount.isError ? <Button variant="quiet" disabled={requestCount.isFetching} onClick={() => void requestCount.refetch()}>Retry request count</Button> : null}
+              </>
             ) : null}
             {canManageBaskets ? (
               <Button
@@ -461,7 +480,7 @@ export function KnowledgeBaseIndexPage() {
       {noticeDismissed ? null : (
         <KnowledgeSafetyNotice onDismiss={dismissNotice} />
       )}
-      {canManageBaskets && basketRequestsOpen ? <KnowledgeBasketRequestReview /> : null}
+      {canReviewRequests && basketRequestsOpen ? <KnowledgeBasketRequestReview navigationKey={location.key} canDecide={canCreate} /> : null}
       {announcement ? (
         <p className="sr-only" role="status">
           {announcement}

@@ -810,6 +810,9 @@
   .dashboard-action-list strong { font-size: .72rem; font-weight: 700; }
   .dashboard-action-list small { color: var(--dashboard-exec-muted); font-size: .62rem; }
   .dashboard-action-list b { font-size: .86rem; font-variant-numeric: tabular-nums; }
+  .dashboard-action-list .dashboard-vendor-request-queue > a { grid-template-columns: minmax(0, 1fr) auto; }
+  .dashboard-vendor-request-queue > a > span { display: grid; gap: .1rem; }
+  .dashboard-vendor-request-queue > button { margin-bottom: .4rem; font-size: .68rem; }
 
   .dashboard-client-pulse__facts {
     display: grid;
