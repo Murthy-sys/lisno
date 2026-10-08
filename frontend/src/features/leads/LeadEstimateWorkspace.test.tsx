@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
@@ -216,8 +216,8 @@ function RefetchSavedEstimate() {
 }
 
 describe("LeadEstimateWorkspace", () => {
-  it("omits basket descriptions and count badges while keeping independent card toggles and disclosures with keyboard support", async () => {
-    const basketName = "Wall and ceiling finishes with specialist surface preparation";
+  it("keeps photo-card controls usable after image failure, omits descriptions and counts, and preserves independent keyboard toggles and disclosures", async () => {
+    const basketName = "Functional Lights Supply and Installation";
     const description = "Prepare surfaces and apply the specified finishes.\nProtect adjoining furniture during execution.";
     let failRefresh = false;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -239,6 +239,15 @@ describe("LeadEstimateWorkspace", () => {
     const user = userEvent.setup();
     renderWorkspace();
     const card = await screen.findByRole("article", { name: basketName });
+    expect(within(card).getByRole("heading", { name: basketName })).toBeVisible();
+    const photo = card.querySelector("img");
+    expect(photo).toHaveAttribute("alt", "");
+    expect(photo).toHaveAttribute("loading", "lazy");
+    expect(photo).toHaveAttribute("width");
+    expect(photo).toHaveAttribute("height");
+    expect(photo?.getAttribute("src")).not.toMatch(/^https?:/);
+    fireEvent.error(photo!);
+    expect(card.querySelector("img")).toBeNull();
     expect(within(card).getByRole("heading", { name: basketName })).toBeVisible();
     expect(within(card).queryByText(/Prepare surfaces and apply the specified finishes/)).not.toBeInTheDocument();
     expect(card.querySelector(".configured-estimate-chooser__description")).toBeNull();
@@ -272,6 +281,17 @@ describe("LeadEstimateWorkspace", () => {
       expect(undescribed.querySelector(".configured-estimate-chooser__counts")).toBeNull();
       expect(within(undescribed).getByRole("button", { name: `Add ${name}` })).toHaveAttribute("aria-pressed", "false");
     }
+    const unknownCard = screen.getByRole("article", { name: "Legacy Description" });
+    expect(unknownCard.querySelector("img")).toBeNull();
+    expect(unknownCard.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(within(unknownCard).queryByRole("status")).not.toBeInTheDocument();
+    expect(within(unknownCard).queryByText(/loading/i)).not.toBeInTheDocument();
+    await user.click(within(unknownCard).getByRole("button", { name: "Add Legacy Description" }));
+    expect(within(unknownCard).getByRole("button", { name: "Added Legacy Description" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(within(unknownCard).getByRole("button", { name: "Added Legacy Description" }));
+    await user.click(within(unknownCard).getByRole("button", { name: "Show Legacy Description details" }));
+    expect(within(unknownCard).getByText("No available items in this basket yet.")).toBeVisible();
+    expect(within(unknownCard).getByRole("button", { name: "Add Legacy Description" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.queryByRole("radio", { name: /item type for Main Basket/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     await user.click(add);
@@ -280,10 +300,92 @@ describe("LeadEstimateWorkspace", () => {
     await screen.findByText("The catalogue refresh failed. The last loaded baskets are shown; retry before adding items.");
     expect(within(card).getByRole("button", { name: `Added ${basketName}` })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Add Electrical Works" })).toBeDisabled();
+    const selection = screen.getByRole("region", { name: "Basket selection" });
+    expect(within(selection).getByRole("status")).toHaveTextContent("1 selected");
+    expect(within(selection).getByRole("button", { name: "Clear all" })).toBeDisabled();
+    expect(within(selection).getByRole("button", { name: "Continue to item selection" })).toBeDisabled();
+    expect(screen.getByRole("searchbox", { name: "Search baskets" })).toBeEnabled();
     expect(disclosure).toBeEnabled();
     await user.click(disclosure);
     expect(disclosure).toHaveAttribute("aria-expanded", "false");
     expect(within(card).getByRole("button", { name: `Added ${basketName}` })).toHaveAttribute("aria-pressed", "true");
+    const search = screen.getByRole("searchbox", { name: "Search baskets" });
+    await user.type(search, "functional");
+    failRefresh = false;
+    await user.click(screen.getByRole("button", { name: "Refresh available items" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: `Added ${basketName}` })).toBeEnabled());
+    expect(search).toHaveValue("functional");
+    expect(screen.queryByRole("article", { name: "Electrical Works" })).not.toBeInTheDocument();
+    expect(within(selection).getByRole("status")).toHaveTextContent("1 selected");
+    expect(within(selection).getByRole("button", { name: "Clear all" })).toBeEnabled();
+  });
+
+  it("searches loaded basket names in configured order without requests and continues with selections hidden by the filter", async () => {
+    const requests: Array<{ url: string; method: string }> = [];
+    const baskets = [
+      { id: "basket-zinc", name: "Zinc finishes", displayOrder: 1, subBaskets: [], directTemporaryItems: [] },
+      { id: "basket-paint", name: "Painting", displayOrder: 2, subBaskets: [], directTemporaryItems: [] },
+      { id: "basket-ceiling", name: "Ceiling finishes", displayOrder: 3, subBaskets: [], directTemporaryItems: [] }
+    ];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      requests.push({ url, method: init?.method ?? "GET" });
+      if (url.endsWith("/leads/lead-1")) return response(leadFixture);
+      if (url.endsWith("/leads/lead-1/estimate")) return response(null);
+      if (url.includes("/estimation/catalogue?")) return response({ items: baskets,
+        pagination: { limit: 100, offset: 0, total: 3, hasMore: false }, ineligibleLineCount: 0 });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+    await screen.findByRole("article", { name: "Zinc finishes" });
+    const selection = screen.getByRole("region", { name: "Basket selection" });
+    const count = within(selection).getByRole("status");
+    const continueButton = within(selection).getByRole("button", { name: "Continue to item selection" });
+    expect(count).toHaveTextContent("0 selected");
+    expect(within(selection).getByRole("button", { name: "Clear all" })).toBeDisabled();
+    expect(continueButton).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: "Continue to item selection" })).toHaveLength(1);
+    expect(screen.getAllByRole("article").map((card) => within(card).getByRole("heading").textContent)).toEqual(baskets.map((basket) => basket.name));
+    await user.click(screen.getByRole("button", { name: "Add Zinc finishes" }));
+    await user.click(screen.getByRole("button", { name: "Add Painting" }));
+    expect(count).toHaveTextContent("2 selected");
+    expect(continueButton).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(continueButton).toBeEnabled();
+
+    const search = screen.getByRole("searchbox", { name: "Search baskets" });
+    expect(search).toHaveAttribute("placeholder", "Search baskets...");
+    const readsBeforeSearch = requests.length;
+    await user.type(search, "  FiNiShEs  ");
+    expect(screen.getAllByRole("article").map((card) => within(card).getByRole("heading").textContent)).toEqual(["Zinc finishes", "Ceiling finishes"]);
+    expect(screen.queryByRole("article", { name: "Painting" })).not.toBeInTheDocument();
+    expect(count).toHaveTextContent("2 selected");
+    expect(screen.getByRole("button", { name: "Added Zinc finishes" })).toHaveAttribute("aria-pressed", "true");
+    expect(continueButton).toBeEnabled();
+    await user.clear(search);
+    await user.type(search, "not-in-this-catalogue");
+    expect(screen.getByText("No baskets match your search.")).toBeVisible();
+    expect(screen.queryByText("No active Main Baskets are available in the estimator catalogue.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    expect(count).toHaveTextContent("2 selected");
+    expect(continueButton).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(search).toHaveValue("");
+    expect(screen.getAllByRole("article").map((card) => within(card).getByRole("heading").textContent)).toEqual(baskets.map((basket) => basket.name));
+    expect(screen.getByRole("button", { name: "Added Painting" })).toHaveAttribute("aria-pressed", "true");
+    await user.type(search, "ceiling");
+    expect(screen.queryByRole("article", { name: "Zinc finishes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("article", { name: "Painting" })).not.toBeInTheDocument();
+    expect(requests).toHaveLength(readsBeforeSearch);
+    await user.click(continueButton);
+    expect(screen.getByRole("region", { name: "Zinc finishes" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Painting" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Ceiling finishes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Basket selection" })).not.toBeInTheDocument();
+    expect(requests.every((request) => request.method === "GET")).toBe(true);
   });
 
   it("blocks editing when the saved estimate read fails", async () => {
@@ -1157,17 +1259,19 @@ describe("LeadEstimateWorkspace", () => {
     const user = userEvent.setup();
     renderWorkspace();
     expect(await screen.findByRole("alert")).toHaveTextContent("Configured baskets could not be loaded");
+    expect(screen.getByRole("button", { name: "Clear all" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Continue to item selection" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: /^(?:Add|Added) General Items$/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Retry catalogue" }));
     expect(await screen.findByRole("button", { name: /^(?:Add|Added) General Items$/ })).toBeEnabled();
     expect(catalogueReads).toBe(2);
   });
 
-  it("keeps configured basket selection read-only in a locked estimate", async () => {
+  it.each(["sent_to_client", "pending_manager_assignment"] as const)("keeps configured basket selection read-only for %s and counts missing saved selections", async (status) => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/leads/lead-1")) return response(leadFixture);
-      if (url.endsWith("/leads/lead-1/estimate")) return response({ ...estimateFixture("sent_to_client"), lineItems: [], selectedMainBasketIds: ["basket-1"], selectedMainBasketClassifications: [{ mainBasketId: "basket-1", classification: "special" }] });
+      if (url.endsWith("/leads/lead-1/estimate")) return response({ ...estimateFixture(status), lineItems: [], selectedMainBasketIds: ["basket-1", "basket-no-longer-available"], selectedMainBasketClassifications: [{ mainBasketId: "basket-1", classification: "special" }] });
       if (url.includes("/estimation/catalogue?")) return response({ items: [{ id: "basket-1", name: "Painting", displayOrder: 1, subBaskets: [] }], pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 });
       throw new Error(`Unexpected request: ${url}`);
     });
@@ -1177,6 +1281,11 @@ describe("LeadEstimateWorkspace", () => {
     expect(screen.queryByText("Item type:")).not.toBeInTheDocument();
     expect(screen.queryByRole("radio", { name: /item type for Main Basket Painting/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue to item selection" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Clear all" })).toBeDisabled();
+    const selection = screen.getByRole("region", { name: "Basket selection" });
+    expect(within(selection).getByRole("status")).toHaveTextContent("2 selected");
+    expect(screen.getByRole("searchbox", { name: "Search baskets" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Show Painting details" })).toBeEnabled();
   });
 
   it("shows denied catalogue access without an empty-basket message or retry control", async () => {
@@ -1191,6 +1300,8 @@ describe("LeadEstimateWorkspace", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("You do not have permission to read the estimator catalogue.");
     expect(screen.queryByText("No active Main Baskets are available in the estimator catalogue.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry catalogue" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clear all" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Continue to item selection" })).toBeDisabled();
   });
 
   it("uses the legacy save shape after an older catalogue service rejects the ready flag", async () => {

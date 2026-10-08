@@ -1,0 +1,384 @@
+.lead-detail.lead-detail--estimate-progress {
+  --estimation-progress-surface: color-mix(in srgb, var(--button-primary-ink) 55%, var(--color-bg));
+  --estimation-progress-tint: color-mix(in srgb, var(--button-primary-bg) 7%, var(--estimation-progress-surface));
+  --estimation-progress-border: color-mix(in srgb, var(--button-primary-bg) 18%, var(--color-border));
+  container: estimation-progress / inline-size;
+  min-inline-size: 0;
+  gap: var(--space-4);
+  background: var(--estimation-progress-surface);
+  color: var(--color-text-strong);
+}
+
+.lead-detail--estimate-progress .estimation-progress__header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-4) var(--space-5);
+  align-items: start;
+  padding-block-end: var(--space-4);
+  border-block-end: 1px solid var(--color-border);
+}
+
+.lead-detail--estimate-progress .estimation-progress__identity {
+  display: grid;
+  gap: var(--space-2);
+  min-inline-size: 0;
+}
+
+.lead-detail--estimate-progress .estimation-progress__eyebrow {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.lead-detail--estimate-progress .estimation-progress__title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-inline-size: 0;
+}
+
+.lead-detail--estimate-progress .estimation-progress__title-row h1 {
+  margin: 0;
+  min-inline-size: 0;
+  color: var(--color-primary);
+  font: 600 clamp(1.375rem, 2vw, 1.75rem) / 1.3 var(--font-main);
+  overflow-wrap: anywhere;
+}
+
+.lead-detail--estimate-progress .estimation-progress__property {
+  max-inline-size: 100%;
+  padding: 5px 10px;
+  border-radius: 4px;
+  background: var(--role-deck-tint, var(--button-primary-ink));
+  color: var(--color-warning);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.lead-detail--estimate-progress .estimation-progress__contacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-md);
+}
+
+.lead-detail--estimate-progress .estimation-progress__contacts li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.lead-detail--estimate-progress .estimation-progress__contacts svg {
+  flex: 0 0 17px;
+  inline-size: 17px;
+  block-size: 17px;
+  color: var(--color-text-muted);
+}
+
+.lead-detail--estimate-progress .estimation-progress__contacts :is(a, span) {
+  min-inline-size: 0;
+  color: inherit;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.lead-detail--estimate-progress .estimation-progress__contacts a:hover {
+  text-decoration: underline;
+}
+
+.lead-detail--estimate-progress .estimation-progress__location {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.lead-detail--estimate-progress .estimation-progress__header-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-3);
+  inline-size: 27rem;
+  max-inline-size: 100%;
+}
+
+.lead-detail--estimate-progress .estimation-progress__header-controls .ui-field {
+  flex: 1 1 14rem;
+  min-inline-size: 0;
+}
+
+.lead-detail--estimate-progress .estimation-progress__header-controls .ui-field__label {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.lead-detail--estimate-progress .estimation-progress__header-controls .ui-select {
+  inline-size: 100%;
+  min-block-size: 40px;
+  padding-inline: 10px 30px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  background-color: var(--estimation-progress-surface);
+  color: var(--color-primary);
+  font-size: var(--text-sm);
+}
+
+.lead-detail--estimate-progress .estimation-progress__critical:empty,
+.lead-detail--estimate-progress .project-chat-navigation--estimate-progress:empty {
+  display: none;
+}
+
+.lead-detail--estimate-progress .estimation-progress__critical {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.lead-detail--estimate-progress .estimation-progress__critical .project-chat-navigation__summary {
+  display: grid;
+  gap: var(--space-1);
+  justify-items: start;
+}
+
+.lead-detail--estimate-progress .estimation-progress__critical .project-chat-priority {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: 40px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-danger) 7%, var(--estimation-progress-surface));
+  color: var(--color-danger-strong);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.lead-detail--estimate-progress .project-chat-navigation--estimate-progress {
+  gap: var(--space-2) var(--space-3);
+  min-inline-size: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.lead-detail--estimate-progress .project-chat-navigation--estimate-progress nav {
+  min-inline-size: 0;
+  gap: var(--space-3);
+}
+
+.lead-detail--estimate-progress .project-chat-navigation--estimate-progress nav a {
+  min-inline-size: 0;
+  min-block-size: 44px;
+  padding: 8px 6px;
+  border-block-end: 2px solid transparent;
+  border-radius: 0;
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.lead-detail--estimate-progress .project-chat-navigation--estimate-progress nav a[aria-current="page"] {
+  border-block-end-color: var(--button-primary-bg);
+  background: transparent;
+  color: var(--button-primary-bg);
+  box-shadow: none;
+}
+
+.lead-detail--estimate-progress .project-chat-navigation__tab-icon {
+  flex: 0 0 18px;
+  inline-size: 18px;
+  block-size: 18px;
+}
+
+.lead-detail--estimate-progress .project-chat-navigation--estimate-progress .project-status-button {
+  margin-inline-start: auto;
+  margin-block-end: var(--space-2);
+  min-block-size: 36px;
+  padding: 6px 12px;
+  border-color: var(--estimation-progress-border);
+  background: var(--estimation-progress-tint);
+  color: var(--button-secondary-ink);
+  font-size: var(--text-sm);
+}
+
+.ui-app-shell[data-role] .lead-detail--estimate-progress .lead-detail__grid {
+  min-inline-size: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+}
+
+.ui-app-shell[data-role] .lead-detail--estimate-progress .lead-detail__grid > section {
+  min-inline-size: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--estimation-progress-surface);
+  box-shadow: none;
+}
+
+.ui-app-shell[data-role] .lead-detail--estimate-progress .lead-detail__grid .estimation-progress__estimate-heading {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  margin: 0;
+  padding-block-end: var(--space-3);
+  border-block-end: 1px solid var(--color-border);
+  color: var(--color-primary);
+  font-size: var(--text-xl);
+  font-weight: 600;
+}
+
+.lead-detail--estimate-progress .estimation-progress__heading-symbol {
+  display: grid;
+  flex: 0 0 34px;
+  inline-size: 34px;
+  block-size: 34px;
+  place-items: center;
+  border-radius: 4px;
+  background: var(--estimation-progress-tint);
+  color: var(--button-primary-bg);
+}
+
+.ui-app-shell[data-role] .lead-detail--estimate-progress .estimation-progress__heading-symbol svg {
+  inline-size: 23px;
+  block-size: 23px;
+}
+
+.lead-detail--estimate-progress .estimation-progress__steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lead-detail--estimate-progress .estimation-progress__steps li {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  min-inline-size: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  color: var(--color-primary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.lead-detail--estimate-progress .estimation-progress__steps li:first-child {
+  border-color: var(--estimation-progress-border);
+  background: var(--estimation-progress-tint);
+}
+
+.lead-detail--estimate-progress .estimation-progress__step-number {
+  display: grid;
+  inline-size: 26px;
+  block-size: 26px;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--estimation-progress-surface));
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.lead-detail--estimate-progress .estimation-progress__steps li:first-child .estimation-progress__step-number {
+  background: var(--button-primary-bg);
+  color: var(--button-primary-ink);
+}
+
+.lead-detail--estimate-progress .estimation-progress__step-symbol {
+  inline-size: 25px;
+  block-size: 25px;
+}
+
+.lead-detail--estimate-progress .estimation-progress__estimate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ui-app-shell[data-role] .lead-detail--estimate-progress .estimation-progress__next-action {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.lead-detail--estimate-progress .estimation-progress__next-action span {
+  color: var(--color-primary);
+}
+
+.lead-detail--estimate-progress .estimation-progress__estimate-actions .ui-button {
+  min-block-size: 40px;
+  margin-inline-start: auto;
+}
+
+.lead-detail--estimate-progress .ui-button,
+.lead-detail--estimate-progress .ui-control {
+  border-radius: 4px;
+  transition: none;
+}
+
+.lead-detail--estimate-progress .ui-button:is(:hover, :active, :focus-visible),
+.lead-detail--estimate-progress .ui-control:is(:hover, :active, :focus-visible) {
+  box-shadow: none;
+  transform: none;
+}
+
+.lead-detail--estimate-progress :is(a, button, select, textarea):focus-visible {
+  outline: 2px solid var(--button-primary-bg);
+  outline-offset: 3px;
+}
+
+@container estimation-progress (max-width: 60rem) {
+  .lead-detail--estimate-progress .estimation-progress__header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lead-detail--estimate-progress .estimation-progress__header-controls {
+    inline-size: 100%;
+    max-inline-size: 30rem;
+  }
+}
+
+@container estimation-progress (max-width: 42rem) {
+  .lead-detail--estimate-progress .estimation-progress__steps {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+
+  .ui-app-shell[data-role] .lead-detail--estimate-progress .lead-detail__grid > section {
+    padding: var(--space-3);
+  }
+}
+
+@container estimation-progress (max-width: 24rem) {
+  .lead-detail--estimate-progress .estimation-progress__header-controls {
+    align-items: start;
+  }
+
+  .lead-detail--estimate-progress .estimation-progress__header-controls .ui-field {
+    flex-basis: 100%;
+  }
+
+  .lead-detail--estimate-progress .project-chat-navigation--estimate-progress nav {
+    gap: var(--space-2);
+  }
+
+  .lead-detail--estimate-progress .estimation-progress__estimate-actions .ui-button {
+    inline-size: 100%;
+  }
+}

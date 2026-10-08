@@ -15,7 +15,8 @@ import { estimateBuilderSections } from "./estimateBuilderCatalogue";
 import { EstimateBuilder, type BuilderLine, type BuilderRoom, type BuilderSection } from "./EstimateBuilder";
 import { ConfiguredEstimateBuilder } from "./ConfiguredEstimateBuilder";
 import { buildConfiguredLines, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredQuantityUnits, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
-import { estimationCatalogueKeys, getEstimationCatalogue, getEstimationCatalogueRecommendations, type EstimationCatalogueBasket } from "./estimationCatalogueApi";
+import { estimationCatalogueKeys, getEstimationCatalogue, getEstimationCatalogueRecommendations } from "./estimationCatalogueApi";
+import { MainBasketSelectionCard } from "./MainBasketSelectionCard";
 import { buildRoomRecommendations, partitionRoomRecommendationSources, recommendationSourceIdentity, recommendationLines, recommendationTargetIdentity, type RecommendationLine, type RecommendationDecision, type RecommendedLineTarget } from "./roomRecommendations";
 import { EstimateDeliveryStatus } from "./EstimateDeliveryStatus";
 import { EstimateClientFeedback } from "./EstimateClientFeedback";
@@ -66,42 +67,6 @@ const roomSelectOptions: RoomOption[] = roomDefinitions.map((definition) => ({
 function RoomIcon({ typeId }: { typeId: string }) {
   const Icon = roomIcons[typeId] ?? Pencil;
   return <Icon size={16} aria-hidden="true" />;
-}
-function basketCount(count: number, singular: string, plural: string) {
-  return `${count} ${count === 1 ? singular : plural}`;
-}
-function MainBasketSelectionCard({ basket, selected, disabled, onToggle }: {
-  basket: EstimationCatalogueBasket;
-  selected: boolean;
-  disabled: boolean;
-  onToggle: () => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const detailsId = `estimate-basket-details-${basket.id}`;
-  const headingId = `estimate-basket-heading-${basket.id}`;
-  const temporaryCount = (basket.directTemporaryItems ?? []).length + basket.subBaskets.reduce((sum, item) => sum + (item.temporaryItems ?? []).length, 0);
-  return <article className={`configured-estimate-chooser__item${selected ? " configured-estimate-chooser__item--selected" : ""}`} aria-labelledby={headingId}>
-    {selected ? <span className="configured-estimate-chooser__selected-mark" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m5 10 3 3 7-7" /></svg></span> : null}
-    <header className="configured-estimate-chooser__card-heading">
-        <span className="configured-estimate-chooser__glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"><path d="m12 2 9 5v10l-9 5-9-5V7l9-5Z" /><path d="m3 7 9 5 9-5M12 12v10" /></svg></span>
-      <div className="configured-estimate-chooser__card-title">
-        <h3 id={headingId}>{basket.name}</h3>
-      </div>
-    </header>
-    <div className="configured-estimate-chooser__actions">
-      <button type="button" className="configured-estimate-chooser__selection" aria-pressed={selected} aria-label={`${selected ? "Added" : "Add"} ${basket.name}`} disabled={disabled} onClick={onToggle}>
-        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={selected ? "m4 10 4 4 8-8" : "M10 4v12M4 10h12"} /></svg><span>{selected ? "Added" : "Add"}</span>
-      </button>
-      <button type="button" className="configured-estimate-chooser__disclosure" aria-expanded={expanded} aria-controls={detailsId} aria-label={`${expanded ? "Hide" : "Show"} ${basket.name} details`} onClick={() => setExpanded((current) => !current)}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>
-      </button>
-    </div>
-    <div id={detailsId} className="configured-estimate-chooser__details" hidden={!expanded}>
-      {basket.subBaskets.map((subBasket) => <div key={subBasket.id} className="configured-estimate-chooser__detail"><strong>{subBasket.name}</strong><span>{basketCount(subBasket.mainLines.length, "Main Line", "Main Lines")} · {basketCount((subBasket.temporaryItems ?? []).length, "Temporary Item", "Temporary Items")}</span></div>)}
-      {(basket.directTemporaryItems ?? []).length ? <div className="configured-estimate-chooser__detail"><strong>Directly under Main Basket</strong><span>{basketCount(basket.directTemporaryItems?.length ?? 0, "Temporary Item", "Temporary Items")}</span></div> : null}
-      {!basket.subBaskets.length && !temporaryCount ? <p>No available items in this basket yet.</p> : null}
-    </div>
-  </article>;
 }
 function TabIcon({ tab }: { tab: EstimateTab }) {
   return <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{tab === "builder" ? <><rect x="5" y="5" width="14" height="16" rx="1" /><path d="M9 5V3h6v2M9 10h6M9 14h6M9 18h4" /></> : tab === "summary" ? <><path d="M4 20V11M9 20V5M14 20v-8M19 20V8M3 20h18" /></> : tab === "proposal" ? <><path d="M6 2h9l4 4v16H6zM15 2v5h4M9 11h7M9 15h7M9 19h5" /></> : <circle cx="12" cy="12" r="8" />}</svg>;
@@ -221,6 +186,40 @@ function EstimateBuilderArea({ children }: { children: ReactNode }) {
   return <div ref={areaRef} className="estimate-workspace__builder-area">{children}</div>;
 }
 
+function ConfigureSelectionFooter({ count, clearDisabled, continueDisabled, onClear, onContinue }: {
+  count: number;
+  clearDisabled: boolean;
+  continueDisabled: boolean;
+  onClear: () => void;
+  onContinue: () => void;
+}) {
+  const footerRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const footer = footerRef.current;
+    const workspace = footer?.closest<HTMLElement>(".estimate-workspace");
+    if (!footer || !workspace) return;
+    const measure = () => workspace.style.setProperty("--estimate-selection-footer-height", `${Math.ceil(footer.getBoundingClientRect().height)}px`);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(footer);
+    measure();
+    return () => {
+      observer?.disconnect();
+      workspace.style.removeProperty("--estimate-selection-footer-height");
+    };
+  }, []);
+
+  return <div ref={footerRef} className="estimate-selection-footer" role="region" aria-label="Basket selection">
+    <div className="estimate-selection-footer__summary">
+      <span className="estimate-selection-footer__count" role="status" aria-live="polite" aria-atomic="true">{count} selected</span>
+      <button type="button" className="estimate-selection-footer__clear" disabled={clearDisabled} onClick={onClear}>Clear all</button>
+    </div>
+    <button type="button" className="button button--primary estimate-selection-footer__continue" disabled={continueDisabled} onClick={onContinue}>
+      Continue to item selection
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 12h16m-6-6 6 6-6 6" /></svg>
+    </button>
+  </div>;
+}
+
 export function LeadEstimateWorkspace() {
   const { leadId = "" } = useParams();
   return <LeadEstimateWorkspaceForLead key={leadId} leadId={leadId} />;
@@ -251,6 +250,8 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   const [rooms, setRooms] = useState<RoomDraft[]>([]);
   const [enabledSections, setEnabledSections] = useState<Set<string>>(() => new Set(["FC", "FL", "CA", "PA", "EL", "CV"]));
   const [selectedMainBasketIds, setSelectedMainBasketIds] = useState<Set<string>>(() => new Set());
+  const [basketSearch, setBasketSearch] = useState("");
+  const basketSearchRef = useRef<HTMLInputElement>(null);
   const [mainBasketClassifications, setMainBasketClassifications] = useState<Map<string, EstimateClassification>>(() => new Map());
   const [lines, setLines] = useState<LineDraft[]>([]);
   const [configuredLines, setConfiguredLines] = useState<ConfiguredLineDraft[]>([]);
@@ -675,6 +676,13 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   if (lead.isError) return <AsyncState state="error" message="We couldn't load this lead." actionLabel="Try again" onAction={() => void lead.refetch()} />;
   if (saved.isError && saved.data === undefined) return <AsyncState state="error" message="We couldn't load the saved estimate. Retry before making changes." actionLabel="Retry estimate" onAction={() => void saved.refetch()} />;
   const leadItem = lead.data;
+  const basketSearchTerm = basketSearch.trim().toLowerCase();
+  const visibleBaskets = catalogue.data?.items.filter((basket) => basket.name.toLowerCase().includes(basketSearchTerm)) ?? [];
+  const basketSelectionDisabled = !editable || catalogue.isError || !catalogue.data;
+  const clearBasketSearch = () => {
+    setBasketSearch("");
+    basketSearchRef.current?.focus();
+  };
 
   const selectedRoomTypeIds = Array.from(new Set(rooms.map((room) => room.typeId)));
   const handleRoomsChange = (nextTypeIds: string[]) => {
@@ -712,6 +720,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     return next;
   }));
   const toggleMainBasket = (id: string) => {
+    if (basketSelectionDisabled || submissionInFlight.current) return;
     if (selectedMainBasketIds.has(id)) {
       setConfiguredLines((prior) => deselectConfiguredRecommendationSources(prior,
         new Set(prior.filter((line) => line.mainBasketId === id && line.included).map((line) => line.key))));
@@ -732,8 +741,15 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
       return next;
     });
   };
+  const clearMainBaskets = () => {
+    if (basketSelectionDisabled || submissionInFlight.current || !selectedMainBasketIds.size) return;
+    setConfiguredLines((prior) => deselectConfiguredRecommendationSources(prior,
+      new Set(prior.filter((line) => selectedMainBasketIds.has(line.mainBasketId) && line.included).map((line) => line.key))));
+    setSelectedMainBasketIds(new Set());
+    cancelRecommendationOpening();
+  };
   const buildLines = () => {
-    if (!catalogue.data) return;
+    if (!catalogue.data || catalogue.isError || !editable || submissionInFlight.current || !rooms.length || !selectedMainBasketIds.size) return;
     setCatalogueRequested(true);
     setConfiguredLines((previous) => buildConfiguredLines(catalogue.data, rooms, selectedMainBasketIds, previous));
     setActiveRoomId(rooms[0]?.id ?? "");
@@ -894,7 +910,17 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
       </section>
       {rooms.length ? <section className="estimate-configure-dimensions" aria-label="Room dimensions"><RoomDimensionsAccordion rooms={rooms.map((room) => ({ id: room.id, label: room.label, icon: roomIcons[room.typeId] ?? Pencil, length: room.length, width: room.width }))} onDimensionChange={updateRoom} onRemove={removeRoom} /></section> : null}
       <section className="estimate-panel configured-estimate-chooser" aria-labelledby="estimate-main-baskets-title">
-        <div className="configured-estimate-chooser__heading"><div><p className="eyebrow">Configuration</p><h2 id="estimate-main-baskets-title">Main Baskets</h2><p>Select the Main Baskets for this estimate. Available Main Lines and temporary items appear in the builder.</p></div>{configuredMode ? <button type="button" className="button button--secondary" disabled={catalogue.isFetching} onClick={() => void refreshAvailableItems()}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M5.1 8a7 7 0 0 1 11.6-3L20 8M4 16l3.3 3A7 7 0 0 0 18.9 16" /></svg><span>Refresh available items</span></button> : null}</div>
+        <div className="configured-estimate-chooser__heading">
+          <div><p className="eyebrow">Configuration</p><h2 id="estimate-main-baskets-title">Main Baskets</h2><p>Select the Main Baskets for this estimate. Available Main Lines and temporary items appear in the builder.</p></div>
+          {configuredMode ? <div className="configured-estimate-chooser__tools">
+            <div className="configured-estimate-chooser__search">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg>
+              <input ref={basketSearchRef} type="search" aria-label="Search baskets" placeholder="Search baskets..." value={basketSearch} onChange={(event) => setBasketSearch(event.target.value)} />
+              {basketSearch ? <button type="button" aria-label="Clear search" onClick={clearBasketSearch}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6" /></svg></button> : null}
+            </div>
+            <button type="button" className="button button--secondary" disabled={catalogue.isFetching} onClick={() => void refreshAvailableItems()}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M5.1 8a7 7 0 0 1 11.6-3L20 8M4 16l3.3 3A7 7 0 0 0 18.9 16" /></svg><span>Refresh available items</span></button>
+          </div> : null}
+        </div>
         {!configuredMode ? <div className="configured-estimate-chooser__state"><p>This estimate contains historical items. You can keep editing them, or add current configured items.</p><button type="button" className="button button--secondary" onClick={() => setCatalogueRequested(true)}>Load configured baskets</button></div> : null}
         {configuredMode && catalogue.isPending ? <p role="status">Loading configured baskets…</p> : null}
         {configuredMode && catalogue.isFetching && catalogue.data ? <p role="status">Refreshing available items…</p> : null}
@@ -902,10 +928,11 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
         {configuredMode && catalogue.data && !catalogue.isError && !catalogue.data.items.length ? <p className="configured-estimate-chooser__state">No active Main Baskets are available in the estimator catalogue.</p> : null}
         {configuredMode && catalogue.data?.readyNonActiveSupported === false ? <p className="configured-estimate-chooser__note" role="status">This catalogue currently shows Active items only. Draft and Inactive items will become available when the catalogue service is updated.</p> : null}
         {configuredMode && catalogue.data?.ineligibleLineCount ? <p className="configured-estimate-chooser__note">{catalogue.data.ineligibleLineCount} configured {catalogue.data.ineligibleLineCount === 1 ? "item is" : "items are"} unavailable in the estimator catalogue. Availability depends on item completeness and a valid UOM.</p> : null}
-        {configuredMode && catalogue.data ? <div className="configured-estimate-chooser__list">{catalogue.data.items.map((basket) => <MainBasketSelectionCard key={basket.id} basket={basket} selected={selectedMainBasketIds.has(basket.id)} disabled={!editable || catalogue.isError} onToggle={() => toggleMainBasket(basket.id)} />)}</div> : null}
+        {configuredMode && catalogue.data ? <div className="configured-estimate-chooser__list">{visibleBaskets.map((basket) => <MainBasketSelectionCard key={basket.id} basket={basket} selected={selectedMainBasketIds.has(basket.id)} disabled={basketSelectionDisabled} onToggle={() => toggleMainBasket(basket.id)} />)}</div> : null}
+        {configuredMode && (catalogue.data?.items.length ?? 0) > 0 && basketSearchTerm && !visibleBaskets.length ? <p className="configured-estimate-chooser__state" role="status">No baskets match your search.</p> : null}
       </section>
       {!configuredMode && lines.length ? <button type="button" className="button button--secondary estimate-continue" onClick={() => setTab("builder")}>Return to saved items</button> : null}
-      {configuredMode ? <button type="button" className="button button--primary estimate-continue" disabled={!rooms.length || !selectedMainBasketIds.size || !catalogue.data || catalogue.isError || !editable} onClick={buildLines}>Continue to item selection</button> : null}
+      {configuredMode ? <ConfigureSelectionFooter count={selectedMainBasketIds.size} clearDisabled={basketSelectionDisabled || !selectedMainBasketIds.size} continueDisabled={basketSelectionDisabled || !rooms.length || !selectedMainBasketIds.size} onClear={clearMainBaskets} onContinue={buildLines} /> : null}
     </> : null}
     {tab === "builder" && configuredMode && catalogue.isError ? <div className="configured-estimate-refresh">
       {catalogue.isError ? <p role="alert">{catalogue.error instanceof ApiError && catalogue.error.status === 403 ? "You do not have permission to read the estimator catalogue." : catalogue.data ? "Available items could not be refreshed. The last loaded catalogue is shown. Try again." : "Available items could not be loaded. Try again."}</p> : null}

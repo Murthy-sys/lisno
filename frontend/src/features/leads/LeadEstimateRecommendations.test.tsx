@@ -30,6 +30,7 @@ const revisions: Record<string, { revisionId: string; revisionVersion: number; i
 
 function installReads(failFirstRecommendation = false, savedEstimate: unknown = null, recommendationGate?: Promise<void>, sharedTarget = false, saveGate?: Promise<void>, echoDraftSave = false, rulesForSource?: (sourceId: string) => EstimationRecommendationRule[]) {
   const calls: string[][] = [];
+  const requests: Array<{ url: string; method: string }> = [];
   const savedInputs: Array<{ rooms: Array<{ id: string; label: string }>; selectedMainBasketIds: string[]; lineItems: Array<{
     source: string; id?: string; roomId: string; roomName: string; mainLineId: string; mainBasketId: string;
     subBasketId: string | null; included: boolean; quantity: number; ratePaise: number | null;
@@ -41,6 +42,7 @@ function installReads(failFirstRecommendation = false, savedEstimate: unknown = 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+    requests.push({ url, method });
     if (url.endsWith("/leads/lead-1") && method === "GET") return response({ id: "lead-1", clientName: "Asha Shah", projectName: "Asha home", location: "Pune", propertyType: "2BHK" });
     if (url.endsWith("/leads/lead-1/estimate") && method === "GET") return response(currentSavedEstimate);
     if (url.endsWith("/leads/lead-1/estimate") && method === "PUT") {
@@ -91,7 +93,7 @@ function installReads(failFirstRecommendation = false, savedEstimate: unknown = 
     }
     throw new Error(`Unexpected request: ${method} ${url}`);
   });
-  return { calls, savedInputs };
+  return { calls, savedInputs, requests };
 }
 
 function savedConfiguredEstimate(revisionId: string) {
@@ -406,6 +408,106 @@ describe("estimator room recommendations", () => {
       .getByText("False ceiling painting").closest(".configured-estimate-line") as HTMLElement;
     expect(within(painting).getByRole("checkbox", { name: /False ceiling painting/ })).not.toBeChecked();
     expect(screen.getByText("₹0 total")).toBeVisible();
+  });
+
+  it("clears filtered and hidden baskets without writes, preserves saved and edited data, and clears recommendation inclusion when re-added", async () => {
+    const user = userEvent.setup();
+    const { savedInputs, requests } = installReads(false, null, undefined, false, undefined, true);
+    renderWorkspace();
+    await openBuilder(user);
+    await user.click(screen.getByRole("checkbox", { name: /POP false ceiling/ }));
+    let dialog = await screen.findByRole("dialog", { name: "Recommendations for Living & Dining" });
+    await user.click(within(dialog).getByRole("button", { name: "Add False ceiling painting for Living & Dining" }));
+    await user.click(within(dialog).getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("checkbox", { name: /Functional Lights/ }));
+    dialog = await screen.findByRole("dialog", { name: "Recommendations for Living & Dining" });
+    await user.click(within(dialog).getByRole("button", { name: "Add False ceiling functional lights for Living & Dining" }));
+    await user.click(within(dialog).getByRole("button", { name: "Done" }));
+
+    const source = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
+    await user.click(within(source).getByRole("radio", { name: /Special item type/ }));
+    await user.click(within(source).getByRole("radio", { name: /PMC pricing mode/ }));
+    const sourceRate = within(source).getByRole("textbox", { name: /Selling rate/ });
+    await user.clear(sourceRate);
+    await user.type(sourceRate, "123.45");
+    const sourceQuantity = within(source).getByRole("spinbutton", { name: /Quantity/ });
+    await user.clear(sourceQuantity);
+    await user.type(sourceQuantity, "2.5");
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Estimate draft saved.");
+    expect(savedInputs).toHaveLength(1);
+    const firstSaved = savedInputs[0]!;
+    expect(firstSaved.selectedMainBasketIds).toEqual(["basket-pop", "basket-paint", "basket-light"]);
+    expect(firstSaved.lineItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ mainLineId: "line-paint", included: true, recommendationSourceMainLineIds: ["line-pop"] }),
+      expect.objectContaining({ mainLineId: "line-light", included: true, recommendationSourceMainLineIds: ["line-functional"] })
+    ]));
+    const persistedInputs = structuredClone(firstSaved);
+
+    await user.clear(screen.getByRole("spinbutton", { name: /Quantity.*POP false ceiling/ }));
+    await user.type(screen.getByRole("spinbutton", { name: /Quantity.*POP false ceiling/ }), "4.75");
+    const paintingRate = screen.getByRole("textbox", { name: /Selling rate.*False ceiling painting/ });
+    await user.clear(paintingRate);
+    await user.type(paintingRate, "287.65");
+    const paintingQuantity = screen.getByRole("spinbutton", { name: /Quantity.*False ceiling painting/ });
+    await user.clear(paintingQuantity);
+    await user.type(paintingQuantity, "3.25");
+    await user.click(screen.getByRole("button", { name: "Back to Asha Shah" }));
+    expect(screen.getByRole("region", { name: /Living & Dining dimensions/ })).toBeVisible();
+    expect(screen.getByRole("region", { name: /Master Bedroom dimensions/ })).toBeVisible();
+    const search = screen.getByRole("searchbox", { name: "Search baskets" });
+    await user.type(search, "pop");
+    expect(screen.getByRole("button", { name: "Added POP / Gypsum" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("article", { name: "Painting" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("article", { name: "Lights" })).not.toBeInTheDocument();
+    const selection = screen.getByRole("region", { name: "Basket selection" });
+    expect(within(selection).getByRole("status")).toHaveTextContent("3 selected");
+    const beforeClear = requests.slice();
+    const clearAll = within(selection).getByRole("button", { name: "Clear all" });
+    clearAll.focus();
+    await user.keyboard("{Enter}");
+    expect(within(selection).getByRole("status")).toHaveTextContent("0 selected");
+    expect(clearAll).toBeDisabled();
+    expect(within(selection).getByRole("button", { name: "Continue to item selection" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add POP / Gypsum" })).toHaveAttribute("aria-pressed", "false");
+    expect(search).toHaveValue("pop");
+    expect(requests).toEqual(beforeClear);
+    expect(savedInputs).toEqual([persistedInputs]);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
+    for (const name of ["POP / Gypsum", "Painting", "Lights"]) {
+      const add = screen.getByRole("button", { name: `Add ${name}` });
+      expect(add).toHaveAttribute("aria-pressed", "false");
+      await user.click(add);
+    }
+    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    for (const name of [/POP false ceiling/, /Functional Lights/, /False ceiling painting/, /False ceiling functional lights/]) {
+      expect(screen.getByRole("checkbox", { name })).not.toBeChecked();
+    }
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Recommendations for this room" })).not.toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: /Quantity.*POP false ceiling/ })).toHaveValue(4.75);
+    expect(screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toHaveValue("123.45");
+    expect(screen.getByRole("spinbutton", { name: /Quantity.*False ceiling painting/ })).toHaveValue(3.25);
+    expect(screen.getByRole("textbox", { name: /Selling rate.*False ceiling painting/ })).toHaveValue("287.65");
+    expect(screen.getByRole("navigation", { name: "Rooms" })).toHaveTextContent("Master Bedroom");
+    expect(screen.getByRole("navigation", { name: "Rooms" })).toHaveTextContent("Living & Dining");
+    expect(savedInputs).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(savedInputs).toHaveLength(2));
+    const cleared = savedInputs[1]!;
+    expect(cleared.rooms).toEqual(firstSaved.rooms);
+    expect(cleared.lineItems).toHaveLength(4);
+    expect(cleared.lineItems.every((line) => !line.included && line.recommendationSourceMainLineIds?.length === 0)).toBe(true);
+    expect(cleared.lineItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "saved-line-pop", mainLineId: "line-pop", quantity: 4.75, ratePaise: 12345, classification: "special", pricingMode: "pmc", rateSource: "manual" }),
+      expect.objectContaining({ id: "saved-line-paint", mainLineId: "line-paint", quantity: 3.25, ratePaise: 28765, rateSource: "manual" }),
+      expect.objectContaining({ id: "saved-line-functional", mainLineId: "line-functional" }),
+      expect.objectContaining({ id: "saved-line-light", mainLineId: "line-light" })
+    ]));
+    expect(firstSaved).toEqual(persistedInputs);
   });
 
   it("restores a previously selected mode on recommendation inclusion, saves origin and manual pricing, and restores both", async () => {
