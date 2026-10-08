@@ -46,6 +46,47 @@ export interface RecommendationDecision {
   reasons: RecommendationReason[];
 }
 
+export interface RecommendationLine {
+  key: string;
+  target: RecommendedLineTarget;
+  name: string;
+  requirement: "must" | "can";
+  selected: boolean;
+  reasons: RecommendationReason[];
+}
+
+export function recommendationTargetIdentity(target: RecommendedLineTarget): string {
+  return JSON.stringify([target.mainLineId, target.basketId, target.subBasketId]);
+}
+
+export function recommendationLines(decisions: readonly RecommendationDecision[]): RecommendationLine[] {
+  const lines = new Map<string, RecommendationLine>();
+  const add = (target: RecommendedLineTarget, name: string, selected: boolean, decision: RecommendationDecision) => {
+    const key = recommendationTargetIdentity(target);
+    const existing = lines.get(key);
+    if (!existing) {
+      lines.set(key, { key, target, name, selected, requirement: decision.requirement, reasons: [...decision.reasons] });
+      return;
+    }
+    existing.selected ||= selected;
+    if (decision.requirement === "must") existing.requirement = "must";
+    for (const reason of decision.reasons) {
+      if (!existing.reasons.some((item) => item.sourceId === reason.sourceId && item.ruleId === reason.ruleId)) {
+        existing.reasons.push(reason);
+      }
+    }
+  };
+  for (const decision of decisions) {
+    if (!decision.available) continue;
+    if (decision.kind === "main_line" && decision.target) {
+      add(decision.target, decision.name, decision.selected, decision);
+    } else if (decision.kind === "sub_basket") {
+      for (const child of decision.children) add(child.target, child.name, child.selected, decision);
+    }
+  }
+  return [...lines.values()].sort((a, b) => Number(b.requirement === "must") - Number(a.requirement === "must"));
+}
+
 export interface RecommendationGuidanceView {
   id: string;
   sourceId: string;

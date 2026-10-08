@@ -484,15 +484,13 @@ describe("AdminProjectsPage", () => {
       ["Client email", "asha@example.com"],
       ["Mobile", "+91 90000 00000"],
       ["Project / property name", "Asha home"],
-      ["Location", "Pune"],
-      ["Property type", "3BHK"],
-      ["Minimum budget", "800000"],
-      ["Maximum budget", "1200000"],
       ["Next action", "Schedule site visit"],
-      ["Next action date", "2026-08-25T10:30"]
     ] as const) {
       fireEvent.change(within(dialog).getByLabelText(requiredLabel(label)), { target: { value } });
     }
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Property type" }), "3BHK");
+    await user.click(within(dialog).getByRole("button", { name: "Next action date" }));
+    await user.click(within(dialog).getByRole("button", { name: "Today" }));
     const estimatorInput = within(dialog).getByRole("combobox", { name: "Sales" });
     await user.click(estimatorInput);
     await within(dialog).findByRole("option", { name: /Ravi Estimator/ });

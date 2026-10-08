@@ -5,12 +5,17 @@ import { Router } from "express";
 import { z } from "zod";
 
 import { normalizeEmail } from "../domain/email.js";
+import { ESTIMATE_PRICING_MODES, ESTIMATE_RATE_SOURCES, estimateConfigurationRateMatches,
+  estimatePricingMetadataIsValid, type EstimatePricingMode, type EstimateRateSource } from "../domain/estimate-mode-pricing.js";
 import { ApiError } from "../middleware/errors.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
 import { validateBody } from "../middleware/validate.js";
 import { EstimateModel } from "../models/Estimate.js";
 import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
+import { AiEstimatorKnowledgeMainLineModel } from "../models/AiEstimatorKnowledgeMainLine.js";
+import { AiEstimatorKnowledgeSubBasketModel } from "../models/AiEstimatorKnowledgeSubBasket.js";
+import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
 import { LeadModel } from "../models/Lead.js";
 import { UserModel } from "../models/User.js";
 import { resolveEstimatorCatalogueLines, type EstimatorCatalogueLine } from "../services/estimator-catalogue.service.js";
@@ -28,6 +33,11 @@ import type { EstimatePublicationService } from "../services/estimate-publicatio
 import { sendDownload } from "./estimate-client-responses.js";
 
 const stableIdSchema = z.string().trim().min(1).max(128);
+const estimateClassificationSchema = z.enum(["standard", "special"]);
+const selectedMainBasketClassificationSchema = z.object({
+  mainBasketId: stableIdSchema,
+  classification: estimateClassificationSchema
+}).strict();
 const legacyEstimateLineSchema = z.object({
   source: z.literal("legacy").optional(), catalogueId: stableIdSchema,
   roomName: z.string().trim().min(1), specification: z.string().trim().min(1),
@@ -39,23 +49,39 @@ const configuredEstimateLineSchema = z.object({
   catalogueId: stableIdSchema, roomId: stableIdSchema, roomName: z.string().trim().min(1),
   mainBasketId: stableIdSchema, subBasketId: stableIdSchema.nullable(),
   itemType: z.enum(["main_line", "temporary"]).default("main_line"),
+  classification: estimateClassificationSchema.optional(),
+  pricingMode: z.enum(ESTIMATE_PRICING_MODES).optional(),
+  rateSource: z.enum(ESTIMATE_RATE_SOURCES).optional(),
   mainLineId: stableIdSchema, revisionId: stableIdSchema, uomId: stableIdSchema,
+  recommendationSourceMainLineIds: z.array(stableIdSchema).optional(),
   itemVersion: z.number().int().positive().safe().optional(),
   revisionVersion: z.number().int().positive().safe().optional(),
   quantity: z.number().finite().nonnegative(), included: z.boolean(),
   ratePaise: z.number().int().nonnegative().safe().nullable()
 }).strict().superRefine((line, context) => {
+  if (line.rateSource === "configuration" && line.pricingMode === undefined) context.addIssue({
+    code: z.ZodIssueCode.custom, path: ["pricingMode"], message: "Configuration pricing requires a pricing mode."
+  });
+  if (line.classification === "standard" && line.pricingMode !== undefined && line.pricingMode !== "sub_vendor") {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["pricingMode"], message: "Standard items use Sub-Vendor pricing." });
+  }
   if (line.catalogueId !== line.mainLineId) context.addIssue({
     code: z.ZodIssueCode.custom, path: ["catalogueId"], message: "Catalogue identity must match the Main Line."
   });
   if (line.itemType === "main_line" && line.subBasketId === null) context.addIssue({
     code: z.ZodIssueCode.custom, path: ["subBasketId"], message: "A Main Line requires a Sub Basket."
   });
+  if (line.recommendationSourceMainLineIds !== undefined &&
+    new Set(line.recommendationSourceMainLineIds).size !== line.recommendationSourceMainLineIds.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["recommendationSourceMainLineIds"],
+      message: "Select each recommendation source only once." });
+  }
 });
 const estimateLineSchema = z.union([configuredEstimateLineSchema, legacyEstimateLineSchema]);
 const estimateSchema = z.object({
   propertyType: z.string().trim().min(1), rooms: z.array(z.record(z.unknown())),
   scopes: z.array(z.string()), selectedMainBasketIds: z.array(stableIdSchema).optional(),
+  selectedMainBasketClassifications: z.array(selectedMainBasketClassificationSchema).optional(),
   expectedVersion: z.number().int().positive().optional(),
   lineItems: z.array(estimateLineSchema)
 }).strict().superRefine((value, context) => {
@@ -63,6 +89,14 @@ const estimateSchema = z.object({
   if (new Set(selected).size !== selected.length) context.addIssue({
     code: z.ZodIssueCode.custom, path: ["selectedMainBasketIds"], message: "Select each Main Basket only once."
   });
+  const classifications = value.selectedMainBasketClassifications;
+  if (classifications !== undefined) {
+    const classifiedIds = classifications.map((entry) => entry.mainBasketId);
+    if (new Set(classifiedIds).size !== classifiedIds.length) context.addIssue({
+      code: z.ZodIssueCode.custom, path: ["selectedMainBasketClassifications"],
+      message: "Classify each Main Basket only once."
+    });
+  }
   const identities = new Set<string>();
   const configuredInput = value.lineItems.some((line) => line.source === "configuration");
   const roomIds = new Set<string>();
@@ -95,6 +129,88 @@ const estimateSchema = z.object({
     identities.add(identity);
   }
 });
+type EstimateLineInput = z.infer<typeof estimateLineSchema>;
+
+function configuredLineKey(roomId: string, mainLineId: string): string {
+  return `${roomId}\u0000${mainLineId}`;
+}
+
+function normalizeRecommendationOrigins(
+  lines: EstimateLineInput[],
+  previousConfigured: ReadonlyMap<string, Record<string, unknown>>
+): EstimateLineInput[] {
+  const configuredIndices = new Map<string, number>();
+  const roomsByMainLine = new Map<string, Set<string>>();
+  lines.forEach((line, index) => {
+    if (line.source !== "configuration") return;
+    configuredIndices.set(configuredLineKey(line.roomId, line.mainLineId), index);
+    const rooms = roomsByMainLine.get(line.mainLineId) ?? new Set<string>();
+    rooms.add(line.roomId);
+    roomsByMainLine.set(line.mainLineId, rooms);
+  });
+
+  const entries: Array<{ line: EstimateLineInput; recommendationOnly: boolean }> = lines.map((line) => {
+    if (line.source !== "configuration") return { line, recommendationOnly: false };
+    const prior = previousConfigured.get(configuredLineKey(line.roomId, line.mainLineId));
+    const savedOrigins = prior?.recommendationSourceMainLineIds;
+    let origins = line.recommendationSourceMainLineIds;
+    if (origins !== undefined) {
+      for (const sourceId of origins) {
+        if (sourceId === line.mainLineId) {
+          throw new ApiError(400, "ESTIMATE_RECOMMENDATION_SOURCE_INVALID",
+            "A Main Line cannot recommend itself.");
+        }
+        const sourceIndex = configuredIndices.get(configuredLineKey(line.roomId, sourceId));
+        const source = sourceIndex === undefined ? undefined : lines[sourceIndex];
+        if (source?.source !== "configuration") {
+          throw new ApiError(400,
+            sourceIndex === undefined && roomsByMainLine.has(sourceId)
+              ? "ESTIMATE_RECOMMENDATION_SOURCE_ROOM_INVALID"
+              : "ESTIMATE_RECOMMENDATION_SOURCE_INVALID",
+            "Choose a configured recommendation source in the same room.");
+        }
+      }
+    } else if (Array.isArray(savedOrigins)) {
+      // A legacy client may omit the field and remove an old source line entirely.
+      origins = [...new Set(savedOrigins.filter((sourceId): sourceId is string => {
+        if (typeof sourceId !== "string" || sourceId === line.mainLineId) return false;
+        const sourceIndex = configuredIndices.get(configuredLineKey(line.roomId, sourceId));
+        const source = sourceIndex === undefined ? undefined : lines[sourceIndex];
+        return source?.source === "configuration";
+      }))];
+    }
+    return {
+      line: origins === undefined ? line : { ...line, recommendationSourceMainLineIds: origins },
+      recommendationOnly: (origins?.length ?? 0) > 0 ||
+        (line.recommendationSourceMainLineIds === undefined && Array.isArray(savedOrigins) && savedOrigins.length > 0)
+    };
+  });
+
+  let changed: boolean;
+  do {
+    changed = false;
+    for (const entry of entries) {
+      if (entry.line.source !== "configuration" || !entry.recommendationOnly) continue;
+      const line = entry.line;
+      const currentOrigins = line.recommendationSourceMainLineIds ?? [];
+      const includedOrigins = line.included ? currentOrigins.filter((sourceId) => {
+        const sourceIndex = configuredIndices.get(configuredLineKey(line.roomId, sourceId));
+        const source = sourceIndex === undefined ? undefined : entries[sourceIndex]?.line;
+        return source?.source === "configuration" && source.included;
+      }) : [];
+      if (includedOrigins.length !== currentOrigins.length || line.included && includedOrigins.length === 0) {
+        entry.line = {
+          ...line,
+          recommendationSourceMainLineIds: includedOrigins,
+          included: line.included && includedOrigins.length > 0
+        };
+        changed = true;
+      }
+    }
+  } while (changed);
+  return entries.map((entry) => entry.line);
+}
+
 const assignmentSchema = z.object({ designerId: z.string().trim().min(1) }).strict();
 const decisionSchema = z.object({ decision: z.enum(["approve", "request_changes"]), note: z.string().trim().max(1000).default("") }).strict();
 const clientDecisionSchema = decisionSchema.extend({
@@ -121,8 +237,32 @@ export function createEstimatesRouter(
     actor: Parameters<EstimateClientReviewService["currentSummaryForEstimate"]>[0],
     value: Record<string, unknown> | null
   ) => {
-    const estimate = mapEstimate(value);
+    let estimate = mapEstimate(value);
     if (!estimate || !["estimator_sales", "super_admin"].includes(actor.role)) return estimate;
+    if (isEditableEstimateStatus(estimate.status) && Array.isArray(estimate.lineItems)) {
+      const savedLines = estimate.lineItems as Record<string, unknown>[];
+      const latest = await resolveEstimatorCatalogueLines(savedLines.filter((line) =>
+        line.source === "configuration" && typeof line.mainLineId === "string")
+        .map((line) => String(line.mainLineId)));
+      const lineItems = savedLines.map((line) => {
+        if (line.source !== "configuration") return line;
+        const source = latest.get(String(line.mainLineId));
+        if (!source) return { ...line, configurationSourceUnavailable: true };
+        const configurationUomChanged = line.uomId !== source.line.uom.id ||
+          line.uomDecimalScale !== source.line.uom.decimalScale;
+        return {
+          ...line,
+          ...currentConfiguredFields(source),
+          configurationSourceUnavailable: false,
+          configurationUomChanged,
+          ...(configurationUomChanged ? { previousUomName: String(line.uomName ?? line.unit ?? "") } : {})
+        };
+      });
+      estimate = { ...estimate, lineItems,
+        isIncomplete: estimate.isIncomplete === true || lineItems.some((line) =>
+          line.source === "configuration" &&
+          (line.configurationSourceUnavailable === true || line.configurationUomChanged === true)) };
+    }
     const [clientReview, clientFeedback] = await Promise.all([
       reviews.currentSummaryForEstimate(actor, String(estimate.id)),
       reviews.currentClientFeedbackForEstimate(actor, String(estimate.id), estimate)
@@ -163,7 +303,28 @@ export function createEstimatesRouter(
       const previousLines = (estimate?.toObject().lineItems ?? []) as Record<string, unknown>[];
       const previousConfigured = new Map(previousLines.filter((line) => line.source === "configuration")
         .map((line) => [`${String(line.roomId)}\u0000${String(line.mainLineId)}`, line]));
+      const inputLines = normalizeRecommendationOrigins(
+        req.body.lineItems as z.infer<typeof estimateLineSchema>[], previousConfigured);
       const selectedMainBasketIds: string[] = req.body.selectedMainBasketIds ?? estimate?.selectedMainBasketIds ?? [];
+      const explicitBasketClassifications = req.body.selectedMainBasketClassifications as
+        z.infer<typeof selectedMainBasketClassificationSchema>[] | undefined;
+      if (explicitBasketClassifications !== undefined &&
+        (explicitBasketClassifications.length !== selectedMainBasketIds.length ||
+          explicitBasketClassifications.some((entry) => !selectedMainBasketIds.includes(entry.mainBasketId)))) {
+        throw new ApiError(400, "ESTIMATE_BASKET_CLASSIFICATION_INVALID",
+          "Classify each selected Main Basket exactly once.");
+      }
+      const previousBasketClassifications = (estimate?.toObject().selectedMainBasketClassifications ?? []) as
+        z.infer<typeof selectedMainBasketClassificationSchema>[];
+      const previousBasketClassificationById = new Map(previousBasketClassifications.map((entry) =>
+        [entry.mainBasketId, entry.classification]));
+      const explicitBasketClassificationById = new Map(explicitBasketClassifications?.map((entry) =>
+        [entry.mainBasketId, entry.classification]) ?? []);
+      const selectedMainBasketClassifications = selectedMainBasketIds.map((mainBasketId) => ({
+        mainBasketId,
+        classification: explicitBasketClassificationById.get(mainBasketId) ??
+          previousBasketClassificationById.get(mainBasketId) ?? "standard"
+      }));
       const previousSelected = new Set<string>(estimate?.selectedMainBasketIds ?? []);
       const newlySelected = selectedMainBasketIds.filter((id) => !previousSelected.has(id));
       if (newlySelected.length > 0 && await AiEstimatorKnowledgeBasketModel.countDocuments({
@@ -171,12 +332,18 @@ export function createEstimatesRouter(
       }).session(session) !== newlySelected.length) {
         throw new ApiError(409, "ESTIMATE_CATALOGUE_CHANGED", "Configuration changed. Refresh the catalogue before saving this basket.");
       }
-      const newMainLineIds = (req.body.lineItems as z.infer<typeof estimateLineSchema>[])
+      const configuredMainLineIds = inputLines
         .filter((line): line is z.infer<typeof configuredEstimateLineSchema> => line.source === "configuration")
-        .filter((line) => !previousConfigured.has(`${line.roomId}\u0000${line.mainLineId}`))
         .map((line) => line.mainLineId);
-      const configured = await resolveEstimatorCatalogueLines(newMainLineIds, session);
-      const lineItems = (req.body.lineItems as z.infer<typeof estimateLineSchema>[]).map((line, index) => {
+      const configurationPricedLines = inputLines.filter((line) => {
+        if (line.source !== "configuration") return false;
+        const prior = previousConfigured.get(configuredLineKey(line.roomId, line.mainLineId));
+        return line.rateSource === "configuration" || line.rateSource === undefined &&
+          prior?.rateSource === "configuration" && line.ratePaise === prior.ratePaise;
+      });
+      await fenceEstimateConfigurationDependencies(configurationPricedLines, session);
+      const configured = await resolveEstimatorCatalogueLines(configuredMainLineIds, session);
+      const lineItems = inputLines.map((line, index) => {
         if (line.source !== "configuration") {
           const previous = previousLines[index];
           const amount = line.included ? Math.round(line.quantity * line.rate) : 0;
@@ -194,6 +361,10 @@ export function createEstimatesRouter(
           throw new ApiError(409, "ESTIMATE_LINE_CHANGED", "Refresh the saved estimate line before editing it.");
         }
         const firstSave = configured.get(line.mainLineId);
+        if (prior && !firstSave) {
+          throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE",
+            "This Main Line has no current Configuration. Correct it before saving the estimate.");
+        }
         if (!prior && !selectedMainBasketIds.includes(line.mainBasketId)) {
           throw new ApiError(400, "ESTIMATE_BASKET_NOT_SELECTED", "Select the Main Basket before adding its item.");
         }
@@ -210,12 +381,31 @@ export function createEstimatesRouter(
         )) {
           throw new ApiError(409, "ESTIMATE_CATALOGUE_CHANGED", "Configuration changed. Refresh the catalogue before saving this line.");
         }
-        const snapshot = prior ? savedConfiguredSnapshot(prior) : firstSave!;
-        if (prior && (snapshot.line.itemType !== line.itemType ||
-          snapshot.line.basketId !== line.mainBasketId ||
-          snapshot.line.subBasketId !== line.subBasketId ||
-          snapshot.line.revisionId !== line.revisionId || snapshot.line.uom.id !== line.uomId)) {
-          throw new ApiError(409, "ESTIMATE_LINE_CHANGED", "Refresh the saved estimate line before editing it.");
+        if (prior) savedConfiguredSnapshot(prior);
+        const snapshot = firstSave!;
+        if (prior && snapshot.line.uom.id !== line.uomId) {
+          throw new ApiError(409, "ESTIMATE_UOM_CHANGED",
+            "The configured UOM changed. Review this line's quantity before saving.");
+        }
+        const classification = line.classification ?? (prior?.classification === "special" ? "special" : "standard");
+        const pricingMode = line.pricingMode ?? prior?.pricingMode as EstimatePricingMode | undefined;
+        const rateSource = line.rateSource ?? (prior && line.ratePaise !== prior.ratePaise
+          ? "manual" : prior?.rateSource as EstimateRateSource | undefined);
+        const pricing = { classification, pricingMode, rateSource, ratePaise: line.ratePaise };
+        if (!estimatePricingMetadataIsValid(pricing)) {
+          throw new ApiError(400, "ESTIMATE_PRICING_MODE_INVALID", "Select a valid pricing mode for this item type.");
+        }
+        if (rateSource === "configuration") {
+          // Only older callers preserving a saved origin may reuse its saved version metadata.
+          const itemVersion = line.itemVersion ?? (line.rateSource === undefined ? prior?.sourceItemVersion : undefined);
+          const revisionVersion = line.revisionVersion ?? (line.rateSource === undefined ? prior?.sourceRevisionVersion : undefined);
+          if (line.mainBasketId !== snapshot.line.basketId || line.subBasketId !== snapshot.line.subBasketId ||
+            line.itemType !== snapshot.line.itemType || line.revisionId !== snapshot.line.revisionId ||
+            itemVersion !== snapshot.line.itemVersion || revisionVersion !== snapshot.line.revisionVersion ||
+            !estimateConfigurationRateMatches(pricing, snapshot.line.modeBaseRatesPaise)) {
+            throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
+              "Configuration pricing changed. Refresh the catalogue and review the selected mode price before saving.");
+          }
         }
         const quantityScale = snapshot.line.uom.decimalScale;
         const quantityUnits = scaledQuantity(line.quantity, quantityScale, line.included);
@@ -223,24 +413,16 @@ export function createEstimatesRouter(
           ? null : line.included
             ? calculateAmountPaise(line.ratePaise!, quantityUnits, quantityScale)
             : 0;
-        const sourceProvenance = prior ? savedSourceProvenance(prior) : {
-          sourceItemStatus: firstSave!.line.itemStatus,
-          sourceRevisionStatus: firstSave!.line.revisionStatus,
-          sourceItemVersion: firstSave!.line.itemVersion,
-          sourceRevisionVersion: firstSave!.line.revisionVersion
-        };
         return {
           id: typeof prior?.id === "string" ? prior.id : `estimate-line-${randomUUID()}`,
           source: "configuration" as const, catalogueId: line.mainLineId,
           roomId: line.roomId, roomName: line.roomName,
-          itemType: snapshot.line.itemType,
-          mainBasketId: snapshot.line.basketId, subBasketId: snapshot.line.subBasketId,
-          mainLineId: line.mainLineId, revisionId: snapshot.line.revisionId,
-          ...sourceProvenance,
-          uomId: snapshot.line.uom.id, uomCode: snapshot.line.uom.code,
-          uomDecimalScale: quantityScale,
-          mainBasketName: snapshot.mainBasketName, subBasketName: snapshot.subBasketName,
-          mainLineName: snapshot.line.name, uomName: snapshot.line.uom.name,
+          classification,
+          ...(pricingMode === undefined ? {} : { pricingMode }),
+          ...(rateSource === undefined ? {} : { rateSource }),
+          ...(line.recommendationSourceMainLineIds !== undefined
+            ? { recommendationSourceMainLineIds: line.recommendationSourceMainLineIds } : {}),
+          ...currentConfiguredFields(snapshot),
           specification: null, unit: snapshot.line.uom.name,
           ratePaise: line.ratePaise, rate: line.ratePaise === null ? null : line.ratePaise / 100,
           quantity: line.quantity, included: line.included,
@@ -286,6 +468,7 @@ export function createEstimatesRouter(
       estimate.rooms = req.body.rooms;
       estimate.scopes = req.body.scopes;
       estimate.selectedMainBasketIds = selectedMainBasketIds;
+      estimate.selectedMainBasketClassifications = selectedMainBasketClassifications;
       estimate.lineItems = lineItems;
       estimate.subtotalPaise = subtotalPaise;
       estimate.gstPaise = gstPaise;
@@ -313,6 +496,7 @@ export function createEstimatesRouter(
     const estimate = await EstimateModel.findOne({ leadId: lead.id, ownerId: req.authenticatedUser!.id });
     if (!estimate || estimate.lineItems.every((line: { included: boolean }) => !line.included)) throw new ApiError(409, "ESTIMATE_EMPTY", "Select at least one estimate item before submitting.");
     assertEstimateReadyToSubmit(estimate.lineItems);
+    await assertEstimateCurrentConfiguration(estimate.toObject());
     const approvalRequired = estimate.total > 1_500_000;
     const submittedAt = new Date();
     if (!approvalRequired) {
@@ -336,6 +520,8 @@ export function createEstimatesRouter(
       }).session(session);
       if (!current) throw new ApiError(409, "ESTIMATE_LOCKED", "The estimate changed before it could be submitted.");
       assertEstimateReadyToSubmit(current.lineItems);
+      await fenceEstimateConfigurationDependencies(current.toObject().lineItems, session);
+      await assertEstimateCurrentConfiguration(current.toObject(), session);
       current.approvalRequired = true;
       current.status = "pending_manager_assignment";
       current.submittedAt = submittedAt;
@@ -356,6 +542,7 @@ export function createEstimatesRouter(
       line.source === "configuration" && line.included && line.ratePaise == null)) {
       throw new ApiError(409, "ESTIMATE_INCOMPLETE", "Enter all selected selling rates before downloading a proposal PDF.");
     }
+    if (isEditableEstimateStatus(estimate.status)) await assertEstimateCurrentConfiguration(estimate);
     const lead = await LeadModel.findById(estimate.leadId).lean();
     if (!lead) throw estimateNotFound();
     const pdf = await estimatePdf.generate(toEstimatePdfInput(estimate, lead));
@@ -496,15 +683,134 @@ export function createEstimatesRouter(
   return router;
 }
 
-function mapEstimate(value: Record<string, unknown> | null) {
+function mapEstimate(value: Record<string, unknown> | null): Record<string, unknown> | null {
   if (!value) return null;
   const { _id, ...estimate } = value;
-  return { ...estimate, id: _id ?? value.id };
+  const selectedMainBasketIds = Array.isArray(estimate.selectedMainBasketIds)
+    ? estimate.selectedMainBasketIds as string[] : [];
+  const savedBasketClassifications = Array.isArray(estimate.selectedMainBasketClassifications)
+    ? estimate.selectedMainBasketClassifications as Array<{ mainBasketId: string; classification: string }> : [];
+  const savedClassificationsById = new Map(savedBasketClassifications.map((entry) =>
+    [entry.mainBasketId, entry.classification]));
+  return {
+    ...estimate,
+    id: _id ?? value.id,
+    selectedMainBasketClassifications: selectedMainBasketIds.map((mainBasketId) => ({
+      mainBasketId,
+      classification: savedClassificationsById.get(mainBasketId) === "special" ? "special" : "standard"
+    })),
+    lineItems: Array.isArray(estimate.lineItems) ? estimate.lineItems.map((line) => {
+      const item = line as Record<string, unknown>;
+      return item.source === "configuration"
+        ? { ...item, classification: item.classification === "special" ? "special" : "standard" }
+        : item;
+    }) : estimate.lineItems
+  };
 }
 function estimateNotFound() { return new ApiError(404, "ESTIMATE_NOT_FOUND", "Estimate not found."); }
 
+function isEditableEstimateStatus(status: unknown): boolean {
+  return status === "draft" || status === "designer_changes_requested" || status === "client_changes_requested";
+}
+
+function currentConfiguredFields(source: {
+  line: EstimatorCatalogueLine;
+  mainBasketName: string;
+  subBasketName: string | null;
+}) {
+  return {
+    itemType: source.line.itemType,
+    mainBasketId: source.line.basketId,
+    subBasketId: source.line.subBasketId,
+    mainLineId: source.line.mainLineId,
+    revisionId: source.line.revisionId,
+    sourceItemStatus: source.line.itemStatus,
+    sourceRevisionStatus: source.line.revisionStatus,
+    sourceItemVersion: source.line.itemVersion,
+    sourceRevisionVersion: source.line.revisionVersion,
+    uomId: source.line.uom.id,
+    uomCode: source.line.uom.code,
+    uomDecimalScale: source.line.uom.decimalScale,
+    mainBasketName: source.mainBasketName,
+    subBasketName: source.subBasketName,
+    mainLineName: source.line.name,
+    uomName: source.line.uom.name,
+    unit: source.line.uom.name
+  };
+}
+
+async function assertEstimateCurrentConfiguration(
+  estimate: { lineItems?: unknown },
+  session?: mongoose.ClientSession
+): Promise<void> {
+  const saved = Array.isArray(estimate.lineItems)
+    ? estimate.lineItems.filter((line): line is Record<string, unknown> =>
+      line && typeof line === "object" && line.source === "configuration") : [];
+  if (saved.length === 0) return;
+  const current = await resolveEstimatorCatalogueLines(saved.map((line) => String(line.mainLineId)), session);
+  for (const line of saved) {
+    const source = current.get(String(line.mainLineId));
+    if (!source) {
+      throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE",
+        "This Main Line has no current Configuration. Correct it before submitting the estimate.");
+    }
+    const fields = currentConfiguredFields(source);
+    if (Object.entries(fields).some(([field, value]) => line[field] !== value) ||
+      !estimateConfigurationRateMatches(line, source.line.modeBaseRatesPaise)) {
+      throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
+        "Configuration changed. Save the estimate with its current Main Line values before continuing.");
+    }
+  }
+}
+
+async function fenceEstimateConfigurationDependencies(lines: unknown, session: mongoose.ClientSession): Promise<void> {
+  const configured = Array.isArray(lines) ? lines.filter((line): line is Record<string, unknown> =>
+    line && typeof line === "object" && line.source === "configuration") : [];
+  const ids = (field: "mainBasketId" | "subBasketId" | "uomId" | "mainLineId", optional = false) => {
+    const values = configured.map((line) => line[field]);
+    if (values.some((value) => !(optional && value === null) && (typeof value !== "string" || !value))) {
+      throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE", "A configured Main Line dependency is unavailable.");
+    }
+    return [...new Set(values.filter((value): value is string => typeof value === "string"))].sort();
+  };
+  for (const id of ids("mainBasketId")) {
+    const locked = await AiEstimatorKnowledgeBasketModel.findOneAndUpdate(
+      { _id: id, status: { $in: ["active", "inactive"] } },
+      { $inc: { dependencyEpoch: 1 } },
+      { session, returnDocument: "after", runValidators: true, timestamps: false }
+    ).select({ _id: 1 }).lean().exec();
+    if (!locked) throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE", "A configured Main Basket is unavailable.");
+  }
+  for (const id of ids("subBasketId", true)) {
+    const locked = await AiEstimatorKnowledgeSubBasketModel.findOneAndUpdate(
+      { _id: id },
+      { $inc: { dependencyEpoch: 1 } },
+      { session, returnDocument: "after", runValidators: true, timestamps: false }
+    ).select({ _id: 1 }).lean().exec();
+    if (!locked) throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE", "A configured Sub Basket is unavailable.");
+  }
+  for (const id of ids("uomId")) {
+    const locked = await AiEstimatorKnowledgeUomModel.findOneAndUpdate(
+      { _id: id, status: { $in: ["active", "inactive"] } },
+      { $inc: { dependencyEpoch: 1 } },
+      { session, returnDocument: "after", runValidators: true, timestamps: false }
+    ).select({ _id: 1 }).lean().exec();
+    if (!locked) throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE", "A configured UOM is unavailable.");
+  }
+  for (const id of ids("mainLineId")) {
+    const locked = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
+      { _id: id, status: { $in: ["active", "draft", "inactive"] } },
+      { $inc: { dependencyEpoch: 1 } },
+      { session, returnDocument: "after", runValidators: true, timestamps: false }
+    ).select({ _id: 1 }).lean().exec();
+    if (!locked) {
+      throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE", "A configured Main Line is unavailable.");
+    }
+  }
+}
+
 function savedConfiguredSnapshot(prior: Record<string, unknown>): {
-  line: Omit<EstimatorCatalogueLine, "itemStatus" | "revisionStatus" | "itemVersion" | "revisionVersion" | "inHouseBaseRatePaise">;
+  line: Omit<EstimatorCatalogueLine, "itemStatus" | "revisionStatus" | "itemVersion" | "revisionVersion" | "inHouseBaseRatePaise" | "modeBaseRatesPaise">;
   mainBasketName: string; subBasketName: string | null;
 } {
   const strings = ["mainBasketId", "mainLineId", "revisionId", "uomId",
@@ -531,23 +837,6 @@ function savedConfiguredSnapshot(prior: Record<string, unknown>): {
       uom: { id: String(prior.uomId), code: String(prior.uomCode), name: String(prior.uomName),
         decimalScale: Number(prior.uomDecimalScale) }
     }
-  };
-}
-
-function savedSourceProvenance(prior: Record<string, unknown>) {
-  const fields = ["sourceItemStatus", "sourceRevisionStatus", "sourceItemVersion", "sourceRevisionVersion"] as const;
-  if (fields.every((field) => prior[field] === undefined || prior[field] === null)) return {};
-  if (!["draft", "active", "inactive"].includes(String(prior.sourceItemStatus)) ||
-    !["draft", "active"].includes(String(prior.sourceRevisionStatus)) ||
-    !Number.isSafeInteger(prior.sourceItemVersion) || Number(prior.sourceItemVersion) < 1 ||
-    !Number.isSafeInteger(prior.sourceRevisionVersion) || Number(prior.sourceRevisionVersion) < 1) {
-    throw new ApiError(409, "ESTIMATE_LINE_SNAPSHOT_INVALID", "This saved line needs review before it can be edited.");
-  }
-  return {
-    sourceItemStatus: prior.sourceItemStatus,
-    sourceRevisionStatus: prior.sourceRevisionStatus,
-    sourceItemVersion: prior.sourceItemVersion,
-    sourceRevisionVersion: prior.sourceRevisionVersion
   };
 }
 

@@ -1,3 +1,4 @@
+import { estimateConfigurationRateMatches } from "../domain/estimate-mode-pricing.js";
 import { createMongoRepository } from "../repositories/mongo.js";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -8,16 +9,22 @@ import {
   buildEstimateClientReviewDedupeKey,
   configuredEstimateParentIsValid,
   type EstimateClientReviewSnapshot,
+  type SelectedMainBasketClassification,
   type EstimateClientReviewSummary
 } from "../domain/estimate-client-review.js";
 import { approvedEstimateLineItemKey } from "../domain/estimate-line-item.js";
 import { normalizeEmail } from "../domain/email.js";
 import { ApiError } from "../middleware/errors.js";
+import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
+import { AiEstimatorKnowledgeMainLineModel } from "../models/AiEstimatorKnowledgeMainLine.js";
+import { AiEstimatorKnowledgeSubBasketModel } from "../models/AiEstimatorKnowledgeSubBasket.js";
+import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
 import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
 import { EstimateModel } from "../models/Estimate.js";
 import { LeadModel } from "../models/Lead.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
+import { resolveEstimatorCatalogueLines } from "./estimator-catalogue.service.js";
 import type { EstimateClientReviewStorage } from "./estimate-client-review-storage.js";
 import type { EstimateClientReviewService } from "./estimate-client-review.service.js";
 import type {
@@ -55,7 +62,7 @@ interface PublicationEstimate {
   version: number;
   status: string;
   propertyType: string;
-  lineItems: EstimatePdfInput["lineItems"];
+  lineItems: Array<EstimateClientReviewSnapshot["lineItems"][number] & { recommendationSourceMainLineIds?: string[] }>;
   subtotal: number;
   gst: number;
   total: number;
@@ -63,6 +70,7 @@ interface PublicationEstimate {
   gstPaise?: number;
   totalPaise?: number;
   selectedMainBasketIds?: string[];
+  selectedMainBasketClassifications?: SelectedMainBasketClassification[];
   approvalRequired: boolean;
   reviews: Record<string, unknown>[];
   notifications: Record<string, unknown>[];
@@ -115,6 +123,7 @@ export function createEstimatePublicationService(input: {
       const preflightEstimate = await findEstimateForPublication(publication);
       if (!preflightEstimate) publicationConflict();
       assertPublishableConfiguredLines(preflightEstimate);
+      if (publication.expectedStatus === "draft") await assertCurrentConfiguredPublication(preflightEstimate);
       if (
         publication.expectedStatus === "draft" &&
         preflightEstimate.total > APPROVAL_THRESHOLD
@@ -186,6 +195,10 @@ export function createEstimatePublicationService(input: {
           );
           if (!currentEstimate) publicationConflict();
           assertPublishableConfiguredLines(currentEstimate);
+          if (publication.expectedStatus === "draft") {
+            await fencePublicationConfigurationDependencies(currentEstimate, session);
+            await assertCurrentConfiguredPublication(currentEstimate, session);
+          }
           if (
             publication.expectedStatus === "draft" &&
             currentEstimate.total > APPROVAL_THRESHOLD
@@ -467,7 +480,39 @@ function toEstimateSnapshot(
     location: lead.location,
     propertyType: estimate.propertyType,
     lineItems: estimate.lineItems.map((line, index) => ({
-      ...line,
+      source: line.source,
+      itemType: line.itemType,
+      classification: line.source === "configuration"
+        ? line.classification === "special" ? "special" : "standard"
+        : line.classification,
+      pricingMode: line.pricingMode,
+      rateSource: line.rateSource,
+      catalogueId: line.catalogueId,
+      roomId: line.roomId,
+      roomName: line.roomName,
+      specification: line.specification,
+      unit: line.unit,
+      rate: line.rate,
+      ratePaise: line.ratePaise,
+      quantity: line.quantity,
+      included: line.included,
+      amount: line.amount,
+      amountPaise: line.amountPaise,
+      mainBasketId: line.mainBasketId,
+      subBasketId: line.subBasketId,
+      mainLineId: line.mainLineId,
+      revisionId: line.revisionId,
+      sourceItemStatus: line.sourceItemStatus,
+      sourceRevisionStatus: line.sourceRevisionStatus,
+      sourceItemVersion: line.sourceItemVersion,
+      sourceRevisionVersion: line.sourceRevisionVersion,
+      uomId: line.uomId,
+      uomCode: line.uomCode,
+      uomDecimalScale: line.uomDecimalScale,
+      mainBasketName: line.mainBasketName,
+      subBasketName: line.subBasketName,
+      mainLineName: line.mainLineName,
+      uomName: line.uomName,
       id: approvedEstimateLineItemKey({
         id: (line as { id?: unknown }).id,
         estimateId: estimate._id,
@@ -481,7 +526,14 @@ function toEstimateSnapshot(
     ...(estimate.subtotalPaise === undefined ? {} : { subtotalPaise: estimate.subtotalPaise }),
     ...(estimate.gstPaise === undefined ? {} : { gstPaise: estimate.gstPaise }),
     ...(estimate.totalPaise === undefined ? {} : { totalPaise: estimate.totalPaise }),
-    ...(estimate.selectedMainBasketIds === undefined ? {} : { selectedMainBasketIds: [...estimate.selectedMainBasketIds] })
+    ...(estimate.selectedMainBasketIds === undefined ? {} : {
+      selectedMainBasketIds: [...estimate.selectedMainBasketIds],
+      selectedMainBasketClassifications: estimate.selectedMainBasketIds.map((mainBasketId) => ({
+        mainBasketId,
+        classification: estimate.selectedMainBasketClassifications?.find((entry) =>
+          entry.mainBasketId === mainBasketId)?.classification === "special" ? "special" as const : "standard" as const
+      }))
+    })
   };
 }
 
@@ -507,6 +559,95 @@ function assertPublishableConfiguredLines(estimate: PublicationEstimate): void {
     estimate.gst !== estimate.gstPaise! / 100 ||
     estimate.total !== estimate.totalPaise! / 100) {
     throw new ApiError(409, "ESTIMATE_INCOMPLETE", "Complete every included configured line before sending the estimate.");
+  }
+}
+
+async function fencePublicationConfigurationDependencies(
+  estimate: PublicationEstimate,
+  session: mongoose.ClientSession
+): Promise<void> {
+  const configured = estimate.lineItems.filter((line) => line.source === "configuration");
+  const ids = (field: "mainBasketId" | "subBasketId" | "uomId" | "mainLineId", optional = false) => {
+    const values = configured.map((line) => line[field]);
+    if (values.some((value) => !(optional && value === null) && (typeof value !== "string" || !value))) {
+      publicationConflict();
+    }
+    return [...new Set(values.filter((value): value is string => typeof value === "string"))].sort();
+  };
+  for (const id of ids("mainBasketId")) {
+    const locked = await AiEstimatorKnowledgeBasketModel.findOneAndUpdate(
+      { _id: id, status: { $in: ["active", "inactive"] } },
+      { $inc: { dependencyEpoch: 1 } },
+      { session, returnDocument: "after", runValidators: true, timestamps: false }
+    ).select({ _id: 1 }).lean().exec();
+    if (!locked) throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE",
+      "This Main Basket has no current Configuration. Correct it before sending the estimate.");
+  }
+  for (const id of ids("subBasketId", true)) {
+    const locked = await AiEstimatorKnowledgeSubBasketModel.findOneAndUpdate(
+      { _id: id },
+      { $inc: { dependencyEpoch: 1 } },
+      { session, returnDocument: "after", runValidators: true, timestamps: false }
+    ).select({ _id: 1 }).lean().exec();
+    if (!locked) throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE",
+      "This Sub Basket has no current Configuration. Correct it before sending the estimate.");
+  }
+  for (const id of ids("uomId")) {
+    const locked = await AiEstimatorKnowledgeUomModel.findOneAndUpdate(
+      { _id: id, status: { $in: ["active", "inactive"] } },
+      { $inc: { dependencyEpoch: 1 } },
+      { session, returnDocument: "after", runValidators: true, timestamps: false }
+    ).select({ _id: 1 }).lean().exec();
+    if (!locked) throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE",
+      "This UOM has no current Configuration. Correct it before sending the estimate.");
+  }
+  for (const id of ids("mainLineId")) {
+    const locked = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
+      { _id: id, status: { $in: ["active", "draft", "inactive"] } },
+      { $inc: { dependencyEpoch: 1 } },
+      { session, returnDocument: "after", runValidators: true, timestamps: false }
+    ).select({ _id: 1 }).lean().exec();
+    if (!locked) throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE",
+      "This Main Line has no current Configuration. Correct it before sending the estimate.");
+  }
+}
+
+async function assertCurrentConfiguredPublication(
+  estimate: PublicationEstimate,
+  session?: mongoose.ClientSession
+): Promise<void> {
+  const lines = estimate.lineItems.filter((line) => line.source === "configuration");
+  if (lines.length === 0) return;
+  const current = await resolveEstimatorCatalogueLines(lines.map((line) => String(line.mainLineId)), session);
+  for (const line of lines) {
+    const source = current.get(String(line.mainLineId));
+    if (!source) throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE",
+      "This Main Line has no current Configuration. Correct it before sending the estimate.");
+    const stored = line as unknown as Record<string, unknown>;
+    const expected: Record<string, unknown> = {
+      itemType: source.line.itemType,
+      mainBasketId: source.line.basketId,
+      subBasketId: source.line.subBasketId,
+      mainLineId: source.line.mainLineId,
+      revisionId: source.line.revisionId,
+      sourceItemStatus: source.line.itemStatus,
+      sourceRevisionStatus: source.line.revisionStatus,
+      sourceItemVersion: source.line.itemVersion,
+      sourceRevisionVersion: source.line.revisionVersion,
+      uomId: source.line.uom.id,
+      uomCode: source.line.uom.code,
+      uomDecimalScale: source.line.uom.decimalScale,
+      mainBasketName: source.mainBasketName,
+      subBasketName: source.subBasketName,
+      mainLineName: source.line.name,
+      uomName: source.line.uom.name,
+      unit: source.line.uom.name
+    };
+    if (Object.entries(expected).some(([field, value]) => stored[field] !== value) ||
+      !estimateConfigurationRateMatches(line, source.line.modeBaseRatesPaise)) {
+      throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
+        "Configuration changed. Save the estimate with its current Main Line values before sending it.");
+    }
   }
 }
 

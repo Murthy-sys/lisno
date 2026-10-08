@@ -169,6 +169,12 @@
 .vendor-profile__basket-create { display: grid; align-content: start; gap: var(--space-2); min-width: 0; }
 .vendor-profile__basket-create > .ui-button { min-block-size: var(--control-height-large); }
 .vendor-profile__basket-inline > p { margin: 0 0 var(--space-2); color: var(--color-text-muted); font: var(--type-metadata); }
+.vendor-profile__basket-request { display: grid; gap: var(--space-4); min-width: 0; padding: var(--space-4); }
+.vendor-profile__basket-request .ui-control { width: 100%; }
+.vendor-profile__basket-request-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+@media (max-width: 480px) {
+  .vendor-profile__basket-request-actions > .ui-button { flex: 1 1 100%; }
+}
 .vendor-profile__dropzone { position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--space-2) var(--space-3); min-width: 0; min-block-size: 88px; padding: var(--space-4); border: 1px dashed var(--color-border-strong); border-radius: var(--radius-field); background: var(--color-surface); color: var(--color-text-muted); font: var(--type-metadata); text-align: center; transition: border-color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard); }
 .vendor-profile__dropzone strong { color: var(--color-text); font-weight: 600; }
 .vendor-profile__dropzone-icon { display: flex; flex: none; color: var(--button-primary-bg); }

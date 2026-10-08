@@ -14,7 +14,10 @@ export interface PurchaseOrderLineInput {
   deliveryLocation: string;
 }
 
-export interface PurchaseOrderLine extends PurchaseOrderLineInput {
+export interface PurchaseOrderLine extends Omit<PurchaseOrderLineInput, "scopeType" | "targetDate" | "deliveryLocation"> {
+  scopeType: PurchaseOrderScope | null;
+  targetDate: string | null;
+  deliveryLocation: string | null;
   id: string;
   procurementItemVersion: number;
   netPaise: number;
@@ -34,7 +37,7 @@ export interface PurchaseOrderRevision {
   revision: number;
   submittedAt: string;
   submittedById: string;
-  terms: string;
+  terms: string | null;
   lines: PurchaseOrderLine[];
   totals: PurchaseOrderTotals;
 }
@@ -49,7 +52,7 @@ export interface PurchaseOrder {
   version: number;
   revision: number;
   estimateSource: { estimateId: string; estimateVersion: number; estimateReviewRoundId: string | null };
-  terms: string;
+  terms: string | null;
   draftLines: PurchaseOrderLine[];
   draftTotals: PurchaseOrderTotals;
   submittedRevisionId: string | null;
@@ -70,7 +73,7 @@ export interface VendorPurchaseOrder {
   vendor: { id: string; code: string; name: string };
   revision: number;
   approvedAt: string;
-  terms: string;
+  terms: string | null;
   lines: PurchaseOrderLine[];
   totals: PurchaseOrderTotals;
 }
@@ -86,6 +89,149 @@ export interface PurchaseOrderCommitments {
 export interface PurchaseOrderPage { items: PurchaseOrder[]; total: number; limit: number; offset: number }
 
 export interface PurchaseOrderPreparationBlocker { code: string; message: string; itemId?: string }
+export type PurchaseOrderModeKey = "pmc" | "sub_vendor" | "in_house";
+export interface PurchaseOrderModeIntegrityBasis {
+  kind: "observed_unverified";
+  activatedDigest: string;
+  observedDigest: string;
+  reason: string;
+  actorId: string;
+  acknowledgedAt: string;
+}
+export interface PurchaseOrderModeIntegrity {
+  status: "mismatch";
+  activatedDigest: string;
+  observedDigest: string;
+  candidateAvailability: Array<{ key: PurchaseOrderModeKey; label: string; available: boolean; issues: Array<{ code: string; message: string }> }>;
+}
+export interface PurchaseOrderModeDecision {
+  id: string;
+  version: number;
+  sourceLineItemKey: string;
+  mode: PurchaseOrderModeKey | null;
+  quantity: string | null;
+  discountBps: number;
+  markupBasis: "starting" | "minimum";
+  exceptionReason: string | null;
+  revisionId: string | null;
+  revisionDigest: string | null;
+  updatedAt: string;
+  integrityBasis?: PurchaseOrderModeIntegrityBasis;
+}
+export interface PurchaseOrderModePreview {
+  formulaVersion: string;
+  mode: PurchaseOrderModeKey;
+  quantity: string;
+  quantityScale: number;
+  baseCostPaise: number;
+  adjustedCostPaise: number;
+  lowQuantityImpactPaise: number;
+  sellingPaise: number;
+  finalVendorChargesPaise: number | null;
+  floorSellingPaise: number | null;
+  marginBps: number | null;
+  appliedImpactBps: number | null;
+  discountBps: number;
+  discountAmountPaise: number;
+  quantityRule: { slabId: string; minimumQuantity: string; maximumQuantity: string | null; adjustmentBps: number } | null;
+  procurementQuantitySuggestion: string | null;
+  settings: {
+    scopes: Array<{ scope: "pmc" | "sub_vendor" | "in_house_labor" | "in_house_material";
+      source: "scoped" | "legacy_shared" | "legacy_in_house" | null;
+      baseRatePaise: number; lowQuantityLimit: string; impactBps: number;
+      minimumMarkupBps: number; startingMarkupBps: number }>;
+    configuredMarginBps: number | null;
+    markupBasis: "starting" | "minimum";
+  };
+  components: Array<{ scope: "labor" | "material"; adjustedCostPaise: number; sellingPaise: number; floorSellingPaise: number }>;
+}
+export interface PurchaseOrderModePriceReference {
+  state: "ready" | "unavailable";
+  priceVersionId: string | null;
+  priceVersionNumber: number | null;
+  taxVersionId: string | null;
+  taxVersionNumber: number | null;
+  unitPricePaise: number | null;
+  gstBasisPoints: number | null;
+  treatment: "inclusive" | "exclusive" | null;
+  effectiveFrom: string | null;
+  effectiveTo: string | null;
+  issues: Array<{ code: string; message: string }>;
+}
+export interface PurchaseOrderModeResolution {
+  state: "ready" | "selection_required" | "unavailable" | "exception";
+  options: Array<{ key: PurchaseOrderModeKey; label: string }>;
+  availability?: Array<{ key: PurchaseOrderModeKey; label: string; available: boolean; issues: Array<{ code: string; message: string }> }>;
+  decision: PurchaseOrderModeDecision | null;
+  preview: PurchaseOrderModePreview | null;
+  issues: Array<{ code: string; message: string }>;
+  revision: { id: string; version: number; status: string; contentDigest: string | null } | null;
+  uom: { id: string; code: string; name?: string; decimalScale: number } | null;
+  priceReferences?: Record<string, PurchaseOrderModePriceReference>;
+  integrity?: PurchaseOrderModeIntegrity;
+}
+export interface PurchaseOrderModeCalculationStage {
+  scope: "pmc" | "sub_vendor" | "in_house_labor" | "in_house_material";
+  baseRatePaise: number;
+  baseSubtotalPaise: number;
+  lowQuantityLimit: string;
+  configuredImpactBps: number;
+  thresholdMet: boolean;
+  appliedImpactBps: number;
+  adjustedUnitRatePaise: number;
+  adjustedCostPaise: number;
+  lowQuantityImpactPaise: number;
+  marginBps: number;
+  marginAmountPaise: number;
+  sellingBeforeDiscountPaise: number;
+  discountBasisPaise: number;
+  discountAmountPaise: number;
+  floorSellingPaise: number | null;
+  sellingPaise: number;
+}
+export interface PreviewPurchaseOrderModeInput {
+  estimateSource: { estimateId: string; estimateVersion: number; estimateReviewRoundId: string | null };
+  sourceLineItemKey: string;
+  expectedVersion: number;
+  mode: PurchaseOrderModeKey;
+  quantity: string;
+  discountBps: number;
+  markupBasis: "starting" | "minimum";
+  expectedObservedDigest?: string;
+}
+export interface PurchaseOrderModeDraftPreview {
+  projectId: string;
+  estimateSource: PreviewPurchaseOrderModeInput["estimateSource"];
+  sourceLineItemKey: string;
+  decisionVersion: number;
+  revision: PurchaseOrderModeResolution["revision"];
+  uom: PurchaseOrderModeResolution["uom"];
+  preview: PurchaseOrderModePreview | null;
+  scopes: PurchaseOrderModeCalculationStage[];
+  issues: Array<{ code: string; message: string }>;
+  integrity?: PurchaseOrderModeIntegrity;
+}
+export interface PurchaseOrderPreparationEstimateLine {
+  key: string;
+  included: boolean;
+  source: "configuration" | "legacy";
+  itemType?: "main_line" | "temporary";
+  mainBasketClassification?: "standard" | "special";
+  mainBasketClassificationExplicit?: boolean;
+  roomId: string | null;
+  roomName: string;
+  mainBasketId: string | null;
+  mainBasketName: string | null;
+  subBasketId: string | null;
+  subBasketName: string | null;
+  mainLineId: string | null;
+  mainLineName: string | null;
+  quantity: string;
+  unit: string;
+  amountPaise: number | null;
+  itemIds: string[];
+  mode: PurchaseOrderModeResolution | null;
+}
 export interface PurchaseOrderPreparationItem {
   id: string;
   version: number;
@@ -120,6 +266,7 @@ export interface PurchaseOrderPreparation {
   committedTotalPaise: number;
   remainingPaise: number;
   sections: PurchaseOrderPreparationSection[];
+  estimateLines: PurchaseOrderPreparationEstimateLine[];
   netPaise: number | null;
   itemCount: number;
   readyItemCount: number;
@@ -135,6 +282,7 @@ export interface PurchaseOrderRequestLineInput {
   description: string;
   targetDate: string;
   deliveryLocation: string;
+  commercialExceptionReason?: string | null;
 }
 export interface PurchaseOrderRequestLine extends PurchaseOrderLine {
   vendorId: string;
@@ -148,6 +296,37 @@ export interface PurchaseOrderRequestLine extends PurchaseOrderLine {
   itemName: string;
   brand: string;
   uomCode: string;
+}
+export interface PurchaseOrderRequestModeSnapshot {
+  sourceLineItemKey: string;
+  source: "configuration" | "legacy";
+  roomId: string | null;
+  roomName: string;
+  mainBasketId: string | null;
+  mainBasketName: string | null;
+  subBasketId: string | null;
+  subBasketName: string | null;
+  mainLineId: string | null;
+  mainLineName: string | null;
+  approvedQuantity: string;
+  approvedUnit: string;
+  approvedAmountPaise: number;
+  referenceAsOf: string;
+  mode: PurchaseOrderModeResolution;
+  actualChildren: Array<{
+    procurementItemId: string;
+    vendorId: string;
+    quantityMilliUnits: number;
+    unitPricePaise: number;
+    gstBasisPoints: number;
+    allocatedWorkPaise: number;
+    netPaise: number;
+    gstPaise: number;
+    totalPaise: number;
+    commercialExceptionReason: string | null;
+  }>;
+  actualTotals: PurchaseOrderTotals;
+  actualNetMinusConfiguredCostPaise: number | null;
 }
 export interface ProjectPurchaseOrderRequest extends PurchaseOrderCommitments {
   id: string;
@@ -166,6 +345,8 @@ export interface ProjectPurchaseOrderRequest extends PurchaseOrderCommitments {
   approvedOrderIds: string[];
   decisions: Array<{ id: string; revisionId: string; revision: number; decision: "approve" | "request_changes" | "reject"; actorId: string; reason: string | null; budgetOverrideReason: string | null; decidedAt: string }>;
   revisions: Array<PurchaseOrderCommitments & { id: string; revision: number; submittedAt: string; submittedById: string; preparationDigest: string;
+    modeSnapshotStatus: "captured" | "historical_unavailable";
+    modeSnapshots: PurchaseOrderRequestModeSnapshot[];
     lines: PurchaseOrderRequestLine[]; sectionTotals: ProjectPurchaseOrderRequest["sectionTotals"];
     vendorTotals: ProjectPurchaseOrderRequest["vendorTotals"]; totals: PurchaseOrderTotals }>;
   createdAt: string;
@@ -176,6 +357,7 @@ export interface PurchaseOrderRequestQuote extends PurchaseOrderCommitments {
   preparationDigest: string;
   estimateSource: ProjectPurchaseOrderRequest["estimateSource"];
   lines: PurchaseOrderRequestLine[];
+  modeSnapshots: PurchaseOrderRequestModeSnapshot[];
   sectionTotals: ProjectPurchaseOrderRequest["sectionTotals"];
   vendorTotals: ProjectPurchaseOrderRequest["vendorTotals"];
   totals: PurchaseOrderTotals;
@@ -196,6 +378,28 @@ export const purchaseOrderKeys = {
 };
 
 const requestPath = (projectId: string) => `/procurement/projects/${encodeURIComponent(projectId)}/purchase-order-requests`;
+export interface SavePurchaseOrderModeDecisionInput {
+  sourceLineItemKey: string;
+  expectedVersion: number;
+  expectedEstimateSource: { estimateId: string; estimateVersion: number; estimateReviewRoundId: string | null };
+  expectedRevisionDigest?: string | null;
+  idempotencyKey: string;
+  mode: PurchaseOrderModeKey | null;
+  quantity: string | null;
+  discountBps?: number;
+  markupBasis?: "starting" | "minimum";
+  exceptionReason?: string | null;
+  recovery?: { expectedObservedDigest: string; reason: string; acknowledge: true };
+}
+export function savePurchaseOrderModeDecision(projectId: string, input: SavePurchaseOrderModeDecisionInput) {
+  return apiClient.post<PurchaseOrderModeDecision>(`/procurement/projects/${encodeURIComponent(projectId)}/purchase-order-mode-decisions`, input);
+}
+export function previewPurchaseOrderMode(projectId: string, input: PreviewPurchaseOrderModeInput, signal?: AbortSignal) {
+  return apiClient.post<PurchaseOrderModeDraftPreview>(
+    `/procurement/projects/${encodeURIComponent(projectId)}/purchase-order-mode-previews`, input,
+    { signal, showGlobalLoader: false }
+  );
+}
 export async function getPurchaseOrderPreparation(projectId: string, signal?: AbortSignal) {
   const result = await apiClient.get<PurchaseOrderPreparation>(`/procurement/projects/${encodeURIComponent(projectId)}/purchase-order-preparation`, { signal });
   if (result.projectId !== projectId) throw new Error("The purchase order preparation does not match this project. Refresh before continuing.");

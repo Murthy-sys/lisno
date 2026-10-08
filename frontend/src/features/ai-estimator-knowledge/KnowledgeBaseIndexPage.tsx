@@ -17,7 +17,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { useId, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
@@ -47,12 +47,14 @@ import { syncKnowledgeBasketDeletion, syncKnowledgeBasketMutation } from "./know
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { KNOWLEDGE_ITEM_STATUS_LABELS } from "./knowledgePresentation";
 import { KnowledgeBasketManagementDialog } from "./KnowledgeBasketManagementDialog";
+import { KnowledgeBasketRequestReview } from "./KnowledgeBasketRequestReview";
 import { CreateKnowledgeItemDialog } from "./CreateKnowledgeItemDialog";
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
 import { KnowledgeIndexItemCard } from "./KnowledgeIndexItemCard";
 import { KnowledgeMainLineNameDialog } from "./KnowledgeMainLineNameDialog";
+import { KnowledgeMainLineDeleteDialog } from "./KnowledgeMainLineDeleteDialog";
 import { KnowledgeRenamePenButton } from "./KnowledgeRenamePenButton";
-import { KnowledgeSubBasketEditor } from "./KnowledgeSubBasketDialogs";
+import { KnowledgeSubBasketDeleteDialog, KnowledgeSubBasketEditor } from "./KnowledgeSubBasketDialogs";
 import type { CatalogState } from "./knowledgeIndexPresentation";
 import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
 import { KnowledgeLifecycleDialog } from "./KnowledgeLifecycleDialogs";
@@ -115,10 +117,13 @@ export function KnowledgeBaseIndexPage() {
   const [offset, setOffset] = useState(0);
   const [basketDialogOpen, setBasketDialogOpen] = useState(false);
   const [basketManagerOpen, setBasketManagerOpen] = useState(false);
+  const [basketRequestsOpen, setBasketRequestsOpen] = useState(false);
   const [basketEditor, setBasketEditor] = useState<KnowledgeBasket | null>(null);
   const [basketDelete, setBasketDelete] = useState<KnowledgeBasket | null>(null);
   const [subBasketEditor, setSubBasketEditor] = useState<{ basket: KnowledgeBasket; subBasket: KnowledgeSubBasket } | null>(null);
+  const [subBasketDelete, setSubBasketDelete] = useState<{ basket: KnowledgeBasket; subBasket: KnowledgeSubBasket } | null>(null);
   const [mainLineEditorItem, setMainLineEditorItem] = useState<KnowledgeItemListItem | null>(null);
+  const [mainLineDeleteItem, setMainLineDeleteItem] = useState<KnowledgeItemListItem | null>(null);
   const [itemDialogOpen, setItemDialogOpen] = useState(false);
   const [temporaryBasketId, setTemporaryBasketId] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
@@ -129,7 +134,14 @@ export function KnowledgeBaseIndexPage() {
   const [noticeDismissed, setNoticeDismissed] = useState(false);
   const manageBasketsButtonRef = useRef<HTMLButtonElement>(null);
   const subBasketEditFocusRef = useRef<HTMLButtonElement>(null);
+  const subBasketDeleteFocusRef = useRef<HTMLElement | null>(null);
+  const subBasketDeletionCommittedRef = useRef(false);
+  const basketHeaderRefs = useRef(new Map<string, HTMLButtonElement>());
+  const indexFocusRef = useRef<HTMLDivElement>(null);
   const mainLineEditFocusRef = useRef<HTMLButtonElement>(null);
+  const mainLineDeleteFocusRef = useRef<HTMLElement | null>(null);
+  const mainLineDeletionCommittedRef = useRef(false);
+  const subBasketHeaderRefs = useRef(new Map<string, HTMLButtonElement>());
   const filterCountDescriptionId = useId();
 
   const canCreate = hasFrontendPermission(
@@ -220,7 +232,27 @@ export function KnowledgeBaseIndexPage() {
       enabled: !collapsedBaskets.includes(basketId)
     }))
   });
+  const deletionBasket = subBasketDelete
+    ? basketsQuery.data?.items.find(({ id }) => id === subBasketDelete.basket.id)
+    : undefined;
+  const deletionSubBasketQuery = subBasketDelete
+    ? subBasketQueries[groupedItems.findIndex(([basketId]) => basketId === subBasketDelete.basket.id)]
+    : undefined;
+  const deletionSubBasket = deletionSubBasketQuery?.data?.items.find(({ id, basketId }) =>
+    id === subBasketDelete?.subBasket.id && basketId === subBasketDelete.basket.id);
+  const subBasketDeleteDisabledReason = auth.user?.role !== "super_admin" || !canLifecycle
+    ? "You no longer have permission to delete this Sub-Basket. Close this dialog and refresh your access."
+    : !basketsQuery.isSuccess || !deletionSubBasketQuery?.isSuccess
+      ? "The current basket catalog could not be verified. Close this dialog and refresh the catalog before deleting."
+      : !deletionBasket || deletionBasket.status === "archived" || !deletionSubBasket
+        ? "This Sub-Basket is no longer available for deletion under the reviewed Main Basket. Close this dialog and refresh the catalog."
+        : undefined;
   const total = itemsQuery.data?.pagination.total ?? 0;
+  useEffect(() => {
+    if (!mainLineDeletionCommittedRef.current || !itemsQuery.isSuccess || itemsQuery.isPlaceholderData) return;
+    const lastPageOffset = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1) * PAGE_SIZE;
+    if (offset > lastPageOffset) setOffset(lastPageOffset);
+  }, [itemsQuery.isSuccess, itemsQuery.isPlaceholderData, offset, total]);
   const advancedFilterCount = ADVANCED_FILTER_KEYS.filter((key) => filters[key]).length;
   const appliedChips = useMemo(() => {
     const baskets = basketsQuery.data?.items ?? [];
@@ -297,6 +329,52 @@ export function KnowledgeBaseIndexPage() {
     returnFocusToBasketManagerButton();
   }
 
+  function closeSubBasketDelete() {
+    if (subBasketDeletionCommittedRef.current || !subBasketDeleteFocusRef.current?.isConnected) {
+      subBasketDeleteFocusRef.current = subBasketDelete
+        ? basketHeaderRefs.current.get(subBasketDelete.basket.id) ?? indexFocusRef.current
+        : indexFocusRef.current;
+    }
+    setSubBasketDelete(null);
+  }
+
+  function mainLineDeleteDisabledReason(target: KnowledgeItemListItem): string | undefined {
+    if (auth.user?.role !== "super_admin" || !canLifecycle) {
+      return "You no longer have permission to delete this Main Line. Close this dialog and refresh your access.";
+    }
+    if (!itemsQuery.isSuccess || itemsQuery.isPlaceholderData || !basketsQuery.isSuccess || basketsQuery.isPlaceholderData) {
+      return "The current item and basket catalogs could not be verified. Close this dialog and refresh the catalogs before deleting.";
+    }
+    const current = itemsQuery.data.items.find((item) => item.mainLineId === target.mainLineId);
+    const basket = basketsQuery.data.items.find(({ id }) => id === target.basketId);
+    if (!current || current.basketId !== target.basketId || (current.subBasketId ?? null) !== (target.subBasketId ?? null)
+      || current.itemType === "temporary" || current.status === "active" || !current.allowedActions.includes("archive")
+      || !basket || basket.status === "archived") {
+      return "This Main Line is no longer available for deletion in the reviewed location. Close this dialog and refresh the catalog.";
+    }
+    if (target.subBasketId) {
+      const catalog = subBasketQueries[groupedItems.findIndex(([basketId]) => basketId === target.basketId)];
+      if (!catalog?.isSuccess || catalog.isPlaceholderData) {
+        return "The current Sub-Basket catalog could not be verified. Close this dialog and refresh the catalog before deleting.";
+      }
+      if (!catalog.data.items.some(({ id, basketId }) => id === target.subBasketId && basketId === target.basketId)) {
+        return "The reviewed Sub-Basket is no longer available. Close this dialog and refresh the catalog.";
+      }
+    }
+    return undefined;
+  }
+
+  function closeMainLineDelete() {
+    if (mainLineDeletionCommittedRef.current || !mainLineDeleteFocusRef.current?.isConnected) {
+      const subBasketHeader = mainLineDeleteItem?.subBasketId
+        ? subBasketHeaderRefs.current.get(mainLineDeleteItem.subBasketId) : undefined;
+      const basketHeader = mainLineDeleteItem ? basketHeaderRefs.current.get(mainLineDeleteItem.basketId) : undefined;
+      mainLineDeleteFocusRef.current = subBasketHeader?.isConnected ? subBasketHeader
+        : basketHeader?.isConnected ? basketHeader : indexFocusRef.current;
+    }
+    setMainLineDeleteItem(null);
+  }
+
   function renderItemCard(item: KnowledgeItemListItem) {
     return <KnowledgeIndexItemCard
       key={item.id}
@@ -311,11 +389,16 @@ export function KnowledgeBaseIndexPage() {
             setMainLineEditorItem(item);
           }
         : undefined}
+      onDelete={!mainLineDeleteDisabledReason(item) ? (trigger) => {
+        mainLineDeleteFocusRef.current = trigger;
+        mainLineDeletionCommittedRef.current = false;
+        setMainLineDeleteItem(item);
+      } : undefined}
     />;
   }
 
   return (
-    <div className="knowledge-page knowledge-page--index">
+    <div ref={indexFocusRef} className="knowledge-page knowledge-page--index" tabIndex={-1} aria-labelledby="knowledge-base-title">
       <PageHeader
         id="knowledge-base-title"
         eyebrow="Configuration"
@@ -330,6 +413,15 @@ export function KnowledgeBaseIndexPage() {
             >
               Manage reusable values
             </Button>
+            {canManageBaskets ? (
+              <Button
+                variant="secondary"
+                aria-expanded={basketRequestsOpen}
+                onClick={() => setBasketRequestsOpen((open) => !open)}
+              >
+                Main Basket requests
+              </Button>
+            ) : null}
             {canManageBaskets ? (
               <Button
                 ref={manageBasketsButtonRef}
@@ -369,6 +461,7 @@ export function KnowledgeBaseIndexPage() {
       {noticeDismissed ? null : (
         <KnowledgeSafetyNotice onDismiss={dismissNotice} />
       )}
+      {canManageBaskets && basketRequestsOpen ? <KnowledgeBasketRequestReview /> : null}
       {announcement ? (
         <p className="sr-only" role="status">
           {announcement}
@@ -585,6 +678,10 @@ export function KnowledgeBaseIndexPage() {
                 <div className="knowledge-basket-panel__heading">
                   <h2 className="knowledge-basket-panel__title">
                     <button
+                      ref={(element) => {
+                        if (element) basketHeaderRefs.current.set(basketId, element);
+                        else basketHeaderRefs.current.delete(basketId);
+                      }}
                       type="button"
                       className="knowledge-basket-panel__toggle"
                       aria-expanded={expanded}
@@ -645,7 +742,10 @@ export function KnowledgeBaseIndexPage() {
                   return <section key={subBasketId} className="knowledge-sub-basket" data-expanded={subExpanded || undefined}>
                     <div className="knowledge-sub-basket__header">
                       <div className="knowledge-sub-basket__name">
-                        <h3><button type="button" className="knowledge-sub-basket__toggle" aria-expanded={subExpanded} aria-controls={subPanelId} onClick={() => toggleSubBasket(subBasketId)}><ChevronDown aria-hidden="true" /><span>{subBasketName}</span></button></h3>
+                        <h3><button ref={(element) => {
+                          if (element) subBasketHeaderRefs.current.set(subBasketId, element);
+                          else subBasketHeaderRefs.current.delete(subBasketId);
+                        }} type="button" className="knowledge-sub-basket__toggle" aria-expanded={subExpanded} aria-controls={subPanelId} onClick={() => toggleSubBasket(subBasketId)}><ChevronDown aria-hidden="true" /><span>{subBasketName}</span></button></h3>
                         {auth.user?.role === "super_admin" && canUpdate && !basketsQuery.isError && !subBasketQuery?.isError && basketRecord?.status !== "archived" && basketRecord && subBasketRecord ? <KnowledgeRenamePenButton
                           label={`Edit Sub-Basket name for ${subBasketName}`}
                           onClick={(event) => {
@@ -653,6 +753,17 @@ export function KnowledgeBaseIndexPage() {
                             setSubBasketEditor({ basket: basketRecord, subBasket: subBasketRecord });
                           }}
                         /> : null}
+                        {auth.user?.role === "super_admin" && canLifecycle && basketsQuery.isSuccess && subBasketQuery?.isSuccess && basketRecord && basketRecord.status !== "archived" && subBasketRecord ? <Button
+                          size="compact"
+                          variant="destructive-outline"
+                          className="knowledge-sub-basket__delete"
+                          aria-label={`Delete Sub-Basket ${subBasketName} permanently`}
+                          onClick={(event) => {
+                            subBasketDeleteFocusRef.current = event.currentTarget;
+                            subBasketDeletionCommittedRef.current = false;
+                            setSubBasketDelete({ basket: basketRecord, subBasket: subBasketRecord });
+                          }}
+                        >Delete</Button> : null}
                       </div>
                       <span className="knowledge-count-pill">{subItems.length} {subItems.length === 1 ? "item" : "items"} on this page</span>
                     </div>
@@ -755,6 +866,19 @@ export function KnowledgeBaseIndexPage() {
           setAnnouncement(`Sub-Basket renamed to “${saved.name}”.`);
         }}
       /> : null}
+      {subBasketDelete ? <KnowledgeSubBasketDeleteDialog
+        basket={subBasketDelete.basket}
+        subBasket={subBasketDelete.subBasket}
+        returnFocusRef={subBasketDeleteFocusRef}
+        fallbackFocusRef={indexFocusRef}
+        disabledReason={subBasketDeleteDisabledReason}
+        onCommitted={() => { subBasketDeletionCommittedRef.current = true; }}
+        onClose={closeSubBasketDelete}
+        onDeleted={(name) => {
+          setAnnouncement(`Sub-Basket “${name}” was permanently deleted.`);
+          closeSubBasketDelete();
+        }}
+      /> : null}
       {mainLineEditorItem ? <KnowledgeMainLineNameDialog
         mainLineId={mainLineEditorItem.mainLineId}
         listedName={mainLineEditorItem.mainLineName}
@@ -764,6 +888,18 @@ export function KnowledgeBaseIndexPage() {
           setMainLineEditorItem(null);
           setAnnouncement(`Main Line renamed to “${saved.mainLineName}”.`);
         }}
+      /> : null}
+      {mainLineDeleteItem ? <KnowledgeMainLineDeleteDialog
+        target={mainLineDeleteItem}
+        disabledReason={mainLineDeleteDisabledReason(mainLineDeleteItem)}
+        returnFocusRef={mainLineDeleteFocusRef}
+        fallbackFocusRef={indexFocusRef}
+        onClose={closeMainLineDelete}
+        onCommitted={(item) => {
+          mainLineDeletionCommittedRef.current = true;
+          setAnnouncement(`Main Line “${item.mainLineName}” was permanently deleted.`);
+        }}
+        onDeleted={closeMainLineDelete}
       /> : null}
       {temporaryBasketId !== null && <CreateKnowledgeItemDialog itemType="temporary" initialBasketId={temporaryBasketId}
         canCreateBasket={canCreateBasketInline}
@@ -993,7 +1129,7 @@ function BasketDeletionImpactSummary({ impact }: {
           <dd>{impact.subBasketCount ?? 0}</dd>
         </div>
         <div>
-          <dt>References removed elsewhere</dt>
+          <dt>References in other configurations</dt>
           <dd>{impact.historicalReferenceCount}</dd>
         </div>
       </dl>
@@ -1008,9 +1144,9 @@ function BasketDeletionImpactSummary({ impact }: {
         </p>
         {impact.historicalReferenceCount > 0 ? (
           <p>
-            {impact.historicalReferenceCount} {plural(impact.historicalReferenceCount, "exclusion or dependency", "exclusions and dependencies")} in other
-            configurations point at this basket. {plural(impact.historicalReferenceCount, "It", "They")} will be removed so
-            nothing is left pointing at something that no longer exists.
+            {impact.historicalReferenceCount} {plural(impact.historicalReferenceCount, "reference", "references")} in other
+            configurations point at this basket. Draft references will be removed. Active and superseded revisions
+            keep their history and show the deleted target as unavailable.
           </p>
         ) : null}
         <p>A Super Admin can add this basket again afterwards; nothing is restored with it.</p>

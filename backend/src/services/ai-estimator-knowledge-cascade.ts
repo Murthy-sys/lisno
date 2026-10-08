@@ -47,13 +47,14 @@ export function deletedTargetReferences(payload: unknown, targets: DeletionTarge
 }
 
 /**
- * Drops every exclusion, dependency and recommendation in the surviving
- * configurations that points at something being deleted.
+ * Drops exclusions, dependencies and recommendations in surviving drafts
+ * that point at something being deleted. Activated and superseded revisions
+ * retain their exact content because their digest is immutable history.
  *
- * Without this a deletion would leave other people's sections holding stable
- * IDs for rows that no longer exist, which the context service would then try
- * to resolve at estimate time. Sections belonging to the deleted Main Lines
- * are not visited: they are removed wholesale by the caller.
+ * Without draft cleanup, a saved draft could reactivate a deleted target.
+ * Historical references remain part of immutable Configuration lineage;
+ * readers resolve current target availability without changing that history.
+ * Sections belonging to deleted Main Lines are removed by the caller.
  */
 export async function stripReferencesToDeleted(
   targets: DeletionTargets,
@@ -66,11 +67,19 @@ export async function stripReferencesToDeleted(
     .session(session)
     .lean()
     .exec() as Row[];
+  const affectedRevisionIds = [...new Set(sections
+    .filter((section) => deletedTargetReferences(section.payload, targets).length > 0)
+    .map((section) => String(section.revisionId)))];
+  if (affectedRevisionIds.length === 0) return 0;
+  const draftRevisionIds = new Set((await AiEstimatorKnowledgeRevisionModel.find({
+    _id: { $in: affectedRevisionIds }, status: "draft"
+  }).select({ _id: 1 }).session(session).lean().exec()).map((revision) => String(revision._id)));
 
   let stripped = 0;
   const changedMainLineIds = new Set<string>();
   const changedRevisionIds = new Set<string>();
   for (const section of sections) {
+    if (!draftRevisionIds.has(String(section.revisionId))) continue;
     const payload = section.payload;
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) continue;
     const row = payload as Row;
@@ -103,10 +112,13 @@ export async function stripReferencesToDeleted(
       { _id: { $in: [...changedMainLineIds] } },
       { $inc: { version: 1 } }
     ).session(session).exec();
-    await AiEstimatorKnowledgeRevisionModel.updateMany(
+    const updatedRevisions = await AiEstimatorKnowledgeRevisionModel.updateMany(
       { _id: { $in: [...changedRevisionIds] }, status: "draft" },
       { $inc: { version: 1 } }
     ).session(session).exec();
+    if (updatedRevisions.modifiedCount !== changedRevisionIds.size) {
+      throw new ApiError(409, "VERSION_CONFLICT", "An affected knowledge revision changed elsewhere.");
+    }
   }
   return stripped;
 }

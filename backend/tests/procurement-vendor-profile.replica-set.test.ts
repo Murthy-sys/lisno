@@ -70,7 +70,8 @@ describe("vendor profile shared persistence", () => {
       await UserModel.create({ _id: user.id, name: user.name, email: user.email, emailNormalized: user.email, passwordHash: "fixture-only", role: user.role, active: true });
     }
     const scopedReference = createAiEstimatorKnowledgeReferenceService({ audit });
-    const basket = await scopedReference.createBasket(procurement, { name: "Procurement basket" });
+    await expect(scopedReference.createBasket(procurement, { name: "Procurement basket" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const basket = await scopedReference.createBasket(actor, { name: "Procurement basket" });
     const subBasket = await scopedReference.createSubBasket(procurement, basket.id, { name: "Procurement sub-basket" });
     expect((await scopedReference.listBaskets(procurement, {}, { limit: 10, offset: 0 })).total).toBe(1);
     expect((await scopedReference.listSubBaskets(procurement, basket.id, {}, { limit: 10, offset: 0 })).total).toBe(1);

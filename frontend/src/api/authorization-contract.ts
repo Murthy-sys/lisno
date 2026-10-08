@@ -4,6 +4,7 @@ export const ROLE_CODES = [
   "estimator_sales",
   "designer",
   "procurement",
+  "program_manager",
   "finance_head",
   "site_manager",
   "worker_electrician",
@@ -26,6 +27,7 @@ export const ROLE_LABELS = {
   estimator_sales: "Sales",
   designer: "Designer",
   procurement: "Procurement",
+  program_manager: "Program Manager",
   finance_head: "Finance Manager",
   site_manager: "Site Manager",
   worker_electrician: "Electrician",
@@ -55,6 +57,7 @@ export const OPERATIONAL_ROLES = [
   "estimator_sales",
   "designer",
   "procurement",
+  "program_manager",
   "finance_head",
   "site_manager",
   ...WORKER_ROLES
@@ -89,6 +92,7 @@ export const REQUESTABLE_MODULES_BY_ROLE = {
   estimator_sales: [],
   designer: ["design"],
   procurement: ["procurement"],
+  program_manager: [],
   finance_head: ["finance"],
   site_manager: ["execution"],
   worker_electrician: [],
@@ -115,6 +119,7 @@ export const PERMISSION_CODES = [
   "projects.design_workflow.act",
   "projects.design_workflow.payments.read",
   "projects.initiate",
+  "projects.procurement_identity.manage",
   "projects.floor.create",
   "projects.stage.create",
   "projects.task.create",
@@ -222,6 +227,7 @@ export const PERMISSION_CODES = [
   "finance.bucket.read",
   "finance.entry.read",
   "finance.entry.create",
+  "finance.vendor_invoice.manage",
   "workflow.tasks.read",
   "workflow.tasks.update",
   "ai_estimator_knowledge.configuration.read",
@@ -242,6 +248,9 @@ export const PERMISSION_CODES = [
   "procurement.purchase_orders.read",
   "procurement.purchase_orders.manage",
   "procurement.purchase_orders.approve",
+  "procurement.work_order_approval.read",
+  "procurement.work_order_approval.decide",
+  "procurement.vendor_city.manage",
   "procurement.vendor_work.read",
   "procurement.vendor_work.update",
   "procurement.vendor_work.media.read",
@@ -274,7 +283,7 @@ export const PERMISSION_CODES = [
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-10-01.vendor-procurement.v1" as const;
+  "2026-10-05.procurement-basket-work-orders.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

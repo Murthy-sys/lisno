@@ -8,6 +8,8 @@ const subBasketSchema = new Schema({
   nameNormalized: { type: String, required: true },
   displayOrder: { type: Number, required: true, min: 0, validate: Number.isSafeInteger },
   version: { type: Number, required: true, default: 1, min: 1, validate: Number.isSafeInteger },
+  dependencyEpoch: { type: Number, default: 0, min: 0, max: Number.MAX_SAFE_INTEGER,
+    validate: Number.isSafeInteger },
   createdById: { type: String, ref: "User", required: true, immutable: true },
   updatedById: { type: String, ref: "User", required: true }
 }, { collection: "aiEstimatorKnowledgeSubBaskets", timestamps: true, versionKey: false, strict: "throw" });

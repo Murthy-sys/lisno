@@ -1,4 +1,7 @@
 import type { ProcurementReferenceStatus } from "./project-procurement.js";
+import type { PurchaseOrderModeResolution, PurchaseOrderModeStandardSuggestion } from "./project-purchase-order-mode.js";
+import type { ProcurementBasketProjectRate } from "./procurement-basket-base-rate.js";
+import type { ProcurementEstimateMode } from "./procurement-basket-mode-groups.js";
 
 export interface PurchaseOrderPreparationBlocker {
   code: string;
@@ -32,6 +35,34 @@ export interface PurchaseOrderPreparationSection {
   items: PurchaseOrderPreparationItem[];
 }
 
+/** The immutable approved-round order is retained; child purchase items are linked by source key. */
+export interface PurchaseOrderPreparationEstimateLine {
+  /** Read-only approved estimate selection; not the current commercial mode decision. */
+  estimateMode?: ProcurementEstimateMode;
+  key: string;
+  included: boolean;
+  source: "configuration" | "legacy";
+  itemType?: "main_line" | "temporary";
+  mainBasketClassification?: "standard" | "special";
+  /** True only when the immutable approved snapshot explicitly classified this Main Basket. */
+  mainBasketClassificationExplicit?: boolean;
+  roomId: string | null;
+  roomName: string;
+  mainBasketId: string | null;
+  mainBasketName: string | null;
+  subBasketId: string | null;
+  subBasketName: string | null;
+  mainLineId: string | null;
+  mainLineName: string | null;
+  quantity: string;
+  unit: string;
+  amountPaise: number | null;
+  itemIds: string[];
+  mode: PurchaseOrderModeResolution | null;
+  standardSuggestion?: PurchaseOrderModeStandardSuggestion | null;
+  projectRate?: ProcurementBasketProjectRate;
+}
+
 export interface ProjectPurchaseOrderPreparationDto {
   projectId: string;
   orderDefaults: { targetDate: string | null; deliveryLocation: string | null };
@@ -41,6 +72,7 @@ export interface ProjectPurchaseOrderPreparationDto {
   committedGstPaise: number;
   committedTotalPaise: number;
   remainingPaise: number;
+  estimateLines: PurchaseOrderPreparationEstimateLine[];
   sections: PurchaseOrderPreparationSection[];
   netPaise: number | null;
   itemCount: number;

@@ -1,3 +1,4 @@
+import { ESTIMATE_PRICING_MODES, ESTIMATE_RATE_SOURCES, estimatePricingMetadataIsValid } from "../domain/estimate-mode-pricing.js";
 import { z } from "zod";
 
 import { configuredEstimateParentIsValid, type ClientPublishedEstimateReview } from "../domain/estimate-client-review.js";
@@ -17,6 +18,9 @@ const configuredLine = z.object({
   ...commonLine, rate: money.nullable(), amount: money.nullable(),
   source: z.literal("configuration"), specification: z.null(),
   itemType: z.enum(["main_line", "temporary"]).optional(),
+  classification: z.enum(["standard", "special"]).optional(),
+  pricingMode: z.enum(ESTIMATE_PRICING_MODES).optional(),
+  rateSource: z.enum(ESTIMATE_RATE_SOURCES).optional(),
   roomId: z.string().min(1), mainBasketId: z.string().min(1),
   subBasketId: z.string().min(1).nullable(), mainLineId: z.string().min(1),
   revisionId: z.string().min(1), uomId: z.string().min(1),
@@ -24,7 +28,7 @@ const configuredLine = z.object({
   mainBasketName: z.string().min(1), subBasketName: z.string().min(1).nullable(),
   mainLineName: z.string().min(1), uomName: z.string().min(1),
   ratePaise: paise.nullable(), amountPaise: paise.nullable()
-}).refine((line) => configuredEstimateParentIsValid(line) && line.catalogueId === line.mainLineId &&
+}).refine((line) => configuredEstimateParentIsValid(line) && estimatePricingMetadataIsValid(line) && line.catalogueId === line.mainLineId &&
   (!line.included || line.ratePaise !== null && line.amountPaise !== null));
 const snapshotSchema = z.object({
   clientName: z.string().min(1), projectName: z.string().min(1),
@@ -32,8 +36,20 @@ const snapshotSchema = z.object({
   lineItems: z.array(z.union([configuredLine, legacyLine])).min(1),
   subtotal: money, gst: money, total: money,
   subtotalPaise: paise.optional(), gstPaise: paise.optional(), totalPaise: paise.optional(),
-  selectedMainBasketIds: z.array(z.string().min(1)).optional()
+  selectedMainBasketIds: z.array(z.string().min(1)).optional(),
+  selectedMainBasketClassifications: z.array(z.object({
+    mainBasketId: z.string().min(1), classification: z.enum(["standard", "special"])
+  })).optional()
 }).superRefine((snapshot, ctx) => {
+  if (snapshot.selectedMainBasketClassifications !== undefined) {
+    const selectedIds = snapshot.selectedMainBasketIds ?? [];
+    const classifiedIds = snapshot.selectedMainBasketClassifications.map((entry) => entry.mainBasketId);
+    if (classifiedIds.length !== selectedIds.length ||
+      new Set(classifiedIds).size !== classifiedIds.length ||
+      classifiedIds.some((id) => !selectedIds.includes(id))) {
+      ctx.addIssue({ code: "custom", message: "Published basket classifications do not match selected Main Baskets." });
+    }
+  }
   if (!snapshot.lineItems.some((line) => line.source === "configuration")) return;
   if (snapshot.subtotalPaise === undefined || snapshot.gstPaise === undefined || snapshot.totalPaise === undefined ||
     snapshot.subtotalPaise + snapshot.gstPaise !== snapshot.totalPaise) {
@@ -95,7 +111,17 @@ export function presentClientEstimate(
     !Number.isSafeInteger(round.sendGeneration) || round.sendGeneration < 1
   ));
   const reviewSourceIssue = sourceConflict ? "source_conflict" : !parsed.success ? "missing_snapshot" : null;
-  const snapshot = reviewSourceIssue === null && parsed.success ? parsed.data : null;
+  const snapshot = reviewSourceIssue === null && parsed.success ? {
+    ...parsed.data,
+    lineItems: parsed.data.lineItems.map((line) => line.source === "configuration"
+      ? { ...line, classification: line.classification ?? "standard" as const }
+      : line),
+    selectedMainBasketClassifications: parsed.data.selectedMainBasketIds?.map((mainBasketId) => ({
+      mainBasketId,
+      classification: parsed.data.selectedMainBasketClassifications?.find((entry) =>
+        entry.mainBasketId === mainBasketId)?.classification ?? "standard" as const
+    })) ?? []
+  } : null;
   const publishedReview: ClientPublishedEstimateReview | null = snapshot && round ? {
     id: String(round._id ?? round.id), version: round.version,
     estimateVersion: round.estimateVersion, sendGeneration: round.sendGeneration,
@@ -118,6 +144,7 @@ export function presentClientEstimate(
     gstPaise: snapshot?.gstPaise ?? null,
     totalPaise: snapshot?.totalPaise ?? null,
     selectedMainBasketIds: stableDrawingMetadata ? snapshot?.selectedMainBasketIds ?? [] : [],
+    selectedMainBasketClassifications: stableDrawingMetadata ? snapshot?.selectedMainBasketClassifications ?? [] : [],
     rooms: stableDrawingMetadata ? estimate.rooms ?? [] : [],
     scopes: stableDrawingMetadata ? estimate.scopes ?? [] : [],
     approvalRequired: estimate.approvalRequired ?? false,

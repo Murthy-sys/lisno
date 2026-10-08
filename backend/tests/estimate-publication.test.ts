@@ -371,6 +371,7 @@ afterEach(() => {
 });
 
 describe("ordinary transactional Estimate publication", () => {
+  // Draft Configuration fencing is covered by the Mongo replica-set suite; these unit cases isolate frozen snapshots.
   it("publishes configured identity and exact paise, and rechecks null rates inside the transaction", async () => {
     const configuredLine = {
       id: "configured-line", source: "configuration", catalogueId: "main-line-lower",
@@ -382,12 +383,13 @@ describe("ordinary transactional Estimate publication", () => {
       subBasketName: "Original child", mainLineName: "Original line", uomName: "Square feet"
     };
     const configuredEstimate = estimate({
+      status: "ready_for_client",
       lineItems: [configuredLine], selectedMainBasketIds: ["basket-a"],
       subtotal: 121.25, gst: 21.83, total: 143.08,
       subtotalPaise: 12_125, gstPaise: 2_183, totalPaise: 14_308
     });
     const harness = setupHarness({ estimate: configuredEstimate });
-    await harness.publication.publishEstimateToClient(publicationInput());
+    await harness.publication.publishEstimateToClient(publicationInput({ expectedStatus: "ready_for_client" }));
     expect(harness.createRound.mock.calls[0]?.[0][0].estimateSnapshot).toMatchObject({
       selectedMainBasketIds: ["basket-a"], subtotalPaise: 12_125,
       gstPaise: 2_183, totalPaise: 14_308,
@@ -400,7 +402,7 @@ describe("ordinary transactional Estimate publication", () => {
       transactionEstimate: estimate({ ...configuredEstimate,
         lineItems: [{ ...configuredLine, rate: null, ratePaise: null, amount: null, amountPaise: null }] })
     });
-    await expect(raced.publication.publishEstimateToClient(publicationInput()))
+    await expect(raced.publication.publishEstimateToClient(publicationInput({ expectedStatus: "ready_for_client" })))
       .rejects.toMatchObject({ code: "ESTIMATE_INCOMPLETE" });
     expect(raced.createRound).not.toHaveBeenCalled();
     expect(raced.events).toContain("storage:delete:new-snapshot-1.pdf");
@@ -418,12 +420,13 @@ describe("ordinary transactional Estimate publication", () => {
       subBasketName: null, mainLineName: "Custom finish", uomName: "Number"
     };
     const inputEstimate = estimate({
+      status: "ready_for_client",
       lineItems: [direct], selectedMainBasketIds: ["basket-a"],
       subtotal: 70.03, gst: 12.61, total: 82.64,
       subtotalPaise: 7_003, gstPaise: 1_261, totalPaise: 8_264
     });
     const harness = setupHarness({ estimate: inputEstimate });
-    await harness.publication.publishEstimateToClient(publicationInput());
+    await harness.publication.publishEstimateToClient(publicationInput({ expectedStatus: "ready_for_client" }));
     const roundInput = harness.createRound.mock.calls[0]?.[0][0];
     expect(roundInput.estimateSnapshot.lineItems[0]).toMatchObject({
       itemType: "temporary", subBasketId: null, subBasketName: null,
@@ -452,7 +455,7 @@ describe("ordinary transactional Estimate publication", () => {
     const invalid = setupHarness({ estimate: estimate({ ...inputEstimate,
       lineItems: [{ ...direct, itemType: "main_line" }]
     }) });
-    await expect(invalid.publication.publishEstimateToClient(publicationInput()))
+    await expect(invalid.publication.publishEstimateToClient(publicationInput({ expectedStatus: "ready_for_client" })))
       .rejects.toMatchObject({ code: "ESTIMATE_INCOMPLETE" });
     expect(invalid.createRound).not.toHaveBeenCalled();
   });

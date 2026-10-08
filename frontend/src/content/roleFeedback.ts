@@ -96,6 +96,7 @@ const roleFeedback: Record<Role, RoleFeedbackContent> = {
     },
   },
   procurement: neutralRoleFeedback,
+  program_manager: neutralRoleFeedback,
   vendor: neutralRoleFeedback,
   finance_head: neutralRoleFeedback,
   site_manager: neutralRoleFeedback,

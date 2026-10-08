@@ -1,0 +1,24 @@
+.next-action-date-time { min-width: 0; }
+.next-action-date-time__inputs { display: grid; grid-template-columns: minmax(0, 1fr); }
+.next-action-date-time__trigger { display: flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left; cursor: pointer; }
+.next-action-date-time__trigger svg { flex-shrink: 0; }
+.next-action-date-time__calendar { margin-top: 10px; max-width: 360px; padding: 14px; background: var(--color-bg); border: 1px solid var(--color-border); animation: initiation-calendar-in 180ms cubic-bezier(.2,.75,.25,1) both; transform-origin: top; }
+.next-action-date-time__calendar[data-closing] { animation: initiation-calendar-out 180ms ease both; pointer-events: none; }
+.next-action-date-time__heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.next-action-date-time__calendar button { color: var(--color-primary); border: 1px solid transparent; background: transparent; cursor: pointer; }
+.next-action-date-time__calendar button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.next-action-date-time__heading button { width: 40px; height: 40px; font-size: 1.65rem; }
+.next-action-date-time__heading strong { font-size: 0.95rem; }
+.next-action-date-time__grid { width: 100%; table-layout: fixed; border-collapse: collapse; }
+.next-action-date-time__grid th { padding: 4px 0 8px; color: var(--color-text-muted); font-size: 0.7rem; font-weight: 500; text-align: center; }
+.next-action-date-time__grid td { padding: 2px; text-align: center; }
+.next-action-date-time__grid button { width: 100%; min-height: 36px; padding: 4px 0; font-size: 0.85rem; }
+.next-action-date-time__grid button[data-outside] { color: var(--color-text-muted); }
+.next-action-date-time__grid button[aria-current="date"] { border-color: var(--color-primary); }
+.next-action-date-time__grid button[data-selected] { background: var(--color-primary); color: var(--color-bg); }
+.next-action-date-time__footer { display: flex; justify-content: space-between; padding-top: 10px; margin-top: 8px; border-top: 1px solid var(--color-border); }
+.next-action-date-time__footer button { min-height: 36px; padding: 0 6px; font-size: 0.8rem; font-weight: 600; }
+@keyframes initiation-calendar-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes initiation-calendar-out { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-4px); } }
+@media (max-width: 400px) { .next-action-date-time__trigger { padding-inline: 10px; font-size: 0.85rem; } .next-action-date-time__calendar { padding: 8px; } }
+@media (prefers-reduced-motion: reduce) { .next-action-date-time__calendar, .next-action-date-time__calendar[data-closing] { animation: none; } }

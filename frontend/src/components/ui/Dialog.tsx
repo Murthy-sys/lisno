@@ -16,6 +16,8 @@ export interface DialogProps {
   description?: string;
   onClose: () => void;
   children: ReactNode;
+  className?: string;
+  layerClassName?: string;
   busy?: boolean;
   role?: "dialog" | "alertdialog";
   contentInert?: boolean;
@@ -31,6 +33,8 @@ export function Dialog({
   description,
   onClose,
   children,
+  className,
+  layerClassName,
   busy = false,
   role = "dialog",
   contentInert = false,
@@ -58,7 +62,7 @@ export function Dialog({
   return (
     <OverlayPortal>
       <OverlayScope value={scope}>
-        <div ref={layerRef} className="ui-overlay-layer modal-layer">
+        <div ref={layerRef} className={["ui-overlay-layer modal-layer", layerClassName].filter(Boolean).join(" ")}>
           <Button
             className="ui-overlay-backdrop modal-backdrop"
             variant="quiet"
@@ -70,9 +74,10 @@ export function Dialog({
           </Button>
           <div
             ref={dialogRef}
-            className="ui-dialog modal"
+            className={["ui-dialog modal", className].filter(Boolean).join(" ")}
             role={role}
             aria-modal="true"
+            aria-busy={busy || undefined}
             aria-labelledby={titleId}
             aria-describedby={description ? descriptionId : undefined}
             tabIndex={-1}

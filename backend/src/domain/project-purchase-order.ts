@@ -73,7 +73,10 @@ export type PurchaseOrderAmendInput = z.infer<typeof purchaseOrderAmendSchema>;
 export type PurchaseOrderQuery = z.infer<typeof purchaseOrderQuerySchema>;
 export type PurchaseOrderStatus = "draft" | "pending_approval" | "changes_requested" | "rejected" | "approved" | "cancelled";
 
-export interface ApprovedPurchaseOrderLine extends PurchaseOrderLineInput {
+export interface ApprovedPurchaseOrderLine extends Omit<PurchaseOrderLineInput, "scopeType" | "targetDate" | "deliveryLocation"> {
+  scopeType?: PurchaseOrderLineInput["scopeType"];
+  targetDate?: string;
+  deliveryLocation?: string;
   id: string;
   procurementItemVersion: number;
   estimateId: string;

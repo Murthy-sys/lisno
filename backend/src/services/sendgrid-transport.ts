@@ -49,6 +49,7 @@ export interface SendGridMessage {
   text: string;
   html: string;
   attachments?: SendGridAttachment[];
+  mailSettings?: { sandboxMode: { enable: true } };
 }
 
 interface SendGridSdkResponse {
@@ -218,7 +219,8 @@ export function createIsolatedSendGridTransport(
           sdk.send(message),
           config.deliveryTimeoutMs
         );
-        if (response.statusCode !== 202) {
+        const expectedStatus = message.mailSettings?.sandboxMode.enable ? 200 : 202;
+        if (response.statusCode !== expectedStatus) {
           throw new SendGridStatusError(response.statusCode);
         }
       } catch (error) {

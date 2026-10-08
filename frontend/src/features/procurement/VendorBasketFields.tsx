@@ -4,25 +4,26 @@ import { useEffect, useId, useRef, useState, type FocusEvent, type KeyboardEvent
 import { Button } from "../../components/ui/Button";
 import { Checkbox, Field, Select } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
-import { CreateKnowledgeBasketFields } from "../ai-estimator-knowledge/CreateKnowledgeBasketFields";
 import { CreateKnowledgeSubBasketFields } from "../ai-estimator-knowledge/CreateKnowledgeSubBasketFields";
 import { listKnowledgeBaskets, listKnowledgeSubBaskets } from "../ai-estimator-knowledge/knowledgeApi";
 import { collectAllKnowledgeMasterPages } from "../ai-estimator-knowledge/knowledgeMasterPagination";
 import { knowledgeQueryKeys } from "../ai-estimator-knowledge/knowledgeQueryKeys";
-import type { KnowledgeBasket, KnowledgeSubBasket, ProcurementVendorSummary } from "../ai-estimator-knowledge/knowledgeTypes";
+import type { KnowledgeSubBasket, ProcurementVendorSummary } from "../ai-estimator-knowledge/knowledgeTypes";
+import { procurementError } from "./procurementPresentation";
+import { VendorBasketRequestDialog } from "./VendorBasketRequestDialog";
 import { VENDOR_BASKET_SELECTION_LIMITS } from "./vendorProfileDraft";
 
-type Adding = { kind: "main" } | { kind: "sub"; parentId: string } | null;
+type Adding = { kind: "sub"; parentId: string } | null;
 
-export function VendorBasketFields({ mainBasketIds, subBasketIds, original, errors, canCreate, disabled, readOnly = false, onChange, onBusyChange, onDraftChange, onCatalogBlockedChange }: {
+export function VendorBasketFields({ mainBasketIds, subBasketIds, original, errors, vendorName, vendorId, canCreate, canRequestMainBasket, disabled, readOnly = false, onChange, onBusyChange, onDraftChange, onCatalogBlockedChange }: {
   mainBasketIds: string[]; subBasketIds: string[]; original?: ProcurementVendorSummary; errors: Record<string, string>;
-  canCreate: boolean; disabled: boolean; readOnly?: boolean; onChange: (main: string[], sub: string[]) => void;
+  vendorName: string; vendorId?: string | null; canCreate: boolean; canRequestMainBasket: boolean; disabled: boolean; readOnly?: boolean; onChange: (main: string[], sub: string[]) => void;
   onBusyChange: (busy: boolean) => void; onDraftChange: (dirty: boolean) => void; onCatalogBlockedChange: (blocked: boolean) => void;
 }) {
   const id = useId();
   const [adding, setAdding] = useState<Adding>(null);
+  const [requestOpen, setRequestOpen] = useState(false);
   const [createParentId, setCreateParentId] = useState("");
-  const [addedMains, setAddedMains] = useState<KnowledgeBasket[]>([]);
   const [addedSubs, setAddedSubs] = useState<KnowledgeSubBasket[]>([]);
   const [notice, setNotice] = useState("");
   const [refreshError, setRefreshError] = useState("");
@@ -31,7 +32,7 @@ export function VendorBasketFields({ mainBasketIds, subBasketIds, original, erro
   const subPicker = useRef<HTMLDivElement>(null);
   const mainTrigger = useRef<HTMLButtonElement>(null);
   const subTrigger = useRef<HTMLButtonElement>(null);
-  useEffect(() => { onDraftChange(Boolean(adding)); return () => onDraftChange(false); }, [adding, onDraftChange]);
+  useEffect(() => { onDraftChange(Boolean(adding || requestOpen)); return () => onDraftChange(false); }, [adding, requestOpen, onDraftChange]);
   useEffect(() => {
     if (!openPicker) return;
     function dismissOutside(event: PointerEvent) {
@@ -42,13 +43,13 @@ export function VendorBasketFields({ mainBasketIds, subBasketIds, original, erro
     return () => document.removeEventListener("pointerdown", dismissOutside);
   }, [openPicker]);
 
-  const baskets = useQuery({ queryKey: [...knowledgeQueryKeys.basketLists(), "vendor-active-catalog"], queryFn: () => collectAllKnowledgeMasterPages((page) => listKnowledgeBaskets({ ...page, status: "active" }), "Main Basket") });
-  const mainOptions = [...(baskets.data?.items ?? [])];
-  for (const basket of addedMains) if (!mainOptions.some((option) => option.id === basket.id)) mainOptions.push(basket);
+  const baskets = useQuery({ queryKey: [...knowledgeQueryKeys.basketLists(), "vendor-active-catalog"], queryFn: () => collectAllKnowledgeMasterPages((page) => listKnowledgeBaskets({ ...page, status: "active" }), "Main Basket"), refetchOnWindowFocus: "always" });
+  const mainOptions = baskets.data?.items ?? [];
   const activeMainIds = mainBasketIds.filter((basketId) => mainOptions.some((basket) => basket.id === basketId));
   const subQueries = useQueries({ queries: activeMainIds.map((basketId) => ({
     queryKey: [...knowledgeQueryKeys.subBasketLists(basketId), "vendor-catalog"],
-    queryFn: () => collectAllKnowledgeMasterPages((page) => listKnowledgeSubBaskets(basketId, page), "Sub Basket")
+    queryFn: () => collectAllKnowledgeMasterPages((page) => listKnowledgeSubBaskets(basketId, page), "Sub Basket"),
+    refetchOnWindowFocus: "always" as const
   })) });
   const catalogBlocked = baskets.isPending || baskets.isError || subQueries.some((query) => query.isPending || query.isError) || Boolean(refreshError);
   useEffect(() => { onCatalogBlockedChange(catalogBlocked); return () => onCatalogBlockedChange(false); }, [catalogBlocked, onCatalogBlockedChange]);
@@ -65,6 +66,10 @@ export function VendorBasketFields({ mainBasketIds, subBasketIds, original, erro
   const selectedActiveMains = activeMainIds.map((basketId) => ({ id: basketId, name: mainName(basketId) }));
   const targetParentId = selectedActiveMains.length === 1 ? selectedActiveMains[0].id : selectedActiveMains.some((basket) => basket.id === createParentId) ? createParentId : "";
   const hasCatalogError = baskets.isError || subQueries.some((query) => query.isError) || Boolean(refreshError);
+  const failedSubQuery = subQueries.find((query) => query.isError);
+  const catalogError = refreshError || (baskets.isError
+    ? `Configuration Main Baskets could not load: ${procurementError(baskets.error, baskets.error instanceof Error ? baskets.error.message : "Connection failed.")}`
+    : failedSubQuery ? `Configuration Sub Baskets could not load: ${procurementError(failedSubQuery.error, failedSubQuery.error instanceof Error ? failedSubQuery.error.message : "Connection failed.")}` : "");
   const emitChange = (main: string[], sub: string[]) => onChange([...main].sort(), [...sub].sort());
   const mainSelection = mainBasketIds.map(mainName).join(", ");
   const selectedSubs = subBasketIds.map((subId) => {
@@ -137,12 +142,13 @@ export function VendorBasketFields({ mainBasketIds, subBasketIds, original, erro
             </label>;
           })}
           {baskets.isPending ? <p role="status">Loading Main Baskets…</p> : null}
+          {baskets.isError ? <p role="status">Configuration Main Baskets are unavailable. Retry the list below.</p> : null}
           {!baskets.isPending && !baskets.isError && !shownMains.length ? <p>No active Main Baskets are available.</p> : null}
         </div></div> : null}
         {errors.mainBasketIds ? <p className="ui-field__error" id={`${id}-main-error`}>{errors.mainBasketIds}</p> : null}
       </fieldset>
       </div>
-      {canCreate && !adding ? <Button variant="secondary" size="compact" disabled={disabled} onClick={() => { setOpenPicker(null); setAdding({ kind: "main" }); }} leadingIcon={<Plus aria-hidden="true" />}>Add Main Basket</Button> : null}
+      {canRequestMainBasket && !adding ? <Button variant="secondary" size="compact" disabled={disabled} onClick={() => { setOpenPicker(null); setRequestOpen(true); }} leadingIcon={<Plus aria-hidden="true" />}>Add Main Basket</Button> : null}
     </div>
     <div className="vendor-profile__basket-row">
       <div className="vendor-profile__basket-picker" ref={subPicker} onBlur={handlePickerBlur} onKeyDown={(event) => handlePickerKeyDown(event, "sub")}>
@@ -165,6 +171,7 @@ export function VendorBasketFields({ mainBasketIds, subBasketIds, original, erro
                 <span>{sub.name ?? `Unavailable Sub Basket (${sub.id})`}{sub.unavailable ? <small id={`${id}-sub-${sub.id}-status`}>Unavailable for new selections</small> : null}</span>
               </label>)}
               {subQuery?.isPending ? <p role="status">Loading Sub Baskets in {mainName(basketId)}…</p> : null}
+              {subQuery?.isError ? <p role="status">Sub Baskets in {mainName(basketId)} are unavailable. Retry the list below.</p> : null}
               {!subQuery?.isPending && !subQuery?.isError && !rows.length ? <p>No Sub Baskets are available in this Main Basket.</p> : null}
             </fieldset>;
           })}
@@ -181,8 +188,8 @@ export function VendorBasketFields({ mainBasketIds, subBasketIds, original, erro
         <Button variant="secondary" size="compact" disabled={disabled || !targetParentId} onClick={() => { setOpenPicker(null); setAdding({ kind: "sub", parentId: targetParentId }); }} leadingIcon={<Plus aria-hidden="true" />}>Add Sub Basket</Button>
       </div> : null}
     </div>
-    {hasCatalogError ? <InlineMessage tone="error" action={<Button variant="secondary" onClick={() => void retryCatalog()}>Retry baskets</Button>}>{refreshError || "The shared basket list could not be loaded. Your vendor entries are preserved."}</InlineMessage> : null}
-    {adding?.kind === "main" ? <CreateKnowledgeBasketFields onBusyChange={onBusyChange} onCancel={() => setAdding(null)} onRefreshError={(message) => setRefreshError(message)} onCreated={(basket, message) => { setAddedMains((current) => [...current, basket]); emitChange([...mainBasketIds, basket.id], subBasketIds); setAdding(null); setNotice(message); }} /> : null}
+    {hasCatalogError ? <InlineMessage tone="error" action={<Button variant="secondary" onClick={() => void retryCatalog()}>Retry baskets</Button>}>{catalogError} Your vendor entries are preserved.</InlineMessage> : null}
+    {requestOpen ? <VendorBasketRequestDialog vendorName={vendorName} vendorId={vendorId} activeBasketNames={mainOptions.map((basket) => basket.name)} onClose={() => setRequestOpen(false)} onBusyChange={onBusyChange} onSent={() => { setRequestOpen(false); setNotice("Main Basket request sent to Super Admin. Select it after it appears in Configuration."); }} /> : null}
     {adding?.kind === "sub" ? <div className="vendor-profile__basket-inline"><p>Creating in {mainName(adding.parentId)}</p><CreateKnowledgeSubBasketFields key={adding.parentId} basketId={adding.parentId} onBusyChange={onBusyChange} onCancel={() => setAdding(null)} onRefreshError={(message) => setRefreshError(message)} onCreated={(sub, message) => { setAddedSubs((current) => [...current, sub]); emitChange(mainBasketIds, [...subBasketIds, sub.id]); setAdding(null); setNotice(message); }} /></div> : null}
     {notice ? <p role="status">{notice}</p> : null}
   </div>;

@@ -1,5 +1,5 @@
 import axe from "axe-core";
-import { useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { focusManager, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
@@ -20,9 +20,9 @@ const savedCertificate = { id: "certificate-one", originalFilename: "synthetic-m
 const stagedCertificate = { uploadId: "upload-one", originalFilename: "synthetic-msme.pdf", mimeType: "application/pdf", byteSize: 4, expiresAt: "2099-01-01T00:00:00Z" };
 let stored: ProcurementVendorDetail;
 let writes: Record<string, unknown>[];
-function start(existing = true, canCreateBasket = true, canUpdate = true, canCorrectBaseline = canUpdate) {
+function start(existing = true, canCreateBasket = true, canUpdate = true, canCorrectBaseline = canUpdate, canRequestMainBasket = canCreateBasket) {
   const closed = vi.fn(); const saved = vi.fn(); let client!: QueryClient;
-  function Capture() { client = useQueryClient(); return <ProcurementVendorEditor existing={existing ? safe(stored) : undefined} canCreateBasket={canCreateBasket} canUpdate={canUpdate} canCorrectBaseline={canCorrectBaseline} onClose={closed} onSaved={saved} />; }
+  function Capture() { client = useQueryClient(); return <ProcurementVendorEditor existing={existing ? safe(stored) : undefined} canCreateBasket={canCreateBasket} canRequestMainBasket={canRequestMainBasket} canUpdate={canUpdate} canCorrectBaseline={canCorrectBaseline} onClose={closed} onSaved={saved} />; }
   const view = renderWithQuery(<Capture />);
   return { ...view, closed, saved, get client() { return client; } };
 }
@@ -396,9 +396,10 @@ describe("Procurement vendor profile", () => {
   });
   it("preserves edits while a basket catalog fails and permits save after retry", async () => {
     let failed = true;
-    server.use(http.get("/api/v1/admin/ai-estimator-knowledge/baskets", () => failed ? response({ error: { code: "TEMPORARY", message: "Catalog unavailable" } }, 503) : page([vendorBasket])));
+    server.use(http.get("/api/v1/admin/ai-estimator-knowledge/baskets", () => failed ? HttpResponse.json({ error: { code: "TEMPORARY", message: "Catalog unavailable" } }, { status: 503 }) : page([vendorBasket])));
     const view = start(); const user = userEvent.setup();
     await screen.findByRole("button", { name: "Retry baskets" });
+    expect(screen.getByText(/Configuration Main Baskets could not load: Catalog unavailable/)).toBeVisible();
     fireEvent.change(screen.getByRole("textbox", { name: "Position" }), { target: { value: "Catalog retry draft" } });
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
     failed = false; await user.click(screen.getByRole("button", { name: "Retry baskets" }));
@@ -408,22 +409,128 @@ describe("Procurement vendor profile", () => {
     await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
     expect(writes[0]).toMatchObject({ procurementProfile: { mainBasketIds: [vendorBasket.id], subBasketIds: [vendorSubBasket.id] } });
   });
-  it("reuses inline basket creation and immediately selects the shared identities", async () => {
-    server.use(http.post("/api/v1/admin/ai-estimator-knowledge/baskets", async () => response({ ...vendorBasket, id: "basket-new", name: "Metal work" })),
-      http.post("/api/v1/admin/ai-estimator-knowledge/baskets/basket-new/sub-baskets", () => response({ ...vendorSubBasket, id: "sub-new", basketId: "basket-new", name: "Rails" })));
+  it("sends a request for a saved vendor without creating or associating a Main Basket, while Sub Basket creation still works", async () => {
+    const requests: Record<string, unknown>[] = [];
+    let directCreates = 0;
+    server.use(http.post("/api/v1/procurement/vendor-basket-requests", async ({ request }) => { requests.push(await request.json() as Record<string, unknown>); return response({ id: "request-one", status: "pending" }, 201); }),
+      http.post("/api/v1/admin/ai-estimator-knowledge/baskets", () => { directCreates++; return response({ ...vendorBasket, id: "basket-new", name: "Metal work" }); }),
+      http.post(`/api/v1/admin/ai-estimator-knowledge/baskets/${vendorBasket.id}/sub-baskets`, () => response({ ...vendorSubBasket, id: "sub-new", basketId: vendorBasket.id, name: "Rails" })));
     start(); const user = userEvent.setup(); await screen.findByRole("textbox", { name: "Entity Name" });
     await user.click(screen.getByRole("button", { name: "Add Main Basket" }));
-    await user.type(screen.getByRole("textbox", { name: "New Main Basket name" }), "Metal work");
-    await user.click(within(screen.getByRole("group", { name: "Add Main Basket" })).getByRole("button", { name: "Save main basket" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: /^Main Baskets,/ })).toHaveAccessibleName(/Metal work/));
-    expect(await mainChoice("Metal work")).toBeChecked();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Create under Main Basket" }), "basket-new");
+    const dialog = screen.getByRole("dialog", { name: "Request Main Basket" });
+    expect(within(dialog).getByRole("textbox", { name: "Vendor name" })).toHaveValue("Timber House");
+    expect(within(dialog).getByText("Saved vendor")).toBeVisible();
+    await user.type(within(dialog).getByRole("textbox", { name: "New Main Basket name" }), "Metal work");
+    await user.click(within(dialog).getByRole("button", { name: "Send request" }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]).toMatchObject({ vendorId: stored.id, vendorName: "Timber House", proposedName: "Metal work", idempotencyKey: expect.any(String) });
+    expect(directCreates).toBe(0);
+    expect(screen.queryByRole("dialog", { name: "Request Main Basket" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Main Basket request sent to Super Admin/)).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Main Baskets,/ })).not.toHaveAccessibleName(/Metal work/);
+    expect(await mainChoice(vendorBasket.name)).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Add Sub Basket" }));
     await user.type(screen.getByRole("textbox", { name: /New Sub.Basket name/ }), "Rails");
     await user.click(within(screen.getByRole("group", { name: /Add Sub.Basket/ })).getByRole("button", { name: "Save Sub-Basket" }));
     await waitFor(() => expect(screen.getByRole("button", { name: /^Sub Baskets,/ })).toHaveAccessibleName(/Rails/));
-    expect(await subChoice("Rails in Metal work")).toBeChecked();
+    expect(await subChoice(`Rails in ${vendorBasket.name}`)).toBeChecked();
     expect(screen.getByRole("textbox", { name: "Entity Name" })).toHaveValue("Timber House");
+  });
+  it("uses the unsaved vendor draft name and restores keyboard focus when the request dialog closes", async () => {
+    const requests: Record<string, unknown>[] = [];
+    server.use(http.post("/api/v1/procurement/vendor-basket-requests", async ({ request }) => { requests.push(await request.json() as Record<string, unknown>); return response({ id: "request-new", status: "pending" }, 201); }));
+    start(false); const user = userEvent.setup();
+    const entity = await screen.findByRole("textbox", { name: "Entity Name" });
+    await user.type(entity, "New Synthetic Vendor");
+    const open = screen.getByRole("button", { name: "Add Main Basket" });
+    open.focus(); await user.keyboard("{Enter}");
+    const dialog = screen.getByRole("dialog", { name: "Request Main Basket" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(within(dialog).getByRole("textbox", { name: "Vendor name" })).toHaveValue("New Synthetic Vendor");
+    expect(within(dialog).getByText("Entered name, vendor not yet saved")).toBeVisible();
+    const proposal = within(dialog).getByRole("textbox", { name: "New Main Basket name" });
+    await waitFor(() => expect(proposal).toHaveFocus());
+    const accessibility = await axe.run(dialog, { rules: { "color-contrast": { enabled: false } } });
+    expect(accessibility.violations).toEqual([]);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Request Main Basket" })).not.toBeInTheDocument();
+    expect(open).toHaveFocus();
+    expect(entity).toHaveValue("New Synthetic Vendor");
+    await user.click(open);
+    await user.type(within(screen.getByRole("dialog", { name: "Request Main Basket" })).getByRole("textbox", { name: "New Main Basket name" }), "Stone finishes");
+    await user.click(screen.getByRole("button", { name: "Send request" }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]).toMatchObject({ vendorId: null, vendorName: "New Synthetic Vendor", proposedName: "Stone finishes" });
+    expect(entity).toHaveValue("New Synthetic Vendor");
+  });
+  it("preserves a failed request and retries with the same idempotency key", async () => {
+    const requests: Record<string, unknown>[] = [];
+    server.use(http.post("/api/v1/procurement/vendor-basket-requests", async ({ request }) => {
+      requests.push(await request.json() as Record<string, unknown>);
+      return requests.length === 1 ? HttpResponse.json({ error: { code: "TEMPORARY", message: "Request service unavailable" } }, { status: 503 }) : response({ id: "request-retried", status: "pending" }, 201);
+    }));
+    start(); const user = userEvent.setup();
+    const position = await screen.findByRole("textbox", { name: "Position" });
+    fireEvent.change(position, { target: { value: "Catalog draft" } });
+    await user.click(screen.getByRole("button", { name: "Add Main Basket" }));
+    const dialog = screen.getByRole("dialog", { name: "Request Main Basket" });
+    const proposal = within(dialog).getByRole("textbox", { name: "New Main Basket name" });
+    await user.type(proposal, "Metal work");
+    await user.click(within(dialog).getByRole("button", { name: "Send request" }));
+    expect(await within(dialog).findByText("Request service unavailable")).toBeVisible();
+    expect(proposal).toHaveValue("Metal work");
+    await user.click(within(dialog).getByRole("button", { name: "Send request" }));
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1]).toEqual(requests[0]);
+    expect(position).toHaveValue("Catalog draft");
+    expect(screen.getByRole("button", { name: /^Main Baskets,/ })).not.toHaveAccessibleName(/Metal work/);
+  });
+  it("guides selection of an existing Configuration basket and sees new baskets after catalogue refresh", async () => {
+    const newBasket = { ...vendorBasket, id: "basket-new", name: "Stone finishes" };
+    let added = false;
+    const requests: Record<string, unknown>[] = [];
+    server.use(http.get("/api/v1/admin/ai-estimator-knowledge/baskets", () => page(added ? [vendorBasket, newBasket] : [vendorBasket])),
+      http.post("/api/v1/procurement/vendor-basket-requests", async ({ request }) => { requests.push(await request.json() as Record<string, unknown>); return response({ id: "request-duplicate", status: "pending" }, 201); }));
+    const view = start(); const user = userEvent.setup(); await screen.findByRole("textbox", { name: "Entity Name" });
+    await user.click(screen.getByRole("button", { name: "Add Main Basket" }));
+    const dialog = screen.getByRole("dialog", { name: "Request Main Basket" });
+    await user.type(within(dialog).getByRole("textbox", { name: "New Main Basket name" }), `  ${vendorBasket.name.toUpperCase()}  `);
+    await user.click(within(dialog).getByRole("button", { name: "Send request" }));
+    expect(within(dialog).getByText("This Main Basket is already in Configuration. Select it from the list.")).toBeVisible();
+    expect(requests).toHaveLength(0);
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    added = true;
+    await act(async () => { await view.client.invalidateQueries({ queryKey: knowledgeQueryKeys.basketLists() }); });
+    expect(await mainChoice(newBasket.name)).not.toBeChecked();
+    expect(screen.getByRole("textbox", { name: "Entity Name" })).toHaveValue("Timber House");
+  });
+  it("refreshes selected Configuration Sub Baskets when the vendor form regains focus", async () => {
+    const newSubBasket = { ...vendorSubBasket, id: "sub-new", name: "Exterior painting" };
+    let added = false;
+    server.use(http.get("/api/v1/admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets", () =>
+      page(added ? [vendorSubBasket, newSubBasket] : [vendorSubBasket])));
+    start();
+    expect(await subChoice(`${vendorSubBasket.name} in ${vendorBasket.name}`)).toBeChecked();
+    added = true;
+    try {
+      await act(async () => { focusManager.setFocused(false); focusManager.setFocused(true); });
+      expect(await subChoice(`${newSubBasket.name} in ${vendorBasket.name}`)).not.toBeChecked();
+      expect(screen.getByRole("textbox", { name: "Entity Name" })).toHaveValue("Timber House");
+    } finally {
+      focusManager.setFocused(undefined);
+    }
+  });
+  it("keeps the dialog open for a duplicate pending request returned by the service", async () => {
+    server.use(http.post("/api/v1/procurement/vendor-basket-requests", () => HttpResponse.json({ error: { code: "REQUEST_PENDING", message: "A request for this basket is already pending." } }, { status: 409 })));
+    start(); const user = userEvent.setup(); await screen.findByRole("textbox", { name: "Entity Name" });
+    await user.click(screen.getByRole("button", { name: "Add Main Basket" }));
+    const dialog = screen.getByRole("dialog", { name: "Request Main Basket" });
+    const proposal = within(dialog).getByRole("textbox", { name: "New Main Basket name" });
+    await user.type(proposal, "Metal work");
+    await user.click(within(dialog).getByRole("button", { name: "Send request" }));
+    expect(await within(dialog).findByText("A request for this basket is already pending.")).toBeVisible();
+    expect(proposal).toHaveValue("Metal work");
+    expect(screen.getByRole("button", { name: /^Main Baskets,/ })).not.toHaveAccessibleName(/Metal work/);
   });
   it("retries failed picture attachment without recreating the vendor or changing retry identity", async () => {
     const uploads: { key: FormDataEntryValue | null; version: FormDataEntryValue | null; id: unknown }[] = [];

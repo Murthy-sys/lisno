@@ -66,7 +66,8 @@ describe("reference vendor directory", () => {
     expect(screen.getByRole("region", { name: "Vendor overview" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Add vendor" }));
     expect(await screen.findByRole("dialog", { name: "Add vendor" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Add Main Basket" })).toBeVisible();
+    if (actor === "procurement") expect(screen.getByRole("button", { name: "Add Main Basket" })).toBeVisible();
+    else expect(screen.queryByRole("button", { name: "Add Main Basket" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     await user.click(screen.getByRole("button", { name: "Edit Timber House" }));
     expect(await screen.findByRole("textbox", { name: "Entity Name" })).toHaveValue("Timber House");

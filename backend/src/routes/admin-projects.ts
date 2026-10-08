@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { cityNameSchema } from "../domain/procurement-city.js";
 
 import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
@@ -13,15 +14,17 @@ const initiationSchema = z.object({
   clientEmail: z.string().trim().email(),
   clientMobile: z.string().trim().min(1),
   projectName: z.string().trim().min(1),
-  location: z.string().trim().min(1),
+  location: z.string().trim().min(1).optional(),
+  cityName: cityNameSchema.nullable().optional(),
   propertyType: z.string().trim().min(1),
-  budgetMin: z.number().nonnegative(),
-  budgetMax: z.number().nonnegative(),
+  source: z.string().trim().min(1).max(200).optional(),
+  budgetMin: z.number().nonnegative().optional(),
+  budgetMax: z.number().nonnegative().optional(),
   nextAction: z.string().trim().min(1),
   nextActionAt: z.string().datetime({ offset: true }),
   estimatorId: z.string().trim().min(1).optional(),
   salesManagerId: z.string().trim().min(1).optional()
-}).strict().refine((value) => value.budgetMax >= value.budgetMin, {
+}).strict().refine((value) => value.budgetMin === undefined || value.budgetMax === undefined || value.budgetMax >= value.budgetMin, {
   path: ["budgetMax"],
   message: "Maximum budget must be at least the minimum budget."
 });

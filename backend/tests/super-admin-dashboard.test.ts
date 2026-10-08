@@ -58,6 +58,10 @@ describe("Super Admin dashboard routes", () => {
       accountKind: "standard",
       active: true
     });
+    seed.users.push({ ...structuredClone(seed.users[0]!), id: "user-program-manager-dashboard-fixture",
+      name: "Program Manager dashboard fixture", email: "program-manager-dashboard-fixture@lisno.example",
+      emailNormalized: "program-manager-dashboard-fixture@lisno.example", role: "program_manager",
+      accountKind: "standard", active: true });
     const repository = createMemoryRepository(seed);
     const aggregate = vi.spyOn(repository, "readSuperAdminDashboardOverview");
     const app = createApp(repository);

@@ -1,3 +1,5 @@
+import type { EstimatePricingMode, EstimateRateSource } from "./estimate-mode-pricing.js";
+
 import { createHash } from "node:crypto";
 
 export const ESTIMATE_DELIVERY_STATUSES = [
@@ -36,6 +38,11 @@ export type EstimateClientProofMimeType =
   (typeof ESTIMATE_CLIENT_PROOF_MIME_TYPES)[number];
 
 export type ConfiguredEstimateItemType = "main_line" | "temporary";
+export type EstimateClassification = "standard" | "special";
+export interface SelectedMainBasketClassification {
+  mainBasketId: string;
+  classification: EstimateClassification;
+}
 export type ConfiguredEstimateSourceItemStatus = "draft" | "active" | "inactive";
 export type ConfiguredEstimateSourceRevisionStatus = "draft" | "active" | "superseded";
 
@@ -60,6 +67,9 @@ export interface EstimateClientReviewSnapshot {
     id?: string | null;
     source?: "legacy" | "configuration";
     itemType?: ConfiguredEstimateItemType;
+    classification?: EstimateClassification;
+    pricingMode?: EstimatePricingMode;
+    rateSource?: EstimateRateSource;
     catalogueId: string;
     roomId?: string;
     roomName: string;
@@ -94,6 +104,7 @@ export interface EstimateClientReviewSnapshot {
   gstPaise?: number;
   totalPaise?: number;
   selectedMainBasketIds?: readonly string[];
+  selectedMainBasketClassifications?: readonly SelectedMainBasketClassification[];
 }
 
 /** Client-facing projection of the immutable proposal submitted for review. */

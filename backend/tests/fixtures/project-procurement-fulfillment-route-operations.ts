@@ -2,6 +2,8 @@ const personal = { kind: "non_project", namespace: "project_workflow" } as const
 
 export const EXPECTED_PROJECT_PROCUREMENT_FULFILLMENT_OPERATIONS = [
   { key: "GET /procurement/projects/:projectId/purchase-order-preparation", permission: "procurement.purchase_orders.read", scope: personal, operationClass: "read", superAdminBehavior: "global_read", availability: "project_workflow" },
+  { key: "POST /procurement/projects/:projectId/purchase-order-mode-decisions", permission: "procurement.purchase_orders.manage", scope: personal, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "project_workflow" },
+  { key: "POST /procurement/projects/:projectId/purchase-order-mode-previews", permission: "procurement.purchase_orders.manage", scope: personal, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "project_workflow" },
   { key: "GET /procurement/projects/:projectId/purchase-order-requests", permission: "procurement.purchase_orders.read", scope: personal, operationClass: "read", superAdminBehavior: "global_read", availability: "project_workflow" },
   { key: "GET /procurement/projects/:projectId/purchase-order-requests/:requestId", permission: "procurement.purchase_orders.read", scope: personal, operationClass: "read", superAdminBehavior: "global_read", availability: "project_workflow" },
   { key: "POST /procurement/projects/:projectId/purchase-order-requests/quote", permission: "procurement.purchase_orders.manage", scope: personal, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "project_workflow" },

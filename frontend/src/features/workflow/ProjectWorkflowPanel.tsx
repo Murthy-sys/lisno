@@ -9,11 +9,12 @@ import { WorkflowStageActions } from "./WorkflowStageActions";
 import { getDesignWorkflow, projectWorkflowKeys } from "./projectWorkflowApi";
 import { currentProjectWorkflowStage } from "./projectWorkflowSelectors";
 
-export function ProjectWorkflowPanel({ projectId, onOpenTask, timelineContainer, presentation = "full" }: {
+export function ProjectWorkflowPanel({ projectId, onOpenTask, timelineContainer, presentation = "full", showInitialPayment = true }: {
   projectId: string;
   onOpenTask?: (taskId: string) => void;
   timelineContainer?: HTMLElement | null;
   presentation?: "full" | "client" | "designer";
+  showInitialPayment?: boolean;
 }) {
   const workflow = useQuery({
     queryKey: projectWorkflowKeys.designWorkflow(projectId),
@@ -42,7 +43,7 @@ export function ProjectWorkflowPanel({ projectId, onOpenTask, timelineContainer,
       ) : (
         <>
           {workflow.isError ? <p role="alert">The latest workflow refresh failed. Saved information is shown; your open form has been kept. <Button variant="secondary" size="compact" onClick={() => void workflow.refetch()}>Retry refresh</Button></p> : null}
-          {presentation === "full" && workflow.data?.initialPayment ? <ProjectInitialPaymentStatus key={`payment-${projectId}`} workflow={workflow.data} /> : null}
+          {showInitialPayment && presentation === "full" && workflow.data?.initialPayment ? <ProjectInitialPaymentStatus key={`payment-${projectId}`} workflow={workflow.data} /> : null}
           {presentation === "full" && workflow.data?.notices?.length ? <section className="workflow-live-notices" aria-label="Project notifications"><h3>Project updates</h3><ul>{workflow.data.notices.map((notice) => <li key={notice.id}>{notice.message}</li>)}</ul></section> : null}
           {presentation === "full" && workflow.data?.projectStages?.some((stage) => stage.operational?.reminders?.length) ? <section className="workflow-live-notices" aria-label="Stage SLA reminders"><h3>Stage SLA reminders</h3><ul>{workflow.data.projectStages.flatMap((stage) => stage.operational?.reminders?.map((reminder) => <li key={reminder.id}><strong>{stage.name}</strong><span>{reminder.label}</span><time dateTime={reminder.dueAt}>{new Date(reminder.dueAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</time></li>) ?? [])}</ul><p>Due reminders refresh while this project is open.</p></section> : null}
           {showProjectProgress ? <ProjectWorkflowProgress key={`workflow-${projectId}`} workflow={workflow.data!} onOpenTask={onOpenTask} timelineContainer={timelineContainer}

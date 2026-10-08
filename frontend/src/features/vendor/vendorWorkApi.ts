@@ -14,10 +14,10 @@ export interface VendorWorkTask {
   sectionLabel: string;
   roomName: string;
   itemName: string;
-  scopeType: "supply" | "execution" | "supply_and_execution";
+  scopeType: "supply" | "execution" | "supply_and_execution" | null;
   description: string;
-  targetDate: string;
-  deliveryLocation: string;
+  targetDate: string | null;
+  deliveryLocation: string | null;
   status: VendorWorkStatus;
   version: number;
   progress: number;

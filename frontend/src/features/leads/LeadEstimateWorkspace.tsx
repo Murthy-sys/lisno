@@ -1,6 +1,6 @@
 import { ProjectChatNavigation } from "../messages";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Armchair, Bath, Bed, BedDouble, BedSingle, Briefcase, Building2, ChefHat, DoorOpen, Hammer, Layers, Leaf, PanelTop, Paintbrush, Pencil, ShowerHead, Sofa, Utensils, Wrench, Zap } from "lucide-react";
 
@@ -14,19 +14,20 @@ import { calculateEstimateTotals, resolveRate } from "./estimateEngine";
 import { estimateBuilderSections } from "./estimateBuilderCatalogue";
 import { EstimateBuilder, type BuilderLine, type BuilderRoom, type BuilderSection } from "./EstimateBuilder";
 import { ConfiguredEstimateBuilder } from "./ConfiguredEstimateBuilder";
-import { buildConfiguredLines, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredQuantityUnits, parseSellingRate, restoreConfiguredLine, type ConfiguredLineDraft } from "./configuredEstimate";
-import { estimationCatalogueKeys, getEstimationCatalogue, getEstimationCatalogueRecommendations, type EstimationCatalogueBasket } from "./estimationCatalogueApi";
-import { buildRoomRecommendations, partitionRoomRecommendationSources, recommendationSourceIdentity, type RecommendationDecision, type RecommendedLineTarget } from "./roomRecommendations";
+import { buildConfiguredLines, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredQuantityUnits, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
+import { estimationCatalogueKeys, getEstimationCatalogue, getEstimationCatalogueRecommendations } from "./estimationCatalogueApi";
+import { MainBasketSelectionCard } from "./MainBasketSelectionCard";
+import { buildRoomRecommendations, partitionRoomRecommendationSources, recommendationSourceIdentity, recommendationLines, recommendationTargetIdentity, type RecommendationLine, type RecommendationDecision, type RecommendedLineTarget } from "./roomRecommendations";
 import { EstimateDeliveryStatus } from "./EstimateDeliveryStatus";
 import { EstimateClientFeedback } from "./EstimateClientFeedback";
 import { EstimatePlanChangeRequests } from "./EstimatePlanChangeRequests";
 import { PropertyTypeDropdown } from "./PropertyTypeDropdown";
+import { propertyTypes } from "./propertyTypes";
 import { RoomsMultiSelectDropdown, type RoomGroup, type RoomOption } from "./RoomsMultiSelectDropdown";
 import { RoomDimensionsAccordion } from "./RoomDimensionsAccordion";
-import { getLead, getLeadEstimate, leadKeys, retryEstimateClientEmail, saveLeadEstimate, sendEstimateToClient, submitLeadEstimate, type ConfiguredEstimateLine, type EstimateDraft, type EstimateDraftInput } from "./leadsApi";
+import { getLead, getLeadEstimate, leadKeys, retryEstimateClientEmail, saveLeadEstimate, sendEstimateToClient, submitLeadEstimate, type ConfiguredEstimateLine, type EstimateClassification, type EstimateDraft, type EstimateDraftInput } from "./leadsApi";
 import "../../styles/estimator-dashboard.css";
 
-const propertyTypes = ["1BHK", "2BHK", "2.5BHK", "3BHK", "3.5BHK", "4BHK", "Villa", "Penthouse", "Studio", "Duplex"];
 const roomDefinitions = [
   { typeId: "living", label: "Living & Dining", icon: "🛋️", sqft: 300 },
   { typeId: "master", label: "Master Bedroom", icon: "🛏️", sqft: 200 },
@@ -66,43 +67,6 @@ const roomSelectOptions: RoomOption[] = roomDefinitions.map((definition) => ({
 function RoomIcon({ typeId }: { typeId: string }) {
   const Icon = roomIcons[typeId] ?? Pencil;
   return <Icon size={16} aria-hidden="true" />;
-}
-function basketCount(count: number, singular: string, plural: string) {
-  return `${count} ${count === 1 ? singular : plural}`;
-}
-function MainBasketSelectionRow({ basket, selected, disabled, onToggle }: {
-  basket: EstimationCatalogueBasket;
-  selected: boolean;
-  disabled: boolean;
-  onToggle: () => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const detailsId = `estimate-basket-details-${basket.id}`;
-  const mainLineCount = basket.subBaskets.reduce((sum, item) => sum + item.mainLines.length, 0);
-  const temporaryCount = (basket.directTemporaryItems ?? []).length + basket.subBaskets.reduce((sum, item) => sum + (item.temporaryItems ?? []).length, 0);
-  return <div className={`configured-estimate-chooser__item${selected ? " configured-estimate-chooser__item--selected" : ""}`}>
-    <div className="configured-estimate-chooser__row">
-      <label className="configured-estimate-chooser__selection">
-        <input type="checkbox" checked={selected} disabled={disabled} onChange={onToggle} />
-        <span className="configured-estimate-chooser__glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"><path d="m12 2 9 5v10l-9 5-9-5V7l9-5Z" /><path d="m3 7 9 5 9-5M12 12v10" /></svg></span>
-        <strong>{basket.name}</strong>
-        <span className="sr-only">{basketCount(basket.subBaskets.length, "Sub Basket", "Sub Baskets")} · {basketCount(mainLineCount, "Main Line", "Main Lines")} · {basketCount(temporaryCount, "temporary item", "temporary items")}</span>
-      </label>
-      <div className="configured-estimate-chooser__counts">
-        <span>{basketCount(basket.subBaskets.length, "Sub Basket", "Sub Baskets")}</span>
-        <span>{basketCount(mainLineCount, "Main Line", "Main Lines")}</span>
-        <span>{basketCount(temporaryCount, "Temporary Item", "Temporary Items")}</span>
-      </div>
-      <button type="button" className="configured-estimate-chooser__disclosure" aria-expanded={expanded} aria-controls={detailsId} aria-label={`${expanded ? "Hide" : "Show"} ${basket.name} details`} onClick={() => setExpanded((current) => !current)}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>
-      </button>
-    </div>
-    <div id={detailsId} className="configured-estimate-chooser__details" hidden={!expanded}>
-      {basket.subBaskets.map((subBasket) => <div key={subBasket.id} className="configured-estimate-chooser__detail"><strong>{subBasket.name}</strong><span>{basketCount(subBasket.mainLines.length, "Main Line", "Main Lines")} · {basketCount((subBasket.temporaryItems ?? []).length, "Temporary Item", "Temporary Items")}</span></div>)}
-      {(basket.directTemporaryItems ?? []).length ? <div className="configured-estimate-chooser__detail"><strong>Directly under Main Basket</strong><span>{basketCount(basket.directTemporaryItems?.length ?? 0, "Temporary Item", "Temporary Items")}</span></div> : null}
-      {!basket.subBaskets.length && !temporaryCount ? <p>No available items in this basket yet.</p> : null}
-    </div>
-  </div>;
 }
 function TabIcon({ tab }: { tab: EstimateTab }) {
   return <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{tab === "builder" ? <><rect x="5" y="5" width="14" height="16" rx="1" /><path d="M9 5V3h6v2M9 10h6M9 14h6M9 18h4" /></> : tab === "summary" ? <><path d="M4 20V11M9 20V5M14 20v-8M19 20V8M3 20h18" /></> : tab === "proposal" ? <><path d="M6 2h9l4 4v16H6zM15 2v5h4M9 11h7M9 15h7M9 19h5" /></> : <circle cx="12" cy="12" r="8" />}</svg>;
@@ -169,6 +133,93 @@ function sourceHasSelectedRecommendation(
   });
 }
 
+function recommendationSkipIdentity(roomId: string, line: RecommendationLine,
+  sources: readonly ConfiguredLineDraft[], catalogueUpdatedAt: number): string | null {
+  const reasons = line.reasons.map((reason) => {
+    const source = sources.find((item) => item.mainLineId === reason.sourceId && item.roomId === roomId);
+    return source ? JSON.stringify([reason.sourceId, reason.ruleId, reason.requirement, recommendationSourceIdentity(source)]) : null;
+  });
+  if (!reasons.length || reasons.some((reason) => reason === null)) return null;
+  return JSON.stringify([roomId, catalogueUpdatedAt, line.key, line.requirement, reasons.sort()]);
+}
+
+function EstimateBuilderArea({ children }: { children: ReactNode }) {
+  const areaRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const area = areaRef.current;
+    const workspace = area?.parentElement;
+    if (!area || !workspace) return;
+    let frame = 0;
+    const measure = () => {
+      const footer = workspace.querySelector<HTMLElement>(".estimate-workspace__footer");
+      const gap = Number.parseFloat(getComputedStyle(workspace).rowGap) || 0;
+      const shell = workspace.parentElement;
+      const bottomPadding = shell ? Number.parseFloat(getComputedStyle(shell).paddingBottom) || 0 : 0;
+      const viewport = window.visualViewport;
+      const height = (viewport?.height ?? window.innerHeight) + (viewport?.offsetTop ?? 0);
+      const available = height - Math.max(0, area.getBoundingClientRect().top) -
+        (footer?.getBoundingClientRect().height ?? 0) - gap - bottomPadding;
+      const value = `${Math.max(0, Math.floor(available))}px`;
+      if (area.style.getPropertyValue("--estimate-builder-height") !== value) {
+        area.style.setProperty("--estimate-builder-height", value);
+      }
+    };
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    };
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+    observer?.observe(workspace);
+    for (const child of workspace.children) if (child !== area) observer?.observe(child);
+    window.addEventListener("resize", schedule);
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.visualViewport?.addEventListener("resize", schedule);
+    measure();
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("scroll", schedule);
+      window.visualViewport?.removeEventListener("resize", schedule);
+    };
+  }, []);
+  return <div ref={areaRef} className="estimate-workspace__builder-area">{children}</div>;
+}
+
+function ConfigureSelectionFooter({ count, clearDisabled, continueDisabled, onClear, onContinue }: {
+  count: number;
+  clearDisabled: boolean;
+  continueDisabled: boolean;
+  onClear: () => void;
+  onContinue: () => void;
+}) {
+  const footerRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const footer = footerRef.current;
+    const workspace = footer?.closest<HTMLElement>(".estimate-workspace");
+    if (!footer || !workspace) return;
+    const measure = () => workspace.style.setProperty("--estimate-selection-footer-height", `${Math.ceil(footer.getBoundingClientRect().height)}px`);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(footer);
+    measure();
+    return () => {
+      observer?.disconnect();
+      workspace.style.removeProperty("--estimate-selection-footer-height");
+    };
+  }, []);
+
+  return <div ref={footerRef} className="estimate-selection-footer" role="region" aria-label="Basket selection">
+    <div className="estimate-selection-footer__summary">
+      <span className="estimate-selection-footer__count" role="status" aria-live="polite" aria-atomic="true">{count} selected</span>
+      <button type="button" className="estimate-selection-footer__clear" disabled={clearDisabled} onClick={onClear}>Clear all</button>
+    </div>
+    <button type="button" className="button button--primary estimate-selection-footer__continue" disabled={continueDisabled} onClick={onContinue}>
+      Continue to item selection
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 12h16m-6-6 6 6-6 6" /></svg>
+    </button>
+  </div>;
+}
+
 export function LeadEstimateWorkspace() {
   const { leadId = "" } = useParams();
   return <LeadEstimateWorkspaceForLead key={leadId} leadId={leadId} />;
@@ -177,15 +228,21 @@ export function LeadEstimateWorkspace() {
 function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   const queryClient = useQueryClient();
   const lead = useQuery({ queryKey: leadKeys.detail(leadId), queryFn: () => getLead(leadId) });
-  const saved = useQuery({ queryKey: leadKeys.estimate(leadId), queryFn: () => getLeadEstimate(leadId), retry: false });
+  const saved = useQuery({ queryKey: leadKeys.estimate(leadId), queryFn: () => getLeadEstimate(leadId), retry: false,
+    refetchOnMount: "always", refetchOnWindowFocus: false });
   const [catalogueRequested, setCatalogueRequested] = useState(false);
+  const [submissionLocked, setSubmissionLocked] = useState(false);
+  const submissionInFlight = useRef(false);
   const hasConfiguredSaved = Boolean(saved.data?.lineItems.some((line) => line.source === "configuration") || saved.data?.selectedMainBasketIds?.length);
   const configuredMode = !saved.data || hasConfiguredSaved || catalogueRequested;
+  const draftEditable = !saved.data || ["draft", "designer_changes_requested", "client_changes_requested"].includes(saved.data.status);
+  const editable = draftEditable && !submissionLocked;
   const catalogue = useQuery({
     queryKey: estimationCatalogueKeys.ready,
     queryFn: () => getEstimationCatalogue({ includeReadyNonActive: true }),
     enabled: !saved.isPending && !(saved.isError && saved.data === undefined) && configuredMode,
     staleTime: 60_000,
+    refetchOnMount: "always", refetchOnWindowFocus: "always",
     retry: false
   });
   const [tab, setTab] = useState<EstimateTab>("configure");
@@ -193,6 +250,9 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   const [rooms, setRooms] = useState<RoomDraft[]>([]);
   const [enabledSections, setEnabledSections] = useState<Set<string>>(() => new Set(["FC", "FL", "CA", "PA", "EL", "CV"]));
   const [selectedMainBasketIds, setSelectedMainBasketIds] = useState<Set<string>>(() => new Set());
+  const [basketSearch, setBasketSearch] = useState("");
+  const basketSearchRef = useRef<HTMLInputElement>(null);
+  const [mainBasketClassifications, setMainBasketClassifications] = useState<Map<string, EstimateClassification>>(() => new Map());
   const [lines, setLines] = useState<LineDraft[]>([]);
   const [configuredLines, setConfiguredLines] = useState<ConfiguredLineDraft[]>([]);
   const [activeRoomId, setActiveRoomId] = useState("");
@@ -200,43 +260,52 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   const [pendingRecommendationSources, setPendingRecommendationSources] = useState<PendingRecommendationSource[]>([]);
   const automaticRecommendationContext = useRef<AutomaticRecommendationContext | null>(null);
   const selectedDuringSlideOut = useRef(new Set<string>());
+  const [skippedRecommendations, setSkippedRecommendations] = useState<Map<string, string>>(() => new Map());
+  const skippedRecommendationsRef = useRef(skippedRecommendations);
+  const replaceSkippedRecommendations = (next: Map<string, string>) => {
+    skippedRecommendationsRef.current = next;
+    setSkippedRecommendations(next);
+  };
+  const clearSkippedRecommendations = () => {
+    if (skippedRecommendationsRef.current.size) replaceSkippedRecommendations(new Map());
+  };
   const recommendationSequence = useRef(0);
   const recommendationContext = useRef({ roomId: activeRoomId, tab });
   const [notice, setNotice] = useState("");
   const [retryError, setRetryError] = useState("");
   const skipSavedHydrationFor = useRef<EstimateDraft | null>(null);
+  const hasHydratedSavedEstimate = useRef(false);
+  const [hydrationRequest, setHydrationRequest] = useState(0);
   const cancelRecommendationOpening = () => {
     setPendingRecommendationSources([]);
     automaticRecommendationContext.current = null;
     selectedDuringSlideOut.current.clear();
+    clearSkippedRecommendations();
     setRecommendationDialogOpen(false);
   };
 
-  useEffect(() => {
-    cancelRecommendationOpening();
-    const draft = saved.data;
-    if (draft && draft === skipSavedHydrationFor.current) {
-      skipSavedHydrationFor.current = null;
-      return;
-    }
+  const hydrateEstimate = (draft: EstimateDraft | null, preserveView = false) => {
+    hasHydratedSavedEstimate.current = true;
     if (!draft) {
-      if (saved.isSuccess) {
-        setPropertyType("");
-        setRooms([]);
-        setEnabledSections(new Set(["FC", "FL", "CA", "PA", "EL", "CV"]));
-        setSelectedMainBasketIds(new Set());
-        setLines([]);
-        setConfiguredLines([]);
-        setActiveRoomId("");
-        setTab("configure");
-      }
+      setPropertyType("");
+      setRooms([]);
+      setEnabledSections(new Set(["FC", "FL", "CA", "PA", "EL", "CV"]));
+      setSelectedMainBasketIds(new Set());
+      setMainBasketClassifications(new Map());
+      setLines([]);
+      setConfiguredLines([]);
+      setActiveRoomId("");
+      setTab("configure");
       return;
     }
     const restoredRooms = draft.rooms as RoomDraft[];
     setPropertyType(draft.propertyType);
     setRooms(restoredRooms);
     setEnabledSections(new Set(draft.scopes));
-    setSelectedMainBasketIds(new Set(draft.selectedMainBasketIds ?? draft.lineItems.filter((line) => line.source === "configuration").map((line) => line.mainBasketId)));
+    const selectedIds = draft.selectedMainBasketIds ?? draft.lineItems.filter((line) => line.source === "configuration").map((line) => line.mainBasketId);
+    const savedClassifications = new Map(draft.selectedMainBasketClassifications?.map(({ mainBasketId, classification }) => [mainBasketId, classification]) ?? []);
+    setSelectedMainBasketIds(new Set(selectedIds));
+    setMainBasketClassifications(new Map(selectedIds.map((id) => [id, savedClassifications.get(id) ?? "standard"])));
     setConfiguredLines(draft.lineItems.filter((line) => line.source === "configuration").map(restoreConfiguredLine));
     setLines(draft.lineItems.filter((line) => line.source !== "configuration").map((line, index) => {
       const room = restoredRooms.find((item) => item.label === line.roomName);
@@ -252,14 +321,26 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
         rate: line.rate, quantity: line.quantity, included: line.included
       };
     }));
-    setActiveRoomId(restoredRooms[0]?.id ?? "");
-    if (draft.lineItems.length) setTab("builder");
-  }, [saved.data, saved.isSuccess]);
+    setActiveRoomId((current) => preserveView && restoredRooms.some((room) => room.id === current) ? current : restoredRooms[0]?.id ?? "");
+    if (draft.lineItems.length && !preserveView) setTab("builder");
+  };
 
   useEffect(() => {
-    if (!catalogue.data || !configuredMode || !rooms.length || !selectedMainBasketIds.size) return;
-    setConfiguredLines((previous) => buildConfiguredLines(catalogue.data, rooms, selectedMainBasketIds, previous));
-  }, [catalogue.data, configuredMode, rooms, selectedMainBasketIds]);
+    cancelRecommendationOpening();
+    const draft = saved.data;
+    if (draft && draft === skipSavedHydrationFor.current) {
+      skipSavedHydrationFor.current = null;
+      hasHydratedSavedEstimate.current = true;
+      return;
+    }
+    if (hasHydratedSavedEstimate.current || !saved.isSuccess) return;
+    hydrateEstimate(draft ?? null);
+  }, [saved.data, saved.isSuccess, hydrationRequest]);
+
+  useEffect(() => {
+    if (submissionInFlight.current || !catalogue.data || !configuredMode || !rooms.length || !selectedMainBasketIds.size) return;
+    setConfiguredLines((previous) => buildConfiguredLines(catalogue.data, rooms, selectedMainBasketIds, previous, !draftEditable));
+  }, [catalogue.data, configuredMode, draftEditable, submissionLocked, rooms, selectedMainBasketIds]);
 
   const legacyTotals = useMemo(() => calculateEstimateTotals(lines), [lines]);
   const configuredSubtotalPaise = configuredLines.reduce((sum, line) => sum + (configuredLineAmountPaise(line) ?? 0), 0);
@@ -296,6 +377,22 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
         ? recommendations.error instanceof ApiError && recommendations.error.status === 403 ? "forbidden" as const : "error" as const
         : recommendations.isPending || recommendations.isFetching || catalogue.isFetching
           ? "loading" as const : "ready" as const;
+  const currentRecommendationLines = recommendationLines(recommendationView?.decisions ?? automaticRecommendationContext.current?.decisions ?? []);
+  const skippedRecommendationKeys = new Set(currentRecommendationLines.filter((line) => {
+    if (line.requirement !== "can" || line.selected) return false;
+    const identity = recommendationSkipIdentity(activeRoomId, line, recommendationSources, catalogue.dataUpdatedAt);
+    return identity !== null && skippedRecommendations.get(line.key) === identity;
+  }).map((line) => line.key));
+  const validSkipKeys = JSON.stringify([...skippedRecommendationKeys].sort());
+  useEffect(() => {
+    if (!recommendationDialogOpen || !editable || catalogue.isFetching || catalogue.isError ||
+      recommendationState === "stale" || recommendationState === "error" || recommendationState === "forbidden") {
+      clearSkippedRecommendations();
+    } else if (recommendationState === "ready" && skippedRecommendations.size !== skippedRecommendationKeys.size) {
+      replaceSkippedRecommendations(new Map([...skippedRecommendations].filter(([key]) => skippedRecommendationKeys.has(key))));
+    }
+  }, [recommendationDialogOpen, editable, catalogue.isFetching, catalogue.isError, catalogue.dataUpdatedAt,
+    recommendationState, validSkipKeys, skippedRecommendations]);
   const incompleteSelectedConfiguredLines = selectedConfiguredLines.filter((line) => configuredLineAmountPaise(line) === null);
   const hasIncompleteConfiguredTotal = incompleteSelectedConfiguredLines.length > 0;
   const invalidSelectedAmountCount = incompleteSelectedConfiguredLines.filter((line) => parseSellingRate(line.rateInput).kind !== "blank").length;
@@ -306,13 +403,13 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
       (rate.kind === "value" && quantityUnits > 0 && configuredLinePreviewAmountPaise(line) === null);
   });
   const incompleteConfiguredLines = selectedConfiguredLines.filter((line) => parseSellingRate(line.rateInput).kind === "blank");
-  const unavailableNewConfiguredLines = selectedConfiguredLines.filter((line) => !line.persistedId && line.sourceMissing);
-  const changedNewConfiguredLines = selectedConfiguredLines.filter((line) => !line.persistedId && line.sourceReview);
+  const unavailableConfiguredLines = configuredLines.filter((line) =>
+    (line.included || line.persistedId) && selectedMainBasketIds.has(line.mainBasketId) && line.sourceMissing);
+  const changedUomConfiguredLines = configuredLines.filter((line) => (line.included || line.persistedId) && line.uomNeedsQuantityReview);
   const supportsExpandedCatalogue = catalogue.data?.readyNonActiveSupported === true;
   const legacyIncompatibleConfiguredLines = !supportsExpandedCatalogue
     ? configuredLines.filter((line) => (line.included || line.persistedId) && (line.itemType === "temporary" || line.subBasketId === null))
     : [];
-  const editable = !saved.data || ["draft", "designer_changes_requested", "client_changes_requested"].includes(saved.data.status);
   useEffect(() => {
     const previous = recommendationContext.current;
     recommendationContext.current = { roomId: activeRoomId, tab };
@@ -321,6 +418,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
       setPendingRecommendationSources([]);
       automaticRecommendationContext.current = null;
       selectedDuringSlideOut.current.clear();
+      clearSkippedRecommendations();
     }
   }, [activeRoomId, tab]);
 
@@ -331,6 +429,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
       catalogue.dataUpdatedAt !== automaticRecommendationContext.current.catalogueUpdatedAt) {
       automaticRecommendationContext.current = null;
       selectedDuringSlideOut.current.clear();
+      clearSkippedRecommendations();
     }
   }, [editable, catalogue.isError, catalogue.isFetching, catalogue.dataUpdatedAt, recommendationState]);
 
@@ -357,6 +456,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
         catalogueUpdatedAt: catalogue.dataUpdatedAt
       };
       selectedDuringSlideOut.current.clear();
+      clearSkippedRecommendations();
       setRecommendationDialogOpen(true);
     }
     setPendingRecommendationSources([]);
@@ -365,24 +465,36 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     propertyType: propertyType || lead.data?.propertyType || "",
     rooms, scopes: lines.length ? Array.from(enabledSections) : [],
     selectedMainBasketIds: Array.from(selectedMainBasketIds),
+    selectedMainBasketClassifications: Array.from(selectedMainBasketIds, (mainBasketId) => ({
+      mainBasketId, classification: mainBasketClassifications.get(mainBasketId) ?? "standard"
+    })),
     ...(configuredMode && typeof saved.data?.version === "number" ? { expectedVersion: saved.data.version } : {}),
     lineItems: [
       ...lines.map(({ catalogueId, roomName, specification, unit, rate, quantity, included }) => ({ source: "legacy" as const, catalogueId, roomName, specification, unit, rate, quantity, included })),
       ...configuredLines.filter((line) => line.included || line.persistedId).map((line) => ({
         source: "configuration" as const,
         ...(supportsExpandedCatalogue ? { itemType: line.itemType } : {}),
+        classification: line.classification ?? "standard",
+        ...(line.pricingMode !== undefined ? { pricingMode: line.pricingMode } : {}),
+        ...(line.rateSource !== undefined ? { rateSource: line.rateSource } : {}),
         id: line.persistedId, catalogueId: line.mainLineId,
         roomId: line.roomId, roomName: line.roomName, mainBasketId: line.mainBasketId,
         subBasketId: line.subBasketId, mainLineId: line.mainLineId, revisionId: line.revisionId,
-        ...(supportsExpandedCatalogue && !line.persistedId && line.itemVersion !== undefined ? { itemVersion: line.itemVersion } : {}),
-        ...(supportsExpandedCatalogue && !line.persistedId && line.revisionVersion !== undefined ? { revisionVersion: line.revisionVersion } : {}),
+        ...(line.recommendationSourceMainLineIds !== undefined
+          ? { recommendationSourceMainLineIds: line.recommendationSourceMainLineIds } : {}),
+        ...(supportsExpandedCatalogue && (!line.persistedId || line.rateSource === "configuration") && line.itemVersion !== undefined ? { itemVersion: line.itemVersion } : {}),
+        ...(supportsExpandedCatalogue && (!line.persistedId || line.rateSource === "configuration") && line.revisionVersion !== undefined ? { revisionVersion: line.revisionVersion } : {}),
         uomId: line.uomId, quantity: line.quantity, included: line.included,
         ratePaise: parseSellingRate(line.rateInput).paise
       }))
     ]
   });
   const refreshSubmittedEstimate = (estimate: EstimateDraft, submittedLeadId: string) => {
-    if (submittedLeadId === leadId) cancelRecommendationOpening();
+    if (submittedLeadId === leadId) {
+      cancelRecommendationOpening();
+      skipSavedHydrationFor.current = null;
+      hydrateEstimate(estimate, true);
+    }
     queryClient.setQueryData<EstimateDraft>(leadKeys.estimate(submittedLeadId), (current) => ({
       ...estimate,
       clientFeedback: estimate.clientFeedback === undefined ? current?.clientFeedback : estimate.clientFeedback
@@ -397,7 +509,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
       queryClient.invalidateQueries({ queryKey: leadKeys.detail(submittedLeadId), exact: true })
     ]);
   };
-  const rememberDraftSave = (estimate: EstimateDraft, submittedLeadId: string) => {
+  const rememberDraftSave = (estimate: EstimateDraft, submittedLeadId: string, submittedInput: EstimateDraftInput, submittedLineState: readonly ConfiguredLineDraft[]) => {
     if (submittedLeadId === leadId) cancelRecommendationOpening();
     const cached = queryClient.setQueryData<EstimateDraft>(leadKeys.estimate(submittedLeadId), (current) => ({
       ...estimate, clientFeedback: estimate.clientFeedback === undefined ? current?.clientFeedback : estimate.clientFeedback
@@ -407,26 +519,68 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     const savedLines = new Map(estimate.lineItems
       .filter((line): line is ConfiguredEstimateLine => line.source === "configuration")
       .map((line) => [`${line.roomId}\u0000${line.mainLineId}`, line]));
+    const submittedLines = new Map(submittedInput.lineItems
+      .filter((line) => line.source === "configuration")
+      .map((line) => [`${line.roomId}\u0000${line.mainLineId}`, line]));
+    const submittedState = new Map(submittedLineState.map((line) => [line.key, line]));
     setConfiguredLines((current) => current.map((line) => {
       const stored = savedLines.get(`${line.roomId}\u0000${line.mainLineId}`);
+      const submitted = submittedLines.get(`${line.roomId}\u0000${line.mainLineId}`);
+      const selectionUnchanged = submitted && submitted.included === line.included &&
+        JSON.stringify(submitted.recommendationSourceMainLineIds) ===
+          JSON.stringify(line.recommendationSourceMainLineIds);
+      const snapshot = submittedState.get(line.key);
+      const sourceUnchanged = snapshot && snapshot.revisionId === line.revisionId &&
+        snapshot.mainBasketId === line.mainBasketId && snapshot.subBasketId === line.subBasketId &&
+        snapshot.mainBasketName === line.mainBasketName && snapshot.subBasketName === line.subBasketName &&
+        snapshot.mainLineName === line.mainLineName && snapshot.uomId === line.uomId &&
+        snapshot.uomName === line.uomName && snapshot.uomDecimalScale === line.uomDecimalScale &&
+        snapshot.itemVersion === line.itemVersion && snapshot.revisionVersion === line.revisionVersion;
+      const pricingUnchanged = submitted && submitted.classification === (line.classification ?? "standard") &&
+        submitted.pricingMode === line.pricingMode && submitted.rateSource === line.rateSource &&
+        submitted.ratePaise === parseSellingRate(line.rateInput).paise;
       return stored ? {
         ...line,
         persistedId: stored.id,
-        sourceItemStatus: stored.sourceItemStatus ?? line.sourceItemStatus,
-        sourceRevisionStatus: stored.sourceRevisionStatus ?? line.sourceRevisionStatus,
-        sourceItemVersion: stored.sourceItemVersion ?? line.sourceItemVersion,
-        sourceRevisionVersion: stored.sourceRevisionVersion ?? line.sourceRevisionVersion
+        ...(sourceUnchanged ? {
+          mainBasketId: stored.mainBasketId,
+          mainBasketName: stored.mainBasketName,
+          subBasketId: stored.subBasketId,
+          subBasketName: stored.subBasketName,
+          mainLineName: stored.mainLineName,
+          revisionId: stored.revisionId,
+          uomId: stored.uomId,
+          uomName: stored.uomName,
+          uomDecimalScale: stored.uomDecimalScale,
+          sourceItemStatus: stored.sourceItemStatus ?? line.sourceItemStatus,
+          sourceRevisionStatus: stored.sourceRevisionStatus ?? line.sourceRevisionStatus,
+          sourceItemVersion: stored.sourceItemVersion ?? line.sourceItemVersion,
+          sourceRevisionVersion: stored.sourceRevisionVersion ?? line.sourceRevisionVersion
+        } : {}),
+        ...(selectionUnchanged ? {
+          included: stored.included,
+          recommendationSourceMainLineIds: stored.recommendationSourceMainLineIds
+        } : {}),
+        ...(pricingUnchanged ? {
+          classification: stored.classification ?? line.classification,
+          pricingMode: stored.pricingMode ?? line.pricingMode,
+          rateSource: stored.rateSource ?? line.rateSource
+        } : {})
       } : line;
     }));
   };
   const save = useMutation({
-    mutationFn: () => saveLeadEstimate(leadId, draftInput()),
+    mutationFn: async () => {
+      const input = draftInput();
+      const lineState = configuredLines;
+      return { estimate: await saveLeadEstimate(leadId, input), input, lineState };
+    },
     onMutate: () => {
       cancelRecommendationOpening();
       setNotice("");
     },
-    onSuccess: (estimate) => {
-      rememberDraftSave(estimate, leadId);
+    onSuccess: ({ estimate, input, lineState }) => {
+      rememberDraftSave(estimate, leadId, input, lineState);
       submit.reset();
       setNotice("Estimate draft saved.");
       void Promise.all([
@@ -439,11 +593,15 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   const submit = useMutation({
     mutationFn: async () => {
       const submittedLeadId = leadId;
-      const draft = await saveLeadEstimate(submittedLeadId, draftInput());
-      rememberDraftSave(draft, submittedLeadId);
+      const input = draftInput();
+      const lineState = configuredLines;
+      const draft = await saveLeadEstimate(submittedLeadId, input);
+      rememberDraftSave(draft, submittedLeadId, input, lineState);
       return { estimate: await submitLeadEstimate(submittedLeadId), submittedLeadId };
     },
     onMutate: () => {
+      submissionInFlight.current = true;
+      setSubmissionLocked(true);
       cancelRecommendationOpening();
       setNotice("");
     },
@@ -453,6 +611,10 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
         ? "Submitted. A design manager must now assign a designer for approval."
         : publicationNotice("Submitted to the client portal for approval.", estimate.clientReview));
       refreshSubmittedEstimate(estimate, submittedLeadId);
+    },
+    onSettled: () => {
+      submissionInFlight.current = false;
+      setSubmissionLocked(false);
     }
   });
   const sendToClient = useMutation({
@@ -499,6 +661,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     setPendingRecommendationSources([]);
     automaticRecommendationContext.current = null;
     selectedDuringSlideOut.current.clear();
+    clearSkippedRecommendations();
     const result = await catalogue.refetch();
     if (result.isSuccess) await queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.recommendations });
     if (result.isSuccess && [save.error, submit.error].some((error) =>
@@ -513,6 +676,13 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   if (lead.isError) return <AsyncState state="error" message="We couldn't load this lead." actionLabel="Try again" onAction={() => void lead.refetch()} />;
   if (saved.isError && saved.data === undefined) return <AsyncState state="error" message="We couldn't load the saved estimate. Retry before making changes." actionLabel="Retry estimate" onAction={() => void saved.refetch()} />;
   const leadItem = lead.data;
+  const basketSearchTerm = basketSearch.trim().toLowerCase();
+  const visibleBaskets = catalogue.data?.items.filter((basket) => basket.name.toLowerCase().includes(basketSearchTerm)) ?? [];
+  const basketSelectionDisabled = !editable || catalogue.isError || !catalogue.data;
+  const clearBasketSearch = () => {
+    setBasketSearch("");
+    basketSearchRef.current?.focus();
+  };
 
   const selectedRoomTypeIds = Array.from(new Set(rooms.map((room) => room.typeId)));
   const handleRoomsChange = (nextTypeIds: string[]) => {
@@ -550,24 +720,47 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     return next;
   }));
   const toggleMainBasket = (id: string) => {
+    if (basketSelectionDisabled || submissionInFlight.current) return;
     if (selectedMainBasketIds.has(id)) {
-      setConfiguredLines((prior) => prior.map((line) => line.mainBasketId === id ? { ...line, included: false } : line));
+      setConfiguredLines((prior) => deselectConfiguredRecommendationSources(prior,
+        new Set(prior.filter((line) => line.mainBasketId === id && line.included).map((line) => line.key))));
+      setPendingRecommendationSources([]);
+      automaticRecommendationContext.current = null;
+      selectedDuringSlideOut.current.clear();
+      clearSkippedRecommendations();
     }
     setSelectedMainBasketIds((current) => {
       const next = new Set(current);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+    setMainBasketClassifications((current) => {
+      if (current.has(id)) return current;
+      const next = new Map(current);
+      next.set(id, "standard");
+      return next;
+    });
+  };
+  const clearMainBaskets = () => {
+    if (basketSelectionDisabled || submissionInFlight.current || !selectedMainBasketIds.size) return;
+    setConfiguredLines((prior) => deselectConfiguredRecommendationSources(prior,
+      new Set(prior.filter((line) => selectedMainBasketIds.has(line.mainBasketId) && line.included).map((line) => line.key))));
+    setSelectedMainBasketIds(new Set());
+    cancelRecommendationOpening();
   };
   const buildLines = () => {
-    if (!catalogue.data) return;
+    if (!catalogue.data || catalogue.isError || !editable || submissionInFlight.current || !rooms.length || !selectedMainBasketIds.size) return;
     setCatalogueRequested(true);
     setConfiguredLines((previous) => buildConfiguredLines(catalogue.data, rooms, selectedMainBasketIds, previous));
     setActiveRoomId(rooms[0]?.id ?? "");
     setTab("builder");
   };
-  const updateLine = (id: string, change: Partial<LineDraft>) => setLines((current) => current.map((line) => line.id === id ? { ...line, ...change } : line));
+  const updateLine = (id: string, change: Partial<LineDraft>) => {
+    if (!editable || submissionInFlight.current) return;
+    setLines((current) => current.map((line) => line.id === id ? { ...line, ...change } : line));
+  };
   const updateConfiguredLine = (key: string, change: Partial<ConfiguredLineDraft>) => {
+    if (!editable || submissionInFlight.current) return;
     const line = configuredLines.find((item) => item.key === key);
     if (change.included === true && line && !line.included && !line.sourceMissing && line.roomId === activeRoomId &&
       tab === "builder" && editable) {
@@ -579,30 +772,60 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
         }]);
     }
     if (change.included === false && line?.included) {
+      clearSkippedRecommendations();
       setPendingRecommendationSources((current) => current.filter((event) => event.lineKey !== line.key));
       if (automaticRecommendationContext.current?.sources.some((event) => event.lineKey === line.key)) {
         automaticRecommendationContext.current = null;
         selectedDuringSlideOut.current.clear();
+        clearSkippedRecommendations();
       }
     }
-    setConfiguredLines((current) => current.map((item) => item.key === key ? { ...item, ...change } : item));
+    setConfiguredLines((current) => {
+      const updated = current.map((item) => item.key === key ? {
+        ...updateConfiguredLinePricing(item, change, mainBasketClassifications.get(item.mainBasketId) ?? "standard"),
+        ...(change.included !== undefined && change.included !== item.included
+          ? { recommendationSourceMainLineIds: [] } : {}),
+        ...(change.quantity !== undefined ? { uomNeedsQuantityReview: false, previousUomName: undefined } : {}),
+        ...(change.included === true && !item.included && item.classification === undefined
+          ? { classification: mainBasketClassifications.get(item.mainBasketId) ?? "standard" } : {})
+      } : item);
+      return change.included === false ? deselectConfiguredRecommendationSources(updated, new Set([key])) : updated;
+    });
+  };
+  const skipRecommendedLine = (target: RecommendedLineTarget) => {
+    if (!editable || submissionInFlight.current || !recommendationDialogOpen || tab !== "builder" ||
+      !catalogue.data || catalogue.isError || catalogue.isFetching || recommendationState !== "ready" ||
+      !activeRoomId || !recommendationView) return false;
+    const key = recommendationTargetIdentity(target);
+    const line = currentRecommendationLines.find((candidate) => candidate.key === key);
+    if (!line || line.requirement !== "can" || line.selected) return false;
+    const identity = recommendationSkipIdentity(activeRoomId, line, recommendationSources, catalogue.dataUpdatedAt);
+    if (!identity || skippedRecommendationsRef.current.get(key) === identity) return false;
+    replaceSkippedRecommendations(new Map(skippedRecommendationsRef.current).set(key, identity));
+    return true;
   };
   const selectRecommendedLine = (target: RecommendedLineTarget) => {
     if (!editable || !catalogue.data || catalogue.isError || catalogue.isFetching ||
       recommendationState !== "ready" || !activeRoomId || !recommendationView) return false;
-    const permitted = recommendationView.decisions.some((decision) => decision.available && (
+    const matchingDecisions = recommendationView.decisions.filter((decision) => decision.available && (
       decision.kind === "main_line"
         ? decision.target?.mainLineId === target.mainLineId && decision.target.basketId === target.basketId && decision.target.subBasketId === target.subBasketId
         : decision.children.some((child) => child.target.mainLineId === target.mainLineId && child.target.basketId === target.basketId && child.target.subBasketId === target.subBasketId)
     ));
-    if (!permitted) return false;
+    const sourceIds = [...new Set(matchingDecisions.flatMap((decision) => decision.reasons.map((reason) => reason.sourceId)))].filter((sourceId) =>
+      sourceId !== target.mainLineId && configuredLines.some((line) =>
+        line.roomId === activeRoomId && line.mainLineId === sourceId && line.included));
+    if (!sourceIds.length) return false;
     const nextBasketIds = new Set(selectedMainBasketIds);
     nextBasketIds.add(target.basketId);
     setSelectedMainBasketIds(nextBasketIds);
+    setMainBasketClassifications((current) => current.has(target.basketId)
+      ? current : new Map(current).set(target.basketId, "standard"));
     setConfiguredLines((previous) => buildConfiguredLines(catalogue.data, rooms, nextBasketIds, previous).map((line) =>
       line.roomId === activeRoomId && line.mainLineId === target.mainLineId && !line.sourceMissing &&
       line.mainBasketId === target.basketId && line.subBasketId === target.subBasketId
-        ? { ...line, included: true } : line
+        ? line.included ? line : { ...line, included: true, recommendationSourceMainLineIds: sourceIds,
+          classification: line.classification ?? mainBasketClassifications.get(target.basketId) ?? "standard" } : line
     ));
     if (automaticRecommendationContext.current) {
       selectedDuringSlideOut.current.add(recommendedTargetIdentity(activeRoomId, target));
@@ -640,7 +863,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     updateLine(id, change);
   };
   const includedItemCount = selectedLines.length + selectedConfiguredLines.length;
-  const hasInvalidInput = invalidConfiguredLines.length > 0;
+  const hasInvalidInput = invalidConfiguredLines.length > 0 || changedUomConfiguredLines.length > 0;
   const hasMissingRate = incompleteConfiguredLines.length > 0;
   const totalLabel = (value: number) => hasIncompleteConfiguredTotal ? "Incomplete" : money(value);
   const estimateVersionConflict = [save.error, submit.error].some((error) =>
@@ -649,6 +872,8 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   const reloadSavedEstimate = async () => {
     const result = await saved.refetch();
     if (result.isSuccess) {
+      hasHydratedSavedEstimate.current = false;
+      setHydrationRequest((current) => current + 1);
       save.reset();
       submit.reset();
       setNotice("Latest saved estimate loaded.");
@@ -658,14 +883,23 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     ? <ProjectChatNavigation projectId={leadItem.projectId} overviewTo={`/estimator-sales/leads/${leadId}/estimate`} overviewLabel="Estimate" />
     : null;
 
+  const boundedBuilder = tab === "builder" && configuredMode && Boolean(catalogue.data || hasConfiguredSaved);
+  const viewControls = tab !== "configure" ? <div className="estimate-workspace__view-controls">
+    <nav aria-label="Estimate views" className="estimate-workspace__tabs">{(["builder", "summary", "proposal"] as const).map((value) => {
+      const active = tab === value;
+      return <button type="button" key={value} onClick={() => setTab(value)} aria-pressed={active}><TabIcon tab={value} /> {value === "builder" ? "Estimate Builder" : value === "summary" ? "Summary" : "Proposal"}</button>;
+    })}</nav>
+    {boundedBuilder && projectNavigation ? <div className="estimate-workspace__messages">{projectNavigation}</div> : null}
+  </div> : null;
+
   return <section className={`estimate-workspace estimator-dashboard${tab === "configure" ? " estimate-workspace--configure-view" : " estimate-workspace--item-view"}`} aria-labelledby="estimate-title">
-    {tab === "configure" ? <Link to={`/estimator-sales/leads/${leadId}`} className="estimate-workspace__back lead-detail__back-link"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D89A3E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5" /><path d="M12 19l-7-7 7-7" /></svg>Back to {leadItem.clientName}</Link> : <button type="button" onClick={() => setTab("configure")} className="estimate-workspace__back lead-detail__back-link"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D89A3E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5" /><path d="M12 19l-7-7 7-7" /></svg>Back to {leadItem.clientName}</button>}
-    <header className="estimate-workspace__header"><div className="estimate-workspace__title"><p className="eyebrow">Estimate draft · {leadItem.clientName}</p><h1 id="estimate-title">{tab === "configure" ? "Configure estimate" : "Select estimate items"}</h1><p>{leadItem.projectName} · {leadItem.location}</p></div>{tab !== "configure" ? projectNavigation : null}<div className="estimate-workspace__summary"><strong>{totalLabel(totals.total)}</strong><span>Total including GST</span>{tab !== "configure" ? <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="1" /><path d="M8 6h8v3H8zM8 13h2m4 0h2m-8 4h2m4 0h2" /></svg> : null}</div></header>
+    {tab === "configure" ? <Link to={`/estimator-sales/leads/${leadId}`} className="estimate-workspace__back lead-detail__back-link"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D89A3E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5" /><path d="M12 19l-7-7 7-7" /></svg>Back to {leadItem.clientName}</Link> : <button type="button" disabled={submissionLocked} onClick={() => setTab("configure")} className="estimate-workspace__back lead-detail__back-link"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D89A3E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5" /><path d="M12 19l-7-7 7-7" /></svg>Back to {leadItem.clientName}</button>}
+    <header className="estimate-workspace__header"><div className="estimate-workspace__title"><p className="eyebrow">Estimate draft · {leadItem.clientName}</p><h1 id="estimate-title">{tab === "configure" ? "Configure estimate" : "Select estimate items"}</h1><p>{leadItem.projectName} · {leadItem.location}</p></div>{tab !== "configure" && !boundedBuilder ? projectNavigation : null}<div className="estimate-workspace__summary"><strong>{totalLabel(totals.total)}</strong><span>Total including GST</span>{tab !== "configure" ? <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="1" /><path d="M8 6h8v3H8zM8 13h2m4 0h2m-8 4h2m4 0h2" /></svg> : null}</div></header>
     {tab === "configure" ? projectNavigation : null}
     {saved.data?.clientReview ? <EstimateDeliveryStatus review={saved.data.clientReview} retrying={retryEmail.isPending} onRetry={() => retryEmail.mutate()} /> : null}
     {saved.data?.clientFeedback ? <EstimateClientFeedback feedback={saved.data.clientFeedback} editable={editable} refreshing={saved.isFetching} refreshFailed={saved.isRefetchError} onRefresh={() => void saved.refetch()} /> : null}
     {saved.data?.status === "client_changes_requested" ? <EstimatePlanChangeRequests estimateId={saved.data.id} /> : null}
-    {tab !== "configure" ? <nav aria-label="Estimate views" className="estimate-workspace__tabs">{(["builder", "summary", "proposal"] as const).map((value) => { const active = tab === value; return <button type="button" key={value} onClick={() => setTab(value)} aria-pressed={active}><TabIcon tab={value} /> {value === "builder" ? "Estimate Builder" : value === "summary" ? "Summary" : "Proposal"}</button>; })}</nav> : null}
+    {!boundedBuilder ? viewControls : null}
     {tab === "configure" ? <>
       <section className="estimate-panel estimate-configure-details" aria-labelledby="estimate-project-details-title">
         <div className="estimate-configure-details__heading"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m3 10 9-7 9 7M5 9v12h14V9M9 21v-7h6v7" /></svg><h2 id="estimate-project-details-title">Project details</h2></div>
@@ -676,7 +910,17 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
       </section>
       {rooms.length ? <section className="estimate-configure-dimensions" aria-label="Room dimensions"><RoomDimensionsAccordion rooms={rooms.map((room) => ({ id: room.id, label: room.label, icon: roomIcons[room.typeId] ?? Pencil, length: room.length, width: room.width }))} onDimensionChange={updateRoom} onRemove={removeRoom} /></section> : null}
       <section className="estimate-panel configured-estimate-chooser" aria-labelledby="estimate-main-baskets-title">
-        <div className="configured-estimate-chooser__heading"><div><p className="eyebrow">Configuration</p><h2 id="estimate-main-baskets-title">Main Baskets</h2><p>Select the Main Baskets for this estimate. Available Main Lines and temporary items appear in the builder.</p></div>{configuredMode ? <button type="button" className="button button--secondary" disabled={catalogue.isFetching} onClick={() => void refreshAvailableItems()}>Refresh available items</button> : null}</div>
+        <div className="configured-estimate-chooser__heading">
+          <div><p className="eyebrow">Configuration</p><h2 id="estimate-main-baskets-title">Main Baskets</h2><p>Select the Main Baskets for this estimate. Available Main Lines and temporary items appear in the builder.</p></div>
+          {configuredMode ? <div className="configured-estimate-chooser__tools">
+            <div className="configured-estimate-chooser__search">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg>
+              <input ref={basketSearchRef} type="search" aria-label="Search baskets" placeholder="Search baskets..." value={basketSearch} onChange={(event) => setBasketSearch(event.target.value)} />
+              {basketSearch ? <button type="button" aria-label="Clear search" onClick={clearBasketSearch}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6" /></svg></button> : null}
+            </div>
+            <button type="button" className="button button--secondary" disabled={catalogue.isFetching} onClick={() => void refreshAvailableItems()}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M5.1 8a7 7 0 0 1 11.6-3L20 8M4 16l3.3 3A7 7 0 0 0 18.9 16" /></svg><span>Refresh available items</span></button>
+          </div> : null}
+        </div>
         {!configuredMode ? <div className="configured-estimate-chooser__state"><p>This estimate contains historical items. You can keep editing them, or add current configured items.</p><button type="button" className="button button--secondary" onClick={() => setCatalogueRequested(true)}>Load configured baskets</button></div> : null}
         {configuredMode && catalogue.isPending ? <p role="status">Loading configured baskets…</p> : null}
         {configuredMode && catalogue.isFetching && catalogue.data ? <p role="status">Refreshing available items…</p> : null}
@@ -684,15 +928,17 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
         {configuredMode && catalogue.data && !catalogue.isError && !catalogue.data.items.length ? <p className="configured-estimate-chooser__state">No active Main Baskets are available in the estimator catalogue.</p> : null}
         {configuredMode && catalogue.data?.readyNonActiveSupported === false ? <p className="configured-estimate-chooser__note" role="status">This catalogue currently shows Active items only. Draft and Inactive items will become available when the catalogue service is updated.</p> : null}
         {configuredMode && catalogue.data?.ineligibleLineCount ? <p className="configured-estimate-chooser__note">{catalogue.data.ineligibleLineCount} configured {catalogue.data.ineligibleLineCount === 1 ? "item is" : "items are"} unavailable in the estimator catalogue. Availability depends on item completeness and a valid UOM.</p> : null}
-        {configuredMode && catalogue.data ? <div className="configured-estimate-chooser__list">{catalogue.data.items.map((basket) => <MainBasketSelectionRow key={basket.id} basket={basket} selected={selectedMainBasketIds.has(basket.id)} disabled={!editable || catalogue.isError} onToggle={() => toggleMainBasket(basket.id)} />)}</div> : null}
+        {configuredMode && catalogue.data ? <div className="configured-estimate-chooser__list">{visibleBaskets.map((basket) => <MainBasketSelectionCard key={basket.id} basket={basket} selected={selectedMainBasketIds.has(basket.id)} disabled={basketSelectionDisabled} onToggle={() => toggleMainBasket(basket.id)} />)}</div> : null}
+        {configuredMode && (catalogue.data?.items.length ?? 0) > 0 && basketSearchTerm && !visibleBaskets.length ? <p className="configured-estimate-chooser__state" role="status">No baskets match your search.</p> : null}
       </section>
       {!configuredMode && lines.length ? <button type="button" className="button button--secondary estimate-continue" onClick={() => setTab("builder")}>Return to saved items</button> : null}
-      {configuredMode ? <button type="button" className="button button--primary estimate-continue" disabled={!rooms.length || !selectedMainBasketIds.size || !catalogue.data || catalogue.isError || !editable} onClick={buildLines}>Continue to item selection</button> : null}
+      {configuredMode ? <ConfigureSelectionFooter count={selectedMainBasketIds.size} clearDisabled={basketSelectionDisabled || !selectedMainBasketIds.size} continueDisabled={basketSelectionDisabled || !rooms.length || !selectedMainBasketIds.size} onClear={clearMainBaskets} onContinue={buildLines} /> : null}
     </> : null}
     {tab === "builder" && configuredMode && catalogue.isError ? <div className="configured-estimate-refresh">
       {catalogue.isError ? <p role="alert">{catalogue.error instanceof ApiError && catalogue.error.status === 403 ? "You do not have permission to read the estimator catalogue." : catalogue.data ? "Available items could not be refreshed. The last loaded catalogue is shown. Try again." : "Available items could not be loaded. Try again."}</p> : null}
     </div> : null}
-    {tab === "builder" && configuredMode && (catalogue.data || hasConfiguredSaved) ? <>
+    {boundedBuilder ? <EstimateBuilderArea>
+      {viewControls}
       {!catalogue.data ? <p className="estimate-notice" role="status">Current Configuration is unavailable. Saved lines are shown from this estimate's snapshot.</p> : null}
       <ConfiguredEstimateBuilder
       rooms={builderRooms}
@@ -700,6 +946,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
       onSelectRoom={setActiveRoomId}
       catalogue={catalogue.data ?? { items: [], ineligibleLineCount: 0 }}
       selectedMainBasketIds={selectedMainBasketIds}
+      mainBasketClassifications={mainBasketClassifications}
       lines={configuredLines}
       onUpdateLine={updateConfiguredLine}
       onRefreshAvailableItems={() => void refreshAvailableItems()}
@@ -717,13 +964,16 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
         setPendingRecommendationSources([]);
         automaticRecommendationContext.current = null;
         selectedDuringSlideOut.current.clear();
+        clearSkippedRecommendations();
         setRecommendationDialogOpen(true);
       }}
       onCloseRecommendations={() => {
         const context = automaticRecommendationContext.current;
         const successfulTargets = new Set(selectedDuringSlideOut.current);
+        const explicitSkips = new Map(skippedRecommendationsRef.current);
         automaticRecommendationContext.current = null;
         selectedDuringSlideOut.current.clear();
+        clearSkippedRecommendations();
         setRecommendationDialogOpen(false);
         setPendingRecommendationSources([]);
         if (!context || context.roomId !== activeRoomId || tab !== "builder" || !editable ||
@@ -736,6 +986,15 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
         }).current;
         const currentDecisions = recommendationState === "ready" && recommendationView
           ? recommendationView.decisions : context.decisions;
+        const currentTargets = recommendationLines(currentDecisions);
+        const hasReviewedOptionalRecommendations = (sourceId: string) => {
+          const targets = currentTargets.filter((line) => line.reasons.some((reason) => reason.sourceId === sourceId));
+          return targets.length > 0 && targets.every((line) => {
+            if (line.requirement !== "can") return false;
+            const identity = recommendationSkipIdentity(context.roomId, line, currentSources, catalogue.dataUpdatedAt);
+            return line.selected || (identity !== null && explicitSkips.get(line.key) === identity);
+          });
+        };
         const toUncheck = context.sources.filter((event) =>
           currentSources.some((line) => line.key === event.lineKey && line.mainLineId === event.sourceMainLineId &&
             recommendationSourceIdentity(line) === event.sourceIdentity) &&
@@ -743,16 +1002,16 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
             reason.sourceId === event.sourceMainLineId) &&
             (decision.kind === "main_line" ? Boolean(decision.target) : decision.children.length > 0)) &&
           !sourceHasSelectedRecommendation(event.sourceMainLineId, context.roomId, currentDecisions,
-            currentSources, successfulTargets)
+            currentSources, successfulTargets) &&
+          !hasReviewedOptionalRecommendations(event.sourceMainLineId)
         );
         if (!toUncheck.length) return;
         const sourceKeys = new Set(toUncheck.map((event) => event.lineKey));
-        setConfiguredLines((current) => current.map((line) =>
-          sourceKeys.has(line.key) && line.roomId === context.roomId && line.included &&
-          toUncheck.some((event) => event.lineKey === line.key &&
-            event.sourceMainLineId === line.mainLineId && event.sourceIdentity === recommendationSourceIdentity(line))
-            ? { ...line, included: false } : line
-        ));
+        setConfiguredLines((current) => deselectConfiguredRecommendationSources(current,
+          new Set(current.filter((line) => sourceKeys.has(line.key) && line.roomId === context.roomId && line.included &&
+            toUncheck.some((event) => event.lineKey === line.key &&
+              event.sourceMainLineId === line.mainLineId && event.sourceIdentity === recommendationSourceIdentity(line)))
+            .map((line) => line.key))));
         const sourceName = currentSources.find((line) => line.key === toUncheck[0]?.lineKey)?.mainLineName;
         const roomName = rooms.find((room) => room.id === context.roomId)?.label ?? "this room";
         setNotice(toUncheck.length === 1
@@ -761,7 +1020,9 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
       }}
       onRetryRecommendations={() => void recommendations.refetch()}
       onSelectRecommendedLine={selectRecommendedLine}
-    /></> : null}
+      skippedRecommendationKeys={skippedRecommendationKeys}
+      onSkipRecommendedLine={skipRecommendedLine}
+    /></EstimateBuilderArea> : null}
     {tab === "builder" && lines.length ? <section aria-label="Earlier catalogue items"><h2>Earlier catalogue items</h2><EstimateBuilder
       rooms={builderRooms}
       activeRoomId={activeRoomId}
@@ -776,11 +1037,11 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     /></section> : null}
     {tab === "summary" ? <section className="estimate-panel estimate-summary"><h2>Estimate summary</h2>{rooms.map((room) => <div className="estimate-summary-row" key={room.id}><span><RoomIcon typeId={room.typeId} /> <strong>{room.label}</strong><small>{lines.filter((line) => line.roomName === room.label && line.included).length + configuredLines.filter((line) => line.roomId === room.id && line.included).length} selected items</small></span><strong>{roomTotalLabel(room.id)}</strong></div>)}{hasMissingRate ? <p role="status">Total incomplete: enter the selling rate for {incompleteConfiguredLines.length} selected items.</p> : null}{invalidSelectedAmountCount ? <p role="status">Total incomplete: correct the quantity or price for {invalidSelectedAmountCount} selected items.</p> : null}<div className="estimate-total-card"><span>Sub-total <strong>{totalLabel(totals.subtotal)}</strong></span><span>GST @ 18% <strong>{totalLabel(totals.gst)}</strong></span><span>Total (incl. GST) <strong>{totalLabel(totals.total)}</strong></span></div></section> : null}
     {tab === "proposal" ? <section className="estimate-panel estimate-proposal"><header><p className="eyebrow">Lisno interior proposal</p><h2>{leadItem.projectName}</h2><p>Prepared for {leadItem.clientName}</p></header>{rooms.map((room) => <article key={room.id}><h3><RoomIcon typeId={room.typeId} /> {room.label}</h3>{selectedLines.filter((line) => line.roomName === room.label).map((line) => <div key={line.id}><span>{catalogueRows.find((row) => row.id === line.catalogueId)?.description ?? line.catalogueId}<small>{line.specification} · {line.quantity} {line.unit}</small></span><strong>{money(Math.round(line.quantity * line.rate))}</strong></div>)}{selectedConfiguredLines.filter((line) => line.roomId === room.id).map((line) => <div key={line.key}><span>{line.mainLineName}<small>{line.mainBasketName}{line.subBasketName ? ` / ${line.subBasketName}` : ""} · {line.itemType === "temporary" ? "Temporary item" : "Main Line"} · {line.quantity} {line.uomName} · {parseSellingRate(line.rateInput).kind === "blank" ? "Rate required" : `₹${line.rateInput} per ${line.uomName}`}</small></span><strong>{configuredLineAmountPaise(line) === null ? "Incomplete" : moneyPaise(configuredLineAmountPaise(line) ?? 0)}</strong></div>)}</article>)}{hasMissingRate ? <p role="status">This proposal is incomplete until every selected item has a selling rate.</p> : null}{invalidSelectedAmountCount ? <p role="status">This proposal is incomplete until the highlighted quantities or prices are corrected.</p> : null}<div className="estimate-total-card"><span>Sub-total <strong>{totalLabel(totals.subtotal)}</strong></span><span>GST @ 18% <strong>{totalLabel(totals.gst)}</strong></span><span>Total (incl. GST) <strong>{totalLabel(totals.total)}</strong></span></div><p className="estimate-terms">Valid for 30 days. Rates subject to material market changes. Final scope on site measurement. GST as applicable.</p></section> : null}
-    {tab !== "configure" ? <footer className="estimate-workspace__footer"><div><strong>{hasIncompleteConfiguredTotal ? "Total incomplete" : `${money(totals.total)} total`}</strong><span>{includedItemCount} selected line {includedItemCount === 1 ? "item" : "items"} across {rooms.length} {rooms.length === 1 ? "room" : "rooms"} · {saved.data?.status?.replaceAll("_", " ") ?? "draft"}</span></div><div className="estimate-actions">{editable ? <button type="button" className="button button--secondary" disabled={save.isPending || submit.isPending || hasInvalidInput || unavailableNewConfiguredLines.length > 0 || changedNewConfiguredLines.length > 0 || legacyIncompatibleConfiguredLines.length > 0 || estimateVersionConflict} onClick={() => save.mutate()}>{save.isPending ? "Saving…" : "Save draft"}</button> : null}{editable ? <button type="button" className="button button--primary estimate-continue" disabled={!includedItemCount || hasInvalidInput || hasMissingRate || unavailableNewConfiguredLines.length > 0 || changedNewConfiguredLines.length > 0 || legacyIncompatibleConfiguredLines.length > 0 || save.isPending || submit.isPending || estimateVersionConflict} onClick={() => submit.mutate()}>{submit.isPending ? "Submitting…" : "Submit estimate"}</button> : null}{saved.data?.status === "ready_for_client" ? <button type="button" className="button button--primary" disabled={sendToClient.isPending} onClick={() => sendToClient.mutate()}>{sendToClient.isPending ? "Sending…" : "Send to client"}</button> : null}</div></footer> : null}
-    {hasInvalidInput ? <p className="estimate-notice estimate-notice--error" role="alert">Correct the highlighted rate or quantity before saving.</p> : null}
-    {unavailableNewConfiguredLines.length ? <p className="estimate-notice estimate-notice--error" role="alert">A selected item is no longer available for a new estimate line. Refresh available items or uncheck it before saving.</p> : null}
-    {changedNewConfiguredLines.length ? <p className="estimate-notice estimate-notice--error" role="alert">A selected item changed during refresh. Review its updated source, quantity, and rate in the builder before saving.</p> : null}
+    {tab !== "configure" ? <footer className="estimate-workspace__footer"><div><strong>{hasIncompleteConfiguredTotal ? "Total incomplete" : `${money(totals.total)} total`}</strong><span>{includedItemCount} selected line {includedItemCount === 1 ? "item" : "items"} across {rooms.length} {rooms.length === 1 ? "room" : "rooms"} · {saved.data?.status?.replaceAll("_", " ") ?? "draft"}</span></div><div className="estimate-actions">{draftEditable ? <button type="button" className="button button--secondary" disabled={save.isPending || submit.isPending || hasInvalidInput || unavailableConfiguredLines.length > 0 || legacyIncompatibleConfiguredLines.length > 0 || estimateVersionConflict} onClick={() => save.mutate()}>{save.isPending ? "Saving…" : "Save draft"}</button> : null}{draftEditable ? <button type="button" className="button button--primary estimate-continue" disabled={!includedItemCount || hasInvalidInput || hasMissingRate || unavailableConfiguredLines.length > 0 || legacyIncompatibleConfiguredLines.length > 0 || save.isPending || submit.isPending || estimateVersionConflict} onClick={() => submit.mutate()}>{submit.isPending ? "Submitting…" : "Submit estimate"}</button> : null}{saved.data?.status === "ready_for_client" ? <button type="button" className="button button--primary" disabled={sendToClient.isPending} onClick={() => sendToClient.mutate()}>{sendToClient.isPending ? "Sending…" : "Send to client"}</button> : null}</div></footer> : null}
+    {invalidConfiguredLines.length ? <p className="estimate-notice estimate-notice--error" role="alert">Correct the highlighted rate or quantity before saving.</p> : null}
+    {unavailableConfiguredLines.length ? <p className="estimate-notice estimate-notice--error" role="alert">A Main Line is no longer available in Configuration. Refresh available items or remove it before saving.</p> : null}
+    {changedUomConfiguredLines.length ? <p className="estimate-notice estimate-notice--error" role="alert">Configuration changed a line's unit. Re-enter its quantity in the builder before saving.</p> : null}
     {legacyIncompatibleConfiguredLines.length ? <p className="estimate-notice estimate-notice--error" role="alert">{catalogue.data?.readyNonActiveSupported === false ? "This catalogue service cannot save temporary items yet. Keep this estimate open and refresh after the service is updated." : "Refresh available items before saving temporary items in this estimate."}</p> : null}
-    {estimateVersionConflict ? <div className="estimate-notice estimate-notice--error" role="alert"><p>This estimate changed elsewhere. Reload the latest saved estimate before editing it again.</p><button type="button" className="button button--secondary" onClick={() => void reloadSavedEstimate()}>Reload saved estimate (discard edits)</button></div> : [save.error, submit.error].some((error) => error instanceof ApiError && error.code === "ESTIMATE_CATALOGUE_CHANGED") ? <div className="estimate-notice estimate-notice--error" role="alert"><p>Configuration changed since you opened this estimate. Refresh available items and check the selected lines before saving.</p><button type="button" className="button button--secondary" onClick={() => void refreshAvailableItems()}>Refresh catalogue</button></div> : save.isError || submit.isError || sendToClient.isError ? <p className="estimate-notice estimate-notice--error" role="alert">The estimate action could not be completed. Check the current workflow state and try again.</p> : null}{retryError ? <p className="estimate-notice estimate-notice--error" role="alert">{retryError}</p> : null}{notice ? <p className="estimate-notice" role="status">{notice}</p> : null}
+    {estimateVersionConflict ? <div className="estimate-notice estimate-notice--error" role="alert"><p>This estimate changed elsewhere. Reload the latest saved estimate before editing it again.</p><button type="button" className="button button--secondary" onClick={() => void reloadSavedEstimate()}>Reload saved estimate (discard edits)</button></div> : [save.error, submit.error].some((error) => error instanceof ApiError && ["ESTIMATE_CATALOGUE_CHANGED", "ESTIMATE_UOM_CHANGED", "ESTIMATE_CONFIGURATION_UNAVAILABLE", "ESTIMATE_CONFIGURATION_CHANGED"].includes(error.code)) ? <div className="estimate-notice estimate-notice--error" role="alert"><p>Configuration changed since you opened this estimate. Refresh available items and check the selected lines before saving.</p><button type="button" className="button button--secondary" onClick={() => void refreshAvailableItems()}>Refresh catalogue</button></div> : save.isError || submit.isError || sendToClient.isError ? <p className="estimate-notice estimate-notice--error" role="alert">The estimate action could not be completed. Check the current workflow state and try again.</p> : null}{retryError ? <p className="estimate-notice estimate-notice--error" role="alert">{retryError}</p> : null}{notice ? <p className="estimate-notice" role="status">{notice}</p> : null}
   </section>;
 }

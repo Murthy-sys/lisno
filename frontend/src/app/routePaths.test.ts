@@ -9,6 +9,7 @@ const expectedRoleHomes: Record<Role, string> = {
   estimator_sales: "/estimator-sales",
   designer: "/designer",
   procurement: "/home",
+  program_manager: "/work-order-approvals",
   finance_head: "/home",
   site_manager: "/home",
   worker_electrician: "/home",

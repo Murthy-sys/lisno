@@ -1,0 +1,41 @@
+- generic [ref=f1e2]:
+  - main [ref=f1e3]:
+    - generic [ref=f1e4]:
+      - paragraph [ref=f1e5]: Lisno · Vendor enquiry
+      - heading "Submit your BOQ quotation" [level=1] [ref=f1e6]
+      - paragraph [ref=f1e7]: Enter one unit rate and applicable GST rate for every item. Quantities and scope are fixed for this enquiry.
+    - generic [ref=f1e8]:
+      - generic [ref=f1e9]:
+        - generic [ref=f1e10]: Enquiry for
+        - strong [ref=f1e11]: Aurora Villa / Painting
+      - paragraph [ref=f1e12]: This link expires 1 Jan 2099, 5:30 am.
+    - generic [ref=f1e13]:
+      - region [ref=f1e14]:
+        - generic [ref=f1e15]:
+          - paragraph [ref=f1e16]: execution · Due 2026-11-30
+          - heading "Primer coat for living and dining walls" [level=2] [ref=f1e17]
+          - generic [ref=f1e18]: 2200 sq-ft · Aurora Villa site
+        - generic [ref=f1e19]:
+          - generic [ref=f1e20]:
+            - text: Unit rate · ₹
+            - textbox "Unit rate · ₹" [ref=f1e21]
+          - generic [ref=f1e22]:
+            - text: GST · %
+            - textbox "GST · %" [ref=f1e23]
+      - region [ref=f1e24]:
+        - generic [ref=f1e25]:
+          - paragraph [ref=f1e26]: execution · Due 2026-12-15
+          - heading "Interior painting across bedrooms" [level=2] [ref=f1e27]
+          - generic [ref=f1e28]: 1400 sq-ft · Aurora Villa site
+        - generic [ref=f1e29]:
+          - generic [ref=f1e30]:
+            - text: Unit rate · ₹
+            - textbox "Unit rate · ₹" [ref=f1e31]
+          - generic [ref=f1e32]:
+            - text: GST · %
+            - textbox "GST · %" [ref=f1e33]
+    - generic [ref=f1e34]:
+      - paragraph [ref=f1e35]: All rates are reviewed and calculated by Lisno before they enter a vendor comparison.
+      - button "Submit quotation" [ref=f1e36] [cursor=pointer]
+  - status "Application announcements" [ref=f1e37]
+  - region "Notifications"

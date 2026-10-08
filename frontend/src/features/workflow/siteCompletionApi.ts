@@ -6,7 +6,7 @@ export interface SiteCompletionSection {
   sectionLabel: string;
   roomName: string;
   itemName: string;
-  scopeType: string;
+  scopeType: string | null;
   imageIds: string[];
 }
 

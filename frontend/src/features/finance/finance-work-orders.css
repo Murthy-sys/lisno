@@ -1,0 +1,23 @@
+.finance-work-orders { margin-top: 1.5rem; padding: 1.25rem; border: 1px solid var(--border, #d8ded7); background: var(--surface, #f7f8f5); }
+.finance-work-orders__heading { display: flex; justify-content: space-between; gap: 1rem; align-items: start; margin-bottom: 1rem; }
+.finance-work-orders__heading h2 { margin: .15rem 0 .35rem; }
+.finance-work-orders__heading p:last-child { max-width: 62ch; margin: 0; }
+.finance-work-orders__list { list-style: none; padding: 0; margin: 0; border-top: 1px solid #d8ded7; }
+.finance-work-orders__list li { border-bottom: 1px solid #d8ded7; }
+.finance-work-orders__list button { width: 100%; display: flex; justify-content: space-between; gap: 1rem; align-items: center; padding: .8rem .3rem; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.finance-work-orders__list button[aria-pressed="true"] { background: #e9efe8; }
+.finance-work-orders__list button:focus-visible { outline: 2px solid #28543a; outline-offset: -2px; }
+.finance-work-orders__list button span { display: grid; gap: .2rem; }
+.finance-work-orders__list small { color: #5b685e; }
+.finance-work-orders__pagination { display: flex; align-items: center; justify-content: flex-end; gap: .75rem; padding-top: .8rem; }
+.finance-work-orders__editor { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #d8ded7; }
+.finance-work-orders__stale { padding: .65rem .8rem; border: 1px solid #a66d32; background: #f8f2e8; color: #513b27; }
+.finance-work-orders__stale button { margin-left: .5rem; border: 0; padding: .2rem 0; background: transparent; color: #28543a; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.finance-work-orders__stale button:focus-visible { outline: 2px solid #28543a; outline-offset: 2px; }
+.finance-work-orders__contract, .finance-work-orders__contract dl { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.finance-work-orders__contract > div:first-child, .finance-work-orders__contract dl > div { display: grid; gap: .2rem; }
+.finance-work-orders__contract dl { margin: 0; }
+.finance-work-orders__contract dt { color: #5b685e; }
+.finance-work-orders__editor form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .85rem; margin-top: 1rem; }
+.finance-work-orders__editor form > :nth-last-child(2), .finance-work-orders__editor form > :last-child { grid-column: 1 / -1; }
+@media (max-width: 700px) { .finance-work-orders__heading { flex-direction: column; } .finance-work-orders__editor form { grid-template-columns: 1fr; } .finance-work-orders__pagination { justify-content: space-between; } }

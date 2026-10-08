@@ -611,7 +611,7 @@ describe("role landing staging contract", () => {
 
 describe("public invitation route", () => {
   it("mounts directly while staying outside the protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(42);
+    expect(ROUTE_REGISTRY).toHaveLength(43);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -718,13 +718,13 @@ describe("registered permission routes", () => {
       (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
     );
 
-    expect(paths).toHaveLength(historicalProtectedPaths.length + 21);
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 22);
     expect(additions).toEqual([
       "/project-messages", "/projects/:projectId/messages",
       "/designer/design-plans",
       "/vendor",
       knowledgeConfigurationPaths[0],
-      "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/admin/purchase-orders", "/admin/project-completion", "/procurement", "/procurement/vendors", "/procurement/vendors/:vendorId",
+      "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/admin/purchase-orders", "/admin/project-completion", "/procurement", "/work-order-approvals", "/procurement/vendors", "/procurement/vendors/:vendorId",
       ...knowledgeConfigurationPaths.slice(1),
       ...clientResponsePaths,
       "/admin/design-approvals",
@@ -737,7 +737,7 @@ describe("registered permission routes", () => {
         "/designer/design-plans",
         "/vendor",
         ...knowledgeConfigurationPaths,
-        "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/admin/purchase-orders", "/admin/project-completion", "/procurement", "/procurement/vendors", "/procurement/vendors/:vendorId",
+        "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/admin/purchase-orders", "/admin/project-completion", "/procurement", "/work-order-approvals", "/procurement/vendors", "/procurement/vendors/:vendorId",
         ...clientResponsePaths,
         "/admin/design-approvals",
         ...procurementPaths,

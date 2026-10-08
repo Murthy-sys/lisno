@@ -97,4 +97,26 @@ describe("vendor assigned work", () => {
     expect(await screen.findByRole("button", { name: /Kitchen unit/ })).toBeVisible();
     expect(screen.getAllByRole("button", { name: "Project status" })).toHaveLength(2);
   });
+
+  it("shows tender work without invented scope, target date, or delivery location", async () => {
+    const task: VendorWorkTask = { ...baseTask, scopeType: null, targetDate: null, deliveryLocation: null };
+    server.use(
+      http.get("/api/v1/vendor/work", () => HttpResponse.json({ data: { items: [task], total: 1, limit: 50, offset: 0 } })),
+      http.get("/api/v1/vendor/work/assignment-one", () => HttpResponse.json({ data: task })),
+      http.get("/api/v1/vendor/purchase-orders/order-one", () => HttpResponse.json({ data: {
+        id: "order-one", orderNumber: "PO-ONE", projectId: "project-one", vendor: { id: "vendor-one", code: "VEN-1", name: "Oak Works" }, revision: 1,
+        approvedAt: "2026-10-01T00:00:00.000Z", terms: null, lines: [{ id: "line-one", itemName: "TV unit", description: "Build and fit oak TV unit", quantityMilliUnits: 1000, uomCode: "unit", scopeType: null, targetDate: null, deliveryLocation: null, gstBasisPoints: 2000, totalPaise: 600000 }], totals: { netPaise: 500000, gstPaise: 100000, totalPaise: 600000 }
+      } }))
+    );
+    const user = userEvent.setup();
+    renderWithQuery(<VendorWorkPage />);
+    const row = await screen.findByRole("button", { name: /TV unit/ });
+    expect(row).toHaveTextContent("Living room · Not specified");
+    await user.click(row);
+    expect(await screen.findByText("Target date")).toBeVisible();
+    expect(screen.getByText("Delivery location").nextSibling).toHaveTextContent("Not specified");
+    await user.click(await screen.findByText("View approved purchase order PO-ONE"));
+    expect(screen.getByText(/Target Not specified · Not specified · GST/)).toBeVisible();
+    expect(screen.queryByText("Terms:")).not.toBeInTheDocument();
+  });
 });

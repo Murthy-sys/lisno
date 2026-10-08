@@ -361,7 +361,7 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     expect(await lisnoPersistenceSnapshot()).toEqual(before);
   });
 
-  it("resolves independent cost settings from each Main Line's active revision and Overview UOM", async () => {
+  it("resolves independent cost settings from each Main Line's latest saved revision and Overview UOM", async () => {
     const services = createServices();
     const secondUom = await services.reference.createMaster(SUPER_ADMIN, "uoms", {
       code: "NOS-ANALYSIS", name: "Number", decimalScale: 0
@@ -434,11 +434,13 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     }, "advanced", { ...first.advanced, modeCalculations: nextMap });
     const vendorInput = { mainBasketId: BASKET_ID, mainLineId: first.mainLineId, modeKind: "execution" as const, executionSource: "sub_vendor" as const };
     const beforeActivation = await services.context.resolve(SUPER_ADMIN, vendorInput);
-    expect(beforeActivation.lineage.revisionId).toBe(first.revisionId);
-    expect(beforeActivation.configuration.calculations[0]?.settings).toEqual(firstMap.sub_vendor);
+    expect(beforeActivation.lineage.revisionId).toBe(edited.revisionId);
+    expect(beforeActivation.lineage.contentDigest).toMatch(/^[a-f0-9]{64}$/u);
+    expect(beforeActivation.configuration.calculations[0]?.settings).toEqual(nextMap.sub_vendor);
     await services.item.activate(SUPER_ADMIN, edited.mainLineId, edited.revisionId, { expectedVersion: edited.aggregateVersion });
     const afterActivation = await services.context.resolve(SUPER_ADMIN, vendorInput);
     expect(afterActivation.lineage.revisionId).toBe(edited.revisionId);
+    expect(afterActivation.lineage.contentDigest).toBe(beforeActivation.lineage.contentDigest);
     expect(afterActivation.configuration.calculations[0]?.settings).toEqual(nextMap.sub_vendor);
     expect((await services.context.resolve(SUPER_ADMIN, { ...vendorInput, mainLineId: second.mainLineId })).configuration.calculations[0]?.settings).toEqual(secondMap.sub_vendor);
     expect((await services.context.resolve(SUPER_ADMIN, { ...vendorInput, executionSource: "in_house" })).configuration.calculations.map((row) => row.settings))
@@ -467,6 +469,25 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     expect(unconfigured.configuration.shared).toEqual({ paragraph: null, scopeConfigurationId: null, inclusions: [], exclusions: [] });
     await seedActor(ADMIN);
     await expect(services.context.resolve(ADMIN, input)).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
+  });
+
+  it("does not price a current draft from a retained but disabled Pricing section", async () => {
+    const services = createServices();
+    const draft = await createConfiguredDraft(services.item, "Disabled current pricing", { withPrice: true });
+    const input = { mainBasketId: BASKET_ID, mainLineId: draft.mainLineId,
+      quantity: "1.00", uomId: UOM_ID };
+    expect((await services.context.resolve(SUPER_ADMIN, input)).preview).not.toBeNull();
+    // Retained payload from a disabled section must not supply current pricing.
+    await AiEstimatorKnowledgeSectionModel.updateOne({ mainLineId: draft.mainLineId,
+      revisionId: draft.revisionId, sectionKey: "pricing" },
+    { $set: { applicability: "not_applicable" } }).exec();
+    const disabled = await services.context.resolve(SUPER_ADMIN, input);
+    expect(disabled.preview).toBeNull();
+    expect(disabled.lineage.priceVersionId).toBeNull();
+    expect(disabled.sections.pricing).toBeUndefined();
+    expect(disabled.availability).toContainEqual(expect.objectContaining({
+      sectionKey: "pricing", state: "not_applicable"
+    }));
   });
 
   it("reloads the stored actor for reads and mutations and requires exactly one active Super Admin", async () => {
@@ -2049,7 +2070,7 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     });
   });
 
-  it("strips the inbound pointer when a referenced Main Line is deleted", async () => {
+  it("retains the historical pointer and digest when a referenced Main Line is deleted", async () => {
     const services = createServices();
     const target = await createAndActivateOverviewOnly(services.item, "Referenced Target");
     const source = await createAndActivateOverviewOnly(services.item, "Referencing Source", {
@@ -2059,11 +2080,14 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
       expectedVersion: target.aggregateVersion,
       reason: "Taken out of circulation"
     });
+    const sourceRevisionBefore = await AiEstimatorKnowledgeRevisionModel.findById(source.revisionId)
+      .lean().exec();
+    const sourceSectionsBefore = await AiEstimatorKnowledgeSectionModel
+      .find({ mainLineId: source.mainLineId }).sort({ sectionKey: 1 }).lean().exec();
 
     /*
-     * An inbound reference no longer protects the target. Deletion is
-     * permanent, so it takes the pointer with it instead of refusing and
-     * leaving the reader with nothing they can act on.
+     * An inbound reference does not protect the target, but activated
+     * Configuration content must remain byte-for-byte stable for its digest.
      */
     await expect(services.item.permanentlyDeleteMainLine(SUPER_ADMIN, target.mainLineId, {
       expectedVersion: inactiveTarget.version,
@@ -2071,19 +2095,11 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     })).resolves.toMatchObject({ deleted: true });
     expect(await AiEstimatorKnowledgeMainLineModel.findById(target.mainLineId).lean().exec())
       .toBeNull();
-
-    const sourceSections = await AiEstimatorKnowledgeSectionModel
-      .find({ mainLineId: source.mainLineId })
-      .lean()
-      .exec() as Array<{ payload?: Record<string, unknown> }>;
-    for (const section of sourceSections) {
-      for (const field of ["exclusions", "dependencies", "recommendations"]) {
-        const rows = section.payload?.[field];
-        if (!Array.isArray(rows)) continue;
-        expect(rows.some((row) => (row as { targetMainLineId?: string }).targetMainLineId === target.mainLineId))
-          .toBe(false);
-      }
-    }
+    expect(await AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean().exec())
+      .toEqual(sourceRevisionBefore);
+    expect(await AiEstimatorKnowledgeSectionModel.find({ mainLineId: source.mainLineId })
+      .sort({ sectionKey: 1 }).lean().exec()).toEqual(sourceSectionsBefore);
+    expect(JSON.stringify(sourceSectionsBefore)).toContain(target.mainLineId);
   });
 
   it("rolls back step and item dependency cycles", async () => {
@@ -2181,6 +2197,139 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     expect((await services.item.getItem(SUPER_ADMIN, temp.mainLineId)).linkedMainLines).toMatchObject([{ revisionStatus: "active", revisionId: source.revisionId }]);
     await services.item.activate(SUPER_ADMIN, source.mainLineId, draft.draftRevisionId!, { expectedVersion: cleared.aggregateVersion });
     expect((await services.item.getItem(SUPER_ADMIN, temp.mainLineId)).linkedMainLines).toEqual([]);
+  });
+
+  it("preserves activated Configuration content and digests when a referenced item is deleted", async () => {
+    const services = createServices();
+    const target = await createAndActivateOverviewOnly(services.item, "Referenced light fitting");
+    let source = await createConfiguredDraft(services.item, "Priced POP false ceiling", { withPrice: true });
+    const rule = {
+      id: "preserved-price-reference", trigger: "removed", action: "remove", requirement: "must",
+      targetType: "catalog", targetBasketId: BASKET_ID, targetSubBasketId: null,
+      targetMainLineId: target.mainLineId, reason: "The fitting belongs to the ceiling.", active: true
+    };
+    source = await updateDraftSection(services.item, source, "recommendations", { budgetAlterations: [rule] });
+    const firstActive = await services.item.activate(SUPER_ADMIN, source.mainLineId, source.revisionId, {
+      expectedVersion: source.aggregateVersion
+    });
+    const secondDraft = await services.item.createRevision(SUPER_ADMIN, source.mainLineId, {
+      expectedVersion: firstActive.version
+    });
+    const secondActive = await services.item.activate(SUPER_ADMIN, source.mainLineId, secondDraft.draftRevisionId!, {
+      expectedVersion: secondDraft.version
+    });
+    const currentDraft = await services.item.createRevision(SUPER_ADMIN, source.mainLineId, {
+      expectedVersion: secondActive.version
+    });
+    const historicalRevisionIds = [source.revisionId, secondDraft.draftRevisionId!];
+    const historicalRevisionsBefore = await AiEstimatorKnowledgeRevisionModel.find({
+      _id: { $in: historicalRevisionIds }
+    }).sort({ revisionNumber: 1 }).lean().exec();
+    const historicalSectionsBefore = await AiEstimatorKnowledgeSectionModel.find({
+      revisionId: { $in: historicalRevisionIds }
+    }).sort({ revisionId: 1, sectionKey: 1 }).lean().exec();
+    const draftSectionBefore = await services.item.getSection(
+      SUPER_ADMIN, source.mainLineId, currentDraft.draftRevisionId!, "recommendations"
+    );
+
+    const inactiveTarget = await services.item.deactivate(SUPER_ADMIN, target.mainLineId, {
+      expectedVersion: target.aggregateVersion
+    });
+    await services.item.permanentlyDeleteMainLine(SUPER_ADMIN, target.mainLineId, {
+      expectedVersion: inactiveTarget.version
+    });
+
+    expect(await AiEstimatorKnowledgeRevisionModel.find({ _id: { $in: historicalRevisionIds } })
+      .sort({ revisionNumber: 1 }).lean().exec()).toEqual(historicalRevisionsBefore);
+    expect(await AiEstimatorKnowledgeSectionModel.find({ revisionId: { $in: historicalRevisionIds } })
+      .sort({ revisionId: 1, sectionKey: 1 }).lean().exec()).toEqual(historicalSectionsBefore);
+    expect(historicalRevisionsBefore.map((revision) => [revision.status, revision.contentDigest]))
+      .toEqual([["superseded", firstActive.activeRevision?.contentDigest],
+        ["active", secondActive.activeRevision?.contentDigest]]);
+    const currentDraftSection = await services.item.getSection(
+      SUPER_ADMIN, source.mainLineId, currentDraft.draftRevisionId!, "recommendations"
+    );
+    expect(currentDraftSection).toMatchObject({
+      version: draftSectionBefore.version + 1,
+      payload: { budgetAlterations: [] }
+    });
+    const context = await services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID, mainLineId: source.mainLineId, quantity: "1.00", uomId: UOM_ID
+    });
+    expect(context.lineage.revisionId).toBe(currentDraft.draftRevisionId);
+    expect(context.lineage.contentDigest).toMatch(/^[a-f0-9]{64}$/u);
+    expect(context.lineage.contentDigest).not.toBe(secondActive.activeRevision?.contentDigest);
+    expect(context.sections.recommendations).toMatchObject({ budgetAlterations: [] });
+    expect(context.preview).not.toBeNull();
+  });
+
+  it("copies an active revision into an editable draft after a referenced Main Basket was deleted", async () => {
+    const services = createServices();
+    const targetBasket = await services.reference.createBasket(SUPER_ADMIN, {
+      name: "Retired referenced Basket"
+    });
+    let source = await createConfiguredDraft(services.item, "Source with historical Basket reference");
+    source = await updateDraftSection(services.item, source, "scope",
+      historicalScopeReference(targetBasket.id, "retired-basket"));
+    const active = await services.item.activate(SUPER_ADMIN, source.mainLineId, source.revisionId, {
+      expectedVersion: source.aggregateVersion
+    });
+    const activeRevisionBefore = await AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean().exec();
+    const activeScopeBefore = await services.item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "scope");
+    await services.reference.permanentlyDeleteBasket(SUPER_ADMIN, targetBasket.id, {
+      expectedVersion: targetBasket.version,
+      confirmationName: targetBasket.name,
+      reason: "Retire an unrelated Basket"
+    });
+
+    const draft = await services.item.createRevision(SUPER_ADMIN, source.mainLineId, {
+      expectedVersion: active.version
+    });
+    expect((await services.item.getSection(SUPER_ADMIN, source.mainLineId, draft.draftRevisionId!, "scope"))
+      .payload.exclusions).toEqual([]);
+    expect(await services.item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "scope"))
+      .toEqual(activeScopeBefore);
+    expect(await AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean().exec())
+      .toEqual(activeRevisionBefore);
+    await expect(services.item.activate(SUPER_ADMIN, source.mainLineId, draft.draftRevisionId!, {
+      expectedVersion: draft.version
+    })).resolves.toMatchObject({ activeRevisionId: draft.draftRevisionId });
+  });
+
+  it("copies an active revision into an editable draft after a referenced Main Line was deleted", async () => {
+    const services = createServices();
+    const target = await createAndActivateOverviewOnly(services.item, "Retired related item");
+    let source = await createConfiguredDraft(services.item, "Source with priced historical relation", { withPrice: true });
+    source = await updateDraftSection(services.item, source, "advanced", {
+      dependencies: [{
+        id: "retired-related-item", targetBasketId: BASKET_ID,
+        targetMainLineId: target.mainLineId, reason: null, active: true
+      }]
+    });
+    const active = await services.item.activate(SUPER_ADMIN, source.mainLineId, source.revisionId, {
+      expectedVersion: source.aggregateVersion
+    });
+    const activeRevisionBefore = await AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean().exec();
+    const activeAdvancedBefore = await services.item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced");
+    const inactiveTarget = await services.item.deactivate(SUPER_ADMIN, target.mainLineId, {
+      expectedVersion: target.aggregateVersion
+    });
+    await services.item.permanentlyDeleteMainLine(SUPER_ADMIN, target.mainLineId, {
+      expectedVersion: inactiveTarget.version
+    });
+
+    const draft = await services.item.createRevision(SUPER_ADMIN, source.mainLineId, {
+      expectedVersion: active.version
+    });
+    expect((await services.item.getSection(SUPER_ADMIN, source.mainLineId, draft.draftRevisionId!, "advanced"))
+      .payload.dependencies).toEqual([]);
+    expect(await services.item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced"))
+      .toEqual(activeAdvancedBefore);
+    expect(await AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean().exec())
+      .toEqual(activeRevisionBefore);
+    await expect(services.item.activate(SUPER_ADMIN, source.mainLineId, draft.draftRevisionId!, {
+      expectedVersion: draft.version
+    })).resolves.toMatchObject({ activeRevisionId: draft.draftRevisionId });
   });
 
   it("projects enabled Budget Alterations with revision lineage and current target availability", async () => {
@@ -2289,6 +2438,17 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
       { id: "draft-only-rule", target: { status: "available", availableChildCount: 1, temporaryChildCount: 0, completionRequired: true } },
       { id: "active-only-rule", target: { status: "available", availableChildCount: 1, temporaryChildCount: 0, completionRequired: false } },
       { id: "temporary-only-rule", target: { status: "available", availableChildCount: 1, temporaryChildCount: 1, completionRequired: true } }
+    ] });
+
+    await services.item.createRevision(SUPER_ADMIN, activeOnly.mainLineId, { expectedVersion: activeOnly.version });
+    const currentDraft = await services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID, mainLineId: source.mainLineId, quantity: "1.00", uomId: UOM_ID
+    });
+    expect(currentDraft.sections.recommendations).toMatchObject({ budgetAlterations: [
+      { id: "draft-only-rule" },
+      { id: "active-only-rule", target: { status: "available", availableChildCount: 1,
+        temporaryChildCount: 0, completionRequired: true } },
+      { id: "temporary-only-rule" }
     ] });
 
     await services.item.createMainLine(SUPER_ADMIN, BASKET_ID, {
@@ -2756,8 +2916,9 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
       mainLineId: draft.mainLineId,
       modeKind: "pmc"
     });
-    expect(JSON.stringify(contextAfterDraftEdit.sections.advanced)).toContain("PMC mark A1");
-    expect(JSON.stringify(contextAfterDraftEdit.sections.advanced)).not.toMatch(/PMC mark [BC]1/u);
+    expect(contextAfterDraftEdit.lineage.revisionId).toBe(copiedRevisionId);
+    expect(JSON.stringify(contextAfterDraftEdit.sections.advanced)).toMatch(/PMC mark [BC]1/u);
+    expect(JSON.stringify(contextAfterDraftEdit.sections.advanced)).not.toContain("PMC mark A1");
 
     await expect(services.item.updateSection(
       SUPER_ADMIN,
@@ -2775,13 +2936,18 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     });
 
     await AiEstimatorKnowledgeModeModel.deleteOne({ _id: PMC_MODE_ID });
+    const draftSharedPrice = await AiEstimatorKnowledgePriceVersionModel.findOne({
+      revisionId: copiedRevisionId,
+      modeId: null
+    }).lean().exec();
+    expect(draftSharedPrice).not.toBeNull();
     await expect(services.context.resolve(SUPER_ADMIN, {
       mainBasketId: BASKET_ID,
       mainLineId: draft.mainLineId,
       modeKind: "execution"
     })).resolves.toMatchObject({
-      lineage: { priceVersionId: sharedPrice?._id },
-      preview: { effectivePriceVersionId: sharedPrice?._id }
+      lineage: { priceVersionId: draftSharedPrice?._id },
+      preview: { effectivePriceVersionId: draftSharedPrice?._id }
     });
     await expect(services.context.resolve(SUPER_ADMIN, {
       mainBasketId: BASKET_ID,

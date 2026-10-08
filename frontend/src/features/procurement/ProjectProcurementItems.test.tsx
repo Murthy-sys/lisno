@@ -106,8 +106,7 @@ describe("ProjectProcurementItems", () => {
     await user.type(screen.getByRole("textbox", { name: /Planned order quantity/ }), "2.5");
     const amountPreview = within(screen.getByRole("dialog"));
     expect(amountPreview.getByText("Planned amount, before GST").nextElementSibling).toHaveTextContent("₹300.13");
-    expect(amountPreview.getByText("GST (18%)").nextElementSibling).toHaveTextContent("₹54.02");
-    expect(amountPreview.getByText("Planned amount, with GST").nextElementSibling).toHaveTextContent("₹354.15");
+    expect(amountPreview.queryByText(/GST \(18%\)/)).not.toBeInTheDocument();
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add item" }));
     await screen.findByText("Plywood board added in this project.");
     expect(post).toHaveBeenCalledWith({ itemName: "Plywood board", brand: "Greenply", uomId: uom.id, vendorId: null, pricePaise: 12005, plannedOrderQuantityMilliUnits: 2500, ...sourceFor() });
@@ -412,9 +411,7 @@ describe("ProjectProcurementItems", () => {
     await user.selectOptions(screen.getByRole("combobox", { name: "UOM" }), uom.id);
     await user.type(screen.getByRole("textbox", { name: "Price (INR)" }), "88.01");
     await user.type(screen.getByRole("textbox", { name: /Planned order quantity/ }), "1");
-    await user.click(screen.getByRole("button", { name: "Use planned amount with GST for allocated work" }));
-    expect(screen.getByRole("textbox", { name: "Allocated work (INR)" })).toHaveValue("103.85");
-    await user.clear(screen.getByRole("textbox", { name: "Allocated work (INR)" }));
+    expect(screen.queryByRole("button", { name: "Use planned amount with GST for allocated work" })).not.toBeInTheDocument();
     await user.type(screen.getByRole("textbox", { name: "Allocated work (INR)" }), "30000");
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add item" }));
     await waitFor(() => expect(itemPosts).toHaveBeenCalledWith({ itemName: "Plywood board", brand: "Greenply", uomId: uom.id, vendorId: active.id, pricePaise: 8801, plannedOrderQuantityMilliUnits: 1000, allocatedWorkPaise: 3000000, ...sourceFor() }));

@@ -16,7 +16,7 @@ import type {
 import { useFeedback } from "../../components/feedback/FeedbackProvider";
 import { Button } from "../../components/ui/Button";
 import { ContextPanel } from "../../components/ui/ContextPanel";
-import { Field, Input } from "../../components/ui/Field";
+import { Field, Input, Select } from "../../components/ui/Field";
 import { SearchCombobox } from "../../components/ui/SearchCombobox";
 import {
   adminProjectKeys,
@@ -26,16 +26,17 @@ import {
 } from "./adminProjectsApi";
 import { leadKeys } from "../leads/leadsApi";
 import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
+import { propertyTypes } from "../leads/propertyTypes";
+import { NextActionDateTime } from "./NextActionDateTime";
 
 interface ProjectInitiationForm {
   clientName: string;
   clientEmail: string;
   clientMobile: string;
   projectName: string;
-  location: string;
+  cityName: string;
   propertyType: string;
-  budgetMin: string;
-  budgetMax: string;
+  source: string;
   nextAction: string;
   nextActionAt: string;
 }
@@ -45,10 +46,9 @@ const emptyForm: ProjectInitiationForm = {
   clientEmail: "",
   clientMobile: "",
   projectName: "",
-  location: "",
+  cityName: "",
   propertyType: "",
-  budgetMin: "",
-  budgetMax: "",
+  source: "",
   nextAction: "",
   nextActionAt: ""
 };
@@ -58,12 +58,11 @@ const fields = [
   ["clientEmail", "Client email", "email", "example@email.com"],
   ["clientMobile", "Mobile", "text", "Enter mobile number"],
   ["projectName", "Project / property name", "text", "Enter project / property name"],
-  ["location", "Location", "text", "Enter location"],
+  ["cityName", "Project city", "text", "Enter city for vendor matching"],
   ["propertyType", "Property type", "text", "Enter property type"],
-  ["budgetMin", "Minimum budget", "number", "Enter minimum budget"],
-  ["budgetMax", "Maximum budget", "number", "Enter maximum budget"],
+  ["source", "Source", "text", "Instagram, existing customer, social media…"],
   ["nextAction", "Next action", "text", "Enter next action"],
-  ["nextActionAt", "Next action date", "datetime-local", undefined]
+  ["nextActionAt", "Next action date", "date", undefined]
 ] as const satisfies ReadonlyArray<readonly [keyof ProjectInitiationForm, string, string, string | undefined]>;
 
 function validate(
@@ -74,24 +73,11 @@ function validate(
 ): Record<string, string> {
   const errors: Record<string, string> = {};
   for (const [key, label] of fields) {
+    if (key === "cityName" || key === "source") continue;
     if (!form[key].trim()) errors[key] = `${label} is required.`;
   }
-  const minimum = Number(form.budgetMin);
-  const maximum = Number(form.budgetMax);
-  if (form.budgetMin.trim() && (!Number.isFinite(minimum) || minimum < 0)) {
-    errors.budgetMin = "Minimum budget must be a non-negative number.";
-  }
-  if (form.budgetMax.trim() && (!Number.isFinite(maximum) || maximum < 0)) {
-    errors.budgetMax = "Maximum budget must be a non-negative number.";
-  } else if (
-    Number.isFinite(minimum) &&
-    minimum >= 0 &&
-    Number.isFinite(maximum) &&
-    maximum < minimum
-  ) {
-    errors.budgetMax = "Maximum budget must be at least the minimum budget.";
-  }
-  if (form.nextActionAt.trim() && Number.isNaN(new Date(form.nextActionAt).getTime())) {
+  if (form.source.trim().length > 200) errors.source = "Source must be 200 characters or fewer.";
+  if (form.nextActionAt.trim() && Number.isNaN(new Date(`${form.nextActionAt}T00:00:00`).getTime())) {
     errors.nextActionAt = "Next action date must be valid.";
   }
   if (!selectedAssignee) {
@@ -120,7 +106,7 @@ export function AdminProjectInitiationDialog({
   const [selectedAssignee, setSelectedAssignee] = useState<EstimatorOption | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [submissionError, setSubmissionError] = useState<string | null>(null);
-  const refs = useRef<Record<string, HTMLInputElement | null>>({});
+  const refs = useRef<Record<string, HTMLInputElement | HTMLSelectElement | HTMLButtonElement | null>>({});
   const submissionStarted = useRef(false);
 
   useEffect(() => {
@@ -175,9 +161,8 @@ export function AdminProjectInitiationDialog({
     }
   });
 
-  const update = (key: keyof ProjectInitiationForm) =>
-    (event: ChangeEvent<HTMLInputElement>) => {
-      setForm((current) => ({ ...current, [key]: event.target.value }));
+  const updateValue = (key: keyof ProjectInitiationForm, value: string) => {
+      setForm((current) => ({ ...current, [key]: value }));
       setFieldErrors((current) => {
         if (!current[key]) return current;
         const next = { ...current };
@@ -185,6 +170,9 @@ export function AdminProjectInitiationDialog({
         return next;
       });
     };
+
+  const update = (key: keyof ProjectInitiationForm) =>
+    (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => updateValue(key, event.target.value);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -203,12 +191,12 @@ export function AdminProjectInitiationDialog({
       clientEmail: form.clientEmail.trim(),
       clientMobile: form.clientMobile.trim(),
       projectName: form.projectName.trim(),
-      location: form.location.trim(),
+      ...(form.cityName.trim() ? { cityName: form.cityName.trim() } : {}),
       propertyType: form.propertyType.trim(),
-      budgetMin: Number(form.budgetMin),
-      budgetMax: Number(form.budgetMax),
+      ...(form.source.trim() ? { source: form.source.trim() } : {}),
       nextAction: form.nextAction.trim(),
-      nextActionAt: new Date(form.nextActionAt).toISOString(),
+      // The initiation form collects a local calendar date; the API stores a timestamp.
+      nextActionAt: new Date(`${form.nextActionAt}T00:00:00`).toISOString(),
       ...(selectsSalesManager
         ? { salesManagerId: selectedAssignee.id }
         : { estimatorId: selectedAssignee.id })
@@ -254,25 +242,34 @@ export function AdminProjectInitiationDialog({
         {fields.map(([key, label, type, placeholder]) => (
           <Field
             key={key}
-            className={key === "clientName" || key === "projectName" ? "admin-project-form__wide" : undefined}
+            className={key === "clientName" || key === "projectName" || key === "source" || key === "nextAction" || key === "nextActionAt" ? "admin-project-form__wide" : undefined}
             id={`admin-project-${key}`}
             label={label}
-            required
+            required={key !== "cityName" && key !== "source"}
+            hint={key === "source" ? "How did the client hear about Lisno?" : undefined}
             error={fieldErrors[key]}
           >
             {(controlProps) => (
               <div className="admin-project-form__control">
-                <Input
+                {key === "propertyType" ? <Select {...controlProps}
+                  ref={(node) => { refs.current[key] = node; }} name={key}
+                  value={form.propertyType} onChange={update(key)} disabled={mutation.isPending}>
+                  <option value="">Select property type</option>
+                  {propertyTypes.map((option) => <option key={option} value={option}>{option}</option>)}
+                </Select> : key === "nextActionAt" ? <NextActionDateTime {...controlProps}
+                  value={form.nextActionAt} onChange={(value) => updateValue(key, value)}
+                  inputRef={(node) => { refs.current[key] = node; }} disabled={mutation.isPending}
+                /> : <Input
                   {...controlProps}
                   ref={(node) => { refs.current[key] = node; }}
                   name={key}
                   type={type}
                   placeholder={placeholder}
-                  min={key === "budgetMin" || key === "budgetMax" ? 0 : undefined}
-                  step={key === "budgetMin" || key === "budgetMax" ? "any" : undefined}
+                  maxLength={key === "source" ? 200 : undefined}
+                  disabled={mutation.isPending}
                   value={form[key]}
                   onChange={update(key)}
-                />
+                />}
               </div>
             )}
           </Field>

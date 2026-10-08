@@ -15,6 +15,14 @@ const review = (id: string, imageIds: string[] = []) => ({
 });
 
 describe("ClientVendorWorkReview", () => {
+  it("shows an unspecified scope when a review has no section label or scope", async () => {
+    server.use(http.get("/api/v1/clients/projects/project-a/vendor-work-reviews", () => HttpResponse.json({
+      data: { items: [{ ...review("joinery"), sectionLabel: "", scopeType: null }], total: 1 }
+    })));
+    renderWithQuery(<ClientVendorWorkReview projectId="project-a" />);
+    expect(await screen.findByText("Living room · Not specified")).toBeVisible();
+  });
+
   it("shows each section's images beside that section and requests actionable changes", async () => {
     const decisions: Array<Record<string, unknown>> = [];
     const imageFetch = vi.fn(() => new HttpResponse(new Blob(["image"], { type: "image/png" }), { headers: { "Content-Type": "image/png" } }));

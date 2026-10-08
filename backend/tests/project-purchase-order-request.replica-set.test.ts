@@ -1,5 +1,11 @@
 import mongoose, { type ClientSession } from "mongoose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createKnowledgeRevisionDigest } from "../src/domain/ai-estimator-knowledge-completeness.js";
+import { AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS } from "../src/domain/ai-estimator-knowledge.js";
+import { AiEstimatorKnowledgePriceVersionModel } from "../src/models/AiEstimatorKnowledgePriceVersion.js";
+import { AiEstimatorKnowledgeRevisionModel } from "../src/models/AiEstimatorKnowledgeRevision.js";
+import { AiEstimatorKnowledgeSectionModel } from "../src/models/AiEstimatorKnowledgeSection.js";
+import { AiEstimatorKnowledgeTaxVersionModel } from "../src/models/AiEstimatorKnowledgeTaxVersion.js";
 import { AiEstimatorKnowledgeUomModel } from "../src/models/AiEstimatorKnowledgeUom.js";
 import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowledgeVendor.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
@@ -8,6 +14,7 @@ import { EstimateModel } from "../src/models/Estimate.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { ProjectProcurementItemModel } from "../src/models/ProjectProcurementItem.js";
 import { ProjectPurchaseOrderModel } from "../src/models/ProjectPurchaseOrder.js";
+import { ProjectPurchaseOrderModeDecisionModel, ProjectPurchaseOrderModeDecisionReceiptModel } from "../src/models/ProjectPurchaseOrderModeDecision.js";
 import { ProjectPurchaseOrderRequestModel } from "../src/models/ProjectPurchaseOrderRequest.js";
 import { ProjectPurchaseOrderRequestRevisionModel } from "../src/models/ProjectPurchaseOrderRequestRevision.js";
 import { ProjectPurchaseOrderRevisionModel } from "../src/models/ProjectPurchaseOrderRevision.js";
@@ -18,6 +25,7 @@ import { createMemoryRepository } from "../src/repositories/memory.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import type { PublicUser } from "../src/services/auth.service.js";
 import { buildProjectPurchaseOrderPreparation } from "../src/services/project-purchase-order-preparation.service.js";
+import { createProjectPurchaseOrderModeDecisionService } from "../src/services/project-purchase-order-mode.service.js";
 import { createProjectPurchaseOrderRequestService } from "../src/services/project-purchase-order-request.service.js";
 import { createProjectPurchaseOrderService } from "../src/services/project-purchase-order.service.js";
 import { createProjectProcurementService } from "../src/services/project-procurement.service.js";
@@ -36,13 +44,17 @@ const admin: PublicUser = { id: "request-admin", name: "Admin", email: "request-
 const client: PublicUser = { id: "request-client", name: "Client", email: "request-client@example.test", role: "client" };
 const audit = createAuditService(createMemoryRepository());
 const service = createProjectPurchaseOrderRequestService({ audit, onApproved: onPurchaseOrderApproved, now: () => now });
+const modeDecisions = createProjectPurchaseOrderModeDecisionService({ audit, now: () => now });
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 
 beforeAll(async () => {
   replica = await startMongoReplicaSet("project-purchase-order-request-tests");
   await Promise.all([UserModel, ProjectModel, EstimateModel, EstimateClientReviewRoundModel, ProjectWorkflowTaskModel,
-    AiEstimatorKnowledgeUomModel, AiEstimatorKnowledgeVendorModel, ProjectProcurementItemModel, ProjectPurchaseOrderModel,
+    AiEstimatorKnowledgeUomModel, AiEstimatorKnowledgeVendorModel, AiEstimatorKnowledgeRevisionModel,
+    AiEstimatorKnowledgeSectionModel, AiEstimatorKnowledgePriceVersionModel, AiEstimatorKnowledgeTaxVersionModel,
+    ProjectProcurementItemModel, ProjectPurchaseOrderModel,
     ProjectPurchaseOrderRevisionModel, ProjectPurchaseOrderRequestModel, ProjectPurchaseOrderRequestRevisionModel,
+    ProjectPurchaseOrderModeDecisionModel, ProjectPurchaseOrderModeDecisionReceiptModel,
     VendorWorkAssignmentModel, AuditEventModel].map(model => model.syncIndexes()));
 }, 120_000);
 beforeEach(async () => {
@@ -68,6 +80,13 @@ beforeEach(async () => {
     item("request-project-a", "b", "CB", "line-second", "request-vendor-b", 20_000, 2_000, 50_000),
     item("request-project-b", "c", "CA", "line-first", "request-vendor-a", 5_001, 1_000, 10_000)
   ]);
+  for (const projectId of ["request-project-a", "request-project-b"])
+    for (const lineKey of ["line-first", "line-second"])
+      await modeDecisions.save(buyer, projectId, { sourceLineItemKey: lineKey, expectedVersion: 0,
+        expectedEstimateSource: { estimateId: `estimate-${projectId}`, estimateVersion: 1,
+          estimateReviewRoundId: `round-${projectId}` },
+        idempotencyKey: `legacy-${projectId}-${lineKey}`, mode: null, quantity: null, discountBps: 0,
+        markupBasis: "starting", exceptionReason: "Historical approved line has no saved Configuration revision." });
 });
 afterAll(async () => { await replica?.stop(); });
 
@@ -109,14 +128,113 @@ function item(projectId: string, suffix: string, sectionId: string, lineKey: str
     vendorSearch: vendorId, pricePaise, plannedOrderQuantityMilliUnits: quantityMilliUnits, allocatedWorkPaise,
     version: 1, createdById: buyer.id, updatedById: buyer.id };
 }
+async function configureFirstApprovedLine() {
+  const mainLineId = "request-main-line";
+  const revisionId = "request-config-revision";
+  const sections = AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map(sectionKey => ({
+    _id: `${revisionId}-${sectionKey}`, mainLineId, revisionId, sectionKey,
+    applicability: ["overview", "advanced", "pricing", "quantity-margin"].includes(sectionKey) ? "configured" : "not_configured",
+    payload: sectionKey === "overview" ? { uomId: "request-meter" }
+      : sectionKey === "advanced" ? { modeCalculations: { pmc: { baseRatePaise: 10_000,
+        lowQuantityLimit: "2", impactBps: 1_000, minimumMarkupBps: 1_000, startingMarkupBps: 2_000 },
+        sub_vendor: null, in_house_labor: null, in_house_material: null },
+        pmcMarginBps: 1_500, subVendorMarginBps: null }
+        : sectionKey === "pricing" ? { priceEntries: [{ operation: "reference", priceEntryId: "request-price-entry",
+          priceVersionId: "request-price-version" }] }
+          : sectionKey === "quantity-margin" ? { gapBehavior: "no_adjustment", quantitySlabs: [], wastageBps: 0 } : {},
+    version: 1, createdById: buyer.id, updatedById: buyer.id, createdAt: now, updatedAt: now
+  }));
+  const contentDigest = createKnowledgeRevisionDigest({ mainLineId, revisionNumber: 1,
+    sections: sections.map(section => ({ sectionKey: section.sectionKey,
+      applicability: section.applicability as "configured" | "not_configured", payload: section.payload })) });
+  await AiEstimatorKnowledgeRevisionModel.collection.insertOne({ _id: revisionId, mainLineId, revisionNumber: 1,
+    status: "active", contentDigest, version: 2, createdById: buyer.id, updatedById: buyer.id,
+    activatedAt: now, activatedById: buyer.id, createdAt: now, updatedAt: now });
+  await AiEstimatorKnowledgeSectionModel.collection.insertMany(sections);
+  await AiEstimatorKnowledgeTaxVersionModel.collection.insertOne({ _id: "request-tax-version", taxRuleId: "request-tax-rule",
+    versionNumber: 1, rateBps: 1_800, treatment: "exclusive", applicability: "purchase",
+    effectiveFrom: new Date("2026-01-01T00:00:00.000Z"), effectiveTo: null, status: "active", version: 1,
+    createdById: buyer.id, updatedById: buyer.id, createdAt: now, updatedAt: now });
+  await AiEstimatorKnowledgePriceVersionModel.collection.insertOne({ _id: "request-price-version", mainLineId, revisionId,
+    priceEntryId: "request-price-entry", scopeKey: "fixture", versionNumber: 1, vendorId: "request-vendor-a",
+    uomId: "request-meter", specificationId: null, modeId: null, taxRuleId: "request-tax-rule",
+    taxVersionId: "request-tax-version", currency: "INR", treatment: "exclusive", inputAmountPaise: 10_001,
+    baseAmountPaise: 10_001, taxAmountPaise: 1_800, totalAmountPaise: 11_801,
+    effectiveFrom: new Date("2026-01-01T00:00:00.000Z"), effectiveTo: null, status: "active", reviewRequired: false,
+    version: 1, createdById: buyer.id, updatedById: buyer.id, createdAt: now, updatedAt: now });
+  await EstimateClientReviewRoundModel.collection.updateOne({ _id: "round-request-project-a" }, { $set: {
+    "estimateSnapshot.lineItems.0.source": "configuration", "estimateSnapshot.lineItems.0.itemType": "main_line",
+    "estimateSnapshot.lineItems.0.catalogueId": mainLineId,
+    "estimateSnapshot.lineItems.0.amountPaise": 1_000_000,
+    "estimateSnapshot.lineItems.0.roomId": "request-room-a",
+    "estimateSnapshot.lineItems.0.mainBasketId": "request-basket-a",
+    "estimateSnapshot.lineItems.0.mainBasketName": "Joinery",
+    "estimateSnapshot.lineItems.0.subBasketId": "request-sub-a",
+    "estimateSnapshot.lineItems.0.subBasketName": "Cabinetry",
+    "estimateSnapshot.lineItems.0.mainLineId": mainLineId,
+    "estimateSnapshot.lineItems.0.mainLineName": "Timber",
+    "estimateSnapshot.lineItems.0.revisionId": revisionId,
+    "estimateSnapshot.lineItems.0.sourceItemStatus": "active",
+    "estimateSnapshot.lineItems.0.sourceRevisionStatus": "active",
+    "estimateSnapshot.lineItems.0.sourceItemVersion": 1,
+    "estimateSnapshot.lineItems.0.sourceRevisionVersion": 2,
+    "estimateSnapshot.lineItems.0.uomId": "request-meter",
+    "estimateSnapshot.lineItems.0.uomCode": "M",
+    "estimateSnapshot.lineItems.0.uomDecimalScale": 2,
+    "estimateSnapshot.lineItems.0.uomName": "Meter"
+  } });
+  await ProjectProcurementItemModel.collection.updateMany({ projectId: "request-project-a",
+    sourceLineItemKey: "line-first" }, { $set: { sourceSectionId: "request-basket-a" } });
+  await modeDecisions.save(buyer, "request-project-a", { sourceLineItemKey: "line-first", expectedVersion: 1,
+    expectedEstimateSource: { estimateId: "estimate-request-project-a", estimateVersion: 1,
+      estimateReviewRoundId: "round-request-project-a" }, expectedRevisionDigest: contentDigest,
+    idempotencyKey: "first-line-configured-mode", mode: "pmc", quantity: "2", discountBps: 0,
+    markupBasis: "starting", exceptionReason: null });
+}
+async function saveRecoveredFirstApprovedLine() {
+  await configureFirstApprovedLine();
+  // Model the reported mismatch: content changes without a timestamp change.
+  await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "request-config-revision-advanced" },
+    { $set: { "payload.modeCalculations.pmc.baseRatePaise": 11_000 } });
+  const before = await preparation();
+  const pendingMode = before.estimateLines.find(line => line.key === "line-first")?.mode;
+  expect(pendingMode).toMatchObject({ state: "unavailable", integrity: { status: "mismatch",
+    activatedDigest: expect.any(String), observedDigest: expect.any(String) } });
+  const observedDigest = pendingMode!.integrity!.observedDigest;
+  const sectionsBeforeSave = await AiEstimatorKnowledgeSectionModel.find({ revisionId: "request-config-revision" }).lean();
+  const revisionBeforeSave = await AiEstimatorKnowledgeRevisionModel.findById("request-config-revision").lean();
+  const saved = await modeDecisions.save(buyer, "request-project-a", { sourceLineItemKey: "line-first", expectedVersion: 2,
+    expectedEstimateSource: { estimateId: "estimate-request-project-a", estimateVersion: 1,
+      estimateReviewRoundId: "round-request-project-a" },
+    expectedRevisionDigest: pendingMode!.revision!.contentDigest,
+    idempotencyKey: "first-line-recovered-mode", mode: "pmc", quantity: "2", discountBps: 0,
+    markupBasis: "starting", exceptionReason: null,
+    recovery: { expectedObservedDigest: observedDigest,
+      reason: "Buyer reviewed the current saved PMC calculation.", acknowledge: true } });
+  expect(saved.integrityBasis).toMatchObject({ kind: "observed_unverified", observedDigest,
+    activatedDigest: pendingMode!.revision!.contentDigest });
+  expect(await AiEstimatorKnowledgeSectionModel.find({ revisionId: "request-config-revision" }).lean()).toEqual(sectionsBeforeSave);
+  expect(await AiEstimatorKnowledgeRevisionModel.findById("request-config-revision").lean()).toEqual(revisionBeforeSave);
+  const prepared = await preparation();
+  expect(prepared.estimateLines.find(line => line.key === "line-first")?.mode).toMatchObject({ state: "ready",
+    integrity: { observedDigest }, decision: { integrityBasis: { observedDigest } },
+    preview: { settings: { scopes: [{ baseRatePaise: 11_000 }] } } });
+  return { prepared, observedDigest, saved };
+}
 async function preparation(projectId = "request-project-a") {
   return mongoose.connection.transaction(session => buildProjectPurchaseOrderPreparation(projectId, session));
 }
+async function historicalPreparation(projectId = "request-project-a") {
+  return mongoose.connection.transaction(session => buildProjectPurchaseOrderPreparation(projectId, session,
+    { at: now, digestVersion: "legacy" }));
+}
 function submitInput(digest: string, corrected = false) {
   return { expectedPreparationDigest: digest, lines: [
-    { procurementItemId: "request-item-a", expectedVersion: corrected ? 2 : 1, gstBasisPoints: 1_800, scopeType: "execution" as const,
+    { procurementItemId: "request-item-a", expectedVersion: corrected ? 2 : 1, gstBasisPoints: 1_800,
+      commercialExceptionReason: "Agreed rate and tax for this historical source item.", scopeType: "execution" as const,
       description: "Build joinery", targetDate: "2026-11-15", deliveryLocation: "Villa" },
-    { procurementItemId: "request-item-b", expectedVersion: 1, gstBasisPoints: 500, scopeType: "supply" as const,
+    { procurementItemId: "request-item-b", expectedVersion: 1, gstBasisPoints: 500,
+      commercialExceptionReason: "Agreed rate and tax for this historical source item.", scopeType: "supply" as const,
       description: "Deliver wiring", targetDate: "2026-11-20", deliveryLocation: "Villa" }
   ], vendorTerms: [{ vendorId: "request-vendor-a", terms: "On site" }, { vendorId: "request-vendor-b", terms: "Delivery included" }],
   idempotencyKey: corrected ? "submit-corrected-request" : "submit-project-request" };
@@ -162,6 +280,252 @@ describe("project purchase-order request transactions", () => {
     expect(submitted.vendorTotals).toEqual(quote.vendorTotals);
   });
 
+  it("rejects duplicate child IDs even when the array length masks an omitted item", async () => {
+    const prepared = await preparation();
+    const input = submitInput(prepared.digest);
+    const duplicate = { ...input, lines: [input.lines[0]!, input.lines[0]!] };
+    const { idempotencyKey: _key, ...quoteInput } = duplicate;
+    await expect(service.quote(buyer, "request-project-a", quoteInput)).rejects.toMatchObject({
+      status: 400, code: "VALIDATION_ERROR" });
+    await expect(service.submit(buyer, "request-project-a", duplicate)).rejects.toMatchObject({
+      status: 400, code: "VALIDATION_ERROR" });
+    expect(await ProjectPurchaseOrderRequestModel.countDocuments()).toBe(0);
+  });
+
+  it("requires documented commercial terms for an unavailable historical price and freezes one snapshot for multiple children", async () => {
+    await ProjectProcurementItemModel.create(item("request-project-a", "extra", "CA", "line-first",
+      "request-vendor-a", 3_333, 1_000, 5_000));
+    const prepared = await preparation();
+    const input = submitInput(prepared.digest);
+    input.lines.push({ procurementItemId: "request-item-extra", expectedVersion: 1, gstBasisPoints: 500,
+      commercialExceptionReason: "Extra material uses the vendor's directly agreed rate and GST.",
+      scopeType: "supply", description: "Additional material", targetDate: "2026-11-20", deliveryLocation: "Villa" });
+    const { idempotencyKey: _key, ...quoteInput } = input;
+    await expect(service.quote(buyer, "request-project-a", { ...quoteInput,
+      lines: quoteInput.lines.map((line, index) => index === 2 ? { ...line, commercialExceptionReason: null } : line)
+    })).rejects.toMatchObject({ code: "PURCHASE_ORDER_COMMERCIAL_EXCEPTION_REQUIRED" });
+
+    const quote = await service.quote(buyer, "request-project-a", quoteInput);
+    expect(quote.modeSnapshots).toHaveLength(2);
+    const first = quote.modeSnapshots.find(snapshot => snapshot.sourceLineItemKey === "line-first");
+    expect(first).toMatchObject({ source: "legacy", mode: { state: "exception", decision: { version: 1,
+      exceptionReason: expect.stringContaining("Historical approved line") } },
+      actualChildren: [{ procurementItemId: "request-item-a" }, { procurementItemId: "request-item-extra" }] });
+    expect(first?.actualTotals).toEqual({ netPaise: 15_834, gstPaise: 2_417, totalPaise: 18_251 });
+    expect(first?.actualNetMinusConfiguredCostPaise).toBeNull();
+    const submitted = await service.submit(buyer, "request-project-a", input);
+    expect(submitted.revisions[0]?.modeSnapshotStatus).toBe("captured");
+    expect(submitted.revisions[0]?.modeSnapshots).toEqual(quote.modeSnapshots);
+    const frozen = await ProjectPurchaseOrderRequestRevisionModel.findById(submitted.submittedRevisionId).lean();
+    expect(frozen?.modeSnapshots).toHaveLength(2);
+    const approved = await service.decide(admin, submitted.id, { expectedVersion: submitted.version,
+      submittedRevisionId: submitted.submittedRevisionId, idempotencyKey: "approve-multiple-children",
+      decision: "approve", reason: null, budgetOverrideReason: null });
+    for (const orderId of approved.approvedOrderIds) {
+      const order = await ProjectPurchaseOrderModel.findById(orderId).lean();
+      const revision = await ProjectPurchaseOrderRevisionModel.findById(order?.approvedRevisionId).lean();
+      expect(order).not.toHaveProperty("modeSnapshots");
+      expect(revision).not.toHaveProperty("modeSnapshots");
+      expect(revision?.lines.every((line: Record<string, unknown>) =>
+        !("mode" in line) && !("commercialExceptionReason" in line))).toBe(true);
+    }
+  });
+
+  it("rejects a quote after a source-line mode decision changes and reads a historical revision without invented mode values", async () => {
+    const stale = await preparation();
+    await modeDecisions.save(buyer, "request-project-a", { sourceLineItemKey: "line-first", expectedVersion: 1,
+      expectedEstimateSource: { estimateId: "estimate-request-project-a", estimateVersion: 1,
+        estimateReviewRoundId: "round-request-project-a" },
+      idempotencyKey: "legacy-line-first-updated", mode: null, quantity: null, discountBps: 0,
+      markupBasis: "starting", exceptionReason: "Historical approved line still has no pinned configuration data." });
+    const { idempotencyKey: _key, ...fields } = submitInput(stale.digest);
+    await expect(service.quote(buyer, "request-project-a", fields)).rejects.toMatchObject({
+      code: "PURCHASE_ORDER_PREPARATION_CONFLICT" });
+    const current = await preparation();
+    const submitted = await service.submit(buyer, "request-project-a", submitInput(current.digest));
+    expect(submitted.revisions[0]?.modeSnapshots[0]?.mode.decision?.version).toBe(2);
+    await ProjectPurchaseOrderRequestRevisionModel.collection.updateOne({ _id: submitted.submittedRevisionId },
+      { $unset: { modeSnapshots: "" } });
+    const historical = await service.get(buyer, "request-project-a", submitted.id);
+    expect(historical.revisions[0]).toMatchObject({ modeSnapshotStatus: "historical_unavailable", modeSnapshots: [] });
+    expect(historical.revisions[0]?.totals).toEqual(submitted.totals);
+  });
+
+  it("approves a pending pre-mode request using its original digest while still rejecting changed procurement inputs", async () => {
+    const current = await preparation();
+    const submitted = await service.submit(buyer, "request-project-a", submitInput(current.digest));
+    const historical = await historicalPreparation();
+    expect(historical.digest).not.toBe(current.digest);
+    // Simulate a revision persisted before mode snapshots and mode decisions existed.
+    await ProjectPurchaseOrderRequestRevisionModel.collection.updateOne({ _id: submitted.submittedRevisionId },
+      { $set: { preparationDigest: historical.digest }, $unset: { modeSnapshots: "" } });
+    await ProjectPurchaseOrderRequestModel.collection.updateOne({ _id: submitted.id },
+      { $set: { preparationDigest: historical.digest } });
+    await ProjectPurchaseOrderModeDecisionModel.deleteMany({ projectId: "request-project-a" });
+    await ProjectProcurementItemModel.collection.updateOne({ _id: "request-item-a" }, { $set: { pricePaise: 10_002 } });
+    const approval = { expectedVersion: submitted.version, submittedRevisionId: submitted.submittedRevisionId,
+      idempotencyKey: "approve-historical-pending", decision: "approve" as const,
+      reason: null, budgetOverrideReason: null };
+    await expect(service.decide(admin, submitted.id, approval)).rejects.toMatchObject({
+      code: "PURCHASE_ORDER_PREPARATION_CONFLICT" });
+    expect(await ProjectPurchaseOrderModel.countDocuments({ projectId: "request-project-a" })).toBe(0);
+    await ProjectProcurementItemModel.collection.updateOne({ _id: "request-item-a" }, { $set: { pricePaise: 10_001 } });
+    const approved = await service.decide(admin, submitted.id, approval);
+    expect(approved.status).toBe("approved");
+    expect(approved.approvedOrderIds).toHaveLength(2);
+    expect(approved.revisions[0]).toMatchObject({ modeSnapshotStatus: "historical_unavailable", modeSnapshots: [] });
+    expect(approved.totals).toEqual(submitted.totals);
+  });
+
+  it("freezes one pinned configured calculation and matching price references for two children, then blocks altered settings", async () => {
+    await ProjectProcurementItemModel.create(item("request-project-a", "extra", "CA", "line-first",
+      "request-vendor-a", 10_001, 1_000, 20_000));
+    await configureFirstApprovedLine();
+    const prepared = await preparation();
+    expect(prepared.estimateLines.find(line => line.key === "line-first")?.mode).toMatchObject({
+      state: "ready", preview: { adjustedCostPaise: 22_000, settings: { configuredMarginBps: 1_500,
+        scopes: [{ baseRatePaise: 10_000, lowQuantityLimit: "2", impactBps: 1_000 }] } } });
+    const original = submitInput(prepared.digest);
+    const { commercialExceptionReason: _matchedReason, ...matched } = original.lines[0]!;
+    const fields = { ...original, lines: [matched, original.lines[1]!, {
+      procurementItemId: "request-item-extra", expectedVersion: 1, gstBasisPoints: 1_800,
+      scopeType: "supply" as const, description: "More of the same source material",
+      targetDate: "2026-11-20", deliveryLocation: "Villa"
+    }] };
+    const { idempotencyKey: _key, ...quoteInput } = fields;
+    const mismatch = { ...quoteInput, lines: quoteInput.lines.map((line, index) =>
+      index === 0 ? { ...line, gstBasisPoints: 500 } : line) };
+    await expect(service.quote(buyer, "request-project-a", mismatch)).rejects.toMatchObject({
+      code: "PURCHASE_ORDER_COMMERCIAL_EXCEPTION_REQUIRED" });
+    const quote = await service.quote(buyer, "request-project-a", quoteInput);
+    const configured = quote.modeSnapshots.find(snapshot => snapshot.sourceLineItemKey === "line-first");
+    expect(configured?.mode).not.toHaveProperty("integrity");
+    expect(configured?.mode.decision).not.toHaveProperty("integrityBasis");
+    expect(configured).toMatchObject({ source: "configuration", mainBasketId: "request-basket-a",
+      subBasketId: "request-sub-a", mainLineId: "request-main-line", referenceAsOf: now.toISOString(),
+      mode: { state: "ready", revision: { id: "request-config-revision" },
+        priceReferences: { "request-item-a": { state: "ready", priceVersionId: "request-price-version",
+          taxVersionId: "request-tax-version", unitPricePaise: 10_001, gstBasisPoints: 1_800 },
+          "request-item-extra": { state: "ready", priceVersionId: "request-price-version" } } },
+      actualChildren: [{ commercialExceptionReason: null }, { commercialExceptionReason: null }] });
+    expect(configured?.actualTotals).toEqual({ netPaise: 22_502, gstPaise: 4_050, totalPaise: 26_552 });
+    expect(configured?.actualNetMinusConfiguredCostPaise).toBe(502);
+    const submitted = await service.submit(buyer, "request-project-a", fields);
+    expect(submitted.revisions[0]?.modeSnapshots.find(snapshot => snapshot.sourceLineItemKey === "line-first")?.mode.preview?.settings)
+      .toEqual(configured?.mode.preview?.settings);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "request-config-revision-advanced" },
+      { $set: { "payload.pmcMarginBps": 1_700 } });
+    await expect(service.decide(admin, submitted.id, { expectedVersion: submitted.version,
+      submittedRevisionId: submitted.submittedRevisionId, idempotencyKey: "approve-after-config-change",
+      decision: "approve", reason: null, budgetOverrideReason: null })).rejects.toMatchObject({
+      code: "PURCHASE_ORDER_PREPARATION_CONFLICT" });
+    expect(await ProjectPurchaseOrderModel.countDocuments({ projectId: "request-project-a" })).toBe(0);
+    const retained = await service.get(buyer, "request-project-a", submitted.id);
+    expect(retained.revisions[0]?.modeSnapshots.find(snapshot => snapshot.sourceLineItemKey === "line-first")?.mode.preview?.settings.configuredMarginBps)
+      .toBe(1_500);
+  });
+
+  it("invalidates a recovered quote after the observed content changes without an updated timestamp", async () => {
+    const projectB = await preparation("request-project-b");
+    const { prepared } = await saveRecoveredFirstApprovedLine();
+    expect((await preparation("request-project-b")).digest).toBe(projectB.digest);
+    const { idempotencyKey: _key, ...fields } = submitInput(prepared.digest);
+    const quote = await service.quote(buyer, "request-project-a", fields);
+    expect(quote.modeSnapshots.find(snapshot => snapshot.sourceLineItemKey === "line-first")?.mode.decision?.integrityBasis)
+      .toMatchObject({ kind: "observed_unverified", observedDigest: expect.any(String) });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "request-config-revision-advanced" },
+      { $set: { "payload.modeCalculations.pmc.baseRatePaise": 12_000 } });
+    const changed = await preparation();
+    expect(changed.digest).not.toBe(prepared.digest);
+    expect(changed.estimateLines.find(line => line.key === "line-first")?.mode?.state).not.toBe("ready");
+    await expect(service.quote(buyer, "request-project-a", fields)).rejects.toMatchObject({
+      code: "PURCHASE_ORDER_PREPARATION_CONFLICT" });
+    await expect(service.submit(buyer, "request-project-a", submitInput(prepared.digest))).rejects.toMatchObject({
+      code: "PURCHASE_ORDER_PREPARATION_CONFLICT" });
+    expect(await ProjectPurchaseOrderRequestModel.countDocuments({ projectId: "request-project-a" })).toBe(0);
+  });
+
+  it("requires a separate Super Admin reason for recovered values and keeps vendor orders commercial only", async () => {
+    const { prepared } = await saveRecoveredFirstApprovedLine();
+    const submitted = await service.submit(buyer, "request-project-a", submitInput(prepared.digest));
+    const frozen = submitted.revisions[0]?.modeSnapshots.find(snapshot => snapshot.sourceLineItemKey === "line-first");
+    expect(frozen?.mode.decision?.integrityBasis).toMatchObject({ kind: "observed_unverified",
+      reason: "Buyer reviewed the current saved PMC calculation." });
+    expect(frozen?.mode.preview?.adjustedCostPaise).toBe(24_200);
+    const decision = { expectedVersion: submitted.version, submittedRevisionId: submitted.submittedRevisionId,
+      idempotencyKey: "approve-recovered-request", decision: "approve" as const,
+      budgetOverrideReason: null };
+    await expect(service.decide(admin, submitted.id, { ...decision, reason: null,
+      budgetOverrideReason: "Budget variance separately reviewed." })).rejects.toMatchObject({
+      code: "PURCHASE_ORDER_RECOVERY_APPROVAL_REASON_REQUIRED" });
+    await expect(service.decide(admin, submitted.id, { ...decision, reason: "Too short" })).rejects.toMatchObject({
+      code: "PURCHASE_ORDER_RECOVERY_APPROVAL_REASON_REQUIRED" });
+    const reason = "I reviewed the unverified saved mode values and vendor terms.";
+    const approved = await service.decide(admin, submitted.id, { ...decision, reason });
+    expect(approved.status).toBe("approved");
+    expect(approved.approvedOrderIds).toHaveLength(2);
+    expect(approved.decisions.at(-1)?.reason).toBe(reason);
+    expect(approved.totals).toEqual(submitted.totals);
+    expect(await AuditEventModel.findOne({ entityId: submitted.id,
+      action: "project_purchase_order_request_decided" }).lean()).toMatchObject({ actorId: admin.id, reason });
+    for (const orderId of approved.approvedOrderIds) {
+      const order = await ProjectPurchaseOrderModel.findById(orderId).lean();
+      const vendorRevision = await ProjectPurchaseOrderRevisionModel.findById(order?.approvedRevisionId).lean();
+      expect(order).not.toHaveProperty("modeSnapshots");
+      expect(vendorRevision).not.toHaveProperty("modeSnapshots");
+      expect(vendorRevision?.lines.every((line: Record<string, unknown>) =>
+        !("integrityBasis" in line) && !("mode" in line))).toBe(true);
+    }
+    expect(await service.decide(admin, submitted.id, { ...decision, reason })).toMatchObject({ status: "approved" });
+  });
+
+  it("blocks approval if the observed content changes after a recovered request is submitted", async () => {
+    const { prepared } = await saveRecoveredFirstApprovedLine();
+    const submitted = await service.submit(buyer, "request-project-a", submitInput(prepared.digest));
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "request-config-revision-advanced" },
+      { $set: { "payload.modeCalculations.pmc.baseRatePaise": 12_000 } });
+    await expect(service.decide(admin, submitted.id, { expectedVersion: submitted.version,
+      submittedRevisionId: submitted.submittedRevisionId, idempotencyKey: "approve-stale-recovered-request",
+      decision: "approve", reason: "I reviewed the buyer's saved value recovery.", budgetOverrideReason: null }))
+      .rejects.toMatchObject({ code: "PURCHASE_ORDER_PREPARATION_CONFLICT" });
+    expect(await ProjectPurchaseOrderModel.countDocuments({ projectId: "request-project-a" })).toBe(0);
+    expect((await service.get(buyer, "request-project-a", submitted.id)).status).toBe("pending_approval");
+  });
+
+  it("freezes price references only for children in a later request after one child was individually ordered", async () => {
+    await ProjectProcurementItemModel.create(item("request-project-a", "extra", "CA", "line-first",
+      "request-vendor-a", 10_001, 1_000, 20_000));
+    await configureFirstApprovedLine();
+    const individual = createProjectPurchaseOrderService({ audit, onApproved: onPurchaseOrderApproved, now: () => now });
+    const draft = await individual.create(buyer, "request-project-a", { vendorId: "request-vendor-a", terms: "First delivery",
+      idempotencyKey: "manual-configured-child", lines: [{ procurementItemId: "request-item-a", quantityMilliUnits: 1_250,
+        unitPricePaise: 10_001, gstBasisPoints: 1_800, scopeType: "execution", description: "Initial joinery",
+        targetDate: "2026-11-15", deliveryLocation: "Villa" }] });
+    const sent = await individual.submit(buyer, "request-project-a", draft.id,
+      { expectedVersion: draft.version, idempotencyKey: "manual-configured-child-submit" });
+    await individual.decide(admin, "request-project-a", draft.id, { expectedVersion: sent.version,
+      submittedRevisionId: sent.submittedRevisionId!, idempotencyKey: "manual-configured-child-approve",
+      decision: "approve", reason: null, budgetOverrideReason: null });
+    const prepared = await preparation();
+    expect(Object.keys(prepared.estimateLines.find(line => line.key === "line-first")?.mode?.priceReferences ?? {}))
+      .toEqual(["request-item-a", "request-item-extra"]);
+    const input = { expectedPreparationDigest: prepared.digest, lines: [
+      { procurementItemId: "request-item-extra", expectedVersion: 1, gstBasisPoints: 1_800,
+        scopeType: "supply" as const, description: "Follow-up configured material", targetDate: "2026-11-20",
+        deliveryLocation: "Villa" },
+      submitInput(prepared.digest).lines[1]!
+    ], vendorTerms: [{ vendorId: "request-vendor-a", terms: "Follow-up delivery" },
+      { vendorId: "request-vendor-b", terms: "Delivery included" }] };
+    const quote = await service.quote(buyer, "request-project-a", input);
+    const configured = quote.modeSnapshots.find(snapshot => snapshot.sourceLineItemKey === "line-first");
+    expect(configured?.actualChildren.map(child => child.procurementItemId)).toEqual(["request-item-extra"]);
+    expect(Object.keys(configured?.mode.priceReferences ?? {})).toEqual(["request-item-extra"]);
+    const submitted = await service.submit(buyer, "request-project-a",
+      { ...input, idempotencyKey: "later-configured-child-request" });
+    expect(Object.keys(submitted.revisions[0]?.modeSnapshots.find(snapshot =>
+      snapshot.sourceLineItemKey === "line-first")?.mode.priceReferences ?? {})).toEqual(["request-item-extra"]);
+  });
+
   it("keeps approved request history when new procurement items need a later project request", async () => {
     const first = await service.submit(buyer, "request-project-a", submitInput((await preparation()).digest));
     await service.decide(admin, first.id, { expectedVersion: first.version, submittedRevisionId: first.submittedRevisionId,
@@ -170,6 +534,7 @@ describe("project purchase-order request transactions", () => {
     const preview = await preparation();
     const later = await service.submit(buyer, "request-project-a", { expectedPreparationDigest: preview.digest,
       lines: [{ procurementItemId: "request-item-later", expectedVersion: 1, gstBasisPoints: 500,
+        commercialExceptionReason: "Second purchase uses an explicitly agreed vendor rate and tax.",
         scopeType: "supply", description: "Later material", targetDate: "2026-11-25", deliveryLocation: "Villa" }],
       vendorTerms: [{ vendorId: "request-vendor-a", terms: "Second delivery" }], idempotencyKey: "submit-later-request" });
     expect(later.id).not.toBe(first.id);

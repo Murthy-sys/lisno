@@ -679,10 +679,30 @@
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card__name {
   display: flex;
   align-items: center;
+  flex-wrap: nowrap;
   flex: 1 1 auto;
   gap: 2px;
   min-inline-size: 0;
   min-block-size: 44px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card__delete {
+  flex: 0 0 auto;
+  min-inline-size: 58px;
+  min-block-size: 36px;
+  margin-inline-start: 4px;
+  padding-inline: 8px;
+}
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card__delete:not([data-busy]) .ui-button__busy {
+  display: none;
+}
+/* Outrank the Super Admin modal accent without changing other lifecycle dialogs. */
+.ui-dialog.modal:has(.knowledge-main-line-delete-context) .ui-dialog__header > div > p.eyebrow {
+  color: var(--color-text-muted);
+}
+@media (max-width: 640px) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card__name { flex-wrap: wrap; }
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card__delete { min-block-size: 44px; }
 }
 
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-index-card__title h3 {
@@ -1068,8 +1088,19 @@
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__name {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   flex: 1 1 auto;
   min-inline-size: 0;
+}
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__delete {
+  flex: 0 0 auto;
+  min-inline-size: 64px;
+  min-block-size: 36px;
+  margin-inline-start: 8px;
+  padding-inline: 10px;
+}
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__delete:not([data-busy]) .ui-button__busy {
+  display: none;
 }
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__header h3 {
   flex: 0 1 auto;
@@ -1100,6 +1131,7 @@
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__body[hidden] { display: none; }
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__body > p { margin: 0; color: var(--color-text-muted); }
 @media (max-width: 640px) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__delete { min-block-size: 44px; }
   .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__header { align-items: flex-start; flex-direction: column; gap: 4px; }
   .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__header .knowledge-count-pill { margin-inline-start: 0; }
   .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-sub-basket__body { padding-inline: 8px; }

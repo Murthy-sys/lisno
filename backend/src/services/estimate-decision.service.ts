@@ -467,7 +467,9 @@ async function approve(input: {
       clientName: String(lead.clientName),
       clientEmail: String(lead.clientEmail),
       clientMobile: String(lead.clientMobile),
-      location: String(lead.location)
+      location: String(lead.location),
+      cityName: lead.cityName == null ? null : String(lead.cityName),
+      cityKey: lead.cityKey == null ? null : String(lead.cityKey)
     },
     clientId: clientId == null ? null : String(clientId),
     occurredAt,

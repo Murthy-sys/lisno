@@ -20,6 +20,7 @@ export interface KnowledgeIndexItemCardProps {
   readonly catalogState: CatalogState;
   readonly onOpen: () => void;
   readonly onEditName?: (trigger: HTMLButtonElement | null) => void;
+  readonly onDelete?: (trigger: HTMLButtonElement) => void;
 }
 
 function KnowledgeIndexMenu({ name, onOpen }: { name: string; onOpen: () => void }) {
@@ -95,7 +96,7 @@ function KnowledgeIndexMenu({ name, onOpen }: { name: string; onOpen: () => void
   );
 }
 
-export function KnowledgeIndexItemCard({ item, uoms, priorities, catalogState, onOpen, onEditName }: KnowledgeIndexItemCardProps) {
+export function KnowledgeIndexItemCard({ item, uoms, priorities, catalogState, onOpen, onEditName, onDelete }: KnowledgeIndexItemCardProps) {
   const temporary = item.itemType === "temporary";
   const badgeId = `temporary-kind-${item.id}`;
   const badgeTitle = item.completionRequired ? "Temporary item · Must be completed" : "Temporary item";
@@ -125,6 +126,13 @@ export function KnowledgeIndexItemCard({ item, uoms, priorities, catalogState, o
               label={`Edit Main Line name for ${item.mainLineName}`}
               onClick={(event) => onEditName(event.currentTarget)}
             /> : null}
+            {onDelete && !temporary ? <Button
+              size="compact"
+              variant="destructive-outline"
+              className="knowledge-index-card__delete"
+              aria-label={`Delete Main Line ${item.mainLineName} permanently`}
+              onClick={(event) => onDelete(event.currentTarget)}
+            >Delete</Button> : null}
           </div>
           <KnowledgeIndexMenu name={item.mainLineName} onOpen={onOpen} />
         </div>

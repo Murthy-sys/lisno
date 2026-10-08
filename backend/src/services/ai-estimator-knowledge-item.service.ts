@@ -711,6 +711,7 @@ export function createAiEstimatorKnowledgeItemService(
         const copiedSections = copyRevisionSections(
           sourceSections, priceReferences, uuid, false, line.itemType === "temporary"
         );
+        await removeMissingCopiedRelationships(copiedSections, session);
         await coordinateCopiedBasketReferences(copiedSections, session);
         await coordinateCopiedSurfaceReferences(copiedSections, session, false);
         const completeness = completenessForRows(mainLineId, copiedSections);
@@ -2810,6 +2811,62 @@ async function coordinateCopiedBasketReferences(
   session: ClientSession
 ): Promise<void> {
   await coordinateBasketDependencies(await relationshipBasketIds(rows, session), session);
+}
+
+async function removeMissingCopiedRelationships(rows: Row[], session: ClientSession): Promise<void> {
+  const basketIds = new Set<string>();
+  const mainLineIds = new Set<string>();
+  const subBasketIds = new Set<string>();
+  const fields = ["exclusions", "dependencies", "recommendations", "budgetAlterations"] as const;
+  for (const row of rows) {
+    const payload = payloadFor(row);
+    for (const field of fields) {
+      for (const relation of structuredRows(payload[field])) {
+        addOptionalId(basketIds, relation.targetBasketId);
+        addOptionalId(mainLineIds, relation.targetMainLineId);
+        addOptionalId(subBasketIds, relation.targetSubBasketId);
+      }
+    }
+  }
+  if (!basketIds.size && !mainLineIds.size && !subBasketIds.size) return;
+
+  const [baskets, subBaskets] = await Promise.all([
+    AiEstimatorKnowledgeBasketModel.find({ _id: { $in: [...basketIds] } })
+      .select({ _id: 1 }).session(session).lean().exec(),
+    AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: [...subBasketIds] } })
+      .select({ _id: 1 }).session(session).lean().exec()
+  ]);
+  const existingBasketIds = new Set(baskets.map((basket) => String(basket._id)));
+  const existingSubBasketIds = new Set(subBaskets.map((group) => String(group._id)));
+  const missingBasketIds = new Set([...basketIds].filter((id) => !existingBasketIds.has(id)));
+  const missingSubBasketIds = new Set([...subBasketIds].filter((id) => !existingSubBasketIds.has(id)));
+  const missingMainLineIds = new Set<string>();
+  // Share a write with target deletion so a live reference cannot disappear
+  // between this read and the new Draft's commit.
+  for (const id of [...mainLineIds].sort()) {
+    const target = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
+      { _id: id }, { $inc: { dependencyEpoch: 1 } },
+      { returnDocument: "after", runValidators: true, session, timestamps: false }
+    ).select({ _id: 1 }).lean().exec();
+    if (!target) missingMainLineIds.add(id);
+  }
+  if (!missingBasketIds.size && !missingMainLineIds.size && !missingSubBasketIds.size) return;
+
+  for (const row of rows) {
+    const payload = payloadFor(row);
+    for (const field of fields) {
+      if (!Array.isArray(payload[field])) continue;
+      payload[field] = payload[field].filter((candidate: unknown) => {
+        const relation = asRow(candidate);
+        if (!relation) return true;
+        return !(
+          (optionalString(relation.targetBasketId) && missingBasketIds.has(String(relation.targetBasketId)))
+          || (optionalString(relation.targetMainLineId) && missingMainLineIds.has(String(relation.targetMainLineId)))
+          || (optionalString(relation.targetSubBasketId) && missingSubBasketIds.has(String(relation.targetSubBasketId)))
+        );
+      });
+    }
+  }
 }
 
 async function relationshipBasketIds(rows: Row[], session: ClientSession): Promise<Set<string>> {

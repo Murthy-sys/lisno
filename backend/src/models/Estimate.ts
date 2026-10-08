@@ -12,10 +12,14 @@ const estimateLineSchema = new Schema({
   },
   source: { type: String, enum: ["legacy", "configuration"] },
   itemType: { type: String, enum: ["main_line", "temporary"] },
+  classification: { type: String, enum: ["standard", "special"], default: undefined },
+  pricingMode: { type: String, enum: ["pmc", "sub_vendor", "in_house"], default: undefined },
+  rateSource: { type: String, enum: ["configuration", "manual"], default: undefined },
   catalogueId: { type: String, required: true },
   roomId: { type: String, default: null }, roomName: { type: String, required: true },
   mainBasketId: { type: String, default: null }, subBasketId: { type: String, default: null },
   mainLineId: { type: String, default: null }, revisionId: { type: String, default: null },
+  recommendationSourceMainLineIds: { type: [String], default: undefined },
   sourceItemStatus: { type: String, enum: ["draft", "active", "inactive"] },
   sourceRevisionStatus: { type: String, enum: ["draft", "active"] },
   sourceItemVersion: { type: Number, min: 1, validate: Number.isSafeInteger },
@@ -36,6 +40,11 @@ const estimateReviewSchema = new Schema({
   action: { type: String, required: true },
   note: { type: String, default: "" },
   occurredAt: { type: Date, required: true }
+}, { _id: false });
+
+const selectedMainBasketClassificationSchema = new Schema({
+  mainBasketId: { type: String, required: true },
+  classification: { type: String, enum: ["standard", "special"], required: true }
 }, { _id: false });
 
 const estimateNotificationSchema = new Schema({
@@ -64,6 +73,7 @@ const estimateSchema = new Schema({
   propertyType: { type: String, required: true },
   rooms: { type: [Schema.Types.Mixed], required: true, default: [] }, scopes: { type: [String], required: true, default: [] },
   selectedMainBasketIds: { type: [String], required: true, default: [] },
+  selectedMainBasketClassifications: { type: [selectedMainBasketClassificationSchema], default: undefined },
   lineItems: { type: [estimateLineSchema], required: true, default: [] },
   subtotal: { type: Number, required: true, default: 0 }, gst: { type: Number, required: true, default: 0 }, total: { type: Number, required: true, default: 0 },
   subtotalPaise: { type: Number }, gstPaise: { type: Number }, totalPaise: { type: Number },

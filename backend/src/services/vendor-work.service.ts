@@ -41,8 +41,8 @@ const IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 export interface VendorWorkTaskDto {
   id: string; projectId: string; vendorId: string; orderId: string; orderRevision: number;
   lineId: string; sourceSectionId: string; sectionLabel: string; sourceLineItemKey: string; roomName: string;
-  itemName: string; scopeType: "supply" | "execution" | "supply_and_execution";
-  description: string; targetDate: string; deliveryLocation: string;
+  itemName: string; scopeType: "supply" | "execution" | "supply_and_execution" | null;
+  description: string; targetDate: string | null; deliveryLocation: string | null;
   status: VendorWorkStatus; version: number; progress: number; displayProgress: number;
   progressSource: "vendor" | "site_manager"; currentRound: number;
   note: string; requestedChangeReason: string | null; imageCount: number;
@@ -52,7 +52,7 @@ export interface VendorWorkTaskDto {
 
 export interface ClientVendorWorkReviewDto {
   id: string; projectId: string; assignmentId: string; round: number; status: "pending" | "approved" | "changes_requested";
-  version: number; roomName: string; itemName: string; scopeType: string; description: string;
+  version: number; roomName: string; itemName: string; scopeType: string | null; description: string;
   sourceSectionId: string; sectionLabel: string; note: string; progress: number; submittedAt: string;
   imageIds: string[]; decision: { decision: "approve" | "request_changes"; reason: string | null; decidedAt: string } | null;
 }
@@ -145,8 +145,9 @@ function taskDto(assignment: Row, imageCount: number, requestedChangeReason: str
     id: String(assignment._id), projectId: String(assignment.projectId), vendorId: String(assignment.vendorId),
     orderId: String(assignment.orderId), orderRevision: Number(assignment.orderRevision), lineId: String(assignment.lineId),
     sourceSectionId: String(assignment.sourceSectionId), sectionLabel: projectWorkflowSectionLabel(String(assignment.sourceSectionId)), sourceLineItemKey: String(assignment.sourceLineItemKey),
-    roomName: String(assignment.roomName), itemName: String(assignment.itemName), scopeType: assignment.scopeType,
-    description: String(assignment.description), targetDate: String(assignment.targetDate), deliveryLocation: String(assignment.deliveryLocation),
+    roomName: String(assignment.roomName), itemName: String(assignment.itemName), scopeType: assignment.scopeType ?? null,
+    description: String(assignment.description), targetDate: assignment.targetDate ?? null,
+    deliveryLocation: assignment.deliveryLocation ?? null,
     status: assignment.status, version: Number(assignment.version),
     progress: Number(assignment.progress), displayProgress: Number(assignment.progress), progressSource: "vendor",
     currentRound: Number(assignment.currentRound), note: String(assignment.note),
@@ -177,7 +178,7 @@ function reviewDto(review: Row, assignment: Row): ClientVendorWorkReviewDto {
   return {
     id: String(review._id), projectId: String(review.projectId), assignmentId: String(review.assignmentId),
     round: Number(review.round), status: review.status, version: Number(review.version),
-    roomName: String(assignment.roomName), itemName: String(assignment.itemName), scopeType: String(assignment.scopeType),
+    roomName: String(assignment.roomName), itemName: String(assignment.itemName), scopeType: assignment.scopeType ?? null,
     description: String(assignment.description), sourceSectionId: String(assignment.sourceSectionId), sectionLabel: projectWorkflowSectionLabel(String(assignment.sourceSectionId)),
     note: String(review.note), progress: Number(review.progress), submittedAt: review.submittedAt.toISOString(),
     imageIds: [...review.imageIds],
@@ -210,7 +211,9 @@ export async function onPurchaseOrderApproved(approval: { orderId: string; proje
     const snapshot = { projectId: approval.projectId, vendorId: approval.vendorId, orderId: approval.orderId, orderRevision: approval.revision, lineId: line.id,
       procurementItemId: line.procurementItemId, estimateId: line.estimateId, estimateVersion: line.estimateVersion, estimateReviewRoundId: line.estimateReviewRoundId,
       sourceSectionId: line.sourceSectionId, sourceLineItemKey: line.sourceLineItemKey, roomName: line.roomName, itemName: line.itemName,
-      scopeType: line.scopeType, description: line.description, targetDate: line.targetDate, deliveryLocation: line.deliveryLocation };
+      ...(line.scopeType ? { scopeType: line.scopeType } : {}), description: line.description,
+      ...(line.targetDate ? { targetDate: line.targetDate } : {}),
+      ...(line.deliveryLocation ? { deliveryLocation: line.deliveryLocation } : {}) };
     await VendorWorkAssignmentModel.updateOne({ _id: id }, { $setOnInsert: { _id: id, ...snapshot, status: member ? "ready" : "awaiting_vendor_access", version: 1, progress: 0, currentRound: 1, note: "", receipts: [] } }, { upsert: true, session });
     const stored = await VendorWorkAssignmentModel.findById(id).session(session).lean() as Row | null;
     if (!stored || Object.entries(snapshot).some(([key, value]) => stored[key] !== value)) throw new ApiError(409, "VENDOR_WORK_SOURCE_CONFLICT", "An existing work assignment does not match this approved order.");

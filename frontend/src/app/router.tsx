@@ -65,6 +65,8 @@ import { VendorWorkPage } from "../features/vendor/VendorWorkPage";
 import { VendorKpiStaffPage } from "../features/procurement/VendorKpiStaffPage";
 import { VendorKpiPublicPage } from "../features/procurement/VendorKpiPublicPage";
 import { VendorInductionPublicPage } from "../features/procurement/VendorInductionPublicPage";
+import { VendorBoqPublicPage } from "../features/procurement/VendorBoqPublicPage";
+import { ProcurementBasketApprovalQueue } from "../features/procurement/ProcurementBasketApprovalQueue";
 import { KnowledgeBaseIndexPage } from "../features/ai-estimator-knowledge/KnowledgeBaseIndexPage";
 import { KnowledgeItemWorkspacePage } from "../features/ai-estimator-knowledge/KnowledgeItemWorkspacePage";
 import { KnowledgeReusableValuesPage } from "../features/ai-estimator-knowledge/KnowledgeReusableValuesPage";
@@ -118,6 +120,12 @@ const roleHomeContent: Record<Role, RoleHomeContent> = {
     eyebrow: "Project procurement",
     description: "Your authorized procurement work will appear here.",
     status: "Ready for staged access"
+  },
+  program_manager: {
+    heading: "Program Manager workspace",
+    eyebrow: "Work order approvals",
+    description: "Review work orders assigned to your projects.",
+    status: "Ready for approval review"
   },
   vendor: {
     heading: "Vendor workspace",
@@ -374,6 +382,7 @@ export function AppRoutes() {
       <Route path="/reset-password" element={<PasswordResetPage />} />
       <Route path="/vendor-kpi" element={<VendorKpiPublicPage />} />
       <Route path="/vendor-induction" element={<VendorInductionPublicPage />} />
+      <Route path="/vendor-boq" element={<VendorBoqPublicPage />} />
       <Route path="/accept-invitation" element={<InvitationAcceptancePage />} />
       <Route path="/" element={<HomeRedirect />} />
       <Route
@@ -394,6 +403,7 @@ export function AppRoutes() {
         <Route path="/admin/project-completion" element={registeredElement("/admin/project-completion", <ProjectCompletionPage />)} />
         <Route path="/vendor" element={registeredElement("/vendor", <VendorWorkPage />)} />
         <Route path="/procurement" element={registeredElement("/procurement", <ProcurementWorkspace />)} />
+        <Route path="/work-order-approvals" element={registeredElement("/work-order-approvals", <ProcurementBasketApprovalQueue />)} />
         <Route path="/procurement/vendors" element={registeredElement("/procurement/vendors", <VendorDirectoryRoute />)} />
         <Route path="/procurement/vendors/:vendorId" element={registeredElement("/procurement/vendors/:vendorId", <VendorKpiStaffPage />)} />
         <Route element={<ProjectChatLayout />}>

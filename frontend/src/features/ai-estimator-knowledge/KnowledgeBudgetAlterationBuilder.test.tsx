@@ -1608,7 +1608,8 @@ describe("Inline whole Sub-Basket removal", () => {
     await within(dialog).findByRole("textbox", { name: "Reason" });
     expect(dialog).toHaveTextContent("Electrical");
     expect(dialog).toHaveTextContent("Items deleted with it1");
-    expect(dialog).toHaveTextContent("References removed elsewhere2");
+    expect(dialog).toHaveTextContent("References in other configurations2");
+    expect(dialog).toHaveTextContent("Active and superseded revisions keep their history");
     expect(dialog).toHaveTextContent("This rule will keep its unavailable target");
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
     const accessibility = await axe.run(dialog, { rules: { "color-contrast": { enabled: false } } });

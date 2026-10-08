@@ -33,7 +33,7 @@ const roleNavigation = [
   ["designer", [["Workspace", "/designer", LayoutDashboard], ["Design plans", "/designer/design-plans", Palette], ["My access requests", "/access-requests/mine", KeyRound]]],
   ["procurement", [["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
   ["finance_head", [["Finance", "/finance", WalletCards], ["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
-  ["site_manager", [["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
+  ["site_manager", [["Work order approvals", "/work-order-approvals", ClipboardCheck], ["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
   ["worker_electrician", [["Home", "/home", House]]],
   ["worker_plumber", [["Home", "/home", House]]],
   ["worker_carpenter", [["Home", "/home", House]]],
@@ -139,10 +139,32 @@ describe("role navigation", () => {
     ).toEqual([]);
   });
 
+  it("gives Site Managers permission-based work order navigation without enabling legacy Program Managers", () => {
+    const approvals = (role: Role, permissions?: Parameters<typeof authorizationFor>[1]) => navigationForAuthorization(role,
+      permissions ? authorizationFor(role, permissions) : authorizationFor(role)).filter(({ label }) => label === "Work order approvals");
+    expect(approvals("site_manager")).toEqual([expect.objectContaining({ to: "/work-order-approvals" })]);
+    expect(approvals("site_manager", ["identity.self.read"])).toEqual([]);
+    expect(approvals("program_manager")).toEqual([]);
+    expect(approvals("program_manager", ["procurement.work_order_approval.read"])).toEqual([]);
+  });
+
+  it.each(["procurement", "site_manager", "super_admin", "designer", "finance_head"] as const)(
+    "renders Work order approvals for a permitted %s",
+    (role) => {
+      render(<MemoryRouter initialEntries={["/work-order-approvals"]}>
+        <Sidebar user={{ id: `${role}-one`, name: "Assigned Approver", email: "approver@lisno.example", role }}
+          authorization={authorizationFor(role, ["identity.self.read", "procurement.work_order_approval.read"])} />
+      </MemoryRouter>);
+      expect(screen.getByRole("link", { name: "Work order approvals" })).toHaveAttribute("href", "/work-order-approvals");
+      expect(navigationForAuthorization(role, authorizationFor(role, ["identity.self.read"]))
+        .some(({ label }) => label === "Work order approvals")).toBe(false);
+    }
+  );
+
   it.each([
-    ["super_admin", "/admin/procurement", "/admin/procurement/vendors"],
-    ["procurement", "/procurement", "/procurement/vendors"]
-  ] as const)("derives Dashboard and Vendors under one %s Procurement group", (role, dashboard, vendors) => {
+    ["super_admin", "Dashboard", "/admin/procurement", "/admin/procurement/vendors"],
+    ["procurement", "Projects", "/procurement", "/procurement/vendors"]
+  ] as const)("derives role-specific links under one %s Procurement group", (role, primaryLabel, primaryRoute, vendors) => {
     const groups = navigationForAuthorization(role, navigationAuthorization(role)).filter(isNavigationGroup);
     expect(groups).toHaveLength(1);
     expect(groups[0]).toMatchObject({
@@ -150,7 +172,7 @@ describe("role navigation", () => {
       label: "Procurement",
       icon: ShoppingCart,
       children: [
-        { label: "Dashboard", to: dashboard, sidebarIcon: "procurement-dashboard" },
+        { label: primaryLabel, to: primaryRoute, sidebarIcon: "procurement-dashboard" },
         { label: "Vendors", to: vendors, sidebarIcon: "procurement-vendors" }
       ]
     });
@@ -177,7 +199,7 @@ describe("role navigation", () => {
     const children = screen.getByRole("group", { name: "Procurement sections" });
     expect(trigger).toHaveAttribute("aria-expanded", "true");
     expect(trigger).toHaveAttribute("aria-controls", children.id);
-    expect(within(children).getByRole("link", { name: "Dashboard" })).toHaveAttribute("aria-current", "page");
+    expect(within(children).getByRole("link", { name: "Projects" })).toHaveAttribute("aria-current", "page");
     expect(within(children).getByRole("link", { name: "Vendors" })).not.toHaveAttribute("aria-current");
     trigger.focus();
     await user.keyboard("{Enter}");

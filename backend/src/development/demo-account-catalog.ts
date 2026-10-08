@@ -61,6 +61,6 @@ export const DEVELOPMENT_DEMO_ACCOUNTS = Object.freeze([
   account("user-client-aurora", "Rhea Kapoor", "client@aurora.example", "client", "Aurora Living")
 ] satisfies readonly DevelopmentDemoAccount[]);
 
-if (DEVELOPMENT_DEMO_ACCOUNTS.map(({ role }) => role).join(",") !== ROLE_CODES.filter((role) => role !== "vendor").join(",")) {
-  throw new Error("Development demo accounts must remain in non-vendor ROLE_CODES order.");
+if (DEVELOPMENT_DEMO_ACCOUNTS.map(({ role }) => role).join(",") !== ROLE_CODES.filter((role) => role !== "vendor" && role !== "program_manager").join(",")) {
+  throw new Error("Development demo accounts must remain in legacy demo-role order.");
 }

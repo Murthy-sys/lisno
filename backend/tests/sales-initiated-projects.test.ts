@@ -27,7 +27,10 @@ function setup() {
   seed.users.push(
     { ...manager, id: "selected-manager", name: "A Selected Manager", email: "selected@example.com", emailNormalized: "selected@example.com", title: "Sales Manager" },
     { ...manager, id: "inactive-manager", name: "Inactive Manager", email: "inactive@example.com", emailNormalized: "inactive@example.com", active: false },
-    { ...manager, id: "vendor-sales-access-fixture", name: "Vendor access fixture", email: "vendor-sales-access@example.com", emailNormalized: "vendor-sales-access@example.com", role: "vendor", vendorId: "vendor-sales-access-fixture", accountKind: "standard" }
+    { ...manager, id: "vendor-sales-access-fixture", name: "Vendor access fixture", email: "vendor-sales-access@example.com", emailNormalized: "vendor-sales-access@example.com", role: "vendor", vendorId: "vendor-sales-access-fixture", accountKind: "standard" },
+    { ...manager, id: "program-manager-sales-access-fixture", name: "Program Manager access fixture",
+      email: "program-manager-sales-access@example.com", emailNormalized: "program-manager-sales-access@example.com",
+      role: "program_manager", accountKind: "standard" }
   );
   seed.projects = [];
   seed.leads = [];
@@ -42,6 +45,23 @@ function setup() {
 }
 
 describe("Sales-initiated projects", () => {
+  it("creates a Sales-owned lead without location or budgets and preserves its manager grant", async () => {
+    const { repository, app } = setup();
+    const { location: _location, budgetMin: _minimum, budgetMax: _maximum, ...withoutHiddenFields } = input;
+    const response = await request(app).post("/api/v1/admin/projects")
+      .set("Authorization", bearer()).send(withoutHiddenFields).expect(201);
+    await expect(repository.findProjectById(response.body.data.id)).resolves.toMatchObject({
+      location: "", clientAddress: "", assignedEstimatorId: "user-estimator-sales"
+    });
+    await expect(repository.findLeadById(response.body.data.lead.id)).resolves.toMatchObject({
+      location: "", budgetMin: null, budgetMax: null, ownerId: "user-estimator-sales"
+    });
+    await expect(repository.listActiveProjectAccessGrants("selected-manager", "projects"))
+      .resolves.toEqual([expect.objectContaining({
+        projectId: response.body.data.id, grantedById: "user-estimator-sales", source: "admin_initiator"
+      })]);
+  });
+
   it("owns the linked lead as the authenticated estimator and scopes client representation to the selected manager", async () => {
     const { repository, app } = setup();
     const response = await request(app).post("/api/v1/admin/projects")
@@ -84,6 +104,46 @@ describe("Sales-initiated projects", () => {
     await request(app).post("/api/v1/admin/design-plan-response-tasks/unknown-round/decision")
       .set("Authorization", bearer()).send({ decision: "approve" }).expect(403);
   });
+
+  it.each(["  Instagram  ", "Existing customer", `  ${"a".repeat(200)}  `])(
+    "persists Sales project source %j and reads it back without changing the manager grant", async (source) => {
+      const { repository, app } = setup();
+      const response = await request(app).post("/api/v1/admin/projects")
+        .set("Authorization", bearer()).send({ ...input, source }).expect(201);
+      const { id: projectId, lead } = response.body.data;
+      await expect(repository.findLeadById(lead.id)).resolves.toMatchObject({
+        projectId, ownerId: "user-estimator-sales", source: source.trim()
+      });
+      const readback = await request(app).get(`/api/v1/leads/${lead.id}`)
+        .set("Authorization", bearer()).expect(200);
+      expect(readback.body.data.source).toBe(source.trim());
+      await expect(repository.listActiveProjectAccessGrants("selected-manager", "projects"))
+        .resolves.toEqual([expect.objectContaining({
+          projectId, source: "admin_initiator", grantedById: "user-estimator-sales"
+        })]);
+      const audits = await repository.pageAuditEvents({ entityId: lead.id }, { limit: 20, offset: 0 });
+      expect(audits.items).toHaveLength(1);
+      expect(audits.items[0]!.newValues).toEqual({
+        stage: "new_lead", projectId, ownerId: "user-estimator-sales"
+      });
+    }
+  );
+
+  it.each(["", " \t\n ", "a".repeat(201), null, 42, ["Instagram"], { channel: "Instagram" }])(
+    "rejects invalid Sales source %j before creating any records", async (source) => {
+      const { repository, app } = setup();
+      const response = await request(app).post("/api/v1/admin/projects")
+        .set("Authorization", bearer()).send({ ...input, source }).expect(400);
+      expect(response.body.error).toMatchObject({
+        code: "VALIDATION_ERROR", fields: { source: expect.any(String) }
+      });
+      await expect(repository.pageAdminProjects((await repository.findUserById("user-super-admin"))!, { limit: 20, offset: 0 }))
+        .resolves.toMatchObject({ total: 0 });
+      await expect(repository.pageAllLeads({}, { limit: 20, offset: 0 })).resolves.toMatchObject({ total: 0 });
+      await expect(repository.listActiveProjectAccessGrants("selected-manager", "projects")).resolves.toEqual([]);
+      await expect(repository.pageAuditEvents({}, { limit: 20, offset: 0 })).resolves.toMatchObject({ total: 0 });
+    }
+  );
 
   it.each([undefined, "missing-manager", "inactive-manager", "user-estimator-sales", "user-super-admin"])(
     "rejects missing, unavailable or wrong-role manager %s without writes", async (salesManagerId) => {

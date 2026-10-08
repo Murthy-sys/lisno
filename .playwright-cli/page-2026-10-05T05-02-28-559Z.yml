@@ -1,0 +1,43 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - link "Skip to main content" [ref=e4] [cursor=pointer]:
+        - /url: "#main-content"
+      - complementary "Application sidebar" [ref=e5]:
+        - generic [ref=e6]:
+          - generic [ref=e7]:
+            - img "Lisno" [ref=e8]
+            - generic [ref=e9]: INTERIOR WORKSPACE
+          - navigation "Primary navigation" [ref=e10]:
+            - generic [ref=e11]:
+              - button "Procurement" [expanded] [ref=e12] [cursor=pointer]
+              - group "Procurement sections" [ref=e20]:
+                - link "Projects" [ref=e21] [cursor=pointer]:
+                  - /url: /procurement
+                - link "Vendors" [ref=e25] [cursor=pointer]:
+                  - /url: /procurement/vendors
+            - link "My access requests" [ref=e30] [cursor=pointer]:
+              - /url: /access-requests/mine
+            - link "Home" [ref=e36] [cursor=pointer]:
+              - /url: /home
+      - banner "Workspace tools" [ref=e40]:
+        - generic [ref=e41]:
+          - button "Notifications" [ref=e42] [cursor=pointer]
+          - button "Synthetic workspace reviewer" [ref=e47] [cursor=pointer]:
+            - generic [aria-hidden] [ref=e48]: SW
+            - generic [ref=e49]:
+              - generic [ref=e50]: Synthetic workspace reviewer
+              - generic [ref=e51]: Procurement
+      - main [ref=e54]:
+        - region [ref=e55]:
+          - generic [ref=e56]:
+            - link "Back to projects" [ref=e58] [cursor=pointer]:
+              - /url: /procurement
+            - generic [ref=e59]:
+              - generic [ref=e60]: Project procurement
+              - heading "Project procurement" [level=1] [ref=e62]
+              - paragraph [ref=e63]: Plan each main basket, compare vendor BOQs and issue approved work orders.
+    - status "Application announcements" [ref=e67]
+    - region "Notifications"
+  - status "Content status":
+    - generic: Loading project procurement…

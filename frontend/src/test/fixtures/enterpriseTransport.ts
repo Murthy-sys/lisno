@@ -1,9 +1,13 @@
 import { tokenStorage } from "../../api/client";
 import { ROLE_CODES, type Role, type PermissionCode } from "../../api/authorization-contract";
 import { authorizationFor } from "../authFixtures";
-import { enterpriseDataFor } from "./enterpriseRoutes";
+import { enterpriseDataFor, enterpriseProcurementQuoteFor, enterpriseStandardBasketForRates,
+  type EnterpriseProjectRate } from "./enterpriseRoutes";
+import type { SaveBasketBaseRateInput, SavedBasketBaseRate } from "../../features/procurement/procurementBasketApi";
 import type { KnowledgePreviewRequest } from "../../features/ai-estimator-knowledge/knowledgeApi";
 import type { KnowledgePreview } from "../../features/ai-estimator-knowledge/knowledgeTypes";
+import { createEnterpriseEstimateModes } from "./enterpriseEstimateModesData";
+import { chatTestPage, chatTestPolicy, chatTestSummary } from "../../features/messages/projectChatFixtures";
 
 export type EnterpriseState = "populated" | "empty" | "error" | "denied" | "loading" | "mutation-error";
 export interface EnterpriseScenario { route: string; role: Role; state: EnterpriseState; }
@@ -139,6 +143,36 @@ async function jsonBody(input: RequestInfo | URL, init?: RequestInit): Promise<u
 
 export function installEnterpriseTransport(scenario: EnterpriseScenario) {
   const requests: EnterpriseRequest[] = [];
+  const scenarioParams = new URL(scenario.route, window.location.origin).searchParams;
+  const estimateModesReady = scenarioParams.get("qaEstimateModes") === "ready";
+  const estimateModes = estimateModesReady && scenario.state === "populated"
+    ? createEnterpriseEstimateModes({ basketCards: scenarioParams.get("qaBasketCards") === "ready",
+      recommendationScroll: scenarioParams.get("qaRecommendationScroll") === "ready" }) : null;
+  const recommendationChatReady = Boolean(estimateModes && scenarioParams.get("qaRecommendationScroll") === "ready" && scenario.role === "estimator_sales");
+  const chatSummary = chatTestSummary({
+    project: { id: "project-1", name: (enterpriseDataFor("/leads/lead-1", new URLSearchParams(), scenario) as { projectName: string }).projectName, status: "active" },
+    counts: { openCritical: 0, openImportant: 0, unread: 0, unreadMentions: 0 }, participantCount: 1,
+    cursor: "synthetic-estimator-chat", lastReadSequence: 0, latestMessageSequence: 0,
+    capabilities: { canSend: false, canManageParticipants: false, canManageIssues: false, canRenameProject: false }
+  });
+  const chatStreamStops = new Set<() => void>();
+  const readRecommendationChat = (path: string): unknown => {
+    if (!recommendationChatReady) return undefined;
+    if (path === "/chat/availability") return { timezone: "Asia/Kolkata", writable: false, nextOpenAt: null, nextChangeAt: "2099-01-01T00:00:00.000Z" };
+    if (path === "/projects/project-1/chat") return chatSummary;
+    if (path === "/notifications") return { items: [], unreadCount: 0, pagination: { limit: 20, offset: 0, total: 0, hasMore: false } };
+    if (path === "/project-messages") return { items: [{ ...chatSummary, lastMessageAt: null }], pagination: { limit: 30, offset: 0, total: 1, hasMore: false } };
+    if (path === "/projects/project-1/chat/messages") return { ...chatTestPage([]), snapshotCursor: chatSummary.cursor };
+    if (path === "/projects/project-1/chat/action-types") return { items: [], canCreate: false };
+    if (path === "/projects/project-1/chat/participants") return { items: [{ id: "estimator_sales-1", name: "Synthetic workspace reviewer", role: "estimator_sales",
+      sources: [{ kind: "estimate_assignment", id: "estimate-1" }], selection: null }], setupWarnings: [] };
+    if (path === "/projects/project-1/chat/attachment-policy") return { ...chatTestPolicy(), enabled: false, capabilities: { canUpload: false, canRecord: false } };
+    return undefined;
+  };
+  const updateEstimateConfiguration = (event: Event) => estimateModes?.updateConfiguration((event as CustomEvent<unknown>).detail);
+  if (estimateModes) window.addEventListener("enterprise-qa-estimate-mode-rates", updateEstimateConfiguration);
+  const projectRates = new Map<string, EnterpriseProjectRate>();
+  const savedRateRequests = new Map<string, { signature: string; response: SavedBasketBaseRate }>();
   const originals = { fetch: window.fetch, get: tokenStorage.get, set: tokenStorage.set, clear: tokenStorage.clear, open: XMLHttpRequest.prototype.open, send: XMLHttpRequest.prototype.send, setRequestHeader: XMLHttpRequest.prototype.setRequestHeader, abort: XMLHttpRequest.prototype.abort };
   const publicRoute = /^\/(login|signup|forgot-password|reset-password|accept-invitation)(?:\?|$)/.test(scenario.route);
   let token: string | null = publicRoute ? null : "synthetic-enterprise-session";
@@ -162,6 +196,19 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
     const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
     const path = url.pathname.replace(/^\/api\/v1(?=\/|$)/, "");
     const inHouseReady = new URL(scenario.route, window.location.origin).searchParams.get("qaInHouse") === "ready";
+    const procurementModesReady = new URL(scenario.route, window.location.origin).searchParams.get("qaProcurementModes") === "ready";
+    const standardBasketReady = new URL(scenario.route, window.location.origin).searchParams.get("qaStandardBasket") === "ready";
+    if (method === "PUT" && path === "/leads/lead-1/estimate" && estimateModes) {
+      if (scenario.role !== "estimator_sales") { log(method, path, 403); return failure(403, "FORBIDDEN", "Estimator access is required."); }
+      try {
+        const data = estimateModes.save(await jsonBody(input, init));
+        log(method, path, 200);
+        return Response.json({ data });
+      } catch (error) {
+        log(method, path, 422);
+        return failure(422, "INVALID_SYNTHETIC_ESTIMATE", error instanceof Error ? error.message : "Synthetic estimate save failed.");
+      }
+    }
     if (method === "POST" && path === "/admin/ai-estimator-knowledge/preview" && inHouseReady) {
       try {
         const data = inHousePreview(await jsonBody(input, init) as KnowledgePreviewRequest);
@@ -172,14 +219,80 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
         return failure(422, "INVALID_BASIS_POINTS", error instanceof Error ? error.message : "Synthetic In-house preview failed.");
       }
     }
+    if (method === "POST" && path === "/procurement/projects/project-one/purchase-order-requests/quote" && procurementModesReady && scenario.state === "populated") {
+      try {
+        const data = enterpriseProcurementQuoteFor(await jsonBody(input, init));
+        log(method, path, 200);
+        return Response.json({ data });
+      } catch (error) {
+        log(method, path, 422);
+        return failure(422, "INVALID_SYNTHETIC_QUOTE", error instanceof Error ? error.message : "Synthetic procurement quote failed.");
+      }
+    }
+    if (method === "PUT" && path === "/procurement/projects/project-one/baskets/basket-carpentry/base-rate" &&
+      standardBasketReady && scenario.state === "populated") {
+      let body: SaveBasketBaseRateInput;
+      try { body = await jsonBody(input, init) as SaveBasketBaseRateInput; }
+      catch { log(method, path, 422); return failure(422, "INVALID_PROJECT_RATE", "Enter a valid project Base amount."); }
+      if (scenario.role !== "procurement") { log(method, path, 403); return failure(403, "FORBIDDEN", "Procurement access is required."); }
+      const current = enterpriseStandardBasketForRates(projectRates);
+      const line = current.lines.find((item) => item.sourceLineItemKey === body.sourceLineItemKey);
+      const sourceMatches = body.expectedEstimateSource?.estimateId === current.estimateSource.estimateId &&
+        body.expectedEstimateSource.estimateVersion === current.estimateSource.estimateVersion &&
+        body.expectedEstimateSource.estimateReviewRoundId === current.estimateSource.estimateReviewRoundId;
+      if (!line || !sourceMatches || !body.idempotencyKey || !Number.isSafeInteger(body.expectedVersion) ||
+        body.baseRatePaise !== null && (!Number.isSafeInteger(body.baseRatePaise) || body.baseRatePaise < 0 || body.baseRatePaise > 9_000_000_000_000)) {
+        log(method, path, 422); return failure(422, "INVALID_PROJECT_RATE", "Enter a valid project Base amount.");
+      }
+      const signature = JSON.stringify(body);
+      const replay = savedRateRequests.get(body.idempotencyKey);
+      if (replay) {
+        if (replay.signature !== signature) { log(method, path, 409); return failure(409, "IDEMPOTENCY_CONFLICT", "This save request was already used for a different amount."); }
+        log(method, path, 200); return Response.json({ data: replay.response });
+      }
+      if (body.expectedPreparationDigest !== current.preparationDigest || body.expectedVersion !== line.projectRate.version) {
+        log(method, path, 409); return failure(409, "PROJECT_RATE_VERSION_CONFLICT", "The basket amount changed. Refresh the basket.");
+      }
+      const projectRate = { version: line.projectRate.version + 1, overridePaise: body.baseRatePaise };
+      projectRates.set(line.sourceLineItemKey, projectRate);
+      const response: SavedBasketBaseRate = { projectId: current.projectId, mainBasketId: current.id,
+        estimateSource: current.estimateSource, sourceLineItemKey: line.sourceLineItemKey, projectRate };
+      savedRateRequests.set(body.idempotencyKey, { signature, response });
+      log(method, path, 200);
+      return Response.json({ data: response });
+    }
     if (method !== "GET") { log(method, path, 422); return failure(422, "SYNTHETIC_MUTATION_FAILURE", "Synthetic QA: the change was not saved. Your values remain available to review."); }
     if (path === "/auth/me") { log(method, path, 200); return Response.json({ data: { id: scenario.role === "designer" ? "user-designer-ananya" : `${scenario.role}-1`, name: "Synthetic workspace reviewer", email: "reviewer@lisno.example", role: scenario.role } }); }
     if (path === "/auth/authorization") {
       const base = authorizationFor(scenario.role);
-      const permissions = scenario.state === "denied" ? ["identity.self.read", "identity.authorization.read"] as const : [...new Set([...base.permissions, ...(extraPermissions[scenario.role] ?? [])])];
+      const permissions = scenario.state === "denied" ? ["identity.self.read", "identity.authorization.read"] as const : [...new Set([...base.permissions, ...(extraPermissions[scenario.role] ?? []), ...(recommendationChatReady ? ["chat.read" as const] : [])])];
       log(method, path, 200); return Response.json({ data: authorizationFor(scenario.role, permissions) });
     }
-    const data = enterpriseDataFor(path, url.searchParams, scenario);
+    if (recommendationChatReady && ["/projects/project-1/chat/events", "/notifications/events"].includes(path)) {
+      const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+      let cancel = () => {};
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          let closed = false;
+          const stop = () => {
+            if (closed) return;
+            closed = true;
+            signal?.removeEventListener("abort", stop);
+            chatStreamStops.delete(stop);
+            controller.close();
+          };
+          cancel = () => { closed = true; signal?.removeEventListener("abort", stop); chatStreamStops.delete(stop); };
+          chatStreamStops.add(stop);
+          if (signal?.aborted) { stop(); return; }
+          signal?.addEventListener("abort", stop, { once: true });
+          controller.enqueue(new TextEncoder().encode('event: state\ndata: {"status":"live"}\n\n'));
+        },
+        cancel() { cancel(); }
+      });
+      log(method, path, 200);
+      return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } });
+    }
+    const data = readRecommendationChat(path) ?? estimateModes?.read(path, url.searchParams) ?? enterpriseDataFor(path, url.searchParams, scenario, projectRates);
     if (data === undefined) { log(method, path, 501, true); return failure(501, "UNEXPECTED_QA_REQUEST", `No synthetic response registered for ${path}.`); }
     if (scenario.state === "loading") { log(method, path, 0); return new Promise<Response>((_resolve, reject) => { const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined); if (signal?.aborted) reject(new DOMException("Aborted", "AbortError")); signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true }); }); }
     if (scenario.state === "error") { log(method, path, 503); return failure(503, "SYNTHETIC_UNAVAILABLE", "Synthetic QA: this information could not be loaded."); }
@@ -191,5 +304,5 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
   XMLHttpRequest.prototype.setRequestHeader = function() {};
   XMLHttpRequest.prototype.send = function() { const request = xhrRequests.get(this) ?? { method: "UNKNOWN", path: "unknown-upload" }; log(request.method, request.path, 0); queueMicrotask(() => this.dispatchEvent(new ProgressEvent("error"))); };
   XMLHttpRequest.prototype.abort = function() { this.dispatchEvent(new ProgressEvent("abort")); };
-  return { requests, restore: () => { window.fetch = originals.fetch; tokenStorage.get = originals.get; tokenStorage.set = originals.set; tokenStorage.clear = originals.clear; XMLHttpRequest.prototype.open = originals.open; XMLHttpRequest.prototype.send = originals.send; XMLHttpRequest.prototype.setRequestHeader = originals.setRequestHeader; XMLHttpRequest.prototype.abort = originals.abort; alert.remove(); } };
+  return { requests, restore: () => { for (const stop of chatStreamStops) stop(); window.removeEventListener("enterprise-qa-estimate-mode-rates", updateEstimateConfiguration); window.fetch = originals.fetch; tokenStorage.get = originals.get; tokenStorage.set = originals.set; tokenStorage.clear = originals.clear; XMLHttpRequest.prototype.open = originals.open; XMLHttpRequest.prototype.send = originals.send; XMLHttpRequest.prototype.setRequestHeader = originals.setRequestHeader; XMLHttpRequest.prototype.abort = originals.abort; alert.remove(); } };
 }

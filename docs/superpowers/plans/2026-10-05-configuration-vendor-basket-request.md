@@ -1,0 +1,24 @@
+# Configuration Main Basket vendor request task plan
+
+Specification: [Configuration Main Baskets in vendor classification](../specs/2026-10-05-configuration-vendor-basket-request-design.md).
+
+## Boundaries
+
+- Configuration basket IDs remain the only vendor classification keys. Procurement can request a missing Main Basket; only Super Admin can create it in Configuration. A request never assigns a basket to a vendor.
+- Preserve existing vendor drafts, Sub Basket creation, Configuration editing, and unrelated dirty worktree paths. Do not seed, migrate live data, send mail, commit, or deploy.
+- Before writers start, capture the dirty-path set and inspect the existing diff on every assigned target. The parent owns the API contract, cross-stack reconciliation, integration, and final verification; the backend owner owns the backend route-operation registry.
+
+## Ordered tasks
+
+1. **Trace the catalogue failure and settle the contract (parent; read-only first).** Verify the current Configuration basket GET route, pagination, caller permission, and actual HTTP failure in an isolated local/test server. Confirm the vendor editor's name/ID source and the Super Admin Configuration entry point. Specify the smallest request/decision payloads, error codes, idempotency key, query keys, and role matrix. If the API returns a non-2xx response after the server is reachable, fix that specific read boundary in the later backend task. Acceptance: no parallel vendor catalogue or guessed options; list failure has an identified cause.
+2. **Backend request workflow and authorization (backend owner).** Add a request model and service for pending, fulfilled, and rejected Main Basket proposals; scoped create/own-read and Super Admin list/decision endpoints; validation, normalized duplicate checks, idempotency, version/CAS, audit, and transactional create-or-link of a Configuration basket. Change direct Main Basket POST authorization and service checks to Super Admin Configuration creation permission, while retaining Procurement's existing Sub Basket permission. Align operation registry, OpenAPI, indexes, and focused route/replica-set tests. Acceptance: AC2–AC4, including no Configuration or vendor mutation on a Procurement request, no duplicate creation, and enforced role separation.
+3. **Procurement vendor form (frontend owner; may start after task 1 contract, parallel with task 2).** Keep `VendorBasketFields` on the Configuration list and Sub Baskets under selected parent IDs. Pass the entered vendor name and optional saved ID from `ProcurementVendorEditor`; replace direct Main Basket creation with an accessible request dialog. Preserve the draft on close/failure, show pending/success/error states and a concise catalogue failure with retry, invalidate/refetch the Configuration list after a later admin change, and remove the direct-create/auto-select path. Update focused rendered tests for source mapping, outage/retry, duplicate request and keyboard/mobile behavior. Acceptance: AC1–AC2.
+4. **Super Admin review UI (separate frontend owner; may run parallel with task 3 after task 1 contract).** Add a compact pending/history request view at the established Configuration admin surface. Support fulfill by create-or-link and reject with reason, display requester/vendor/proposal/status, and refresh request and Configuration queries after decisions. Cover empty, conflict, retry, permission and keyboard states in focused rendered tests. Acceptance: AC3–AC4.
+5. **Integrate and verify (parent after all writers).** Reconcile backend/frontend types, permissions, status transitions and query invalidation. Run focused backend route/replica-set and frontend vendor/Configuration tests, authorization and API inventory checks, both typechecks/builds, `git diff --check`, and rendered desktop/mobile interaction and accessibility checks. Review the final diff and run a read-only integrity review for cross-role access, duplicate races and Configuration lineage. Report exact results and any remaining runtime limitation. Acceptance: all four specification criteria are evidenced; no unintended direct Main Basket creation or vendor association.
+
+## Parallel ownership for Mode A, if selected
+
+- Backend owner: request model/service/routes, Configuration Main Basket create enforcement, backend audit/OpenAPI/tests. Do not edit frontend files.
+- Procurement frontend owner: `VendorBasketFields`, `ProcurementVendorEditor`, their vendor tests and local styles/API client. Do not edit backend or Super Admin review files.
+- Super Admin frontend owner: Configuration review surface and its tests/local styles/API client. Do not edit the vendor form or backend.
+- Parent: shared contract, cross-stack authorization review, final integration/review/verification. Do not launch implementation subagents before the execution-mode choice.

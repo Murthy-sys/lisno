@@ -659,6 +659,110 @@ describe("Admin-initiated projects", () => {
     );
   });
 
+  it.each([
+    [{}, null, null],
+    [{ budgetMin: 0 }, 0, null],
+    [{ budgetMax: 1200000 }, null, 1200000]
+  ])("initiates without location and preserves optional budget bounds %j", async (budgets, budgetMin, budgetMax) => {
+    const repository = createMemoryRepository(structuredClone(demoSeedData));
+    const app = createApp({ repository, auth, clock });
+    const response = await request(app).post("/api/v1/admin/projects")
+      .set("Authorization", bearer("user-admin", "admin"))
+      .send({
+        clientName: "Asha Shah", clientEmail: "asha@example.com", clientMobile: "9000000000",
+        projectName: "Asha home", cityName: "Pune", propertyType: "Apartment",
+        nextAction: "Visit", nextActionAt: "2026-08-25T10:30:00+05:30",
+        estimatorId: "user-estimator-sales", ...budgets
+      }).expect(201);
+    await expect(repository.findProjectById(response.body.data.id)).resolves.toMatchObject({
+      location: "", clientAddress: "", cityName: "Pune", cityKey: "pune",
+      assignedEstimatorId: "user-estimator-sales"
+    });
+    await expect(repository.findLeadById(response.body.data.lead.id)).resolves.toMatchObject({
+      location: "", budgetMin, budgetMax, cityName: "Pune", cityKey: "pune"
+    });
+  });
+
+  it.each(["  Instagram  ", "Existing customer", `  ${"a".repeat(200)}  `])(
+    "persists the trimmed project source %j without changing access provenance", async (source) => {
+      const repository = createMemoryRepository(structuredClone(demoSeedData));
+      const app = createApp({ repository, auth, clock });
+      const response = await request(app).post("/api/v1/admin/projects")
+        .set("Authorization", bearer("user-admin", "admin"))
+        .send({
+          clientName: "Asha Shah", clientEmail: "asha@example.com", clientMobile: "9000000000",
+          projectName: "Asha home", propertyType: "Apartment", source,
+          nextAction: "Visit", nextActionAt: "2026-08-25T10:30:00+05:30",
+          estimatorId: "user-estimator-sales"
+        }).expect(201);
+      const { id: projectId, lead } = response.body.data;
+      await expect(repository.findLeadById(lead.id)).resolves.toMatchObject({
+        projectId, ownerId: "user-estimator-sales", source: source.trim()
+      });
+      const readback = await request(app).get(`/api/v1/leads/${lead.id}`)
+        .set("Authorization", bearer("user-estimator-sales", "estimator_sales")).expect(200);
+      expect(readback.body.data.source).toBe(source.trim());
+      await expect(repository.listActiveProjectAccessGrants("user-admin", "projects"))
+        .resolves.toEqual([expect.objectContaining({ projectId, source: "admin_initiator" })]);
+      const audits = await repository.pageAuditEvents({ entityId: lead.id }, { limit: 20, offset: 0 });
+      expect(audits.items).toHaveLength(1);
+      expect(audits.items[0]!.newValues).toEqual({
+        stage: "new_lead", projectId, ownerId: "user-estimator-sales"
+      });
+    }
+  );
+
+  it.each(["", " \t\n ", "a".repeat(201), null, 42, ["Instagram"], { channel: "Instagram" }])(
+    "rejects invalid project source %j before creating any records", async (source) => {
+      const seed = structuredClone(demoSeedData);
+      seed.projects = [];
+      seed.leads = [];
+      seed.projectAccessGrants = [];
+      seed.auditEvents = [];
+      const repository = createMemoryRepository(seed);
+      const app = createApp({ repository, auth, clock });
+      const response = await request(app).post("/api/v1/admin/projects")
+        .set("Authorization", bearer("user-admin", "admin"))
+        .send({
+          clientName: "Asha Shah", clientEmail: "asha@example.com", clientMobile: "9000000000",
+          projectName: "Asha home", propertyType: "Apartment", source,
+          nextAction: "Visit", nextActionAt: "2026-08-25T10:30:00+05:30",
+          estimatorId: "user-estimator-sales"
+        }).expect(400);
+      expect(response.body.error).toMatchObject({
+        code: "VALIDATION_ERROR", fields: { source: expect.any(String) }
+      });
+      await expect(repository.pageAdminProjects((await repository.findUserById("user-super-admin"))!, { limit: 20, offset: 0 }))
+        .resolves.toMatchObject({ total: 0 });
+      await expect(repository.pageAllLeads({}, { limit: 20, offset: 0 })).resolves.toMatchObject({ total: 0 });
+      await expect(repository.listActiveProjectAccessGrants("user-admin", "projects")).resolves.toEqual([]);
+      await expect(repository.pageAuditEvents({}, { limit: 20, offset: 0 })).resolves.toMatchObject({ total: 0 });
+    }
+  );
+
+  it("keeps location required for ordinary leads and the legacy project creation endpoint denied", async () => {
+    const app = createApp({ repository: createMemoryRepository(structuredClone(demoSeedData)), auth, clock });
+    const lead = {
+      clientName: "Asha Shah", clientEmail: "asha@example.com", clientMobile: "9000000000",
+      projectName: "Asha home", propertyType: "Apartment", source: "Referral",
+      nextAction: "Visit", nextActionAt: "2026-08-25T10:30:00+05:30"
+    };
+    for (const location of [undefined, ""]) {
+      const response = await request(app).post("/api/v1/leads")
+        .set("Authorization", bearer("user-estimator-sales", "estimator_sales"))
+        .send({ ...lead, location }).expect(400);
+      expect(response.body.error.fields).toHaveProperty("location");
+      await request(app).post("/api/v1/projects")
+        .set("Authorization", bearer("user-super-admin", "super_admin"))
+        .send({
+          name: "Asha home", clientName: lead.clientName, clientEmail: lead.clientEmail,
+          clientMobile: lead.clientMobile, location, clientAddress: location,
+          assignedDesignerIds: ["user-designer"], managerId: "user-project-manager",
+          plannedStartAt: "2026-08-25T10:30:00+05:30", plannedEndAt: "2026-09-25T10:30:00+05:30"
+        }).expect(403);
+    }
+  });
+
   it("rejects unsafe initiation inputs and hides another Admin's project", async () => {
     const seed = structuredClone(demoSeedData);
     const otherAdmin = {
@@ -675,7 +779,7 @@ describe("Admin-initiated projects", () => {
       projectName: "Asha home", location: "Pune", propertyType: "3BHK",
       budgetMin: 1200000, budgetMax: 800000, nextAction: "Visit",
       nextActionAt: "2026-08-25T10:30:00", estimatorId: "user-estimator-sales",
-      source: "forged"
+      source: " "
     };
     const invalid = await request(app).post("/api/v1/admin/projects")
       .set("Authorization", bearer("user-admin", "admin")).send(base).expect(400);
@@ -734,9 +838,14 @@ describe("Admin-initiated projects", () => {
     };
     const invalidCases: Array<[Record<string, unknown>, string]> = [
       [Object.fromEntries(Object.entries(valid).filter(([key]) => key !== "estimatorId")), "estimatorId"],
-      [{ ...valid, source: "forged" }, "source"],
+      [{ ...valid, unknownField: "forged" }, "unknownField"],
       [{ ...valid, budgetMin: -1 }, "budgetMin"],
+      [{ ...valid, budgetMin: -1, budgetMax: undefined }, "budgetMin"],
+      [{ ...valid, budgetMin: undefined, budgetMax: -1 }, "budgetMax"],
+      [{ ...valid, budgetMin: null }, "budgetMin"],
+      [{ ...valid, budgetMax: null }, "budgetMax"],
       [{ ...valid, budgetMax: 1 }, "budgetMax"],
+      [{ ...valid, location: " " }, "location"],
       [{ ...valid, nextActionAt: "2026-08-25T10:30:00" }, "nextActionAt"]
     ];
     for (const [body, field] of invalidCases) {
@@ -799,7 +908,8 @@ describe("Admin-initiated projects", () => {
       clientName: "Asha Shah", clientEmail: "asha@example.com", clientMobile: "9000000000",
       projectName: "Asha home", location: "Pune", propertyType: "3BHK",
       budgetMin: 800000, budgetMax: 1200000, nextAction: "Visit",
-      nextActionAt: "2026-08-25T10:30:00+05:30", estimatorId: "user-estimator-sales"
+      nextActionAt: "2026-08-25T10:30:00+05:30", estimatorId: "user-estimator-sales",
+      source: "Existing customer"
     })).rejects.toThrow(/injected/);
     const superAdmin = (await base.findUserById("user-super-admin"))!;
     await expect(base.pageAdminProjects(superAdmin, { limit: 20, offset: 0 }))

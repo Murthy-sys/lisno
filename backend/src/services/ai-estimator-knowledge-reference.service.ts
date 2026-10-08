@@ -650,7 +650,7 @@ export function createAiEstimatorKnowledgeReferenceService(
 
     async createBasket(actor, input) {
       return mapMongoConflict(() => withMongoTransaction(startSession, async (session) => {
-        const authorized = await vendorActorGuard.requireMutationActor(actor, session);
+        const authorized = await actorGuard.requireMutationActor(actor, session);
         validateBasketCreate(input);
         const timestamp = now();
         const normalized = normalizeKnowledgeIdentity(input.name);

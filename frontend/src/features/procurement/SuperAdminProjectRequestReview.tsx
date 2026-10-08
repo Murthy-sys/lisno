@@ -6,12 +6,12 @@ import { Field, Textarea } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { PageState } from "../../components/ui/PageState";
 import { dashboardKeys } from "../admin/dashboard/superAdminDashboardApi";
-import { formatPaise } from "../finance/ProjectFinancePanel";
+import { formatBps, formatPaise } from "../finance/ProjectFinancePanel";
 import { projectStatusKeys } from "../project-status/projectStatusApi";
 import { procurementError } from "./procurementPresentation";
 import {
   decideProjectPurchaseOrderRequest, getPendingProjectPurchaseOrderRequests, purchaseOrderKeys,
-  type ProjectPurchaseOrderRequest, type PurchaseOrderRequestLine
+  type ProjectPurchaseOrderRequest, type PurchaseOrderRequestLine, type PurchaseOrderRequestModeSnapshot
 } from "./purchaseOrderApi";
 
 async function allPendingRequests(): Promise<ProjectPurchaseOrderRequest[]> {
@@ -30,9 +30,93 @@ function ReviewLine({ line }: { line: PurchaseOrderRequestLine }) {
   return <li className="purchase-orders__request-review-line">
     <div><strong>{line.itemName}</strong><small>{line.roomName} · {line.vendorName} · {line.description}</small>
       <small>{line.quantityMilliUnits / 1000} {line.uomCode} × {formatPaise(line.unitPricePaise)} · GST {line.gstBasisPoints / 100}%</small>
-      <small>{line.scopeType.replaceAll("_", " ")} · {line.targetDate} · {line.deliveryLocation}</small></div>
+      <small>{[line.scopeType?.replaceAll("_", " "), line.targetDate, line.deliveryLocation].filter(Boolean).join(" · ") || "Work order details not specified"}</small></div>
     <dl><div><dt>Before GST</dt><dd>{formatPaise(line.netPaise)}</dd></div><div><dt>GST</dt><dd>{formatPaise(line.gstPaise)}</dd></div><div><dt>Total</dt><dd>{formatPaise(line.totalPaise)}</dd></div></dl>
   </li>;
+}
+
+function SnapshotAmount({ label, amount }: { label: string; amount: number | null }) {
+  return <div><dt>{label}</dt><dd>{amount === null ? "Unavailable" : formatPaise(amount)}</dd></div>;
+}
+
+function ModeSnapshotReview({ snapshot, lines }: { snapshot: PurchaseOrderRequestModeSnapshot; lines: PurchaseOrderRequestLine[] }) {
+  const { mode } = snapshot;
+  const preview = mode.preview;
+  const integrityBasis = mode.decision?.integrityBasis;
+  const selectedMode = mode.options.find((option) => option.key === mode.decision?.mode)?.label
+    ?? (mode.decision?.mode === "pmc" ? "PMC" : mode.decision?.mode === "sub_vendor" ? "Sub vendor" : mode.decision?.mode === "in_house" ? "In house" : "Manual exception");
+  const hierarchy = [snapshot.roomName, snapshot.mainBasketName, snapshot.subBasketName].filter(Boolean).join(" / ");
+  const referenceIssues = snapshot.actualChildren.flatMap((child) => mode.priceReferences?.[child.procurementItemId]?.issues ?? []);
+  const manualReasons = [mode.decision?.exceptionReason, ...snapshot.actualChildren.map((child) => child.commercialExceptionReason)].filter((reason): reason is string => Boolean(reason));
+
+  return <article className="purchase-orders__mode-line" aria-label={`${snapshot.mainLineName ?? snapshot.sourceLineItemKey} mode and vendor reconciliation`}>
+    <div className="purchase-orders__mode-line-head">
+      <div><p className="purchase-orders__mode-path">{hierarchy || snapshot.roomName}</p>
+        <h5>{snapshot.mainLineName ?? snapshot.sourceLineItemKey}</h5>
+        <p>{snapshot.source === "configuration" ? "Configured estimate source" : "Legacy estimate source"} · {snapshot.approvedQuantity} {snapshot.approvedUnit} approved · {selectedMode}</p></div>
+      <span className="purchase-orders__mode-state">{mode.state.replaceAll("_", " ")}</span>
+    </div>
+    {integrityBasis?.kind === "observed_unverified" ? <div className="purchase-orders__integrity-review" role="note">
+      <strong>Unverified saved Configuration values</strong>
+      <p>The buyer used the current saved settings for this calculation. They could not be verified against the revision's activation record.</p>
+      <p><strong>Buyer reason:</strong> {integrityBasis.reason}</p>
+    </div> : null}
+    <dl className="purchase-orders__mode-amounts">
+      <SnapshotAmount label="Approved customer estimate" amount={snapshot.approvedAmountPaise} />
+      <SnapshotAmount label="Configured cost benchmark" amount={preview?.adjustedCostPaise ?? null} />
+      {preview?.mode === "sub_vendor" ? <div><dt>Configured Sub-Vendor balance (signed)</dt><dd>{preview.finalVendorChargesPaise == null
+        ? "Unavailable" : `${preview.finalVendorChargesPaise > 0 ? "+" : ""}${formatPaise(preview.finalVendorChargesPaise)}`}</dd></div> : null}
+      <SnapshotAmount label="Actual vendor net" amount={snapshot.actualTotals.netPaise} />
+      <SnapshotAmount label="Actual GST" amount={snapshot.actualTotals.gstPaise} />
+      <SnapshotAmount label="Actual vendor gross" amount={snapshot.actualTotals.totalPaise} />
+      <SnapshotAmount label="Vendor net − configured cost" amount={snapshot.actualNetMinusConfiguredCostPaise} />
+    </dl>
+    {mode.state !== "ready" || mode.issues.length || referenceIssues.length || manualReasons.length ? <div className="purchase-orders__mode-notes">
+      {mode.state !== "ready" ? <p>Configuration state: {mode.state.replaceAll("_", " ")}.</p> : null}
+      {mode.issues.map((issue, index) => <p key={`mode-${index}`}>{issue.message}</p>)}
+      {referenceIssues.map((issue, index) => <p key={`reference-${index}`}>Price or tax reference: {issue.message}</p>)}
+      {manualReasons.map((reason, index) => <p key={`manual-${index}`}>Manual exception: {reason}</p>)}
+    </div> : null}
+    <details className="purchase-orders__mode-evidence">
+      <summary>Calculation, source and vendor line evidence</summary>
+      <div className="purchase-orders__mode-evidence-body">
+        <dl className="purchase-orders__mode-facts">
+          <div><dt>Estimate line ID</dt><dd>{snapshot.sourceLineItemKey}</dd></div>
+          <div><dt>Configured main line ID</dt><dd>{snapshot.mainLineId ?? "Legacy source"}</dd></div>
+          <div><dt>Configuration revision</dt><dd>{mode.revision ? `${mode.revision.id} · v${mode.revision.version} · ${mode.revision.status}` : "Not captured"}</dd></div>
+          <div><dt>Revision digest</dt><dd>{mode.revision?.contentDigest ?? "Not captured"}</dd></div>
+          {integrityBasis ? <div><dt>Observed content digest</dt><dd>{integrityBasis.observedDigest}</dd></div> : null}
+          <div><dt>Mode decision version</dt><dd>{mode.decision ? `v${mode.decision.version}` : "Not captured"}</dd></div>
+          <div><dt>Reference date</dt><dd>{new Date(snapshot.referenceAsOf).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</dd></div>
+          <div><dt>Calculation quantity</dt><dd>{preview ? `${preview.quantity} ${mode.uom?.code ?? snapshot.approvedUnit}` : "Unavailable"}</dd></div>
+          <div><dt>Quantity slab</dt><dd>{preview?.quantityRule ? `${preview.quantityRule.maximumQuantity === null ? `≥ ${preview.quantityRule.minimumQuantity}` : `${preview.quantityRule.minimumQuantity}–${preview.quantityRule.maximumQuantity}`} · ${formatBps(preview.quantityRule.adjustmentBps)} adjustment` : "No quantity slab applied"}</dd></div>
+          <div><dt>Procurement quantity suggestion</dt><dd>{preview?.procurementQuantitySuggestion ?? "No suggestion captured"}</dd></div>
+          <div><dt>Configured selling benchmark</dt><dd>{preview ? formatPaise(preview.sellingPaise) : "Unavailable"}</dd></div>
+          <div><dt>Minimum selling floor</dt><dd>{preview?.floorSellingPaise == null ? "Unavailable" : formatPaise(preview.floorSellingPaise)}</dd></div>
+          <div><dt>Applied margin</dt><dd>{formatBps(preview?.marginBps ?? null)}</dd></div>
+          <div><dt>Discount</dt><dd>{preview ? formatBps(preview.discountBps) : "Unavailable"}</dd></div>
+          <div><dt>Low quantity impact</dt><dd>{preview ? `${formatPaise(preview.lowQuantityImpactPaise)} · ${formatBps(preview.appliedImpactBps)}` : "Unavailable"}</dd></div>
+          <div><dt>Calculation version</dt><dd>{preview?.formulaVersion ?? "Unavailable"}</dd></div>
+        </dl>
+        {preview?.settings.scopes.length ? <div className="purchase-orders__mode-settings"><h6>Saved mode settings</h6>
+          <ul>{preview.settings.scopes.map((setting) => <li key={setting.scope}><strong>{setting.scope.replaceAll("_", " ")}</strong>
+            <span>{setting.source ? `${setting.source.replaceAll("_", " ")} rate` : "Rate source unavailable"} {formatPaise(setting.baseRatePaise)} · Low quantity limit {setting.lowQuantityLimit} · Impact {formatBps(setting.impactBps)} · Starting markup {formatBps(setting.startingMarkupBps)} · Minimum markup {formatBps(setting.minimumMarkupBps)}</span></li>)}</ul>
+          {preview.settings.configuredMarginBps !== null ? <p>Configured margin {formatBps(preview.settings.configuredMarginBps)} · {preview.settings.markupBasis} markup basis</p> : null}
+        </div> : null}
+        <div className="purchase-orders__mode-children"><h6>Actual vendor lines</h6><ul>
+          {snapshot.actualChildren.map((child, index) => {
+            const line = lines.find((candidate) => candidate.procurementItemId === child.procurementItemId && candidate.vendorId === child.vendorId && candidate.sourceLineItemKey === snapshot.sourceLineItemKey);
+            const reference = mode.priceReferences?.[child.procurementItemId];
+            return <li key={`${child.procurementItemId}-${child.vendorId}-${index}`}><div><strong>{line?.itemName ?? child.procurementItemId}</strong>
+              <small>{line?.vendorName ?? child.vendorId} · {child.quantityMilliUnits / 1000} {line?.uomCode ?? "UOM unavailable"} × {formatPaise(child.unitPricePaise)} · GST {formatBps(child.gstBasisPoints)}</small>
+              <small>Allocated work {formatPaise(child.allocatedWorkPaise)} · Item ID {child.procurementItemId}</small>
+              <small>{reference ? reference.state === "ready" ? `Price version ${reference.priceVersionNumber ?? "unavailable"} (${reference.priceVersionId ?? "ID unavailable"}) · Tax version ${reference.taxVersionNumber ?? "unavailable"} (${reference.taxVersionId ?? "ID unavailable"}) · Catalog price ${reference.unitPricePaise === null ? "unavailable" : formatPaise(reference.unitPricePaise)} · Catalog GST ${formatBps(reference.gstBasisPoints)}` : "Price or tax reference unavailable" : "No versioned price or tax reference captured"}</small>
+            </div><dl><div><dt>Net</dt><dd>{formatPaise(child.netPaise)}</dd></div><div><dt>GST</dt><dd>{formatPaise(child.gstPaise)}</dd></div><div><dt>Gross</dt><dd>{formatPaise(child.totalPaise)}</dd></div></dl></li>;
+          })}
+        </ul></div>
+      </div>
+    </details>
+  </article>;
 }
 
 export function SuperAdminProjectRequestReview() {
@@ -50,11 +134,12 @@ export function SuperAdminProjectRequestReview() {
   const selected = requests.data?.find((request) => request.id === selectedId) ?? null;
   const revision = selected?.revisions.find((item) => item.id === selected.submittedRevisionId) ?? null;
   const exceedsBudget = Boolean(revision && revision.committedPaise + revision.totals.netPaise > revision.approvedEstimatePaise);
+  const hasRecoveredModes = Boolean(revision?.modeSnapshots?.some((snapshot) => snapshot.mode.decision?.integrityBasis?.kind === "observed_unverified"));
   const act = useMutation({
     mutationFn: ({ request, idempotencyKey }: { request: ProjectPurchaseOrderRequest; idempotencyKey: string }) =>
       decideProjectPurchaseOrderRequest(request, {
         decision,
-        reason: decision === "approve" ? null : reason.trim(),
+        reason: decision === "approve" ? (hasRecoveredModes ? reason.trim() : null) : reason.trim(),
         budgetOverrideReason: decision === "approve" ? overrideReason.trim() || null : null,
         idempotencyKey
       }),
@@ -80,6 +165,7 @@ export function SuperAdminProjectRequestReview() {
     event.preventDefault();
     if (!selected || !revision) return setError("The submitted revision is unavailable. Refresh this queue.");
     if (decision === "approve" && exceedsBudget && !overrideReason.trim()) return setError("Explain the budget override before approving.");
+    if (decision === "approve" && hasRecoveredModes && reason.trim().length < 10) return setError("Explain why you approve using the unverified saved Configuration values (at least 10 characters).");
     if (decision !== "approve" && !reason.trim()) return setError("Explain the changes or rejection.");
     const signature = JSON.stringify({ id: selected.id, version: selected.version, revisionId: revision.id,
       decision, reason: reason.trim(), overrideReason: overrideReason.trim() });
@@ -132,6 +218,16 @@ export function SuperAdminProjectRequestReview() {
           {exceedsBudget ? <InlineMessage tone="warning">The proposed before GST amount exceeds the approved estimate after existing commitments. Record an override reason to approve.</InlineMessage> : null}
           <small>Budget and commitments shown here are the immutable submission snapshot. Approval rechecks current source and allocations.</small>
         </div>
+        <section className="purchase-orders__mode-review" aria-labelledby="purchase-order-mode-review-title">
+          <div className="purchase-orders__mode-review-head"><h4 id="purchase-order-mode-review-title">Estimate to vendor reconciliation</h4>
+            <p>Amounts and mode settings saved with this submitted revision. Vendor amounts include only the lines shown under each estimate source.</p></div>
+          {hasRecoveredModes ? <InlineMessage tone="warning">This request uses current saved Configuration values that could not be verified against activation. Review the buyer reason and calculation for each affected line, then record your own approval reason.</InlineMessage> : null}
+          {revision.modeSnapshotStatus === "captured"
+            ? revision.modeSnapshots?.length
+              ? <div className="purchase-orders__mode-lines">{revision.modeSnapshots.map((snapshot) => <ModeSnapshotReview key={snapshot.sourceLineItemKey} snapshot={snapshot} lines={revision.lines} />)}</div>
+              : <p className="purchase-orders__mode-unavailable">No frozen mode evidence is available in this submitted revision.</p>
+            : <p className="purchase-orders__mode-unavailable">Mode and price evidence was not captured for this historical revision.</p>}
+        </section>
         <div className="purchase-orders__request-breakdown">
           <h4>Section review</h4>
           {revision.sectionTotals.map((section) => <details key={section.sectionId} className="purchase-orders__section">
@@ -153,9 +249,14 @@ export function SuperAdminProjectRequestReview() {
         <label><input type="radio" name="project-purchase-order-decision" checked={decision === "request_changes"} onChange={() => setDecision("request_changes")} /> Request changes</label>
         <label><input type="radio" name="project-purchase-order-decision" checked={decision === "reject"} onChange={() => setDecision("reject")} /> Reject request</label>
       </fieldset>
-      {decision === "approve" ? <Field id="project-order-budget-override" label="Budget override reason" required={exceedsBudget}
-        hint="Required when the proposed amount before GST plus existing commitments exceeds the approved estimate.">{(props) =>
-          <Textarea {...props} rows={2} maxLength={2000} value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} />}</Field>
+      {decision === "approve" ? <>
+        {hasRecoveredModes ? <Field id="project-order-integrity-reason" label="Unverified configuration approval reason" required
+          hint="Explain your decision to approve the current saved values. This is separate from any budget override.">{(props) =>
+            <Textarea {...props} rows={2} minLength={10} maxLength={2000} value={reason} onChange={(event) => setReason(event.target.value)} />}</Field> : null}
+        <Field id="project-order-budget-override" label="Budget override reason" required={exceedsBudget}
+          hint="Required when the proposed amount before GST plus existing commitments exceeds the approved estimate.">{(props) =>
+            <Textarea {...props} rows={2} maxLength={2000} value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} />}</Field>
+      </>
         : <Field id="project-order-decision-reason" label="Reason for Procurement" required>{(props) =>
           <Textarea {...props} rows={2} maxLength={2000} value={reason} onChange={(event) => setReason(event.target.value)} />}</Field>}
       {error ? <InlineMessage tone="error">{error}</InlineMessage> : null}

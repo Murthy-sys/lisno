@@ -16,6 +16,8 @@ export interface ResolveApprovalProjectInput {
     clientEmail: string;
     clientMobile: string;
     location: string;
+    cityName?: string | null;
+    cityKey?: string | null;
   };
   clientId: string | null;
   occurredAt: Date;
@@ -60,8 +62,11 @@ export async function resolveApprovalProject(
       assignedEstimatorId: estimate.ownerId,
       assignedDesignerIds: [],
       managerId: null,
+      programManagerId: null,
       status: "planning",
       location: lead.location,
+      cityName: lead.cityName ?? null,
+      cityKey: lead.cityKey ?? null,
       plannedStartAt: occurredAt,
       plannedEndAt
     }], { session });

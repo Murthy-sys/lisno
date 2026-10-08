@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { purchaseOrderQuerySchema, type ApprovedPurchaseOrderLine } from "./project-purchase-order.js";
+import type { PurchaseOrderModeResolution } from "./project-purchase-order-mode.js";
 
 const id = z.string().trim().min(1).max(500);
 const key = z.string().trim().min(8).max(128);
@@ -11,6 +12,7 @@ const requestContent = {
     procurementItemId: id,
     expectedVersion: version,
     gstBasisPoints: z.number().int().min(0).max(10_000),
+    commercialExceptionReason: z.string().trim().min(10).max(2_000).nullable().optional(),
     scopeType: z.enum(["supply", "execution", "supply_and_execution"]),
     description: z.string().trim().min(1).max(2_000),
     targetDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u).refine((value) => {
@@ -67,3 +69,36 @@ export type PurchaseOrderRequestLine = ApprovedPurchaseOrderLine & {
 };
 export type PurchaseOrderRequestSectionTotal = { sectionId: string; label: string; totals: PurchaseOrderRequestTotals };
 export type PurchaseOrderRequestVendorTotal = { vendorId: string; code: string; name: string; terms: string; totals: PurchaseOrderRequestTotals };
+
+/** Internal project-request evidence. Never copy this into a vendor PO line or task. */
+export type PurchaseOrderRequestModeSnapshot = {
+  sourceLineItemKey: string;
+  source: "configuration" | "legacy";
+  roomId: string | null;
+  roomName: string;
+  mainBasketId: string | null;
+  mainBasketName: string | null;
+  subBasketId: string | null;
+  subBasketName: string | null;
+  mainLineId: string | null;
+  mainLineName: string | null;
+  approvedQuantity: string;
+  approvedUnit: string;
+  approvedAmountPaise: number;
+  referenceAsOf: string;
+  mode: PurchaseOrderModeResolution;
+  actualChildren: Array<{
+    procurementItemId: string;
+    vendorId: string;
+    quantityMilliUnits: number;
+    unitPricePaise: number;
+    gstBasisPoints: number;
+    allocatedWorkPaise: number;
+    netPaise: number;
+    gstPaise: number;
+    totalPaise: number;
+    commercialExceptionReason: string | null;
+  }>;
+  actualTotals: PurchaseOrderRequestTotals;
+  actualNetMinusConfiguredCostPaise: number | null;
+};

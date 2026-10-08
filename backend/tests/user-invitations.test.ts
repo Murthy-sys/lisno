@@ -302,7 +302,12 @@ describe("protected user invitation administration", () => {
     "denies a stored %s before creating invitation state",
     async (role) => {
       const { seed, operator } = standardSeed();
-      const stored = seed.users.find((user) => user.role === role)!;
+      const stored = seed.users.find((user) => user.role === role) ?? {
+        ...operator, id: "synthetic-program-manager", name: "Synthetic Program Manager",
+        email: "program-manager@example.test", emailNormalized: "program-manager@example.test",
+        role: "program_manager" as const, accountKind: "standard" as const
+      };
+      if (role === "program_manager") seed.users.push(stored);
       const { repository, service, sendInvitation } = setup(seed);
 
       await expect(service.create(publicUser(stored), createInput)).rejects.toMatchObject({
