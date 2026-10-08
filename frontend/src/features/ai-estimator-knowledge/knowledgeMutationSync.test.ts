@@ -246,6 +246,89 @@ describe("knowledge mutation cache synchronization", () => {
     assert();
   });
 
+  it("refreshes the deleted child's parent version while retaining empty groups and unrelated drafts", async () => {
+    const client = queryClient();
+    const parentKey = [...knowledgeQueryKeys.subBasketLists("basket-1"), "index-catalog"];
+    const otherParentKey = knowledgeQueryKeys.subBasketLists("basket-2");
+    const group = { id: "sub-1", basketId: "basket-1", name: "Lighting", version: 4 };
+    const pagination = { total: 1, limit: 100, offset: 0, hasMore: false };
+    client.setQueryData(parentKey, { items: [group], pagination });
+    client.setQueryData(otherParentKey, { items: [{ ...group, id: "sub-2", basketId: "basket-2" }], pagination });
+    const draftKey = knowledgeQueryKeys.section("survivor", "revision", "recommendations");
+    const draft = { payload: { note: "Keep this unsaved source draft" } };
+    client.setQueryData(draftKey, draft);
+    const refreshParent = vi.fn(async () => ({ items: [{ ...group, version: 5 }], pagination }));
+    const observer = new QueryObserver(client, { queryKey: parentKey, queryFn: refreshParent, staleTime: Infinity });
+    const unsubscribe = observer.subscribe(() => undefined);
+    try {
+      commitKnowledgeMainLineRemoval(client, "deleted");
+      await syncKnowledgeMainLineDeletion(client, "deleted", { basketId: "basket-1", throwOnError: true });
+      expect(refreshParent).toHaveBeenCalledTimes(1);
+      expect(client.getQueryData(parentKey)).toMatchObject({ items: [{ id: "sub-1", version: 5 }] });
+      expect(client.getQueryState(otherParentKey)?.isInvalidated).toBe(false);
+      expect(client.getQueryData(draftKey)).toEqual(draft);
+      expect(client.getQueryState(draftKey)?.isInvalidated).toBe(false);
+    } finally { unsubscribe(); client.clear(); }
+  });
+
+  it.each(["items", "parent", "temporary", "procurement"] as const)(
+    "reports %s refresh failure after removal and recovers with reads only",
+    async (family) => {
+      const client = queryClient();
+      const deleted = itemDetail({ id: "deleted", mainLineId: "deleted" });
+      const survivor = itemDetail({ id: "survivor", mainLineId: "survivor" });
+      const listKey = knowledgeQueryKeys.itemList({ limit: 20, offset: 0 });
+      const list = { items: [deleted, survivor], pagination: { total: 2, limit: 20, offset: 0, hasMore: false } };
+      const refreshedList = { items: [survivor], pagination: { ...list.pagination, total: 1 } };
+      const deletedKeys = [knowledgeQueryKeys.item("deleted"), knowledgeQueryKeys.section("deleted", "rev", "overview"),
+        knowledgeQueryKeys.history("deleted"), knowledgeQueryKeys.activationReview("deleted", "rev")];
+      client.setQueryData(listKey, list);
+      deletedKeys.forEach((key) => client.setQueryData(key, deleted));
+      const key = family === "items" ? listKey
+        : family === "parent" ? knowledgeQueryKeys.subBasketLists("basket-1")
+          : family === "temporary" ? knowledgeQueryKeys.item("temporary")
+            : procurementBasketKeys.detail("project-one", "painting");
+      const value = family === "items" ? refreshedList : family === "temporary"
+        ? itemDetail({ id: "temporary", mainLineId: "temporary", itemType: "temporary" })
+        : { refreshed: true };
+      if (family !== "items") client.setQueryData(key, value);
+      let fail = true;
+      const refresh = vi.fn(async () => {
+        if (fail) throw new Error("Read unavailable");
+        return value;
+      });
+      const observer = new QueryObserver(client, { queryKey: key, queryFn: refresh, staleTime: Infinity, retry: false });
+      const unsubscribe = observer.subscribe(() => undefined);
+      try {
+        commitKnowledgeMainLineRemoval(client, "deleted");
+        await expect(syncKnowledgeMainLineDeletion(client, "deleted", {
+          basketId: "basket-1", throwOnError: true
+        })).rejects.toThrow("The Main Line was deleted, but some catalog views could not refresh.");
+        expect(refresh).toHaveBeenCalledTimes(1);
+        expect(client.getQueryData(listKey)).toMatchObject({ items: [survivor], pagination: { total: 1 } });
+        deletedKeys.forEach((deletedKey) => expect(client.getQueryData(deletedKey)).toBeUndefined());
+        fail = false;
+        await syncKnowledgeMainLineDeletion(client, "deleted", { basketId: "basket-1", throwOnError: true });
+        expect(refresh).toHaveBeenCalledTimes(2);
+        expect(client.getQueryData(listKey)).toMatchObject({ items: [survivor], pagination: { total: 1 } });
+        deletedKeys.forEach((deletedKey) => expect(client.getQueryData(deletedKey)).toBeUndefined());
+      } finally { unsubscribe(); client.clear(); }
+    }
+  );
+
+  it("preserves existing deletion callers' background-refresh behavior unless strict recovery is requested", async () => {
+    const client = queryClient();
+    const key = knowledgeQueryKeys.itemList({ limit: 20, offset: 0 });
+    client.setQueryData(key, { items: [], pagination: { total: 0, limit: 20, offset: 0, hasMore: false } });
+    const observer = new QueryObserver(client, { queryKey: key, staleTime: Infinity, retry: false,
+      queryFn: async () => { throw new Error("Refresh unavailable"); } });
+    const unsubscribe = observer.subscribe(() => undefined);
+    try {
+      await expect(syncKnowledgeMainLineDeletion(client, "deleted")).resolves.toBeUndefined();
+      expect(client.getQueryState(key)?.status).toBe("error");
+    } finally { unsubscribe(); client.clear(); }
+  });
+
   it("removes a permanently deleted Basket and invalidates every dependent knowledge cache", async () => {
     const client = queryClient();
     const activeListKey = knowledgeQueryKeys.basketList({ limit: 100, offset: 0 });

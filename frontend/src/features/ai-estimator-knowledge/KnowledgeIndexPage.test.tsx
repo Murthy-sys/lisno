@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
@@ -10,6 +10,7 @@ import { server } from "../../test/server";
 import { KnowledgeBaseIndexPage } from "./KnowledgeBaseIndexPage";
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
 import * as knowledgeApi from "./knowledgeApi";
+import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import type {
   KnowledgeBasket,
   KnowledgeItemDetail,
@@ -22,7 +23,8 @@ import type {
 const authState = vi.hoisted(() => ({
   create: true,
   update: true,
-  lifecycle: true
+  lifecycle: true,
+  role: "super_admin"
 }));
 
 vi.mock("../../auth/AuthProvider", () => ({
@@ -32,7 +34,7 @@ vi.mock("../../auth/AuthProvider", () => ({
       id: "super-admin-1",
       name: "Super Admin",
       email: "admin@lisno.example",
-      role: "super_admin"
+      role: authState.role
     },
     authorization: {},
     sessionExpired: false
@@ -59,6 +61,8 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     listKnowledgeSubBaskets: vi.fn(),
     listKnowledgeMasters: vi.fn(),
     getKnowledgeBasketDeletionImpact: vi.fn(),
+    getKnowledgeSubBasketDeletionImpact: vi.fn(),
+    permanentlyDeleteKnowledgeSubBasket: vi.fn(),
     getKnowledgeItem: vi.fn(),
     updateKnowledgeMainLine: vi.fn(),
     updateKnowledgeSubBasket: vi.fn()
@@ -190,7 +194,7 @@ function renderIndex() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } }
   });
-  return render(
+  const content = () => (
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={["/admin/configuration/estimation"]}>
         <Routes>
@@ -206,6 +210,8 @@ function renderIndex() {
       </MemoryRouter>
     </QueryClientProvider>
   );
+  const view = render(content());
+  return { ...view, queryClient, rerenderIndex: () => view.rerender(content()) };
 }
 
 function basketPanel(name: string) {
@@ -221,11 +227,63 @@ function itemCard(name: string) {
   return screen.getByRole("link", { name }).closest("article")!;
 }
 
+const panelGroup = subBasket(carpentry, "sub-panel", "Shared finishes", 4);
+const emptyGroup = subBasket(carpentry, "sub-empty", "Unused finishes", 7);
+const retainedGroup = subBasket(carpentry, "sub-retained", "Retained finishes", 9);
+const pipeGroup = subBasket(plumbing, "sub-pipes", "Shared finishes", 12);
+
+function mockDeletionHierarchy() {
+  const state = {
+    groups: [panelGroup, emptyGroup, retainedGroup, pipeGroup],
+    items: [
+      { ...panelling, subBasketId: panelGroup.id, subBasketName: panelGroup.name },
+      listItem({
+        id: "line-retained", mainLineId: "line-retained", mainLineName: "Retained shelving",
+        subBasketId: retainedGroup.id, subBasketName: retainedGroup.name
+      }),
+      { ...pipework, subBasketId: pipeGroup.id, subBasketName: pipeGroup.name }
+    ]
+  };
+  vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockImplementation(async (basketId) => {
+    const items = state.groups.filter((group) => group.basketId === basketId);
+    return { items, pagination: { ...pagination, total: items.length } };
+  });
+  vi.mocked(knowledgeApi.listKnowledgeItems).mockImplementation(async () => ({
+    items: state.items, pagination: { ...pagination, limit: 20, total: state.items.length }
+  }));
+  vi.mocked(knowledgeApi.getKnowledgeSubBasketDeletionImpact).mockImplementation(async (basketId, subBasketId) => {
+    const group = state.groups.find((entry) => entry.id === subBasketId && entry.basketId === basketId);
+    if (!group) throw new Error("Sub-Basket not found under this Main Basket.");
+    return {
+      basketId, subBasketId, subBasketName: group.name, version: group.version,
+      mainLineCount: state.items.filter((item) => item.basketId === basketId && item.subBasketId === subBasketId).length,
+      referenceCount: 0, impactToken: `impact-${subBasketId}`
+    };
+  });
+  vi.mocked(knowledgeApi.permanentlyDeleteKnowledgeSubBasket).mockImplementation(async (basketId, subBasketId) => {
+    const deletedMainLineIds = state.items
+      .filter((item) => item.basketId === basketId && item.subBasketId === subBasketId)
+      .map((item) => item.mainLineId);
+    state.groups = state.groups.filter((group) => group.id !== subBasketId || group.basketId !== basketId);
+    state.items = state.items.filter((item) => !deletedMainLineIds.includes(item.mainLineId));
+    return { basketId, subBasketId, deleted: true, deletedAt: timestamp, deletedMainLineIds, deletedReferenceCount: 0 };
+  });
+  return state;
+}
+
+async function fillSubBasketDeletion(user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement, name: string) {
+  await user.type(await within(dialog).findByRole("textbox", { name: "Type Sub-Basket name to confirm" }), name);
+  await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), "Remove obsolete configuration");
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   authState.create = true;
   authState.update = true;
   authState.lifecycle = true;
+  authState.role = "super_admin";
+  vi.mocked(knowledgeApi.getKnowledgeSubBasketDeletionImpact).mockReset();
+  vi.mocked(knowledgeApi.permanentlyDeleteKnowledgeSubBasket).mockReset();
   vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({
     items: [carpentry, plumbing],
     pagination: { ...pagination, total: 2 }
@@ -869,5 +927,288 @@ describe("Knowledge Base index page", () => {
 
     await screen.findByRole("button", { name: "Archived group" });
     expect(screen.queryByRole("button", { name: "Edit Sub-Basket name for Archived group" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Sub-Basket deletion from the Configuration hierarchy", () => {
+  it("opens the empty group's authoritative preview with the keyboard and cancels back to its trigger", async () => {
+    const user = userEvent.setup();
+    mockDeletionHierarchy();
+    renderIndex();
+
+    const action = await screen.findByRole("button", { name: `Delete Sub-Basket ${emptyGroup.name} permanently` });
+    const toggle = screen.getByRole("button", { name: emptyGroup.name });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(visibleLabel(action)).toBe("Delete");
+    action.focus();
+    await user.keyboard("{Enter}");
+    const dialog = await screen.findByRole("alertdialog", { name: "Delete Sub-Basket?" });
+    expect(dialog).toHaveTextContent(carpentry.name);
+    expect(await within(dialog).findByText(/This Sub-Basket is empty/)).toBeVisible();
+    expect(knowledgeApi.getKnowledgeSubBasketDeletionImpact).toHaveBeenCalledWith(carpentry.id, emptyGroup.id);
+    expect(within(dialog).getByRole("button", { name: "Delete Sub-Basket" })).toBeDisabled();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(action).toHaveFocus());
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(knowledgeApi.permanentlyDeleteKnowledgeSubBasket).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("deletes only the selected populated group, preserving same-named and expanded siblings and returning focus to its parent", async () => {
+    const user = userEvent.setup();
+    mockDeletionHierarchy();
+    renderIndex();
+    const carpentryPanel = await screen.findByRole("heading", { level: 2, name: carpentry.name }).then((heading) => heading.closest("section")!);
+    const trigger = await within(carpentryPanel).findByRole("button", { name: `Delete Sub-Basket ${panelGroup.name} permanently` });
+    await user.click(within(carpentryPanel).getByRole("button", { name: panelGroup.name }));
+    await user.click(within(carpentryPanel).getByRole("button", { name: retainedGroup.name }));
+    await user.click(within(basketPanel(plumbing.name)).getByRole("button", { name: pipeGroup.name }));
+    expect(screen.getByRole("link", { name: panelling.mainLineName })).toBeVisible();
+    await user.click(trigger);
+    const dialog = await screen.findByRole("alertdialog", { name: "Delete Sub-Basket?" });
+    await fillSubBasketDeletion(user, dialog, panelGroup.name);
+    await user.click(within(dialog).getByRole("button", { name: "Delete Sub-Basket" }));
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(knowledgeApi.permanentlyDeleteKnowledgeSubBasket).toHaveBeenCalledExactlyOnceWith(
+      carpentry.id, panelGroup.id, {
+        expectedVersion: panelGroup.version, confirmationName: panelGroup.name,
+        reason: "Remove obsolete configuration", impactToken: `impact-${panelGroup.id}`
+      }
+    );
+    expect(within(carpentryPanel).queryByRole("button", { name: panelGroup.name })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: panelling.mainLineName, hidden: true })).not.toBeInTheDocument();
+    expect(within(carpentryPanel).getByRole("button", { name: retainedGroup.name })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "Retained shelving" })).toBeVisible();
+    expect(within(basketPanel(plumbing.name)).getByRole("button", { name: pipeGroup.name })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: pipework.mainLineName })).toBeVisible();
+    expect(screen.getByRole("button", { name: emptyGroup.name })).toBeVisible();
+    await waitFor(() => expect(within(carpentryPanel).getByRole("button", { name: carpentry.name })).toHaveFocus());
+    expect(screen.getByRole("status")).toHaveTextContent(/Shared finishes.*deleted/);
+  });
+
+  it("uses the selected parent and current impact even when a filtered page shows only one of many children", async () => {
+    const user = userEvent.setup();
+    const state = mockDeletionHierarchy();
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockImplementation(async (params) => ({
+      items: params?.search ? state.items.filter((item) => item.mainLineId === pipework.mainLineId) : state.items,
+      pagination: { ...pagination, limit: 20, total: 45, hasMore: true }
+    }));
+    vi.mocked(knowledgeApi.getKnowledgeSubBasketDeletionImpact).mockResolvedValue({
+      basketId: plumbing.id, subBasketId: pipeGroup.id, subBasketName: pipeGroup.name,
+      version: 19, mainLineCount: 8, referenceCount: 3, impactToken: "reviewed-plumbing-impact"
+    });
+    renderIndex();
+    await screen.findByRole("heading", { level: 2, name: plumbing.name });
+    await user.type(screen.getByRole("searchbox", { name: "Search Basket or Main Line" }), "pipe{Enter}");
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(knowledgeApi.listKnowledgeItems).toHaveBeenLastCalledWith(
+      expect.objectContaining({ search: "pipe", limit: 20, offset: 20 })
+    ));
+    await user.click(await within(basketPanel(plumbing.name)).findByRole("button", { name: `Delete Sub-Basket ${pipeGroup.name} permanently` }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Delete Sub-Basket?" });
+    await fillSubBasketDeletion(user, dialog, pipeGroup.name);
+    expect(within(dialog).getByText("Items deleted with it").parentElement).toHaveTextContent("8");
+    expect(knowledgeApi.getKnowledgeSubBasketDeletionImpact).toHaveBeenCalledWith(plumbing.id, pipeGroup.id);
+    await user.click(within(dialog).getByRole("button", { name: "Delete Sub-Basket" }));
+    await waitFor(() => expect(knowledgeApi.permanentlyDeleteKnowledgeSubBasket).toHaveBeenCalledExactlyOnceWith(
+      plumbing.id, pipeGroup.id, {
+        expectedVersion: 19, confirmationName: pipeGroup.name,
+        reason: "Remove obsolete configuration", impactToken: "reviewed-plumbing-impact"
+      }
+    ));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(screen.queryByRole("heading", { level: 2, name: plumbing.name })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1, name: "AI Estimator Knowledge Base" })
+      .closest(".knowledge-page")).toHaveFocus());
+  });
+
+  it.each(["missing permission", "non-Super Admin", "archived parent"] as const)("hides deletion for %s", async (restriction) => {
+    mockDeletionHierarchy();
+    if (restriction === "missing permission") authState.lifecycle = false;
+    if (restriction === "non-Super Admin") authState.role = "admin";
+    if (restriction === "archived parent") {
+      vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({
+        items: [{ ...carpentry, status: "archived" }, plumbing], pagination: { ...pagination, total: 2 }
+      });
+    }
+    const view = renderIndex();
+    const panel = await screen.findByRole("heading", { level: 2, name: carpentry.name }).then((heading) => heading.closest("section")!);
+    await within(panel).findByRole("button", { name: panelGroup.name });
+    await waitFor(() => expect(view.queryClient.isFetching()).toBe(0));
+    expect(within(panel).queryByRole("button", { name: /^Delete Sub-Basket/ })).not.toBeInTheDocument();
+    expect(knowledgeApi.getKnowledgeSubBasketDeletionImpact).not.toHaveBeenCalled();
+    expect(knowledgeApi.permanentlyDeleteKnowledgeSubBasket).not.toHaveBeenCalled();
+  });
+
+  it.each(["missing parent", "failed parent", "missing child", "failed child", "wrong parent", "loading child"] as const)("does not infer a deletion target from item labels with a %s catalog", async (restriction) => {
+    mockDeletionHierarchy();
+    if (restriction === "missing parent") {
+      vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [plumbing], pagination: { ...pagination, total: 1 } });
+    } else if (restriction === "failed parent") {
+      vi.mocked(knowledgeApi.listKnowledgeBaskets).mockRejectedValue(new Error("Main Basket catalog unavailable"));
+    } else {
+      vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockImplementation(async (basketId) => {
+        if (basketId !== carpentry.id) return { items: [pipeGroup], pagination: { ...pagination, total: 1 } };
+        if (restriction === "failed child") throw new Error("Sub-Basket catalog unavailable");
+        if (restriction === "loading child") return new Promise<never>(() => undefined);
+        return {
+          items: restriction === "wrong parent" ? [{ ...panelGroup, basketId: plumbing.id }] : [],
+          pagination: { ...pagination, total: restriction === "wrong parent" ? 1 : 0 }
+        };
+      });
+    }
+    const view = renderIndex();
+    const panel = await screen.findByRole("heading", { level: 2, name: carpentry.name }).then((heading) => heading.closest("section")!);
+    await within(panel).findByRole("button", { name: panelGroup.name });
+    if (restriction === "loading child") expect(within(panel).getByText("Loading Sub-Baskets…")).toBeVisible();
+    else await waitFor(() => expect(view.queryClient.isFetching()).toBe(0));
+    expect(within(panel).queryByRole("button", { name: `Delete Sub-Basket ${panelGroup.name} permanently` })).not.toBeInTheDocument();
+    expect(knowledgeApi.getKnowledgeSubBasketDeletionImpact).not.toHaveBeenCalled();
+  });
+
+  it("allows lifecycle-only access for the Super Admin under an inactive parent", async () => {
+    mockDeletionHierarchy();
+    authState.update = false;
+    authState.create = false;
+    vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({
+      items: [{ ...carpentry, status: "inactive" }, plumbing], pagination: { ...pagination, total: 2 }
+    });
+    renderIndex();
+
+    expect(await screen.findByRole("button", { name: `Delete Sub-Basket ${emptyGroup.name} permanently` })).toBeVisible();
+    expect(screen.queryByRole("button", { name: `Edit Sub-Basket name for ${emptyGroup.name}` })).not.toBeInTheDocument();
+  });
+
+  it.each(["permission", "role"] as const)("blocks an already-open confirmation when the actor loses their %s", async (lost) => {
+    const user = userEvent.setup();
+    mockDeletionHierarchy();
+    const view = renderIndex();
+    await user.click(await screen.findByRole("button", { name: `Delete Sub-Basket ${emptyGroup.name} permanently` }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Delete Sub-Basket?" });
+    await fillSubBasketDeletion(user, dialog, emptyGroup.name);
+    expect(within(dialog).getByRole("button", { name: "Delete Sub-Basket" })).toBeEnabled();
+
+    if (lost === "permission") authState.lifecycle = false;
+    else authState.role = "admin";
+    view.rerenderIndex();
+
+    expect(within(dialog).getByRole("button", { name: "Delete Sub-Basket" })).toBeDisabled();
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(/permission|access/i);
+    await user.click(within(dialog).getByRole("button", { name: "Delete Sub-Basket" }));
+    expect(knowledgeApi.permanentlyDeleteKnowledgeSubBasket).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "Main Basket catalog failure", "Sub-Basket catalog failure", "removed Main Basket",
+    "archived Main Basket", "removed Sub-Basket", "changed Sub-Basket parent"
+  ] as const)("blocks an already-open confirmation after %s", async (change) => {
+    const user = userEvent.setup();
+    const state = mockDeletionHierarchy();
+    const view = renderIndex();
+    const panel = await screen.findByRole("heading", { level: 2, name: carpentry.name }).then((heading) => heading.closest("section")!);
+    await user.click(await within(panel).findByRole("button", { name: `Delete Sub-Basket ${panelGroup.name} permanently` }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Delete Sub-Basket?" });
+    await fillSubBasketDeletion(user, dialog, panelGroup.name);
+    const confirm = within(dialog).getByRole("button", { name: "Delete Sub-Basket" });
+    expect(confirm).toBeEnabled();
+
+    const parentChanged = change.includes("Main Basket");
+    if (change === "Main Basket catalog failure") {
+      vi.mocked(knowledgeApi.listKnowledgeBaskets).mockRejectedValueOnce(new Error("Main Basket catalog unavailable"));
+    } else if (change === "Sub-Basket catalog failure") {
+      vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockRejectedValueOnce(new Error("Sub-Basket catalog unavailable"));
+    } else if (change === "removed Main Basket" || change === "archived Main Basket") {
+      const items: KnowledgeBasket[] = change === "removed Main Basket"
+        ? [plumbing] : [{ ...carpentry, status: "archived" }, plumbing];
+      vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items, pagination: { ...pagination, total: items.length } });
+    } else {
+      state.groups = change === "removed Sub-Basket"
+        ? state.groups.filter((group) => group.id !== panelGroup.id)
+        : state.groups.map((group) => group.id === panelGroup.id ? { ...group, basketId: plumbing.id } : group);
+    }
+    await act(async () => {
+      await view.queryClient.invalidateQueries({
+        queryKey: parentChanged ? knowledgeQueryKeys.basketLists() : knowledgeQueryKeys.subBasketLists(carpentry.id)
+      });
+    });
+
+    await waitFor(() => expect(confirm).toBeDisabled());
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(/catalog could not be verified|no longer available for deletion/);
+    expect(within(dialog).getByRole("textbox", { name: "Type Sub-Basket name to confirm" })).toHaveValue(panelGroup.name);
+    await user.click(confirm);
+    expect(knowledgeApi.permanentlyDeleteKnowledgeSubBasket).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(within(basketPanel(carpentry.name)).getByRole("button", { name: carpentry.name })).toHaveFocus());
+  });
+
+  it("locks repeated submissions while the deletion request is pending", async () => {
+    const user = userEvent.setup();
+    mockDeletionHierarchy();
+    const deleteGroup = vi.mocked(knowledgeApi.permanentlyDeleteKnowledgeSubBasket).getMockImplementation()!;
+    let releaseRequest: () => void = () => undefined;
+    const pendingRequest = new Promise<void>((resolve) => { releaseRequest = resolve; });
+    vi.mocked(knowledgeApi.permanentlyDeleteKnowledgeSubBasket).mockImplementation(async (...args) => {
+      await pendingRequest;
+      return deleteGroup(...args);
+    });
+    renderIndex();
+    await user.click(await screen.findByRole("button", { name: `Delete Sub-Basket ${emptyGroup.name} permanently` }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Delete Sub-Basket?" });
+    await fillSubBasketDeletion(user, dialog, emptyGroup.name);
+    const confirm = within(dialog).getByRole("button", { name: "Delete Sub-Basket" });
+    const form = confirm.closest("form")!;
+
+    act(() => {
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+    });
+
+    await waitFor(() => expect(knowledgeApi.permanentlyDeleteKnowledgeSubBasket).toHaveBeenCalledTimes(1));
+    expect(confirm).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(within(dialog).getByRole("textbox", { name: "Reason" })).toBeDisabled();
+    fireEvent.submit(form);
+    expect(knowledgeApi.permanentlyDeleteKnowledgeSubBasket).toHaveBeenCalledTimes(1);
+    await act(async () => { releaseRequest(); });
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: emptyGroup.name })).not.toBeInTheDocument();
+    expect(knowledgeApi.permanentlyDeleteKnowledgeSubBasket).toHaveBeenCalledExactlyOnceWith(
+      carpentry.id, emptyGroup.id, {
+        expectedVersion: emptyGroup.version, confirmationName: emptyGroup.name,
+        reason: "Remove obsolete configuration", impactToken: `impact-${emptyGroup.id}`
+      }
+    );
+  });
+
+  it("keeps a committed deletion in refresh-only recovery and never resubmits it", async () => {
+    const user = userEvent.setup();
+    mockDeletionHierarchy();
+    renderIndex();
+    await user.click(await screen.findByRole("button", { name: `Delete Sub-Basket ${emptyGroup.name} permanently` }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Delete Sub-Basket?" });
+    await fillSubBasketDeletion(user, dialog, emptyGroup.name);
+    vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockRejectedValueOnce(new Error("Catalog refresh unavailable"));
+    await user.click(within(dialog).getByRole("button", { name: "Delete Sub-Basket" }));
+
+    expect(await within(dialog).findByText(/was permanently deleted, but the catalog could not refresh/)).toBeVisible();
+    expect(within(dialog).queryByRole("button", { name: "Delete Sub-Basket" })).not.toBeInTheDocument();
+    expect(knowledgeApi.permanentlyDeleteKnowledgeSubBasket).toHaveBeenCalledTimes(1);
+    await user.click(within(dialog).getByRole("button", { name: "Retry catalog refresh" }));
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: emptyGroup.name })).not.toBeInTheDocument();
+    expect(within(basketPanel(carpentry.name)).getByRole("button", { name: panelGroup.name })).toBeVisible();
+    await waitFor(() => expect(within(basketPanel(carpentry.name)).getByRole("button", { name: carpentry.name })).toHaveFocus());
+    expect(knowledgeApi.permanentlyDeleteKnowledgeSubBasket).toHaveBeenCalledExactlyOnceWith(
+      carpentry.id, emptyGroup.id, {
+        expectedVersion: emptyGroup.version, confirmationName: emptyGroup.name,
+        reason: "Remove obsolete configuration", impactToken: `impact-${emptyGroup.id}`
+      }
+    );
   });
 });

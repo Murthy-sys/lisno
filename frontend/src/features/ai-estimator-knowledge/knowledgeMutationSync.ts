@@ -388,11 +388,14 @@ export async function syncKnowledgeSubBasketDeletion(
   await refreshKnowledgeSubBasketCatalog(queryClient, result.basketId);
 }
 
-export function invalidateTemporaryMainLineDetails(queryClient: QueryClient): Promise<void> {
+export function invalidateTemporaryMainLineDetails(
+  queryClient: QueryClient,
+  options?: { readonly throwOnError?: boolean }
+): Promise<void> {
   return queryClient.invalidateQueries({
     queryKey: knowledgeQueryKeys.items(),
     predicate: (query) => query.queryKey.length === 3 && (query.state.data as KnowledgeItemDetail | undefined)?.itemType === "temporary"
-  });
+  }, options);
 }
 
 export function commitKnowledgeSectionMutation(
@@ -512,26 +515,41 @@ function basketListFilterFamily(queryKey: readonly unknown[]): string {
  */
 export async function syncKnowledgeMainLineDeletion(
   queryClient: QueryClient,
-  mainLineId: string
+  mainLineId: string,
+  options: { readonly basketId?: string; readonly throwOnError?: boolean } = {}
 ): Promise<void> {
   queryClient.removeQueries({
     queryKey: knowledgeQueryKeys.item(mainLineId),
     exact: true
   });
 
-  await Promise.all([
-    invalidateTemporaryMainLineDetails(queryClient),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts() }),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketDeletionImpacts() }),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists() }),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.histories() }),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.activationReviews() }),
-    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }),
-    queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }),
-    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
-    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
-  ]);
+  const refreshOptions = options.throwOnError ? { throwOnError: true } : undefined;
+  const refreshes = [
+    invalidateTemporaryMainLineDetails(queryClient, refreshOptions),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts() }, refreshOptions),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketDeletionImpacts() }, refreshOptions),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }, refreshOptions),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists() }, refreshOptions),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.histories() }, refreshOptions),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.activationReviews() }, refreshOptions),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }, refreshOptions),
+    queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }, refreshOptions),
+    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }, refreshOptions),
+    queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() }, refreshOptions),
+    // Child deletion advances the parent's stored version, even when it is now empty.
+    ...(options.basketId ? [queryClient.invalidateQueries({
+      queryKey: knowledgeQueryKeys.subBasketLists(options.basketId)
+    }, refreshOptions)] : [])
+  ];
+  if (!options.throwOnError) {
+    await Promise.all(refreshes);
+    return;
+  }
+  // A committed delete cannot be retried. Finish every refresh before showing recovery.
+  const results = await Promise.allSettled(refreshes);
+  if (results.some((result) => result.status === "rejected")) {
+    throw new Error("The Main Line was deleted, but some catalog views could not refresh.");
+  }
 }
 
 export async function syncKnowledgeLifecycleMutation(
