@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useParams, useLocation, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../../api/client";
@@ -190,13 +190,20 @@ function WorkspaceStub() {
   return <h1>Workspace for {itemId}</h1>;
 }
 
-function renderIndex() {
+function NavigationProbe() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  return <><output aria-label="Current search">{location.search}</output><button onClick={() => navigate(-1)}>Previous page</button><button onClick={() => navigate(1)}>Next page</button></>;
+}
+
+function renderIndex(entry = "/admin/configuration/estimation", navigation = false) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } }
   });
   const content = () => (
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={["/admin/configuration/estimation"]}>
+      <MemoryRouter initialEntries={[entry]}>
+        {navigation ? <NavigationProbe /> : null}
         <Routes>
           <Route
             path="/admin/configuration/estimation"
@@ -277,6 +284,8 @@ async function fillSubBasketDeletion(user: ReturnType<typeof userEvent.setup>, d
 }
 
 beforeEach(() => {
+  server.use(http.get("/api/v1/admin/ai-estimator-knowledge/basket-requests", () =>
+    HttpResponse.json({ data: { items: [], pagination: { limit: 1, offset: 0, total: 0, hasMore: false } } })));
   vi.clearAllMocks();
   authState.create = true;
   authState.update = true;
@@ -305,6 +314,46 @@ beforeEach(() => {
 });
 
 describe("Knowledge Base index page", () => {
+  it("opens pending review directly and preserves unrelated parameters across back and forward", async () => {
+    const user = userEvent.setup();
+    renderIndex("/admin/configuration/estimation?basketRequests=pending&context=vendor", true);
+    const trigger = screen.getByRole("button", { name: "Main Basket requests" });
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const region = await screen.findByRole("region", { name: "Main Basket requests" });
+    expect(await within(region).findByText("No pending Main Basket requests.")).toBeVisible();
+    await user.click(within(region).getByRole("button", { name: "All" }));
+    await user.click(trigger);
+    expect(screen.getByLabelText("Current search")).toHaveTextContent("?context=vendor");
+    expect(screen.queryByRole("region", { name: "Main Basket requests" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Previous page" }));
+    const reopened = await screen.findByRole("region", { name: "Main Basket requests" });
+    expect(within(reopened).getByRole("button", { name: "Pending" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Current search")).toHaveTextContent("basketRequests=pending&context=vendor");
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    expect(screen.queryByRole("region", { name: "Main Basket requests" })).not.toBeInTheDocument();
+  });
+
+  it("shows the authoritative pending count and recovers after a failed count read", async () => {
+    let failing = true;
+    server.use(http.get("/api/v1/admin/ai-estimator-knowledge/basket-requests", () => failing
+      ? HttpResponse.json({ error: { code: "TEMPORARY", message: "Unavailable" } }, { status: 503 })
+      : HttpResponse.json({ data: { items: [], pagination: { limit: 1, offset: 0, total: 26, hasMore: true } } })));
+    renderIndex();
+    const trigger = screen.getByRole("button", { name: "Main Basket requests" });
+    await waitFor(() => expect(trigger).toHaveAccessibleDescription("Count unavailable"));
+    failing = false;
+    await userEvent.setup().click(screen.getByRole("button", { name: "Retry request count" }));
+    await waitFor(() => expect(trigger).toHaveAccessibleDescription("26 pending"));
+  });
+
+  it("does not expose request review through a deep link for a non-Super Admin", async () => {
+    authState.role = "procurement";
+    renderIndex("/admin/configuration/estimation?basketRequests=pending");
+    await screen.findByRole("heading", { level: 1, name: "AI Estimator Knowledge Base" });
+    expect(screen.queryByRole("button", { name: "Main Basket requests" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Main Basket requests" })).not.toBeInTheDocument();
+  });
+
   it("opens Main Basket request review from Configuration", async () => {
     server.use(http.get("/api/v1/admin/ai-estimator-knowledge/basket-requests", () =>
       HttpResponse.json({ data: { items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false } } })));

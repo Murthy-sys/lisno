@@ -14,6 +14,7 @@ import { useAuth } from "../../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../../auth/authorization";
 import { StatusBadge } from "../../../components/ui/StatusBadge";
 import { Surface } from "../../../components/ui/Surface";
+import { VendorClassificationRequestQueueItem } from "./VendorClassificationRequestQueueItem";
 import {
   BudgetPositionChart,
   CostCompositionChart,
@@ -181,11 +182,13 @@ function PriorityProject({
 function ActionQueue({
   data,
   showComparison,
-  canReadClientResponses
+  canReadClientResponses,
+  canReviewVendorRequests
 }: {
   data: SuperAdminDashboardOverview;
   showComparison: boolean;
   canReadClientResponses: boolean;
+  canReviewVendorRequests: boolean;
 }) {
   const days = data.period.days;
   const items = [
@@ -207,6 +210,7 @@ function ActionQueue({
         <Link to={dashboardHref("risk", days, showComparison)}>View all</Link>
       </div>
       <ul className="dashboard-action-list">
+        {canReviewVendorRequests ? <VendorClassificationRequestQueueItem /> : null}
         {items.map((item) => {
           const presentation = safeValue(data.dataQuality, item.key, item.value);
           const content = (
@@ -432,6 +436,8 @@ export function DashboardOverview({
   const canReadUsers = hasFrontendPermission(auth.authorization, "identity.users.read");
   const canReadProjects = hasFrontendPermission(auth.authorization, "projects.read");
   const canReadClientResponses = hasFrontendPermission(auth.authorization, "estimation.client_response_tasks.read");
+  const canReviewVendorRequests = auth.user?.role === "super_admin"
+    && hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.read");
 
   const projects = safeValue(data.dataQuality, "projects.total", data.projects.total.toLocaleString("en-IN"));
   const revenue = safeValue(data.dataQuality, "finance.approvedSubtotalPaise", formatPaise(data.finance.approvedSubtotalPaise));
@@ -528,7 +534,7 @@ export function DashboardOverview({
 
         <aside className="dashboard-executive-rail" aria-label="Current dashboard context">
           <PriorityProject data={data} canReadProjects={canReadProjects} />
-          <ActionQueue data={data} showComparison={showComparison} canReadClientResponses={canReadClientResponses} />
+          <ActionQueue data={data} showComparison={showComparison} canReadClientResponses={canReadClientResponses} canReviewVendorRequests={canReviewVendorRequests} />
           <ClientPulse data={data} canReadUsers={canReadUsers} />
         </aside>
 

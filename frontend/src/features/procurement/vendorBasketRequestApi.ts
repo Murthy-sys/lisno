@@ -11,6 +11,8 @@ export interface VendorBasketRequest {
   status: VendorBasketRequestStatus;
   version: number;
   basketId: string | null;
+  subBasketId: string | null;
+  mainLineId: string | null;
   reason: string | null;
   createdAt: string;
   decidedAt: string | null;
@@ -47,11 +49,20 @@ export function listVendorBasketRequestsForReview(
   return apiClient.get(`/admin/ai-estimator-knowledge/basket-requests?${params.toString()}`);
 }
 
-export function decideVendorBasketRequest(requestId: string, input: {
+export interface VendorBasketRequestConfiguration {
+  subBasketId?: string;
+  subBasketName?: string;
+  mainLineName?: string;
+}
+
+export interface DecideVendorBasketRequestInput {
   decision: "fulfill" | "reject";
   expectedVersion: number;
   reason?: string | null;
   idempotencyKey: string;
-}): Promise<VendorBasketRequest> {
+  configuration?: VendorBasketRequestConfiguration;
+}
+
+export function decideVendorBasketRequest(requestId: string, input: DecideVendorBasketRequestInput): Promise<VendorBasketRequest> {
   return apiClient.post(`/admin/ai-estimator-knowledge/basket-requests/${encodeURIComponent(requestId)}/decision`, input);
 }

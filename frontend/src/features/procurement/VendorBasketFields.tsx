@@ -15,9 +15,10 @@ import { VENDOR_BASKET_SELECTION_LIMITS } from "./vendorProfileDraft";
 
 type Adding = { kind: "sub"; parentId: string } | null;
 
-export function VendorBasketFields({ mainBasketIds, subBasketIds, original, errors, vendorName, vendorId, canCreate, canRequestMainBasket, disabled, readOnly = false, onChange, onBusyChange, onDraftChange, onCatalogBlockedChange }: {
+export function VendorBasketFields({ mainBasketIds, subBasketIds, original, errors, vendorName, vendorId, onVendorNameChange, canCreate, canRequestMainBasket, disabled, readOnly = false, onChange, onBusyChange, onDraftChange, onCatalogBlockedChange }: {
   mainBasketIds: string[]; subBasketIds: string[]; original?: ProcurementVendorSummary; errors: Record<string, string>;
   vendorName: string; vendorId?: string | null; canCreate: boolean; canRequestMainBasket: boolean; disabled: boolean; readOnly?: boolean; onChange: (main: string[], sub: string[]) => void;
+  onVendorNameChange: (name: string) => void;
   onBusyChange: (busy: boolean) => void; onDraftChange: (dirty: boolean) => void; onCatalogBlockedChange: (blocked: boolean) => void;
 }) {
   const id = useId();
@@ -188,8 +189,8 @@ export function VendorBasketFields({ mainBasketIds, subBasketIds, original, erro
         <Button variant="secondary" size="compact" disabled={disabled || !targetParentId} onClick={() => { setOpenPicker(null); setAdding({ kind: "sub", parentId: targetParentId }); }} leadingIcon={<Plus aria-hidden="true" />}>Add Sub Basket</Button>
       </div> : null}
     </div>
-    {hasCatalogError ? <InlineMessage tone="error" action={<Button variant="secondary" onClick={() => void retryCatalog()}>Retry baskets</Button>}>{catalogError} Your vendor entries are preserved.</InlineMessage> : null}
-    {requestOpen ? <VendorBasketRequestDialog vendorName={vendorName} vendorId={vendorId} activeBasketNames={mainOptions.map((basket) => basket.name)} onClose={() => setRequestOpen(false)} onBusyChange={onBusyChange} onSent={() => { setRequestOpen(false); setNotice("Main Basket request sent to Super Admin. Select it after it appears in Configuration."); }} /> : null}
+    {hasCatalogError ? <InlineMessage tone="error" action={<Button variant="secondary" onClick={() => void retryCatalog()}>Retry baskets</Button>}>{catalogError} Your vendor entries are preserved.</InlineMessage> : <Button variant="quiet" size="compact" disabled={disabled || baskets.isFetching || subQueries.some((query) => query.isFetching)} onClick={() => void retryCatalog()}>Refresh baskets</Button>}
+    {requestOpen ? <VendorBasketRequestDialog vendorName={vendorName} vendorId={vendorId} onVendorNameChange={onVendorNameChange} disabled={disabled || readOnly || !canRequestMainBasket} activeBasketNames={mainOptions.map((basket) => basket.name)} onClose={() => setRequestOpen(false)} onBusyChange={onBusyChange} onSent={() => { setRequestOpen(false); setNotice("Main Basket request sent to Super Admin and awaiting approval. Refresh baskets after approval to select the Main Basket and Sub Basket for this vendor."); }} /> : null}
     {adding?.kind === "sub" ? <div className="vendor-profile__basket-inline"><p>Creating in {mainName(adding.parentId)}</p><CreateKnowledgeSubBasketFields key={adding.parentId} basketId={adding.parentId} onBusyChange={onBusyChange} onCancel={() => setAdding(null)} onRefreshError={(message) => setRefreshError(message)} onCreated={(sub, message) => { setAddedSubs((current) => [...current, sub]); emitChange(mainBasketIds, [...subBasketIds, sub.id]); setAdding(null); setNotice(message); }} /></div> : null}
     {notice ? <p role="status">{notice}</p> : null}
   </div>;

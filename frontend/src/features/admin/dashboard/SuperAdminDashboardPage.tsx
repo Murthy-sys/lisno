@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -13,6 +13,7 @@ import { PageState } from "../../../components/ui/PageState";
 import { SectionState } from "../../../components/ui/SectionState";
 import { Surface } from "../../../components/ui/Surface";
 import { DesignPaymentConfirmations } from "../../finance/DesignPaymentConfirmations";
+import { vendorBasketRequestKeys } from "../../procurement/vendorBasketRequestApi";
 import { DashboardModuleCharts } from "./DashboardModuleCharts";
 import { DashboardNavigation } from "./DashboardNavigation";
 import { DashboardOverview } from "./DashboardOverview";
@@ -288,6 +289,7 @@ const queryKeys = ["projectStatus", "moduleStatus", "riskLevel", "riskFactor", "
 
 export function SuperAdminDashboardPage() {
   const [params, setParams] = useSearchParams();
+  const queryClient = useQueryClient();
   const tab = normalizeDashboardTab(params.get("tab"));
   const periodDays = normalizeDashboardPeriod(params.get("periodDays"));
   const showComparison = params.get("comparison") !== "off";
@@ -335,6 +337,9 @@ export function SuperAdminDashboardPage() {
   const refresh = async () => {
     setManualRefresh(true); setAnnouncement("Refreshing dashboard…");
     const requests: Array<Promise<unknown>> = [overview.refetch()];
+    if (tab === "overview") requests.push(queryClient.refetchQueries(
+      { queryKey: vendorBasketRequestKeys.review, type: "active" }, { throwOnError: true }
+    ).then(() => ({ isError: false }), () => ({ isError: true })));
     if (PROJECT_TABS.includes(tab as never)) requests.push(projects.refetch());
     if (tab === "workforce") requests.push(workforce.refetch());
     const results = await Promise.all(requests);

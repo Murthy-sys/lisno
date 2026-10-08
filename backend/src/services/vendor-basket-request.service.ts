@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession } from "mongoose";
 
-import type { CreateVendorBasketRequestInput, DecideVendorBasketRequestInput, VendorBasketRequestDto, VendorBasketRequestStatus } from "../contracts/vendor-basket-request.js";
+import type { CreateVendorBasketRequestInput, DecideVendorBasketRequestInput, VendorBasketRequestConfiguration, VendorBasketRequestDto, VendorBasketRequestStatus } from "../contracts/vendor-basket-request.js";
 import { normalizeKnowledgeIdentity } from "../domain/ai-estimator-knowledge.js";
 import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
@@ -10,6 +10,7 @@ import { VendorBasketRequestModel } from "../models/VendorBasketRequest.js";
 import type { PaginationInput } from "../repositories/types.js";
 import { aiEstimatorKnowledgeActorGuard, aiEstimatorKnowledgeVendorActorGuard } from "./ai-estimator-knowledge-actor.js";
 import { AI_ESTIMATOR_KNOWLEDGE_BASKET_DISPLAY_ORDER_SCOPE, allocateAiEstimatorKnowledgeDisplayOrder } from "./ai-estimator-knowledge-display-order.service.js";
+import { createKnowledgeHierarchyInSession } from "./ai-estimator-knowledge-item.service.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import { systemClock, type Clock } from "./workflow.js";
@@ -71,7 +72,7 @@ export function createVendorBasketRequestService(dependencies: {
           const [record] = await VendorBasketRequestModel.create([{
             _id: `vendor-basket-request-${createId()}`, requesterId: authorized.id, vendorId, vendorKey,
             vendorName, vendorNameNormalized, proposedName, proposedNameNormalized, status: "pending", version: 1,
-            basketId: null, reason: null, idempotencyKey: input.idempotencyKey, requestFingerprint: fingerprint,
+            basketId: null, subBasketId: null, mainLineId: null, reason: null, idempotencyKey: input.idempotencyKey, requestFingerprint: fingerprint,
             decisionIdempotencyKey: null, decisionFingerprint: null, createdAt,
             decidedAt: null, decidedById: null
           }], { session });
@@ -109,7 +110,10 @@ export function createVendorBasketRequestService(dependencies: {
       if (input.decision === "reject" && !reason) {
         throw new ApiError(400, "VALIDATION_ERROR", "A rejection reason is required.", { reason: "Enter a reason." });
       }
-      const fingerprint = digest({ decision: input.decision, expectedVersion: input.expectedVersion, reason });
+      const configuration = normalizeConfiguration(input);
+      // Omit absent setup to preserve the fingerprint used by historical decisions.
+      const fingerprint = digest({ decision: input.decision, expectedVersion: input.expectedVersion, reason,
+        ...(configuration ? { configuration } : {}) });
       for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
           return await inTransaction(startSession, async (session) => {
@@ -133,20 +137,35 @@ export function createVendorBasketRequestService(dependencies: {
             ).lean().exec() as RequestRow | null;
             if (!updated) throw new ApiError(409, "VERSION_CONFLICT", "This request has changed. Refresh it before deciding.");
             let basketId: string | null = null;
+            let subBasketId: string | null = null;
+            let mainLineId: string | null = null;
             if (input.decision === "fulfill") {
               basketId = await findOrCreateBasket(current, authorized.id, decidedAt, session, createId, dependencies.audit);
+              if (configuration) {
+                const hierarchy = await createKnowledgeHierarchyInSession({
+                  actorId: authorized.id, basketId, occurredAt: decidedAt, session, uuid: createId,
+                  audit: dependencies.audit, sourceRequestId: requestId,
+                  mainLineId: configuration.mainLineName === undefined ? null : `ai-knowledge-main-line-${createId()}`,
+                  input: {
+                    ...(configuration.subBasketId !== undefined ? { subBasketId: configuration.subBasketId } : { subBasketName: configuration.subBasketName! }),
+                    ...(configuration.mainLineName !== undefined ? { name: configuration.mainLineName } : {})
+                  }
+                });
+                subBasketId = hierarchy.subBasketId;
+                mainLineId = hierarchy.mainLineId;
+              }
               await VendorBasketRequestModel.updateOne({ _id: requestId, version: input.expectedVersion + 1 },
-                { $set: { basketId } }, { session }).exec();
+                { $set: { basketId, subBasketId, mainLineId } }, { session }).exec();
             }
             await dependencies.audit.appendInMongoTransaction({
               actorId: authorized.id,
               action: input.decision === "fulfill" ? "vendor_basket_request_fulfilled" : "vendor_basket_request_rejected",
               entityType: "vendor_basket_request", entityId: requestId, occurredAt: decidedAt.toISOString(),
               oldValues: { status: "pending", version: input.expectedVersion },
-              newValues: { status: input.decision === "fulfill" ? "fulfilled" : "rejected", version: input.expectedVersion + 1, basketId },
+              newValues: { status: input.decision === "fulfill" ? "fulfilled" : "rejected", version: input.expectedVersion + 1, basketId, subBasketId, mainLineId },
               reason
             }, session);
-            return dto({ ...updated, basketId });
+            return dto({ ...updated, basketId, subBasketId, mainLineId });
           });
         } catch (error) {
           if (!duplicateKey(error) || attempt > 0) throw error;
@@ -162,7 +181,16 @@ async function findOrCreateBasket(request: RequestRow, actorId: string, timestam
   const nameNormalized = String(request.proposedNameNormalized);
   const existing = await AiEstimatorKnowledgeBasketModel.findOne({ nameNormalized, status: { $in: ["active", "inactive"] } })
     .select({ _id: 1, status: 1 }).session(session).lean().exec();
-  if (existing?.status === "active") return String(existing._id);
+  if (existing?.status === "active") {
+    // Participate in the same parent dependency write used by Configuration
+    // deletion and status changes, including Main Basket-only approvals.
+    const coordinated = await AiEstimatorKnowledgeBasketModel.findOneAndUpdate(
+      { _id: existing._id, status: "active" }, { $inc: { dependencyEpoch: 1 } },
+      { session, returnDocument: "after", runValidators: true, timestamps: false }
+    ).select({ _id: 1 }).lean().exec();
+    if (!coordinated) throw new ApiError(409, "BASKET_INACTIVE", "The Main Basket is no longer available. Refresh before approving.");
+    return String(coordinated._id);
+  }
   if (existing) throw new ApiError(409, "BASKET_INACTIVE", "A matching inactive Main Basket exists in Configuration. Review it before fulfilling.");
   const displayOrder = await allocateAiEstimatorKnowledgeDisplayOrder({
     scope: AI_ESTIMATOR_KNOWLEDGE_BASKET_DISPLAY_ORDER_SCOPE,
@@ -188,6 +216,8 @@ function dto(row: RequestRow): VendorBasketRequestDto {
     vendorId: row.vendorId == null ? null : String(row.vendorId), vendorName: String(row.vendorName),
     proposedName: String(row.proposedName), status: row.status as VendorBasketRequestStatus,
     version: Number(row.version), basketId: row.basketId == null ? null : String(row.basketId),
+    subBasketId: row.subBasketId == null ? null : String(row.subBasketId),
+    mainLineId: row.mainLineId == null ? null : String(row.mainLineId),
     reason: row.reason == null ? null : String(row.reason),
     createdAt: dateIso(row.createdAt)!, decidedAt: dateIso(row.decidedAt),
     decidedById: row.decidedById == null ? null : String(row.decidedById) };
@@ -220,6 +250,26 @@ function cleanName(value: string): string {
   const name = typeof value === "string" ? value.normalize("NFKC").trim().replace(/\s+/gu, " ") : "";
   if (!name || name.length > 240) throw new ApiError(400, "VALIDATION_ERROR", "Enter a name of at most 240 characters.");
   return name;
+}
+
+function normalizeConfiguration(input: DecideVendorBasketRequestInput): VendorBasketRequestConfiguration | undefined {
+  const value = input.configuration;
+  if (value === undefined) return undefined;
+  if (input.decision !== "fulfill" || !value || typeof value !== "object" || Array.isArray(value)
+    || (value.subBasketId !== undefined) === (value.subBasketName !== undefined)) {
+    throw new ApiError(400, "VALIDATION_ERROR", "Approval setup requires either a Sub Basket ID or name.", {
+      configuration: "Select an existing Sub Basket or enter a new Sub Basket name when approving."
+    });
+  }
+  const subBasketId = value.subBasketId === undefined ? undefined
+    : typeof value.subBasketId === "string" ? value.subBasketId.trim() : "";
+  if (value.subBasketId !== undefined && (!subBasketId || subBasketId.length > 128)) {
+    throw new ApiError(400, "VALIDATION_ERROR", "Select a valid Sub Basket.", { subBasketId: "Select a valid Sub Basket." });
+  }
+  return {
+    ...(subBasketId !== undefined ? { subBasketId } : { subBasketName: cleanName(value.subBasketName!) }),
+    ...(value.mainLineName !== undefined ? { mainLineName: cleanName(value.mainLineName) } : {})
+  };
 }
 
 function digest(value: object): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }

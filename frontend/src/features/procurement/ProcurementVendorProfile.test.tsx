@@ -418,7 +418,11 @@ describe("Procurement vendor profile", () => {
     start(); const user = userEvent.setup(); await screen.findByRole("textbox", { name: "Entity Name" });
     await user.click(screen.getByRole("button", { name: "Add Main Basket" }));
     const dialog = screen.getByRole("dialog", { name: "Request Main Basket" });
-    expect(within(dialog).getByRole("textbox", { name: "Vendor name" })).toHaveValue("Timber House");
+    const vendorName = within(dialog).getByRole("textbox", { name: "Vendor name" });
+    expect(vendorName).toHaveValue("Timber House");
+    expect(vendorName).toHaveAttribute("readonly");
+    await user.type(vendorName, " must not rename");
+    expect(vendorName).toHaveValue("Timber House");
     expect(within(dialog).getByText("Saved vendor")).toBeVisible();
     await user.type(within(dialog).getByRole("textbox", { name: "New Main Basket name" }), "Metal work");
     await user.click(within(dialog).getByRole("button", { name: "Send request" }));
@@ -447,7 +451,7 @@ describe("Procurement vendor profile", () => {
     const dialog = screen.getByRole("dialog", { name: "Request Main Basket" });
     expect(dialog).toHaveAttribute("aria-modal", "true");
     expect(within(dialog).getByRole("textbox", { name: "Vendor name" })).toHaveValue("New Synthetic Vendor");
-    expect(within(dialog).getByText("Entered name, vendor not yet saved")).toBeVisible();
+    expect(within(dialog).getByText("Updates Entity Name in the vendor form. The vendor is not saved yet.")).toBeVisible();
     const proposal = within(dialog).getByRole("textbox", { name: "New Main Basket name" });
     await waitFor(() => expect(proposal).toHaveFocus());
     const accessibility = await axe.run(dialog, { rules: { "color-contrast": { enabled: false } } });
@@ -462,6 +466,147 @@ describe("Procurement vendor profile", () => {
     await waitFor(() => expect(requests).toHaveLength(1));
     expect(requests[0]).toMatchObject({ vendorId: null, vendorName: "New Synthetic Vendor", proposedName: "Stone finishes" });
     expect(entity).toHaveValue("New Synthetic Vendor");
+  });
+  it("accepts a vendor name in an initially blank request dialog without saving the vendor", async () => {
+    const requests: Record<string, unknown>[] = [];
+    server.use(http.post("/api/v1/procurement/vendor-basket-requests", async ({ request }) => {
+      requests.push(await request.json() as Record<string, unknown>);
+      return response({ id: "request-entered-name", status: "pending" }, 201);
+    }));
+    const view = start(false); const user = userEvent.setup();
+    const entity = await screen.findByRole("textbox", { name: "Entity Name" });
+    await user.click(screen.getByRole("button", { name: "Add Main Basket" }));
+    const dialog = screen.getByRole("dialog", { name: "Request Main Basket" });
+    const vendorName = within(dialog).getByRole("textbox", { name: "Vendor name" });
+    const proposal = within(dialog).getByRole("textbox", { name: "New Main Basket name" });
+    const send = within(dialog).getByRole("button", { name: "Send request" });
+    await waitFor(() => expect(vendorName).toHaveFocus());
+    expect(vendorName).toBeRequired(); expect(vendorName).not.toHaveAttribute("readonly");
+    expect(vendorName).toHaveAttribute("maxlength", "240"); expect(send).toBeDisabled();
+    await user.type(vendorName, "   ");
+    await user.type(proposal, "Stone finishes");
+    expect(send).toBeDisabled(); await user.click(send); expect(requests).toHaveLength(0);
+    await user.clear(vendorName);
+    await user.type(vendorName, "  Draft Stone Vendor  ");
+    expect(vendorName).toHaveFocus(); expect(vendorName).toHaveValue("  Draft Stone Vendor  ");
+    expect(entity).toHaveValue("  Draft Stone Vendor  ");
+    await user.clear(proposal); await user.type(proposal, "   ");
+    expect(send).toBeDisabled(); await user.click(send); expect(requests).toHaveLength(0);
+    await user.clear(proposal); await user.type(proposal, "  Stone finishes  ");
+    await user.click(send);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Request Main Basket" })).not.toBeInTheDocument());
+    expect(requests).toEqual([{ vendorId: null, vendorName: "Draft Stone Vendor", proposedName: "Stone finishes", idempotencyKey: expect.any(String) }]);
+    expect(entity).toHaveValue("  Draft Stone Vendor  "); expect(writes).toHaveLength(0);
+    expect(view.saved).not.toHaveBeenCalled();
+  });
+  it("retains edits from the request dialog after cancel and success and uses them in the later vendor save", async () => {
+    const requests: Record<string, unknown>[] = [];
+    server.use(http.post("/api/v1/procurement/vendor-basket-requests", async ({ request }) => {
+      requests.push(await request.json() as Record<string, unknown>);
+      return response({ id: "request-edited-name", status: "pending" }, 201);
+    }));
+    const view = start(false); const user = userEvent.setup();
+    await mainChoice(vendorBasket.name); await fillNew(user);
+    const entity = screen.getByRole("textbox", { name: "Entity Name" });
+    const position = screen.getByRole("textbox", { name: "Position" });
+    fireEvent.change(position, { target: { value: "Preserved vendor contact role" } });
+    const open = screen.getByRole("button", { name: "Add Main Basket" });
+    await user.click(open);
+    let dialog = screen.getByRole("dialog", { name: "Request Main Basket" });
+    await waitFor(() => expect(within(dialog).getByRole("textbox", { name: "New Main Basket name" })).toHaveFocus());
+    let vendorName = within(dialog).getByRole("textbox", { name: "Vendor name" });
+    expect(vendorName).toHaveValue("New Synthetic Vendor");
+    await user.clear(vendorName); await user.type(vendorName, "Renamed draft vendor");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(open).toHaveFocus(); expect(entity).toHaveValue("Renamed draft vendor");
+    expect(position).toHaveValue("Preserved vendor contact role"); expect(requests).toHaveLength(0); expect(writes).toHaveLength(0);
+    await user.click(open);
+    dialog = screen.getByRole("dialog", { name: "Request Main Basket" });
+    vendorName = within(dialog).getByRole("textbox", { name: "Vendor name" });
+    expect(vendorName).toHaveValue("Renamed draft vendor");
+    await user.clear(vendorName); await user.type(vendorName, "Final draft vendor");
+    await user.type(within(dialog).getByRole("textbox", { name: "New Main Basket name" }), "Stone finishes");
+    await user.click(within(dialog).getByRole("button", { name: "Send request" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Request Main Basket" })).not.toBeInTheDocument());
+    expect(requests).toHaveLength(1); expect(requests[0]).toMatchObject({ vendorId: null, vendorName: "Final draft vendor", proposedName: "Stone finishes" });
+    expect(entity).toHaveValue("Final draft vendor"); expect(position).toHaveValue("Preserved vendor contact role"); expect(writes).toHaveLength(0);
+    expect(view.saved).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Save vendor" }));
+    await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({ name: "Final draft vendor", procurementProfile: { position: "Preserved vendor contact role", mainBasketIds: [vendorBasket.id], subBasketIds: [vendorSubBasket.id] } });
+  });
+  it("associates server name errors with the right fields and changes the retry key only when request contents change", async () => {
+    const requests: Record<string, unknown>[] = [];
+    server.use(http.post("/api/v1/procurement/vendor-basket-requests", async ({ request }) => {
+      requests.push(await request.json() as Record<string, unknown>);
+      return requests.length < 3
+        ? HttpResponse.json({ error: { code: "VALIDATION_ERROR", message: "Review the request names.", fields: { vendorName: "Check this vendor name.", proposedName: "Check this basket name." } } }, { status: 400 })
+        : response({ id: "request-corrected-name", status: "pending" }, 201);
+    }));
+    start(false); const user = userEvent.setup();
+    const entity = await screen.findByRole("textbox", { name: "Entity Name" });
+    await user.type(entity, "First draft vendor");
+    await user.click(screen.getByRole("button", { name: "Add Main Basket" }));
+    const dialog = screen.getByRole("dialog", { name: "Request Main Basket" });
+    const vendorName = within(dialog).getByRole("textbox", { name: "Vendor name" });
+    const proposal = within(dialog).getByRole("textbox", { name: "New Main Basket name" });
+    const send = within(dialog).getByRole("button", { name: "Send request" });
+    await user.type(proposal, "Stone finishes"); await user.click(send);
+    await waitFor(() => expect(vendorName).toHaveAccessibleDescription(/Check this vendor name\./));
+    expect(vendorName).toHaveAttribute("aria-invalid", "true");
+    expect(proposal).toHaveAccessibleDescription("Check this basket name."); expect(proposal).toHaveAttribute("aria-invalid", "true");
+    expect(vendorName).toHaveValue("First draft vendor"); expect(proposal).toHaveValue("Stone finishes");
+    await user.click(send);
+    await waitFor(() => expect(requests).toHaveLength(2));
+    await waitFor(() => expect(send).toBeEnabled());
+    expect(requests[1]).toEqual(requests[0]);
+    await user.clear(vendorName); await user.type(vendorName, "Corrected draft vendor");
+    expect(vendorName).not.toHaveAttribute("aria-invalid");
+    expect(entity).toHaveValue("Corrected draft vendor"); expect(proposal).toHaveValue("Stone finishes");
+    await user.click(send);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Request Main Basket" })).not.toBeInTheDocument());
+    expect(requests).toHaveLength(3);
+    expect(requests[2]).toMatchObject({ vendorId: null, vendorName: "Corrected draft vendor", proposedName: "Stone finishes" });
+    expect(requests[2].idempotencyKey).not.toBe(requests[0].idempotencyKey);
+    expect(entity).toHaveValue("Corrected draft vendor"); expect(writes).toHaveLength(0);
+  });
+  it("freezes request fields and prevents duplicate submissions while the vendor request is pending", async () => {
+    const requests: Record<string, unknown>[] = [];
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    server.use(http.post("/api/v1/procurement/vendor-basket-requests", async ({ request }) => {
+      requests.push(await request.json() as Record<string, unknown>);
+      await pending;
+      return response({ id: "request-held-name", status: "pending" }, 201);
+    }));
+    start(false); const user = userEvent.setup();
+    await screen.findByRole("textbox", { name: "Entity Name" });
+    await user.click(screen.getByRole("button", { name: "Add Main Basket" }));
+    const dialog = screen.getByRole("dialog", { name: "Request Main Basket" });
+    const vendorName = within(dialog).getByRole("textbox", { name: "Vendor name" });
+    const proposal = within(dialog).getByRole("textbox", { name: "New Main Basket name" });
+    await user.type(vendorName, "Pending draft vendor"); await user.type(proposal, "Stone finishes");
+    const form = vendorName.closest("form")!;
+    try {
+      act(() => { fireEvent.submit(form); fireEvent.submit(form); });
+      await waitFor(() => expect(requests).toHaveLength(1));
+      expect(vendorName).toBeDisabled(); expect(proposal).toBeDisabled();
+      expect(within(dialog).getByRole("button", { name: "Send request" })).toBeDisabled();
+      expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+      await user.type(vendorName, " changed"); await user.type(proposal, " changed");
+      await user.keyboard("{Escape}"); fireEvent.submit(form);
+      expect(dialog).toBeInTheDocument(); expect(vendorName).toHaveValue("Pending draft vendor"); expect(proposal).toHaveValue("Stone finishes");
+      expect(requests).toHaveLength(1);
+    } finally { release(); }
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Request Main Basket" })).not.toBeInTheDocument());
+    expect(requests).toHaveLength(1); expect(writes).toHaveLength(0);
+  });
+  it("keeps request permission separate from permission to create Sub Baskets", async () => {
+    start(false, true, true, true, false);
+    await mainChoice(vendorBasket.name);
+    expect(screen.queryByRole("button", { name: "Add Main Basket" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add Sub Basket" })).toBeInTheDocument();
   });
   it("preserves a failed request and retries with the same idempotency key", async () => {
     const requests: Record<string, unknown>[] = [];
@@ -485,6 +630,48 @@ describe("Procurement vendor profile", () => {
     expect(position).toHaveValue("Catalog draft");
     expect(screen.getByRole("button", { name: /^Main Baskets,/ })).not.toHaveAccessibleName(/Metal work/);
   });
+  it("retains a new vendor draft through request and approval, then saves with the refreshed classification", async () => {
+    const approvedBasket = { ...vendorBasket, id: "basket-stone", name: "Stone finishes" };
+    const approvedSub = { ...vendorSubBasket, id: "sub-stone", basketId: approvedBasket.id, name: "Stone installation" };
+    let approved = false;
+    const requests: Record<string, unknown>[] = [];
+    server.use(
+      http.get("/api/v1/admin/ai-estimator-knowledge/baskets", () => page(approved ? [vendorBasket, approvedBasket] : [vendorBasket])),
+      http.get("/api/v1/admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets", ({ params }) =>
+        page(params.basketId === vendorBasket.id ? [vendorSubBasket] : approved && params.basketId === approvedBasket.id ? [approvedSub] : [])),
+      http.post("/api/v1/procurement/vendor-basket-requests", async ({ request }) => {
+        requests.push(await request.json() as Record<string, unknown>);
+        return response({ id: "request-stone", status: "pending" }, 201);
+      })
+    );
+    const view = start(false); const user = userEvent.setup();
+    await mainChoice(vendorBasket.name); await fillNew(user);
+    await user.click(screen.getByRole("button", { name: "Add Main Basket" }));
+    const dialog = screen.getByRole("dialog", { name: "Request Main Basket" });
+    await user.type(within(dialog).getByRole("textbox", { name: "New Main Basket name" }), approvedBasket.name);
+    await user.click(within(dialog).getByRole("button", { name: "Send request" }));
+    await screen.findByText(/sent to Super Admin and awaiting approval/);
+    expect(requests).toHaveLength(1); expect(writes).toHaveLength(0);
+    // Configuration changes in the Super Admin session while this vendor form stays open.
+    approved = true;
+    await user.click(screen.getByRole("button", { name: "Refresh baskets" }));
+    expect(await mainChoice(vendorBasket.name)).toBeChecked();
+    const newMain = await mainChoice(approvedBasket.name);
+    expect(newMain).not.toBeChecked();
+    expect(screen.getByRole("textbox", { name: "Entity Name" })).toHaveValue("New Synthetic Vendor");
+    expect(screen.getByRole("textbox", { name: "Position" })).toHaveValue(completeVendorProfile.position);
+    await user.click(newMain);
+    expect(await subChoice(`${vendorSubBasket.name} in ${vendorBasket.name}`)).toBeChecked();
+    const newSub = await subChoice(`${approvedSub.name} in ${approvedBasket.name}`);
+    expect(newSub).not.toBeChecked(); await user.click(newSub);
+    expect(writes).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Save vendor" }));
+    await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
+    const profile = writes[0].procurementProfile as ProcurementVendorProfile;
+    expect(profile.mainBasketIds).toEqual(expect.arrayContaining([vendorBasket.id, approvedBasket.id]));
+    expect(profile.subBasketIds).toEqual(expect.arrayContaining([vendorSubBasket.id, approvedSub.id]));
+  });
+
   it("guides selection of an existing Configuration basket and sees new baskets after catalogue refresh", async () => {
     const newBasket = { ...vendorBasket, id: "basket-new", name: "Stone finishes" };
     let added = false;

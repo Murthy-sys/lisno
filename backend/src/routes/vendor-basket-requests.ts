@@ -19,8 +19,17 @@ const decisionSchema = z.object({
   decision: z.enum(["fulfill", "reject"]),
   expectedVersion: z.number().int().min(1),
   reason: z.string().trim().min(1).max(1000).nullable().optional(),
+  configuration: z.object({
+    subBasketId: z.string().trim().min(1).max(128).optional(),
+    subBasketName: boundedName.optional(),
+    mainLineName: boundedName.optional()
+  }).strict().refine((value) => (value.subBasketId !== undefined) !== (value.subBasketName !== undefined), {
+    message: "Select an existing Sub Basket or enter a new Sub Basket name."
+  }).optional(),
   idempotencyKey
-}).strict();
+}).strict().refine((value) => value.decision === "fulfill" || value.configuration === undefined, {
+  message: "Configuration setup is only available when approving a request.", path: ["configuration"]
+});
 const pagination = {
   limit: z.coerce.number().int().min(1).max(100).default(20),
   offset: z.coerce.number().int().min(0).default(0)

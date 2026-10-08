@@ -71,10 +71,81 @@
 .knowledge-basket-requests__decision {
   display: grid;
   gap: var(--space-2);
+  min-inline-size: 0;
+}
+
+.knowledge-basket-requests__decision p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-basket-requests__setup-toggle,
+.knowledge-basket-requests__choices label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-block-size: 2.5rem;
+}
+
+.knowledge-basket-requests__setup-toggle {
+  font-weight: 600;
+}
+
+.knowledge-basket-requests__setup {
+  display: grid;
+  gap: var(--space-2);
+  padding-block-start: var(--space-2);
+  border-block-start: 1px solid var(--color-border);
+  min-inline-size: 0;
+}
+
+.knowledge-basket-requests__choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+
+.knowledge-basket-requests__choices legend {
+  margin-block-end: var(--space-1);
+  font-weight: 600;
+}
+
+.knowledge-basket-requests__hierarchy {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.knowledge-basket-requests__hierarchy dt {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.knowledge-basket-requests__hierarchy dd {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-basket-requests__draft {
+  margin-inline-start: var(--space-1);
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+.knowledge-basket-requests__panel .ui-field,
+.knowledge-basket-requests__panel .ui-control {
+  min-inline-size: 0;
+  max-inline-size: 100%;
 }
 
 .knowledge-basket-requests__dialog-actions {
   justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 @media (max-width: 640px) {
@@ -86,5 +157,18 @@
 
   .knowledge-basket-requests__actions {
     inline-size: 100%;
+  }
+
+  .knowledge-basket-requests__pages {
+    flex-wrap: wrap;
+  }
+
+  .knowledge-basket-requests__panel .ui-inline-message {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .knowledge-basket-requests__panel .ui-inline-message__action {
+    grid-column: 2;
+    justify-self: start;
   }
 }

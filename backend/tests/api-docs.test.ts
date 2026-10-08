@@ -2390,6 +2390,28 @@ describe("OpenAPI and Swagger UI", () => {
     ).toEqual({ $ref: "#/components/responses/AuthenticationRequired" });
   });
 
+  it("documents optional fulfillment setup and nullable hierarchy results for vendor classification requests", () => {
+    const schemas = componentSchemas();
+    expect(schemas.KnowledgeVendorBasketRequest).toMatchObject({
+      required: expect.arrayContaining(["basketId", "subBasketId", "mainLineId"]),
+      properties: { subBasketId: { type: "string", nullable: true }, mainLineId: { type: "string", nullable: true } }
+    });
+    expect(schemas.KnowledgeVendorBasketRequestDecision).toMatchObject({
+      additionalProperties: false,
+      required: ["decision", "expectedVersion", "idempotencyKey"],
+      oneOf: [
+        { properties: { decision: { enum: ["fulfill"] } } },
+        { properties: { decision: { enum: ["reject"] } }, not: { required: ["configuration"] } }
+      ],
+      properties: { configuration: {
+        additionalProperties: false,
+        oneOf: [{ required: ["subBasketId"], not: { required: ["subBasketName"] } },
+          { required: ["subBasketName"], not: { required: ["subBasketId"] } }],
+        properties: { mainLineName: { type: "string", minLength: 1, maxLength: 240 } }
+      } }
+    });
+  });
+
   it("does not expose persistence-only credential or storage fields", () => {
     const serialized = JSON.stringify(openApiDocument);
 

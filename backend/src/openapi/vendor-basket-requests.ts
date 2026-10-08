@@ -11,10 +11,11 @@ const pageQuery = [
 
 export const VENDOR_BASKET_REQUEST_SCHEMAS = {
   KnowledgeVendorBasketRequest: { type: "object", additionalProperties: false,
-    required: ["id", "requesterId", "vendorId", "vendorName", "proposedName", "status", "version", "basketId", "reason", "createdAt", "decidedAt", "decidedById"],
+    required: ["id", "requesterId", "vendorId", "vendorName", "proposedName", "status", "version", "basketId", "subBasketId", "mainLineId", "reason", "createdAt", "decidedAt", "decidedById"],
     properties: { id, requesterId: id, vendorId: { ...id, nullable: true }, vendorName: { type: "string" },
       proposedName: { type: "string" }, status: { type: "string", enum: ["pending", "fulfilled", "rejected"] },
       version: { type: "integer", minimum: 1 }, basketId: { ...id, nullable: true },
+      subBasketId: { ...id, nullable: true }, mainLineId: { ...id, nullable: true },
       reason: { type: "string", nullable: true }, createdAt: dateTime,
       decidedAt: { ...dateTime, nullable: true }, decidedById: { ...id, nullable: true } } },
   KnowledgeVendorBasketRequestCreate: { type: "object", additionalProperties: false,
@@ -24,8 +25,17 @@ export const VENDOR_BASKET_REQUEST_SCHEMAS = {
       idempotencyKey: { type: "string", pattern: "^[A-Za-z0-9_-]{8,128}$" } } },
   KnowledgeVendorBasketRequestDecision: { type: "object", additionalProperties: false,
     required: ["decision", "expectedVersion", "idempotencyKey"],
+    oneOf: [
+      { properties: { decision: { enum: ["fulfill"] } } },
+      { properties: { decision: { enum: ["reject"] } }, not: { required: ["configuration"] } }
+    ],
     properties: { decision: { type: "string", enum: ["fulfill", "reject"] },
       expectedVersion: { type: "integer", minimum: 1 }, reason: { type: "string", minLength: 1, maxLength: 1000, nullable: true },
+      configuration: { type: "object", additionalProperties: false,
+        oneOf: [{ required: ["subBasketId"], not: { required: ["subBasketName"] } },
+          { required: ["subBasketName"], not: { required: ["subBasketId"] } }],
+        properties: { subBasketId: id, subBasketName: { type: "string", minLength: 1, maxLength: 240 },
+          mainLineName: { type: "string", minLength: 1, maxLength: 240 } } },
       idempotencyKey: { type: "string", pattern: "^[A-Za-z0-9_-]{8,128}$" } } },
   KnowledgeVendorBasketRequestPage: { type: "object", additionalProperties: false, required: ["items", "pagination"],
     properties: { items: { type: "array", items: requestRef }, pagination: { type: "object", additionalProperties: false,

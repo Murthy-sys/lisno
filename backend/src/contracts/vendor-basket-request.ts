@@ -9,6 +9,8 @@ export interface VendorBasketRequestDto {
   readonly status: VendorBasketRequestStatus;
   readonly version: number;
   readonly basketId: string | null;
+  readonly subBasketId: string | null;
+  readonly mainLineId: string | null;
   readonly reason: string | null;
   readonly createdAt: string;
   readonly decidedAt: string | null;
@@ -27,4 +29,11 @@ export interface DecideVendorBasketRequestInput {
   readonly expectedVersion: number;
   readonly reason?: string | null;
   readonly idempotencyKey: string;
+  readonly configuration?: VendorBasketRequestConfiguration;
+}
+
+export interface VendorBasketRequestConfiguration {
+  readonly subBasketId?: string;
+  readonly subBasketName?: string;
+  readonly mainLineName?: string;
 }
