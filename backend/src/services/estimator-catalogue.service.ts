@@ -1,5 +1,7 @@
 import type mongoose from "mongoose";
 
+import { estimateModeBaseRatesPaise, type EstimateModeBaseRatesPaise } from "../domain/estimate-mode-pricing.js";
+
 import { selectCurrentMainLineRevision } from "../domain/ai-estimator-knowledge-current-revision.js";
 import { normalizeKnowledgeBudgetAlterationTarget } from "../domain/ai-estimator-knowledge-recommendation.js";
 import { ApiError } from "../middleware/errors.js";
@@ -26,6 +28,7 @@ export interface EstimatorCatalogueLine {
   itemVersion: number;
   revisionVersion: number;
   inHouseBaseRatePaise: number | null;
+  modeBaseRatesPaise: EstimateModeBaseRatesPaise;
   uom: { id: string; code: string; name: string; decimalScale: number };
 }
 
@@ -41,6 +44,7 @@ export interface EstimatorCatalogueSubBasket {
 export interface EstimatorCatalogueBasket {
   id: string;
   name: string;
+  description: string | null;
   displayOrder: number;
   subBaskets: EstimatorCatalogueSubBasket[];
   directTemporaryItems: EstimatorCatalogueLine[];
@@ -89,7 +93,7 @@ export interface EstimatorCatalogueRecommendationSource {
   guidance: RecommendationGuidance[];
 }
 
-/** Only the combined in-house base rate is projected; source cost details stay in Configuration. */
+/** Project base unit rates only; markup and source cost details stay in Configuration. */
 export async function listEstimatorCatalogue(
   actor: PublicUser,
   pagination: { limit: number; offset: number },
@@ -99,7 +103,7 @@ export async function listEstimatorCatalogue(
 
   const [baskets, total] = await Promise.all([
     AiEstimatorKnowledgeBasketModel.find({ status: "active" })
-      .select({ _id: 1, name: 1, displayOrder: 1 })
+      .select({ _id: 1, name: 1, description: 1, displayOrder: 1 })
       .sort({ displayOrder: 1, _id: 1 })
       .skip(pagination.offset).limit(pagination.limit).lean().exec(),
     AiEstimatorKnowledgeBasketModel.countDocuments({ status: "active" }).exec()
@@ -151,6 +155,7 @@ export async function listEstimatorCatalogue(
   }
   const items = baskets.map((basket): EstimatorCatalogueBasket => ({
     id: String(basket._id), name: String(basket.name), displayOrder: Number(basket.displayOrder),
+    description: typeof basket.description === "string" ? basket.description : null,
     subBaskets: [...children.values()].filter((child) => child.basketId === String(basket._id)).sort(order),
     directTemporaryItems: (directTemporaryItems.get(String(basket._id)) ?? []).sort(order)
   }));
@@ -411,8 +416,10 @@ async function projectLines(
   const advancedQuery = AiEstimatorKnowledgeSectionModel.find({
     revisionId: { $in: revisionIds }, sectionKey: "advanced"
   }).select({ revisionId: 1, mainLineId: 1, applicability: 1,
-    "payload.modeCalculations.in_house_labor.baseRatePaise": 1,
-    "payload.modeCalculations.in_house_material.baseRatePaise": 1,
+    "payload.modeCalculations.pmc.baseRatePaise": 1,
+    "payload.modeCalculations.sub_vendor.baseRatePaise": 1,
+    "payload.modeCalculations.in_house_labor": 1,
+    "payload.modeCalculations.in_house_material": 1,
     "payload.modeCalculations.in_house.baseRatePaise": 1 });
   if (session) { revisionQuery.session(session); overviewQuery.session(session); advancedQuery.session(session); }
   // Keep reads sequential when this resolver runs inside an estimate-save transaction.
@@ -421,7 +428,7 @@ async function projectLines(
   const advancedSections = await advancedQuery.lean().exec();
   const revisionById = new Map(revisions.map((revision) => [String(revision._id), revision]));
   const uomIdByRevision = new Map<string, string>();
-  const inHouseBaseRateByRevision = new Map<string, number | null>();
+  const modeBasesByRevision = new Map<string, EstimateModeBaseRatesPaise>();
   for (const overview of overviews) {
     const revisionId = String(overview.revisionId);
     const payload = overview.payload as Record<string, unknown> | null;
@@ -434,7 +441,7 @@ async function projectLines(
     const revision = revisionById.get(revisionId);
     if (!revision || String(revision.mainLineId) !== String(advanced.mainLineId) ||
       advanced.applicability !== "configured") continue;
-    inHouseBaseRateByRevision.set(revisionId, inHouseBaseRatePaise(advanced.payload));
+    modeBasesByRevision.set(revisionId, estimateModeBaseRatesPaise(advanced.payload));
   }
   const uomQuery = AiEstimatorKnowledgeUomModel.find({
     _id: { $in: [...new Set(uomIdByRevision.values())] }, status: { $in: ["active", "inactive"] }
@@ -464,31 +471,12 @@ async function projectLines(
       itemStatus: raw.status as EstimatorCatalogueLine["itemStatus"],
       revisionStatus: source.status,
       itemVersion: Number(raw.version), revisionVersion: Number(revision.version),
-      inHouseBaseRatePaise: inHouseBaseRateByRevision.get(revisionId) ?? null,
+      inHouseBaseRatePaise: modeBasesByRevision.get(revisionId)?.in_house ?? null,
+      modeBaseRatesPaise: modeBasesByRevision.get(revisionId) ?? estimateModeBaseRatesPaise(null),
       uom: { id: uomId!, code: String(uom.code), name: String(uom.name), decimalScale: Number(uom.decimalScale) }
     });
   }
   return projected;
-}
-
-function inHouseBaseRatePaise(payload: unknown): number | null {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
-  const calculations = (payload as Record<string, unknown>).modeCalculations;
-  if (!calculations || typeof calculations !== "object" || Array.isArray(calculations)) return null;
-  const scopes = calculations as Record<string, unknown>;
-  const baseRate = (value: unknown): number | null => {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    const rate = (value as Record<string, unknown>).baseRatePaise;
-    return typeof rate === "number" && Number.isSafeInteger(rate) && rate >= 0 ? rate : null;
-  };
-  if (Object.hasOwn(scopes, "in_house_labor") || Object.hasOwn(scopes, "in_house_material")) {
-    const labor = baseRate(scopes.in_house_labor);
-    const material = baseRate(scopes.in_house_material);
-    if (labor === null || material === null) return null;
-    const combined = labor + material;
-    return Number.isSafeInteger(combined) ? combined : null;
-  }
-  return baseRate(scopes.in_house);
 }
 
 function hasReadyOverviewAndMode(completeness: unknown): boolean {

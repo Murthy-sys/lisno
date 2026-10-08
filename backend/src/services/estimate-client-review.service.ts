@@ -1,3 +1,4 @@
+import type { EstimatePricingMode, EstimateRateSource } from "../domain/estimate-mode-pricing.js";
 import type mongoose from "mongoose";
 
 import {
@@ -952,6 +953,8 @@ function mapSnapshot(row: Row): EstimateClientReviewSnapshot {
         source: "configuration" as const,
         ...(lineItem.itemType === undefined ? {} : { itemType: stringField(lineItem, "itemType") as "main_line" | "temporary" }),
         classification: lineItem.classification === "special" ? "special" as const : "standard" as const,
+        ...(lineItem.pricingMode === undefined ? {} : { pricingMode: stringField(lineItem, "pricingMode") as EstimatePricingMode }),
+        ...(lineItem.rateSource === undefined ? {} : { rateSource: stringField(lineItem, "rateSource") as EstimateRateSource }),
         specification: null,
         rate: lineItem.rate === null ? null : numberField(lineItem, "rate"),
         amount: lineItem.amount === null ? null : numberField(lineItem, "amount"),

@@ -293,6 +293,8 @@ export interface EstimateClientReviewSnapshot {
     mainBasketId?: string;
     itemType?: "main_line" | "temporary";
     classification?: "standard" | "special";
+    pricingMode?: "pmc" | "sub_vendor" | "in_house";
+    rateSource?: "configuration" | "manual";
     subBasketId?: string | null;
     mainLineId?: string;
     revisionId?: string;
@@ -801,6 +803,7 @@ interface InitiateProjectFields {
   location?: string;
   cityName?: string | null;
   propertyType: string;
+  source?: string;
   budgetMin?: number;
   budgetMax?: number;
   nextAction: string;

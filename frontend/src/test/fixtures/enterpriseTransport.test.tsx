@@ -10,6 +10,8 @@ import { server } from "../server";
 import { tokenStorage } from "../../api/client";
 import type { Role } from "../../api/types";
 import { installEnterpriseTransport, type EnterpriseScenario } from "./enterpriseTransport";
+import type { EstimateDraft } from "../../features/leads/leadsApi";
+import type { EstimationCataloguePage, EstimationCatalogueRecommendations } from "../../features/leads/estimationCatalogueApi";
 
 let transport: ReturnType<typeof installEnterpriseTransport> | undefined;
 let cleanup: (() => void) | undefined;
@@ -42,6 +44,171 @@ const routes: [string, Role][] = [
   ["/admin/configuration/estimation", "super_admin"], ["/admin/configuration/estimation/items/line-1", "super_admin"], ["/admin/configuration/estimation/reusable-values", "super_admin"]
 ];
 describe("synthetic enterprise route harness", () => {
+  it("gates the recommendation scrolling fixture without changing mode or basket defaults", async () => {
+    const read = async <T,>(path: string) => (await (await fetch(`/api/v1${path}`)).json()).data as T;
+    for (const query of ["qaRecommendationScroll=ready", "qaEstimateModes=ready", "qaEstimateModes=ready&qaBasketCards=ready"]) {
+      transport = installEnterpriseTransport({ route: `/estimator-sales/leads/lead-1/estimate?${query}`, role: "estimator_sales", state: "populated" });
+      const catalogue = await read<EstimationCataloguePage>("/estimation/catalogue");
+      expect(catalogue.items.flatMap((basket) => basket.subBaskets.flatMap((subBasket) => subBasket.mainLines))
+        .some((line) => line.mainLineId === "line-probable-source")).toBe(false);
+      if (query === "qaEstimateModes=ready") {
+        expect(catalogue.items).toHaveLength(2);
+        const recommendations = await read<EstimationCatalogueRecommendations>("/estimation/catalogue/recommendations?mainLineIds=line-ceiling");
+        expect(recommendations.sources[0]?.rules).toEqual([]);
+      }
+      if (query.includes("qaBasketCards")) {
+        const draft = await read<EstimateDraft>("/leads/lead-1/estimate");
+        expect(draft.lineItems).toHaveLength(0);
+        expect(catalogue.items).toHaveLength(6);
+      }
+      expect(transport.requests.filter((request) => request.unexpected)).toEqual([]);
+      transport.restore();
+    }
+  });
+
+  it("serves current optional, required, shared and sub-basket rules with two unequal scrolling rooms", async () => {
+    transport = installEnterpriseTransport({ route: "/estimator-sales/leads/lead-1/estimate?qaEstimateModes=ready&qaRecommendationScroll=ready",
+      role: "estimator_sales", state: "populated" });
+    const read = async <T,>(path: string) => (await (await fetch(`/api/v1${path}`)).json()).data as T;
+    const catalogue = await read<EstimationCataloguePage>("/estimation/catalogue");
+    const lines = catalogue.items.flatMap((basket) => basket.subBaskets.flatMap((subBasket) => subBasket.mainLines));
+    expect(catalogue.items).toHaveLength(6);
+    expect(lines).toHaveLength(35);
+    const initial = await read<EstimateDraft>("/leads/lead-1/estimate");
+    expect(initial.rooms).toMatchObject([{ id: "living-room", sqft: 192 }, { id: "master-bedroom", sqft: 143 }]);
+    expect(initial.lineItems).toHaveLength(70);
+    expect(initial.selectedMainBasketIds).toHaveLength(6);
+    expect(initial.lineItems.filter((line) => line.included)).toHaveLength(4);
+    const totals = initial.rooms.map((room) => initial.lineItems.filter((line) => line.source === "configuration" && line.roomId === room.id && line.included)
+      .reduce((total, line) => total + (line.amountPaise ?? 0), 0));
+    expect(totals[0]).not.toBe(totals[1]);
+
+    const sourceIds = ["line-ceiling", "line-probable-source", "line-required-source", "line-mixed-source", "line-subbasket-source", "line-unavailable-source"];
+    const recommendations = await read<EstimationCatalogueRecommendations>(`/estimation/catalogue/recommendations?mainLineIds=${sourceIds.join(",")}`);
+    for (const source of recommendations.sources) {
+      const line = lines.find((item) => item.mainLineId === source.mainLineId)!;
+      expect(source).toMatchObject({ available: true, revisionId: line.revisionId, revisionVersion: line.revisionVersion, itemVersion: line.itemVersion });
+      for (const rule of source.rules.filter((item) => item.available && item.targetKind === "main_line")) {
+        const target = lines.find((item) => item.mainLineId === rule.targetMainLineId)!;
+        expect(rule).toMatchObject({ targetRevisionId: target.revisionId, targetRevisionVersion: target.revisionVersion, targetItemVersion: target.itemVersion });
+      }
+    }
+    const rules = (id: string) => recommendations.sources.find((source) => source.mainLineId === id)!.rules;
+    expect(rules("line-probable-source")).toMatchObject([{ requirement: "can", targetMainLineId: "line-cove" }]);
+    expect(rules("line-required-source")).toMatchObject([{ requirement: "must", targetMainLineId: "line-cove" }]);
+    expect(rules("line-mixed-source")).toMatchObject([{ requirement: "must", targetMainLineId: "line-painting" }, { requirement: "can", targetMainLineId: "line-cove" }]);
+    const subBasketRule = rules("line-subbasket-source")[0]!;
+    expect(subBasketRule).toMatchObject({ requirement: "can", targetKind: "sub_basket", unavailableChildCount: 0 });
+    expect(subBasketRule.children).toHaveLength(2);
+    for (const child of subBasketRule.children!) {
+      const target = lines.find((item) => item.mainLineId === child.mainLineId)!;
+      expect(child).toMatchObject({ available: true, revisionId: target.revisionId, revisionVersion: target.revisionVersion, itemVersion: target.itemVersion });
+    }
+    expect(rules("line-unavailable-source")).toMatchObject([{ requirement: "can", available: false, completionRequired: true }]);
+
+    const lineItems = initial.lineItems.map((line) => line.source === "configuration" && line.roomId === "living-room" && line.mainLineId === "line-probable-source"
+      ? { ...line, included: true } : line);
+    expect((await fetch("/api/v1/leads/lead-1/estimate", { method: "PUT", body: JSON.stringify({ ...initial, expectedVersion: 1, lineItems }) })).status).toBe(200);
+    const saved = await read<EstimateDraft>("/leads/lead-1/estimate");
+    expect(saved.version).toBe(2);
+    expect(saved.lineItems.filter((line) => line.included)).toHaveLength(5);
+    expect(saved.lineItems.filter((line) => line.source === "configuration" && line.mainLineId === "line-cove").every((line) => !line.included)).toBe(true);
+    expect(transport.requests.filter((request) => request.unexpected)).toEqual([]);
+  });
+
+  it("renders the recommendation scrolling fixture with a saved summary and unopened review", async () => {
+    const { client } = mount("/estimator-sales/leads/lead-1/estimate?qaEstimateModes=ready&qaRecommendationScroll=ready", "estimator_sales");
+    await screen.findByRole("navigation", { name: "Primary navigation" });
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    expect(await screen.findByRole("button", { name: "Review recommendations" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Recommendations for Living Room" })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /Ambient ceiling details/ })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Final timber finish inspection/ })).toBeInTheDocument();
+    expect(transport?.requests.filter((request) => request.unexpected)).toEqual([]);
+  });
+
+  it("enables only the scrolling fixture's read-only Messages navigation and destination", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("min-width") || query.includes("pointer: fine"),
+      media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    transport = installEnterpriseTransport({ route: "/estimator-sales/leads/lead-1/estimate?qaEstimateModes=ready", role: "estimator_sales", state: "populated" });
+    const defaultAuthorization = (await (await fetch("/api/v1/auth/authorization")).json()).data;
+    expect(defaultAuthorization.permissions).not.toContain("chat.read");
+    transport.restore();
+    mount("/estimator-sales/leads/lead-1/estimate?qaEstimateModes=ready&qaRecommendationScroll=ready", "estimator_sales");
+    const navigation = await screen.findByRole("navigation", { name: "Project sections" });
+    const link = await within(navigation).findByRole("link", { name: "Messages" });
+    expect(link).toHaveAttribute("href", "/projects/project-1/messages");
+    await waitFor(() => expect(transport?.requests.some((request) => request.path === "/projects/project-1/chat/events" && request.status === 200)).toBe(true));
+    expect(transport?.requests.filter((request) => request.unexpected || request.method !== "GET")).toEqual([]);
+    cleanup?.(); cleanup = undefined; transport?.restore();
+    const { client } = mount("/projects/project-1/messages?qaEstimateModes=ready&qaRecommendationScroll=ready", "estimator_sales");
+    expect(await screen.findByRole("textbox", { name: "Message the project team" })).toBeDisabled();
+    expect(await screen.findByText("Sending is not available for your current access.")).toBeVisible();
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    expect(transport?.requests.some((request) => request.path === "/projects/project-1/chat/messages" && request.status === 200)).toBe(true);
+    expect(transport?.requests.filter((request) => request.unexpected || request.method !== "GET")).toEqual([]);
+    expect((await fetch("/api/v1/projects/project-1/chat/messages", { method: "POST", body: "{}" })).status).toBe(422);
+  });
+
+  it("provides six basket cards with description and empty states only in the opted-in fixture", async () => {
+    transport = installEnterpriseTransport({
+      route: "/estimator-sales/leads/lead-1/estimate?qaEstimateModes=ready&qaBasketCards=ready",
+      role: "estimator_sales", state: "populated"
+    });
+    const catalogue = (await (await fetch("/api/v1/estimation/catalogue")).json()).data;
+    expect(catalogue.items).toHaveLength(6);
+    expect(catalogue.items[0]).toMatchObject({ name: "POP / Gypsum", description: expect.stringContaining("gypsum boards") });
+    expect(catalogue.items[4]).toMatchObject({ name: "Electrical Works", description: null, subBaskets: [] });
+    const draft = (await (await fetch("/api/v1/leads/lead-1/estimate")).json()).data;
+    expect(draft).toMatchObject({ selectedMainBasketIds: ["basket-ceiling"], lineItems: [], totalPaise: 0 });
+    expect(transport.requests.every((request) => !request.unexpected)).toBe(true);
+  });
+
+  it("round trips mode pricing only in the gated local estimate scenario", async () => {
+    const route = "/estimator-sales/leads/lead-1/estimate?qaEstimateModes=ready";
+    transport = installEnterpriseTransport({ route, role: "estimator_sales", state: "populated" });
+    const path = "/api/v1/leads/lead-1/estimate";
+    const read = async () => (await (await fetch(path)).json()).data as EstimateDraft;
+    const initial = await read();
+    expect(initial).toMatchObject({ version: 1, subtotalPaise: 170_000, gstPaise: 30_600, totalPaise: 200_600 });
+    expect(initial.lineItems.filter((line) => line.included)).toHaveLength(2);
+    const lineItems = initial.lineItems.map((line) => line.source === "configuration" && line.mainLineId === "line-ceiling"
+      ? { ...line, pricingMode: "in_house", rateSource: "manual", ratePaise: 12_345 } : line);
+    const response = await fetch(path, { method: "PUT", body: JSON.stringify({ ...initial, expectedVersion: initial.version, lineItems }) });
+    expect(response.status).toBe(200);
+    expect(await read()).toMatchObject({ version: 2, subtotalPaise: 173_450, gstPaise: 31_221, totalPaise: 204_671 });
+    expect((await read()).lineItems[0]).toMatchObject({ pricingMode: "in_house", rateSource: "manual", ratePaise: 12_345 });
+
+    window.dispatchEvent(new CustomEvent("enterprise-qa-estimate-mode-rates", { detail: {
+      mainLineId: "line-ceiling", modeBaseRatesPaise: { pmc: 21_000, sub_vendor: 22_000, in_house: 23_000 }
+    } }));
+    expect((await read()).lineItems[0]).toMatchObject({ ratePaise: 12_345, sourceRevisionVersion: 4 });
+    window.dispatchEvent(new CustomEvent("enterprise-qa-estimate-mode-rates", { detail: {
+      mainLineId: "line-painting", modeBaseRatesPaise: { pmc: 2_000, sub_vendor: 3_500, in_house: 4_000 }
+    } }));
+    const updated = await read();
+    expect(updated.lineItems[3]).toMatchObject({ pricingMode: "sub_vendor", rateSource: "configuration", ratePaise: 3_500, sourceRevisionVersion: 6 });
+    expect(updated.subtotalPaise).toBe(193_450);
+    const catalogue = (await (await fetch("/api/v1/estimation/catalogue")).json()).data;
+    expect(catalogue.items[0].subBaskets[0].mainLines[1].modeBaseRatesPaise.pmc).toBeNull();
+    expect(catalogue.items[0].subBaskets[0].mainLines[2].modeBaseRatesPaise.pmc).toBe(0);
+    expect((await fetch("/api/v1/projects", { method: "POST", body: "{}" })).status).toBe(422);
+    expect(transport.requests.filter((request) => request.unexpected)).toEqual([]);
+
+    transport.restore();
+    transport = installEnterpriseTransport({ route: "/estimator-sales/leads/lead-1/estimate", role: "estimator_sales", state: "populated" });
+    expect((await fetch(path, { method: "PUT", body: JSON.stringify(initial) })).status).toBe(422);
+    transport.restore();
+    transport = installEnterpriseTransport({ route, role: "estimator_sales", state: "mutation-error" });
+    expect((await fetch(path, { method: "PUT", body: JSON.stringify(initial) })).status).toBe(422);
+  });
+  it("renders the populated mode-pricing fixture without unknown reads", async () => {
+    const { client } = mount("/estimator-sales/leads/lead-1/estimate?qaEstimateModes=ready", "estimator_sales");
+    await screen.findByRole("navigation", { name: "Primary navigation" });
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    await waitFor(() => expect(screen.getByRole("radio", { name: "PMC pricing mode for False ceiling, Ceiling finishes, False ceiling in Living Room", checked: true })).toBeInTheDocument());
+    expect(transport?.requests.filter((request) => request.unexpected)).toEqual([]);
+  });
   it.each(routes)("renders %s as %s with only registered mock reads", async (route, role) => {
     const { client } = mount(route, role);
     await screen.findByRole("navigation", { name: "Primary navigation" });

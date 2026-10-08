@@ -36,6 +36,7 @@ interface ProjectInitiationForm {
   projectName: string;
   cityName: string;
   propertyType: string;
+  source: string;
   nextAction: string;
   nextActionAt: string;
 }
@@ -47,6 +48,7 @@ const emptyForm: ProjectInitiationForm = {
   projectName: "",
   cityName: "",
   propertyType: "",
+  source: "",
   nextAction: "",
   nextActionAt: ""
 };
@@ -58,6 +60,7 @@ const fields = [
   ["projectName", "Project / property name", "text", "Enter project / property name"],
   ["cityName", "Project city", "text", "Enter city for vendor matching"],
   ["propertyType", "Property type", "text", "Enter property type"],
+  ["source", "Source", "text", "Instagram, existing customer, social media…"],
   ["nextAction", "Next action", "text", "Enter next action"],
   ["nextActionAt", "Next action date", "date", undefined]
 ] as const satisfies ReadonlyArray<readonly [keyof ProjectInitiationForm, string, string, string | undefined]>;
@@ -70,9 +73,10 @@ function validate(
 ): Record<string, string> {
   const errors: Record<string, string> = {};
   for (const [key, label] of fields) {
-    if (key === "cityName") continue;
+    if (key === "cityName" || key === "source") continue;
     if (!form[key].trim()) errors[key] = `${label} is required.`;
   }
+  if (form.source.trim().length > 200) errors.source = "Source must be 200 characters or fewer.";
   if (form.nextActionAt.trim() && Number.isNaN(new Date(`${form.nextActionAt}T00:00:00`).getTime())) {
     errors.nextActionAt = "Next action date must be valid.";
   }
@@ -189,6 +193,7 @@ export function AdminProjectInitiationDialog({
       projectName: form.projectName.trim(),
       ...(form.cityName.trim() ? { cityName: form.cityName.trim() } : {}),
       propertyType: form.propertyType.trim(),
+      ...(form.source.trim() ? { source: form.source.trim() } : {}),
       nextAction: form.nextAction.trim(),
       // The initiation form collects a local calendar date; the API stores a timestamp.
       nextActionAt: new Date(`${form.nextActionAt}T00:00:00`).toISOString(),
@@ -237,10 +242,11 @@ export function AdminProjectInitiationDialog({
         {fields.map(([key, label, type, placeholder]) => (
           <Field
             key={key}
-            className={key === "clientName" || key === "projectName" || key === "nextAction" || key === "nextActionAt" ? "admin-project-form__wide" : undefined}
+            className={key === "clientName" || key === "projectName" || key === "source" || key === "nextAction" || key === "nextActionAt" ? "admin-project-form__wide" : undefined}
             id={`admin-project-${key}`}
             label={label}
-            required={key !== "cityName"}
+            required={key !== "cityName" && key !== "source"}
+            hint={key === "source" ? "How did the client hear about Lisno?" : undefined}
             error={fieldErrors[key]}
           >
             {(controlProps) => (
@@ -259,6 +265,7 @@ export function AdminProjectInitiationDialog({
                   name={key}
                   type={type}
                   placeholder={placeholder}
+                  maxLength={key === "source" ? 200 : undefined}
                   disabled={mutation.isPending}
                   value={form[key]}
                   onChange={update(key)}

@@ -1,3 +1,5 @@
+import type { EstimatePricingMode, EstimateRateSource } from "./estimate-mode-pricing.js";
+
 import { createHash } from "node:crypto";
 
 export const ESTIMATE_DELIVERY_STATUSES = [
@@ -66,6 +68,8 @@ export interface EstimateClientReviewSnapshot {
     source?: "legacy" | "configuration";
     itemType?: ConfiguredEstimateItemType;
     classification?: EstimateClassification;
+    pricingMode?: EstimatePricingMode;
+    rateSource?: EstimateRateSource;
     catalogueId: string;
     roomId?: string;
     roomName: string;

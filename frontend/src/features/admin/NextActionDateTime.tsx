@@ -101,11 +101,13 @@ export function NextActionDateTime({ id, value, onChange, disabled, inputRef, ..
       <button id={id} type="button" className="ui-control next-action-date-time__trigger"
         ref={(node) => { trigger.current = node; if (typeof inputRef === "function") inputRef(node); else if (inputRef) inputRef.current = node; }}
         aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? calendarId : undefined}
-        aria-required={field.required} aria-invalid={field["aria-invalid"]} aria-describedby={field["aria-describedby"]}
+        aria-invalid={field["aria-invalid"]}
+        aria-describedby={[field.required ? `${id}-required` : undefined, field["aria-describedby"]].filter(Boolean).join(" ") || undefined}
         disabled={disabled} onClick={() => open ? close(true) : show()}>
         <span>{day ? fullDate(readDate(day)) : "Select date"}</span>
         <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="5" width="18" height="16" rx="1" /><path d="M7 2v6m10-6v6M3 11h18" /></svg>
       </button>
+      {field.required ? <span id={`${id}-required`} className="sr-only">Required</span> : null}
     </div>
     {open || closing ? <div ref={calendar} id={calendarId} className="next-action-date-time__calendar"
       role="dialog" aria-label="Choose next action date" aria-hidden={closing || undefined} inert={closing || undefined}

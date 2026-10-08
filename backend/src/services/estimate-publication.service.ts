@@ -1,3 +1,4 @@
+import { estimateConfigurationRateMatches } from "../domain/estimate-mode-pricing.js";
 import { createMongoRepository } from "../repositories/mongo.js";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -484,6 +485,8 @@ function toEstimateSnapshot(
       classification: line.source === "configuration"
         ? line.classification === "special" ? "special" : "standard"
         : line.classification,
+      pricingMode: line.pricingMode,
+      rateSource: line.rateSource,
       catalogueId: line.catalogueId,
       roomId: line.roomId,
       roomName: line.roomName,
@@ -640,7 +643,8 @@ async function assertCurrentConfiguredPublication(
       uomName: source.line.uom.name,
       unit: source.line.uom.name
     };
-    if (Object.entries(expected).some(([field, value]) => stored[field] !== value)) {
+    if (Object.entries(expected).some(([field, value]) => stored[field] !== value) ||
+      !estimateConfigurationRateMatches(line, source.line.modeBaseRatesPaise)) {
       throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
         "Configuration changed. Save the estimate with its current Main Line values before sending it.");
     }

@@ -20,6 +20,8 @@ describe("NextActionDateTime", () => {
     const user = userEvent.setup();
     render(<Example />);
     const trigger = screen.getByRole("button", { name: "Next action date" });
+    expect(trigger).toHaveAccessibleDescription("Required");
+    expect(trigger).not.toHaveAttribute("aria-required");
     await user.click(trigger);
     await user.click(screen.getByRole("button", { name: "15 January 2026" }));
     expect(screen.queryByRole("dialog", { name: "Choose next action date" })).not.toBeInTheDocument();

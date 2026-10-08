@@ -45,6 +45,19 @@ describe("published Client estimate presentation", () => {
       expect(result?.lineItems[0]).not.toHaveProperty(field);
       expect(result?.publishedReview?.snapshot.lineItems[0]).not.toHaveProperty(field);
     }
+    for (const pricingMode of ["pmc", "sub_vendor", "in_house"]) {
+      const withMode = presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: { ...configured,
+        lineItems: [{ ...configured.lineItems[0], classification: "special", pricingMode, rateSource: "configuration" }] } });
+      expect(withMode).toMatchObject({ lineItems: [{ pricingMode, rateSource: "configuration" }],
+        publishedReview: { snapshot: { lineItems: [{ pricingMode, rateSource: "configuration" }] } } });
+    }
+    for (const metadata of [{ pricingMode: "unknown" }, { rateSource: "unknown" },
+      { rateSource: "configuration" }, { pricingMode: "pmc" }]) {
+      expect(presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: { ...configured,
+        lineItems: [{ ...configured.lineItems[0], ...metadata }] } })).toMatchObject({ reviewSourceIssue: "missing_snapshot", publishedReview: null });
+    }
+    expect(result?.lineItems[0]).not.toHaveProperty("pricingMode");
+    expect(result?.lineItems[0]).not.toHaveProperty("rateSource");
     const historical = presentClientEstimate(actor, estimate, lead, { ...round,
       estimateSnapshot: {
         ...configured, selectedMainBasketClassifications: undefined,

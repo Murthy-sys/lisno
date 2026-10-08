@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 
 import { Dialog } from "../../components/ui/Dialog";
-import type { RecommendationDecision, RecommendationReason, RoomRecommendationView, RecommendedLineTarget } from "./roomRecommendations";
+import { recommendationLines, type RecommendationDecision, type RecommendationLine, type RecommendationReason,
+  type RoomRecommendationView, type RecommendedLineTarget } from "./roomRecommendations";
 
 export type RecommendationReadState = "loading" | "ready" | "error" | "forbidden" | "stale";
 
@@ -17,50 +18,13 @@ interface EstimatorRecommendationsProps {
   onRetry: () => void;
   onRefresh: () => void;
   onSelect: (target: RecommendedLineTarget) => boolean | void;
+  onSkip?: (target: RecommendedLineTarget) => boolean | void;
+  skippedKeys?: ReadonlySet<string>;
   fallbackFocusRef?: RefObject<HTMLElement | null>;
   automaticDismissal?: boolean;
 }
 
-interface RecommendationLine {
-  key: string;
-  target: RecommendedLineTarget;
-  name: string;
-  requirement: "must" | "can";
-  selected: boolean;
-  reasons: RecommendationReason[];
-}
-
-function targetIdentity(target: RecommendedLineTarget): string {
-  return JSON.stringify([target.mainLineId, target.basketId, target.subBasketId]);
-}
-
-function lineRecommendations(decisions: readonly RecommendationDecision[]): RecommendationLine[] {
-  const lines = new Map<string, RecommendationLine>();
-  const add = (target: RecommendedLineTarget, name: string, selected: boolean, decision: RecommendationDecision) => {
-    const key = targetIdentity(target);
-    const existing = lines.get(key);
-    if (!existing) {
-      lines.set(key, { key, target, name, selected, requirement: decision.requirement, reasons: [...decision.reasons] });
-      return;
-    }
-    existing.selected ||= selected;
-    if (decision.requirement === "must") existing.requirement = "must";
-    for (const reason of decision.reasons) {
-      if (!existing.reasons.some((item) => item.sourceId === reason.sourceId && item.ruleId === reason.ruleId)) {
-        existing.reasons.push(reason);
-      }
-    }
-  };
-  for (const decision of decisions) {
-    if (!decision.available) continue;
-    if (decision.kind === "main_line" && decision.target) {
-      add(decision.target, decision.name, decision.selected, decision);
-    } else if (decision.kind === "sub_basket") {
-      for (const child of decision.children) add(child.target, child.name, child.selected, decision);
-    }
-  }
-  return [...lines.values()].sort((a, b) => Number(b.requirement === "must") - Number(a.requirement === "must"));
-}
+const EMPTY_SKIPPED_KEYS: ReadonlySet<string> = new Set();
 
 function hasUnavailableItems(decision: RecommendationDecision): boolean {
   return !decision.available || decision.unavailableChildCount > 0 ||
@@ -95,7 +59,7 @@ function additionalSourceNames(line: RecommendationLine, primary?: Recommendatio
 
 export function EstimatorRecommendations({
   roomName, sourceCount, state, view, editable, open, onOpen, onClose, onRetry, onRefresh, onSelect, fallbackFocusRef,
-  automaticDismissal = false
+  onSkip, skippedKeys = EMPTY_SKIPPED_KEYS, automaticDismissal = false
 }: EstimatorRecommendationsProps) {
   const reviewButtonRef = useRef<HTMLButtonElement>(null);
   const detailBodyRef = useRef<HTMLDivElement>(null);
@@ -111,8 +75,9 @@ export function EstimatorRecommendations({
   const decisions = view?.decisions ?? [];
   const guidance = view?.guidance ?? [];
   const historicalSources = view?.historicalSources ?? [];
-  const lines = lineRecommendations(decisions);
-  const pending = state === "ready" ? lines.filter((line) => !line.selected && !acceptedKeys.has(line.key)) : [];
+  const lines = recommendationLines(decisions);
+  const isSkipped = (line: RecommendationLine) => line.requirement === "can" && skippedKeys.has(line.key);
+  const pending = state === "ready" ? lines.filter((line) => !line.selected && !acceptedKeys.has(line.key) && !isSkipped(line)) : [];
   const unavailableCount = state === "ready" ? decisions.filter(hasUnavailableItems).length : 0;
   const primaryPending = pending.find((line) => line.requirement === "must") ?? pending[0];
   const detailView = state === "loading" && open && lastReadyViewRef.current?.roomName === roomName
@@ -121,10 +86,12 @@ export function EstimatorRecommendations({
   const detailDecisions = detailView?.decisions ?? [];
   const detailGuidance = detailView?.guidance ?? [];
   const detailHistoricalSources = detailView?.historicalSources ?? [];
-  const displayedLines = lineRecommendations(detailDecisions).map((line) =>
+  const displayedLines = recommendationLines(detailDecisions).map((line) =>
     acceptedKeys.has(line.key) ? { ...line, selected: true } : line
   );
-  const detailPending = displayedLines.filter((line) => !line.selected);
+  const detailPending = displayedLines.filter((line) => !line.selected && !isSkipped(line));
+  const hasSkippedLines = displayedLines.some((line) => !line.selected && isSkipped(line));
+  const hasProbableLines = displayedLines.some((line) => line.requirement === "can");
   const activeIndex = Math.max(0, detailPending.findIndex((line) => line.key === activeKey));
   const activeLine = detailPending[activeIndex];
   const activeReason = activeLine ? sourceReason(activeLine) : undefined;
@@ -150,7 +117,7 @@ export function EstimatorRecommendations({
       return;
     }
     if (state !== "ready" || !view) return;
-    const confirmed = new Set(lineRecommendations(decisions).filter((line) => line.selected).map((line) => line.key));
+    const confirmed = new Set(recommendationLines(decisions).filter((line) => line.selected).map((line) => line.key));
     const hadFreshResponse = sawLoadingAfterSelectionRef.current;
     const remaining = hadFreshResponse ? new Set<string>() : new Set([...acceptedKeys].filter((key) => !confirmed.has(key)));
     if (hadFreshResponse || remaining.size !== acceptedKeys.size) {
@@ -164,7 +131,7 @@ export function EstimatorRecommendations({
     selectionFocusRef.current = false;
     const nextSelect = detailBodyRef.current?.querySelector<HTMLButtonElement>("button[data-recommendation-select]:not([disabled])");
     (nextSelect ?? detailBodyRef.current?.querySelector<HTMLButtonElement>("button[data-recommendation-complete]") ?? closeButtonRef.current)?.focus();
-  }, [acceptedKeys, open]);
+  }, [acceptedKeys, activeKey, open, skippedKeys]);
 
   useEffect(() => {
     if (!open) return;
@@ -186,7 +153,8 @@ export function EstimatorRecommendations({
   else if (state === "forbidden") summary = "Recommendations are unavailable for this account.";
   else if (state === "stale") summary = "Available items changed. Refresh recommendations.";
   else if (primaryPending) summary = relationshipMessage(primaryPending) ?? "Related items to review.";
-  else if (lines.length && !unavailableCount) summary = "All related items selected.";
+  else if (lines.length && !unavailableCount) summary = lines.some((line) => !line.selected && isSkipped(line))
+    ? "All recommendations reviewed." : "All related items selected.";
   else if (unavailableCount) summary = "Related items need availability review.";
   else if (guidance.length) summary = "Guidance to review.";
   else if (historicalSources.length) summary = "Saved recommendation sources need review.";
@@ -199,6 +167,14 @@ export function EstimatorRecommendations({
     selectionFocusRef.current = true;
     setAcceptedKeys((current) => new Set(current).add(line.key));
     setSelectionAnnouncement(`${line.name} selected for ${roomName}.`);
+  };
+
+  const skipItem = (line: RecommendationLine) => {
+    if (!editable || state !== "ready" || line.requirement !== "can" || isSkipped(line) || onSkip?.(line.target) !== true) return;
+    const nextLine = detailPending.length > 1 ? detailPending[(activeIndex + 1) % detailPending.length] : undefined;
+    setActiveKey(nextLine?.key ?? null);
+    selectionFocusRef.current = true;
+    setSelectionAnnouncement(`${line.name} marked not necessary for ${roomName}.`);
   };
 
   return <>
@@ -224,7 +200,9 @@ export function EstimatorRecommendations({
             <div className="estimator-recommendations__card-heading">
               <div className="estimator-recommendations__title-row">
                 <h3>{activeLine ? "Related item recommended" : `Recommendations for ${roomName}`}</h3>
-                {state === "ready" && activeLine ? <span className="estimator-recommendations__card-badge">Configuration suggestion</span> : null}
+                {state === "ready" && activeLine ? <span className="estimator-recommendations__card-badge">
+                  {activeLine.requirement === "must" ? "Non-Negotiable Addition" : "Probable Addition"}
+                </span> : null}
               </div>
               {activeLine ? <p>{relationshipMessage(activeLine) ?? "A related item is recommended for this room."}</p> : null}
             </div>
@@ -269,10 +247,15 @@ export function EstimatorRecommendations({
             {!editable ? <p className="estimator-recommendations__context">This estimate is read-only. Related items are shown for review.</p> : null}
             {state === "loading" ? <p className="estimator-recommendations__context">Updating related items. Selection will be available when the check finishes.</p> : null}
             {automaticDismissal && state === "ready" && editable ? <p className="estimator-recommendations__context">
-              Closing without adding a related item will uncheck any newly selected item that still needs one.
+              {hasProbableLines
+                ? "Use Not necessary to skip a Probable Addition. Closing with unanswered recommendations and no related item added will uncheck newly selected items that still need a response."
+                : "Closing without adding a related item will uncheck any newly selected item that still needs one."}
             </p> : null}
             <div className="estimator-recommendations__card-actions">
               <button className="estimator-recommendations__not-now" type="button" onClick={onClose}>Not now</button>
+              {activeLine.requirement === "can" ? <button className="estimator-recommendations__skip" type="button"
+                onClick={() => skipItem(activeLine)} disabled={!editable || state !== "ready" || !onSkip}
+                aria-label={`Not necessary: ${activeLine.name} for ${roomName}`}>Not necessary</button> : null}
               <button type="button" data-recommendation-select onClick={() => selectItem(activeLine)}
                 disabled={!editable || state !== "ready"} aria-label={`Add ${activeLine.name} for ${roomName}`}>
                 Add recommended item
@@ -286,7 +269,9 @@ export function EstimatorRecommendations({
           </details> : null}
           {state === "ready" && !decisions.length && !guidance.length && !historicalSources.length ? <p className="estimator-recommendations__state">No configured recommendations for the selected items in this room.</p> : null}
           {state === "ready" && displayedLines.length > 0 && !activeLine ? <div className="estimator-recommendations__state estimator-recommendations__complete" role="status">
-            <p>{detailUnavailableCount ? "All available related items selected." : "All related items selected."}</p>
+            <p>{hasSkippedLines
+              ? detailUnavailableCount ? "All available recommendations reviewed." : "All recommendations reviewed."
+              : detailUnavailableCount ? "All available related items selected." : "All related items selected."}</p>
             <button type="button" data-recommendation-complete onClick={onClose}>Done</button>
           </div> : null}
           {(state === "ready" || state === "loading") && detailUnavailableCount ? <p className="estimator-recommendations__state estimator-recommendations__unavailable">

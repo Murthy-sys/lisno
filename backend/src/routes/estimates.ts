@@ -5,6 +5,8 @@ import { Router } from "express";
 import { z } from "zod";
 
 import { normalizeEmail } from "../domain/email.js";
+import { ESTIMATE_PRICING_MODES, ESTIMATE_RATE_SOURCES, estimateConfigurationRateMatches,
+  estimatePricingMetadataIsValid, type EstimatePricingMode, type EstimateRateSource } from "../domain/estimate-mode-pricing.js";
 import { ApiError } from "../middleware/errors.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
@@ -48,6 +50,8 @@ const configuredEstimateLineSchema = z.object({
   mainBasketId: stableIdSchema, subBasketId: stableIdSchema.nullable(),
   itemType: z.enum(["main_line", "temporary"]).default("main_line"),
   classification: estimateClassificationSchema.optional(),
+  pricingMode: z.enum(ESTIMATE_PRICING_MODES).optional(),
+  rateSource: z.enum(ESTIMATE_RATE_SOURCES).optional(),
   mainLineId: stableIdSchema, revisionId: stableIdSchema, uomId: stableIdSchema,
   recommendationSourceMainLineIds: z.array(stableIdSchema).optional(),
   itemVersion: z.number().int().positive().safe().optional(),
@@ -55,6 +59,12 @@ const configuredEstimateLineSchema = z.object({
   quantity: z.number().finite().nonnegative(), included: z.boolean(),
   ratePaise: z.number().int().nonnegative().safe().nullable()
 }).strict().superRefine((line, context) => {
+  if (line.rateSource === "configuration" && line.pricingMode === undefined) context.addIssue({
+    code: z.ZodIssueCode.custom, path: ["pricingMode"], message: "Configuration pricing requires a pricing mode."
+  });
+  if (line.classification === "standard" && line.pricingMode !== undefined && line.pricingMode !== "sub_vendor") {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["pricingMode"], message: "Standard items use Sub-Vendor pricing." });
+  }
   if (line.catalogueId !== line.mainLineId) context.addIssue({
     code: z.ZodIssueCode.custom, path: ["catalogueId"], message: "Catalogue identity must match the Main Line."
   });
@@ -325,6 +335,13 @@ export function createEstimatesRouter(
       const configuredMainLineIds = inputLines
         .filter((line): line is z.infer<typeof configuredEstimateLineSchema> => line.source === "configuration")
         .map((line) => line.mainLineId);
+      const configurationPricedLines = inputLines.filter((line) => {
+        if (line.source !== "configuration") return false;
+        const prior = previousConfigured.get(configuredLineKey(line.roomId, line.mainLineId));
+        return line.rateSource === "configuration" || line.rateSource === undefined &&
+          prior?.rateSource === "configuration" && line.ratePaise === prior.ratePaise;
+      });
+      await fenceEstimateConfigurationDependencies(configurationPricedLines, session);
       const configured = await resolveEstimatorCatalogueLines(configuredMainLineIds, session);
       const lineItems = inputLines.map((line, index) => {
         if (line.source !== "configuration") {
@@ -370,6 +387,26 @@ export function createEstimatesRouter(
           throw new ApiError(409, "ESTIMATE_UOM_CHANGED",
             "The configured UOM changed. Review this line's quantity before saving.");
         }
+        const classification = line.classification ?? (prior?.classification === "special" ? "special" : "standard");
+        const pricingMode = line.pricingMode ?? prior?.pricingMode as EstimatePricingMode | undefined;
+        const rateSource = line.rateSource ?? (prior && line.ratePaise !== prior.ratePaise
+          ? "manual" : prior?.rateSource as EstimateRateSource | undefined);
+        const pricing = { classification, pricingMode, rateSource, ratePaise: line.ratePaise };
+        if (!estimatePricingMetadataIsValid(pricing)) {
+          throw new ApiError(400, "ESTIMATE_PRICING_MODE_INVALID", "Select a valid pricing mode for this item type.");
+        }
+        if (rateSource === "configuration") {
+          // Only older callers preserving a saved origin may reuse its saved version metadata.
+          const itemVersion = line.itemVersion ?? (line.rateSource === undefined ? prior?.sourceItemVersion : undefined);
+          const revisionVersion = line.revisionVersion ?? (line.rateSource === undefined ? prior?.sourceRevisionVersion : undefined);
+          if (line.mainBasketId !== snapshot.line.basketId || line.subBasketId !== snapshot.line.subBasketId ||
+            line.itemType !== snapshot.line.itemType || line.revisionId !== snapshot.line.revisionId ||
+            itemVersion !== snapshot.line.itemVersion || revisionVersion !== snapshot.line.revisionVersion ||
+            !estimateConfigurationRateMatches(pricing, snapshot.line.modeBaseRatesPaise)) {
+            throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
+              "Configuration pricing changed. Refresh the catalogue and review the selected mode price before saving.");
+          }
+        }
         const quantityScale = snapshot.line.uom.decimalScale;
         const quantityUnits = scaledQuantity(line.quantity, quantityScale, line.included);
         const amountPaise = line.included && line.ratePaise === null
@@ -380,8 +417,9 @@ export function createEstimatesRouter(
           id: typeof prior?.id === "string" ? prior.id : `estimate-line-${randomUUID()}`,
           source: "configuration" as const, catalogueId: line.mainLineId,
           roomId: line.roomId, roomName: line.roomName,
-          classification: line.classification ??
-            (prior?.classification === "special" ? "special" : "standard"),
+          classification,
+          ...(pricingMode === undefined ? {} : { pricingMode }),
+          ...(rateSource === undefined ? {} : { rateSource }),
           ...(line.recommendationSourceMainLineIds !== undefined
             ? { recommendationSourceMainLineIds: line.recommendationSourceMainLineIds } : {}),
           ...currentConfiguredFields(snapshot),
@@ -717,7 +755,8 @@ async function assertEstimateCurrentConfiguration(
         "This Main Line has no current Configuration. Correct it before submitting the estimate.");
     }
     const fields = currentConfiguredFields(source);
-    if (Object.entries(fields).some(([field, value]) => line[field] !== value)) {
+    if (Object.entries(fields).some(([field, value]) => line[field] !== value) ||
+      !estimateConfigurationRateMatches(line, source.line.modeBaseRatesPaise)) {
       throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
         "Configuration changed. Save the estimate with its current Main Line values before continuing.");
     }
@@ -771,7 +810,7 @@ async function fenceEstimateConfigurationDependencies(lines: unknown, session: m
 }
 
 function savedConfiguredSnapshot(prior: Record<string, unknown>): {
-  line: Omit<EstimatorCatalogueLine, "itemStatus" | "revisionStatus" | "itemVersion" | "revisionVersion" | "inHouseBaseRatePaise">;
+  line: Omit<EstimatorCatalogueLine, "itemStatus" | "revisionStatus" | "itemVersion" | "revisionVersion" | "inHouseBaseRatePaise" | "modeBaseRatesPaise">;
   mainBasketName: string; subBasketName: string | null;
 } {
   const strings = ["mainBasketId", "mainLineId", "revisionId", "uomId",

@@ -34,11 +34,15 @@ export interface LegacyEstimateLineInput {
 }
 
 export type EstimateClassification = "standard" | "special";
+export type EstimatePricingMode = "pmc" | "sub_vendor" | "in_house";
+export type EstimateRateSource = "configuration" | "manual";
 
 export interface ConfiguredEstimateLineInput {
   source: "configuration";
   itemType?: "main_line" | "temporary";
   classification?: EstimateClassification;
+  pricingMode?: EstimatePricingMode;
+  rateSource?: EstimateRateSource;
   id?: string;
   catalogueId: string;
   roomId: string;

@@ -35,6 +35,9 @@ describe("Lead follow-ups", () => {
     });
     renderApp(["/estimator-sales/leads/lead-b"]);
     const note = await screen.findByRole("textbox", { name: "Follow-up note" });
+    expect(screen.queryByText(/Budget:/)).not.toBeInTheDocument();
+    expect(screen.getByText("Next action: Schedule review")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Start estimate" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Add follow-up" })).toBeDisabled();
     await user.selectOptions(screen.getByRole("combobox", { name: "Activity type" }), "call");
     await user.type(note, "Confirm the site visit on Friday.");

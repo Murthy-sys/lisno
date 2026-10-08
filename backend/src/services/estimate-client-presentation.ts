@@ -1,3 +1,4 @@
+import { ESTIMATE_PRICING_MODES, ESTIMATE_RATE_SOURCES, estimatePricingMetadataIsValid } from "../domain/estimate-mode-pricing.js";
 import { z } from "zod";
 
 import { configuredEstimateParentIsValid, type ClientPublishedEstimateReview } from "../domain/estimate-client-review.js";
@@ -18,6 +19,8 @@ const configuredLine = z.object({
   source: z.literal("configuration"), specification: z.null(),
   itemType: z.enum(["main_line", "temporary"]).optional(),
   classification: z.enum(["standard", "special"]).optional(),
+  pricingMode: z.enum(ESTIMATE_PRICING_MODES).optional(),
+  rateSource: z.enum(ESTIMATE_RATE_SOURCES).optional(),
   roomId: z.string().min(1), mainBasketId: z.string().min(1),
   subBasketId: z.string().min(1).nullable(), mainLineId: z.string().min(1),
   revisionId: z.string().min(1), uomId: z.string().min(1),
@@ -25,7 +28,7 @@ const configuredLine = z.object({
   mainBasketName: z.string().min(1), subBasketName: z.string().min(1).nullable(),
   mainLineName: z.string().min(1), uomName: z.string().min(1),
   ratePaise: paise.nullable(), amountPaise: paise.nullable()
-}).refine((line) => configuredEstimateParentIsValid(line) && line.catalogueId === line.mainLineId &&
+}).refine((line) => configuredEstimateParentIsValid(line) && estimatePricingMetadataIsValid(line) && line.catalogueId === line.mainLineId &&
   (!line.included || line.ratePaise !== null && line.amountPaise !== null));
 const snapshotSchema = z.object({
   clientName: z.string().min(1), projectName: z.string().min(1),

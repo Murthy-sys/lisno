@@ -41,12 +41,12 @@ beforeEach(async () => {
 });
 afterAll(async () => { await replica?.stop(); });
 
-function app() {
+function app(leadProjectIds: Record<string, string> = {}) {
   const auth = {
     authenticate: async (token: string) => actors[token as ActorKey] ?? (() => { throw new Error("Unknown test actor"); })()
   } as unknown as Parameters<typeof createEstimatorCatalogueRouter>[0];
   const leads = { get: async (actor: PublicUser, leadId: string) => ({
-    id: leadId, ownerId: actor.id, projectId: null
+    id: leadId, ownerId: actor.id, projectId: leadProjectIds[leadId] ?? null
   }) } as unknown as Parameters<typeof createEstimatesRouter>[1];
   const reviews = {
     currentSummaryForEstimate: async () => null,
@@ -129,16 +129,37 @@ async function seedFixtureItem(input: FixtureItem) {
 }
 
 describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () => {
+  it("projects current saved basket descriptions and null for empty or legacy descriptions", async () => {
+    const description = "Electrical wiring, switches, and related installation works.";
+    await AiEstimatorKnowledgeBasketModel.collection.updateOne({ _id: "basket-a" }, { $set: { description } });
+    await AiEstimatorKnowledgeBasketModel.collection.updateOne({ _id: "basket-b" }, { $set: { description: null } });
+    const { server } = app();
+    const response = await request(server).get("/api/v1/estimation/catalogue")
+      .set(bearer("estimator")).expect(200);
+    expect(response.body.data.items).toMatchObject([
+      { id: "basket-a", description },
+      { id: "basket-b", description: null },
+      { id: "basket-c", description: null }
+    ]);
+
+    const updatedDescription = "Updated electrical scope from Configuration.";
+    await AiEstimatorKnowledgeBasketModel.collection.updateOne({ _id: "basket-a" },
+      { $set: { description: updatedDescription } });
+    const refreshed = await request(server).get("/api/v1/estimation/catalogue")
+      .set(bearer("estimator")).expect(200);
+    expect(refreshed.body.data.items[0]).toMatchObject({ id: "basket-a", description: updatedDescription });
+  });
+
   it("projects the selected revision's combined In-house base rate without inventing missing prices", async () => {
     const overflowRevision = await seedFixtureItem({ id: "line-overflow", status: "active",
       itemType: "temporary", subBasketId: "sub-a" });
     await AiEstimatorKnowledgeSectionModel.collection.insertMany([
       { _id: "advanced-a", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced", applicability: "configured",
-        payload: { modeCalculations: { in_house_labor: { baseRatePaise: 42_000 }, in_house_material: { baseRatePaise: 63_000 } } } },
+        payload: { modeCalculations: { pmc: { baseRatePaise: 11_111 }, sub_vendor: { baseRatePaise: 22_222 }, in_house_labor: { baseRatePaise: 42_000 }, in_house_material: { baseRatePaise: 63_000 } } } },
       { _id: "advanced-b", mainLineId: "line-b", revisionId: "revision-b", sectionKey: "advanced", applicability: "configured",
         payload: { modeCalculations: { in_house: { baseRatePaise: 12_500 } } } },
       { _id: "advanced-temp", mainLineId: "line-temp", revisionId: "revision-temp", sectionKey: "advanced", applicability: "configured",
-        payload: { modeCalculations: { in_house_labor: { baseRatePaise: 10_000 }, in_house_material: null } } },
+        payload: { modeCalculations: { in_house: { baseRatePaise: 99_999 }, in_house_labor: { baseRatePaise: 10_000 }, in_house_material: null } } },
       { _id: "advanced-temp-direct", mainLineId: "line-temp-direct", revisionId: "revision-temp-direct", sectionKey: "advanced", applicability: "configured",
         payload: { modeCalculations: { in_house_labor: { baseRatePaise: 0 }, in_house_material: { baseRatePaise: 0 } } } },
       { _id: "advanced-overflow", mainLineId: "line-overflow", revisionId: overflowRevision, sectionKey: "advanced", applicability: "configured",
@@ -154,7 +175,7 @@ describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () 
     } as never);
     await AiEstimatorKnowledgeSectionModel.collection.insertOne({
       _id: "advanced-a-pending", mainLineId: "line-a", revisionId: "revision-a-pending", sectionKey: "advanced", applicability: "configured",
-      payload: { modeCalculations: { in_house_labor: { baseRatePaise: 90_000 }, in_house_material: { baseRatePaise: 90_000 } } }
+      payload: { modeCalculations: { pmc: { baseRatePaise: 33_333 }, sub_vendor: { baseRatePaise: 44_444 }, in_house_labor: { baseRatePaise: 90_000 }, in_house_material: { baseRatePaise: 90_000 } } }
     } as never);
     await AiEstimatorKnowledgeSectionModel.collection.insertOne({
       _id: "overview-a-pending", mainLineId: "line-a", revisionId: "revision-a-pending", sectionKey: "overview",
@@ -166,15 +187,16 @@ describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () 
       .set(bearer("estimator")).expect(200);
     const [electrical, joinery] = response.body.data.items;
     expect(electrical.subBaskets[0].mainLines[0]).toMatchObject({
-      id: "line-a", revisionId: "revision-a-pending", revisionStatus: "draft", inHouseBaseRatePaise: 180_000
+      id: "line-a", revisionId: "revision-a-pending", revisionStatus: "draft", inHouseBaseRatePaise: 180_000,
+      modeBaseRatesPaise: { pmc: 33_333, sub_vendor: 44_444, in_house: 180_000 }
     });
     expect(electrical.subBaskets[0].temporaryItems.find((line: { id: string }) => line.id === "line-temp")).toMatchObject({
-      id: "line-temp", inHouseBaseRatePaise: null
+      id: "line-temp", inHouseBaseRatePaise: null, modeBaseRatesPaise: { pmc: null, sub_vendor: null, in_house: null }
     });
     expect(electrical.subBaskets[0].temporaryItems.find((line: { id: string }) => line.id === "line-overflow"))
       .toMatchObject({ inHouseBaseRatePaise: null });
     expect(electrical.directTemporaryItems[0]).toMatchObject({
-      id: "line-temp-direct", inHouseBaseRatePaise: 0
+      id: "line-temp-direct", inHouseBaseRatePaise: 0, modeBaseRatesPaise: { pmc: null, sub_vendor: null, in_house: 0 }
     });
     expect(joinery.subBaskets[0].mainLines[0]).toMatchObject({
       id: "line-b", inHouseBaseRatePaise: 12_500
@@ -185,11 +207,174 @@ describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () 
     const disabled = await request(server).get("/api/v1/estimation/catalogue?limit=100&includeReadyNonActive=true")
       .set(bearer("estimator")).expect(200);
     expect(disabled.body.data.items[0].subBaskets[0].mainLines[0]).toMatchObject({
-      id: "line-a", inHouseBaseRatePaise: null
+      id: "line-a", inHouseBaseRatePaise: null, modeBaseRatesPaise: { pmc: null, sub_vendor: null, in_house: null }
     });
     expect(disabled.body.data.items[1].subBaskets[0].mainLines[0]).toMatchObject({
       id: "line-b", inHouseBaseRatePaise: 12_500
     });
+  });
+
+  it("saves independent mode choices across rooms and unequal estimates and preserves older callers", async () => {
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({
+      _id: "mode-a", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced", applicability: "configured",
+      payload: { modeCalculations: { pmc: { baseRatePaise: 1001 }, sub_vendor: { baseRatePaise: 2303 },
+        in_house_labor: { baseRatePaise: 700 }, in_house_material: { baseRatePaise: 1107 } } }
+    } as never);
+    const { server } = app({ "lead-modes": "project-mode-a", "lead-other-modes": "project-mode-b" });
+    const path = "/api/v1/leads/lead-modes/estimate";
+    const rooms = [{ id: "room-one", label: "Living room" }, { id: "room-two", label: "Bedroom" }];
+    const firstLine = configuredLine({ classification: "special", pricingMode: "pmc", rateSource: "configuration",
+      itemVersion: 1, revisionVersion: 1, ratePaise: 1001, quantity: 1.25 });
+    const secondLine = configuredLine({ roomId: "room-two", roomName: "Bedroom", classification: "standard",
+      pricingMode: "sub_vendor", rateSource: "configuration", itemVersion: 1, revisionVersion: 1, ratePaise: 2303, quantity: 2 });
+    const input = { ...estimateInput([firstLine, secondLine]), rooms };
+    const saved = await request(server).put(path).set(bearer("estimator")).send(input).expect(200);
+    expect(saved.body.data).toMatchObject({ projectId: "project-mode-a", subtotalPaise: 5857, gstPaise: 1054, totalPaise: 6911,
+      lineItems: [{ pricingMode: "pmc", rateSource: "configuration", amountPaise: 1251 },
+        { pricingMode: "sub_vendor", rateSource: "configuration", amountPaise: 4606 }] });
+    expect((await AiEstimatorKnowledgeMainLineModel.findById("line-a").lean())?.dependencyEpoch).toBe(1);
+    const inHouse = configuredLine({ classification: "special", pricingMode: "in_house", rateSource: "configuration",
+      itemVersion: 1, revisionVersion: 1, ratePaise: 1807, quantity: 3 });
+    const other = await request(server).put("/api/v1/leads/lead-other-modes/estimate").set(bearer("otherEstimator"))
+      .send(estimateInput([inHouse])).expect(200);
+    expect(other.body.data).toMatchObject({ projectId: "project-mode-b", subtotalPaise: 5421, gstPaise: 976, totalPaise: 6397,
+      lineItems: [{ pricingMode: "in_house", rateSource: "configuration" }] });
+    const reload = await request(server).get(path).set(bearer("estimator")).expect(200);
+    expect(reload.body.data.lineItems).toMatchObject(saved.body.data.lineItems);
+    expect((await request(server).get(path).set(bearer("otherEstimator")).expect(200)).body.data).toBeNull();
+    const oldLines = [firstLine, secondLine].map(({ pricingMode: _mode, rateSource: _origin, itemVersion: _item, revisionVersion: _revision, ...line }) => line);
+    const oldSave = await request(server).put(path).set(bearer("estimator"))
+      .send({ ...input, lineItems: oldLines, expectedVersion: saved.body.data.version }).expect(200);
+    expect(oldSave.body.data.lineItems).toMatchObject([{ pricingMode: "pmc", rateSource: "configuration" },
+      { pricingMode: "sub_vendor", rateSource: "configuration" }]);
+    expect((await AiEstimatorKnowledgeMainLineModel.findById("line-a").lean())?.dependencyEpoch).toBe(3);
+    const edited = await request(server).put(path).set(bearer("estimator"))
+      .send({ ...input, lineItems: [{ ...oldLines[0], ratePaise: 1999 }, oldLines[1]], expectedVersion: oldSave.body.data.version }).expect(200);
+    expect(edited.body.data.lineItems).toMatchObject([{ pricingMode: "pmc", rateSource: "manual", ratePaise: 1999 },
+      { pricingMode: "sub_vendor", rateSource: "configuration", ratePaise: 2303 }]);
+    const unchangedOther = await request(server).get("/api/v1/leads/lead-other-modes/estimate").set(bearer("otherEstimator")).expect(200);
+    expect(unchangedOther.body.data.totalPaise).toBe(6397);
+  });
+
+  it.each([false, true])("serializes mode-derived saves with Configuration writes, older caller: %s", async (olderCaller) => {
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({
+      _id: "mode-a", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced", applicability: "configured",
+      payload: { modeCalculations: { sub_vendor: { baseRatePaise: 2001 } } }
+    } as never);
+    const { server } = app();
+    const path = "/api/v1/leads/lead-mode-race/estimate";
+    const line = configuredLine({ pricingMode: "sub_vendor", rateSource: "configuration",
+      itemVersion: 1, revisionVersion: 1, ratePaise: 2001 });
+    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput([line])).expect(200);
+    const { pricingMode: _mode, rateSource: _origin, itemVersion: _item, revisionVersion: _revision, ...historicalPayload } = line;
+    const session = await AiEstimatorKnowledgeMainLineModel.db.startSession();
+    let fenceReached = false;
+    const originalFence = AiEstimatorKnowledgeMainLineModel.findOneAndUpdate.bind(AiEstimatorKnowledgeMainLineModel);
+    const fence = vi.spyOn(AiEstimatorKnowledgeMainLineModel, "findOneAndUpdate")
+      .mockImplementation((...args) => {
+        fenceReached = true;
+        return originalFence(...args);
+      });
+    try {
+      session.startTransaction();
+      await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: "line-a" }, { $inc: { version: 1 } }, { session });
+      await AiEstimatorKnowledgeRevisionModel.updateOne({ _id: "revision-a" }, { $inc: { version: 1 } }, { session });
+      await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "mode-a" },
+        { $set: { "payload.modeCalculations.sub_vendor.baseRatePaise": 4001 } }, { session });
+      let settled = false;
+      const saving = request(server).put(path).set(bearer("estimator"))
+        .send(estimateInput([olderCaller ? historicalPayload : line], ["basket-a"], saved.body.data.version))
+        .then((response) => { settled = true; return response; });
+      await expect.poll(() => fenceReached, { timeout: 5000 }).toBe(true);
+      expect(settled).toBe(false);
+      await session.commitTransaction();
+      const raced = await saving;
+      expect(raced.status).toBe(409);
+      expect(raced.body.error.code).toBe("ESTIMATE_CONFIGURATION_CHANGED");
+      expect(await EstimateModel.findOne({ leadId: "lead-mode-race" }).lean()).toMatchObject({
+        version: saved.body.data.version, lineItems: [{ ratePaise: 2001, rateSource: "configuration", sourceItemVersion: 1 }] });
+    } finally {
+      fence.mockRestore();
+      if (session.inTransaction()) await session.abortTransaction();
+      await session.endSession();
+    }
+  });
+
+  it("saves pricing metadata for direct and grouped temporary rows and detects source changes before submission", async () => {
+    await AiEstimatorKnowledgeSectionModel.collection.insertMany([
+      { _id: "mode-direct", mainLineId: "line-temp-direct", revisionId: "revision-temp-direct", sectionKey: "advanced", applicability: "configured",
+        payload: { modeCalculations: { sub_vendor: { baseRatePaise: 307 } } } },
+      { _id: "mode-grouped", mainLineId: "line-temp", revisionId: "revision-temp", sectionKey: "advanced", applicability: "configured",
+        payload: { modeCalculations: { pmc: { baseRatePaise: 109 } } } }
+    ] as never[]);
+    const { server, publication } = app();
+    const path = "/api/v1/leads/lead-temporary-modes/estimate";
+    const lines = [directTemporaryLine({ pricingMode: "sub_vendor", rateSource: "configuration",
+      itemVersion: 1, revisionVersion: 1, ratePaise: 307 }),
+    groupedTemporaryLine({ classification: "special", pricingMode: "pmc", rateSource: "configuration",
+      itemVersion: 1, revisionVersion: 1, ratePaise: 109 })];
+    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput(lines)).expect(200);
+    expect(saved.body.data).toMatchObject({ subtotalPaise: 941, gstPaise: 169, totalPaise: 1110,
+      lineItems: [{ itemType: "temporary", pricingMode: "sub_vendor", amountPaise: 614 },
+        { itemType: "temporary", pricingMode: "pmc", amountPaise: 327 }] });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "mode-direct" },
+      { $set: { "payload.modeCalculations.sub_vendor.baseRatePaise": 401 } });
+    const stale = await request(server).post(`${path}/submit`).set(bearer("estimator")).expect(409);
+    expect(stale.body.error.code).toBe("ESTIMATE_CONFIGURATION_CHANGED");
+    expect(publication.publishEstimateToClient).not.toHaveBeenCalled();
+    const corrected = await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([{ ...lines[0], ratePaise: 401 }, lines[1]], ["basket-a"], saved.body.data.version)).expect(200);
+    expect(corrected.body.data.subtotalPaise).toBe(1129);
+    await request(server).post(`${path}/submit`).set(bearer("estimator")).expect(200);
+    expect(publication.publishEstimateToClient).toHaveBeenCalledOnce();
+  });
+
+  it("rejects stale configured prices and versions while allowing missing, zero and explicit manual rates", async () => {
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({
+      _id: "mode-a", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced", applicability: "configured",
+      payload: { modeCalculations: { pmc: { baseRatePaise: 0 }, sub_vendor: { baseRatePaise: 2001 } } }
+    } as never);
+    const { server } = app();
+    const path = "/api/v1/leads/lead-mode-validation/estimate";
+    const line = configuredLine({ classification: "special", pricingMode: "pmc", rateSource: "configuration",
+      itemVersion: 1, revisionVersion: 1, ratePaise: 0 });
+    for (const invalid of [{ pricingMode: "other" }, { rateSource: "other" }, { pricingMode: undefined },
+      { classification: "standard" }]) {
+      await request(server).put(path).set(bearer("estimator")).send(estimateInput([{ ...line, ...invalid }])).expect(400);
+    }
+    for (const stale of [{ ratePaise: 1 }, { ratePaise: null }, { itemVersion: undefined }, { revisionVersion: undefined }]) {
+      const response = await request(server).put(path).set(bearer("estimator")).send(estimateInput([{ ...line, ...stale }])).expect(409);
+      expect(response.body.error.code).toBe("ESTIMATE_CONFIGURATION_CHANGED");
+    }
+    expect(await EstimateModel.countDocuments({ leadId: "lead-mode-validation" })).toBe(0);
+    const zero = await request(server).put(path).set(bearer("estimator")).send(estimateInput([line])).expect(200);
+    expect(zero.body.data).toMatchObject({ totalPaise: 0, isIncomplete: false });
+    const missingLine = { ...line, pricingMode: "in_house", ratePaise: null };
+    const missing = await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([missingLine], ["basket-a"], zero.body.data.version)).expect(200);
+    expect(missing.body.data).toMatchObject({ isIncomplete: true, lineItems: [{ pricingMode: "in_house", rateSource: "configuration", ratePaise: null }] });
+    expect((await request(server).post(`${path}/submit`).set(bearer("estimator")).expect(409)).body.error.code).toBe("ESTIMATE_INCOMPLETE");
+    const manual = await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([{ ...missingLine, ratePaise: 7654, rateSource: "manual" }], ["basket-a"], missing.body.data.version)).expect(200);
+    expect(manual.body.data).toMatchObject({ isIncomplete: false, lineItems: [{ rateSource: "manual", ratePaise: 7654 }] });
+    const configured = await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([line], ["basket-a"], manual.body.data.version)).expect(200);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "mode-a" }, { $set: { "payload.modeCalculations.pmc.baseRatePaise": 100 } });
+    expect((await request(server).post(`${path}/submit`).set(bearer("estimator")).expect(409)).body.error.code).toBe("ESTIMATE_CONFIGURATION_CHANGED");
+    await AiEstimatorKnowledgeRevisionModel.collection.updateOne({ _id: "revision-a" }, { $inc: { version: 1 } });
+    const stale = await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([line], ["basket-a"], configured.body.data.version)).expect(409);
+    expect(stale.body.error.code).toBe("ESTIMATE_CONFIGURATION_CHANGED");
+    const { pricingMode: _mode, rateSource: _source, itemVersion: _item, revisionVersion: _revision, ...oldLine } = line;
+    await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([oldLine], ["basket-a"], configured.body.data.version)).expect(409);
+    const corrected = await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([{ ...line, revisionVersion: 2, ratePaise: 100 }], ["basket-a"], configured.body.data.version)).expect(200);
+    expect(corrected.body.data).toMatchObject({ subtotalPaise: 125, lineItems: [{ ratePaise: 100, sourceRevisionVersion: 2 }] });
+    const historical = await request(server).put("/api/v1/leads/lead-historical-mode/estimate").set(bearer("estimator"))
+      .send(estimateInput([configuredLine({ ratePaise: 2001 })])).expect(200);
+    expect(historical.body.data.lineItems[0]).not.toHaveProperty("pricingMode");
+    expect(historical.body.data.lineItems[0]).not.toHaveProperty("rateSource");
   });
 
   it("opts into ready Draft and Inactive items without changing the default Active-only catalogue", async () => {
@@ -311,7 +496,7 @@ describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () 
       revisionId: "revision-temp-direct", uom: { id: "uom-ea" }
     }] });
     expect(first.body.data.ineligibleLineCount).toBe(2);
-    expect(JSON.stringify(first.body.data)).not.toMatch(/vendor|cost|margin|pricePaise/iu);
+    expect(JSON.stringify(first.body.data)).not.toMatch(/vendorId|vendorName|vendorRates|cost|margin|pricePaise/iu);
     await AiEstimatorKnowledgeMainLineModel.collection.updateOne({ _id: "line-b" }, { $unset: { itemType: "" } });
     const second = await request(server).get("/api/v1/estimation/catalogue?limit=1&offset=1")
       .set(bearer("estimator")).expect(200);

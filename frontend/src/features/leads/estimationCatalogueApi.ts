@@ -1,4 +1,7 @@
 import { ApiError, apiClient, type Pagination } from "../../api/client";
+import type { EstimatePricingMode } from "./leadsApi";
+
+export type EstimationModeBaseRatesPaise = Record<EstimatePricingMode, number | null>;
 
 export interface EstimationCatalogueUom {
   id: string;
@@ -21,6 +24,7 @@ export interface EstimationCatalogueMainLine {
   itemVersion?: number;
   revisionVersion?: number;
   inHouseBaseRatePaise?: number | null;
+  modeBaseRatesPaise?: EstimationModeBaseRatesPaise;
   uom: EstimationCatalogueUom;
 }
 
@@ -41,6 +45,7 @@ export interface EstimationCatalogueSubBasket {
 export interface EstimationCatalogueBasket {
   id: string;
   name: string;
+  description?: string | null;
   displayOrder: number;
   subBaskets: EstimationCatalogueSubBasket[];
   directTemporaryItems?: EstimationCatalogueTemporaryItem[];

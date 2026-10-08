@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { buildConfiguredLines } from "./configuredEstimate";
 import type { EstimationCatalogue, EstimationCatalogueRecommendations, EstimationRecommendationRule } from "./estimationCatalogueApi";
-import { buildRoomRecommendations, partitionRoomRecommendationSources, recommendationSourceIdentity } from "./roomRecommendations";
+import { buildRoomRecommendations, partitionRoomRecommendationSources, recommendationLines,
+  recommendationSourceIdentity, recommendationTargetIdentity, type RecommendationDecision } from "./roomRecommendations";
 
 const uom = { id: "uom-sqft", code: "SQFT", name: "sq ft", decimalScale: 2 };
 const catalogue: EstimationCatalogue = { ineligibleLineCount: 0, items: [
@@ -39,6 +40,46 @@ const recommendations: EstimationCatalogueRecommendations = { sources: [
 ] };
 
 describe("room recommendations", () => {
+  it("flattens direct and group targets once with stable location identity and required precedence", () => {
+    const direct = buildRoomRecommendations({ catalogue, lines: sourceLines, roomId: "room-one", recommendations }).decisions[0]!;
+    const optional: RecommendationDecision = { ...direct, requirement: "can", reasons: [direct.reasons[0]!] };
+    const group: RecommendationDecision = {
+      ...direct, key: "sub-basket:basket-paint:sub-paint", kind: "sub_basket", target: null,
+      reasons: [direct.reasons[1]!], children: [
+        { target: direct.target!, name: direct.name, selected: false, completionRequired: false },
+        { target: { mainLineId: "line-accent", basketId: "basket-paint", subBasketId: "sub-paint" },
+          name: "Accent finish", selected: true, completionRequired: true }
+      ]
+    };
+    const before = structuredClone([optional, group]);
+    for (const decisions of [[optional, group, optional], [group, optional]]) {
+      const lines = recommendationLines(decisions);
+      expect(lines).toHaveLength(2);
+      const shared = lines.find((line) => line.target.mainLineId === "line-paint")!;
+      expect(shared).toMatchObject({ key: recommendationTargetIdentity(direct.target!), requirement: "must", selected: false });
+      expect(shared.reasons).toHaveLength(2);
+      expect(new Set(shared.reasons.map((reason) => reason.sourceId))).toEqual(new Set(["line-pop", "line-functional"]));
+      expect(lines.find((line) => line.target.mainLineId === "line-accent")).toMatchObject({ selected: true, requirement: "must" });
+    }
+    expect([optional, group]).toEqual(before);
+  });
+
+  it("keeps equal names at different stable targets separate and excludes unavailable targets", () => {
+    const direct = buildRoomRecommendations({ catalogue, lines: sourceLines, roomId: "room-one", recommendations }).decisions[0]!;
+    const sameName: RecommendationDecision = { ...direct, key: "line:line-same-name", requirement: "can",
+      target: { mainLineId: "line-same-name", basketId: "basket-duplicate", subBasketId: "sub-other" } };
+    const otherLocation: RecommendationDecision = { ...sameName, key: "line:other-location",
+      target: { ...sameName.target!, subBasketId: null } };
+    const unavailable: RecommendationDecision = { ...direct, key: "unavailable", available: false,
+      target: { ...direct.target!, mainLineId: "line-unavailable" } };
+    const lines = recommendationLines([sameName, unavailable, otherLocation, direct]);
+    expect(lines.map((line) => line.name)).toEqual([direct.name, direct.name, direct.name]);
+    expect(lines[0]?.requirement).toBe("must");
+    expect(new Set(lines.map((line) => line.key)).size).toBe(3);
+    expect(lines.some((line) => line.target.mainLineId === "line-unavailable")).toBe(false);
+    expect(recommendationTargetIdentity(sameName.target!)).not.toBe(recommendationTargetIdentity(otherLocation.target!));
+  });
+
   it("joins exact IDs, combines source reasons, and checks selection only in the active room", () => {
     const result = buildRoomRecommendations({ catalogue, lines: sourceLines, roomId: "room-one", recommendations });
     expect(result.stale).toBe(false);

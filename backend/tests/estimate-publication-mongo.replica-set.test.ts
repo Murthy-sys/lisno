@@ -410,6 +410,57 @@ async function selectedRound(roundId: string) {
 }
 
 describe("Estimate publication and delivery on a Mongo replica set", () => {
+  it.each(["pmc", "sub_vendor", "in_house"] as const)("freezes %s mode pricing and excludes recommendation origins", async (pricingMode) => {
+    const fixture = await seedConfiguredPublication();
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({
+      _id: "publication-advanced", mainLineId: "publication-main-line", revisionId: "publication-revision",
+      sectionKey: "advanced", applicability: "configured", payload: { modeCalculations: {
+        pmc: { baseRatePaise: 10_000 }, sub_vendor: { baseRatePaise: 10_000 },
+        in_house_labor: { baseRatePaise: 3001 }, in_house_material: { baseRatePaise: 6999 }
+      } }
+    } as never);
+    await EstimateModel.updateOne({ _id: fixture.estimateId }, { $set: {
+      "lineItems.0.classification": "special", "lineItems.0.pricingMode": pricingMode,
+      "lineItems.0.rateSource": "configuration", "lineItems.0.recommendationSourceMainLineIds": ["source-line"]
+    } });
+    const storage = createReviewStorage();
+    const mail = createSequencedMailer();
+    const harness = createHarness({ storage: storage.storage, mailer: mail.mailer, now: () => new Date(BASE_TIME) });
+    const published = await harness.publication.publishEstimateToClient(publicationInput(fixture));
+    const frozen = await selectedRound(published.clientReview.id);
+    expect(frozen!.estimateSnapshot.lineItems[0]).toMatchObject({ pricingMode, rateSource: "configuration", ratePaise: 10_000 });
+    expect(frozen!.estimateSnapshot.lineItems[0]).not.toHaveProperty("recommendationSourceMainLineIds");
+    const detail = await harness.reviews.detail(ADMIN, published.clientReview.id);
+    expect(detail.estimateSnapshot.lineItems[0]).toMatchObject({ pricingMode, rateSource: "configuration" });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "publication-advanced" },
+      { $set: { "payload.modeCalculations.pmc.baseRatePaise": 999_999 } });
+    expect((await selectedRound(published.clientReview.id))!.estimateSnapshot.lineItems[0])
+      .toMatchObject({ pricingMode, rateSource: "configuration", ratePaise: 10_000 });
+  });
+
+  it("rejects stale configuration-derived publication prices without replacing customer totals", async () => {
+    const fixture = await seedConfiguredPublication();
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({
+      _id: "publication-advanced", mainLineId: "publication-main-line", revisionId: "publication-revision",
+      sectionKey: "advanced", applicability: "configured", payload: { modeCalculations: { sub_vendor: { baseRatePaise: 20_001 } } }
+    } as never);
+    await EstimateModel.updateOne({ _id: fixture.estimateId }, { $set: {
+      "lineItems.0.pricingMode": "sub_vendor", "lineItems.0.rateSource": "configuration"
+    } });
+    const storage = createReviewStorage();
+    const mail = createSequencedMailer();
+    const harness = createHarness({ storage: storage.storage, mailer: mail.mailer, now: () => new Date(BASE_TIME) });
+    await expect(harness.publication.publishEstimateToClient(publicationInput(fixture)))
+      .rejects.toMatchObject({ status: 409, code: "ESTIMATE_CONFIGURATION_CHANGED" });
+    expect(await EstimateClientReviewRoundModel.countDocuments({ estimateId: fixture.estimateId })).toBe(0);
+    expect(await EstimateModel.findById(fixture.estimateId).lean()).toMatchObject({ status: "draft", totalPaise: 11_800 });
+    expect(mail.calls).toHaveLength(0);
+    await EstimateModel.updateOne({ _id: fixture.estimateId }, { $set: { "lineItems.0.rateSource": "manual" } });
+    const published = await harness.publication.publishEstimateToClient(publicationInput(fixture));
+    expect((await selectedRound(published.clientReview.id))!.estimateSnapshot.lineItems[0])
+      .toMatchObject({ rateSource: "manual", ratePaise: 10_000 });
+  });
+
   it.each([
     ["draft", []],
     ["draft", ["source-false-ceiling"]],

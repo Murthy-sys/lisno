@@ -105,6 +105,46 @@ describe("Sales-initiated projects", () => {
       .set("Authorization", bearer()).send({ decision: "approve" }).expect(403);
   });
 
+  it.each(["  Instagram  ", "Existing customer", `  ${"a".repeat(200)}  `])(
+    "persists Sales project source %j and reads it back without changing the manager grant", async (source) => {
+      const { repository, app } = setup();
+      const response = await request(app).post("/api/v1/admin/projects")
+        .set("Authorization", bearer()).send({ ...input, source }).expect(201);
+      const { id: projectId, lead } = response.body.data;
+      await expect(repository.findLeadById(lead.id)).resolves.toMatchObject({
+        projectId, ownerId: "user-estimator-sales", source: source.trim()
+      });
+      const readback = await request(app).get(`/api/v1/leads/${lead.id}`)
+        .set("Authorization", bearer()).expect(200);
+      expect(readback.body.data.source).toBe(source.trim());
+      await expect(repository.listActiveProjectAccessGrants("selected-manager", "projects"))
+        .resolves.toEqual([expect.objectContaining({
+          projectId, source: "admin_initiator", grantedById: "user-estimator-sales"
+        })]);
+      const audits = await repository.pageAuditEvents({ entityId: lead.id }, { limit: 20, offset: 0 });
+      expect(audits.items).toHaveLength(1);
+      expect(audits.items[0]!.newValues).toEqual({
+        stage: "new_lead", projectId, ownerId: "user-estimator-sales"
+      });
+    }
+  );
+
+  it.each(["", " \t\n ", "a".repeat(201), null, 42, ["Instagram"], { channel: "Instagram" }])(
+    "rejects invalid Sales source %j before creating any records", async (source) => {
+      const { repository, app } = setup();
+      const response = await request(app).post("/api/v1/admin/projects")
+        .set("Authorization", bearer()).send({ ...input, source }).expect(400);
+      expect(response.body.error).toMatchObject({
+        code: "VALIDATION_ERROR", fields: { source: expect.any(String) }
+      });
+      await expect(repository.pageAdminProjects((await repository.findUserById("user-super-admin"))!, { limit: 20, offset: 0 }))
+        .resolves.toMatchObject({ total: 0 });
+      await expect(repository.pageAllLeads({}, { limit: 20, offset: 0 })).resolves.toMatchObject({ total: 0 });
+      await expect(repository.listActiveProjectAccessGrants("selected-manager", "projects")).resolves.toEqual([]);
+      await expect(repository.pageAuditEvents({}, { limit: 20, offset: 0 })).resolves.toMatchObject({ total: 0 });
+    }
+  );
+
   it.each([undefined, "missing-manager", "inactive-manager", "user-estimator-sales", "user-super-admin"])(
     "rejects missing, unavailable or wrong-role manager %s without writes", async (salesManagerId) => {
       const { repository, app } = setup();

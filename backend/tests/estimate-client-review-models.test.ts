@@ -140,6 +140,19 @@ describe("EstimateClientReviewRound persistence model", () => {
     const document = round({ estimateSnapshot: configured });
     await expect(document.validate()).resolves.toBeUndefined();
     expect(document.toObject().estimateSnapshot).toMatchObject(configured);
+    for (const pricingMode of ["pmc", "sub_vendor", "in_house"]) {
+      const modeDocument = round({ estimateSnapshot: { ...configured,
+        lineItems: [{ ...configured.lineItems[0], pricingMode, rateSource: "configuration" }] } });
+      await expect(modeDocument.validate()).resolves.toBeUndefined();
+      expect(modeDocument.toObject().estimateSnapshot.lineItems[0]).toMatchObject({ pricingMode, rateSource: "configuration" });
+    }
+    for (const metadata of [{ pricingMode: "unknown" }, { rateSource: "unknown" },
+      { rateSource: "configuration" }, { classification: "standard", pricingMode: "pmc" }]) {
+      await expect(round({ estimateSnapshot: { ...configured,
+        lineItems: [{ ...configured.lineItems[0], ...metadata }] } }).validate()).rejects.toThrow();
+    }
+    expect(EstimateClientReviewRoundModel.schema.path("estimateSnapshot.lineItems.pricingMode").options.immutable).toBe(true);
+    expect(EstimateClientReviewRoundModel.schema.path("estimateSnapshot.lineItems.rateSource").options.immutable).toBe(true);
     const historical = round({ estimateSnapshot: {
       ...configured, selectedMainBasketClassifications: undefined,
       lineItems: [{ ...configured.lineItems[0], classification: undefined }]

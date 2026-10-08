@@ -17,6 +17,7 @@ const initiationSchema = z.object({
   location: z.string().trim().min(1).optional(),
   cityName: cityNameSchema.nullable().optional(),
   propertyType: z.string().trim().min(1),
+  source: z.string().trim().min(1).max(200).optional(),
   budgetMin: z.number().nonnegative().optional(),
   budgetMax: z.number().nonnegative().optional(),
   nextAction: z.string().trim().min(1),

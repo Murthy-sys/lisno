@@ -13,6 +13,8 @@ const estimateLineSchema = new Schema({
   source: { type: String, enum: ["legacy", "configuration"] },
   itemType: { type: String, enum: ["main_line", "temporary"] },
   classification: { type: String, enum: ["standard", "special"], default: undefined },
+  pricingMode: { type: String, enum: ["pmc", "sub_vendor", "in_house"], default: undefined },
+  rateSource: { type: String, enum: ["configuration", "manual"], default: undefined },
   catalogueId: { type: String, required: true },
   roomId: { type: String, default: null }, roomName: { type: String, required: true },
   mainBasketId: { type: String, default: null }, subBasketId: { type: String, default: null },

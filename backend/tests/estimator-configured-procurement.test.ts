@@ -64,6 +64,20 @@ describe("configured Procurement approval lineage", () => {
     expect(second).toMatchObject({ sourceSectionIds: ["basket-lower-b"], approvedAmountPaise: 7_003 });
     expect(first.approvedAmountPaise + second.approvedAmountPaise).toBe(19_128);
   });
+  it("keeps approved mode-priced amounts after a draft selling rate or mode changes", () => {
+    const fixture = approvedProject({ projectId: "project-priced", estimateId: "estimate-priced", basketId: "basket-priced",
+      basketName: "Approved work", lineId: "line-priced", lineAmountPaise: 12_125 });
+    const published = { ...fixture.approvedRounds[0]!.estimateSnapshot.lineItems[0]!,
+      classification: "special", pricingMode: "pmc", rateSource: "configuration" };
+    const current = { ...published, pricingMode: "in_house", rateSource: "manual",
+      ratePaise: 99_999, amountPaise: 99_999, rate: 999.99, amount: 999.99 };
+    const projection = procurementDashboardProjection({ ...fixture,
+      estimate: { ...fixture.estimate, lineItems: [current] },
+      approvedRounds: [{ ...fixture.approvedRounds[0]!, estimateSnapshot: {
+        ...fixture.approvedRounds[0]!.estimateSnapshot, lineItems: [published] } }] });
+    expect(projection).toMatchObject({ approvedAmountPaise: 12_125, sourceLineItemKeys: ["estimate-priced-line"] });
+  });
+
   it("reconciles direct and grouped temporary approved lines across unequal projects without a synthetic child", () => {
     const first = procurementDashboardProjection(approvedProject({
       projectId: "project-direct", estimateId: "estimate-direct", basketId: "painting",

@@ -1,5 +1,5 @@
-import type { EstimationCatalogue, EstimationCatalogueBasket, EstimationCatalogueMainLine, EstimationCatalogueSubBasket, EstimationCatalogueTemporaryItem } from "./estimationCatalogueApi";
-import type { ConfiguredEstimateLine, EstimateClassification } from "./leadsApi";
+import type { EstimationCatalogue, EstimationCatalogueBasket, EstimationCatalogueMainLine, EstimationCatalogueSubBasket, EstimationCatalogueTemporaryItem, EstimationModeBaseRatesPaise } from "./estimationCatalogueApi";
+import type { ConfiguredEstimateLine, EstimateClassification, EstimatePricingMode, EstimateRateSource } from "./leadsApi";
 
 export interface ConfiguredEstimateRoom {
   id: string;
@@ -16,6 +16,8 @@ export interface ConfiguredLineDraft {
   mainBasketName: string;
   itemType: "main_line" | "temporary";
   classification?: EstimateClassification;
+  pricingMode?: EstimatePricingMode;
+  rateSource?: EstimateRateSource;
   subBasketId: string | null;
   subBasketName: string | null;
   mainLineId: string;
@@ -34,6 +36,7 @@ export interface ConfiguredLineDraft {
   uomName: string;
   uomDecimalScale: number;
   inHouseBaseRatePaise?: number | null;
+  modeBaseRatesPaise?: EstimationModeBaseRatesPaise;
   quantity: number;
   rateInput: string;
   included: boolean;
@@ -44,6 +47,32 @@ export interface ConfiguredLineDraft {
 
 export function configuredLineKey(roomId: string, mainLineId: string): string {
   return JSON.stringify([roomId, mainLineId]);
+}
+
+export const estimatePricingModeLabels: Record<EstimatePricingMode, string> = {
+  pmc: "PMC", sub_vendor: "Sub-Vendor", in_house: "In-house"
+};
+
+export function configuredModeBaseRate(line: Pick<ConfiguredLineDraft, "modeBaseRatesPaise">, mode: EstimatePricingMode): number | null {
+  const rate = line.modeBaseRatesPaise?.[mode];
+  return typeof rate === "number" && Number.isSafeInteger(rate) && rate >= 0 ? rate : null;
+}
+
+/** Only deliberate mode/type changes adopt a configured rate. Historical prices stay manual. */
+export function updateConfiguredLinePricing(
+  line: ConfiguredLineDraft,
+  change: Partial<ConfiguredLineDraft>,
+  inheritedClassification: EstimateClassification = "standard"
+): ConfiguredLineDraft {
+  const classification = line.classification ?? inheritedClassification;
+  const explicitTypeOrMode = change.classification !== undefined || change.pricingMode !== undefined;
+  const next = { ...line, ...(explicitTypeOrMode ? { classification } : {}), ...change };
+  const mode = change.classification === "standard" && classification === "special"
+    ? "sub_vendor"
+    : change.pricingMode !== undefined && change.pricingMode !== line.pricingMode ? change.pricingMode : undefined;
+  if (mode) return { ...next, pricingMode: mode, rateSource: "configuration", rateInput: formatRateInput(configuredModeBaseRate(line, mode)) };
+  if (change.rateInput !== undefined) return { ...next, rateSource: "manual" };
+  return next;
 }
 
 export function deselectConfiguredRecommendationSources(
@@ -129,6 +158,8 @@ export function restoreConfiguredLine(line: ConfiguredEstimateLine): ConfiguredL
     mainBasketName: line.mainBasketName,
     itemType: line.itemType ?? "main_line",
     classification: line.classification ?? "standard",
+    pricingMode: line.pricingMode,
+    rateSource: line.rateSource ?? "manual",
     subBasketId: line.subBasketId,
     subBasketName: line.subBasketName,
     mainLineId: line.mainLineId,
@@ -181,8 +212,11 @@ function newLine(
     uomName: mainLine.uom.name,
     uomDecimalScale: mainLine.uom.decimalScale,
     inHouseBaseRatePaise,
+    modeBaseRatesPaise: mainLine.modeBaseRatesPaise,
+    pricingMode: "sub_vendor",
+    rateSource: "configuration",
     quantity: 1,
-    rateInput: formatRateInput(inHouseBaseRatePaise),
+    rateInput: formatRateInput(configuredModeBaseRate(mainLine, "sub_vendor")),
     included: false,
     sourceMissing: false
   };
@@ -209,17 +243,20 @@ export function buildConfiguredLines(
       if (!saved) return fresh;
       if (preservePersisted && saved.persistedId) return {
         ...saved,
+        modeBaseRatesPaise: fresh.modeBaseRatesPaise,
+        inHouseBaseRatePaise: fresh.inHouseBaseRatePaise,
         sourceMissing: saved.mainBasketId !== fresh.mainBasketId ||
           saved.subBasketId !== fresh.subBasketId || saved.itemType !== fresh.itemType
       };
       const uomChanged = saved.uomId !== fresh.uomId;
-      const previousBaseRateInput = formatRateInput(saved.inHouseBaseRatePaise ?? null);
-      const rateWasEdited = Boolean(saved.persistedId) || saved.rateInput !== previousBaseRateInput;
       return {
         ...fresh,
         persistedId: saved.persistedId,
         quantity: saved.quantity,
-        rateInput: rateWasEdited ? saved.rateInput : fresh.rateInput,
+        pricingMode: saved.pricingMode,
+        rateSource: saved.rateSource ?? "manual",
+        rateInput: saved.rateSource === "configuration" && saved.pricingMode
+          ? formatRateInput(configuredModeBaseRate(fresh, saved.pricingMode)) : saved.rateInput,
         included: saved.included,
         recommendationSourceMainLineIds: saved.recommendationSourceMainLineIds,
         classification: saved.classification,
@@ -236,8 +273,9 @@ export function buildConfiguredLines(
   const roomIds = new Set(rooms.map((room) => room.id));
   for (const line of previous) {
     if (!seen.has(line.key) && roomIds.has(line.roomId) && (line.persistedId || line.included ||
-      line.classification !== undefined || line.rateInput !== formatRateInput(line.inHouseBaseRatePaise ?? null) || line.quantity !== 1)) {
-      next.push({ ...line, sourceMissing: true });
+      line.classification !== undefined || line.rateSource === "manual" || line.quantity !== 1)) {
+      next.push({ ...line, sourceMissing: true, modeBaseRatesPaise: undefined,
+        rateInput: !preservePersisted && line.rateSource === "configuration" ? "" : line.rateInput });
     }
   }
   return next;

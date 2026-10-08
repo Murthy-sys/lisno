@@ -26,6 +26,31 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents the current nullable Main Basket description", () => {
+    const basket = componentSchemas().EstimatorCatalogueBasket!;
+    expect(basket.required).toContain("description");
+    expect(basket).toHaveProperty("properties.description", {
+      type: "string", nullable: true,
+      description: "Current saved Main Basket description; null when none is stored."
+    });
+  });
+
+  it("documents optional pricing metadata and nullable current mode base rates", () => {
+    const schemas = componentSchemas();
+    expect(schemas.EstimatorCatalogueLine!.required).toContain("modeBaseRatesPaise");
+    expect(schemas.EstimatorCatalogueLine).toHaveProperty("properties.modeBaseRatesPaise.required", ["pmc", "sub_vendor", "in_house"]);
+    for (const mode of ["pmc", "sub_vendor", "in_house"]) {
+      expect(schemas.EstimatorCatalogueLine).toHaveProperty(`properties.modeBaseRatesPaise.properties.${mode}`, {
+        type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true
+      });
+    }
+    expect(schemas.ConfiguredEstimateLineInput).toHaveProperty("properties.pricingMode.enum", ["pmc", "sub_vendor", "in_house"]);
+    expect(schemas.ConfiguredEstimateLineInput).toHaveProperty("properties.rateSource.enum", ["configuration", "manual"]);
+    expect(schemas.ConfiguredEstimateLineInput!.required).not.toContain("pricingMode");
+    expect(schemas.ConfiguredEstimateLineInput!.required).not.toContain("rateSource");
+    expect(schemas.ClientEstimateSnapshot).toHaveProperty("properties.lineItems.items.properties.pricingMode.enum", ["pmc", "sub_vendor", "in_house"]);
+    expect(schemas.ClientEstimateSnapshot).toHaveProperty("properties.lineItems.items.properties.rateSource.enum", ["configuration", "manual"]);
+  });
   it("documents the ready-item catalogue opt-in and mutable-source versions", () => {
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
     const catalogue = paths["/estimation/catalogue"]!.get!;
@@ -586,7 +611,9 @@ describe("OpenAPI and Swagger UI", () => {
     expect(initiation.required).not.toContain("location");
     expect(initiation.required).not.toContain("budgetMin");
     expect(initiation.required).not.toContain("budgetMax");
+    expect(initiation.required).not.toContain("source");
     expect(initiation.properties).toMatchObject({
+      source: { type: "string", minLength: 1, maxLength: 200 },
       location: { type: "string", minLength: 1 },
       budgetMin: { type: "number", minimum: 0 },
       budgetMax: { type: "number", minimum: 0 }

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { EstimatorRecommendations } from "./EstimatorRecommendations";
-import type { RoomRecommendationView } from "./roomRecommendations";
+import { recommendationTargetIdentity, type RoomRecommendationView } from "./roomRecommendations";
 
 const groupView: RoomRecommendationView = {
   stale: false,
@@ -67,7 +67,7 @@ describe("EstimatorRecommendations", () => {
     expect(panel.closest(".modal-layer")).toBeInTheDocument();
     expect(panel).not.toHaveClass("ui-drawer");
     expect(within(panel).getByRole("heading", { name: "Related item recommended" })).toBeVisible();
-    expect(within(panel).getByText("Configuration suggestion")).toBeVisible();
+    expect(within(panel).getByText("Non-Negotiable Addition")).toBeVisible();
     expect(within(panel).getByText("Selected item")).toBeVisible();
     expect(within(panel).getByText("Recommended addition")).toBeVisible();
     expect(within(panel).getByText("POP false ceiling", { exact: true })).toBeVisible();
@@ -75,6 +75,7 @@ describe("EstimatorRecommendations", () => {
     expect(within(panel).getByText("Finish the ceiling after gypsum work.")).toBeVisible();
     expect(within(panel).getByText("1 of 2 recommended items")).toBeVisible();
     expect(within(panel).getByRole("button", { name: "Not now" })).toBeVisible();
+    expect(within(panel).queryByRole("button", { name: /Not necessary/ })).not.toBeInTheDocument();
     expect(within(panel).getByRole("button", { name: "Add False ceiling painting for Living room" })).toBeVisible();
     expect(within(panel).getByRole("button", { name: "Close recommendations" })).toBeVisible();
     expect(within(panel).queryByText("Cove finish")).not.toBeInTheDocument();
@@ -118,6 +119,7 @@ describe("EstimatorRecommendations", () => {
     const panel = dialog();
     expect(screen.getByRole("region", { name: "Recommendations for this room" })).toHaveTextContent("Consider Accent finish for POP false ceiling.");
     expect(within(panel).getByText("Consider Accent finish for POP false ceiling.")).toBeVisible();
+    expect(within(panel).getByText("Probable Addition")).toBeVisible();
     const add = within(panel).getByRole("button", { name: "Add Accent finish for Living room" });
     await user.click(add);
     expect(onSelect).toHaveBeenCalledOnce();
@@ -129,6 +131,119 @@ describe("EstimatorRecommendations", () => {
     expect(within(panel).getByText("All related items selected.")).toBeVisible();
     expect(within(panel).getByText("Accent finish selected for Living room.", { exact: false })).toBeInTheDocument();
     await waitFor(() => expect(within(panel).getByRole("button", { name: "Done" })).toHaveFocus());
+  });
+
+  it("reviews probable children independently, announces a skip, and focuses the next action", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn(() => true);
+    const onClose = vi.fn();
+    const onSkip = vi.fn(() => true);
+    const probableGroup: RoomRecommendationView = { ...groupView, guidance: [], decisions: groupView.decisions.map((decision) => ({
+      ...decision, requirement: "can", unavailableChildCount: 0,
+      reasons: decision.reasons.map((reason) => ({ ...reason, requirement: "can" }))
+    })) };
+    function Review() {
+      const [skippedKeys, setSkippedKeys] = useState<ReadonlySet<string>>(new Set());
+      return <EstimatorRecommendations {...defaults} view={probableGroup} onSelect={onSelect} onClose={onClose}
+        skippedKeys={skippedKeys} onSkip={(target) => {
+          onSkip();
+          setSkippedKeys((current) => new Set(current).add(recommendationTargetIdentity(target)));
+          return true;
+        }} />;
+    }
+    render(<Review />);
+    const panel = dialog();
+    await waitFor(() => expect(within(panel).getByRole("region", { name: "Recommendation details" })).toHaveFocus());
+    const skip = within(panel).getByRole("button", { name: "Not necessary: False ceiling painting for Living room" });
+    skip.focus();
+    await user.keyboard("{Enter}");
+    expect(onSkip).toHaveBeenCalledOnce();
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(within(panel).getByText("False ceiling painting marked not necessary for Living room.")).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: /False ceiling painting for Living room/ })).not.toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Not necessary: Cove finish for Living room" })).toBeVisible();
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "Add Cove finish for Living room" })).toHaveFocus());
+    await user.click(within(panel).getByRole("button", { name: "Not necessary: Cove finish for Living room" }));
+    expect(onSkip).toHaveBeenCalledTimes(2);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(within(panel).getByText("All recommendations reviewed.")).toBeVisible();
+    expect(panel).not.toHaveTextContent("All related items selected.");
+    expect(screen.getByRole("region", { name: "Recommendations for this room" })).toHaveTextContent("All recommendations reviewed.");
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "Done" })).toHaveFocus());
+  });
+
+  it("requires an accepted skip and parent review state before showing completion", async () => {
+    const user = userEvent.setup();
+    const rejectedSkip = vi.fn(() => false);
+    const props = { ...defaults, view: directView, onSkip: rejectedSkip };
+    const { rerender } = render(<EstimatorRecommendations {...props} />);
+    const panel = dialog();
+    await user.click(within(panel).getByRole("button", { name: /Not necessary: Accent finish/ }));
+    expect(rejectedSkip).toHaveBeenCalledExactlyOnceWith(directView.decisions[0]!.target);
+    expect(panel).not.toHaveTextContent("marked not necessary");
+    expect(within(panel).getByRole("button", { name: "Add Accent finish for Living room" })).toBeVisible();
+
+    const acceptedSkip = vi.fn(() => true);
+    rerender(<EstimatorRecommendations {...props} onSkip={acceptedSkip} />);
+    await user.click(within(panel).getByRole("button", { name: /Not necessary: Accent finish/ }));
+    expect(acceptedSkip).toHaveBeenCalledOnce();
+    expect(within(panel).queryByRole("button", { name: "Done" })).not.toBeInTheDocument();
+    const skippedKeys = new Set([recommendationTargetIdentity(directView.decisions[0]!.target!)]);
+    rerender(<EstimatorRecommendations {...props} onSkip={acceptedSkip} skippedKeys={skippedKeys} />);
+    expect(within(panel).getByText("All recommendations reviewed.")).toBeVisible();
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "Done" })).toHaveFocus());
+
+    rerender(<EstimatorRecommendations {...props} onSkip={acceptedSkip} skippedKeys={new Set()} />);
+    expect(within(panel).getByRole("button", { name: "Add Accent finish for Living room" })).toBeVisible();
+    expect(within(panel).queryByRole("button", { name: "Done" })).not.toBeInTheDocument();
+  });
+
+  it("keeps required targets pending despite a matching skipped key and preserves mixed review completion", async () => {
+    const user = userEvent.setup();
+    const skippedKeys = new Set([recommendationTargetIdentity(directView.decisions[0]!.target!)]);
+    const requiredView: RoomRecommendationView = { ...directView, decisions: directView.decisions.map((decision) => ({
+      ...decision, requirement: "must", reasons: decision.reasons.map((reason) => ({ ...reason, requirement: "must" }))
+    })) };
+    const { rerender } = render(<EstimatorRecommendations {...defaults} view={requiredView} skippedKeys={skippedKeys} onSkip={vi.fn(() => true)} />);
+    const panel = dialog();
+    expect(within(panel).getByText("Non-Negotiable Addition")).toBeVisible();
+    expect(within(panel).getByRole("button", { name: "Add Accent finish for Living room" })).toBeVisible();
+    expect(within(panel).queryByRole("button", { name: /Not necessary/ })).not.toBeInTheDocument();
+    expect(within(panel).queryByText("All recommendations reviewed.")).not.toBeInTheDocument();
+
+    const mixedView: RoomRecommendationView = { ...groupView, decisions: [...groupView.decisions, ...directView.decisions] };
+    rerender(<EstimatorRecommendations {...defaults} view={mixedView} skippedKeys={skippedKeys} onSkip={vi.fn(() => true)} />);
+    await user.click(within(panel).getByRole("button", { name: "Add False ceiling painting for Living room" }));
+    await user.click(within(panel).getByRole("button", { name: "Add Cove finish for Living room" }));
+    expect(within(panel).getByText("All available recommendations reviewed.")).toBeVisible();
+    expect(within(panel).getByText(/1 related recommendation has unavailable items/)).toBeVisible();
+  });
+
+  it("disables optional skipping during loading or read-only review and hides it for unsafe reads", async () => {
+    const user = userEvent.setup();
+    const onSkip = vi.fn(() => true);
+    const props = { ...defaults, view: directView, onSkip };
+    const { rerender } = render(<EstimatorRecommendations {...props} editable={false} />);
+    const panel = dialog();
+    const readOnlySkip = within(panel).getByRole("button", { name: /Not necessary: Accent finish/ });
+    expect(readOnlySkip).toBeDisabled();
+    await user.click(readOnlySkip);
+    expect(onSkip).not.toHaveBeenCalled();
+    rerender(<EstimatorRecommendations {...props} state="loading" view={null} />);
+    const loadingSkip = within(panel).getByRole("button", { name: /Not necessary: Accent finish/ });
+    expect(loadingSkip).toBeDisabled();
+    await user.click(loadingSkip);
+    expect(onSkip).not.toHaveBeenCalled();
+    for (const state of ["error", "forbidden", "stale"] as const) {
+      rerender(<EstimatorRecommendations {...props} state={state} />);
+      expect(within(panel).queryByRole("button", { name: /Not necessary/ })).not.toBeInTheDocument();
+    }
+    const unavailableView: RoomRecommendationView = { ...directView, decisions: directView.decisions.map((decision) => ({
+      ...decision, available: false, target: null
+    })) };
+    rerender(<EstimatorRecommendations {...props} view={unavailableView} />);
+    expect(within(panel).queryByRole("button", { name: /Not necessary/ })).not.toBeInTheDocument();
   });
 
   it("keeps accepted feedback during refetch without an enabled stale Add action", async () => {
@@ -179,12 +294,14 @@ describe("EstimatorRecommendations", () => {
         ] },
       ...groupView.decisions
     ] };
-    render(<EstimatorRecommendations {...defaults} view={duplicated} />);
+    render(<EstimatorRecommendations {...defaults} view={duplicated}
+      skippedKeys={new Set([recommendationTargetIdentity(duplicated.decisions[0]!.target!)])} onSkip={vi.fn(() => true)} />);
     const panel = dialog();
     expect(within(panel).getByText("False ceiling painting is needed for POP false ceiling.")).toBeVisible();
     expect(within(panel).getByText("Also configured for Functional lights.")).toBeVisible();
     expect(within(panel).getByText("1 of 2 recommended items")).toBeVisible();
     expect(within(panel).getAllByRole("button", { name: "Add False ceiling painting for Living room" })).toHaveLength(1);
+    expect(within(panel).queryByRole("button", { name: /Not necessary/ })).not.toBeInTheDocument();
     await user.click(within(panel).getByRole("button", { name: "Next recommendation" }));
     expect(within(panel).getByText("Cove finish", { exact: true })).toBeVisible();
   });
@@ -231,6 +348,9 @@ describe("EstimatorRecommendations", () => {
     expect(dialog()).toHaveTextContent("Closing without adding a related item will uncheck any newly selected item that still needs one.");
     rerender(<EstimatorRecommendations {...defaults} automaticDismissal={false} />);
     expect(dialog()).not.toHaveTextContent("will uncheck");
+    rerender(<EstimatorRecommendations {...defaults} view={directView} automaticDismissal onSkip={vi.fn(() => true)} />);
+    expect(dialog()).toHaveTextContent("Use Not necessary to skip a Probable Addition.");
+    expect(dialog()).toHaveTextContent("Closing with unanswered recommendations and no related item added");
   });
 
   it("keeps selected, historical, unavailable, and read-only states accurate", () => {

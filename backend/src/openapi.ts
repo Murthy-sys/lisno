@@ -2067,6 +2067,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         propertyType: { type: "string", minLength: 1 },
         budgetMin: { type: "number", minimum: 0, description: "Optional legacy budget bound. Stored as null when omitted." },
         budgetMax: { type: "number", minimum: 0, description: "Optional legacy budget bound. Stored as null when omitted. Must be greater than or equal to budgetMin when both are supplied." },
+        source: { type: "string", minLength: 1, maxLength: 200, description: "Optional free-text channel or referral describing how the client heard about Lisno. Trimmed before storage on the linked Lead; omission retains admin_project. Does not affect access-grant provenance." },
         nextAction: { type: "string", minLength: 1 },
         nextActionAt: dateTime,
         estimatorId: { ...id, description: "Required for Sales Manager and Super Admin. For Sales, omit or supply only your own ID." },
@@ -2189,7 +2190,9 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
             amount: { type: "number", minimum: 0, nullable: true }, amountPaise: { type: "integer", minimum: 0, nullable: true },
             mainBasketId: { type: "string" }, subBasketId: { type: "string", nullable: true }, mainLineId: { type: "string" },
             itemType: { type: "string", enum: ["main_line", "temporary"], description: "Absent on historical configured lines, which are Main Lines." },
-            classification: { type: "string", enum: ["standard", "special"], description: "Estimator-selected item classification. Absent historical values display as Standard; this does not change price calculations." },
+            classification: { type: "string", enum: ["standard", "special"], description: "Frozen item classification. Standard uses Sub-Vendor when an explicit pricing mode is present. Historical missing classifications display as Standard without repricing." },
+            pricingMode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"], description: "Frozen selected pricing mode. Absent historical modes remain unknown." },
+            rateSource: { type: "string", enum: ["configuration", "manual"], description: "Frozen origin of the saved selling rate. Published amounts never follow later Configuration changes." },
             revisionId: { type: "string" }, uomId: { type: "string" }, mainBasketName: { type: "string" },
             sourceItemStatus: { type: "string", enum: ["draft", "active", "inactive"] },
             sourceRevisionStatus: { type: "string", enum: ["draft", "active"] },
@@ -2260,7 +2263,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     },
     EstimatorCatalogueLine: {
       type: "object", additionalProperties: false,
-      required: ["id", "mainLineId", "basketId", "subBasketId", "itemType", "name", "displayOrder", "revisionId", "itemStatus", "revisionStatus", "itemVersion", "revisionVersion", "inHouseBaseRatePaise", "uom"],
+      required: ["id", "mainLineId", "basketId", "subBasketId", "itemType", "name", "displayOrder", "revisionId", "itemStatus", "revisionStatus", "itemVersion", "revisionVersion", "inHouseBaseRatePaise", "modeBaseRatesPaise", "uom"],
       properties: {
         id: { type: "string" }, mainLineId: { type: "string" }, basketId: { type: "string" },
         subBasketId: { type: "string", nullable: true }, itemType: { type: "string", enum: ["main_line", "temporary"] },
@@ -2271,6 +2274,15 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         itemVersion: { type: "integer", minimum: 1 }, revisionVersion: { type: "integer", minimum: 1 },
         inHouseBaseRatePaise: { type: "integer", minimum: 0, nullable: true,
           description: "Combined Labor and Material in-house base rate for the selected source revision, in paise; null when unavailable." },
+        modeBaseRatesPaise: {
+          type: "object", additionalProperties: false, required: ["pmc", "sub_vendor", "in_house"],
+          description: "Base unit rates from the latest saved draft revision, otherwise active. No margin, impact, or GST is applied. Missing or invalid values are null; In-house combines labor and material with same-revision legacy support.",
+          properties: {
+            pmc: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true },
+            sub_vendor: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true },
+            in_house: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true }
+          }
+        },
         uom: { $ref: "#/components/schemas/EstimatorCatalogueUom" }
       }
     },
@@ -2285,9 +2297,10 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     },
     EstimatorCatalogueBasket: {
       type: "object", additionalProperties: false,
-      required: ["id", "name", "displayOrder", "subBaskets", "directTemporaryItems"],
+      required: ["id", "name", "description", "displayOrder", "subBaskets", "directTemporaryItems"],
       properties: {
         id: { type: "string" }, name: { type: "string" }, displayOrder: { type: "integer" },
+        description: { type: "string", nullable: true, description: "Current saved Main Basket description; null when none is stored." },
         subBaskets: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueSubBasket" } },
         directTemporaryItems: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueLine" } }
       }
@@ -2372,12 +2385,14 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         mainBasketId: { type: "string" }, subBasketId: { type: "string", nullable: true }, mainLineId: { type: "string" },
         itemType: { type: "string", enum: ["main_line", "temporary"], default: "main_line", description: "Optional for older clients; Main Lines require a real Sub Basket. Only temporary items may have null Sub Basket." },
         classification: { type: "string", enum: ["standard", "special"], description: "Estimator-selected type. Omission preserves a saved value or defaults a new line to Standard." },
+        pricingMode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"], description: "Selected pricing mode. Standard with an explicit mode requires sub_vendor; Special permits all three. Omission preserves a saved mode and does not infer one for historical prices." },
+        rateSource: { type: "string", enum: ["configuration", "manual"], description: "Configuration requires a selected mode and a rate matching its current saved base and source versions. Stale values produce a refreshable conflict. Manual preserves an entered override. On omission, a changed entered rate becomes manual; otherwise saved metadata is preserved." },
         revisionId: { type: "string" }, uomId: { type: "string" },
-        itemVersion: { type: "integer", minimum: 1, description: "Required with revisionVersion for a new Draft or Inactive item; checked when provided for Active items." },
-        revisionVersion: { type: "integer", minimum: 1, description: "Required with itemVersion for a new Draft or Inactive item; checked when provided for Active items." },
+        itemVersion: { type: "integer", minimum: 1, description: "Required with revisionVersion for explicit configuration-derived pricing and new Draft or Inactive items. Older callers preserving an unchanged configuration-derived rate may use its prior saved source version; stale versions conflict." },
+        revisionVersion: { type: "integer", minimum: 1, description: "Required with itemVersion for explicit configuration-derived pricing and new Draft or Inactive items. Must identify the current saved Configuration revision for configuration-derived rates." },
         quantity: { type: "number", minimum: 0 }, included: { type: "boolean" },
         ratePaise: { type: "integer", minimum: 0, nullable: true,
-          description: "Entered customer rate in integer paise. Null keeps an included draft line incomplete." }
+          description: "Customer rate in integer paise. Configuration-derived rates must match the selected mode's current base. Null keeps an included draft line incomplete." }
       }
     },
     EstimateLineInput: {

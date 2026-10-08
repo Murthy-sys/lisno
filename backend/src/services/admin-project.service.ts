@@ -26,6 +26,7 @@ export interface InitiateAdminProjectInput {
   location?: string;
   cityName?: string | null;
   propertyType: string;
+  source?: string;
   budgetMin?: number;
   budgetMax?: number;
   nextAction: string;
@@ -182,7 +183,7 @@ export function createAdminProjectService(
           propertyType: input.propertyType,
           budgetMin: input.budgetMin ?? null,
           budgetMax: input.budgetMax ?? null,
-          source: "admin_project",
+          source: input.source ?? "admin_project",
           stage: "new_lead",
           nextAction: input.nextAction,
           nextActionAt: input.nextActionAt,

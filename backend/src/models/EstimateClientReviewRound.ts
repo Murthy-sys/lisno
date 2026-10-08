@@ -1,3 +1,4 @@
+import { estimatePricingMetadataIsValid } from "../domain/estimate-mode-pricing.js";
 import {
   ESTIMATE_CLIENT_DECISIONS,
   ESTIMATE_CLIENT_DECISION_NOTE_MAX,
@@ -44,6 +45,8 @@ const estimateClientReviewLineItemSchema = new Schema(
     source: { type: String, enum: ["legacy", "configuration"], default: undefined, immutable: true },
     itemType: { type: String, enum: ["main_line", "temporary"], default: undefined, immutable: true },
     classification: { type: String, enum: ["standard", "special"], default: undefined, immutable: true },
+    pricingMode: { type: String, enum: ["pmc", "sub_vendor", "in_house"], default: undefined, immutable: true },
+    rateSource: { type: String, enum: ["configuration", "manual"], default: undefined, immutable: true },
     catalogueId: { type: String, required: true, immutable: true },
     roomId: { type: String, default: undefined, immutable: true },
     roomName: { type: String, required: true, immutable: true },
@@ -88,6 +91,9 @@ estimateClientReviewLineItemSchema.pre("validate", function validateFrozenLine()
     subBasketId: this.get("subBasketId"),
     subBasketName: this.get("subBasketName")
   })) this.invalidate("subBasketId", "Published configured estimate Sub Basket identity is inconsistent.");
+  if (configured && !estimatePricingMetadataIsValid({
+    classification: this.get("classification"), pricingMode: this.get("pricingMode"), rateSource: this.get("rateSource")
+  })) this.invalidate("pricingMode", "Published configured estimate pricing metadata is inconsistent.");
   if (configured) {
     const provenance = ["sourceItemStatus", "sourceRevisionStatus", "sourceItemVersion", "sourceRevisionVersion"] as const;
     const presentCount = provenance.filter((field) => this.get(field) !== undefined).length;

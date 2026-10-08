@@ -4,8 +4,6 @@ import { Button } from "../../components/ui/Button";
 export function ContactAndEstimateCard({
   phone,
   email,
-  budgetMin,
-  budgetMax,
   nextAction,
   buttonLabel,
   onContinue,
@@ -13,8 +11,6 @@ export function ContactAndEstimateCard({
 }: {
   phone: string;
   email: string;
-  budgetMin: number | null | undefined;
-  budgetMax: number | null | undefined;
   nextAction: string;
   buttonLabel: string;
   onContinue: () => void;
@@ -28,9 +24,6 @@ export function ContactAndEstimateCard({
       </h2>
       <p className="text-sm font-normal text-[var(--color-text-strong)]">
         <strong className="font-semibold">{phone}</strong> · {email}
-      </p>
-      <p className="text-sm font-normal text-[var(--color-text-strong)]">
-        Budget: ₹{budgetMin?.toLocaleString() ?? "—"} – ₹{budgetMax?.toLocaleString() ?? "—"}
       </p>
       <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-[var(--color-primary)]/20 bg-[var(--color-primary)]/10 px-3 py-1 text-xs font-semibold text-[var(--color-primary)]">
         <Clock size={12} aria-hidden="true" />
