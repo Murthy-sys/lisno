@@ -26,6 +26,20 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents the same-project client name in the existing Procurement project list", () => {
+    const project = componentSchemas().ProcurementProject!;
+    expect(project.required).toContain("clientName");
+    expect(project).toHaveProperty("properties.clientName", {
+      type: "string", nullable: true,
+      description: "Current saved client name for this project; null when no name is recorded."
+    });
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const list = paths["/procurement/projects"]!.get!;
+    expect(list["x-lisno-permission"]).toBe("procurement.workspace.read");
+    expect(list.responses["2XX"].content["application/json"].schema.properties.data.$ref)
+      .toBe("#/components/schemas/ProcurementProjectList");
+  });
+
   it("documents the current nullable Main Basket description", () => {
     const basket = componentSchemas().EstimatorCatalogueBasket!;
     expect(basket.required).toContain("description");

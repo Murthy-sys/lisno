@@ -84,6 +84,8 @@
 .procurement-basket__mode--inline .procurement-basket__mode-editor { text-align: left; font-weight: 400; }
 .procurement-basket__scope-panel .procurement-basket__mode-editor .procurement-basket__field > span { color: #515b70; }
 .procurement-basket__scope-empty { padding: 15px 17px; color: var(--basket-muted); font-size: 12px; line-height: 1.45; }
+.procurement-basket .procurement-basket__estimate-scope { padding: 9px 12px; border-bottom: 1px solid var(--basket-border); color: #526157; font-size: 11px; line-height: 1.45; }
+.procurement-basket .procurement-basket__scope-source-row th .procurement-basket__estimate-mode { color: #526157; font-size: 11px; line-height: 1.4; }
 
 .procurement-basket__scope-total {
   display: flex;

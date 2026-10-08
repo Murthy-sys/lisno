@@ -2,7 +2,7 @@ import { ROLE_CODES, OPERATIONAL_ROLES, type Role } from "../../api/authorizatio
 import type { Lead, ProjectWorkflowTask, UserInvitationItem, ProjectFinanceBucket } from "../../api/types";
 import { superAdminDashboardOverviewFixture, superAdminDashboardProjectsPageFixture, superAdminDashboardWorkforcePageFixture } from "../../features/admin/dashboard/dashboardFixtures";
 import type { ProjectPurchaseOrderRequest, PurchaseOrder, PurchaseOrderPreparation, PurchaseOrderRequestQuote, PurchaseOrderRequestLineInput, PurchaseOrderTotals } from "../../features/procurement/purchaseOrderApi";
-import type { ProcurementBasketDetail, ProcurementVendorCandidate } from "../../features/procurement/procurementBasketApi";
+import type { ProcurementBasketDetail, ProcurementBasketModeGroup, ProcurementVendorCandidate } from "../../features/procurement/procurementBasketApi";
 import type { EnterpriseScenario } from "./enterpriseTransport";
 import * as admin from "./enterpriseAdminData";
 import * as users from "./enterpriseUsersData";
@@ -13,6 +13,7 @@ import * as project from "./enterpriseProjectData";
 import * as client from "./enterpriseClientData";
 import * as finance from "./enterpriseFinanceData";
 import * as procurement from "./enterpriseProcurementData";
+import { createProcurementGalleryFixture } from "./enterpriseProcurementGalleryData";
 import * as knowledge from "./enterpriseKnowledgeData";
 import * as drawing from "./enterpriseDrawingData";
 import type { KnowledgeSectionKey } from "../../features/ai-estimator-knowledge/knowledgeTypes";
@@ -271,6 +272,15 @@ const qaStandardBasket: ProcurementBasketDetail = {
     }
   }]
 };
+function compactBasketModeGroups(basket: ProcurementBasketDetail, mode: "sub_vendor" | "pmc"): ProcurementBasketModeGroup[] {
+  // Both saved QA scenarios have two included lines and known, explicit approved modes.
+  const cost = mode === "sub_vendor" ? basket.standardCost!.totalPaise! : basket.adjustedCostPaise;
+  const metrics = { ...procurement.qaEmptyModeMetrics, includedLineCount: 2, boqReadyLineCount: 2,
+    readinessPercent: 100, approvedEstimatePaise: 250_000, currentCostPaise: cost };
+  return procurement.qaEmptyModeGroups().map((group) => group.mode !== mode ? group : {
+    ...group, ...metrics, basketCount: 1, baskets: [{ ...metrics, id: basket.id, name: basket.name,
+      sourceLineItemKeys: ["living-room:CA01", "bedroom:CA02"] }] });
+}
 export type EnterpriseProjectRate = { version: number; overridePaise: number | null };
 
 export function enterpriseStandardBasketForRates(rates: ReadonlyMap<string, EnterpriseProjectRate>): ProcurementBasketDetail {
@@ -396,6 +406,12 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   const recommendationCompletionReady = new URLSearchParams(scenario.route.split("?")[1]).get("qaRecommendationCompletion") === "ready";
   const procurementModesReady = new URLSearchParams(scenario.route.split("?")[1]).get("qaProcurementModes") === "ready";
   const procurementModesMismatch = new URLSearchParams(scenario.route.split("?")[1]).get("qaProcurementModes") === "mismatch";
+  const procurementGroupsReady = new URLSearchParams(scenario.route.split("?")[1]).get("qaProcurementGroups") === "ready";
+  const procurementGalleryState = new URLSearchParams(scenario.route.split("?")[1]).get("qaProcurementGallery");
+  const galleryProjects = procurementGalleryState === "ready" || procurementGalleryState === "large"
+    ? createProcurementGalleryFixture(procurementGalleryState === "large") : null;
+  const groupFixture = galleryProjects ? procurement.createProcurementGroupFixture()
+    : procurementGroupsReady ? procurement.createProcurementGroupBrowserFixture() : null;
   const compactBasketReady = new URLSearchParams(scenario.route.split("?")[1]).get("qaCompactBasket") === "ready";
   const standardBasketReady = new URLSearchParams(scenario.route.split("?")[1]).get("qaStandardBasket") === "ready";
   const standardBasketUnverified = new URLSearchParams(scenario.route.split("?")[1]).get("qaStandardBasket") === "unverified";
@@ -526,9 +542,31 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
     if (!bucket) return Response.json({ error: { code: "FINANCE_BUCKET_NOT_FOUND", message: "The synthetic project has no approved finance baseline yet." } }, { status: 404 });
     return path.endsWith("/entries") ? page(financeLedgerFor(bucket)) : bucket;
   }
-  if (path === "/procurement/projects") return list([procurement.procurementProject]);
+  if (path === "/procurement/projects") return list(galleryProjects ?? [procurement.procurementProject]);
+  if (galleryProjects && /^\/procurement\/projects\/[^/]+\/(baskets|purchase-order-requests|purchase-order-commitments)$/.test(path)) {
+    const galleryProject = galleryProjects.find((entry) => entry.projectId === decodeURIComponent(path.split("/")[3]!));
+    if (galleryProject && path.endsWith("/purchase-order-requests")) return { items: [], total: 0, limit: 50, offset: 0 };
+    if (galleryProject && path.endsWith("/purchase-order-commitments")) {
+      const approvedEstimatePaise = galleryProject.sections.reduce((sum, section) => sum + section.estimatedAmountPaise, 0);
+      return { approvedEstimatePaise, committedPaise: 0, committedGstPaise: 0, committedTotalPaise: 0, remainingPaise: approvedEstimatePaise };
+    }
+    if (galleryProject && galleryProject.projectId !== "project-one" && path.endsWith("/baskets")) return {
+      projectId: galleryProject.projectId,
+      estimateSource: { estimateId: galleryProject.estimateId, estimateVersion: galleryProject.estimateVersion, estimateReviewRoundId: null },
+      baskets: [], modeGroups: procurement.qaEmptyModeGroups()
+    };
+  }
+  if (groupFixture && path === "/procurement/projects/project-one/baskets") return empty
+    ? { ...groupFixture.list, baskets: [], modeGroups: procurement.qaEmptyModeGroups() } : groupFixture.list;
+  if (groupFixture && /^\/procurement\/projects\/project-one\/baskets\/[^/]+(?:\/enquiries|\/vendor-candidates)?$/.test(path)) {
+    if (path.endsWith("/enquiries")) return [];
+    if (path.endsWith("/vendor-candidates")) return { projectCity: { name: "Bengaluru", key: "bengaluru" },
+      items: qaCompactVendors, total: 2, matchingVendorCount: 2, blockedReasonCounts: {}, limit: 50, offset: 0 };
+    return groupFixture.details.find((basket) => basket.id === decodeURIComponent(path.split("/").at(-1)!));
+  }
   if (path === "/procurement/projects/project-one/baskets") return syntheticBasketReady ? {
     projectId: "project-one", estimateSource: visibleCompactBasket.estimateSource,
+    modeGroups: compactBasketModeGroups(visibleCompactBasket, standardBasketReady || standardBasketUnverified ? "sub_vendor" : "pmc"),
     baskets: [{ id: visibleCompactBasket.id, name: visibleCompactBasket.name,
       classification: visibleCompactBasket.classification, automaticSubVendor: visibleCompactBasket.automaticSubVendor,
       boqReady: visibleCompactBasket.boqReady, standardCost: visibleCompactBasket.standardCost,
@@ -539,6 +577,14 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
       committedNetPaise: visibleCompactBasket.committedNetPaise, state: visibleCompactBasket.state }]
   } : {
     projectId: "project-one", estimateSource: qaProcurementModePreparation.estimateSource,
+    modeGroups: empty ? procurement.qaEmptyModeGroups() : [...procurement.qaEmptyModeGroups(), {
+      ...procurement.qaEmptyModeMetrics, mode: "unrecorded", basketCount: 1, includedLineCount: 2,
+      readinessPercent: 0, approvedEstimatePaise: 250_000, currentCostPaise: null,
+      currentCostComplete: false, unpricedLineCount: 2, modeIssueCount: 2,
+      baskets: [{ ...procurement.qaEmptyModeMetrics, id: "basket-carpentry", name: "Carpentry",
+        sourceLineItemKeys: ["living-room:CA01", "bedroom:CA02"], includedLineCount: 2,
+        readinessPercent: 0, approvedEstimatePaise: 250_000, currentCostPaise: null,
+        currentCostComplete: false, unpricedLineCount: 2, modeIssueCount: 2 }] }],
     baskets: empty ? [] : [{ id: "basket-carpentry", name: "Carpentry", includedLineCount: 2,
       classification: "special", automaticSubVendor: false, boqReady: false, standardCost: null,
       readyLineCount: procurementModesReady ? 1 : 0, approvedEstimatePaise: 250_000,

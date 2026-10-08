@@ -2,8 +2,10 @@ import { createHash } from "node:crypto";
 import type { ProjectPurchaseOrderPreparationDto, PurchaseOrderPreparationEstimateLine } from "./project-purchase-order-preparation.js";
 import { MAX_FINANCE_AMOUNT_PAISE } from "./project-finance.js";
 import { DEFAULT_PROCUREMENT_BASKET_PROJECT_RATE, type ProcurementBasketProjectRate } from "./procurement-basket-base-rate.js";
+import type { ProcurementEstimateMode } from "./procurement-basket-mode-groups.js";
 
 export interface ProcurementBasketLineDto {
+  estimateMode?: ProcurementEstimateMode;
   sourceLineItemKey: string;
   roomId: string | null;
   roomName: string;
@@ -105,6 +107,7 @@ export function projectProcurementBaskets(preparation: ProjectPurchaseOrderPrepa
       const standardCost = standardLineCosts.get(line.key) ?? null;
       return {
         sourceLineItemKey: line.key, roomId: line.roomId, roomName: line.roomName,
+        ...(line.estimateMode ? { estimateMode: line.estimateMode } : {}),
         subBasketId: line.subBasketId, subBasketName: line.subBasketName,
         mainLineId: line.mainLineId, mainLineName: line.mainLineName,
         approvedQuantity: line.quantity, approvedUnit: line.unit,

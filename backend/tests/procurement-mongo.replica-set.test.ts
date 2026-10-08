@@ -21,6 +21,7 @@ import { createMemoryRepository } from "../src/repositories/memory.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import {
   createProcurementService,
+  procurementItemSourceSnapshot,
   runProcurementReceiptCleanupJobs,
   runProcurementReceiptReconciliationJobs
 } from "../src/services/procurement.service.js";
@@ -68,6 +69,105 @@ afterAll(async () => {
 });
 
 describe("Procurement approved-item workspace and receipt ledger", () => {
+  it("reads each current client from the same project without extra queries or writes", async () => {
+    await createGalleryPeerFixture();
+    const storage = new MemoryStorage();
+    const service = procurementService(storage);
+    await service.postExpense(procurementActor(), PROJECT_ID, expenseInput(), receiptUpload());
+    await service.postExpense(procurementActor(), "gallery-peer-project", expenseInput({
+      sourceLineItemKey: "legacy-estimate-line:gallery-peer-estimate:1:0",
+      amountPaise: 30_000,
+      idempotencyKey: "gallery-peer-expense"
+    }), receiptUpload());
+    await ProjectModel.collection.updateOne({ _id: PROJECT_ID }, {
+      $set: { clientName: "  First saved client  " }
+    });
+
+    const calls: { collection: string; method: string; query: unknown }[] = [];
+    const previousDebug = mongoose.get("debug");
+    mongoose.set("debug", (collection: string, method: string, query: unknown) => {
+      calls.push({ collection, method, query });
+    });
+    let projects;
+    try {
+      projects = await service.listProjects(procurementActor());
+    } finally {
+      mongoose.set("debug", previousDebug);
+    }
+
+    expect(projects).toHaveLength(2);
+    const first = projects.find(project => project.projectId === PROJECT_ID)!;
+    const peer = projects.find(project => project.projectId === "gallery-peer-project")!;
+    expect(first).toMatchObject({ clientName: "First saved client", estimateId: ESTIMATE_ID });
+    expect(peer).toMatchObject({ clientName: "Second saved client", estimateId: "gallery-peer-estimate" });
+    expect(first.sections.map(section => [section.estimatedAmountPaise, section.actualSpendPaise]))
+      .toEqual([[200_000, 125_000], [50_000, 0]]);
+    expect(peer.sections.map(section => [section.estimatedAmountPaise, section.actualSpendPaise]))
+      .toEqual([[110_000, 30_000], [22_500, 0]]);
+    expect(first).not.toHaveProperty("clientEmail");
+    expect(peer).not.toHaveProperty("clientEmail");
+
+    const counts = calls.reduce<Record<string, number>>((totals, call) => {
+      const key = `${call.collection}.${call.method}`;
+      totals[key] = (totals[key] ?? 0) + 1;
+      return totals;
+    }, {});
+    expect(counts).toEqual({
+      [`${UserModel.collection.name}.findOne`]: 1,
+      [`${EstimateModel.collection.name}.find`]: 1,
+      [`${ProjectWorkflowTaskModel.collection.name}.find`]: 1,
+      [`${ProjectModel.collection.name}.findOne`]: 2,
+      [`${EstimateClientReviewRoundModel.collection.name}.find`]: 2,
+      [`${ProjectFinanceBucketModel.collection.name}.findOne`]: 2,
+      [`${FinanceLedgerEntryModel.collection.name}.find`]: 2,
+      [`${FinanceEntryDocumentModel.collection.name}.find`]: 2
+    });
+    expect(calls.filter(call => call.collection === ProjectModel.collection.name).map(call => call.query))
+      .toEqual(expect.arrayContaining([{ _id: PROJECT_ID }, { _id: "gallery-peer-project" }]));
+    expect(storage.files.size).toBe(2);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["null", null],
+    ["empty", ""],
+    ["whitespace", " \t\n "]
+  ])("returns null for a %s legacy client name without using the approved snapshot's client", async (_label, clientName) => {
+    await ProjectModel.collection.updateOne({ _id: PROJECT_ID }, clientName === undefined
+      ? { $unset: { clientName: "" } }
+      : { $set: { clientName } });
+    const projects = await procurementService(new MemoryStorage()).listProjects(procurementActor());
+    expect(projects[0]).toMatchObject({ projectId: PROJECT_ID, clientName: null });
+  });
+
+  it("updates displayed client metadata without changing approved source or financial values", async () => {
+    const service = procurementService(new MemoryStorage());
+    const before = await service.listProjects(procurementActor());
+    const sourceBefore = await mongoose.connection.transaction(session =>
+      procurementItemSourceSnapshot(PROJECT_ID, session));
+    await ProjectModel.updateOne({ _id: PROJECT_ID }, { $set: { clientName: "Updated saved client" } });
+    const after = await service.listProjects(procurementActor());
+    const sourceAfter = await mongoose.connection.transaction(session =>
+      procurementItemSourceSnapshot(PROJECT_ID, session));
+
+    expect(before[0]?.clientName).toBe("Client");
+    expect(after).toEqual([{ ...before[0], clientName: "Updated saved client" }]);
+    expect(sourceAfter).toEqual(sourceBefore);
+    expect(await FinanceLedgerEntryModel.countDocuments()).toBe(0);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+  });
+
+  it("denies a non-Procurement actor before reading project client metadata", async () => {
+    const projectRead = vi.spyOn(ProjectModel, "findById");
+    try {
+      await expect(procurementService(new MemoryStorage()).listProjects(superAdminActor()))
+        .rejects.toMatchObject({ status: 403 });
+      expect(projectRead).not.toHaveBeenCalled();
+    } finally {
+      projectRead.mockRestore();
+    }
+  });
+
   it("uses the immutable fractional-paise baseline for existing and late-opened finance buckets", async () => {
     const configuredLine = {
       id: "configured-line", source: "configuration", itemType: "temporary", catalogueId: "line-lower",
@@ -133,6 +233,7 @@ describe("Procurement approved-item workspace and receipt ledger", () => {
       taskProgress: 0,
       projectId: PROJECT_ID,
       projectName: "Procurement Residence",
+      clientName: "Client",
       estimateId: ESTIMATE_ID,
       estimateVersion: 1,
       sections: [
@@ -1147,6 +1248,44 @@ async function seedIssuedTenderOrder() {
     boqRevisionId: "boq-linked", vendorId: "vendor-linked",
     milestones: [{ id: "advance", name: "Advance", basisPoints: 2_000, amountPaise: 125_000 }]
   });
+}
+
+async function createGalleryPeerFixture() {
+  const [project, estimate, round, task, bucket] = await Promise.all([
+    ProjectModel.findById(PROJECT_ID).lean(),
+    EstimateModel.findById(ESTIMATE_ID).lean(),
+    EstimateClientReviewRoundModel.findById(ROUND_ID).lean(),
+    ProjectWorkflowTaskModel.findById("procurement-task").lean(),
+    ProjectFinanceBucketModel.findOne({ projectId: PROJECT_ID }).lean()
+  ]);
+  const projectId = "gallery-peer-project";
+  const estimateId = "gallery-peer-estimate";
+  const roundId = "gallery-peer-round";
+  const approvedLines = [
+    { catalogueId: "CA01", roomName: "Bedroom", specification: "Peer carpentry", unit: "sqft",
+      rate: 550, quantity: 2, included: true, amount: 1_100 },
+    { catalogueId: "EL01", roomName: "Kitchen", specification: "Peer electrical", unit: "point",
+      rate: 225, quantity: 1, included: true, amount: 225 }
+  ];
+  const money = { subtotal: 5_000, gst: 900, total: 5_900 };
+  await Promise.all([
+    ProjectModel.collection.insertOne({ ...project!, _id: projectId, name: "Procurement Residence",
+      clientName: "Second saved client", clientEmail: "second-client@example.test",
+      clientEmailNormalized: "second-client@example.test" }),
+    EstimateModel.collection.insertOne({ ...estimate!, _id: estimateId, projectId,
+      leadId: "gallery-peer-lead", lineItems: approvedLines, ...money }),
+    EstimateClientReviewRoundModel.collection.insertOne({ ...round!, _id: roundId, estimateId,
+      leadId: "gallery-peer-lead", dedupeKey: "e".repeat(64), recipientEmail: "second-client@example.test",
+      recipientEmailNormalized: "second-client@example.test",
+      estimateSnapshot: { ...round!.estimateSnapshot, clientName: "Snapshot client, not current client",
+        lineItems: approvedLines, ...money } }),
+    ProjectWorkflowTaskModel.collection.insertOne({ ...task!, _id: "gallery-peer-task", projectId,
+      estimateId, dedupeKey: `${estimateId}:procurement` }),
+    ProjectFinanceBucketModel.collection.insertOne({ ...bucket!, _id: `finance-bucket-${projectId}`,
+      projectId, estimateId, estimateReviewRoundId: roundId, approvedSubtotalPaise: 500_000,
+      approvedGstPaise: 90_000, approvedContractTotalPaise: 590_000,
+      targetProfitPaise: 100_000, costBudgetPaise: 400_000 })
+  ]);
 }
 
 async function createFixture() {

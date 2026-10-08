@@ -162,6 +162,42 @@ beforeEach(async () => {
 afterAll(async () => { await replica?.stop(); });
 
 describe("mode-aware purchase order preparation", () => {
+  it("preserves pre-grouping current, legacy and basket digest baselines", async () => {
+    const current = await prepare();
+    const legacy = await mongoose.connection.transaction(session =>
+      buildProjectPurchaseOrderPreparation(projectId, session, { digestVersion: "legacy" }));
+    expect(current.digest).toBe("1bdfa14baf69dffa4ac03bc7818bafa9456cbe470f6f482260379cbb83b666ce");
+    expect(legacy.digest).toBe("bc06618b743bf4fe3c177c953c2c5e122fdfce5ef2891b14eb81cf543f7247ff");
+    expect(projectProcurementBaskets(current).map(basket => ({ id: basket.id, digest: basket.preparationDigest }))).toEqual([
+      { id: "DD", digest: "022123dddb1a3ac406fcedd30a6d509f97cb673fd0b23c3014d0175952f77796" },
+      { id: "basket-a", digest: "9c25f0d67e29f563e12bb513741a5307f5a1c5d050a5ca65c5dfb67f3f60e672" },
+      { id: "basket-b", digest: "286c302e16356bbe4d1249ba72da8ef5943a03fa4d1386ef29bfbdf94588eaf7" },
+      { id: "basket-c", digest: "34b6e31f11808ff70b96a1427c687546592212d2dc70ff624dedcbd4bf47f207" },
+      { id: "CC", digest: "4d800f9789bdb9de504ade03a1107094bc01519b5f8e7d9de89234fb07265961" }
+    ]);
+  });
+  it("keeps all commercial output and current/legacy hashes when only estimate display metadata changes", async () => {
+    const before = await prepare();
+    const legacyBefore = await mongoose.connection.transaction(session =>
+      buildProjectPurchaseOrderPreparation(projectId, session, { digestVersion: "legacy" }));
+    const withDisplay = source.allLineItems.map((line, index) => ({ ...line,
+      approvedClassification: "special" as const,
+      approvedPricingMode: index === 0 ? "in_house" as const : "sub_vendor" as const }));
+    vi.mocked(procurementItemSourceSnapshot).mockResolvedValue({ ...source, allLineItems: withDisplay,
+      lineItems: withDisplay.filter(line => line.included && line.amountPaise !== null) as ApprovedProcurementSnapshot["lineItems"] });
+    const after = await prepare();
+    const legacyAfter = await mongoose.connection.transaction(session =>
+      buildProjectPurchaseOrderPreparation(projectId, session, { digestVersion: "legacy" }));
+    expect(after.digest).toBe(before.digest);
+    expect(legacyAfter.digest).toBe(legacyBefore.digest);
+    expect(after.estimateLines[0]?.estimateMode).toMatchObject({ mode: "in_house", provenance: "line" });
+    const withoutDisplay = (value: typeof before) => ({ ...value,
+      estimateLines: value.estimateLines.map(({ estimateMode: _display, ...line }) => line) });
+    expect(withoutDisplay(after)).toEqual(withoutDisplay(before));
+    const basketCommerce = (value: typeof before) => projectProcurementBaskets(value).map(basket => ({ ...basket,
+      lines: basket.lines.map(({ estimateMode: _display, ...line }) => line) }));
+    expect(basketCommerce(after)).toEqual(basketCommerce(before));
+  });
   it("refreshes current parent labels by stable IDs without rewriting approved or legacy labels", async () => {
     const before = await prepare();
     await AiEstimatorKnowledgeBasketModel.collection.insertOne({ _id: "basket-a", name: "Updated Painting" });

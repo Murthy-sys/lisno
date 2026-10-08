@@ -66,6 +66,20 @@ export function procurementProjectActualTotal(project: ProcurementProject) {
   );
 }
 
+/** A portfolio can exceed the safe paise range even when each project is valid. */
+export function procurementPortfolioSelectedTotal(
+  projects: readonly ProcurementProject[]
+): number | null {
+  let total = 0n;
+  for (const project of projects) {
+    const selected = procurementProjectEstimatedTotal(project);
+    if (!Number.isSafeInteger(selected) || selected < 0) return null;
+    total += BigInt(selected);
+    if (total > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  }
+  return Number(total);
+}
+
 export function procurementProjectForDisplay(
   project: ProcurementProject
 ): ProcurementProject {

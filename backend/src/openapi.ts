@@ -3407,7 +3407,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       type: "object",
       required: [
         "taskId", "taskVersion", "taskStatus", "taskProgress", "openedAt",
-        "updatedAt", "projectId", "projectName", "estimateId",
+        "updatedAt", "projectId", "projectName", "clientName", "estimateId",
         "estimateVersion", "sections"
       ],
       properties: {
@@ -3419,6 +3419,10 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         updatedAt: dateTime,
         projectId: id,
         projectName: { type: "string", minLength: 1 },
+        clientName: {
+          type: "string", nullable: true,
+          description: "Current saved client name for this project; null when no name is recorded."
+        },
         estimateId: id,
         estimateVersion: { type: "integer", minimum: 1 },
         sections: {

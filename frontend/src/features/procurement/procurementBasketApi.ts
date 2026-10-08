@@ -9,6 +9,41 @@ export interface BasketEstimateSource {
 
 export type MainBasketClassification = "standard" | "special";
 
+export type ProcurementEstimateMode = "in_house" | "sub_vendor" | "pmc";
+export type ProcurementEstimateModeGroupKey = ProcurementEstimateMode | "unrecorded";
+
+export interface ProcurementEstimateModeSelection {
+  approvedClassification: MainBasketClassification | null;
+  approvedPricingMode: ProcurementEstimateMode | null;
+  mode: ProcurementEstimateMode | null;
+  provenance: "line" | "legacy_basket" | "unrecorded";
+  issues: Array<{ code: string; message: string }>;
+}
+
+export interface ProcurementModeGroupMetrics {
+  includedLineCount: number;
+  boqReadyLineCount: number;
+  readinessPercent: number | null;
+  approvedEstimatePaise: number;
+  currentCostPaise: number | null;
+  currentCostComplete: boolean;
+  unpricedLineCount: number;
+  committedNetPaise: number;
+  modeIssueCount: number;
+}
+
+export interface ProcurementModeBasketSubset extends ProcurementModeGroupMetrics {
+  id: string;
+  name: string;
+  sourceLineItemKeys: string[];
+}
+
+export interface ProcurementBasketModeGroup extends ProcurementModeGroupMetrics {
+  mode: ProcurementEstimateModeGroupKey;
+  basketCount: number;
+  baskets: ProcurementModeBasketSubset[];
+}
+
 export interface StandardBasketCost {
   totalPaise: number | null;
   complete: boolean;
@@ -61,6 +96,7 @@ export interface ProcurementBasketLine {
   baseUnitRatePaise: number | null;
   projectRate: { version: number; overridePaise: number | null };
   standardCost: StandardBasketLineCost | null;
+  estimateMode?: ProcurementEstimateModeSelection;
 }
 
 export interface SaveBasketBaseRateInput {
@@ -91,6 +127,49 @@ export interface ProcurementBasketList {
   projectId: string;
   estimateSource: BasketEstimateSource;
   baskets: ProcurementBasketSummary[];
+  modeGroups?: ProcurementBasketModeGroup[];
+}
+
+const nonNegativeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object";
+
+function validModeMetrics(value: Record<string, unknown>): boolean {
+  if (![value.includedLineCount, value.boqReadyLineCount, value.approvedEstimatePaise, value.unpricedLineCount,
+    value.committedNetPaise, value.modeIssueCount].every(nonNegativeInteger)) return false;
+  const included = value.includedLineCount as number;
+  if ((value.boqReadyLineCount as number) > included || (value.unpricedLineCount as number) > included) return false;
+  if (included === 0 ? value.readinessPercent !== null : typeof value.readinessPercent !== "number" ||
+    !Number.isFinite(value.readinessPercent) || value.readinessPercent < 0 || value.readinessPercent > 100) return false;
+  return value.currentCostComplete === true
+    ? nonNegativeInteger(value.currentCostPaise) && value.unpricedLineCount === 0
+    : value.currentCostComplete === false && value.currentCostPaise === null && (value.unpricedLineCount as number) > 0;
+}
+
+/** Reject incompatible overview metadata without affecting the canonical basket drill-down. */
+export function hasValidProcurementModeGroups(data: ProcurementBasketList): data is ProcurementBasketList & { modeGroups: ProcurementBasketModeGroup[] } {
+  const groups: unknown = data.modeGroups;
+  if (!Array.isArray(groups) || (groups.length !== 3 && groups.length !== 4)) return false;
+  const order = ["in_house", "sub_vendor", "pmc", "unrecorded"];
+  const canonicalIds = new Set(data.baskets.map((basket) => basket.id));
+  const sourceKeys = new Set<string>();
+  return groups.every((group: unknown, index) => {
+    if (!record(group) || group.mode !== order[index] || !Array.isArray(group.baskets) ||
+      group.basketCount !== group.baskets.length || !validModeMetrics(group)) return false;
+    if (group.mode === "unrecorded" && group.baskets.length === 0) return false;
+    const basketIds = new Set<string>();
+    return group.baskets.every((basket: unknown) => {
+      if (!record(basket) || typeof basket.id !== "string" || !canonicalIds.has(basket.id) || basketIds.has(basket.id) ||
+        typeof basket.name !== "string" || !basket.name.trim() || !validModeMetrics(basket) ||
+        !Array.isArray(basket.sourceLineItemKeys) || basket.sourceLineItemKeys.length === 0 ||
+        (basket.includedLineCount as number) > basket.sourceLineItemKeys.length) return false;
+      basketIds.add(basket.id);
+      return basket.sourceLineItemKeys.every((key: unknown) => {
+        if (typeof key !== "string" || !key || sourceKeys.has(key)) return false;
+        sourceKeys.add(key);
+        return true;
+      });
+    });
+  });
 }
 
 export type VendorCityMatch = "same_city" | "outside_city" | "unknown";

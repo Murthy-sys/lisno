@@ -30,6 +30,7 @@ function setup() {
     updatedAt: "2026-08-25T09:00:00.000Z",
     projectId: "project-1",
     projectName: "Aurora Residence",
+    clientName: "Aurora Client",
     estimateId: "estimate-1",
     estimateVersion: 1,
     sections: []

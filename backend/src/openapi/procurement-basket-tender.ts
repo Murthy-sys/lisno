@@ -33,6 +33,18 @@ const historyDetail = `${historyRoot}/:revisionId`;
 const awardRoot = `${enquiryDetail}/awards`;
 const awardDetail = `${awardRoot}/:awardId`;
 const classification = { type: "string", enum: ["standard", "special"] };
+const estimateMode = object({ approvedClassification: { ...classification, nullable: true },
+  approvedPricingMode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"], nullable: true },
+  mode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"], nullable: true },
+  provenance: { type: "string", enum: ["line", "legacy_basket", "unrecorded"] },
+  issues: { type: "array", items: ref("ProjectPurchaseOrderModeIssue") } });
+const modeMetrics = {
+  includedLineCount: { type: "integer", minimum: 0 }, boqReadyLineCount: { type: "integer", minimum: 0 },
+  readinessPercent: { type: "integer", minimum: 0, maximum: 100, nullable: true },
+  approvedEstimatePaise: paise, currentCostPaise: { ...paise, nullable: true }, currentCostComplete: { type: "boolean" },
+  unpricedLineCount: { type: "integer", minimum: 0 }, committedNetPaise: paise,
+  modeIssueCount: { type: "integer", minimum: 0 }
+};
 const standardCost = object({ totalPaise: { ...paise, nullable: true }, complete: { type: "boolean" },
   provisional: { type: "boolean" }, pricedLineCount: { type: "integer", minimum: 0 } });
 const standardLineCost = object({ state: { type: "string", enum: ["suggested", "observed_unverified", "saved", "unavailable"] },
@@ -49,6 +61,7 @@ const basketSummary = { id, name: { type: "string" }, classification,
   workingTotalPaise: paise, workingTotalComplete: { type: "boolean" },
   committedNetPaise: paise, state: { type: "string", enum: ["ready", "partial", "unavailable"] } };
 const basketLine = object({ sourceLineItemKey: id, roomId: { ...id, nullable: true }, roomName: { type: "string" },
+  estimateMode: ref("ProcurementEstimateMode"),
   subBasketId: { ...id, nullable: true }, subBasketName: { type: "string", nullable: true },
   mainLineId: { ...id, nullable: true }, mainLineName: { type: "string", nullable: true },
   approvedQuantity: { type: "string" }, approvedUnit: { type: "string" },
@@ -60,9 +73,15 @@ const basketLine = object({ sourceLineItemKey: id, roomId: { ...id, nullable: tr
   standardCost: { ...standardLineCost, nullable: true } });
 
 export const PROCUREMENT_BASKET_TENDER_SCHEMAS = {
+  ProcurementEstimateMode: estimateMode,
+  ProcurementBasketModeSubset: object({ id, name: { type: "string" },
+    sourceLineItemKeys: { type: "array", items: id }, ...modeMetrics }),
+  ProcurementBasketModeGroup: object({ mode: { type: "string", enum: ["in_house", "sub_vendor", "pmc", "unrecorded"] },
+    basketCount: { type: "integer", minimum: 0 }, baskets: { type: "array", items: ref("ProcurementBasketModeSubset") }, ...modeMetrics }),
   ProcurementBasketSummary: object(basketSummary),
   ProcurementBasketList: object({ projectId: id, estimateSource: source,
-    baskets: { type: "array", items: ref("ProcurementBasketSummary") } }),
+    baskets: { type: "array", items: ref("ProcurementBasketSummary") },
+    modeGroups: { type: "array", items: ref("ProcurementBasketModeGroup") } }),
   ProcurementBasketDetail: object({ ...basketSummary, projectId: id, estimateSource: source,
     preparationDigest: digest, lines: { type: "array", items: basketLine } }),
   ProcurementBasketBoqLineInput: object({ sourceLineItemKey: id,

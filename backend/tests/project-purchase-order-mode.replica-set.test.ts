@@ -256,13 +256,13 @@ describe("project-only Standard Main Basket Base amount", () => {
     expect(saved).toMatchObject({ projectId: "mode-project", mainBasketId: "basket-a",
       projectRate: { version: 1, overridePaise: 8_000 } });
     const updated = await baskets.get(buyer, "mode-project", "basket-a");
-    expect(updated.lines[0]).toMatchObject({ baseUnitRatePaise: 8_000,
+    expect(updated.lines[0]).toMatchObject({ mainLineName: "POP", approvedQuantity: "1", baseUnitRatePaise: 8_000,
       projectRate: { version: 1, overridePaise: 8_000 },
       standardCost: { baseCostPaise: 8_000, adjustedCostPaise: 8_800 } });
     expect(updated.standardCost?.totalPaise).toBe(8_800);
     expect(updated.preparationDigest).not.toBe(first.preparationDigest);
     const vendorLines = buildBasketBoqLines(updated, [{ sourceLineItemKey: "approved-line",
-      description: "POP false ceiling", quantityMilliUnits: 1_000, scopeType: "execution",
+      description: "POP", quantityMilliUnits: 1_000, scopeType: "execution",
       targetDate: "2026-12-01", deliveryLocation: "Site" }]);
     expect(JSON.stringify(vendorLines)).not.toMatch(/baseRate|projectRate|overridePaise|standardCost/u);
     expect(await baskets.get(buyer, "mode-project-b", "basket-a")).toEqual(otherBefore);
@@ -768,12 +768,12 @@ describe("pinned mode resolution and price references", () => {
     const after = await createProcurementBasketService().get(buyer, "mode-project", "basket-a");
     expect(after).toMatchObject({ automaticSubVendor: true, boqReady: true,
       standardCost: { totalPaise: 8_250, complete: true },
-      lines: [{ approvedQuantity: "1", baseUnitRatePaise: 7_500,
+      lines: [{ mainLineName: "POP", approvedQuantity: "1", baseUnitRatePaise: 7_500,
         mode: { state: "unavailable", decision: null, integrity: { observedDigest } },
         standardCost: { state: "observed_unverified", calculationQuantity: "1",
           baseCostPaise: 7_500, adjustedCostPaise: 8_250 } }] });
     expect(after.preparationDigest).not.toBe(before.preparationDigest);
-    expect(buildBasketBoqLines(after, [{ sourceLineItemKey: "approved-line", description: "POP false ceiling",
+    expect(buildBasketBoqLines(after, [{ sourceLineItemKey: "approved-line", description: "POP",
       quantityMilliUnits: 1_000, scopeType: "execution", targetDate: "2026-12-01",
       deliveryLocation: "Site" }])).toHaveLength(1);
     expect(await ProjectPurchaseOrderModeDecisionModel.countDocuments()).toBe(0);

@@ -12,6 +12,7 @@ import type {
 } from "../../api/types";
 import { renderApp } from "../../test/render";
 import { server } from "../../test/server";
+import { qaEmptyModeGroups } from "../../test/fixtures/enterpriseProcurementData";
 import { procurementKeys } from "./procurementApi";
 import {
   procurementProjectsIntegrityError,
@@ -183,7 +184,7 @@ function installProcurementSession(projects: ProcurementProject[] = [procurement
     http.get("/api/v1/procurement/projects/:projectId/items", () => HttpResponse.json({ data: { items: [], total: 0, limit: 20, offset: 0 } })),
     http.get("/api/v1/procurement/projects/project-one/baskets", () => HttpResponse.json({ data: {
       projectId: "project-one", estimateSource: { estimateId: "estimate-one", estimateVersion: 4, estimateReviewRoundId: null },
-      baskets: []
+      baskets: [], modeGroups: qaEmptyModeGroups()
     } })),
     http.get("/api/v1/procurement/projects/project-one/purchase-order-requests", () => HttpResponse.json({ data: { items: [], total: 0, limit: 50, offset: 0 } })),
     http.get("/api/v1/procurement/projects/project-one/purchase-orders", () => HttpResponse.json({ data: { items: [], total: 0, limit: 50, offset: 0 } })),
@@ -191,6 +192,11 @@ function installProcurementSession(projects: ProcurementProject[] = [procurement
       approvedEstimatePaise: 375_000, committedPaise: 0, committedGstPaise: 0, committedTotalPaise: 0, remainingPaise: 375_000
     } })),
     http.get("/api/v1/procurement/vendors", () => HttpResponse.json({ data: { items: [], total: 0, limit: 20, offset: 0 } })),
+    http.get("/api/v1/daily-critical-tasks", () => HttpResponse.json({ data: {
+      timezone: "Asia/Kolkata", localDate: "2026-10-08", scheduledAt: "2026-10-08T09:00:00.000Z",
+      acknowledgedAt: "2026-10-08T09:00:00.000Z", items: []
+    } })),
+    http.get("/api/v1/chat/availability", () => HttpResponse.json({ data: { available: false, reason: "Synthetic test" } })),
     http.get("/api/v1/workflow-tasks", () => HttpResponse.json({ data: [] })),
     http.get("/api/v1/kpis/users/:userId", () => HttpResponse.json({
       error: { code: "KPI_UNAVAILABLE", message: "KPI unavailable" }
@@ -217,7 +223,7 @@ async function expectNoAxeViolations() {
 }
 
 describe("ProcurementWorkspace", () => {
-  it("lists Design-approved projects as rows that open the project page", async () => {
+  it("lists Design-approved projects as cards that open the project page", async () => {
     installProcurementSession();
     const user = userEvent.setup();
 

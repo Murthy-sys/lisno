@@ -1,5 +1,6 @@
 import mongoose, { type ClientSession } from "mongoose";
 import { projectProcurementBaskets, type ProcurementBasketDetailDto, type ProcurementBasketSummaryDto } from "../domain/procurement-basket-projection.js";
+import { projectProcurementBasketModeGroups, type ProcurementBasketModeGroup } from "../domain/procurement-basket-mode-groups.js";
 import { ApiError } from "../middleware/errors.js";
 import { ProjectPurchaseOrderModel } from "../models/ProjectPurchaseOrder.js";
 import { ProjectPurchaseOrderRevisionModel } from "../models/ProjectPurchaseOrderRevision.js";
@@ -8,7 +9,8 @@ import { assertProcurementProjectAccess } from "./procurement.service.js";
 import { buildProjectPurchaseOrderPreparation } from "./project-purchase-order-preparation.service.js";
 
 export interface ProcurementBasketService {
-  list(actor: PublicUser, projectId: string): Promise<{ projectId: string; estimateSource: ProcurementBasketDetailDto["estimateSource"]; baskets: ProcurementBasketSummaryDto[] }>;
+  list(actor: PublicUser, projectId: string): Promise<{ projectId: string; estimateSource: ProcurementBasketDetailDto["estimateSource"];
+    baskets: ProcurementBasketSummaryDto[]; modeGroups: ProcurementBasketModeGroup[] }>;
   get(actor: PublicUser, projectId: string, basketId: string): Promise<ProcurementBasketDetailDto>;
 }
 
@@ -18,8 +20,9 @@ export function createProcurementBasketService(): ProcurementBasketService {
     list(actor, projectId) {
       return transaction(async session => {
         await assertProcurementProjectAccess(actor, projectId, session);
-        const baskets = await preparedBaskets(projectId, session);
-        return { projectId, estimateSource: baskets[0]?.estimateSource ?? (await buildProjectPurchaseOrderPreparation(projectId, session)).estimateSource,
+        const { baskets, preparation, committedBySourceLine } = await preparedBasketRead(projectId, session);
+        return { projectId, estimateSource: preparation.estimateSource,
+          modeGroups: projectProcurementBasketModeGroups(baskets, committedBySourceLine),
           baskets: baskets.map(({ lines: _lines, projectId: _projectId, estimateSource: _estimateSource,
             preparationDigest: _preparationDigest, ...summary }) => summary) };
       });
@@ -36,6 +39,10 @@ export function createProcurementBasketService(): ProcurementBasketService {
 }
 
 export async function preparedBaskets(projectId: string, session: ClientSession): Promise<ProcurementBasketDetailDto[]> {
+  return (await preparedBasketRead(projectId, session)).baskets;
+}
+
+async function preparedBasketRead(projectId: string, session: ClientSession) {
   const preparation = await buildProjectPurchaseOrderPreparation(projectId, session);
   const approved = await ProjectPurchaseOrderModel.find({ projectId, approvedRevisionId: { $ne: null }, cancelledAt: null })
     .select({ approvedRevisionId: 1 }).session(session).lean();
@@ -51,7 +58,7 @@ export async function preparedBaskets(projectId: string, session: ClientSession)
     if (sum > BigInt(Number.MAX_SAFE_INTEGER)) throw new ApiError(409, "PROCUREMENT_BASKET_COMMITMENT_CONFLICT", "Approved commitments exceed the supported range.");
     committedBySourceLine.set(sourceLineItemKey, Number(sum));
   }
-  return projectProcurementBaskets(preparation, committedBySourceLine);
+  return { preparation, committedBySourceLine, baskets: projectProcurementBaskets(preparation, committedBySourceLine) };
 }
 
 const transaction = <T>(operation: (session: ClientSession) => Promise<T>) =>

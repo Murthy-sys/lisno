@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession } from "mongoose";
 
 import { approvedEstimateLineItemKey } from "../domain/estimate-line-item.js";
+import { readApprovedEstimateSelection, type ApprovedEstimateSelection } from "../domain/procurement-basket-mode-groups.js";
 import {
   projectWorkflowSectionLabel
 } from "../domain/project-workflow.js";
@@ -101,6 +102,7 @@ export interface ProcurementProjectDto {
   updatedAt: string;
   projectId: string;
   projectName: string;
+  clientName: string | null;
   estimateId: string;
   estimateVersion: number;
   sections: ProcurementSectionDto[];
@@ -699,7 +701,7 @@ export interface ApprovedProcurementSnapshot {
   mainBasketClassifications: Record<string, "standard" | "special">;
 }
 
-export interface ApprovedProcurementSourceLine {
+export interface ApprovedProcurementSourceLine extends ApprovedEstimateSelection {
   key: string;
   sectionId: string;
   sectionLabel: string;
@@ -1361,6 +1363,7 @@ async function procurementProjectDto(
     updatedAt: validDate(task.updatedAt ?? task.openedAt).toISOString(),
     projectId: String(project._id),
     projectName: String(project.name),
+    clientName: typeof project.clientName === "string" ? project.clientName.trim() || null : null,
     estimateId: snapshot.estimateId,
     estimateVersion: snapshot.estimateVersion,
     sections
@@ -1401,7 +1404,7 @@ async function resolveProcurementProjectFromEstimate(
 ): Promise<ResolvedProcurementProject> {
   const projectId = requiredStoredText(estimate.projectId);
   const project = await ProjectModel.findById(projectId)
-    .select({ _id: 1, name: 1 })
+    .select({ _id: 1, name: 1, clientName: 1 })
     .session(session)
     .lean();
   if (!project) notFound();
@@ -1574,6 +1577,7 @@ function approvedSnapshotLines(
       key,
       sectionId,
       sectionLabel,
+      ...readApprovedEstimateSelection(line.classification, line.pricingMode),
       ...(configured ? {
         source: "configuration" as const,
         ...(line.itemType === undefined ? {} : { itemType: line.itemType as "main_line" | "temporary" }),

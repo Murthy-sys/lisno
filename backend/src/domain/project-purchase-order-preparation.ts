@@ -1,6 +1,7 @@
 import type { ProcurementReferenceStatus } from "./project-procurement.js";
 import type { PurchaseOrderModeResolution, PurchaseOrderModeStandardSuggestion } from "./project-purchase-order-mode.js";
 import type { ProcurementBasketProjectRate } from "./procurement-basket-base-rate.js";
+import type { ProcurementEstimateMode } from "./procurement-basket-mode-groups.js";
 
 export interface PurchaseOrderPreparationBlocker {
   code: string;
@@ -36,6 +37,8 @@ export interface PurchaseOrderPreparationSection {
 
 /** The immutable approved-round order is retained; child purchase items are linked by source key. */
 export interface PurchaseOrderPreparationEstimateLine {
+  /** Read-only approved estimate selection; not the current commercial mode decision. */
+  estimateMode?: ProcurementEstimateMode;
   key: string;
   included: boolean;
   source: "configuration" | "legacy";

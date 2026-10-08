@@ -138,6 +138,7 @@ export const PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS = {
     estimatedPaise: paise, netPaise: { ...paise, nullable: true },
     items: { type: "array", items: ref("ProjectPurchaseOrderPreparationItem") } }),
   ProjectPurchaseOrderPreparationEstimateLine: object({
+    estimateMode: ref("ProcurementEstimateMode"),
     key: id, included: { type: "boolean" }, source: { type: "string", enum: ["configuration", "legacy"] },
     itemType: { type: "string", enum: ["main_line", "temporary"] },
     mainBasketClassification: { type: "string", enum: ["standard", "special"] },
@@ -152,7 +153,7 @@ export const PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS = {
       overridePaise: { ...paise, nullable: true } }),
     standardSuggestion: { ...object({ preview: { ...ref("ProjectPurchaseOrderModeStandardCostPreview"), nullable: true },
       issues: { type: "array", items: ref("ProjectPurchaseOrderModeIssue") } }), nullable: true }
-  }, ["key", "included", "source", "mainBasketClassification", "mainBasketClassificationExplicit", "roomId", "roomName", "mainBasketId", "mainBasketName", "subBasketId", "subBasketName", "mainLineId", "mainLineName", "quantity", "unit", "amountPaise", "itemIds", "mode", "projectRate"]),
+  }, ["key", "included", "source", "estimateMode", "mainBasketClassification", "mainBasketClassificationExplicit", "roomId", "roomName", "mainBasketId", "mainBasketName", "subBasketId", "subBasketName", "mainLineId", "mainLineName", "quantity", "unit", "amountPaise", "itemIds", "mode", "projectRate"]),
   ProjectPurchaseOrderPreparation: object({ projectId: id, estimateSource: source, approvedEstimatePaise: paise,
     committedPaise: paise, committedGstPaise: paise, committedTotalPaise: paise,
     remainingPaise: { type: "integer" },

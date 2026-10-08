@@ -5,6 +5,7 @@ import { hasFrontendPermission } from "../../auth/authorization";
 import { formatPaise } from "../finance/ProjectFinancePanel";
 import { ProcurementBasketBaseRateEditor } from "./ProcurementBasketBaseRateEditor";
 import { ProcurementBasketModeEditor } from "./ProcurementBasketModeEditor";
+import { procurementEstimateModeLabels } from "./ProcurementBasketModeGroups";
 import { listBasketEnquiries, procurementBasketKeys, type ProcurementBasketDetail } from "./procurementBasketApi";
 import "./procurementBasketScope.css";
 
@@ -29,6 +30,7 @@ export function ProcurementBasketScopePanel({ projectId, projectName, basket, fr
   const showRateEditor = canManageBaseRate && enquiries.isSuccess && !rateEditLocked;
   const rateEditorFrozen = frozen || enquiries.isFetching;
   const includedLines = basket.lines.filter((line) => line.included && line.approvedAmountPaise !== null && line.approvedAmountPaise > 0);
+  const mixedEstimateModes = new Set(basket.lines.filter((line) => line.included).map((line) => line.estimateMode?.mode ?? "unrecorded")).size > 1;
   const complete = standard
     ? Boolean(basket.standardCost?.complete && basket.standardCost.totalPaise !== null)
     : basket.workingTotalComplete;
@@ -48,6 +50,8 @@ export function ProcurementBasketScopePanel({ projectId, projectName, basket, fr
         <div><dt>Total amount</dt><dd>{total}</dd></div>
       </dl>
     </header>
+
+    {mixedEstimateModes ? <p className="procurement-basket__estimate-scope"><strong>All approved lines.</strong> This basket contains different estimate modes. Existing enquiry actions apply to the whole basket.</p> : null}
 
     {includedLines.length ? <div className="procurement-basket__scope-table-wrap">
       <table className="procurement-basket__scope-table">
@@ -70,6 +74,11 @@ export function ProcurementBasketScopePanel({ projectId, projectName, basket, fr
           return <tbody key={line.sourceLineItemKey}>
             <tr className="procurement-basket__scope-source-row">
               <th scope="row"><strong>{line.mainLineName}</strong>
+                <small className="procurement-basket__estimate-mode">Estimate mode: {procurementEstimateModeLabels[line.estimateMode?.mode ?? "unrecorded"]}
+                  {line.estimateMode?.approvedClassification ? ` · ${line.estimateMode.approvedClassification === "standard" ? "Standard" : "Special"}` : ""}
+                  {line.estimateMode?.provenance === "legacy_basket" ? " · Historical basket default" : ""}
+                </small>
+                {line.estimateMode?.issues.map((modeIssue) => <small className="procurement-basket__scope-issue" key={modeIssue.code}>{modeIssue.message}</small>)}
                 {issue ? <small className="procurement-basket__scope-issue">{issue}</small> : null}
                 {!automaticSubVendor && line.mode ? <ProcurementBasketModeEditor projectId={projectId} basketId={basket.id} source={basket.estimateSource} line={line} classification={basket.classification} frozen={frozen} compact /> : null}
               </th>

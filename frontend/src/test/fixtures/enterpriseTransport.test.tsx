@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { transferableAbortController } from "node:util";
 import userEvent from "@testing-library/user-event";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -8,10 +9,13 @@ import { AuthProvider } from "../../auth/AuthProvider";
 import { FeedbackProvider } from "../../components/feedback/FeedbackProvider";
 import { server } from "../server";
 import { tokenStorage } from "../../api/client";
-import type { Role } from "../../api/types";
+import type { ProcurementProject, Role } from "../../api/types";
 import { installEnterpriseTransport, type EnterpriseScenario } from "./enterpriseTransport";
+import type { ProcurementBasketDetail, ProcurementBasketList } from "../../features/procurement/procurementBasketApi";
+import { hasValidProcurementModeGroups } from "../../features/procurement/procurementBasketApi";
 import type { EstimateDraft } from "../../features/leads/leadsApi";
 import type { EstimationCataloguePage, EstimationCatalogueRecommendations } from "../../features/leads/estimationCatalogueApi";
+import { procurementProjectsIntegrityError } from "../../features/procurement/procurementPresentation";
 
 let transport: ReturnType<typeof installEnterpriseTransport> | undefined;
 let cleanup: (() => void) | undefined;
@@ -257,6 +261,8 @@ describe("synthetic enterprise route harness", () => {
     expect(updated.preparationDigest).not.toBe(initial.preparationDigest);
     const list = (await (await fetch("/api/v1/procurement/projects/project-one/baskets")).json()).data;
     expect(list.baskets[0].standardCost.totalPaise).toBe(157_000);
+    expect(list.modeGroups[1]).toMatchObject({ mode: "sub_vendor", currentCostPaise: 157_000,
+      baskets: [{ id: "basket-carpentry", currentCostPaise: 157_000 }] });
     const stale = await save({ ...input, idempotencyKey: "rate-stale" });
     expect(stale.status).toBe(409);
     const cleared = await save({ ...input, baseRatePaise: null, expectedVersion: 1,
@@ -420,5 +426,110 @@ describe("synthetic enterprise route harness", () => {
       transport?.restore(); transport = undefined;
       server.listen({ onUnhandledRequest: "error" });
     }
+  });
+});
+
+
+describe("Procurement mode group browser scenario", () => {
+  it("opts in to mixed groups with all category photos while preserving existing Standard fixtures", async () => {
+    transport = installEnterpriseTransport({ route: "/procurement/projects/project-one?qaProcurementGroups=ready", role: "procurement", state: "populated" });
+    const list = (await (await fetch("/api/v1/procurement/projects/project-one/baskets")).json()).data as ProcurementBasketList;
+    expect(hasValidProcurementModeGroups(list)).toBe(true);
+    expect(list.baskets).toHaveLength(19);
+    expect(list.modeGroups!.map((group) => [group.mode, group.basketCount, group.includedLineCount])).toEqual([
+      ["in_house", 6, 6], ["sub_vendor", 6, 7], ["pmc", 8, 8], ["unrecorded", 1, 1]
+    ]);
+    expect(list.modeGroups![0]!.currentCostPaise).toBeNull();
+    expect(list.modeGroups![1]!.currentCostPaise).toBe(124_000);
+    expect(list.modeGroups![2]!.currentCostPaise).toBe(172_000);
+    expect(list.baskets.filter((basket) => basket.name === "POP / Gypsum").map((basket) => basket.id)).toEqual(["basket-mixed", "basket-duplicate"]);
+    const detail = (await (await fetch("/api/v1/procurement/projects/project-one/baskets/basket-mixed")).json()).data as ProcurementBasketDetail;
+    expect(detail.lines.map((line) => [line.estimateMode?.approvedClassification, line.estimateMode?.mode])).toEqual([
+      ["standard", "sub_vendor"], ["special", "sub_vendor"], ["special", "in_house"], ["special", "pmc"]
+    ]);
+    expect(detail.lines.every((line) => line.mode?.decision?.mode === "pmc")).toBe(true);
+    expect(transport.requests.every((request) => request.method === "GET" && !request.unexpected)).toBe(true);
+    transport.restore();
+    transport = installEnterpriseTransport({ route: "/procurement/projects/project-one?qaStandardBasket=ready", role: "procurement", state: "populated" });
+    const standard = (await (await fetch("/api/v1/procurement/projects/project-one/baskets")).json()).data as ProcurementBasketList;
+    expect(standard.baskets).toHaveLength(1);
+    expect(standard.baskets[0]?.id).toBe("basket-carpentry");
+    expect(standard.modeGroups![1]!.currentCostPaise).toBe(135_000);
+    expect(hasValidProcurementModeGroups(standard)).toBe(true);
+  });
+
+  it("returns three empty groups only for the empty opted-in scenario", async () => {
+    transport = installEnterpriseTransport({ route: "/procurement/projects/project-one?qaProcurementGroups=ready", role: "procurement", state: "empty" });
+    const list = (await (await fetch("/api/v1/procurement/projects/project-one/baskets")).json()).data as ProcurementBasketList;
+    expect(list.baskets).toEqual([]);
+    expect(hasValidProcurementModeGroups(list)).toBe(true);
+    expect(list.modeGroups!.map((group) => [group.basketCount, group.currentCostPaise, group.readinessPercent])).toEqual([
+      [0, 0, null], [0, 0, null], [0, 0, null]
+    ]);
+  });
+});
+
+describe("Procurement project gallery browser scenario", () => {
+  it("keeps unequal gallery records opt-in and reconciles them with real posted expense lineage", async () => {
+    transport = installEnterpriseTransport({ route: "/procurement?qaProcurementGallery=ready", role: "procurement", state: "populated" });
+    const projects = (await (await fetch("/api/v1/procurement/projects")).json()).data as ProcurementProject[];
+    expect(projects.map((project) => [project.projectId, project.taskStatus, project.clientName])).toEqual([
+      ["project-one", "in_progress", "Asha Rao"],
+      ["project-gallery-north", "open", "Dev Mehta and Kavya Mehta"],
+      ["project-gallery-cedar", "completed", null]
+    ]);
+    expect(procurementProjectsIntegrityError(projects)).toBeNull();
+    expect(projects.map((project) => project.sections.reduce((sum, section) => sum + section.estimatedAmountPaise, 0)))
+      .toEqual([197_000, 8_500_000, 8_000]);
+    expect(projects.map((project) => project.sections.reduce((sum, section) => sum + section.actualSpendPaise, 0)))
+      .toEqual([125_000, 8_500_000, 12_500]);
+    const list = (await (await fetch("/api/v1/procurement/projects/project-one/baskets")).json()).data as ProcurementBasketList;
+    expect(hasValidProcurementModeGroups(list)).toBe(true);
+    expect(list.baskets).toHaveLength(3);
+    expect(list.baskets.reduce((sum, basket) => sum + basket.approvedEstimatePaise, 0)).toBe(197_000);
+    expect(list.estimateSource).toMatchObject({ estimateId: projects[0]!.estimateId, estimateVersion: projects[0]!.estimateVersion });
+    expect(transport.requests.every((request) => request.method === "GET" && !request.unexpected)).toBe(true);
+
+    transport.restore();
+    transport = installEnterpriseTransport({ route: "/procurement", role: "procurement", state: "populated" });
+    const normal = (await (await fetch("/api/v1/procurement/projects")).json()).data as ProcurementProject[];
+    expect(normal).toHaveLength(1);
+    expect(normal[0]!.sections.reduce((sum, section) => sum + section.estimatedAmountPaise, 0)).toBe(375_000);
+  });
+
+  it.each(["/procurement", "/home"])("renders %s with local filters and navigates by project ID into the full mixed-mode basket", async (path) => {
+    // React Router creates native Requests on navigation; align their signal with Node's runtime.
+    const controller = transferableAbortController();
+    vi.stubGlobal("AbortController", controller.constructor);
+    vi.stubGlobal("AbortSignal", controller.signal.constructor);
+    const { client, router } = mount(`${path}?qaProcurementGallery=ready`, "procurement");
+    const workspace = await screen.findByRole("region", { name: "Procurement" });
+    await within(workspace).findByRole("article", { name: "Aurora Villa" });
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    const before = [...transport!.requests];
+    await userEvent.type(within(workspace).getByRole("searchbox", { name: "Search projects" }), "  AuRoRa  ");
+    await userEvent.selectOptions(within(workspace).getByRole("combobox", { name: "Project status" }), "in_progress");
+    expect(within(workspace).getAllByRole("article")).toHaveLength(1);
+    expect(within(workspace).getByRole("region", { name: "Procurement portfolio summary" })).toHaveTextContent("₹87,050.00");
+    expect(transport!.requests).toEqual(before);
+    await userEvent.click(within(workspace).getByRole("link", { name: "View procurement items for Aurora Villa" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/procurement/projects/project-one"));
+    const card = await screen.findByRole("button", { name: "Open POP / Gypsum in PMC" });
+    await userEvent.click(card);
+    expect(await screen.findByText("PMC ceiling supervision")).toBeVisible();
+    expect(screen.getByText("Standard POP finish")).toBeVisible();
+    expect(screen.getByText("Special cove finish")).toBeVisible();
+    expect(screen.getByText("In-house ceiling trim")).toBeVisible();
+    expect(router.state.location.search).toContain("basket=basket-mixed");
+    expect(transport!.requests.filter((request) => request.unexpected)).toEqual([]);
+    expect(transport!.requests.every((request) => request.method === "GET")).toBe(true);
+  });
+
+  it("offers a separate valid long-currency scenario without changing default screenshots", async () => {
+    transport = installEnterpriseTransport({ route: "/procurement?qaProcurementGallery=large", role: "procurement", state: "populated" });
+    const projects = (await (await fetch("/api/v1/procurement/projects")).json()).data as ProcurementProject[];
+    expect(procurementProjectsIntegrityError(projects)).toBeNull();
+    expect(projects[1]!.sections[0]!.estimatedAmountPaise).toBe(123_456_789_012);
+    expect(projects[1]!.sections[0]!.actualSpendPaise).toBe(123_456_789_012);
   });
 });

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { resolveProcurementEstimateMode } from "../domain/procurement-basket-mode-groups.js";
 import mongoose, { type ClientSession } from "mongoose";
 import { plannedOrderQuantityMatchesUom, storedProcurementSource, type ProcurementReferenceStatus } from "../domain/project-procurement.js";
 import { approvedEstimateAmountPaiseIsActionable } from "../domain/workflow-estimate-items.js";
@@ -263,7 +264,10 @@ export async function buildProjectPurchaseOrderPreparation(projectId: string, se
           currentLabels.mainBasketName !== (line.mainBasketName ?? line.sectionLabel) ||
           currentLabels.subBasketName !== (line.subBasketName ?? null) ||
           currentLabels.mainLineName !== (line.mainLineName ?? line.specification));
-        return { line, ...(labelsChanged ? { currentLabels } : {}),
+        // Preserve the pre-display source shape and key order for pending request digests.
+        const { approvedClassification: _classification, approvedPricingMode: _pricingMode,
+          approvedModeIssues: _displayIssues, ...commercialLine } = line;
+        return { line: commercialLine, ...(labelsChanged ? { currentLabels } : {}),
           mode: eligibleIds.length ? digestMode(modeResolutions.get(line.key) ?? null, new Set(eligibleIds)) : null,
           itemIds: [...itemIds].sort() };
       });
@@ -289,6 +293,8 @@ function preparationEstimateLine(line: ApprovedProcurementSourceLine, itemIds: s
   currentSubBasketName: string | null): PurchaseOrderPreparationEstimateLine {
   return {
     key: line.key, included: line.included, source: line.source === "configuration" ? "configuration" : "legacy",
+    estimateMode: resolveProcurementEstimateMode(line, line.source === "configuration" &&
+      mainBasketClassificationExplicit && mainBasketClassification === "standard"),
     ...(line.itemType ? { itemType: line.itemType } : {}),
     mainBasketClassification, mainBasketClassificationExplicit,
     roomId: line.roomId ?? null, roomName: line.roomName,

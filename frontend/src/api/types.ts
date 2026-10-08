@@ -694,6 +694,7 @@ export interface ProcurementProject {
   updatedAt: string;
   projectId: string;
   projectName: string;
+  clientName?: string | null;
   estimateId: string;
   estimateVersion: number;
   sections: ProcurementEstimateSection[];

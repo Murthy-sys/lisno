@@ -11,7 +11,11 @@ import type { ProcurementBasketService } from "../src/services/procurement-baske
 function setup() {
   const auth = { authenticate: vi.fn(async (role: string) => ({ id: role, name: role,
     email: `${role}@example.test`, role })) } as unknown as AuthService;
-  const basket = { list: vi.fn(async () => ({ projectId: "project-a", estimateSource: {}, baskets: [] })) };
+  const basket = { list: vi.fn(async () => ({ projectId: "project-a", estimateSource: {}, baskets: [], modeGroups: [
+    { mode: "in_house", basketCount: 0, baskets: [], includedLineCount: 0, boqReadyLineCount: 0, readinessPercent: null,
+      approvedEstimatePaise: 0, currentCostPaise: 0, currentCostComplete: true, unpricedLineCount: 0,
+      committedNetPaise: 0, modeIssueCount: 0 }
+  ] })) };
   const enquiry = { history: vi.fn(async () => ({ enquiryId: "enquiry-a", currentBoqRevisionId: "boq-current",
     revisions: [], nextBeforeRevision: null })),
     historyDetail: vi.fn(async () => ({ enquiryId: "enquiry-a", canAward: false,
@@ -46,6 +50,21 @@ function setup() {
 }
 
 describe("basket tender HTTP boundaries", () => {
+  it("returns additive mode groups only through the current private authorized list route", async () => {
+    const { app, basket, enquiry, award, issue } = setup();
+    const path = "/api/v1/procurement/projects/project-a/baskets";
+    await request(app).get(path).expect(401);
+    await request(app).get(path).set("Authorization", "Bearer designer").expect(403);
+    expect(basket.list).not.toHaveBeenCalled();
+    const result = await request(app).get(path).set("Authorization", "Bearer procurement").expect(200);
+    expect(result.headers["cache-control"]).toBe("private, no-store");
+    expect(result.body.data).toMatchObject({ projectId: "project-a", baskets: [],
+      modeGroups: [{ mode: "in_house", currentCostPaise: 0, currentCostComplete: true, readinessPercent: null }] });
+    expect(basket.list).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ role: "procurement" }), "project-a");
+    expect(enquiry.dispatch).not.toHaveBeenCalled();
+    expect(award.decide).not.toHaveBeenCalled();
+    expect(issue.issue).not.toHaveBeenCalled();
+  });
   it("validates and authorizes the sent-revision batch preview and send routes", async () => {
     const { app, enquiry } = setup();
     const base = "/api/v1/procurement/projects/project-a/baskets/basket-a/enquiries/enquiry-a/invitation-batches";

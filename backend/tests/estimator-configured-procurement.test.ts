@@ -76,6 +76,23 @@ describe("configured Procurement approval lineage", () => {
       approvedRounds: [{ ...fixture.approvedRounds[0]!, estimateSnapshot: {
         ...fixture.approvedRounds[0]!.estimateSnapshot, lineItems: [published] } }] });
     expect(projection).toMatchObject({ approvedAmountPaise: 12_125, sourceLineItemKeys: ["estimate-priced-line"] });
+    const source = approvedProcurementSnapshotFromRows({ ...fixture.estimate, lineItems: [current] },
+      [{ ...fixture.approvedRounds[0]!, estimateSnapshot: { ...fixture.approvedRounds[0]!.estimateSnapshot, lineItems: [published] } }]);
+    expect(source.allLineItems[0]).toMatchObject({ approvedClassification: "special", approvedPricingMode: "pmc", amountPaise: 12_125 });
+  });
+
+  it.each([undefined, "main_line", "temporary"])("retains approved display metadata without changing validation for %s lines", itemType => {
+    const fixture = approvedProject({ projectId: "project-metadata", estimateId: "estimate-metadata", basketId: "basket-metadata",
+      basketName: "Painting", lineId: "line-metadata", lineAmountPaise: 12_125 });
+    const snapshot = fixture.approvedRounds[0]!.estimateSnapshot;
+    const approved = { ...snapshot.lineItems[0], ...(itemType ? { itemType } : {}), classification: "invalid", pricingMode: "pmc" };
+    const source = approvedProcurementSnapshotFromRows(fixture.estimate,
+      [{ ...fixture.approvedRounds[0], estimateSnapshot: { ...snapshot, lineItems: [approved] } }]);
+    expect(source.allLineItems[0]).toMatchObject({ approvedPricingMode: "pmc", amountPaise: 12_125,
+      approvedModeIssues: [{ code: "ESTIMATE_CLASSIFICATION_INVALID" }] });
+    expect(source.allLineItems[0]).not.toHaveProperty("approvedClassification");
+    expect(source.lineItems).toHaveLength(1);
+    expect(source.subtotalPaise).toBe(12_125);
   });
 
   it("reconciles direct and grouped temporary approved lines across unequal projects without a synthetic child", () => {
