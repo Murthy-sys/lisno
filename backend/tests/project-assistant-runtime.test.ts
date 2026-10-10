@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { AssistantGeneratedResult, AssistantReadSources } from "../src/contracts/project-chat-assistant.js";
+import { createGeminiAssistantProvider } from "../src/services/project-assistant-gemini.js";
 import { AssistantFailure, assistantEligibleAt } from "../src/domain/project-chat-assistant.js";
 import { createProjectAssistantRuntime, type AssistantRuntimeOptions } from "../src/services/project-assistant-runtime.js";
 import { createChatFixture, chatSend } from "./helpers/project-chat.js";
@@ -21,6 +22,34 @@ async function fixture(overrides: Partial<AssistantRuntimeOptions> = {}) {
   return {...f, runtime, enqueue, saved, options, published};
 }
 describe("assistant timing and durable lifecycle", () => {
+  it.each([false, true])("uses Gemini only after two minutes and suppresses it after a human reply: %s", async humanReplied => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({
+      candidates: [{finishReason: "STOP", content: {role: "model", parts: [{text: JSON.stringify({kind: "no_answer", factIds: [], candidateIds: [], previewId: null, clarificationCodes: [], narrative: [{text: "Hello! How can I help?", factIds: []}]})}]}}],
+      usageMetadata: {promptTokenCount: 10, candidatesTokenCount: 8, thoughtsTokenCount: 2, totalTokenCount: 20}
+    }));
+    const provider = createGeminiAssistantProvider({apiKey: "synthetic-gemini-key", model: "gemini-3.8-flash", fetch: transport});
+    const f = await fixture({provider}), {run, message} = await f.enqueue("Hello");
+    f.advance(119_999);
+    expect(await f.runtime.runOnce()).toBe(false);
+    expect(transport).not.toHaveBeenCalled();
+    if (humanReplied) {
+      const reply = await f.service.send(f.actor("manager-a"), "a", chatSend("Hello, how can I help?", {replyToId: message.id}));
+      await f.chatRepository.mutate(tx => f.runtime.cancelAfterHumanReply(tx, reply));
+    }
+    f.advance(1);
+    await f.runtime.runOnce();
+    if (humanReplied) {
+      expect(transport).not.toHaveBeenCalled();
+      expect(f.published).toEqual([]);
+      expect(await f.saved(run.id)).toMatchObject({status: "suppressed"});
+    } else {
+      expect(transport).toHaveBeenCalledTimes(1);
+      expect(transport.mock.calls[0][0]).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent");
+      expect(f.published).toEqual([run.id]);
+      expect(await f.saved(run.id)).toMatchObject({status: "no_answer", providerAttempts: 1});
+      expect(await f.chatRepository.snapshot(tx => tx.assistant.counter(`tokens:${f.clock().toISOString().slice(0,10)}`))).toMatchObject({value: 20});
+    }
+  });
   it("always grants automatic messages a full two minutes regardless of owners or staff hours", () => {
     for (const now of ["2026-10-09T13:00:00Z", "2026-10-09T14:29:30Z", "2026-10-09T14:30:00Z", "2026-10-09T23:00:00Z"]) {
       for (const hasOwner of [false, true]) {

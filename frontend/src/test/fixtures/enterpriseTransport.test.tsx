@@ -355,7 +355,7 @@ describe("synthetic enterprise route harness", () => {
     await waitFor(() => expect(client.isFetching()).toBe(0));
     expect(transport?.requests.filter((r) => r.unexpected)).toEqual([]);
     expect(document.body.textContent).not.toMatch(/Unexpected Application Error|Cannot read properties/);
-    if (state === "denied") expect(transport?.requests.every((r) => ["/auth/me", "/auth/authorization", "/daily-critical-tasks", "/chat/availability"].includes(r.path)), JSON.stringify(transport?.requests)).toBe(true);
+    if (state === "denied") expect(transport?.requests.every((r) => ["/auth/me", "/auth/authorization", "/daily-critical-tasks", "/daily-critical-tasks/current", "/chat/availability"].includes(r.path)), JSON.stringify(transport?.requests)).toBe(true);
   });
   it("keeps stored session data untouched and rejects mutations locally", async () => {
     window.localStorage.setItem("lisno.auth.token", "existing-test-session");

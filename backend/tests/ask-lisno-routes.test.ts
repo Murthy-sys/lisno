@@ -44,7 +44,7 @@ describe("Ask Lisno private HTTP boundary", () => {
     expect(f.generate).not.toHaveBeenCalled();
   });
 
-  it.each(["super", "admin-a", "sales-a", "site-a", "electric-a", "vendor-a"])("denies the %s identity without invoking OpenAI", async id => {
+  it.each(["super", "admin-a", "sales-a", "site-a", "electric-a", "vendor-a"])("denies the %s identity without invoking the AI provider", async id => {
     const f = await fixture();
     expect((await request(f.app).post(path).auth(f.token(id), { type: "bearer" }).send(question)).status).toBe(403);
     expect(f.generate).not.toHaveBeenCalled();

@@ -10,7 +10,7 @@ import { acquireAssistantSlot, admitAssistant, admitAssistantProject, reserveAss
 import { clarification, isSocialMessage, resolveProjectName, type ProjectName } from "./ask-lisno-project-resolution.js";
 import { isProjectListRequest, orderedProjectList, PROJECT_LIST_PAGE_SIZE, projectListChanged, projectListPage } from "./ask-lisno-project-list.js";
 import { readAssistantContext, sourceWitness } from "./project-assistant-context.js";
-import type { AssistantProvider } from "./project-assistant-openai.js";
+import type { AssistantProvider } from "./project-assistant-provider.js";
 import { createAssistantReadSources } from "./project-assistant-sources.js";
 
 const projectIdSchema = z.string().trim().min(1).max(200).nullable();

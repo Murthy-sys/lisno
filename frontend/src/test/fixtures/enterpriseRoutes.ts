@@ -429,6 +429,7 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (path === "/admin/dashboard/overview") return empty ? { ...superAdminDashboardOverviewFixture, projects: zeroAggregates(superAdminDashboardOverviewFixture.projects), estimation: zeroAggregates(superAdminDashboardOverviewFixture.estimation), design: zeroAggregates(superAdminDashboardOverviewFixture.design), finance: zeroAggregates(superAdminDashboardOverviewFixture.finance), workforce: zeroAggregates(superAdminDashboardOverviewFixture.workforce), execution: zeroAggregates(superAdminDashboardOverviewFixture.execution), procurement: zeroAggregates(superAdminDashboardOverviewFixture.procurement), governance: zeroAggregates(superAdminDashboardOverviewFixture.governance), risk: zeroAggregates(superAdminDashboardOverviewFixture.risk), trends: [] } : superAdminDashboardOverviewFixture;
   if (/^\/procurement\/vendors\/[^/]+\/login-access$/.test(path)) return { ...vendorLoginAccessFixture, vendorId: decodeURIComponent(path.split("/")[3]!) };
   if (/^\/projects\/[^/]+\/vendor-access$/.test(path)) return vendorOrderAccessPageFixture([]);
+  if (path === "/daily-critical-tasks/current") return { timezone: "Asia/Kolkata", checkedAt: "2026-10-01T11:35:00.000Z", receipt: null, items: [] };
   if (path === "/daily-critical-tasks") return { timezone: "Asia/Kolkata", localDate: "2026-10-01", scheduledAt: "2026-10-01T11:30:00.000Z", acknowledgedAt: "2026-10-01T11:35:00.000Z", items: [] };
   if (path === "/chat/availability") return { available: false, reason: "Synthetic QA" };
   if (path === "/execution/projects") {
@@ -647,6 +648,7 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (/^\/client\/estimate-plan-pages\/page-estimate-1\/(thumbnail|current-image)$/.test(path)) return drawing.syntheticDrawingResponse();
   if (path === "/design-versions/qa-approved-document/download" || path === "/client/estimates/estimate-1/pdf" || /^\/projects\/[^/]+\/design-workflow\/history\/qa-internal-document\/proof$/.test(path)) return drawing.syntheticDocumentResponse();
   const prefix = "/admin/ai-estimator-knowledge";
+  if (path === `${prefix}/basket-requests`) return page([]);
   const temporaryKnowledge = new URLSearchParams(scenario.route.split("?")[1]).get("qaTemporary") === "ready";
   const renameKnowledge = new URLSearchParams(scenario.route.split("?")[1]).get("qaRename") === "ready";
   const baseKnowledgeItem = temporaryKnowledge ? { ...knowledge.item, itemType: "temporary" as const, completionRequired: true } : knowledge.item;

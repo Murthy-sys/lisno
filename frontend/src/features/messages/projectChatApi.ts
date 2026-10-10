@@ -1,7 +1,7 @@
 import type { ChatAssistantResult, ChatAssistantMessageState, ChatAssistantRequestInput } from "./projectChatAssistantTypes";
 import { apiClient, ApiError } from "../../api/client";
 import type { ChatActionType, ChatActionTypes, ChatAttachmentPolicy, ChatStagedAttachment, ChatConversationPage, ChatIssueInput, ChatMessage, ChatMessagePage, ChatMessageQuery, ChatParticipantInput, ChatParticipantOptions, ChatParticipantPage, ChatParticipantRevokeInput, ChatReadInput, ChatReadResult, ChatSendInput, ChatSummary, ChatTypingInput, ChatTypingResult } from "./projectChatTypes";
-import type { ChatAvailability, DailyCriticalTasks } from "../../../../shared/chat/dailyCriticalTasks";
+import type { ChatAvailability, CurrentCriticalTaskReview, DailyCriticalAcknowledgment, DailyCriticalTasks } from "../../../../shared/chat/dailyCriticalTasks";
 
 export const chatPath = (projectId: string) => `/projects/${encodeURIComponent(projectId)}/chat`;
 export const chatKeys = {
@@ -34,7 +34,8 @@ export const projectChatApi = {
   requestAssistant: (id: string, messageId: string, input: ChatAssistantRequestInput, signal?: AbortSignal) => apiClient.post<ChatAssistantMessageState>(`${chatPath(id)}/messages/${encodeURIComponent(messageId)}/assistant/request`, input, { ...quiet, signal, cache: "no-store" }),
   availability: (signal?: AbortSignal) => apiClient.get<ChatAvailability>("/chat/availability", { ...quiet, signal }),
   dailyCriticalTasks: (signal?: AbortSignal) => apiClient.get<DailyCriticalTasks | null>("/daily-critical-tasks", { ...quiet, signal }),
-  acknowledgeDailyCriticalTasks: (localDate: string, signal?: AbortSignal) => apiClient.put<DailyCriticalTasks>(`/daily-critical-tasks/${encodeURIComponent(localDate)}/acknowledgment`, {}, { ...quiet, signal }),
+  currentCriticalTaskReview: (signal?: AbortSignal) => apiClient.get<CurrentCriticalTaskReview>("/daily-critical-tasks/current", { ...quiet, signal, cache: "no-store" }),
+  acknowledgeDailyCriticalTasks: (localDate: string, signal?: AbortSignal) => apiClient.put<DailyCriticalAcknowledgment>(`/daily-critical-tasks/${encodeURIComponent(localDate)}/acknowledgment`, {}, { ...quiet, signal }),
   actionTypes: (id: string, signal?: AbortSignal) => apiClient.get<ChatActionTypes>(`${chatPath(id)}/action-types`, { ...quiet, signal }),
   createActionType: (id: string, input: { name: string; idempotencyKey: string }, signal?: AbortSignal) => apiClient.post<ChatActionType>(`${chatPath(id)}/action-types`, input, { ...quiet, signal }),
   renameProject: (id: string, input: { name: string; expectedVersion: number; idempotencyKey: string }, signal?: AbortSignal) => apiClient.patch<ChatSummary>(`${chatPath(id)}/project-name`, input, { ...quiet, signal }),

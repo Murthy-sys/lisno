@@ -2,7 +2,7 @@ import { createSmtpVendorWorkMailer } from "./services/smtp-vendor-work-mailer.j
 import { createSendGridVendorWorkMailer } from "./services/sendgrid-vendor-work-mailer.js";
 import { createSmtpExecutionDigestMailer } from "./services/smtp-execution-digest-mailer.js";
 import { createSendGridExecutionDigestMailer } from "./services/sendgrid-execution-digest-mailer.js";
-import { createOpenAiAssistantProvider } from "./services/project-assistant-openai.js";
+import { createGeminiAssistantProvider } from "./services/project-assistant-gemini.js";
 import { createSmtpChatMentionMailer } from "./services/smtp-chat-mention-mailer.js";
 import { createSendGridChatMentionMailer } from "./services/sendgrid-chat-mention-mailer.js";
 import "dotenv/config";
@@ -160,15 +160,17 @@ export async function startServer(
       : "http://localhost:5173/vendor";
     const storage = createLocalStorage(env.UPLOADS_DIR);
     // Provider configuration failure disables only AI generation, never human chat or its alerts.
-    const assistantKey = env.OPENAI_API_KEY?.trim();
-    const assistantModel = env.OPENAI_PROJECT_CHAT_MODEL?.trim() ?? "gpt-6-luna";
-    const assistantEnabled = env.PROJECT_CHAT_AI_ENABLED === "true" && Boolean(assistantKey && assistantKey.length <= 1024 && !/\s/u.test(assistantKey)) && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/u.test(assistantModel);
+    const assistantKey = env.GEMINI_API_KEY?.trim();
+    const assistantModel = env.GEMINI_PROJECT_CHAT_MODEL?.trim() ?? "";
+    const assistantEnabled = env.PROJECT_CHAT_AI_ENABLED === "true" &&
+      Boolean(assistantKey && assistantKey.length <= 1024 && !/\s/u.test(assistantKey)) &&
+      /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/u.test(assistantModel);
     app = appFactory({
       repository: repositoryFactory(),
       chatRepository: createMongoProjectChatRepository(),
       projectChatAssistant: {
         enabled: assistantEnabled,
-        provider: assistantEnabled ? createOpenAiAssistantProvider({apiKey: assistantKey!, model: assistantModel}) : undefined,
+        provider: assistantEnabled ? createGeminiAssistantProvider({apiKey: assistantKey!, model: assistantModel}) : undefined,
         tokensPerDay: env.PROJECT_CHAT_AI_DAILY_TOKEN_LIMIT ?? 1_000_000
       },
       auth: {

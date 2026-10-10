@@ -1,14 +1,40 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode, useState, type ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { webcrypto } from "node:crypto";
 
 import { apiClient, tokenStorage } from "../api/client";
 import type { ClientSignupInput, PublicUser } from "../api/types";
 import { AUTHORIZATION_POLICY_VERSION } from "../api/authorization-contract";
 import { authorizationFor } from "../test/authFixtures";
 import { AuthProvider, useAuth } from "./AuthProvider";
+import {
+  captureLoginReviewSession,
+  consumeLoginReview,
+  establishLoginReviewSession,
+  getLoginReviewState
+} from "./loginReviewSession";
+
+const originalLocks = Object.getOwnPropertyDescriptor(navigator, "locks");
+beforeEach(() => {
+  vi.stubGlobal("crypto", webcrypto);
+  let queue: Promise<unknown> = Promise.resolve();
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: { request: (_name: string, operation: () => unknown) => {
+      const result = queue.then(operation);
+      queue = result.catch(() => undefined);
+      return result;
+    } }
+  });
+});
+afterEach(() => {
+  if (originalLocks) Object.defineProperty(navigator, "locks", originalLocks);
+  else Reflect.deleteProperty(navigator, "locks");
+  vi.unstubAllGlobals();
+});
 
 const userA: PublicUser = {
   id: "user-a",
@@ -72,6 +98,8 @@ function AuthHarness() {
     <>
       <output aria-label="Authentication status">{auth.status}</output>
       <output aria-label="Current user">{auth.user?.name ?? "none"}</output>
+      <output aria-label="Review session">{auth.reviewSession?.id ?? "none"}</output>
+      <output aria-label="Review user">{auth.reviewSession?.userId ?? "none"}</output>
       <output aria-label="Authorization role">
         {auth.authorization?.role ?? "none"}
       </output>
@@ -87,6 +115,12 @@ function AuthHarness() {
       <output aria-label="Session expired">{String(auth.sessionExpired)}</output>
       <output aria-label="Logout outcome">{logoutOutcome}</output>
       <output aria-label="Signup outcome">{signupOutcome}</output>
+      <button
+        type="button"
+        onClick={() => void auth.restore()}
+      >
+        Restore session
+      </button>
       <button
         type="button"
         onClick={() => {
@@ -194,6 +228,18 @@ async function seedAuthenticatedCache(queryClient: QueryClient) {
   };
 }
 
+async function replaceReviewFromOtherTab(user: PublicUser, token: string, consumed = false) {
+  const bytes = await webcrypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  const tokenFingerprint = Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
+  const id = webcrypto.randomUUID();
+  act(() => {
+    tokenStorage.set(token);
+    localStorage.setItem("lisno.auth.login-review.v1", JSON.stringify({ version: 1, id, userId: user.id, tokenFingerprint, consumed }));
+    window.dispatchEvent(new StorageEvent("storage", { key: "lisno.auth.login-review.v1", storageArea: localStorage }));
+  });
+  return { id, userId: user.id };
+}
+
 describe("AuthProvider atomic authorization establishment", () => {
   it("keeps identity hidden until both restore requests succeed", async () => {
     const authorizationGate = deferred();
@@ -219,6 +265,7 @@ describe("AuthProvider atomic authorization establishment", () => {
       "restoring"
     );
     expect(screen.getByLabelText("Current user")).toHaveTextContent("none");
+    expect(screen.getByLabelText("Review session")).toHaveTextContent("none");
     expect(screen.getByLabelText("Authorization role")).toHaveTextContent(
       "none"
     );
@@ -1254,5 +1301,321 @@ describe("AuthProvider cache isolation", () => {
       "design_manager"
     );
     expect(screen.getByLabelText("Session expired")).toHaveTextContent("false");
+  });
+});
+
+describe("AuthProvider login review lifecycle", () => {
+  it("creates a fresh presentation session for repeated explicit login with identical credentials and token", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (requestPath(input) === "/api/v1/auth/login") return Response.json({ data: { token: "token-b", user: userB } });
+      return restoredSessionResponse(input, userB);
+    });
+    renderAuthProvider();
+    await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
+    await waitFor(() => expect(screen.getByLabelText("Current user")).toHaveTextContent("User B"));
+    const first = captureLoginReviewSession()!;
+    expect(first.userId).toBe(userB.id);
+    expect(await consumeLoginReview(first, () => true)).toBe(true);
+    await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
+    await waitFor(() => expect(screen.getByLabelText("Authentication status")).toHaveTextContent(/^authenticated$/));
+    const second = captureLoginReviewSession()!;
+    expect(second.id).not.toBe(first.id);
+    expect(screen.getByLabelText("Review session")).toHaveTextContent(second.id);
+    expect(getLoginReviewState(second)).toBe("pending");
+    expect(getLoginReviewState(first)).toBe("stale");
+  });
+
+  it("retains the consumed session through explicit restoration and provider remount in StrictMode", async () => {
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => restoredSessionResponse(input, userA));
+    const firstMount = renderAuthProvider(undefined, children => <StrictMode>{children}</StrictMode>);
+    await waitFor(() => expect(screen.getByLabelText("Current user")).toHaveTextContent("User A"));
+    const session = captureLoginReviewSession()!;
+    expect(await consumeLoginReview(session, () => true)).toBe(true);
+    await userEvent.click(screen.getByRole("button", { name: "Restore session" }));
+    await waitFor(() => expect(screen.getByLabelText("Review session")).toHaveTextContent(session.id));
+    expect(getLoginReviewState(session)).toBe("consumed");
+    firstMount.unmount();
+    renderAuthProvider(undefined, children => <StrictMode>{children}</StrictMode>);
+    await waitFor(() => expect(screen.getByLabelText("Review session")).toHaveTextContent(session.id));
+    expect(getLoginReviewState(session)).toBe("consumed");
+  });
+
+  it("does not publish a review session until login authorization is accepted", async () => {
+    const gate = deferred();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (requestPath(input) === "/api/v1/auth/login") return Response.json({ data: { token: "token-b", user: userB } });
+      await gate.promise;
+      return restoredSessionResponse(input, userB);
+    });
+    renderAuthProvider();
+    await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
+    expect(screen.getByLabelText("Review session")).toHaveTextContent("none");
+    expect(captureLoginReviewSession()).toBeNull();
+    gate.resolve();
+    await waitFor(() => expect(screen.getByLabelText("Review user")).toHaveTextContent(userB.id));
+    expect(captureLoginReviewSession()?.userId).toBe(userB.id);
+  });
+
+  it("a superseded successful login cannot rotate the accepted newer user's marker", async () => {
+    const gate = deferred();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      if (requestPath(input) === "/api/v1/auth/client-signup") {
+        await gate.promise;
+        return Response.json({ data: { token: "token-c", user: userC } });
+      }
+      if (requestPath(input) === "/api/v1/auth/login") return Response.json({ data: { token: "token-b", user: userB } });
+      return restoredSessionResponse(input, userB);
+    });
+    renderAuthProvider();
+    await userEvent.click(screen.getByRole("button", { name: "Sign up as C" }));
+    await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
+    await waitFor(() => expect(screen.getByLabelText("Review user")).toHaveTextContent(userB.id));
+    const accepted = captureLoginReviewSession()!;
+    await consumeLoginReview(accepted, () => true);
+    gate.resolve();
+    await waitFor(() => expect(screen.getByLabelText("Signup outcome")).toHaveTextContent("rejected"));
+    expect(captureLoginReviewSession()).toEqual(accepted);
+    expect(getLoginReviewState(accepted)).toBe("consumed");
+  });
+
+  it.each(["logout", "expiry", "failed-login"])("clears the owned marker after %s", async reason => {
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      const path = requestPath(input);
+      if (path === "/api/v1/expired" || path === "/api/v1/auth/login") {
+        return Response.json({ error: { code: "TOKEN_EXPIRED", message: "Expired" } }, { status: 401 });
+      }
+      return restoredSessionResponse(input, userA);
+    });
+    renderAuthProvider();
+    await waitFor(() => expect(screen.getByLabelText("Review user")).toHaveTextContent(userA.id));
+    const previous = captureLoginReviewSession()!;
+    await userEvent.click(screen.getByRole("button", { name: reason === "logout" ? "Log out" : reason === "expiry" ? "Expire session" : "Log in as B" }));
+    await waitFor(() => expect(screen.getByLabelText("Authentication status")).toHaveTextContent(/^unauthenticated$/));
+    expect(screen.getByLabelText("Review session")).toHaveTextContent("none");
+    await waitFor(() => expect(captureLoginReviewSession()).toBeNull());
+    expect(getLoginReviewState(previous)).toBe("stale");
+  });
+
+  it("clears a retained marker when startup restoration expires", async () => {
+    tokenStorage.set("expired-token");
+    await establishLoginReviewSession(userA.id, "expired-token", () => true);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ error: { code: "TOKEN_EXPIRED", message: "Expired" } }, { status: 401 }));
+    renderAuthProvider();
+    await waitFor(() => expect(screen.getByLabelText("Authentication status")).toHaveTextContent(/^unauthenticated$/));
+    await waitFor(() => expect(captureLoginReviewSession()).toBeNull());
+  });
+
+  it("revalidates an external same-user same-token login and retains its consumed marker", async () => {
+    tokenStorage.set("token-a");
+    const gate = deferred();
+    let recovering = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      if (recovering) await gate.promise;
+      return restoredSessionResponse(input, userA);
+    });
+    const { queryClient } = renderAuthProvider();
+    await waitFor(() => expect(screen.getByLabelText("Current user")).toHaveTextContent("User A"));
+    const old = captureLoginReviewSession()!;
+    const inFlight = await seedAuthenticatedCache(queryClient);
+    recovering = true;
+    const external = await replaceReviewFromOtherTab(userA, "token-a", true);
+    expect(screen.getByLabelText("Authentication status")).toHaveTextContent(/^restoring$/);
+    expect(screen.getByLabelText("Review session")).toHaveTextContent("none");
+    await waitFor(() => expect(inFlight.wasAborted()).toBe(true));
+    expect(queryClient.getQueryData(["viewer"])).toBeUndefined();
+    gate.resolve();
+    await waitFor(() => expect(screen.getByLabelText("Review session")).toHaveTextContent(external.id));
+    expect(getLoginReviewState(old)).toBe("stale");
+    expect(getLoginReviewState(external)).toBe("consumed");
+    expect(captureLoginReviewSession()).toEqual(external);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(4);
+    await inFlight.pendingQuery;
+  });
+
+  it("revalidates a different account from an external marker and drops prior account caches", async () => {
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => restoredSessionResponse(input, tokenStorage.get() === "token-b" ? userB : userA));
+    const { queryClient } = renderAuthProvider();
+    await waitFor(() => expect(screen.getByLabelText("Review user")).toHaveTextContent(userA.id));
+    queryClient.setQueryData(["viewer"], { owner: userA.id });
+    const external = await replaceReviewFromOtherTab(userB, "token-b");
+    await waitFor(() => expect(screen.getByLabelText("Review session")).toHaveTextContent(external.id));
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("User B");
+    expect(screen.getByLabelText("Authorization role")).toHaveTextContent("design_manager");
+    expect(queryClient.getQueryData(["viewer"])).toBeUndefined();
+    expect(await consumeLoginReview(external, () => true)).toBe(true);
+    expect(await consumeLoginReview(external, () => true)).toBe(false);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(4);
+  });
+
+  it("does not revalidate on consumption, repeated same-marker events or local logout", async () => {
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => restoredSessionResponse(input, userA));
+    renderAuthProvider();
+    await waitFor(() => expect(screen.getByLabelText("Review user")).toHaveTextContent(userA.id));
+    const current = captureLoginReviewSession()!;
+    await act(async () => { await consumeLoginReview(current, () => true); });
+    act(() => { window.dispatchEvent(new StorageEvent("storage", { key: "lisno.auth.login-review.v1", storageArea: localStorage })); });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(screen.getByLabelText("Review session")).toHaveTextContent(current.id);
+    await userEvent.click(screen.getByRole("button", { name: "Log out" }));
+    await waitFor(() => expect(screen.getByLabelText("Authentication status")).toHaveTextContent(/^unauthenticated$/));
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(captureLoginReviewSession()).toBeNull();
+  });
+
+  it("does not restart auth or recreate a marker after external logout", async () => {
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => restoredSessionResponse(input, userA));
+    renderAuthProvider();
+    await waitFor(() => expect(screen.getByLabelText("Review user")).toHaveTextContent(userA.id));
+    const old = captureLoginReviewSession()!;
+    act(() => {
+      tokenStorage.clear();
+      localStorage.removeItem("lisno.auth.login-review.v1");
+      window.dispatchEvent(new StorageEvent("storage", { key: "lisno.auth.login-review.v1", storageArea: localStorage }));
+    });
+    expect(getLoginReviewState(old)).toBe("stale");
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(captureLoginReviewSession()).toBeNull();
+  });
+
+  it("ignores late external revalidation after local logout", async () => {
+    tokenStorage.set("token-a");
+    const gate = deferred();
+    let recovering = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      if (recovering) await gate.promise;
+      return restoredSessionResponse(input, userA);
+    });
+    renderAuthProvider();
+    await waitFor(() => expect(screen.getByLabelText("Review user")).toHaveTextContent(userA.id));
+    recovering = true;
+    await replaceReviewFromOtherTab(userA, "token-a");
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(4));
+    await userEvent.click(screen.getByRole("button", { name: "Log out" }));
+    gate.resolve();
+    await waitFor(() => expect(screen.getByLabelText("Authentication status")).toHaveTextContent(/^unauthenticated$/));
+    expect(screen.getByLabelText("Review session")).toHaveTextContent("none");
+    await waitFor(() => expect(captureLoginReviewSession()).toBeNull());
+  });
+
+  it("supersedes a pending external recovery when another tab accepts a newer login", async () => {
+    tokenStorage.set("token-a");
+    const firstRecovery = deferred();
+    let fetchCount = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      fetchCount += 1;
+      const user = tokenStorage.get() === "token-b" ? userB : userA;
+      if (fetchCount === 3 || fetchCount === 4) await firstRecovery.promise;
+      return restoredSessionResponse(input, user);
+    });
+    renderAuthProvider();
+    await waitFor(() => expect(screen.getByLabelText("Review user")).toHaveTextContent(userA.id));
+    await replaceReviewFromOtherTab(userA, "token-a");
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(4));
+    const latest = await replaceReviewFromOtherTab(userB, "token-b", true);
+    await waitFor(() => expect(screen.getByLabelText("Review session")).toHaveTextContent(latest.id));
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("User B");
+    await act(async () => { firstRecovery.resolve(); });
+    expect(captureLoginReviewSession()).toEqual(latest);
+    expect(getLoginReviewState(latest)).toBe("consumed");
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("User B");
+    expect(globalThis.fetch).toHaveBeenCalledTimes(6);
+  });
+
+  it.each(["success", "failure"])("recovers when a superseding token is written before its marker, after the old read's %s", async outcome => {
+    tokenStorage.set("token-a");
+    const firstRecovery = deferred();
+    let fetchCount = 0;
+    let recoveryResponses = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      fetchCount += 1;
+      const user = tokenStorage.get() === "token-b" ? userB : userA;
+      if (fetchCount === 3 || fetchCount === 4) {
+        await firstRecovery.promise;
+        recoveryResponses += 1;
+        if (outcome === "failure") return Response.json({ error: { code: "UNAVAILABLE", message: "Retry" } }, { status: 503 });
+      }
+      return restoredSessionResponse(input, user);
+    });
+    renderAuthProvider();
+    await waitFor(() => expect(screen.getByLabelText("Review user")).toHaveTextContent(userA.id));
+    const first = await replaceReviewFromOtherTab(userA, "token-a");
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(4));
+    act(() => {
+      tokenStorage.set("token-b");
+      window.dispatchEvent(new StorageEvent("storage", { key: "lisno.auth.token", storageArea: localStorage }));
+    });
+    await act(async () => { firstRecovery.resolve(); });
+    await waitFor(() => expect(recoveryResponses).toBe(2));
+    expect(captureLoginReviewSession()).toEqual(first);
+    expect(screen.getByLabelText("Authentication status")).toHaveTextContent(/^restoring$/);
+    expect(screen.getByLabelText("Review session")).toHaveTextContent("none");
+    const latest = await replaceReviewFromOtherTab(userB, "token-b", true);
+    await waitFor(() => expect(screen.getByLabelText("Review session")).toHaveTextContent(latest.id));
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("User B");
+    expect(getLoginReviewState(latest)).toBe("consumed");
+    expect(globalThis.fetch).toHaveBeenCalledTimes(6);
+  });
+
+  it.each(["token-first", "marker-first"])("finishes settled external recovery when the pending login is abandoned (%s)", async order => {
+    tokenStorage.set("token-a");
+    const firstRecovery = deferred();
+    let fetchCount = 0;
+    let recoveryResponses = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      fetchCount += 1;
+      if (fetchCount === 3 || fetchCount === 4) {
+        await firstRecovery.promise;
+        recoveryResponses += 1;
+      }
+      return restoredSessionResponse(input, userA);
+    });
+    const { queryClient } = renderAuthProvider();
+    await waitFor(() => expect(screen.getByLabelText("Review user")).toHaveTextContent(userA.id));
+    await replaceReviewFromOtherTab(userA, "token-a");
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(4));
+    act(() => {
+      tokenStorage.set("token-b");
+      window.dispatchEvent(new StorageEvent("storage", { key: "lisno.auth.token", storageArea: localStorage }));
+    });
+    await act(async () => { firstRecovery.resolve(); });
+    await waitFor(() => expect(recoveryResponses).toBe(2));
+    expect(screen.getByLabelText("Authentication status")).toHaveTextContent(/^restoring$/);
+    queryClient.setQueryData(["recovery-cache"], { pending: true });
+    act(() => {
+      const keys = order === "token-first" ? ["lisno.auth.token", "lisno.auth.login-review.v1"] : ["lisno.auth.login-review.v1", "lisno.auth.token"];
+      for (const key of keys) {
+        localStorage.removeItem(key);
+        window.dispatchEvent(new StorageEvent("storage", { key, storageArea: localStorage }));
+      }
+    });
+    await waitFor(() => expect(screen.getByLabelText("Authentication status")).toHaveTextContent(/^unauthenticated$/));
+    expect(screen.getByLabelText("Review session")).toHaveTextContent("none");
+    expect(captureLoginReviewSession()).toBeNull();
+    expect(queryClient.getQueryData(["recovery-cache"])).toBeUndefined();
+    expect(globalThis.fetch).toHaveBeenCalledTimes(4);
+  });
+
+  it("does not block an accepted login when presentation storage is unavailable", async () => {
+    const originalSet = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+      if (key === "lisno.auth.login-review.v1") throw new DOMException("Quota exceeded", "QuotaExceededError");
+      originalSet.call(this, key, value);
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      if (requestPath(input) === "/api/v1/auth/login") return Response.json({ data: { token: "token-b", user: userB } });
+      return restoredSessionResponse(input, userB);
+    });
+    renderAuthProvider();
+    await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
+    await waitFor(() => expect(screen.getByLabelText("Review user")).toHaveTextContent(userB.id));
+    const accepted = captureLoginReviewSession()!;
+    expect(await consumeLoginReview(accepted, () => true)).toBe(true);
+    expect(await consumeLoginReview(accepted, () => true)).toBe(false);
+    expect(tokenStorage.get()).toBe("token-b");
   });
 });

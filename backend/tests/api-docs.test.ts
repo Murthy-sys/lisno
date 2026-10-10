@@ -26,6 +26,21 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents the personal current-task review separately from scheduled digest acknowledgments", () => {
+    const schemas = componentSchemas();
+    expect(schemas.CurrentCriticalTaskReview!.required).toEqual(["timezone", "checkedAt", "items", "receipt"]);
+    expect(schemas.CurrentCriticalTaskReview).toHaveProperty("properties.receipt.nullable", true);
+    expect(schemas.CurrentCriticalTaskReview).toHaveProperty("properties.receipt.required", ["localDate", "acknowledgedAt"]);
+    expect(schemas.DailyCriticalAcknowledgment!.required).toEqual(["localDate", "acknowledgedAt"]);
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const current = paths["/daily-critical-tasks/current"]!.get!;
+    expect(current.security).toEqual([{ bearerAuth: [] }]);
+    expect(current["x-lisno-permission"]).toBe("chat.read");
+    expect(current["x-lisno-operation-class"]).toBe("personal");
+    expect(current.responses).toHaveProperty("2XX.content.application/json.schema.properties.data.$ref", "#/components/schemas/CurrentCriticalTaskReview");
+    expect(paths["/daily-critical-tasks/{localDate}/acknowledgment"]!.put!.responses).toHaveProperty("2XX.content.application/json.schema.properties.data.$ref", "#/components/schemas/DailyCriticalAcknowledgment");
+  });
+
   it("keeps Ask Lisno project listing optional and documents bounded continuation on its existing private route", () => {
     const schemas = componentSchemas();
     expect(schemas.AskLisnoRequest!.required).not.toContain("projectListPage");
@@ -1014,7 +1029,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 386 routes without versioning paths twice", () => {
+  it("contains all 387 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -1023,7 +1038,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 19);
-    expect(operationCount).toBe(386);
+    expect(operationCount).toBe(387);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);

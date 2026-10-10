@@ -26,7 +26,7 @@ async function fixture() {
 describe("assistant Mongo transaction and restart invariants", () => {
   it("settles private profile-only reservations once while keeping nonusage receipts project-scoped", async () => {
     const f = await fixture();
-    const provider = {async generate(context: import("../src/services/project-assistant-openai.js").AssistantProviderContext) {
+    const provider = {async generate(context: import("../src/services/project-assistant-provider.js").AssistantProviderContext) {
       const id = await context.reserveAttempt(1000);
       await context.settleAttempt(id, {inputTokens: 70, outputTokens: 10});
       await context.settleAttempt(id, {inputTokens: 70, outputTokens: 10});
@@ -41,7 +41,7 @@ describe("assistant Mongo transaction and restart invariants", () => {
   });
   it("stores profile-only usage without a fake project and shares the token budget with project jobs", async () => {
     const f = await fixture();
-    const provider = {async generate(context: import("../src/services/project-assistant-openai.js").AssistantProviderContext) {await context.reserveAttempt(1000); return generated;}};
+    const provider = {async generate(context: import("../src/services/project-assistant-provider.js").AssistantProviderContext) {await context.reserveAttempt(1000); return generated;}};
     const privateChat = createAskLisnoService({chatRepository: f.chatRepository, enabled: true, clock: f.clock, provider, tokensPerDay: 3500});
     await privateChat.request(f.actor("client-a"), {projectId: null, message: "Help with my account", history: []});
     expect(await ProjectChatAssistantReceiptModel.findOne({kind: "usage"}).lean()).toMatchObject({projectId: null, amount: 3048});

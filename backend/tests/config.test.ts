@@ -8,13 +8,47 @@ describe("environment authentication configuration", () => {
   it("keeps project AI disabled by default with bounded server-only model settings", () => {
     const config = loadEnvironment({JWT_SECRET: "runtime-secret-with-at-least-32-characters", OCR_WORKER_TOKEN});
     expect(config.PROJECT_CHAT_AI_ENABLED).toBe("false");
-    expect(config.OPENAI_API_KEY).toBeUndefined();
-    expect(config.OPENAI_PROJECT_CHAT_MODEL).toBe("gpt-6-luna");
+    expect(config.GEMINI_API_KEY).toBeUndefined();
+    expect(config.GEMINI_PROJECT_CHAT_MODEL).toBe("gemini-3.8-flash");
     expect(config.PROJECT_CHAT_AI_DAILY_TOKEN_LIMIT).toBe(1_000_000);
   });
   it("allows missing provider credentials so optional AI cannot prevent human chat startup", () => {
     const config = loadEnvironment({JWT_SECRET: "runtime-secret-with-at-least-32-characters", OCR_WORKER_TOKEN, PROJECT_CHAT_AI_ENABLED: "true"});
-    expect(config.OPENAI_API_KEY).toBeUndefined();
+    expect(config.GEMINI_API_KEY).toBeUndefined();
+  });
+  it("loads explicit Gemini settings and the shared token limit", () => {
+    const config = loadEnvironment({
+      JWT_SECRET: "runtime-secret-with-at-least-32-characters", OCR_WORKER_TOKEN,
+      PROJECT_CHAT_AI_ENABLED: "true", GEMINI_API_KEY: "synthetic-gemini-key",
+      GEMINI_PROJECT_CHAT_MODEL: "gemini-compatible-override", PROJECT_CHAT_AI_DAILY_TOKEN_LIMIT: "43210"
+    });
+    expect(config).toMatchObject({
+      PROJECT_CHAT_AI_ENABLED: "true", GEMINI_API_KEY: "synthetic-gemini-key",
+      GEMINI_PROJECT_CHAT_MODEL: "gemini-compatible-override", PROJECT_CHAT_AI_DAILY_TOKEN_LIMIT: 43210
+    });
+  });
+  it.each([undefined, "synthetic-gemini-key"])("ignores legacy OpenAI settings with Gemini key %s", key => {
+    const config = loadEnvironment({
+      JWT_SECRET: "runtime-secret-with-at-least-32-characters", OCR_WORKER_TOKEN,
+      PROJECT_CHAT_AI_ENABLED: "true", GEMINI_API_KEY: key,
+      OPENAI_API_KEY: "synthetic-legacy-key", OPENAI_PROJECT_CHAT_MODEL: "legacy-model"
+    });
+    expect(config.GEMINI_API_KEY).toBe(key);
+    expect(config.GEMINI_PROJECT_CHAT_MODEL).toBe("gemini-3.8-flash");
+    expect(config).not.toHaveProperty("OPENAI_API_KEY");
+    expect(config).not.toHaveProperty("OPENAI_PROJECT_CHAT_MODEL");
+    expect(JSON.stringify(config)).not.toContain("synthetic-legacy-key");
+  });
+  it.each([
+    {GEMINI_API_KEY: ""},
+    {GEMINI_API_KEY: "invalid key"},
+    {GEMINI_PROJECT_CHAT_MODEL: ""},
+    {GEMINI_PROJECT_CHAT_MODEL: "models/gemini-3.8-flash"}
+  ])("leaves optional malformed provider settings to safe startup disablement: %j", settings => {
+    expect(() => loadEnvironment({
+      JWT_SECRET: "runtime-secret-with-at-least-32-characters", OCR_WORKER_TOKEN,
+      PROJECT_CHAT_AI_ENABLED: "true", ...settings
+    })).not.toThrow();
   });
   it.each(["0", "-1", "100000001", "1.5", "invalid"])("rejects invalid assistant token limit %s", limit => {
     expect(() => loadEnvironment({JWT_SECRET: "runtime-secret-with-at-least-32-characters", OCR_WORKER_TOKEN, PROJECT_CHAT_AI_DAILY_TOKEN_LIMIT: limit})).toThrow();

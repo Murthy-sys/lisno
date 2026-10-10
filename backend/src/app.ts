@@ -11,7 +11,7 @@ import type { ClientSession } from "mongoose";
 import { createProjectChatAssistantService, type ProjectChatAssistantOptions } from "./services/project-chat-assistant.service.js";
 import { createAskLisnoService } from "./services/ask-lisno.service.js";
 import { createAskLisnoRouter } from "./routes/ask-lisno.js";
-import type { AssistantProvider } from "./services/project-assistant-openai.js";
+import type { AssistantProvider } from "./services/project-assistant-provider.js";
 import { AssistantFailure } from "./domain/project-chat-assistant.js";
 import { createProcurementVendorCertificateService } from "./services/procurement-vendor-certificate.service.js";
 import { createProcurementVendorCertificateRouter } from "./routes/procurement-vendor-certificate.js";

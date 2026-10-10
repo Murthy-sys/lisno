@@ -4,7 +4,7 @@ import type { AssistantGeneratedResult, AssistantReadScope, AssistantReadSources
 import { ASSISTANT_DEFAULTS as defaults, AssistantFailure, assistantEligibleAt, assistantFailureCode, assistantTerminal, assistantQuantityFragment } from "../domain/project-chat-assistant.js";
 import type { ChatStoredMessage, ChatTransaction, ProjectChatRepository } from "../repositories/project-chat.js";
 import type { AssistantRun, AssistantTransactions } from "../repositories/project-assistant.js";
-import type { AssistantProvider } from "./project-assistant-openai.js";
+import type { AssistantProvider } from "./project-assistant-provider.js";
 import { isSocialMessage } from "./ask-lisno-project-resolution.js";
 
 type AssistantTx = ChatTransaction & {assistant: AssistantTransactions};
