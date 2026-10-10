@@ -14,7 +14,7 @@ import type { ChatSources, ChatStoredMessage, ChatTransaction, ProjectChatReposi
 import type { AuditService, AuditWrite } from "./audit.service.js";
 import { projectChatContext } from "./project-chat-context.js";
 import { readAssistantContext } from "./project-assistant-context.js";
-import type { AssistantProvider } from "./project-assistant-openai.js";
+import type { AssistantProvider } from "./project-assistant-provider.js";
 import { assistantMessageState, createProjectAssistantRuntime } from "./project-assistant-runtime.js";
 import { createAssistantReadSources } from "./project-assistant-sources.js";
 import type { Clock } from "./workflow.js";

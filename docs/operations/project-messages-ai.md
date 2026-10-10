@@ -9,9 +9,21 @@ Generation is disabled by default. Configure these server variables through the 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PROJECT_CHAT_AI_ENABLED` | `false` | Enables Project message generation and immediate Ask Lisno requests when a usable provider is configured. |
-| `OPENAI_API_KEY` | Unset | Server-only OpenAI credential. Never expose it through `VITE_` variables, responses or logs. |
-| `OPENAI_PROJECT_CHAT_MODEL` | `gpt-6-luna` | Responses model. Account support and model quality require separate verification. |
+| `GEMINI_API_KEY` | Unset | Server-only Google Gemini credential. Never expose it through `VITE_` variables, responses or logs. |
+| `GEMINI_PROJECT_CHAT_MODEL` | `gemini-3.8-flash` | Gemini model supporting native function calls, structured output and low thinking. Account support and model quality require separate verification. |
 | `PROJECT_CHAT_AI_DAILY_TOKEN_LIMIT` | `1000000` | Deployment-wide input plus output token budget per UTC calendar day. |
+
+Set these on the **backend**: in `backend/.env` for local use and the Render backend service's Environment settings for production. Restart the backend after changing them:
+
+```dotenv
+PROJECT_CHAT_AI_ENABLED=true
+GEMINI_API_KEY=<your Gemini API key>
+GEMINI_PROJECT_CHAT_MODEL=gemini-3.8-flash
+```
+
+Do not place a Gemini key in `OPENAI_API_KEY`: old OpenAI variables are ignored and there is no fallback to that provider. Both chat entry points share the configured Gemini provider. No frontend environment change or database migration is needed.
+
+The pinned default is Google's [Gemini 3.8 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash). The [combination of structured output and tools](https://ai.google.dev/gemini-api/docs/generate-content/structured-output) is documented as Preview. A model override must support that combination and `thinkingLevel: LOW`; other models may reject the request safely. Startup performs no provider/network probe.
 
 A missing or locally malformed credential/model disables generation without preventing human chat startup. Invalid credentials rejected by the provider produce safe failure states. Tagged human alert routing continues independently of model availability. Server startup prepares assistant indexes before accepting traffic, starts recovery with notification delivery, and drains the worker before database disconnection.
 
@@ -33,12 +45,12 @@ A later Important-to-Critical escalation resurfaces the existing alert using its
 
 Operational defaults in `backend/src/domain/project-chat-assistant.ts`:
 
-- Up to 16 Client context messages, 32 KiB serialized provider payload and 2,048 output tokens per attempt.
+- Up to 16 Client context messages, 32 KiB serialized provider payload and 2,048 combined thinking and answer tokens per attempt. Gemini uses low thinking with thought summaries disabled. The hard output limit can yield an incomplete response, which is rejected rather than published.
 - Up to three tool-result rounds, six read-tool invocations and four provider HTTP attempts per generation.
 - Twenty-second HTTP timeout and a durable ninety-second generation deadline across retry/restart, including retry delay. At most two worker attempts.
 - Two active model generations per process, one per project across processes. Recovery scans every five seconds; leases last 180 seconds with thirty-second heartbeats.
 - Admission windows: twenty new generations per Client/hour, sixty per project/hour and five hundred deployment-wide/day. Hour/day windows use UTC.
-- Conservative token reservations use serialized payload bytes plus the output-token cap. Known provider usage settles the reservation. Ambiguous network errors/timeouts keep their reservation, so a retry cannot silently overspend the shared allowance.
+- Conservative token reservations use serialized payload bytes plus the output-token cap. Validated Gemini usage settles input from prompt tokens and output from total minus prompt tokens, including thinking exactly once. Candidate/thought counts are cross-checked; absent, unsafe or inconsistent counters keep the reservation. Ambiguous network errors/timeouts keep their reservation, so a retry cannot silently overspend the shared allowance.
 
 An expired crashed-worker lease may already exceed the ninety-second generation deadline. Such work fails safely; an explicit Client retry can create a fresh admitted generation. Existing durable receipts prevent replay from creating a second answer or reusing a completed request key.
 
@@ -46,7 +58,7 @@ An expired crashed-worker lease may already exceed the ninety-second generation 
 
 The model receives only scoped read-tool projections, bounded Client text and optional attachment-presence flags. Staff messages, restricted result amounts, internal costs, margins and approved contract amounts are excluded from model context. The pricing tool returns an opaque preview reference and missing-input state; customer-facing amount rows remain server-side and require a separate authorized result read. Final model output selects validated source IDs and bounded conversational paragraphs. Fact placeholders are expanded from verified values; source/value and workflow-qualification checks reject known unsupported claims. Monetary values remain server-rendered. These targeted checks do not prove arbitrary prose is factually entailed, so synthetic quality evaluation remains necessary. Optional stored narrative is returned only through authenticated result reads and is omitted when sources are stale. Source-free greetings use neutral shared preview text and omit empty source disclosures in the chat. Older facts-only answers continue to render without migration.
 
-Responses requests use strict tool/final schemas and `store: false`. This setting is not a claim of zero provider retention; deployment owners must review applicable OpenAI account data controls. Do not log prompts, tool payloads, provider response bodies, keys, private links or hidden reasoning. Diagnostic state contains safe failure codes and counters only; raw generation context remains in memory and is discarded when the attempt finishes.
+Gemini requests use the fixed Google `generateContent` endpoint, header-only credentials and redirect refusal. Read tools use JSON Schema function declarations; final answers use `generationConfig.responseMimeType=application/json` and `responseJsonSchema` plus authoritative server validation. These compatible fields are intentional: the local Google endpoint rejected the newer `responseFormat.text.mimeType` field with HTTP 400 despite valid model/key access. Required encrypted thought signatures remain attached to their model parts in bounded temporary history, never in stored chat results. This request mode has no OpenAI `store: false` setting and is not a claim of zero provider retention. Deployment owners must review the applicable [Gemini API terms and data use rules](https://ai.google.dev/gemini-api/terms) for their account. Do not log prompts, tool payloads, provider response bodies, keys, private links or hidden reasoning. Diagnostic state contains safe failure codes and counters only; raw generation context remains in memory and is discarded when the attempt finishes.
 
 Result snapshots and semantic generation/publication/routing/usage receipts follow conversation retention. Do not TTL-delete replay receipts or manually reset usage counters to bypass limits. There is no raw diagnostic context to purge after thirty days.
 
@@ -60,4 +72,4 @@ To pause generation, set `PROJECT_CHAT_AI_ENABLED=false` and restart normally. P
 
 ## Local verification
 
-Run `npm test -- tests/project-assistant-runtime.test.ts tests/project-assistant-openai.test.ts tests/project-assistant-runtime.replica-set.test.ts tests/project-assistant-app.test.ts tests/config.test.ts tests/server.test.ts` from `backend/`, followed by backend typecheck/build and the integrated chat/source/pricing/authorization suites. Replica tests require a Mongo replica set and use only synthetic data. All provider boundaries remain mocked unless a separate live evaluation is authorized.
+Run `npm test -- tests/project-assistant-runtime.test.ts tests/project-assistant-gemini.test.ts tests/project-assistant-runtime.replica-set.test.ts tests/project-assistant-app.test.ts tests/config.test.ts tests/server.test.ts` from `backend/`, followed by backend typecheck/build and the integrated chat/source/pricing/authorization suites. Replica tests require a Mongo replica set and use only synthetic data. All provider boundaries remain mocked unless a separate live evaluation is authorized.

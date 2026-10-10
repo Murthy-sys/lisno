@@ -3,7 +3,8 @@ import type { AssistantGeneratedResult, AssistantReadSources } from "../src/cont
 import { createAskLisnoService } from "../src/services/ask-lisno.service.js";
 import { createProjectAssistantRuntime } from "../src/services/project-assistant-runtime.js";
 import { createChatFixture, chatProject, chatSend } from "./helpers/project-chat.js";
-import type { AssistantProviderContext } from "../src/services/project-assistant-openai.js";
+import type { AssistantProviderContext } from "../src/services/project-assistant-provider.js";
+import { createGeminiAssistantProvider } from "../src/services/project-assistant-gemini.js";
 import type { AskLisnoRequest } from "../src/contracts/ask-lisno.js";
 
 const answer: AssistantGeneratedResult = {kind: "no_answer", facts: [], candidates: [], missingInputs: [], commercial: null, freshness: []};
@@ -18,6 +19,35 @@ function fixture(generate: (context: AssistantProviderContext) => Promise<Assist
   return {...f, chatService: f.service, read, provider, service, ask};
 }
 describe("private Ask Lisno requests", () => {
+  it("uses Gemini immediately for private authorized facts without publishing or notifying", async () => {
+    const f = createChatFixture(), read = sources();
+    const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({
+      candidates: [{finishReason: "STOP", content: {role: "model", parts: [{functionCall: {name: "project_status", args: {}, id: "status-read"}, thoughtSignature: "synthetic-signature"}]}}],
+      usageMetadata: {promptTokenCount: 10, candidatesTokenCount: 8, thoughtsTokenCount: 2, totalTokenCount: 20}
+    })).mockResolvedValueOnce(Response.json({
+      candidates: [{finishReason: "STOP", content: {role: "model", parts: [{text: JSON.stringify({kind: "status", factIds: ["status"], candidateIds: [], previewId: null, clarificationCodes: []})}]}}],
+      usageMetadata: {promptTokenCount: 10, candidatesTokenCount: 8, thoughtsTokenCount: 2, totalTokenCount: 20}
+    }));
+    const provider = createGeminiAssistantProvider({apiKey: "synthetic-gemini-key", model: "gemini-3.8-flash", fetch: transport});
+    const service = createAskLisnoService({chatRepository: f.chatRepository, clock: f.clock, enabled: true, provider, readSources: () => read});
+    const before = f.clock().toISOString();
+    await expect(service.request(f.actor("client-a"), {projectId: "b", message: "Project status?", history: []})).rejects.toMatchObject({status: 404});
+    expect(transport).not.toHaveBeenCalled();
+    const response = await service.request(f.actor("client-a"), {projectId: "a", message: "Project status?", history: []});
+    expect(response).toMatchObject({projectId: "a", answer: {kind: "status", facts: [{value: "Active"}]}});
+    expect(f.clock().toISOString()).toBe(before);
+    expect(transport).toHaveBeenCalledTimes(2);
+    for (const [url, init] of transport.mock.calls) {
+      expect(url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent");
+      expect(init?.headers).toMatchObject({"x-goog-api-key": "synthetic-gemini-key"});
+      expect(init?.redirect).toBe("error");
+      expect(String(init?.body)).not.toContain("client-b");
+    }
+    expect(await f.chatRepository.snapshot(tx => tx.assistant.projectRuns("a"))).toEqual([]);
+    expect(await f.chatRepository.snapshot(tx => tx.messages({projectId: "a", userId: "client-a", filter: "all", limit: 100}))).toEqual([]);
+    for (const user of f.seed.users) expect(await f.chatRepository.snapshot(tx => tx.notificationPage(user.id, ["a", "b"], 100, 0))).toMatchObject({total: 0});
+    expect(await f.chatRepository.snapshot(tx => tx.assistant.counter(`tokens:${before.slice(0,10)}`))).toMatchObject({value: 40});
+  });
   it.each(["Hi!", "Good morning", "Thanks for your help", "Hi, thanks for the update", "Thank you so much for your help!", "Okay, thanks", "I'm upset", "Yes"])("answers a social turn without project discovery, profile reads or a forced picker: %s", async message => {
     const narrative = [{text: message === "Yes" ? "Could you tell me what you'd like to confirm?" : "Hello! How can I help?", factIds: []}];
     const f = fixture(async ctx => {

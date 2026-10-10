@@ -80,7 +80,9 @@ vi.mock("../src/models/EstimateClientReviewRound.js", async (importOriginal) => 
   prepareEstimateClientReviewIndexes
 }));
 
-import { startServer } from "../src/server.js";
+import { startServer, type ServerDependencies } from "../src/server.js";
+import { loadEnvironment } from "../src/config/env.js";
+import * as geminiProvider from "../src/services/project-assistant-gemini.js";
 import { UserModel } from "../src/models/User.js";
 import { UserInvitationModel } from "../src/models/UserInvitation.js";
 import { PasswordResetRequestModel } from "../src/models/PasswordResetRequest.js";
@@ -167,23 +169,101 @@ function fakeServer(onClose?: () => void) {
 
 describe("production server bootstrap", () => {
   it.each([
-    {flag: undefined, key: undefined, model: undefined, enabled: false},
-    {flag: "true", key: undefined, model: "gpt-6-luna", enabled: false},
-    {flag: "true", key: "   ", model: "gpt-6-luna", enabled: false},
-    {flag: "true", key: "synthetic-key", model: "invalid model", enabled: false},
-    {flag: "false", key: "synthetic-key", model: "gpt-6-luna", enabled: false},
-    {flag: "true", key: "synthetic-key", model: "gpt-6-luna", enabled: true}
-  ])("isolates assistant readiness from human-chat startup: $flag / $enabled", async ({flag, key, model, enabled}) => {
+    {name: "default disabled", flag: undefined, key: undefined, model: undefined, enabled: false},
+    {name: "missing key", flag: "true", key: undefined, model: undefined, enabled: false},
+    {name: "empty key", flag: "true", key: "", model: undefined, enabled: false},
+    {name: "blank key", flag: "true", key: "   ", model: undefined, enabled: false},
+    {name: "whitespace within key", flag: "true", key: "synthetic key", model: undefined, enabled: false},
+    {name: "multiline key", flag: "true", key: "synthetic\nkey", model: undefined, enabled: false},
+    {name: "oversized key", flag: "true", key: "k".repeat(1025), model: undefined, enabled: false},
+    {name: "maximum key length", flag: "true", key: "k".repeat(1024), model: undefined, enabled: true},
+    {name: "empty model", flag: "true", key: "synthetic-gemini-key", model: "", enabled: false},
+    {name: "blank model", flag: "true", key: "synthetic-gemini-key", model: "   ", enabled: false},
+    {name: "model with whitespace", flag: "true", key: "synthetic-gemini-key", model: "invalid model", enabled: false},
+    {name: "model path", flag: "true", key: "synthetic-gemini-key", model: "models/gemini-3.8-flash", enabled: false},
+    {name: "model action suffix", flag: "true", key: "synthetic-gemini-key", model: "gemini-3.8-flash:generateContent", enabled: false},
+    {name: "model URL", flag: "true", key: "synthetic-gemini-key", model: "https://example.test/model", enabled: false},
+    {name: "non-alphanumeric model prefix", flag: "true", key: "synthetic-gemini-key", model: "-gemini", enabled: false},
+    {name: "oversized model", flag: "true", key: "synthetic-gemini-key", model: "m".repeat(101), enabled: false},
+    {name: "maximum model length", flag: "true", key: "synthetic-gemini-key", model: "m".repeat(100), enabled: true},
+    {name: "explicitly disabled", flag: "false", key: "synthetic-gemini-key", model: undefined, enabled: false},
+    {name: "default model", flag: "true", key: "synthetic-gemini-key", model: undefined, enabled: true},
+    {name: "model override", flag: "true", key: "synthetic-gemini-key", model: "gemini-compatible_override.1", enabled: true},
+    {name: "trimmed settings", flag: "true", key: "  synthetic-gemini-key  ", model: "  gemini-3.8-flash  ", enabled: true},
+    {name: "legacy key only", flag: "true", key: undefined, model: undefined, legacyKey: "synthetic-legacy-key", enabled: false},
+    {name: "both provider keys", flag: "true", key: "synthetic-gemini-key", model: undefined, legacyKey: "synthetic-legacy-key", enabled: true}
+  ])("isolates Gemini readiness from human-chat startup: $name", async ({flag, key, model, legacyKey, enabled}) => {
     const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No live provider calls in startup tests"));
-    const appFactory = vi.fn(() => ({listen: vi.fn((_port: number, callback: () => void) => {callback(); return fakeServer();})}));
-    const runtime = await startServer({loadEnvironment: () => ({...env, PROJECT_CHAT_AI_ENABLED: flag, OPENAI_API_KEY: key, OPENAI_PROJECT_CHAT_MODEL: model, PROJECT_CHAT_AI_DAILY_TOKEN_LIMIT: 43210}),
+    const providerFactory = vi.spyOn(geminiProvider, "createGeminiAssistantProvider");
+    const writeOutput = vi.fn();
+    const appFactory = vi.fn<NonNullable<ServerDependencies["appFactory"]>>(() => ({
+      listen: vi.fn((_port: number, callback: () => void) => {callback(); return fakeServer();})
+    }));
+    const runtime = await startServer({loadEnvironment: () => loadEnvironment({
+      JWT_SECRET: env.JWT_SECRET, OCR_WORKER_TOKEN: env.OCR_WORKER_TOKEN,
+      PROJECT_CHAT_AI_ENABLED: flag, GEMINI_API_KEY: key, GEMINI_PROJECT_CHAT_MODEL: model,
+      OPENAI_API_KEY: legacyKey, OPENAI_PROJECT_CHAT_MODEL: "legacy-model", PROJECT_CHAT_AI_DAILY_TOKEN_LIMIT: "43210"
+    }),
       connect: async () => undefined, disconnect: async () => undefined, prepareApplicationIndexes: async () => undefined,
-      repositoryFactory: () => ({} as AppRepository), appFactory, writeOutput: () => undefined, registerSignalHandlers: false});
-    const configuration = appFactory.mock.calls[0][0].projectChatAssistant;
-    expect(configuration).toMatchObject({enabled, tokensPerDay: 43210});
-    expect(Boolean(configuration.provider)).toBe(enabled);
-    expect(JSON.stringify(configuration)).not.toContain("synthetic-key");
-    expect(network).not.toHaveBeenCalled(); await runtime.stop();
+      repositoryFactory: () => ({} as AppRepository), appFactory, writeOutput, registerSignalHandlers: false});
+    try {
+      const configuration = appFactory.mock.calls[0]![0]!.projectChatAssistant;
+      expect(configuration).toMatchObject({enabled, tokensPerDay: 43210});
+      expect(Boolean(configuration?.provider)).toBe(enabled);
+      if (enabled) {
+        expect(providerFactory).toHaveBeenCalledExactlyOnceWith({
+          apiKey: key!.trim(), model: model?.trim() ?? "gemini-3.8-flash"
+        });
+        expect(configuration?.provider).toBe(providerFactory.mock.results[0]!.value);
+      } else {
+        expect(providerFactory).not.toHaveBeenCalled();
+      }
+      const exposed = JSON.stringify({dependencies: appFactory.mock.calls[0]![0], output: writeOutput.mock.calls});
+      for (const secret of [key?.trim(), legacyKey].filter((value): value is string => Boolean(value))) {
+        expect(exposed).not.toContain(secret);
+      }
+      expect(exposed).not.toContain("legacy-model");
+      expect(network).not.toHaveBeenCalled();
+    } finally {
+      await runtime.stop();
+    }
+  });
+  it.each(["true", "false"])("starts delivery and drains chat before disconnecting with Gemini flag %s", async flag => {
+    const events: string[] = [];
+    let releaseChat: (() => void) | undefined;
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No live provider calls in startup tests"));
+    const runtime = await startServer({
+      loadEnvironment: () => loadEnvironment({
+        JWT_SECRET: env.JWT_SECRET, OCR_WORKER_TOKEN: env.OCR_WORKER_TOKEN,
+        PROJECT_CHAT_AI_ENABLED: flag, GEMINI_API_KEY: "synthetic-gemini-key"
+      }),
+      connect: async () => undefined,
+      disconnect: async () => {events.push("disconnect");},
+      prepareApplicationIndexes: async () => undefined,
+      repositoryFactory: () => ({} as AppRepository),
+      appFactory: () => ({
+        listen: vi.fn((_port: number, callback: () => void) => {
+          events.push("listen"); callback(); return fakeServer(() => {events.push("http-stop");});
+        }),
+        startNotificationDelivery: () => {events.push("notifications-start");},
+        startExecutionDelivery: () => {events.push("execution-start");},
+        closeExecutionDelivery: async () => {events.push("execution-stop");},
+        closeProjectChat: () => new Promise<void>(resolve => {
+          events.push("chat-stop"); releaseChat = resolve;
+        })
+      }),
+      writeOutput: () => undefined,
+      registerSignalHandlers: false
+    });
+    expect(events).toEqual(["listen", "notifications-start", "execution-start"]);
+    const stopping = runtime.stop();
+    await Promise.resolve();
+    expect(events).toEqual(["listen", "notifications-start", "execution-start", "execution-stop", "chat-stop"]);
+    releaseChat?.();
+    await stopping;
+    await runtime.stop();
+    expect(events).toEqual(["listen", "notifications-start", "execution-start", "execution-stop", "chat-stop", "http-stop", "disconnect"]);
+    expect(network).not.toHaveBeenCalled();
   });
   it.each([undefined, "true", "false"] as const)("passes vendor delivery override %s and starts/stops delivery with the server", async (override) => {
     const events: string[] = [];

@@ -378,6 +378,7 @@ export const HUMAN_JWT_OPERATION_LIST = [
   { key: "GET /notifications/events", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
   { key: "GET /chat/availability", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
   { key: "GET /daily-critical-tasks", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
+  { key: "GET /daily-critical-tasks/current", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
   { key: "PUT /daily-critical-tasks/:localDate/acknowledgment", permission: "chat.read_state", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "personal", superAdminBehavior: "self", availability: "project_chat" },
   { key: "GET /project-messages", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_chat" },
   { key: "GET /projects/:projectId/chat/attachment-policy", permission: "chat.read", scope: { kind: "non_project", namespace: "project_chat" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_chat" },

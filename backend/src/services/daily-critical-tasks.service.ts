@@ -1,4 +1,4 @@
-import type { ChatAvailability, DailyCriticalTaskItem, DailyCriticalTasks } from "../contracts/daily-critical-tasks.js";
+import type { ChatAvailability, CurrentCriticalTaskReview, DailyCriticalTaskItem, DailyCriticalTasks } from "../contracts/daily-critical-tasks.js";
 import type { ChatActor } from "../contracts/project-chat.js";
 import { chatAvailability, indiaDigestDue, indiaDigestScheduledAt, indiaLocalDate } from "../domain/chat-hours.js";
 import { workflowTaskDueAt } from "../domain/project-workflow.js";
@@ -17,6 +17,7 @@ const requireInternal = (role: string) => { if (!internal(role)) throw new ApiEr
 
 export interface DailyCriticalTasksService {
   availability(actor: ChatActor): Promise<ChatAvailability>;
+  current(actor: ChatActor): Promise<CurrentCriticalTaskReview>;
   get(actor: ChatActor): Promise<DailyCriticalTasks | null>;
   acknowledge(actor: ChatActor, localDate: string): Promise<{localDate: string; acknowledgedAt: string}>;
   signal(actor: ChatActor): Promise<string | null>;
@@ -102,6 +103,18 @@ export function createDailyCriticalTasksService(options: {
   const pickReceipt = (receipts: DailyCriticalTaskReceipt[]) => receipts.find(row => !row.acknowledgedAt) ?? receipts.at(-1) ?? null;
   return {
     availability: actor => store.snapshot(async tx => { await authenticatedChatUser(tx, actor, clock); return chatAvailability(actor.role, clock()); }),
+    async current(actor) {
+      requireInternal(actor.role);
+      return store.snapshot(async tx => {
+        const at = clock();
+        const items = await authorizedItems(tx, actor, at);
+        const today = indiaLocalDate(at);
+        const lastDueDate = indiaDigestDue(at) ? today : previousDate(today);
+        const receipt = (await tx.digestReceipts(actor.id, lastDueDate)).at(-1);
+        return {timezone: "Asia/Kolkata", checkedAt: at.toISOString(), items,
+          receipt: receipt ? {localDate: receipt.localDate, acknowledgedAt: receipt.acknowledgedAt} : null};
+      });
+    },
     async get(actor) {
       requireInternal(actor.role);
       return store.mutate(async tx => {
