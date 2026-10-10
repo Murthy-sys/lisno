@@ -1,3 +1,4 @@
+import { vendorLoginAccessFixture, vendorOrderAccessPageFixture } from "../../features/procurement/vendorLoginAccessFixtures";
 import { ROLE_CODES, OPERATIONAL_ROLES, type Role } from "../../api/authorization-contract";
 import type { Lead, ProjectWorkflowTask, UserInvitationItem, ProjectFinanceBucket } from "../../api/types";
 import { superAdminDashboardOverviewFixture, superAdminDashboardProjectsPageFixture, superAdminDashboardWorkforcePageFixture } from "../../features/admin/dashboard/dashboardFixtures";
@@ -18,6 +19,7 @@ import * as knowledge from "./enterpriseKnowledgeData";
 import * as drawing from "./enterpriseDrawingData";
 import type { KnowledgeSectionKey } from "../../features/ai-estimator-knowledge/knowledgeTypes";
 import type { EstimationCatalogueBasket } from "../../features/leads/estimationCatalogueApi";
+import { executionFixture, executionPageFixture } from "../../features/execution/executionTestFixtures";
 
 const lead: Lead = { id: "lead-1", projectId: "project-1", ownerId: "estimator_sales-1", clientName: "Asha Shah", clientEmail: "asha@example.com", clientMobile: "+91 90000 00000", projectName: "Asha home — complete residence and terrace refurbishment", location: "Pune", propertyType: "3BHK", budgetMin: 800000, budgetMax: 1200000, source: "Referral", stage: "estimate_in_progress", nextAction: "Review updated living room measurements", nextActionAt: "2026-09-15T10:00:00.000Z", builder: null, areaSqft: 1400, targetHandoverAt: null, notes: "Synthetic project record for visual review.", latestActivityAt: null, createdAt: "2026-08-23T10:00:00.000Z", updatedAt: "2026-09-10T10:00:00.000Z" };
 const estimate = { id: "estimate-1", leadId: lead.id, projectId: lead.projectId, propertyType: "3BHK", rooms: [{ id: "living-room", label: "Living Room", type: "living", length: 16, width: 12, height: 10 }], scopes: ["FC"], lineItems: responses.pendingDetail.estimateSnapshot.lineItems, subtotal: 1200, gst: 216, total: 1416, status: "draft", approvalRequired: false, updatedAt: lead.updatedAt, lead };
@@ -425,8 +427,23 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
     return { items: filtered.slice(offset, offset + limit), pagination: { limit, offset, total: filtered.length, hasMore: offset + limit < filtered.length } };
   };
   if (path === "/admin/dashboard/overview") return empty ? { ...superAdminDashboardOverviewFixture, projects: zeroAggregates(superAdminDashboardOverviewFixture.projects), estimation: zeroAggregates(superAdminDashboardOverviewFixture.estimation), design: zeroAggregates(superAdminDashboardOverviewFixture.design), finance: zeroAggregates(superAdminDashboardOverviewFixture.finance), workforce: zeroAggregates(superAdminDashboardOverviewFixture.workforce), execution: zeroAggregates(superAdminDashboardOverviewFixture.execution), procurement: zeroAggregates(superAdminDashboardOverviewFixture.procurement), governance: zeroAggregates(superAdminDashboardOverviewFixture.governance), risk: zeroAggregates(superAdminDashboardOverviewFixture.risk), trends: [] } : superAdminDashboardOverviewFixture;
+  if (/^\/procurement\/vendors\/[^/]+\/login-access$/.test(path)) return { ...vendorLoginAccessFixture, vendorId: decodeURIComponent(path.split("/")[3]!) };
+  if (/^\/projects\/[^/]+\/vendor-access$/.test(path)) return vendorOrderAccessPageFixture([]);
   if (path === "/daily-critical-tasks") return { timezone: "Asia/Kolkata", localDate: "2026-10-01", scheduledAt: "2026-10-01T11:30:00.000Z", acknowledgedAt: "2026-10-01T11:35:00.000Z", items: [] };
   if (path === "/chat/availability") return { available: false, reason: "Synthetic QA" };
+  if (path === "/execution/projects") {
+    const execution = executionPageFixture();
+    const projects = list([{ id: executionFixture.projectId, name: executionFixture.projectName, status: "active", counts: execution.counts }])
+      .filter(project => !params.get("q") || project.name.toLowerCase().includes(params.get("q")!.trim().toLowerCase()));
+    const limit = Number(params.get("limit") ?? 50), offset = Number(params.get("offset") ?? 0);
+    return { items: projects.slice(offset, offset + limit), total: projects.length, limit, offset, deliveryHealth: null };
+  }
+  if (path === "/vendor/work/execution" || /^\/projects\/[^/]+\/execution$/.test(path)) {
+    const projectId = path === "/vendor/work/execution" ? executionFixture.projectId : decodeURIComponent(path.split("/")[2]!);
+    const result = executionPageFixture(empty ? [] : [{ ...executionFixture, projectId }]);
+    return { ...result, project: path === "/vendor/work/execution" ? null : { ...result.project!, id: projectId }, projectCounts: path === "/vendor/work/execution" ? null : result.projectCounts, policy: result.policy ? { ...result.policy, projectId } : null,
+      counts: empty ? Object.fromEntries(Object.keys(result.counts).map(key => [key, 0])) : result.counts };
+  }
   if (path === "/admin/purchase-order-requests/pending") return { items: empty ? [] : [qaPendingPurchaseRequest], total: empty ? 0 : 1, limit: 50, offset: 0 };
   if (path === "/admin/purchase-orders/pending") return { items: empty ? [] : [qaPendingIndividualOrder], total: empty ? 0 : 1, limit: 50, offset: 0 };
   if (path === "/admin/project-completion-tasks") return { items: [], total: 0, limit: 100, offset: 0 };

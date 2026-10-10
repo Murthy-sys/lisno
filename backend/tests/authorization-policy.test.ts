@@ -225,7 +225,7 @@ describe("authorization policy", () => {
       if (role === "super_admin") continue;
       const historicalPermissions = ROLE_PERMISSIONS[role].filter(
         (permission) =>
-          !permission.startsWith("chat.") &&
+          permission !== "ask_lisno.request" && !permission.startsWith("chat.") && !permission.startsWith("execution.") && !permission.startsWith("procurement.vendor_access.") &&
           permission !== "projects.status.read" &&
           !permission.startsWith("procurement.items.") && !permission.startsWith("procurement.vendors.") && !permission.startsWith("procurement.vendor_suggestions.") &&
           !VENDOR_DIRECTORY_PERMISSIONS.includes(permission as never) &&
@@ -264,9 +264,25 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(170);
-    expect(new Set(PERMISSION_CODES).size).toBe(170);
+    expect(PERMISSION_CODES).toHaveLength(182);
+    expect(new Set(PERMISSION_CODES).size).toBe(182);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
+  });
+
+  it("grants private Ask Lisno to Clients and denies other non-admin roles", () => {
+    for (const role of ROLE_CODES.filter(role => role !== "super_admin")) {
+      expect(hasPermission(role, "ask_lisno.request"), role).toBe(role === "client");
+    }
+    // The Super Admin permission catalogue is complete; its personal route is denied separately.
+  });
+
+  it("limits vendor login invitation management to Procurement and Super Admin", () => {
+    for (const role of ROLE_CODES) {
+      const allowed = role === "procurement" || role === "super_admin";
+      expect(hasPermission(role, "procurement.vendor_access.read"), role).toBe(allowed);
+      expect(hasPermission(role, "procurement.vendor_access.manage"), role).toBe(allowed);
+    }
+    expect(ROLE_PERMISSIONS.procurement.some(permission => String(permission).startsWith("identity.user_invitation"))).toBe(false);
   });
 
   it("grants self-scoped profile photo management to every role that can read itself", () => {
@@ -391,7 +407,7 @@ describe("authorization policy", () => {
   it("gives all worker trades identical identity and workflow-task permissions", () => {
     for (const role of WORKER_ROLES) {
       expect(ROLE_PERMISSIONS[role]).toEqual([
-        "projects.status.read", "chat.read", "chat.send", "chat.issue", "chat.read_state",
+        "projects.status.read", "chat.read", "chat.assistant.read", "chat.send", "chat.issue", "chat.read_state",
         "identity.self.read",
         "identity.self.profile_photo.manage",
         // Workers share the Designer KPI over their own record.
@@ -406,6 +422,7 @@ describe("authorization policy", () => {
 
   it("grants purchase-order, vendor, Client, progress and completion actions to their exact roles", () => {
     const expectedByRole: Partial<Record<Role, readonly string[]>> = {
+      program_manager: ["procurement.vendor_work.media.read"],
       procurement: ["procurement.purchase_orders.read", "procurement.purchase_orders.manage", "procurement.progress.read", "procurement.vendor_work.media.read"],
       site_manager: ["procurement.progress.read", "procurement.site_completion.manage", "procurement.vendor_work.media.read"],
       vendor: ["procurement.vendor_work.read", "procurement.vendor_work.update", "procurement.vendor_work.media.read", "procurement.vendor_work.media.upload"],

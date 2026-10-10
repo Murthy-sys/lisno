@@ -82,7 +82,8 @@ export function parseChatCursor(projectId: string, cursor: string): number {
         return chatInvalid("The conversation cursor is invalid.");
     }
 }
-export function issueCapabilities(actor: ChatActor, message: Pick<ChatMessage, "priority" | "issueStatus" | "raisedBy" | "responsible" | "action">): ChatMessage["capabilities"] {
+export function issueCapabilities(actor: ChatActor, message: Pick<ChatMessage, "priority" | "issueStatus" | "raisedBy" | "responsible" | "action"> & {author?: ChatMessage["author"]}): ChatMessage["capabilities"] {
+    if (message.author?.kind === "service") return {canRaise: false, canResolve: false, canReopen: false, canAssign: false, canAssignSelf: false, canReschedule: false};
     const manager = chatManager(actor);
     const owns = manager || message.raisedBy?.id === actor.id || message.responsible?.id === actor.id;
     return {
@@ -95,6 +96,7 @@ export function issueCapabilities(actor: ChatActor, message: Pick<ChatMessage, "
     };
 }
 export function transitionChatIssue(actor: ChatActor, message: ChatMessage, input: ChatIssueInput, responsible: ChatPerson | null, raiser: ChatPerson): void {
+    if (message.author.kind === "service") chatForbidden();
     const capabilities = issueCapabilities(actor, message);
     const owns = chatManager(actor) || message.raisedBy?.id === actor.id || message.responsible?.id === actor.id;
     if (["resolve", "reopen", "lower", "clear", "reschedule"].includes(input.action) && !input.note?.trim())

@@ -262,7 +262,8 @@ describe("EstimateReviewPanel client disclosures", () => {
     await screen.findByRole("complementary", { name: "Design tools" });
     const launchers = screen.getAllByRole("button", { name: "Ask Lisno" });
     expect(launchers).toHaveLength(1);
-    expect(launchers[0]).toBeDisabled();
+    expect(launchers[0]).toBeEnabled();
+    expect(within(launchers[0]!).getByText("Private AI chat")).toBeVisible();
     expect(launchers[0]!.closest("article")).toBeNull();
   });
 

@@ -1,8 +1,16 @@
+import { ProcurementVendorInvitationIntentModel } from "../src/models/ProcurementVendorInvitationIntent.js";
+import { projectAssistantModels } from "../src/models/ProjectChatAssistant.js";
+import { executionDeliveryModels } from "../src/services/vendor-execution-delivery.service.js";
+import { VendorAccessIntentModel } from "../src/models/VendorAccessIntent.js";
+import { VendorExecutionStateModel } from "../src/models/VendorExecutionState.js";
+import { VendorExecutionEventModel } from "../src/models/VendorExecutionEvent.js";
+import { VendorExecutionReviewModel } from "../src/models/VendorExecutionReview.js";
+import { ExecutionChangeEventModel } from "../src/models/ExecutionChangeEvent.js";
 import { ProcurementVendorCertificateUploadModel, ProcurementVendorCertificateCleanupModel } from "../src/models/ProcurementVendorCertificateUpload.js";
 import { ProcurementVendorSaveCommandModel } from "../src/models/ProcurementVendorSaveCommand.js";
 import { ProcurementVendorCityModel } from "../src/models/ProcurementVendorCity.js";
 import { ProcurementBasketEnquiryModel, ProcurementBasketBoqRevisionModel, ProcurementBasketInvitationModel,
-  ProcurementBasketBidModel, ProcurementBasketCounterofferModel, ProcurementBasketAwardModel,
+  ProcurementBasketWhatsAppAccessModel, ProcurementBasketInvitationBatchModel, ProcurementBasketBidModel, ProcurementBasketCounterofferModel, ProcurementBasketAwardModel,
   ProcurementBasketAwardRevisionModel, ProcurementBasketAwardApprovalModel } from "../src/models/ProcurementBasketTender.js";
 import { ProcurementBasketInvoiceAssessmentModel,
   ProcurementBasketInvoiceAssessmentRevisionModel } from "../src/models/ProcurementBasketInvoiceAssessment.js";
@@ -158,6 +166,44 @@ function fakeServer(onClose?: () => void) {
 }
 
 describe("production server bootstrap", () => {
+  it.each([
+    {flag: undefined, key: undefined, model: undefined, enabled: false},
+    {flag: "true", key: undefined, model: "gpt-6-luna", enabled: false},
+    {flag: "true", key: "   ", model: "gpt-6-luna", enabled: false},
+    {flag: "true", key: "synthetic-key", model: "invalid model", enabled: false},
+    {flag: "false", key: "synthetic-key", model: "gpt-6-luna", enabled: false},
+    {flag: "true", key: "synthetic-key", model: "gpt-6-luna", enabled: true}
+  ])("isolates assistant readiness from human-chat startup: $flag / $enabled", async ({flag, key, model, enabled}) => {
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No live provider calls in startup tests"));
+    const appFactory = vi.fn(() => ({listen: vi.fn((_port: number, callback: () => void) => {callback(); return fakeServer();})}));
+    const runtime = await startServer({loadEnvironment: () => ({...env, PROJECT_CHAT_AI_ENABLED: flag, OPENAI_API_KEY: key, OPENAI_PROJECT_CHAT_MODEL: model, PROJECT_CHAT_AI_DAILY_TOKEN_LIMIT: 43210}),
+      connect: async () => undefined, disconnect: async () => undefined, prepareApplicationIndexes: async () => undefined,
+      repositoryFactory: () => ({} as AppRepository), appFactory, writeOutput: () => undefined, registerSignalHandlers: false});
+    const configuration = appFactory.mock.calls[0][0].projectChatAssistant;
+    expect(configuration).toMatchObject({enabled, tokensPerDay: 43210});
+    expect(Boolean(configuration.provider)).toBe(enabled);
+    expect(JSON.stringify(configuration)).not.toContain("synthetic-key");
+    expect(network).not.toHaveBeenCalled(); await runtime.stop();
+  });
+  it.each([undefined, "true", "false"] as const)("passes vendor delivery override %s and starts/stops delivery with the server", async (override) => {
+    const events: string[] = [];
+    const server = fakeServer(() => { events.push("http-stop"); });
+    const appFactory = vi.fn(() => ({
+      listen: vi.fn((_port: number, callback: () => void) => { events.push("listen"); callback(); return server; }),
+      startExecutionDelivery: () => { events.push("delivery-start"); },
+      closeExecutionDelivery: async () => { events.push("delivery-stop"); }
+    }));
+    const runtime = await startServer({ loadEnvironment: () => ({ ...env, VENDOR_ACCESS_DELIVERY_ENABLED: override }),
+      connect: async () => undefined, disconnect: async () => { events.push("disconnect"); },
+      prepareIdentityIndexes: async () => undefined, repositoryFactory: () => ({} as AppRepository), appFactory,
+      writeOutput: () => undefined, registerSignalHandlers: false });
+    expect(appFactory).toHaveBeenCalledWith(expect.objectContaining({
+      enableVendorAccessDelivery: override === undefined ? undefined : override === "true", enableExecutionReminders: false
+    }));
+    expect(events).toEqual(["listen", "delivery-start"]);
+    await runtime.stop();
+    expect(events).toEqual(["listen", "delivery-start", "delivery-stop", "http-stop", "disconnect"]);
+  });
   it("prepares the connected database before creating the repository, app, or listener", async () => {
     const events: string[] = [];
     const server = fakeServer();
@@ -445,7 +491,10 @@ describe("production server bootstrap", () => {
       events.push("project-procurement-index");
       return ProjectProcurementItemModel as never;
     });
-    const chatModels = [ChatNotificationModel, ProjectChatAttachmentModel, ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel];
+    const executionModels = [VendorAccessIntentModel, ProcurementVendorInvitationIntentModel, VendorExecutionStateModel, VendorExecutionEventModel,
+      VendorExecutionReviewModel, ExecutionChangeEventModel, ...executionDeliveryModels];
+    for (const model of executionModels) vi.spyOn(model, "init").mockImplementation(async () => { events.push(model.modelName + "-index"); return model as never; });
+    const chatModels = [ChatNotificationModel, ProjectChatAttachmentModel, ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel, ...projectAssistantModels];
     for (const model of chatModels) vi.spyOn(model, "init").mockImplementation(async () => { events.push(model.modelName + "-index"); return model as never; });
     const server = fakeServer();
     vi.spyOn(UserModel, "init").mockImplementation(async () => {
@@ -548,7 +597,7 @@ describe("production server bootstrap", () => {
       vi.spyOn(model, "init").mockImplementation(async () => { events.push(model.modelName + "-index"); return model as never; });
     }
     const basketModels = [ProcurementBasketEnquiryModel, ProcurementBasketBoqRevisionModel, ProcurementBasketInvitationModel,
-      ProcurementBasketBidModel, ProcurementBasketCounterofferModel, ProcurementBasketAwardModel,
+      ProcurementBasketWhatsAppAccessModel, ProcurementBasketBidModel, ProcurementBasketCounterofferModel, ProcurementBasketInvitationBatchModel, ProcurementBasketAwardModel,
       ProcurementBasketAwardRevisionModel, ProcurementBasketAwardApprovalModel,
       ProcurementBasketInvoiceAssessmentModel, ProcurementBasketInvoiceAssessmentRevisionModel];
     for (const model of [ProcurementVendorCityModel, ProcurementBasketBaseRateModel, ProcurementBasketBaseRateReceiptModel, ...basketModels]) {
@@ -609,6 +658,7 @@ describe("production server bootstrap", () => {
       ...chatModels.map((model) => model.modelName + "-index"),
       "user-index",
       "invitation-index",
+      ...executionModels.map(model => model.modelName + "-index"),
       "password-reset-index",
       "estimate-client-review-indexes",
       "design-plan-review-index",

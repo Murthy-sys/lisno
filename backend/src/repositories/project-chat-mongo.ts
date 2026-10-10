@@ -1,3 +1,4 @@
+import { createMongoAssistantOperations } from "./project-assistant-mongo.js";
 import { ProjectChatActionTypeModel, ProjectChatExclusionModel } from "../models/ProjectChatAction.js";
 import { ChatNotificationModel } from "../models/ChatNotification.js";
 import { DailyCriticalTaskReceiptModel } from "../models/DailyCriticalTaskReceipt.js";
@@ -60,6 +61,7 @@ function mongoTransaction(app: AppRepository, session: ClientSession): ChatTrans
     const find = async <T>(model: Model<any>, query: Record<string, unknown>): Promise<T[]> => (await model.find(query).session(session).lean()).map((row) => record<T>(row));
     const typingRecord = <T>(row: any): T => row ? record<T>({ ...row, cleanupAt: new Date(row.cleanupAt).toISOString() }) : row;
     return {
+        assistant: createMongoAssistantOperations(session),
         app, session,
         async ensureDigestScheduleStart(localDate, now) {
             const row = await DailyCriticalScheduleStateModel.findOneAndUpdate({_id: "daily-critical-schedule"},
@@ -81,13 +83,23 @@ function mongoTransaction(app: AppRepository, session: ClientSession): ChatTrans
             return row ? {userId, localDate, createdAt: new Date(row.createdAt).toISOString(), acknowledgedAt: row.acknowledgedAt ? new Date(row.acknowledgedAt).toISOString() : null} : null;
         },
         async insertNotification(row) { await ChatNotificationModel.create([document(row)], {session}); },
+        async routeNotification(row, resurface) {
+            const prior = await ChatNotificationModel.findOne({recipientId: row.recipientId, messageId: row.messageId}).session(session).lean();
+            if (!prior) { await ChatNotificationModel.create([document(row)], {session}); return; }
+            if (prior.routing && prior.routing.messageVersion >= row.routing!.messageVersion) return;
+            await ChatNotificationModel.updateOne({_id: prior._id}, {$set: {routing: row.routing, ...(resurface ? {readAt: null, email: row.email} : {})}}, {session, runValidators: true});
+        },
         async notification(id, recipientId) { return record(await ChatNotificationModel.findOne({_id: id, recipientId}).session(session).lean()); },
         async notificationProjectIds(recipientId) { return ChatNotificationModel.distinct("projectId", {recipientId}).session(session).exec(); },
         async notificationPage(recipientId, projectIds, limit, offset) {
             const filter = {recipientId, projectId: {$in: projectIds}};
             const total = await ChatNotificationModel.countDocuments(filter).session(session);
             const unreadCount = await ChatNotificationModel.countDocuments({...filter, readAt: null}).session(session);
-            const items = (await ChatNotificationModel.find(filter).sort({createdAt: -1, _id: -1}).skip(offset).limit(limit).session(session).lean()).map(row => record<NotificationRecord>(row));
+            const rows = await ChatNotificationModel.aggregate([
+              {$match: filter}, {$addFields: {_alertAt: {$ifNull: ["$routing.lastAlertAt", "$createdAt"]}}},
+              {$sort: {_alertAt: -1, _id: -1}}, {$skip: offset}, {$limit: limit}, {$project: {_alertAt: 0}}
+            ]).session(session);
+            const items = rows.map(row => record<NotificationRecord>(row));
             return {items, total, unreadCount};
         },
         async readNotification(id, recipientId, now) { await ChatNotificationModel.updateOne({_id: id, recipientId, readAt: null}, {$set: {readAt: now}}, {session}); },

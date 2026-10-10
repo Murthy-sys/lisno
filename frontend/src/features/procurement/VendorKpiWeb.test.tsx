@@ -1,3 +1,4 @@
+import { vendorLoginAccessFixture } from "./vendorLoginAccessFixtures";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -57,6 +58,7 @@ function publicPage() {
 }
 
 beforeEach(() => {
+  server.use(http.get("/api/v1/procurement/vendors/vendor-one/login-access", () => HttpResponse.json({ data: vendorLoginAccessFixture })));
   role = "procurement"; permissions = undefined;
   window.history.replaceState(null, "", "/");
   captureVendorKpiTokenBeforeRouterMount();
@@ -65,6 +67,25 @@ beforeEach(() => {
 });
 
 describe("staff vendor KPI", () => {
+  it("offers a login invitation in the saved vendor overview before any order", async () => {
+    const commands: unknown[] = [];
+    let loginAccess = vendorLoginAccessFixture;
+    server.use(
+      http.get("/api/v1/procurement/vendors/vendor-one/login-access", () => data(loginAccess)),
+      http.post("/api/v1/procurement/vendors/vendor-one/login-access/send", async ({ request }) => {
+        commands.push(await request.json());
+        loginAccess = { ...loginAccess, delivery: { ...loginAccess.delivery, state: "queued" }, availableActions: [] };
+        return data(loginAccess);
+      })
+    );
+    staff();
+    const panel = await screen.findByRole("region", { name: "Vendor login access" });
+    await userEvent.click(await within(panel).findByRole("button", { name: "Send invitation" }));
+    expect(await within(panel).findByText("Email queued. Delivery status will update after processing.")).toBeVisible();
+    expect(commands).toEqual([{ expectedVendorVersion: 4, invitationId: null, expectedInvitationVersion: null, idempotencyKey: expect.any(String) }]);
+    expect(screen.getByRole("button", { name: "Save Procurement KPI" })).toBeVisible();
+  });
+
   it.each(["procurement", "super_admin"] as const)("shows role-specific vendor detail and saves an official score for %s", async (actor) => {
     role = actor;
     const writes: unknown[] = [];

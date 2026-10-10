@@ -1,3 +1,4 @@
+import { notifyIssuedWorkCommitted } from "./issued-work-delivery.js";
 import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession } from "mongoose";
 import type { ZodType } from "zod";
@@ -88,7 +89,7 @@ export interface ProjectPurchaseOrderRequestService {
   decide(actor: PublicUser, requestId: string, input: PurchaseOrderRequestDecisionInput): Promise<PurchaseOrderRequestDto>;
 }
 
-export function createProjectPurchaseOrderRequestService(input: { audit: AuditService; onApproved: PurchaseOrderApprovalHook; now?: () => Date }): ProjectPurchaseOrderRequestService {
+export function createProjectPurchaseOrderRequestService(input: { audit: AuditService; onApproved: PurchaseOrderApprovalHook; onIssuedCommitted?: () => void | Promise<void>; now?: () => Date }): ProjectPurchaseOrderRequestService {
   if (typeof input.onApproved !== "function") throw new Error("Project purchase-order approval requires transactional vendor work creation.");
   const now = input.now ?? (() => new Date());
 
@@ -278,8 +279,8 @@ export function createProjectPurchaseOrderRequestService(input: { audit: AuditSe
         });
       }
     },
-    decide(actor, requestId, value) {
-      return tx(actor, "super_admin", null, async session => {
+    async decide(actor, requestId, value) {
+      const result = await tx(actor, "super_admin", null, async session => {
         const fields = validate(purchaseOrderRequestDecisionSchema, value);
         const request = await ProjectPurchaseOrderRequestModel.findById(requestId).session(session).lean() as Row | null;
         if (!request) notFound();
@@ -375,7 +376,7 @@ export function createProjectPurchaseOrderRequestService(input: { audit: AuditSe
               createdById: revision.submittedById, updatedById: actor.id, createdAt: timestamp, updatedAt: timestamp });
             await vendorOrder.validate();
             await ProjectPurchaseOrderModel.collection.insertOne(vendorOrder.toObject(), { session });
-            await input.onApproved({ orderId, projectId: String(request.projectId), vendorId: vendor.vendorId, revision: 1,
+            await input.onApproved({ actorId: actor.id, approvedRevisionId: orderRevisionId, occurredAt: timestamp, orderId, projectId: String(request.projectId), vendorId: vendor.vendorId, revision: 1,
               lines: orderLines as ApprovedPurchaseOrderLine[] }, session);
             approvedOrderIds.push(orderId);
           }
@@ -396,6 +397,8 @@ export function createProjectPurchaseOrderRequestService(input: { audit: AuditSe
         const stored = await ProjectPurchaseOrderRequestModel.findById(requestId).session(session).lean() as Row;
         return detail(stored, session);
       });
+      if (result.status === "approved") await notifyIssuedWorkCommitted(input.onIssuedCommitted);
+      return result;
     }
   };
 }

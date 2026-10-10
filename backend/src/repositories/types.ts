@@ -160,6 +160,8 @@ export type PasswordResetDeliveryChange =
     };
 
 export interface UserInvitationRecord {
+  generationReceipt?: import("../domain/user-invitations.js").VendorInvitationGenerationReceipt | null;
+  authority?: import("../domain/user-invitations.js").VendorInvitationAuthority | null;
   id: string;
   name: string;
   email: string;
@@ -228,6 +230,7 @@ export interface SupersedeUserInvitationChange {
 }
 
 export interface ResendUserInvitationChange {
+  generationReceipt?: import("../domain/user-invitations.js").VendorInvitationGenerationReceipt | null;
   tokenHash: string;
   tokenGeneration: number;
   issuedAt: string;
@@ -931,6 +934,8 @@ export interface GrantRevocation {
 }
 
 export interface SeedData {
+  procurementVendorInvitationSources?: import("../domain/user-invitations.js").ProcurementVendorInvitationSource[];
+  vendorWorkInvitationSources?: import("../domain/user-invitations.js").VendorWorkInvitationSource[];
   projectStatusEstimateEvidence?: ProjectStatusEstimateEvidence[];
   designWorkflowStates?: DesignWorkflowState[];
   users: UserRecord[];
@@ -1032,6 +1037,9 @@ export interface AppRepository {
     change: PasswordResetDeliveryChange
   ): Promise<PasswordResetRequestRecord | null>;
   findUserInvitationById(id: string): Promise<UserInvitationRecord | null>;
+  findVendorBoundUsers(vendorId: string): Promise<UserRecord[]>;
+  findProcurementVendorInvitationSource(sourceIntentId: string, lock?: boolean): Promise<import("../domain/user-invitations.js").ProcurementVendorInvitationSource | null>;
+  findVendorWorkInvitationSource(sourceIntentId: string, lock?: boolean): Promise<import("../domain/user-invitations.js").VendorWorkInvitationSource | null>;
   findPendingUserInvitationByEmail(
     emailNormalized: string
   ): Promise<UserInvitationRecord | null>;

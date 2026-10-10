@@ -58,6 +58,11 @@ function navigationAuthorization(role: Role) {
 }
 
 describe("role navigation", () => {
+  it.each(ROLE_CODES)("gates execution navigation by both permission and presentation role for %s", role => {
+    const links = navigationForAuthorization(role, authorizationFor(role, ["execution.tracker.read"])).filter(item => !isNavigationGroup(item));
+    expect(links.some(item => !isNavigationGroup(item) && item.to === "/execution")).toBe(["super_admin", "program_manager", "procurement"].includes(role));
+    expect(navigationForAuthorization(role, authorizationFor(role, [])).some(item => !isNavigationGroup(item) && item.to === "/execution")).toBe(false);
+  });
   it.each(ROLE_CODES)("returns a frozen safe navigation array for %s", (role) => {
     const items = navigationForAuthorization(role, authorizationFor(role));
 

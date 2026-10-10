@@ -10,7 +10,7 @@ export function renderChatMentionEmail(
     throw new Error("Chat notification frontend URL is invalid.");
   }
   const messageUrl = `${frontendUrl.origin}/projects/${encodeURIComponent(input.projectId)}/messages?message=${encodeURIComponent(input.messageId)}`;
-  const mentionDescription = input.kind === "chat.mention"
+  const mentionDescription = input.kind === "chat.assistant.route" ? "has a tagged request for your attention" : input.kind === "chat.mention"
     ? "mentioned you"
     : "mentioned someone";
   const summary = `${input.actorName} ${mentionDescription} in ${input.projectName}.`;

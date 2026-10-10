@@ -7,7 +7,10 @@ const sectionSchema = new Schema({
   roomName: { type: String, required: true, immutable: true },
   itemName: { type: String, required: true, immutable: true },
   scopeType: { type: String, required: true, immutable: true },
-  imageIds: { type: [String], required: true, immutable: true }
+  imageIds: { type: [String], required: true, immutable: true },
+  executionVerificationId: { type: String, default: null, immutable: true },
+  executionRound: { type: Number, default: null, immutable: true },
+  executionSubmissionVersion: { type: Number, default: null, immutable: true }
 }, { _id: false, strict: "throw" });
 
 const decisionSchema = new Schema({

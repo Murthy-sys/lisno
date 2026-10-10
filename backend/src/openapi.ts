@@ -1,3 +1,6 @@
+import { ASK_LISNO_SCHEMAS } from "./openapi/ask-lisno.js";
+import { VENDOR_ACCESS_SCHEMAS, VENDOR_ACCESS_REQUESTS, VENDOR_ACCESS_RESPONSES } from "./openapi/vendor-access.js";
+import { EXECUTION_SCHEMAS, EXECUTION_REQUESTS, EXECUTION_RESPONSES, EXECUTION_QUERIES } from "./openapi/vendor-execution.js";
 import { PROCUREMENT_VENDOR_SCHEMAS, PROCUREMENT_VENDOR_REQUESTS, PROCUREMENT_VENDOR_RESPONSES, PROCUREMENT_VENDOR_QUERIES } from "./openapi/procurement-vendor.js";
 import { VENDOR_KPI_SCHEMAS, VENDOR_KPI_REQUESTS, VENDOR_KPI_RESPONSES } from "./openapi/vendor-kpi.js";
 import { VENDOR_INDUCTION_SCHEMAS, VENDOR_INDUCTION_REQUESTS, VENDOR_INDUCTION_RESPONSES } from "./openapi/vendor-induction.js";
@@ -127,6 +130,7 @@ const genericJsonRequestBody: OpenApiRequestBody = {
 };
 
 const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
+  "POST /client/ask-lisno": jsonRequest("AskLisnoRequest"),
   "POST /estimates/:estimateId/design-plan-documents/prepare": jsonRequest("PlanDocumentPrepare"),
   ...CHAT_REQUEST_BODIES,
   ...PROJECT_PROCUREMENT_REQUESTS,
@@ -136,6 +140,8 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   ...PROCUREMENT_BASKET_OPERATION_REQUESTS,
   ...VENDOR_BASKET_REQUEST_BODIES,
   ...VENDOR_WORK_REQUESTS,
+  ...EXECUTION_REQUESTS,
+  ...VENDOR_ACCESS_REQUESTS,
   ...PROJECT_COMPLETION_REQUESTS,
   ...SITE_COMPLETION_REQUESTS,
   ...VENDOR_SUGGESTION_REQUESTS,
@@ -228,6 +234,7 @@ const operationsWithoutBodies = new Set<string>([
 ]);
 
 const responseSchemaByOperation: Readonly<Record<string, string>> = {
+  "POST /client/ask-lisno": "AskLisnoResponse",
   "GET /estimation/catalogue": "EstimatorCataloguePage",
   "GET /estimation/catalogue/recommendations": "EstimatorCatalogueRecommendationRead",
   "GET /client/estimates": "ClientEstimateReviewList",
@@ -240,6 +247,8 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   ...PROCUREMENT_BASKET_OPERATION_RESPONSES,
   ...VENDOR_BASKET_REQUEST_RESPONSES,
   ...VENDOR_WORK_RESPONSES,
+  ...EXECUTION_RESPONSES,
+  ...VENDOR_ACCESS_RESPONSES,
   ...PROJECT_COMPLETION_RESPONSES,
   ...SITE_COMPLETION_RESPONSES,
   ...VENDOR_SUGGESTION_RESPONSES,
@@ -596,6 +605,7 @@ const queryParametersByOperation: Readonly<
   Record<string, readonly OpenApiParameter[]>
 > = {
   ...CHAT_QUERY_PARAMETERS,
+  ...EXECUTION_QUERIES,
   "GET /estimation/catalogue": [
     { name: "includeReadyNonActive", in: "query", required: false,
       schema: { type: "string", enum: ["true", "false"], default: "false" },
@@ -1253,6 +1263,13 @@ function responsesFor(key: HumanJwtOperationKeyShape): Readonly<Record<string, O
   if (key === "GET /projects/:projectId/chat/attachments/:attachmentId/preview") {
     return binaryResponses("image/webp", "Bounded image preview; private, current-membership-gated.");
   }
+  if (key === "GET /execution/events") {
+    return {
+      "200": { description: "Authenticated scoped execution SSE. Event execution contains only a revision marker; authorized snapshots are fetched separately. Event state signals denied or unavailable. Heartbeats carry no business content. No credentials in the URL.", content: { "text/event-stream": { schema: { type: "string" } } } },
+      ...standardProtectedErrors,
+      "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    };
+  }
   if (key === "GET /notifications/events") {
     return {
       "200": {description: "Recipient-only authenticated SSE. Event notifications carries the authorized first-page NotificationPage snapshot; event daily-critical-tasks carries only an India-local date or null to refresh the authenticated task-list endpoint. Event state reports denied or unavailable. Heartbeat comments carry no content. No credentials in the URL.", content: {"text/event-stream": {schema: {type: "string"}}}},
@@ -1551,6 +1568,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     ...VENDOR_KPI_SCHEMAS,
     ...VENDOR_INDUCTION_SCHEMAS,
     ...CHAT_COMPONENT_SCHEMAS,
+    ...ASK_LISNO_SCHEMAS,
     ...PROJECT_PROCUREMENT_SCHEMAS,
     ...PROJECT_PURCHASE_ORDER_SCHEMAS,
     ...PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS,
@@ -1558,6 +1576,8 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     ...PROCUREMENT_BASKET_OPERATION_SCHEMAS,
     ...VENDOR_BASKET_REQUEST_SCHEMAS,
     ...VENDOR_WORK_SCHEMAS,
+  ...EXECUTION_SCHEMAS,
+  ...VENDOR_ACCESS_SCHEMAS,
     ...PROJECT_COMPLETION_SCHEMAS,
     ...SITE_COMPLETION_SCHEMAS,
     ...VENDOR_SUGGESTION_SCHEMAS,

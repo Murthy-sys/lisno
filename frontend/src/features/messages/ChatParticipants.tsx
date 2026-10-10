@@ -8,9 +8,11 @@ import { chatErrorMessage, chatKeys, isChatDenied, projectChatApi } from "./proj
 import { useProjectChat } from "./ProjectChatProvider";
 import { useChatAction, useChatIdempotency } from "./projectChatQueries";
 import type { ChatParticipant, ChatRemovedParticipant } from "./projectChatTypes";
+import type { ChatAssistantParticipant } from "./projectChatAssistantTypes";
+import { LisnoChatMark } from "./LisnoChatMark";
 
 const sourceLabels = { client: "Linked client", super_admin: "Super Admin", project_assignment: "Project assignment", estimate_assignment: "Estimate assignment", workflow_assignment: "Work assignment", access_grant: "Project access grant", selection: "Selected for this conversation" };
-export function ChatParticipants({ projectId, participants, removed = [], warnings, canManage }: { projectId: string; participants: ChatParticipant[]; removed?: ChatRemovedParticipant[]; warnings: string[]; canManage: boolean }) {
+export function ChatParticipants({ projectId, participants, removed = [], warnings, canManage, assistant }: { projectId: string; participants: ChatParticipant[]; removed?: ChatRemovedParticipant[]; warnings: string[]; canManage: boolean; assistant?: ChatAssistantParticipant }) {
   const [editing, setEditing] = useState<{ mode: "remove" | "restore"; person: ChatParticipant | ChatRemovedParticipant } | "add" | null>(null);
   useEffect(() => { if (!canManage) setEditing(null); }, [canManage]);
   return <section className="project-chat-participants" aria-label="Participants">
@@ -20,6 +22,7 @@ export function ChatParticipants({ projectId, participants, removed = [], warnin
     <ul>{participants.map(person => <li key={person.id}><div><strong>{person.name}</strong><span>{ROLE_LABELS[person.role]}</span>{canManage ? <small>{[...new Set(person.sources.map(source => sourceLabels[source.kind]))].join(" · ")}</small> : null}</div>
       {canManage && person.canRemove ? <Button variant="destructive-outline" size="compact" onClick={() => setEditing({ mode: "remove", person })} aria-label={`Remove participant ${person.name}`}>Remove participant</Button> : canManage && person.removalBlockedReason ? <small>{person.removalBlockedReason}</small> : null}
     </li>)}</ul>
+    {assistant ? <section className="project-chat-assistant-participant" aria-label="Project AI assistant">{assistant.kind === "service" && assistant.id === "lisno-ai" ? <LisnoChatMark /> : null}<strong>{assistant.name}</strong></section> : null}
     {canManage ? <p className="project-chat-muted">Removal blocks conversation access while keeping project assignments and message history unchanged.</p> : null}
     {canManage && removed.length ? <section aria-label="Removed participants"><h3>Removed participants</h3><ul>{removed.map(person => <li key={person.id}><div><strong>{person.name}</strong><span>{ROLE_LABELS[person.role]}</span></div>{person.canRestore ? <Button variant="secondary" size="compact" onClick={() => setEditing({ mode: "restore", person })} aria-label={`Restore participant ${person.name}`}>Restore participant</Button> : <small>Currently unavailable for restoration</small>}</li>)}</ul></section> : null}
     {editing ? <ParticipantDialog projectId={projectId} mode={editing === "add" ? "add" : editing.mode} participant={editing === "add" ? null : editing.mode === "remove" ? participants.find(person => person.id === editing.person.id) ?? null : removed.find(person => person.id === editing.person.id) ?? null} onClose={() => setEditing(null)} /> : null}

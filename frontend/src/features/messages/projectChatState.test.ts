@@ -18,6 +18,14 @@ describe("structured mentions", () => {
   });
 });
 describe("versioned timeline merging", () => {
+  it("uses assistant state versions even when the source message version is unchanged", () => {
+    const assistant = { runId: "run-a", generation: 1, stateVersion: 1, status: "waiting_for_human" as const, eligibleAt: "2026-10-09T08:05:00Z", resultId: null, checkedAt: null, routing: "not_required" as const, notified: null, canRequest: true, failureCode: null };
+    const waiting = chatTestMessage({ assistant });
+    const answered = chatTestMessage({ assistant: { ...assistant, stateVersion: 4, status: "answered", resultId: "result-a" } });
+    const next = chatTestMessage({ assistant: { ...assistant, generation: 2, stateVersion: 1 } });
+    expect(mergeChatMessages([{ items: [waiting] }, { items: [answered, waiting] }])).toEqual([answered]);
+    expect(mergeChatMessages([{ items: [next] }, { items: [answered] }])).toEqual([next]);
+  });
   it("deduplicates replayed IDs, retains newer versions, and orders noncontiguous message sequences", () => {
     const old = chatTestMessage();
     const changed = { ...old, version: 3, priority: "critical" as const };

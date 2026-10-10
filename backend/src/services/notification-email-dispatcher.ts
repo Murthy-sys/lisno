@@ -53,10 +53,16 @@ export function createNotificationEmailDispatcher(options: {
         const sources = await tx.sources(row.projectId);
         if (!sources || !resolveChatMembership(sources, await tx.selections(row.projectId)).participants.some(person => person.id === user.id)) return;
         const actor = await tx.app.findUserById(row.actor.id);
+        if (current.routing) {
+          const message = await tx.message(row.projectId, row.messageId);
+          if (!actor?.active || actor.role !== "client" || sources.project.clientId !== actor.id || !message || message.author.id !== actor.id || message.issueStatus !== "open" || message.version !== current.routing.messageVersion || message.priority !== current.routing.priority) {
+            suppression = "ROUTING_SOURCE_CHANGED"; return;
+          }
+        }
         if (mailer.deliveryKind === "external" && !options.allowDemoAccountExternalEmail && (isReservedDevelopmentDemoIdentity(user) || (actor && isReservedDevelopmentDemoIdentity(actor)))) {
           suppression = "DEMO_EXTERNAL_DELIVERY_BLOCKED"; return;
         }
-        input = {notificationId: row.id, recipient: {name: user.name, email: user.email}, actorName: row.actor.name, projectName: row.projectName, projectId: row.projectId, messageId: row.messageId, excerpt: row.excerpt, kind: row.type};
+        input = {notificationId: current.routing ? `${row.id}:routing:${current.routing.messageVersion}` : row.id, recipient: {name: user.name, email: user.email}, actorName: row.actor.name, projectName: row.projectName, projectId: row.projectId, messageId: row.messageId, excerpt: row.excerpt, kind: current.routing ? "chat.assistant.route" : row.type};
       });
       if (!input) { await finish("suppressed", suppression); continue; }
       let failure: string | null = null;

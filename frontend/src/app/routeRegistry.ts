@@ -56,6 +56,8 @@ export interface RegisteredFrontendRoute {
 }
 
 export const ROUTE_REGISTRY = [
+  { path: "/execution", permission: "execution.tracker.read", presentationRoles: ["super_admin", "site_manager", "program_manager", "procurement"], navigation: { roles: ["super_admin", "program_manager", "procurement"], item: { label: "Execution", to: "/execution", end: true, icon: ClipboardCheck } } },
+  { path: "/projects/:projectId/execution", permission: "execution.tracker.read", presentationRoles: ["super_admin", "site_manager", "program_manager", "procurement"], navigation: null },
   { path: "/project-messages", permission: "chat.read", presentationRoles: ROLE_CODES, navigation: { roles: ROLE_CODES, item: { label: "Project messages", to: "/project-messages", end: true, icon: MessagesSquare } } },
   { path: "/projects/:projectId/messages", permission: "chat.read", presentationRoles: ROLE_CODES, navigation: null },
   { path: "/designer", permission: "projects.list", presentationRoles: ["designer"], navigation: { roles: ["designer"], item: { label: "Workspace", to: "/designer", end: true, icon: LayoutDashboard } } },

@@ -1,3 +1,5 @@
+import { VendorExecutionStateModel } from "../models/VendorExecutionState.js";
+import { currentExecutionVerification } from "./vendor-execution.service.js";
 import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession } from "mongoose";
 import type { ZodType } from "zod";
@@ -297,6 +299,21 @@ async function buildLineage(project: Row, source: Source, session: ClientSession
       JSON.stringify(siteReview.sections.map((section: Row) => String(section.assignmentId)).sort()) !==
         JSON.stringify(work.assignments.map(assignment => assignment.id).sort())) {
       lineageConflict("The accepted Site Manager completion no longer matches current approved work.");
+    }
+  }
+  const trackedStates = await VendorExecutionStateModel.find({ _id: { $in: work.assignments.map(assignment => assignment.id) } }).select({ _id: 1 }).session(session).lean();
+  for (const tracked of trackedStates) {
+    const trackedAssignment = await VendorWorkAssignmentModel.findById(tracked._id).session(session).lean() as Row | null;
+    const verification = trackedAssignment ? await currentExecutionVerification(trackedAssignment, session) : null;
+    if (!verification) {
+      blockers.push({ code: "EXECUTION_VERIFICATION_PENDING", message: "Current vendor Main Lines require individual Site Manager verification." });
+      break;
+    }
+    if (siteReview && ["pending", "approved"].includes(siteReview.status)) {
+      const section = siteReview.sections.find((item: Row) => String(item.assignmentId) === String(tracked._id));
+      if (!section || section.executionVerificationId !== verification.verificationId || section.executionRound !== verification.executionRound || section.executionSubmissionVersion !== verification.submissionVersion) {
+        lineageConflict("Site completion verification no longer matches the submitted execution round.");
+      }
     }
   }
   if (project.status === "active" && siteState?.status !== "client_approved") blockers.push({

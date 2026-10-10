@@ -1,3 +1,7 @@
+import type { ExecutionPolicy } from "../contracts/vendor-execution.js";
+import { VendorExecutionStateModel } from "../models/VendorExecutionState.js";
+import { assertExecutionVerified, currentExecutionVerification, invalidateExecutionVerificationForClientChanges } from "./vendor-execution.service.js";
+import { appendExecutionChange } from "./execution-change-events.js";
 import { createHash } from "node:crypto";
 import mongoose, { type ClientSession } from "mongoose";
 import type { ZodType } from "zod";
@@ -85,20 +89,26 @@ async function snapshot(projectId: string, session: ClientSession): Promise<Site
     .sort({ sourceSectionId: 1, roomName: 1, _id: 1 }).session(session).lean() as Row[];
   const sections: SiteCompletionSection[] = [];
   for (const assignment of assignments) {
-    const images = await VendorWorkImageModel.find({ projectId, assignmentId: assignment._id })
+    await assertExecutionVerified(assignment, session);
+    const verification = await currentExecutionVerification(assignment, session);
+    const images = await VendorWorkImageModel.find({ projectId, assignmentId: assignment._id, ...(verification ? { _id: { $in: verification.imageIds } } : {}) })
       .select({ _id: 1 }).sort({ uploadedAt: 1, _id: 1 }).session(session).lean();
     sections.push({ assignmentId: String(assignment._id), sourceSectionId: String(assignment.sourceSectionId),
       sectionLabel: projectWorkflowSectionLabel(String(assignment.sourceSectionId)), roomName: String(assignment.roomName),
       itemName: String(assignment.itemName),
       scopeType: assignment.scopeType == null ? "Not specified" : String(assignment.scopeType),
-      imageIds: images.map(image => String(image._id)) });
+      imageIds: images.map(image => String(image._id)),
+      ...(verification ? { executionVerificationId: verification.verificationId, executionRound: verification.executionRound, executionSubmissionVersion: verification.submissionVersion } : {}) });
   }
   return sections;
 }
 
 async function currentAssignments(projectId: string, session: ClientSession): Promise<Row[]> {
-  return VendorWorkAssignmentModel.find({ projectId, status: { $ne: "superseded" } })
-    .select({ _id: 1, createdAt: 1 }).sort({ _id: 1 }).session(session).lean() as Promise<Row[]>;
+  const rows = await VendorWorkAssignmentModel.find({ projectId, status: { $ne: "superseded" } })
+    .select({ _id: 1, createdAt: 1, status: 1, projectId: 1, vendorId: 1 }).sort({ _id: 1 }).session(session).lean() as Row[];
+  const tracked = await VendorExecutionStateModel.find({ projectId }).select({ _id: 1 }).session(session).lean();
+  const ids = new Set(tracked.map(row => String(row._id)));
+  return rows.map(row => ({ ...row, executionTracked: ids.has(String(row._id)) }));
 }
 
 async function response(project: Row, session: ClientSession): Promise<SiteCompletionDto> {
@@ -122,6 +132,13 @@ async function response(project: Row, session: ClientSession): Promise<SiteCompl
   if (project.status === "active" && state?.status === "client_approved") blockers.push("The Client accepted completion. Super Admin must close the project.");
   const needsReverification = needsSiteReverification(state, state?.progress === 100 ? await currentAssignments(projectId, session) : []);
   if (needsReverification) blockers.push("Approved work sections changed after the Site Manager marked 100%. Save 100% again to verify the current sections.");
+  if (project.status === "active" && (!state || ["draft", "changes_requested"].includes(state.status))) {
+    for (const assignment of await currentAssignments(projectId, session)) {
+      if (assignment.executionTracked ? !(await currentExecutionVerification(assignment, session)) : !["client_approved", "submitted_for_client"].includes(assignment.status)) {
+        blockers.push("Every current Main Line needs individual Site Manager verification in the Execution tracker."); break;
+      }
+    }
+  }
   return { projectId, projectStatus: String(project.status), version: state ? Number(state.version) : 0,
     progress: state ? Number(state.progress) : 0, note: state ? String(state.note) : "",
     status: state?.status ?? "draft", currentRound: state ? Number(state.currentRound) : 0,
@@ -143,7 +160,7 @@ export interface SiteCompletionService {
   decide(actor: PublicUser, projectId: string, input: SiteCompletionDecisionInput): Promise<SiteCompletionDto>;
 }
 
-export function createSiteCompletionService(input: { audit: AuditService; now?: () => Date }): SiteCompletionService {
+export function createSiteCompletionService(input: { audit: AuditService; now?: () => Date; readExecutionPolicy?: (projectId: string, session: ClientSession) => Promise<ExecutionPolicy> }): SiteCompletionService {
   const now = input.now ?? (() => new Date());
   return {
     read(actor, projectId, role) { return transaction(async session => response(await projectFor(actor, projectId, role, session), session)); },
@@ -232,6 +249,7 @@ export function createSiteCompletionService(input: { audit: AuditService; now?: 
           $inc: { version: 1 } }, { session });
         if (changed.matchedCount !== 1) conflict();
         await incrementAuthority(project, session);
+        await appendExecutionChange({ projectId, version: state.version + 1, kind: "site_completion_submitted", occurredAt: at }, session);
         await input.audit.appendInMongoTransaction({ actorId: actor.id, action: "site_completion_submitted",
           entityType: "site_completion", entityId: `site-completion-review:${projectId}:${round}`,
           occurredAt: at.toISOString(), newValues: { projectId, round, estimateId: summary.estimateSource.estimateId,
@@ -286,6 +304,10 @@ export function createSiteCompletionService(input: { audit: AuditService; now?: 
           updatedById: actor.id, updatedAt: at },
           $inc: { version: 1 } }, { session });
         if (changedState.matchedCount !== 1) conflict();
+        if (fields.decision === "request_changes") {
+          for (const section of review.sections) await invalidateExecutionVerificationForClientChanges(String(section.assignmentId), actor.id, fields.reason ?? "Client requested changes", session, at, await input.readExecutionPolicy?.(projectId, session));
+        }
+        await appendExecutionChange({ projectId, version: state.version + 1, kind: "site_client_decision", occurredAt: at }, session);
         await incrementAuthority(project, session);
         await input.audit.appendInMongoTransaction({ actorId: actor.id, action: "client_site_completion_decided",
           entityType: "site_completion", entityId: String(review._id), occurredAt: at.toISOString(),

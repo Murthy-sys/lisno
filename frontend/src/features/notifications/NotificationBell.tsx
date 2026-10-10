@@ -4,6 +4,9 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Drawer } from "../../components/ui/Drawer";
 import { IconButton } from "../../components/ui/IconButton";
+import { useExecutionNotifications, executionNotificationPath } from "./ExecutionNotifications";
+import { useExecutionConnection } from "../execution/ExecutionLiveProvider";
+import type { ExecutionNotificationDto } from "../execution/executionApi";
 import { useNotifications } from "./NotificationProvider";
 import { notificationApi, notificationKeys, notificationPath, notificationTitle, type ProjectNotification } from "./notificationApi";
 
@@ -11,6 +14,8 @@ const timestamp = (value: string) => new Intl.DateTimeFormat(undefined, { month:
 
 export function NotificationBell() {
   const notifications = useNotifications();
+  const execution = useExecutionNotifications();
+  const [source, setSource] = useState<"execution" | "chat" | null>(null);
   const [open, setOpen] = useState(false);
   const [offset, setOffset] = useState(0);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -28,7 +33,9 @@ export function NotificationBell() {
   const page = offset ? older.data : notifications.page;
   const pending = offset ? older.isFetching && !page : notifications.loading;
   const error = offset ? older.isError : notifications.error;
-  const unread = notifications.page?.unreadCount ?? 0;
+  const unread = (notifications.page?.unreadCount ?? 0) + (execution?.unread ?? 0);
+  const executionAvailable = Boolean(execution?.enabled && !execution.denied);
+  const selectedSource = source ?? (executionAvailable ? "execution" : "chat");
   const available = notifications.enabled && !notifications.denied;
   const select = async (item: ProjectNotification) => {
     if (await notifications.read(item)) {
@@ -42,10 +49,14 @@ export function NotificationBell() {
       label={unread ? `Notifications, ${unread} unread` : "Notifications"}
       aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? "notification-inbox" : undefined}
       icon={<><Bell size={21} aria-hidden="true" />{unread > 0 ? <span className="notification-bell__count" aria-hidden="true">{unread > 99 ? "99+" : unread}</span> : null}</>}
-      onClick={() => { setOffset(0); setOpen(true); }} />
+      onClick={() => { setOffset(0); execution?.setOffset(0); setSource(null); setOpen(true); }} />
     <Drawer id="notification-inbox" open={open} title="Notifications" variant="contextual" width="narrow"
-      description="Project mentions and updates" onClose={() => setOpen(false)} returnFocusRef={trigger} className="notification-inbox">
-      {!available ? <p role="status" className="notification-state">Notifications are unavailable for your current access.</p> : <>
+      description={executionAvailable ? available ? "Work updates and project mentions" : "Daily work updates and reminders" : "Project mentions and updates"} onClose={() => setOpen(false)} returnFocusRef={trigger} className="notification-inbox">
+      {executionAvailable && available ? <div className="notification-sources" role="group" aria-label="Notification source">
+        <button type="button" aria-pressed={selectedSource === "execution"} onClick={() => setSource("execution")}>Execution{execution?.unread ? ` (${execution.unread})` : ""}</button>
+        <button type="button" aria-pressed={selectedSource === "chat"} onClick={() => setSource("chat")}>Project messages{notifications.page?.unreadCount ? ` (${notifications.page.unreadCount})` : ""}</button>
+      </div> : null}
+      {selectedSource === "execution" && executionAvailable ? <ExecutionInbox onNavigate={path => { setOpen(false); navigate(path); }} /> : !available ? <p role="status" className="notification-state">Notifications are unavailable for your current access.</p> : <>
         {pending ? <p role="status" className="notification-state">Loading notifications…</p> : null}
         {!notifications.active ? <p role="status" className="notification-state">You’re offline. Updates will resume when you reconnect.</p> :
           notifications.connection === "reconnecting" ? <p role="status" className="notification-state">Reconnecting to live updates…</p> : null}
@@ -60,7 +71,7 @@ export function NotificationBell() {
               disabled={notifications.reading.has(item.id)} aria-busy={notifications.reading.has(item.id) || undefined}
               onClick={() => void select(item)}>
               <span className="notification-item__indicator" aria-hidden="true">{item.readAt ? <Check size={15} /> : "@"}</span>
-              <span className="notification-item__body"><strong>{notificationTitle(item)}</strong><span className="notification-item__excerpt">{item.excerpt}</span><time dateTime={item.createdAt}>{timestamp(item.createdAt)}</time></span>
+              <span className="notification-item__body"><strong>{notificationTitle(item)}</strong><span className="notification-item__excerpt">{item.excerpt}</span><time dateTime={item.routing?.lastAlertAt ?? item.createdAt}>{timestamp(item.routing?.lastAlertAt ?? item.createdAt)}</time></span>
             </button>
           </li>)}
         </ul>
@@ -94,4 +105,32 @@ export function NotificationBanners() {
     </div>)}
     {error ? <div className="notification-banner"><p role="alert" className="notification-state notification-state--error">{error}</p><IconButton label="Dismiss notification error" variant="quiet" icon={<X size={18} aria-hidden="true" />} onClick={() => setAttempted(false)} /></div> : null}
   </section>;
+}
+
+function ExecutionInbox({ onNavigate }: { onNavigate: (path: string) => void }) {
+  const execution = useExecutionNotifications();
+  const connection = useExecutionConnection();
+  if (!execution) return null;
+  const { page, loading, offset } = execution;
+  const select = async (item: ExecutionNotificationDto) => {
+    if (await execution.read(item)) onNavigate(executionNotificationPath(item, execution.role));
+  };
+  return <>
+    <p className="notification-state">Opening a notification marks it read. Work remains open until its required action is completed.</p>
+    {loading ? <p role="status" className="notification-state">Loading notifications…</p> : null}
+    {connection === "offline" ? <p role="status" className="notification-state">You’re offline. Updates will resume when you reconnect.</p> : connection === "polling" || connection === "connecting" ? <p role="status" className="notification-state">Reconnecting to live updates. Checking for updates every 15 seconds.</p> : null}
+    {execution.error ? <div role="alert" className="notification-state notification-state--error">{page ? "Notifications may be out of date. " : "Notifications could not be loaded. "}<button type="button" onClick={execution.retry}>Try again</button></div> : null}
+    {execution.readError ? <p role="alert" className="notification-state notification-state--error">{execution.readError}</p> : null}
+    {page && !page.items.length ? <div className="notification-empty"><p>{offset ? "No older notifications" : "You’re all caught up"}</p><span>Daily work reminders and execution updates appear here.</span></div> : null}
+    <ul className="notification-list">
+      {page?.items.map(item => <li key={item.id}><button type="button" className={`notification-item${item.readAt ? "" : " notification-item--unread"}`}
+        aria-label={`${item.title}${item.readAt ? "" : ", unread"}. Open work`} disabled={execution.reading === item.id} aria-busy={execution.reading === item.id || undefined} onClick={() => void select(item)}>
+        <span className="notification-item__body"><strong>{item.title}</strong><span className="notification-item__excerpt">{item.projectName} · {item.assignmentIds.length} {item.assignmentIds.length === 1 ? "Main Line" : "Main Lines"}</span><time dateTime={item.createdAt}>{timestamp(item.createdAt)}</time></span>
+      </button></li>)}
+    </ul>
+    {page && (offset > 0 || page.offset + page.items.length < page.total) ? <nav className="notification-pagination" aria-label="Execution notification pages">
+      <button type="button" disabled={offset === 0 || loading} onClick={() => execution.setOffset(Math.max(0, offset - 20))}>Newer</button><span>Page {Math.floor(offset / 20) + 1}</span>
+      <button type="button" disabled={offset + page.items.length >= page.total || loading} onClick={() => execution.setOffset(offset + 20)}>Older</button>
+    </nav> : null}
+  </>;
 }

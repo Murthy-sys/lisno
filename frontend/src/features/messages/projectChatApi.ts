@@ -1,3 +1,4 @@
+import type { ChatAssistantResult, ChatAssistantMessageState, ChatAssistantRequestInput } from "./projectChatAssistantTypes";
 import { apiClient, ApiError } from "../../api/client";
 import type { ChatActionType, ChatActionTypes, ChatAttachmentPolicy, ChatStagedAttachment, ChatConversationPage, ChatIssueInput, ChatMessage, ChatMessagePage, ChatMessageQuery, ChatParticipantInput, ChatParticipantOptions, ChatParticipantPage, ChatParticipantRevokeInput, ChatReadInput, ChatReadResult, ChatSendInput, ChatSummary, ChatTypingInput, ChatTypingResult } from "./projectChatTypes";
 import type { ChatAvailability, DailyCriticalTasks } from "../../../../shared/chat/dailyCriticalTasks";
@@ -6,6 +7,7 @@ export const chatPath = (projectId: string) => `/projects/${encodeURIComponent(p
 export const chatKeys = {
   root: (scope: string) => ["project-chat", scope] as const,
   project: (scope: string, projectId: string) => ["project-chat", scope, "project", projectId] as const,
+  assistantResult: (scope: string, projectId: string, resultId: string) => [...chatKeys.project(scope, projectId), "assistant-result", resultId] as const,
   summary: (scope: string, projectId: string) => [...chatKeys.project(scope, projectId), "summary"] as const,
   actionTypes: (scope: string, projectId: string) => [...chatKeys.project(scope, projectId), "action-types"] as const,
   participants: (scope: string, projectId: string) => [...chatKeys.project(scope, projectId), "participants"] as const,
@@ -28,6 +30,8 @@ export function chatErrorMessage(error: unknown) {
   return error instanceof ApiError ? error.message : "Unable to connect. Please try again.";
 }
 export const projectChatApi = {
+  assistantResult: (id: string, resultId: string, signal?: AbortSignal) => apiClient.get<ChatAssistantResult>(`${chatPath(id)}/assistant/results/${encodeURIComponent(resultId)}`, { ...quiet, signal, cache: "no-store" }),
+  requestAssistant: (id: string, messageId: string, input: ChatAssistantRequestInput, signal?: AbortSignal) => apiClient.post<ChatAssistantMessageState>(`${chatPath(id)}/messages/${encodeURIComponent(messageId)}/assistant/request`, input, { ...quiet, signal, cache: "no-store" }),
   availability: (signal?: AbortSignal) => apiClient.get<ChatAvailability>("/chat/availability", { ...quiet, signal }),
   dailyCriticalTasks: (signal?: AbortSignal) => apiClient.get<DailyCriticalTasks | null>("/daily-critical-tasks", { ...quiet, signal }),
   acknowledgeDailyCriticalTasks: (localDate: string, signal?: AbortSignal) => apiClient.put<DailyCriticalTasks>(`/daily-critical-tasks/${encodeURIComponent(localDate)}/acknowledgment`, {}, { ...quiet, signal }),

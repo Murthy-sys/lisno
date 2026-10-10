@@ -1,3 +1,4 @@
+import { vendorLoginAccessFixture } from "./vendorLoginAccessFixtures";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -51,6 +52,7 @@ function publicPage() {
 }
 
 beforeEach(() => {
+  server.use(http.get("/api/v1/procurement/vendors/vendor-one/login-access", () => HttpResponse.json({ data: vendorLoginAccessFixture })));
   role = "procurement"; permissions = undefined;
   window.history.replaceState(null, "", "/"); captureVendorInductionTokenBeforeRouterMount();
   server.use(http.get("/api/v1/procurement/vendor-kpis/vendor-one", () => data(baseKpi)));

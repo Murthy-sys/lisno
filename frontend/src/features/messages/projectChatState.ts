@@ -41,7 +41,10 @@ export function mergeChatMessages(pages: Array<{ items: ChatMessage[] }>) {
   const messages = new Map<string, ChatMessage>();
   for (const page of pages) for (const message of page.items) {
     const old = messages.get(message.id);
-    if (!old || old.version < message.version) messages.set(message.id, message);
+    if (!old || old.version < message.version || (old.version === message.version && (
+      (message.assistant?.generation ?? 0) > (old.assistant?.generation ?? 0) ||
+      ((message.assistant?.generation ?? 0) === (old.assistant?.generation ?? 0) && (message.assistant?.stateVersion ?? 0) > (old.assistant?.stateVersion ?? 0))
+    ))) messages.set(message.id, message);
   }
   return [...messages.values()].sort((a, b) => a.sequence - b.sequence || a.id.localeCompare(b.id));
 }

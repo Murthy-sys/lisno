@@ -11,6 +11,8 @@ import { knowledgeQueryKeys } from "../ai-estimator-knowledge/knowledgeQueryKeys
 import { getVendorDetail } from "./vendorProfileApi";
 import { ProcurementVendorEditor } from "./ProcurementVendorEditor";
 import { VendorInductionStaffPanel } from "./VendorInductionStaffPanel";
+import { VendorLoginAccessPanel } from "./VendorLoginAccessPanel";
+import { invalidateVendorAccess } from "./vendorLoginAccessApi";
 import { getVendorInduction, vendorInductionKeys } from "./vendorInductionApi";
 import { procurementError, procurementRequestKey } from "./procurementPresentation";
 import { projectProcurementKeys } from "./projectProcurementApi";
@@ -67,7 +69,8 @@ export function VendorKpiStaffPage() {
       client.invalidateQueries({ queryKey: knowledgeQueryKeys.vendorDirectoryOverview() }),
       client.invalidateQueries({ queryKey: projectProcurementKeys.vendors }),
       client.invalidateQueries({ queryKey: ["procurement", "vendor-suggestions"] }),
-      client.invalidateQueries({ queryKey: vendorInductionKeys.detail(actorId, vendorId ?? "") })
+      client.invalidateQueries({ queryKey: vendorInductionKeys.detail(actorId, vendorId ?? "") }),
+      invalidateVendorAccess(client)
     ]);
   }
   const save = useMutation({ mutationFn: (input: VendorKpiSaveInput) => saveProcurementVendorKpi(vendorId!, input), onSuccess: async (detail) => {
@@ -127,8 +130,9 @@ export function VendorKpiStaffPage() {
     {detail.request && !detail.selfAssessment ? <p className="vendor-kpi__request" role="status">Vendor request: {detail.request.status}. {detail.request.status === "sent" ? `Link expires ${new Date(detail.request.expiresAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}.` : ""}</p> : null}
     {!detail.selfAssessment && detail.requestEligibility === "missing_profile" ? <InlineMessage tone="warning">Complete the vendor type and profile email before requesting a self assessment.</InlineMessage> : null}
     <section className="vendor-kpi__identity" aria-label="Vendor details"><div><h2>Vendor details</h2><dl><div><dt>Work profile</dt><dd>{vendor.workProfile || "Not recorded"}</dd></div><div><dt>Main baskets</dt><dd>{vendor.mainBasketNames.join(", ") || "Not recorded"}</dd></div><div><dt>Sub baskets</dt><dd>{vendor.subBasketNames.join(", ") || "Not recorded"}</dd></div></dl></div>{canEdit && vendor.status !== "archived" ? <Button variant="secondary" onClick={() => setEditOpen(true)}>Edit vendor</Button> : null}</section>
+    <VendorLoginAccessPanel vendorId={vendorId} contactEditing={editOpen} onEditContact={canEdit && vendor.status !== "archived" ? () => setEditOpen(true) : undefined} />
     {type ? <div id="vendor-kpi-assessments" className="vendor-kpi__columns"><VendorKpiAssessmentView title="Vendor self rating" assessment={detail.selfAssessment} type={type} />{canRate && vendor.status !== "archived" ? <VendorKpiScoreForm key={`${type}-${detail.procurementAssessment?.revision ?? 0}`} title="Procurement rating" type={type} initial={detail.procurementAssessment} busy={save.isPending} submitLabel="Save Procurement KPI" error={save.isError ? conflict(save.error) ? "The KPI changed while you were editing. Review the latest scores before saving." : procurementError(save.error, "The KPI could not be saved. Retry or refresh to check its status.") : undefined} onSave={saveScores} /> : <VendorKpiAssessmentView title="Procurement rating" assessment={detail.procurementAssessment} type={type} />}</div> : <PageState state="empty" message="Set the vendor type before rating this vendor." />}
-    {editOpen && canEdit ? privateDetail.isPending ? <PageState state="loading" message="Loading vendor editor…" /> : privateDetail.isError ? <InlineMessage tone="error">{procurementError(privateDetail.error, "Vendor details could not be loaded.")}<Button variant="secondary" onClick={() => setEditOpen(false)}>Close</Button></InlineMessage> : privateDetail.data ? <ProcurementVendorEditor existing={privateDetail.data} canCreateBasket={hasFrontendPermission(auth.authorization, "procurement.vendor_classification.create")} canRequestMainBasket={auth.user?.role === "procurement" && hasFrontendPermission(auth.authorization, "procurement.vendor_classification.create")} canUpdate={canEdit} canCorrectBaseline={hasFrontendPermission(auth.authorization, "procurement.vendor_allocation_baseline.correct")} onClose={() => setEditOpen(false)} onSaved={() => { setEditOpen(false); void query.refetch(); void induction.refetch(); }} /> : null : null}
+    {editOpen && canEdit ? privateDetail.isPending ? <PageState state="loading" message="Loading vendor editor…" /> : privateDetail.isError ? <InlineMessage tone="error">{procurementError(privateDetail.error, "Vendor details could not be loaded.")}<Button variant="secondary" onClick={() => setEditOpen(false)}>Close</Button></InlineMessage> : privateDetail.data ? <ProcurementVendorEditor existing={privateDetail.data} canCreateBasket={hasFrontendPermission(auth.authorization, "procurement.vendor_classification.create")} canRequestMainBasket={auth.user?.role === "procurement" && hasFrontendPermission(auth.authorization, "procurement.vendor_classification.create")} canUpdate={canEdit} canCorrectBaseline={hasFrontendPermission(auth.authorization, "procurement.vendor_allocation_baseline.correct")} onClose={() => setEditOpen(false)} onSaved={() => { setEditOpen(false); void query.refetch(); void induction.refetch(); void invalidateVendorAccess(client); }} /> : null : null}
     </>}
   </main>;
 }

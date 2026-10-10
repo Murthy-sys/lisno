@@ -42,4 +42,23 @@ describe("recipient-only notification endpoints", () => {
     expect((await request(f.app).get("/api/v1/notifications").auth(f.token("electric-a"), {type: "bearer"})).body.data.unreadCount).toBe(0);
     await f.stream.close();
   });
+  it("requires the displayed routing version and cannot acknowledge a newer Critical alert", async () => {
+    const f = fixture();
+    await f.service.send(f.actor("client-a"), "a", chatSend("@Electric A", {mentions: [{userId: "electric-a", start: 0, end: 11}]}));
+    const row = (await f.chatRepository.snapshot(tx => tx.notificationPage("electric-a", ["a"], 20, 0))).items[0]!;
+    await f.chatRepository.mutate(tx => tx.routeNotification({...row, routing: {priority: "important", messageVersion: 1, lastAlertAt: f.clock().toISOString()}}, false));
+    const path = `/api/v1/notifications/${row.id}/read`;
+    const mark = (body: unknown) => request(f.app).put(path).auth(f.token("electric-a"), {type: "bearer"}).send(body);
+    expect((await mark({})).status).toBe(409);
+    expect((await mark({routingMessageVersion: 0})).status).toBe(400);
+    expect((await mark({routingMessageVersion: 1, recipientId: "super"})).status).toBe(400);
+    expect((await mark({routingMessageVersion: 1})).status).toBe(200);
+    f.advance(1_000);
+    await f.chatRepository.mutate(tx => tx.routeNotification({...row, routing: {priority: "critical", messageVersion: 2, lastAlertAt: f.clock().toISOString()}}, true));
+    expect((await mark({routingMessageVersion: 1})).status).toBe(409);
+    const latest = await request(f.app).get("/api/v1/notifications").auth(f.token("electric-a"), {type: "bearer"});
+    expect(latest.body.data).toMatchObject({unreadCount: 1, items: [{id: row.id, readAt: null, routing: {priority: "critical", messageVersion: 2}}]});
+    expect((await mark({routingMessageVersion: 2})).status).toBe(200);
+    await f.stream.close();
+  });
 });

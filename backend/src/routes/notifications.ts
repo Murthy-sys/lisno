@@ -13,7 +13,7 @@ export function createNotificationsRouter(auth: AuthService, service: Notificati
     try { response.setHeader("Cache-Control", "no-store"); response.json({data: await service.list(chatActorFromAuthenticatedRequest(request), response.locals.validatedQuery)}); } catch (error) { next(error); }
   });
   router.put("/notifications/:notificationId/read", authenticate(auth), requireOperation("PUT /notifications/:notificationId/read"), async (request, response, next) => {
-    try { response.setHeader("Cache-Control", "no-store"); response.json({data: await service.read(chatActorFromAuthenticatedRequest(request), String(request.params.notificationId))}); } catch (error) { next(error); }
+    try { response.setHeader("Cache-Control", "no-store"); response.json({data: await service.read(chatActorFromAuthenticatedRequest(request), String(request.params.notificationId), request.body)}); } catch (error) { next(error); }
   });
   router.get("/notifications/events", authenticate(auth), requireOperation("GET /notifications/events"), async (request, response, next) => {
     try { await stream.open(request, response); } catch (error) { next(error); }

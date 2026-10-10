@@ -25,6 +25,7 @@ import {
   PASSWORD_RESET_TTL_MS
 } from "../domain/password-resets.js";
 import {
+  hasPermission,
   PROJECT_MODULES,
   REQUESTABLE_PROJECT_MODULES
 } from "../domain/authorization.js";
@@ -267,6 +268,19 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
   };
 
   const implementation: AppRepository = {
+    async findVendorBoundUsers(vendorId) { return clone(state.users.filter(user => user.vendorId === vendorId).slice(0, 2)); },
+    async findProcurementVendorInvitationSource(sourceIntentId) {
+      const source = state.procurementVendorInvitationSources?.find(row => row.sourceIntentId === sourceIntentId);
+      if (!source || state.vendorInvitationTargets?.find(row => row.id === source.vendorId)?.status !== "active") return null;
+      const issuer = state.users.find(row => row.id === source.actorId);
+      if (!issuer?.active || issuer.version !== source.actorVersion || !hasPermission(issuer.role, "procurement.vendor_access.manage") || !hasPermission(issuer.role, "procurement.vendor_directory.read") || (issuer.role === "super_admin" && state.users.filter(row => row.active && row.role === "super_admin").length !== 1)) return null;
+      return clone(source);
+    },
+    async findVendorWorkInvitationSource(sourceIntentId) {
+      const source = state.vendorWorkInvitationSources?.find(row => row.sourceIntentId === sourceIntentId);
+      if (!source || state.vendorInvitationTargets?.find(row => row.id === source.vendorId)?.status !== "active") return null;
+      return clone(source);
+    },
     async findVendorInvitationTarget(vendorId) {
       return clone(state.vendorInvitationTargets?.find((vendor) => vendor.id === vendorId) ?? null);
     },
@@ -672,6 +686,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         ...current,
         tokenHash: change.tokenHash,
         tokenGeneration: change.tokenGeneration,
+        generationReceipt: change.generationReceipt ? clone(change.generationReceipt) : null,
         issuedAt: change.issuedAt,
         expiresAt: change.expiresAt,
         tokenIssuedById: change.tokenIssuedById,
@@ -2495,6 +2510,8 @@ function normalizeNewMemoryInvitation(
   input: UserInvitationRecord
 ): UserInvitationRecord {
   const record: UserInvitationRecord = {
+    ...(input.authority ? { authority: clone(input.authority) } : {}),
+    ...(input.generationReceipt ? { generationReceipt: clone(input.generationReceipt) } : {}),
     id: input.id,
     name: invitationNameSchema.parse(input.name),
     email: invitationEmailSchema.parse(input.email),
@@ -2597,6 +2614,9 @@ function assertUserInvitationState(invitation: UserInvitationRecord) {
     );
   };
   if (!invitation.id) conflict("requires an id.");
+  const receipt = invitation.generationReceipt;
+  if (receipt && (!invitation.authority || receipt.tokenGeneration !== invitation.tokenGeneration || !["vendor_work_order", "procurement_vendor"].includes(receipt.sourceKind) || !receipt.sourceIntentId || !receipt.commandId)) conflict("has an invalid generation receipt.");
+  if (invitation.authority && (!["vendor_work_order", "procurement_vendor"].includes(invitation.authority.kind) || invitation.role !== "vendor" || invitation.authority.vendorId !== invitation.vendorId || invitation.authority.emailNormalized !== invitation.emailNormalized || !invitation.authority.sourceIntentId)) conflict("has invalid work-order authority.");
   try {
     if (invitation.name !== invitationNameSchema.parse(invitation.name)) {
       conflict("has a non-canonical name.");
@@ -2720,10 +2740,13 @@ function presentMemoryInvitation(
   const issuer = seed.users.find(
     (user) => user.id === invitation.tokenIssuedById
   );
-  const issuerMatches =
-    issuer?.active === true &&
-    issuer.role === "super_admin" &&
-    issuer.version === invitation.tokenIssuerVersion;
+  const automatic = invitation.authority;
+  const source = automatic ? (automatic.kind === "procurement_vendor" ? seed.procurementVendorInvitationSources : seed.vendorWorkInvitationSources)?.find(row => row.sourceIntentId === automatic.sourceIntentId) : null;
+  const sourceIssuer = source ? seed.users.find(row => row.id === source.actorId) : null;
+  const manualAuthority = automatic?.kind !== "procurement_vendor" || !!(source && "actorVersion" in source && sourceIssuer?.active && sourceIssuer.version === source.actorVersion && hasPermission(sourceIssuer.role, "procurement.vendor_access.manage") && hasPermission(sourceIssuer.role, "procurement.vendor_directory.read") && (sourceIssuer.role !== "super_admin" || seed.users.filter(row => row.active && row.role === "super_admin").length === 1));
+  const issuerMatches = automatic
+    ? manualAuthority && invitation.role === "vendor" && automatic.vendorId === invitation.vendorId && automatic.emailNormalized === invitation.emailNormalized && source?.vendorId === automatic.vendorId && invitationEmailSchema.safeParse(source.email).success && normalizeInvitationEmail(source.email) === automatic.emailNormalized && seed.vendorInvitationTargets?.find(row => row.id === automatic.vendorId)?.status === "active"
+    : issuer?.active === true && issuer.role === "super_admin" && issuer.version === invitation.tokenIssuerVersion;
   const tokenValidity = tokenValidityForInvitation({
     storedStatus: invitation.status,
     expiresAt: invitation.expiresAt,
@@ -2747,7 +2770,7 @@ function presentMemoryInvitation(
   const availableActions =
     invitation.status !== "pending"
       ? ([] as const)
-      : claimed || reserved
+      : claimed || reserved || (automatic && !issuerMatches)
         ? (["revoke"] as const)
         : (["resend", "revoke"] as const);
   return {

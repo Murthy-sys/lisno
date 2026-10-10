@@ -1,3 +1,18 @@
+import { createProcurementVendorAccessRouter } from "./routes/procurement-vendor-access.js";
+import { createVendorExecutionService, initializeIssuedExecution } from "./services/vendor-execution.service.js";
+import { createVendorExecutionDeliveryService } from "./services/vendor-execution-delivery.service.js";
+import type { ExecutionDigestMailer } from "./services/execution-digest-mailer.js";
+import { createVendorWorkOnboardingService } from "./services/vendor-work-onboarding.service.js";
+import type { VendorWorkMailer } from "./services/vendor-work-mailer.js";
+import { requireExecutionProject } from "./services/vendor-execution-access.js";
+import { createVendorExecutionRouter } from "./routes/vendor-execution.js";
+import type { PurchaseOrderApproval } from "./services/project-purchase-order.service.js";
+import type { ClientSession } from "mongoose";
+import { createProjectChatAssistantService, type ProjectChatAssistantOptions } from "./services/project-chat-assistant.service.js";
+import { createAskLisnoService } from "./services/ask-lisno.service.js";
+import { createAskLisnoRouter } from "./routes/ask-lisno.js";
+import type { AssistantProvider } from "./services/project-assistant-openai.js";
+import { AssistantFailure } from "./domain/project-chat-assistant.js";
 import { createProcurementVendorCertificateService } from "./services/procurement-vendor-certificate.service.js";
 import { createProcurementVendorCertificateRouter } from "./routes/procurement-vendor-certificate.js";
 import { createProjectVendorSuggestionRouter } from "./routes/project-vendor-suggestions.js";
@@ -187,6 +202,12 @@ export interface AppDependencies {
   chatMentionMailer?: ChatMentionMailer;
   chatAttachmentPolicy?: ChatAttachmentPolicy;
   chatEvents?: { watchChanges?: boolean; pollIntervalMs?: number; heartbeatMs?: number };
+  projectChatAssistant?: {
+    enabled: boolean;
+    provider?: AssistantProvider;
+    tokensPerDay?: number;
+    readSources?: ProjectChatAssistantOptions["readSources"];
+  };
   repository?: AppRepository;
   auth: AuthConfig;
   clock?: Clock;
@@ -209,6 +230,10 @@ export interface AppDependencies {
   vendorInductionMailer?: VendorInductionMailer;
   procurementBasketBoqMailer?: ProcurementBasketBoqMailer;
   vendorPortalUrl?: string;
+  vendorWorkMailer?: VendorWorkMailer;
+  executionDigestMailer?: ExecutionDigestMailer;
+  enableVendorAccessDelivery?: boolean;
+  enableExecutionReminders?: boolean;
   allowDemoAccountExternalEmail?: boolean;
   invitationPublicRateLimit?: InvitationRateLimitOptions;
   invitationDeliveryRateLimit?: InvitationRateLimitOptions;
@@ -353,8 +378,21 @@ export function createApp(dependencies: AppDependencies) {
   const notifications = createNotificationService({repository: chatRepository, clock, onChange: id => notificationHub.wake(id)});
   const notificationStream = createNotificationStreamService({auth: authService, service: notifications, hub: notificationHub, dailyCriticalSignal: actor => dailyCriticalTasks.signal(actor)});
   const notificationEmail = createNotificationEmailDispatcher({repository: chatRepository, clock, mailer: dependencies.chatMentionMailer ?? {deliveryKind: "disabled"}, allowDemoAccountExternalEmail: dependencies.allowDemoAccountExternalEmail});
-  const projectChatService = createProjectChatService({ repository, audit: auditService, clock, chatRepository, attachmentPolicy,
+  const projectChatAssistant = createProjectChatAssistantService({chatRepository, audit: auditService, clock,
+    enabled: dependencies.projectChatAssistant?.enabled === true && Boolean(dependencies.projectChatAssistant.provider),
+    provider: dependencies.projectChatAssistant?.provider ?? {async generate() { throw new AssistantFailure("ASSISTANT_UNAVAILABLE"); }},
+    tokensPerDay: dependencies.projectChatAssistant?.tokensPerDay,
+    readSources: dependencies.projectChatAssistant?.readSources,
     onNotificationsCommitted: ids => { for (const id of ids) notificationHub.wake(id); notificationEmail.wake(); }
+  });
+  const projectChatService = createProjectChatService({ repository, audit: auditService, clock, chatRepository, attachmentPolicy, assistant: projectChatAssistant,
+    onNotificationsCommitted: ids => { for (const id of ids) notificationHub.wake(id); notificationEmail.wake(); }
+  });
+  const askLisno = createAskLisnoService({chatRepository, clock,
+    enabled: dependencies.projectChatAssistant?.enabled === true && Boolean(dependencies.projectChatAssistant.provider),
+    provider: dependencies.projectChatAssistant?.provider ?? {async generate() { throw new AssistantFailure("ASSISTANT_UNAVAILABLE"); }},
+    tokensPerDay: dependencies.projectChatAssistant?.tokensPerDay,
+    readSources: dependencies.projectChatAssistant?.readSources
   });
   const projectChatTyping = createProjectChatTypingService({ chatRepository, clock });
   const chatAttachments = createProjectChatAttachmentService({
@@ -401,17 +439,41 @@ export function createApp(dependencies: AppDependencies) {
   const vendorInductionService = createVendorInductionService({ audit: auditService,
     mailer: dependencies.vendorInductionMailer ?? { deliveryKind: "disabled" }, activationForVendor: vendorActivation, now: clock });
   const projectProcurementService = createProjectProcurementService({ audit: auditService, now: clock });
-  const vendorWorkService = createVendorWorkService({ audit: auditService, storage, maxUploadBytes, now: clock });
+  const executionDelivery = createVendorExecutionDeliveryService({ audit: auditService, auth: authService,
+    mailer: dependencies.executionDigestMailer ?? { deliveryKind: "disabled" }, now: clock,
+    enabled: dependencies.enableExecutionReminders ?? false, allowDemoAccountExternalEmail: dependencies.allowDemoAccountExternalEmail });
+  const executionService = createVendorExecutionService({ audit: auditService, now: clock,
+    readPolicy: executionDelivery.policyForProject, readDaily: executionDelivery.dailyForAssignment,
+    readDeliveryHealth: async () => {
+      const health = await executionDelivery.health();
+      return { schedulerEnabled: health.enabled, accessDeliveryEnabled: vendorOnboarding.readiness().state === "ready",
+        lastSchedulerSuccessAt: health.lastSuccessAt, lastSchedulerFailureCode: health.failureCode,
+        pendingEmails: health.pending, failedEmails: health.failed };
+    } });
+  const vendorOnboarding = createVendorWorkOnboardingService({ repository, audit: auditService, clock,
+    deliveryEnabled: dependencies.enableVendorAccessDelivery,
+    invitationMailer: dependencies.invitationMailer ?? { deliveryKind: "disabled" },
+    workMailer: dependencies.vendorWorkMailer ?? { deliveryKind: "disabled" },
+    authorizeProject: requireExecutionProject, allowDemoAccountExternalEmail: dependencies.allowDemoAccountExternalEmail });
+  const issuedVendorWork = async (approval: PurchaseOrderApproval, session: ClientSession) => {
+    await onPurchaseOrderApproved(approval, session);
+    await initializeIssuedExecution(approval, session);
+    await vendorOnboarding.recordIssued(approval, session);
+  };
+  const vendorWorkService = createVendorWorkService({ audit: auditService, storage, maxUploadBytes, now: clock,
+    readExecutionPolicy: executionDelivery.policyForProject });
   const projectPurchaseOrderService = createProjectPurchaseOrderService({
     audit: auditService,
-    onApproved: onPurchaseOrderApproved,
+    onApproved: issuedVendorWork,
+    onIssuedCommitted: () => vendorOnboarding.wake(),
     now: clock
   });
   const projectPurchaseOrderPreparationService = createProjectPurchaseOrderPreparationService();
   const projectPurchaseOrderModeDecisionService = createProjectPurchaseOrderModeDecisionService({ audit: auditService, now: clock });
   const projectPurchaseOrderRequestService = createProjectPurchaseOrderRequestService({
     audit: auditService,
-    onApproved: onPurchaseOrderApproved,
+    onApproved: issuedVendorWork,
+    onIssuedCommitted: () => vendorOnboarding.wake(),
     now: clock
   });
   const procurementBasketService = createProcurementBasketService();
@@ -421,7 +483,7 @@ export function createApp(dependencies: AppDependencies) {
     vendorBoqPublicUrl: new URL("/vendor-boq", dependencies.vendorPortalUrl ?? "http://localhost:5173/vendor").toString(),
     now: clock });
   const projectPurchaseOrderBasketIssueService = createProjectPurchaseOrderBasketIssueService({
-    audit: auditService, onApproved: onPurchaseOrderApproved, now: clock });
+    audit: auditService, onApproved: issuedVendorWork, onIssuedCommitted: () => vendorOnboarding.wake(), now: clock });
   const procurementBasketAwardService = createProcurementBasketAwardService({ audit: auditService, now: clock,
     onReadyToIssue: input => projectPurchaseOrderBasketIssueService.issueAutomatically(input).then(() => undefined) });
   const procurementProjectIdentityService = createProcurementProjectIdentityService({ audit: auditService, now: clock });
@@ -429,7 +491,7 @@ export function createApp(dependencies: AppDependencies) {
   const projectPurchaseOrderBasketMonitorService = createProjectPurchaseOrderBasketMonitorService({ audit: auditService,
     vendorPortalUrl: dependencies.vendorPortalUrl ?? "http://localhost:5173/vendor", now: clock });
   const projectCompletionService = createProjectCompletionService({ audit: auditService, now: clock });
-  const siteCompletionService = createSiteCompletionService({ audit: auditService, now: clock });
+  const siteCompletionService = createSiteCompletionService({ audit: auditService, now: clock, readExecutionPolicy: executionDelivery.policyForProject });
   const procurementVendorBaselineService = createProcurementVendorBaselineService({ audit: auditService, now: clock });
   const procurementVendorCertificateService = createProcurementVendorCertificateService({ storage, maxUploadBytes, now: clock });
   const procurementVendorPhotoService = createProcurementVendorPhotoService({ audit: auditService, storage, maxUploadBytes, now: clock });
@@ -541,7 +603,8 @@ export function createApp(dependencies: AppDependencies) {
   app.use("/api/v1", createProfilePhotosRouter(authService, profilePhotoService));
   app.use("/api/v1", createNotificationsRouter(authService, notifications, notificationStream));
   app.use("/api/v1", createDailyCriticalTasksRouter(authService, dailyCriticalTasks));
-  app.use("/api/v1", createProjectChatRouter(authService, projectChatService, projectChatTyping));
+  app.use("/api/v1", createProjectChatRouter(authService, projectChatService, projectChatTyping, projectChatAssistant));
+  app.use("/api/v1", createAskLisnoRouter(authService, askLisno));
   app.use("/api/v1", createProjectStatusRouter(createProjectStatusService({ repository, chatRepository, clock }), authService));
   app.use("/api/v1", createProjectChatAttachmentsRouter(authService, chatAttachments));
   app.use("/api/v1", createProjectChatEventsRouter(authService, projectChatStream));
@@ -624,6 +687,8 @@ export function createApp(dependencies: AppDependencies) {
   app.use("/api/v1", createProjectPurchaseOrderBasketMonitorRouter(authService, projectPurchaseOrderBasketMonitorService));
   app.use("/api/v1", createProjectCompletionRouter(authService, projectCompletionService));
   app.use("/api/v1", createSiteCompletionRouter(authService, siteCompletionService));
+  app.use("/api/v1", createVendorExecutionRouter(authService, executionService, executionDelivery, vendorOnboarding, invitationDeliveryRateLimit));
+  app.use("/api/v1", createProcurementVendorAccessRouter(authService, vendorOnboarding, invitationDeliveryRateLimit));
   app.use("/api/v1", createVendorWorkRouter(authService, vendorWorkService, maxUploadBytes));
   app.use(
     "/api/v1",
@@ -704,8 +769,16 @@ export function createApp(dependencies: AppDependencies) {
   app.use(errorHandler);
 
   return Object.assign(app, {
-    startNotificationDelivery: () => { notificationEmail.start(); dailyCriticalTasks.start(); },
-    closeProjectChat: async () => { dailyCriticalTasks.stop(); await Promise.all([projectChatStream.close(), notificationStream.close(), notificationEmail.stop()]); },
+    startExecutionDelivery: () => {
+      vendorOnboarding.start();
+      executionDelivery.start();
+    },
+    closeExecutionDelivery: async () => { await Promise.all([vendorOnboarding.stop(), executionDelivery.stop()]); },
+    executionDeliveryHealth: () => executionDelivery.health(),
+    startNotificationDelivery: () => { notificationEmail.start(); dailyCriticalTasks.start(); projectChatAssistant.runtime.start(); },
+    closeProjectChat: async () => { dailyCriticalTasks.stop(); await Promise.all([projectChatAssistant.runtime.stop(), projectChatStream.close(), notificationStream.close(), notificationEmail.stop()]); },
+    projectChatAssistantHealth: () => projectChatAssistant.runtime.health(),
+    runProjectChatAssistantOnce: () => projectChatAssistant.runtime.runOnce(),
     cleanupProjectChatAttachments: () => chatAttachments.cleanup(),
     cleanupProcurementVendorPhotos: () => procurementVendorPhotoService.cleanup(),
     cleanupProcurementVendorCertificates: () => procurementVendorCertificateService.cleanup(),

@@ -5,10 +5,12 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DailyCriticalTasksPrompt } from "./DailyCriticalTasksPrompt";
 import { projectChatApi } from "./projectChatApi";
+import { ChatScheduleProvider, useChatSchedule } from "./ChatScheduleProvider";
 
-vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "team-1", role: "procurement" } }) }));
+const auth = vi.hoisted(() => ({ user: { id: "team-1", role: "procurement" }, authorization: { permissions: ["chat.read"] } }));
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => auth }));
 vi.mock("./projectChatApi", () => ({
-  projectChatApi: { dailyCriticalTasks: vi.fn(), acknowledgeDailyCriticalTasks: vi.fn() },
+  projectChatApi: { dailyCriticalTasks: vi.fn(), acknowledgeDailyCriticalTasks: vi.fn(), availability: vi.fn() },
   chatErrorMessage: (error: Error) => error.message
 }));
 
@@ -25,12 +27,21 @@ const list = {
 
 function renderPrompt() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(<QueryClientProvider client={client}><MemoryRouter><DailyCriticalTasksPrompt /></MemoryRouter></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}><MemoryRouter><ChatScheduleProvider><DailyCriticalTasksPrompt /><ScheduleProbe /></ChatScheduleProvider></MemoryRouter></QueryClientProvider>);
 }
+function ScheduleProbe() { const schedule = useChatSchedule(); return <button disabled={!schedule.canWrite} onClick={schedule.refresh}>Refresh chat schedule</button>; }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => { vi.clearAllMocks(); auth.user.role = "procurement"; auth.authorization.permissions = ["chat.read"]; vi.mocked(projectChatApi.availability).mockResolvedValue({ timezone: "Asia/Kolkata", writable: true, nextOpenAt: null, nextChangeAt: "2099-01-01T00:00:00Z" }); });
 
 describe("daily critical task prompt", () => {
+  it.each(["vendor", "program_manager"])("does not poll staff chat endpoints for a %s without chat permission", async role => {
+    auth.user.role = role; auth.authorization.permissions = [];
+    renderPrompt();
+    expect(screen.getByRole("button", { name: "Refresh chat schedule" })).toBeDisabled();
+    expect(projectChatApi.availability).not.toHaveBeenCalled();
+    expect(projectChatApi.dailyCriticalTasks).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "View daily critical tasks" })).not.toBeInTheDocument();
+  });
   it("shows the authorized list, requires acknowledgment, and keeps it reopenable", async () => {
     const user = userEvent.setup();
     const acknowledged = { ...list, acknowledgedAt: "2026-09-29T11:32:00.000Z" };

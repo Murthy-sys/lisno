@@ -40,6 +40,9 @@ export interface SiteCompletionSection {
   itemName: string;
   scopeType: string;
   imageIds: string[];
+  executionVerificationId?: string | null;
+  executionRound?: number | null;
+  executionSubmissionVersion?: number | null;
 }
 
 export interface SiteCompletionReviewDto {

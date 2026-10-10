@@ -16,6 +16,10 @@ import { SiteCompletionStateModel } from "../src/models/SiteCompletionState.js";
 import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
 import { UserModel } from "../src/models/User.js";
 import { VendorWorkAssignmentModel } from "../src/models/VendorWorkAssignment.js";
+import { VendorExecutionStateModel } from "../src/models/VendorExecutionState.js";
+import { VendorExecutionReviewModel } from "../src/models/VendorExecutionReview.js";
+import { createVendorExecutionService, initializeIssuedExecution } from "../src/services/vendor-execution.service.js";
+import type { ExecutionCommand } from "../src/contracts/vendor-execution.js";
 import { VendorWorkReviewModel } from "../src/models/VendorWorkReview.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { createAuditService } from "../src/services/audit.service.js";
@@ -33,13 +37,22 @@ const buyer: PublicUser = { id: "buyer-po", name: "Buyer", email: "buyer-po@exam
 const admin: PublicUser = { id: "super-admin-po", name: "Admin", email: "super-po@example.test", role: "super_admin" };
 const clientActor: PublicUser = { id: "client-po", name: "Client", email: "client-po@example.test", role: "client" };
 const siteActor: PublicUser = { id: "site-manager-po", name: "Site Manager", email: "site-po@example.test", role: "site_manager" };
-const vendorActor: PublicUser = { id: "vendor-user-po", name: "Vendor", email: "vendor-user-po@example.test", role: "vendor" };
-const otherVendorActor: PublicUser = { id: "other-vendor-user-po", name: "Other Vendor", email: "other-vendor-user-po@example.test", role: "vendor" };
+const vendorActor: PublicUser = { id: "vendor-user-po", name: "Vendor", email: "vendor-user-po@example.test", role: "vendor", vendorId: "vendor-po" };
+const otherVendorActor: PublicUser = { id: "other-vendor-user-po", name: "Other Vendor", email: "other-vendor-user-po@example.test", role: "vendor", vendorId: "vendor-other" };
 const callback = vi.fn(async (_approval: PurchaseOrderApproval, _session: ClientSession) => {});
-const service = createProjectPurchaseOrderService({ audit: createAuditService(createMemoryRepository()), onApproved: callback, now: () => now });
+const committedReads: unknown[] = [];
+const committed = vi.fn(async () => {
+  // Await a non-session read inside the hook. A premature transactional wake
+  // would observe no committed orders and cannot race the later commit.
+  committedReads.push(await ProjectPurchaseOrderModel.find({ status: "approved" }).lean().exec());
+});
+const service = createProjectPurchaseOrderService({ audit: createAuditService(createMemoryRepository()),
+  onApproved: callback, onIssuedCommitted: committed, now: () => now });
 const completionService = createProjectCompletionService({ audit: createAuditService(createMemoryRepository()), now: () => now });
 const siteCompletionService = createSiteCompletionService({ audit: createAuditService(createMemoryRepository()), now: () => now });
-const realOrderService = createProjectPurchaseOrderService({ audit: createAuditService(createMemoryRepository()), onApproved: onPurchaseOrderApproved, now: () => now });
+const realOrderService = createProjectPurchaseOrderService({ audit: createAuditService(createMemoryRepository()), onApproved: async (approval, session) => { await onPurchaseOrderApproved(approval, session); await initializeIssuedExecution(approval, session); }, now: () => now });
+const executionService = createVendorExecutionService({ audit: createAuditService(createMemoryRepository()), now: () => now });
+let commandSequence = 0;
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 
 beforeAll(async () => {
@@ -47,12 +60,12 @@ beforeAll(async () => {
   await Promise.all([UserModel, ProjectModel, EstimateModel, EstimateClientReviewRoundModel, ProjectWorkflowTaskModel,
     ProjectProcurementItemModel, ProjectPurchaseOrderModel, ProjectPurchaseOrderRevisionModel,
     ProjectScopeExceptionModel, ProjectCompletionDecisionModel, SiteCompletionStateModel, SiteCompletionReviewModel,
-    VendorWorkAssignmentModel, VendorWorkReviewModel,
+    VendorWorkAssignmentModel, VendorWorkReviewModel, VendorExecutionStateModel, VendorExecutionReviewModel,
     AiEstimatorKnowledgeVendorModel, AuditEventModel, FinanceLedgerEntryModel].map(model => model.syncIndexes()));
 }, 120_000);
 beforeEach(async () => {
   await replica.clear();
-  callback.mockClear();
+  callback.mockClear(); committed.mockClear(); committedReads.length = 0; commandSequence = 0;
   await UserModel.create([buyer, admin, clientActor, siteActor, vendorActor, otherVendorActor].map(user => ({ _id: user.id, name: user.name, email: user.email,
     emailNormalized: user.email, passwordHash: "fixture-only", role: user.role, active: true,
     vendorId: user.id === vendorActor.id ? "vendor-po" : user.id === otherVendorActor.id ? "vendor-other" : null })));
@@ -80,6 +93,23 @@ beforeEach(async () => {
     pricePaise: 10_000, allocatedWorkPaise: 100_000, version: 1, createdById: buyer.id, updatedById: buyer.id });
 });
 afterAll(async () => { await replica?.stop(); });
+
+async function verifyOrder(orderId: string, actor = vendorActor) {
+  const assignment = (await VendorWorkAssignmentModel.findOne({ orderId }).lean())!;
+  const command = async (user: PublicUser, action: ExecutionCommand["action"], fields: Partial<ExecutionCommand> = {}) => {
+    const current = await executionService.detail(user, String(assignment._id));
+    return executionService.command(user, String(assignment._id), {
+      action, expectedVersion: current.version, idempotencyKey: `completion-command-${++commandSequence}`, ...fields
+    });
+  };
+  await command(actor, "acknowledge");
+  await command(actor, "propose_schedule", { startDate: "2026-10-02", finishDate: "2026-10-15" });
+  await command(siteActor, "confirm_schedule", { startDate: "2026-10-02", finishDate: "2026-10-15" });
+  await command(actor, "report", { status: "in_progress", progress: 100, note: "Assigned work complete" });
+  await command(siteActor, "exempt_evidence", { reason: "Photography prohibited by Client; Site Manager inspected work" });
+  const submitted = await command(actor, "submit", { note: "Ready for inspection" });
+  return command(siteActor, "verify", { submissionId: submitted.submission!.id });
+}
 
 interface ExtraApprovedLine {
   id: string;
@@ -158,16 +188,22 @@ describe("purchase order Mongo transactions", () => {
       sourceLineItemKey: "line-first", roomName: "Living Room", netPaise: 12_500, gstPaise: 2_250, totalPaise: 14_750 });
     expect(await ProjectProcurementItemModel.findById(line.procurementItemId).lean()).toMatchObject({ commitmentEpoch: 2, version: 1 });
     expect(callback).not.toHaveBeenCalled();
+    expect(committed).not.toHaveBeenCalled();
     expect(await service.submit(buyer, "project-po-a", created.id, { expectedVersion: created.version, idempotencyKey: "submit-order-a" })).toMatchObject({ revision: 1 });
     const decision = { expectedVersion: submitted.version, submittedRevisionId: submitted.submittedRevisionId!, idempotencyKey: "approve-order-a", decision: "approve" as const, reason: null, budgetOverrideReason: null };
     const approved = await service.decide(admin, "project-po-a", created.id, decision);
     expect(approved.status).toBe("approved");
+    expect(committed).toHaveBeenCalledTimes(1);
+    expect(await committedReads[0]).toEqual([expect.objectContaining({ _id: created.id, status: "approved",
+      approvedRevisionId: approved.approvedRevisionId })]);
     expect(await service.vendorRead(vendorActor, created.id)).toMatchObject({ id: created.id, revision: 1, terms: "Complete on site", lines: [{ sourceLineItemKey: "line-first" }] });
     await expect(service.vendorRead(otherVendorActor, created.id)).rejects.toMatchObject({ status: 404 });
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback.mock.calls[0]?.[0]).toMatchObject({ orderId: created.id, projectId: "project-po-a", vendorId: "vendor-po", revision: 1 });
     expect(await service.decide(admin, "project-po-a", created.id, decision)).toMatchObject({ approvedRevisionId: approved.approvedRevisionId });
     expect(callback).toHaveBeenCalledTimes(1);
+    expect(committed).toHaveBeenCalledTimes(2);
+    expect(await committedReads[1]).toEqual([expect.objectContaining({ _id: created.id, status: "approved" })]);
     expect(await service.commitments(buyer, "project-po-a")).toEqual({ approvedEstimatePaise: 1_000_000, committedPaise: 12_500,
       committedGstPaise: 2_250, committedTotalPaise: 14_750, remainingPaise: 987_500 });
     expect(await service.commitments(buyer, "project-po-b")).toEqual({ approvedEstimatePaise: 2_350_000, committedPaise: 0,
@@ -189,6 +225,7 @@ describe("purchase order Mongo transactions", () => {
     await expect(service.decide(admin, "project-po-a", created.id, { expectedVersion: submitted.version, submittedRevisionId: submitted.submittedRevisionId!, idempotencyKey: "approve-order-b", decision: "approve", reason: null, budgetOverrideReason: null })).rejects.toThrow("assignment failed");
     expect(await ProjectPurchaseOrderModel.findById(created.id).lean()).toMatchObject({ status: "pending_approval", version: submitted.version, approvedRevisionId: null });
     expect(await AuditEventModel.countDocuments({ entityId: created.id, action: "project_purchase_order_decided" })).toBe(0);
+    expect(committed).not.toHaveBeenCalled();
   });
 
   it("requires a reasoned override only when net commitments exceed the pre-GST approved procurement budget", async () => {
@@ -339,6 +376,8 @@ describe("project final completion Mongo transactions", () => {
     expect(corrected.scope.map(row => row.status)).toEqual(["approved_order", "not_required", "exception"]);
     expect(corrected.blockers.some(blocker => blocker.code === "SCOPE_UNCOVERED")).toBe(false);
     expect(await ProjectScopeExceptionModel.countDocuments({ projectId: "project-po-zero" })).toBe(1);
+    expect((await siteCompletionService.read(siteActor, "project-po-zero", "site_manager")).canSubmit).toBe(false);
+    await verifyOrder(created.id);
     expect((await siteCompletionService.read(siteActor, "project-po-zero", "site_manager")).canSubmit).toBe(true);
     const sent = await siteCompletionService.submit(siteActor, "project-po-zero", { expectedVersion: saved.version,
       idempotencyKey: "zero-scope-site-submit", note: "Installed approved plywood" });
@@ -401,6 +440,7 @@ describe("project final completion Mongo transactions", () => {
     await realOrderService.decide(admin, "project-po-a", firstOrder.id,
       { expectedVersion: firstSubmitted.version, submittedRevisionId: firstSubmitted.submittedRevisionId!,
         idempotencyKey: "scope-first-approve", decision: "approve", reason: null, budgetOverrideReason: null });
+    await verifyOrder(firstOrder.id);
     const saved = await siteCompletionService.progress(siteActor, "project-po-a", { expectedVersion: 0,
       idempotencyKey: "scope-site-progress", progress: 100, note: "First work inspected" });
     expect(saved).toMatchObject({ progress: 100, needsReverification: false, canSubmit: true });
@@ -417,6 +457,7 @@ describe("project final completion Mongo transactions", () => {
     expect(stale).toMatchObject({ progress: 100, needsReverification: true, canSubmit: false });
     await expect(siteCompletionService.submit(siteActor, "project-po-a", { expectedVersion: saved.version,
       idempotencyKey: "scope-stale-submit", note: "First work inspected" })).rejects.toMatchObject({ code: "SITE_COMPLETION_CONFLICT" });
+    await verifyOrder(secondOrder.id, otherVendorActor);
     const renewed = await siteCompletionService.progress(siteActor, "project-po-a", { expectedVersion: saved.version,
       idempotencyKey: "scope-site-reverify", progress: 100, note: "Both work sections inspected" });
     expect(renewed).toMatchObject({ progress: 100, needsReverification: false, canSubmit: true });
@@ -573,12 +614,17 @@ describe("project final completion Mongo transactions", () => {
     expect(pending.pendingOwner).toBe("site_manager");
     const assignment = await VendorWorkAssignmentModel.findOne({ orderId: order.id }).lean();
     expect(assignment).toBeTruthy();
+    const verified = await verifyOrder(order.id);
     const saved = await siteCompletionService.progress(siteActor, "project-po-a", { expectedVersion: 0,
       idempotencyKey: "site-progress-a", progress: 100, note: "Cabinet installed" });
     await expect(completionService.complete(admin, "project-po-a", { expectedAuthorityVersion: (await completionService.summary(admin, "project-po-a")).completionAuthorityVersion,
       idempotencyKey: "premature-closure-a" })).rejects.toMatchObject({ code: "PROJECT_COMPLETION_BLOCKED" });
     const submittedSite = await siteCompletionService.submit(siteActor, "project-po-a", { expectedVersion: saved.version,
       idempotencyKey: "site-submit-a", note: "Cabinet installed" });
+    expect((await SiteCompletionReviewModel.findById(submittedSite.review!.id).lean())?.sections[0]).toMatchObject({
+      executionVerificationId: verified.verification!.id, executionRound: verified.executionRound,
+      executionSubmissionVersion: verified.submission!.version
+    });
     await expect(realOrderService.amend(buyer, "project-po-a", order.id, { expectedVersion: approved.version,
       idempotencyKey: "amend-during-client-completion", reason: "Change after handoff" }))
       .rejects.toMatchObject({ code: "SITE_COMPLETION_IN_REVIEW" });

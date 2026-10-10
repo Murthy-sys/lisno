@@ -9,6 +9,7 @@ import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
 import { dashboardKeys } from "../admin/dashboard/superAdminDashboardApi";
 import { OperationalTaskQueue } from "./OperationalTaskQueue";
+import { executionFixture, executionPageFixture } from "../execution/executionTestFixtures";
 
 const statusAuth = vi.hoisted(() => ({ role: "worker_carpenter" as "worker_carpenter" | "site_manager" }));
 vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({
@@ -247,7 +248,7 @@ describe("OperationalTaskQueue", () => {
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: dashboardKeys.all });
   });
 
-  it("lets the assigned Site Manager save 100% before sending completion to the Client", async () => {
+  it("lets the assigned Site Manager save project progress and send already verified Main Lines to the Client", async () => {
     statusAuth.role = "site_manager";
     const siteTask: ProjectWorkflowTask = {
       ...carpenterTask,
@@ -270,13 +271,11 @@ describe("OperationalTaskQueue", () => {
         HttpResponse.json({ data: [siteTask] })
       ),
       http.get("/api/v1/projects/project-1/site-completion", () => HttpResponse.json({ data: current })),
-      http.get("/api/v1/projects/project-1/vendor-work-progress", () => HttpResponse.json({ data: { projectId: "project-1", assignments: [{
-        id: "vendor-section-1", projectId: "project-1", vendorId: "vendor-1", orderId: "order-1", sectionLabel: "Carpentry",
-        roomName: "Living room", itemName: "TV unit", scopeType: "execution", description: "Install TV unit", targetDate: "2026-11-01",
-        status: "ready", progress: 0, displayProgress: current.progress === 100 ? 100 : 0,
-        progressSource: current.progress === 100 ? "site_manager" : "vendor", note: "", imageCount: 0, imageIds: [],
-        requestedChangeReason: null, submittedAt: null, acceptedAt: null
-      }], pendingOwner: "site_manager" } })),
+      http.get("/api/v1/projects/project-1/execution", () => {
+        const page = executionPageFixture([{ ...executionFixture, projectId: "project-1", status: "site_verified", progress: 100, allowedActions: [],
+          verification: { id: "verification-one", verifiedAt: "2026-10-09T09:00:00Z", verifiedById: "participant-a", executionRound: 1 } }]);
+        return HttpResponse.json({ data: { ...page, counts: { ...page.counts, open: 0, reported: 1, verified: 1 } } });
+      }),
       http.patch("/api/v1/projects/project-1/site-completion/progress", async ({ request }) => {
         const body = await request.json() as Record<string, unknown>;
         current = { ...current, version: current.version + 1, progress: Number(body.progress), note: String(body.note), canSubmit: body.progress === 100 };
@@ -295,7 +294,7 @@ describe("OperationalTaskQueue", () => {
       name: "Site execution overview"
     });
     expect(await within(overview).findByRole("heading", { name: "Aurora Villa completion" })).toBeVisible();
-    expect(within(overview).getByRole("button", { name: "Project status for Aurora Villa" })).toBeVisible();
+    expect(await within(overview).findByRole("button", { name: "Project status for Aurora Villa" })).toBeVisible();
     const complete = within(overview).getByRole("button", { name: "Complete and send to Client" });
     expect(complete).toBeDisabled();
     const progress = within(overview).getByRole("spinbutton", { name: "Project execution progress (%)" });
@@ -304,7 +303,8 @@ describe("OperationalTaskQueue", () => {
     expect(within(overview).getByText("Save 100% progress first. Then send completion to the Client.")).toBeVisible();
     await userEvent.click(within(overview).getByRole("button", { name: "Save 100% progress" }));
     await waitFor(() => expect(complete).toBeEnabled());
-    expect(await within(overview).findByText("100% · Site Manager verified")).toBeVisible();
+    expect(await within(overview).findByText("100% vendor reported")).toBeVisible();
+    expect(within(overview).getByText("Site verified 9 Oct 2026")).toBeVisible();
     await userEvent.click(complete);
     await waitFor(() => expect(sent).toHaveLength(1));
     expect(sent[0]).toMatchObject({ expectedVersion: 2 });
@@ -321,5 +321,23 @@ describe("OperationalTaskQueue", () => {
     expect(await screen.findByRole("heading", { name: "Your coordination tasks" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Update progress for Plan site execution" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Complete and send to Client" })).not.toBeInTheDocument();
+  });
+
+  it("limits selected-project coordination to its legacy tasks and preserves the update", async () => {
+    statusAuth.role = "site_manager";
+    const legacy = { ...carpenterTask, id: "legacy-site-task", kind: "site_execution", completionAuthority: "legacy_staff", title: "Plan site execution", assigneeRole: "site_manager", sourceSectionId: null, roomName: null };
+    const writes: unknown[] = [];
+    server.use(http.get("/api/v1/workflow-tasks", () => HttpResponse.json({ data: [legacy, { ...legacy, id: "foreign-task", projectId: "project-2", projectName: "Other residence", title: "Other coordination" }, { ...legacy, id: "vendor-task", completionAuthority: "vendor_client", title: "Vendor-derived progress" }] })),
+      http.patch("/api/v1/workflow-tasks/legacy-site-task", async ({ request }) => { writes.push(await request.json()); return HttpResponse.json({ data: { ...legacy, progress: 60, version: 3 } }); }));
+    renderWithQuery(<OperationalTaskQueue role="site_manager" selectedProjectId="project-1" />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Update progress for Plan site execution" }));
+    expect(screen.queryByText("Other coordination")).not.toBeInTheDocument();
+    expect(screen.queryByText("Vendor-derived progress")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Complete and send to Client" })).not.toBeInTheDocument();
+    const progress = screen.getByLabelText("Progress percentage"); await user.clear(progress); await user.type(progress, "60");
+    await user.click(screen.getByRole("button", { name: "Save progress" }));
+    await waitFor(() => expect(writes).toEqual([{ version: 2, progress: 60 }]));
+    expect(await screen.findByText("60% complete")).toBeVisible();
   });
 });

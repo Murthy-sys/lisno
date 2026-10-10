@@ -1,3 +1,4 @@
+import { notifyIssuedWorkCommitted } from "./issued-work-delivery.js";
 import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession } from "mongoose";
 import { z } from "zod";
@@ -36,7 +37,7 @@ export type ProcurementBasketIssueInput = z.infer<typeof issueInputSchema>;
 export interface ProcurementBasketIssueResult { awardId: string; purchaseOrderId: string; orderNumber: string; status: "issued" }
 
 /** Commits the approved basket award, its child allocations, purchase order and vendor assignments atomically. */
-export function createProjectPurchaseOrderBasketIssueService(input: { audit: AuditService; onApproved: PurchaseOrderApprovalHook;
+export function createProjectPurchaseOrderBasketIssueService(input: { audit: AuditService; onApproved: PurchaseOrderApprovalHook; onIssuedCommitted?: () => void | Promise<void>;
   now?: () => Date }) {
   const now = input.now ?? (() => new Date());
   return {
@@ -48,7 +49,7 @@ export function createProjectPurchaseOrderBasketIssueService(input: { audit: Aud
       if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Invalid work-order issue request.");
       const fields = parsed.data;
       const requestDigest = digest({ projectId, basketId, enquiryId, awardId, ...fields });
-      return mongoose.connection.transaction(async session => {
+      const result = await mongoose.connection.transaction<ProcurementBasketIssueResult>(async session => {
         await assertProcurementProjectAccess(actor, projectId, session);
         const award = await ProcurementBasketAwardModel.findOne({ _id: awardId, enquiryId, projectId, mainBasketId: basketId })
           .session(session).lean() as Row | null;
@@ -241,7 +242,7 @@ export function createProjectPurchaseOrderBasketIssueService(input: { audit: Aud
           createdById: actor.id, updatedById: actor.id, createdAt: timestamp, updatedAt: timestamp });
         await order.validate();
         await ProjectPurchaseOrderModel.collection.insertOne(order.toObject(), { session });
-        await input.onApproved({ orderId, projectId, vendorId: candidate.vendorId, revision: 1, lines: approvedLines }, session);
+        await input.onApproved({ actorId: actor.id, approvedRevisionId: revisionId, occurredAt: timestamp, orderId, projectId, vendorId: candidate.vendorId, revision: 1, lines: approvedLines }, session);
         const issued = await ProcurementBasketAwardModel.updateOne({ _id: awardId, version: fields.expectedVersion,
           status: "ready_to_issue", currentProposalRevisionId: proposal._id }, {
           $set: { status: "issued", issuedPurchaseOrderId: orderId, issueIdempotencyKey: fields.idempotencyKey,
@@ -262,6 +263,8 @@ export function createProjectPurchaseOrderBasketIssueService(input: { audit: Aud
             submittedById: award.submittedById ?? null } }, session);
         return { awardId, purchaseOrderId: orderId, orderNumber, status: "issued" };
       }, { readConcern: { level: "snapshot" }, readPreference: "primary" });
+      await notifyIssuedWorkCommitted(input.onIssuedCommitted);
+      return result;
     },
     async issueAutomatically(input: { awardId: string; proposalRevisionId: string; expectedVersion: number;
       triggeringApprovalId: string; triggeringApprovalActorId: string }): Promise<ProcurementBasketIssueResult> {

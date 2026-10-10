@@ -1,4 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { projectChatApi } from "./projectChatApi";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,15 +8,68 @@ import { ChatTimeline } from "./ChatTimeline";
 import { ChatMediaProvider } from "./ChatMessageAttachments";
 import { chatTestMessage, chatTestPeople } from "./projectChatFixtures";
 
-const access = { userId: "client-a", scope: "session-a", isCurrent: () => () => true, verifyAccess: vi.fn() };
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { role: "client" } }) }));
+const access = { enabled: true, denied: new Set<string>(), userId: "client-a", scope: "session-a", isCurrent: () => () => true, verifyAccess: vi.fn() };
 vi.mock("./ProjectChatProvider", () => ({ useProjectChat: () => access }));
 const first = chatTestMessage({ author: chatTestPeople[1] });
 const second = chatTestMessage({ id: "message-b", sequence: 7, body: "Another update", author: chatTestPeople[1], createdAt: "2026-09-16T08:01:00Z" });
 const props = () => ({ projectId: "project-a", messages: [first], attempts: [], lastRead: 3, hasOlder: false, hasNewer: false, filtered: false, latestSequence: 3, loadingOlder: false, loadingNewer: false, canSend: true, onOlder: vi.fn(), onNewer: vi.fn(), onLatest: vi.fn(), onReply: vi.fn(), onContext: vi.fn(), onIssue: vi.fn(), onRetry: vi.fn(), onEditAttempt: vi.fn() });
-function wrapper({ children }: { children: React.ReactNode }) { return <QueryClientProvider client={new QueryClient()}><ChatMediaProvider projectId="project-a">{children}</ChatMediaProvider></QueryClientProvider>; }
+function wrapper({ children }: { children: React.ReactNode }) { return <QueryClientProvider client={new QueryClient()}><MemoryRouter><ChatMediaProvider projectId="project-a">{children}</ChatMediaProvider></MemoryRouter></QueryClientProvider>; }
 beforeEach(() => { vi.clearAllMocks(); });
 
 describe("chat transcript presentation", () => {
+  it("identifies a service author without assigning a human role or exposing issue controls", async () => {
+    const input = props();
+    render(<ChatTimeline {...input} messages={[chatTestMessage({ author: { kind: "service", id: "lisno-ai", name: "Lisno AI" }, body: "I checked the current project status." })]} />, { wrapper });
+    expect(screen.getByRole("article", { name: "Message from Lisno AI" })).toBeInTheDocument();
+    expect(screen.getByText("AI assistant")).toBeInTheDocument();
+    const mark = screen.getByRole("article", { name: "Message from Lisno AI" }).querySelector("img.lisno-chat-mark")!;
+    expect(mark).toHaveAttribute("src", "/lisno-chat-mark.svg");
+    expect(mark).toHaveAttribute("alt", "");
+    expect(mark).toHaveAttribute("aria-hidden", "true");
+    expect(mark).toHaveAttribute("width", "24");
+    expect(mark).toHaveAttribute("height", "24");
+    fireEvent.error(mark);
+    expect(screen.getByText("Lisno AI")).toBeVisible();
+    expect(screen.getByText("AI assistant")).toBeVisible();
+    expect(screen.getByText("I checked the current project status.")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Message options from Lisno AI" }));
+    expect(screen.getByRole("menuitem", { name: "Reply" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Flag importance" })).not.toBeInTheDocument();
+  });
+  it("does not brand a human sender named Lisno AI even if its ID matches the service", () => {
+    render(<ChatTimeline {...props()} messages={[chatTestMessage({ author: { kind: "human", id: "lisno-ai", name: "Lisno AI", role: "client" } })]} />, { wrapper });
+    const message = screen.getByRole("article", { name: "Message from Lisno AI" });
+    expect(message.querySelector(".lisno-chat-mark")).toBeNull();
+    expect(screen.queryByText("AI assistant")).not.toBeInTheDocument();
+    expect(message).not.toHaveClass("project-chat-message--assistant");
+  });
+  it("keeps one logo per grouped AI sender heading and preserves each message time and menu", () => {
+    const author = { kind: "service" as const, id: "lisno-ai" as const, name: "Lisno AI" as const };
+    render(<ChatTimeline {...props()} lastRead={4} messages={[chatTestMessage({ author }), chatTestMessage({ id: "ai-followup", sequence: 4, author, createdAt: "2026-09-16T08:01:00Z" })]} />, { wrapper });
+    const messages = screen.getAllByRole("article", { name: "Message from Lisno AI" });
+    expect(messages).toHaveLength(2);
+    expect(messages[0].querySelector(".lisno-chat-mark")).not.toBeNull();
+    expect(messages[1]).toHaveClass("project-chat-message--grouped");
+    expect(messages[1].querySelector(".lisno-chat-mark")).toBeNull();
+    expect(document.querySelectorAll(".project-chat-message__time time")).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Message options from Lisno AI" })).toHaveLength(2);
+  });
+  it("shows the authenticated AI answer once instead of the generic shared body", async () => {
+    vi.spyOn(projectChatApi, "assistantResult").mockResolvedValue({ id: "answer-a", projectId: "project-a", messageId: "ai-message", kind: "status", checkedAt: "2026-10-09T08:00:00Z", stale: false, commercialAccess: "none", facts: [], candidates: [], missingInputs: [], commercial: null, narrative: [{ text: "Your project team is preparing the next stage.", factIds: [] }] });
+    render(<ChatTimeline {...props()} messages={[chatTestMessage({ author: { kind: "service", id: "lisno-ai", name: "Lisno AI" }, body: "I checked the current project status.", assistant: { runId: "run-a", generation: 1, status: "answered", eligibleAt: "2026-10-09T08:00:00Z", resultId: "answer-a", checkedAt: "2026-10-09T08:00:00Z", routing: "not_required", notified: null, canRequest: false, failureCode: null } })]} />, { wrapper });
+    expect(await screen.findByText("Your project team is preparing the next stage.")).toBeVisible();
+    expect(screen.queryByText("I checked the current project status.")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("region", { name: "Lisno AI answer" })).toHaveLength(1);
+    expect(document.querySelectorAll(".project-chat-message__time time")).toHaveLength(1);
+  });
+  it("keeps refresh inside the original message menu without a Client routing footer", async () => {
+    render(<ChatTimeline {...props()} messages={[chatTestMessage({ assistant: { runId: "run-a", generation: 1, status: "answered", eligibleAt: "2026-10-09T08:00:00Z", resultId: "answer-a", checkedAt: "2026-10-09T08:00:00Z", routing: "notified", notified: chatTestPeople[1], canRequest: true, failureCode: null } })]} />, { wrapper });
+    expect(screen.queryByText(/Alert sent|Recalculate/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Refresh AI reply" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Message options from Maya Client" }));
+    expect(screen.getByRole("menuitem", { name: "Refresh AI reply" })).toBeVisible();
+  });
   it("keeps a reader's scroll position on arrival and jumps only on request", async () => {
     const input = props();
     const view = render(<ChatTimeline {...input} />, { wrapper });

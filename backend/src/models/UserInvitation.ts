@@ -17,6 +17,18 @@ import { model, models, Schema } from "./mongoose.js";
 
 const userInvitationSchema = new Schema(
   {
+    generationReceipt: { type: new Schema({
+      sourceKind: { type: String, enum: ["vendor_work_order", "procurement_vendor"], required: true },
+      sourceIntentId: { type: String, required: true, maxlength: 512 },
+      commandId: { type: String, required: true, maxlength: 128 },
+      tokenGeneration: { type: Number, required: true, min: 1 }
+    }, { _id: false, strict: "throw" }), default: null },
+    authority: { type: new Schema({
+      kind: { type: String, enum: ["vendor_work_order", "procurement_vendor"], required: true },
+      sourceIntentId: { type: String, required: true, maxlength: 512 },
+      vendorId: { type: String, required: true, match: VENDOR_ID_PATTERN },
+      emailNormalized: { type: String, required: true, maxlength: USER_INVITATION_EMAIL_MAX }
+    }, { _id: false, strict: "throw" }), default: null, immutable: true },
     _id: { type: String, required: true, immutable: true },
     name: {
       type: String,
@@ -118,6 +130,10 @@ userInvitationSchema.pre("validate", function validateVendorIdentity() {
   const vendorId = this.get("vendorId");
   if (this.get("role") === "vendor" ? typeof vendorId !== "string" || !VENDOR_ID_PATTERN.test(vendorId) : vendorId != null) {
     this.invalidate("vendorId", "Vendor ID is required only for Vendor invitations.");
+  }
+  const authority = this.get("authority");
+  if (authority && (this.get("role") !== "vendor" || authority.vendorId !== vendorId || authority.emailNormalized !== this.get("emailNormalized"))) {
+    this.invalidate("authority", "Work-order authority must match the exact vendor and email.");
   }
 });
 

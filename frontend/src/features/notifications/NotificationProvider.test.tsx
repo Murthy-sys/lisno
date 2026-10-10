@@ -45,6 +45,82 @@ beforeEach(() => {
 });
 
 describe("project notification inbox", () => {
+  it("sends the clicked alert version and keeps a later Critical escalation unread after a stale acknowledgement", async () => {
+    const important = item("routed", { type: "chat.mention", routing: { priority: "important", messageVersion: 1, lastAlertAt: "2026-09-17T09:01:00Z" } });
+    setup(); await connected();
+    await snapshot(page([important]));
+    let reject!: (error: Error) => void;
+    vi.mocked(notificationApi.read).mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
+    await userEvent.click(within(screen.getByRole("region", { name: "New notifications" })).getByRole("button", { name: /Open message/ }));
+    expect(notificationApi.read).toHaveBeenCalledWith("routed", 1, expect.any(AbortSignal));
+    const critical = { ...important, routing: { priority: "critical" as const, messageVersion: 2, lastAlertAt: "2026-09-17T09:05:00Z" } };
+    await snapshot(page([critical]));
+    vi.mocked(notificationApi.list).mockResolvedValueOnce(page([critical]));
+    await act(async () => reject(new ApiError(409, "CONFLICT", "Notification changed")));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Review the latest alert");
+    expect(screen.getByLabelText("Current path")).toHaveTextContent(/^\/$/);
+    expect(screen.getByRole("button", { name: "Notifications, 1 unread" })).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "New notifications" })).getByText("Client critical request in Courtyard residence")).toBeVisible();
+    expect(notificationApi.read).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not replace or dismiss a newer banner when an earlier successful read response arrives late", async () => {
+    const important = item("routed", { type: "chat.assistant.route", routing: { priority: "important", messageVersion: 1, lastAlertAt: "2026-09-17T09:01:00Z" } });
+    const { queryClient } = setup(); await connected();
+    await snapshot(page([important]));
+    let finish!: (value: ProjectNotification) => void;
+    vi.mocked(notificationApi.read).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await userEvent.click(within(screen.getByRole("region", { name: "New notifications" })).getByRole("button", { name: /Open message/ }));
+    const critical = { ...important, routing: { priority: "critical" as const, messageVersion: 2, lastAlertAt: "2026-09-17T09:05:00Z" } };
+    await snapshot(page([critical]));
+    let refresh!: (value: NotificationPage) => void;
+    vi.mocked(notificationApi.list).mockImplementationOnce(() => new Promise(resolve => { refresh = resolve; }));
+    await act(async () => finish({ ...important, readAt: "2026-09-17T09:02:00Z" }));
+    expect(within(screen.getByRole("region", { name: "New notifications" })).getByText("Client critical request in Courtyard residence")).toBeVisible();
+    const current = queryClient.getQueriesData<NotificationPage>({ queryKey: ["notifications"] }).find(([, value]) => value?.items.length)?.[1];
+    expect(current?.items[0]).toEqual(critical);
+    await act(async () => refresh(page([critical])));
+    expect(screen.getByRole("button", { name: "Notifications, 1 unread" })).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "New notifications" })).getByText("Client critical request in Courtyard residence")).toBeVisible();
+  });
+
+  it("announces a later Critical escalation on an already-read routed row once", async () => {
+    const important = item("routed", { type: "chat.assistant.route", createdAt: "2026-09-16T09:00:00Z", routing: { priority: "important", messageVersion: 1, lastAlertAt: "2026-09-17T09:01:00Z" } });
+    setup(); await connected();
+    await snapshot(page([important, item()]));
+    const banner = screen.getByRole("region", { name: "New notifications" });
+    expect(within(banner).getByText("Client important request in Courtyard residence")).toBeVisible();
+    const read = { ...important, readAt: "2026-09-17T09:02:00Z" };
+    vi.mocked(notificationApi.read).mockResolvedValueOnce(read);
+    vi.mocked(notificationApi.list).mockResolvedValueOnce(page([read, item()]));
+    await userEvent.click(within(banner).getByRole("button", { name: /Open message/ }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "New notifications" })).not.toBeInTheDocument());
+    const critical = { ...important, routing: { priority: "critical" as const, messageVersion: 2, lastAlertAt: "2026-09-17T09:05:00Z" } };
+    await snapshot(page([critical, item()]));
+    expect(within(screen.getByRole("region", { name: "New notifications" })).getByText("Client critical request in Courtyard residence")).toBeVisible();
+    await snapshot(page([critical, item()]));
+    expect(screen.getAllByRole("button", { name: /Dismiss notification/ })).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: /Dismiss notification/ }));
+    await snapshot(page([critical, item()]));
+    expect(screen.queryByRole("region", { name: "New notifications" })).not.toBeInTheDocument();
+  });
+
+  it("refreshes retained routed banners with the latest title and excerpt without duplicates", async () => {
+    const important = item("routed", { type: "chat.assistant.route", routing: { priority: "important", messageVersion: 1, lastAlertAt: "2026-09-17T09:01:00Z" } });
+    setup(); await connected();
+    await snapshot(page([important, item()]));
+    const critical = { ...important, excerpt: "Please resolve this urgent site issue.", routing: { priority: "critical" as const, messageVersion: 2, lastAlertAt: "2026-09-17T09:02:00Z" } };
+    await snapshot(page([critical, item()]));
+    const banner = screen.getByRole("region", { name: "New notifications" });
+    expect(within(banner).queryByText("Client important request in Courtyard residence")).not.toBeInTheDocument();
+    expect(within(banner).getByText("Client critical request in Courtyard residence")).toBeVisible();
+    expect(within(banner).getByText(critical.excerpt)).toBeVisible();
+    expect(within(banner).getAllByRole("button", { name: /Open message/ })).toHaveLength(1);
+    await snapshot(page([{ ...critical, projectName: "Renamed residence" }, item()]));
+    expect(within(banner).getByText("Client critical request in Renamed residence")).toBeVisible();
+    expect(within(banner).getAllByRole("button", { name: /Open message/ })).toHaveLength(1);
+  });
+
   it("shows unread bell without replaying the initial inbox and announces a new first-stream item", async () => {
     setup(); await connected();
     expect(screen.getByRole("button", { name: "Notifications, 1 unread" })).toBeVisible();
@@ -71,7 +147,7 @@ describe("project notification inbox", () => {
     vi.mocked(notificationApi.list).mockResolvedValue(page([item("mention-1", { readAt: "2026-09-17T09:10:00Z" })]));
     await userEvent.click(screen.getByRole("button", { name: /Alex Morgan mentioned you.*Open message/ }));
     await waitFor(() => expect(screen.getByLabelText("Current path")).toHaveTextContent("/projects/project-one/messages?message=message-mention-1"));
-    expect(notificationApi.read).toHaveBeenCalledWith("mention-1", expect.any(AbortSignal));
+    expect(notificationApi.read).toHaveBeenCalledWith("mention-1", undefined, expect.any(AbortSignal));
     expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Notifications" })).toBeVisible();
   });

@@ -7,6 +7,8 @@ function timestamp(value: unknown): number {
 }
 
 export function isSiteVerifiedAssignment(site: SiteProgress | null, assignment: Assignment): boolean {
+  // Individually tracked work is verified only through its saved execution review.
+  if (assignment.executionTracked === true) return false;
   if (!site || Number(site.progress) !== 100) return false;
   if (Array.isArray(site.verifiedAssignmentIds)) {
     return site.verifiedAssignmentIds.includes(String(assignment._id));

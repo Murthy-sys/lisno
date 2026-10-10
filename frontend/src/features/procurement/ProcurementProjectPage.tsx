@@ -1,3 +1,4 @@
+import { VendorAccessPanel } from "../execution/VendorAccessPanel";
 import { ProjectChatNavigation } from "../messages";
 import { useRef } from "react";
 import { Link, useParams } from "react-router-dom";
@@ -71,6 +72,8 @@ export function ProcurementProjectPage() {
           message="This project is not available for procurement. It may not be Design approved yet."
         />
       ) : null}
+      {canRead && !accessRevoked && visibleProject && hasFrontendPermission(auth.authorization, "execution.tracker.read") ? <p><Link to={`/projects/${encodeURIComponent(projectId)}/execution`}>View Main Line execution</Link></p> : null}
+      {canRead && !accessRevoked && visibleProject ? <VendorAccessPanel projectId={projectId} /> : null}
       {canRead && !accessRevoked && visibleProject ? <ProcurementBasketWorkspace key={`basket-workspace-${projectId}`}
         projectId={projectId} projectName={visibleProject.projectName} projectSourceStale={projectSourceStale}
         currentEstimate={project ? { estimateId: project.estimateId, estimateVersion: project.estimateVersion } : undefined} /> : null}

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthProvider";
+import { hasFrontendPermission } from "../../auth/authorization";
 import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
 import { chatErrorMessage, projectChatApi } from "./projectChatApi";
@@ -13,7 +14,7 @@ export function DailyCriticalTasksPrompt() {
   const queryClient = useQueryClient();
   const [manualOpen, setManualOpen] = useState(false);
   const [opening, setOpening] = useState(false);
-  const internal = Boolean(auth.user && auth.user.role !== "client");
+  const internal = hasFrontendPermission(auth.authorization ?? null, "chat.read") && Boolean(auth.user && auth.user.role !== "client");
   const key = ["daily-critical-tasks", auth.user?.id] as const;
   const digest = useQuery<DailyCriticalTasks | null>({
     queryKey: key,

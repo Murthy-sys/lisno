@@ -88,7 +88,6 @@ const estimatorCatalogue = {
 const neutralHomeRoles = [
   "procurement",
   "finance_head",
-  "site_manager",
   "worker_electrician",
   "worker_plumber",
   "worker_carpenter",
@@ -300,6 +299,8 @@ function installAuthorizationSession(
     if (path === "/api/v1/auth/authorization") {
       return Response.json({ data: authorizationFor(role, permissions) });
     }
+    if (path.startsWith("/api/v1/execution/projects")) return Response.json({ data: { items: [], total: 0, limit: 25, offset: 0 } });
+    if (path.startsWith("/api/v1/projects/project-one/execution")) return Response.json({ data: { project: { id: "project-one", name: "Oak residence", status: "active", completionAuthority: "vendor_client" }, projectCounts: { total: 0, open: 0, reported: 0, verified: 0, clientAccepted: 0, missing: 0, blocked: 0, overdue: 0, awaitingVerification: 0, setupRequired: 0 }, items: [], total: 0, limit: 25, offset: 0, counts: { total: 0, open: 0, reported: 0, verified: 0, clientAccepted: 0, missing: 0, blocked: 0, overdue: 0, awaitingVerification: 0, setupRequired: 0 }, policy: null, canManagePolicy: false } });
     if (path.startsWith("/api/v1/procurement/suggestion-projects?")) return Response.json({ data: { items: [], total: 0, limit: 20, offset: 0 } });
     if (path.startsWith("/api/v1/admin/ai-estimator-knowledge/vendors?")) return Response.json({ data: { items: [], pagination: { total: 0, limit: 20, offset: 0, hasMore: false } } });
     if (path === "/api/v1/procurement/projects") return Response.json({ data: [] });
@@ -611,7 +612,7 @@ describe("role landing staging contract", () => {
 
 describe("public invitation route", () => {
   it("mounts directly while staying outside the protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(43);
+    expect(ROUTE_REGISTRY).toHaveLength(45);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -699,6 +700,31 @@ describe("public password recovery routes", () => {
 });
 
 describe("registered permission routes", () => {
+  it.each(["super_admin", "site_manager", "program_manager", "procurement"] as const)("opens execution oversight and project work for an authorized %s", async role => {
+    installAuthorizationSession(role, ["execution.tracker.read"]);
+    renderApp(["/projects/project-one/execution"]);
+    expect(await screen.findByRole("heading", { name: role === "site_manager" ? "Oak residence" : "Main Line workflow" })).toBeVisible();
+  });
+  it("redirects the Site Manager execution portfolio to the focused Home workspace", async () => {
+    installAuthorizationSession("site_manager", ["execution.tracker.read", "workflow.tasks.read"]);
+    const { router } = renderApp(["/execution"]);
+    expect(await screen.findByRole("heading", { name: "Assigned projects" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/home");
+    expect(screen.queryByText("Ready for staged access")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Project execution" })).not.toBeInTheDocument();
+  });
+  it("lands the Program Manager on the execution portfolio", async () => {
+    installAuthorizationSession("program_manager", ["execution.tracker.read"]);
+    const { router } = renderApp(["/"]);
+    expect(await screen.findByRole("heading", { name: "Project execution" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/execution");
+  });
+  it.each(["vendor", "client", "admin"] as const)("does not expose staff execution to %s even with a misplaced permission", async role => {
+    installAuthorizationSession(role, ["execution.tracker.read"]);
+    renderApp(["/execution"]);
+    expect(await screen.findByRole("heading", { name: /access denied/i })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Project execution" })).not.toBeInTheDocument();
+  });
   it.each([
     ["admin", "/admin/procurement", "Project vendor suggestions"],
     ["super_admin", "/admin/procurement", "Procurement dashboard"],
@@ -718,8 +744,9 @@ describe("registered permission routes", () => {
       (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
     );
 
-    expect(paths).toHaveLength(historicalProtectedPaths.length + 22);
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 24);
     expect(additions).toEqual([
+      "/execution", "/projects/:projectId/execution",
       "/project-messages", "/projects/:projectId/messages",
       "/designer/design-plans",
       "/vendor",
@@ -733,6 +760,7 @@ describe("registered permission routes", () => {
     ]);
     expect(paths.filter(
       (path) => ![
+        "/execution", "/projects/:projectId/execution",
         "/project-messages", "/projects/:projectId/messages",
         "/designer/design-plans",
         "/vendor",
@@ -1376,7 +1404,7 @@ describe("protected role routing", () => {
     await user.click(await screen.findByRole("button", { name: "Select rooms" }));
     await user.click(screen.getByRole("option", { name: "Master Bedroom" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
-    await user.click(await screen.findByRole("checkbox", { name: /Joinery/ }));
+    await user.click(await screen.findByRole("button", { name: "Add Joinery" }));
     await user.click(screen.getByRole("button", { name: /continue to item selection/i }));
     expect(await screen.findByRole("heading", { name: /select estimate items/i })).toBeVisible();
     expect(screen.getByText("Wardrobe carcass")).toBeVisible();
