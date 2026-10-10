@@ -4626,7 +4626,7 @@
   background: #fff;
   box-shadow: 0 0.6rem 1.5rem rgb(39 48 74 / 8%);
   opacity: 1;
-  cursor: not-allowed;
+  cursor: pointer;
 }
 
 .ask-lisno-launcher__icon {

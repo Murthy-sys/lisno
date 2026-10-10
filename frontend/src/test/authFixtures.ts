@@ -43,6 +43,8 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "procurement.vendor_suggestions.read",
     "procurement.vendors.read",
     "procurement.vendor_directory.read",
+    "procurement.vendor_access.read",
+    "procurement.vendor_access.manage",
     "procurement.vendor_directory.create",
     "procurement.vendor_directory.update",
     "procurement.vendor_directory.lifecycle",
@@ -96,6 +98,8 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "procurement.expense.create",
     "procurement.document.read",
     "procurement.vendor_directory.read",
+    "procurement.vendor_access.read",
+    "procurement.vendor_access.manage",
     "procurement.vendor_directory.create",
     "procurement.vendor_directory.update",
     "procurement.vendor_directory.lifecycle",
@@ -149,6 +153,7 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
   vendor: [...BASE_SESSION_PERMISSIONS, "procurement.vendor_work.read"],
   client: [
     ...BASE_SESSION_PERMISSIONS,
+    "ask_lisno.request",
     "projects.client_summary.read",
     "projects.read"
   ]

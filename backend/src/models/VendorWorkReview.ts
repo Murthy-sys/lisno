@@ -24,6 +24,9 @@ const schema = new Schema({
   submittedAt: { type: Date, required: true, immutable: true },
   status: { type: String, required: true, enum: ["pending", "approved", "changes_requested"] },
   version: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
+  executionVerificationId: { type: String, default: null, immutable: true },
+  executionRound: { type: Number, default: null, immutable: true },
+  executionSubmissionVersion: { type: Number, default: null, immutable: true },
   decision: { type: decisionSchema, default: null }
 }, { collection: "vendorWorkReviews", timestamps: false, versionKey: false, strict: "throw" });
 

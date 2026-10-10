@@ -1,4 +1,13 @@
 export const EXISTING_AUDIT_ACTIONS = [
+  "project_chat.assistant_routed",
+  "project_chat.assistant_answered",
+  "vendor_execution_updated",
+  "vendor_execution_decided",
+  "vendor_execution_policy_updated",
+  "vendor_execution_reminder_recorded",
+  "procurement.vendor_invitation.requested",
+  "vendor_execution_access_send",
+  "vendor_execution_access_retry",
   "design_workflow_action_recorded",
   "client_project_linked",
   "client_signed_up",

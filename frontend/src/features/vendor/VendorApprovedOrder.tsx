@@ -1,0 +1,12 @@
+import { useQuery } from "@tanstack/react-query";
+import { Button } from "../../components/ui/Button";
+import { InlineMessage } from "../../components/ui/InlineMessage";
+import { formatPaise } from "../finance/ProjectFinancePanel";
+import { procurementError } from "../procurement/procurementPresentation";
+import { getVendorPurchaseOrder, purchaseOrderKeys } from "../procurement/purchaseOrderApi";
+import "./vendorWork.css";
+
+export function VendorApprovedOrder({ orderId }: { orderId: string }) {
+  const approvedOrder = useQuery({ queryKey: purchaseOrderKeys.vendorOrder(orderId), queryFn: () => getVendorPurchaseOrder(orderId), enabled: Boolean(orderId) });
+  return <>{approvedOrder.isPending ? <p className="vendor-work__muted">Loading approved purchase order…</p> : approvedOrder.isError ? <InlineMessage tone="error">{procurementError(approvedOrder.error, "The approved purchase order could not be loaded.")}</InlineMessage> : approvedOrder.data ? <details className="vendor-work__order"><summary>View approved purchase order {approvedOrder.data.orderNumber}</summary><div className="vendor-work__order-body"><h3 className="vendor-work__print-title">Purchase order {approvedOrder.data.orderNumber}</h3><div className="vendor-work__order-top"><p>Revision {approvedOrder.data.revision} · Approved {new Date(approvedOrder.data.approvedAt).toLocaleDateString()}</p><Button variant="quiet" size="compact" onClick={() => window.print()}>Print purchase order</Button></div><p><strong>Vendor:</strong> {approvedOrder.data.vendor.name} ({approvedOrder.data.vendor.code}) · <strong>Project reference:</strong> {approvedOrder.data.projectId}</p><div className="vendor-work__order-lines">{approvedOrder.data.lines.map((line) => <div key={line.id}><span><strong>{line.itemName}</strong><small>{line.description} · {line.quantityMilliUnits / 1000} {line.uomCode} · {line.scopeType?.replaceAll("_", " ") ?? "Not specified"}</small><small>Target {line.targetDate ?? "Not specified"} · {line.deliveryLocation ?? "Not specified"} · GST {line.gstBasisPoints / 100}%</small></span><span>{formatPaise(line.totalPaise)}</span></div>)}</div><dl><div><dt>Before GST</dt><dd>{formatPaise(approvedOrder.data.totals.netPaise)}</dd></div><div><dt>GST</dt><dd>{formatPaise(approvedOrder.data.totals.gstPaise)}</dd></div><div><dt>Total</dt><dd>{formatPaise(approvedOrder.data.totals.totalPaise)}</dd></div></dl>{approvedOrder.data.terms ? <p className="vendor-work__terms"><strong>Terms:</strong> {approvedOrder.data.terms}</p> : null}</div></details> : null}</>;
+}

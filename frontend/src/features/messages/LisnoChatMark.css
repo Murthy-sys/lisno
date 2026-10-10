@@ -1,0 +1,8 @@
+.lisno-chat-mark {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  vertical-align: middle;
+}

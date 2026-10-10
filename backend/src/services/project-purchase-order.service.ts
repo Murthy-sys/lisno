@@ -1,3 +1,4 @@
+import { notifyIssuedWorkCommitted } from "./issued-work-delivery.js";
 import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession } from "mongoose";
 import type { ZodType } from "zod";
@@ -89,6 +90,9 @@ export interface ProjectPurchaseOrderService {
 }
 
 export interface PurchaseOrderApproval {
+  actorId: string;
+  approvedRevisionId: string;
+  occurredAt: Date;
   orderId: string;
   projectId: string;
   vendorId: string;
@@ -98,7 +102,7 @@ export interface PurchaseOrderApproval {
 export type PurchaseOrderApprovalHook = (approval: PurchaseOrderApproval, session: ClientSession) => Promise<void>;
 
 /** The approval hook is mandatory: an approved PO and vendor assignments commit together. */
-export function createProjectPurchaseOrderService(input: { audit: AuditService; onApproved: PurchaseOrderApprovalHook; now?: () => Date }): ProjectPurchaseOrderService {
+export function createProjectPurchaseOrderService(input: { audit: AuditService; onApproved: PurchaseOrderApprovalHook; onIssuedCommitted?: () => void | Promise<void>; now?: () => Date }): ProjectPurchaseOrderService {
   if (typeof input.onApproved !== "function") throw new Error("Purchase-order approval requires transactional assignment creation.");
   const now = input.now ?? (() => new Date());
 
@@ -247,8 +251,8 @@ export function createProjectPurchaseOrderService(input: { audit: AuditService; 
         return detail(projectId, orderId, session);
       });
     },
-    decide(actor, projectId, orderId, value) {
-      return tx(actor, "super_admin", projectId, async (session) => {
+    async decide(actor, projectId, orderId, value) {
+      const result = await tx(actor, "super_admin", projectId, async (session) => {
         const fields = validate(purchaseOrderDecisionSchema, value);
         const order = await requireOrder(projectId, orderId, session);
         if (order.tenderAwardId) throw new ApiError(409, "PURCHASE_ORDER_TENDER_MANAGED", "A basket award cannot be approved through the individual purchase-order queue.");
@@ -283,7 +287,7 @@ export function createProjectPurchaseOrderService(input: { audit: AuditService; 
           const commitments = others.reduce((sum, other) => sum + BigInt(storedApprovedPaise(other, "approvedNetPaise")), BigInt(revision.netPaise));
           if (commitments > BigInt(budgetPaise) && !fields.budgetOverrideReason) throw new ApiError(400, "PURCHASE_ORDER_BUDGET_OVERRIDE_REQUIRED", "This approval exceeds the approved estimate. Enter a Super Admin override reason.", { budgetOverrideReason: "Required above the approved estimate." });
           await assertPurchaseOrderAllocations({ projectId, lines: revision.lines as ApprovedPurchaseOrderLine[], excludeOrderIds: [orderId] }, session);
-          await input.onApproved({ orderId, projectId, vendorId: order.vendorId, revision: revision.revision, lines: revision.lines as ApprovedPurchaseOrderLine[] }, session);
+          await input.onApproved({ actorId: actor.id, approvedRevisionId: String(revision._id), occurredAt: now(), orderId, projectId, vendorId: order.vendorId, revision: revision.revision, lines: revision.lines as ApprovedPurchaseOrderLine[] }, session);
           approvedTotals = { approvedRevisionId: revision._id, approvedRevision: revision.revision, approvedNetPaise: revision.netPaise, approvedGstPaise: revision.gstPaise, approvedTotalPaise: revision.totalPaise, approvedAt: now() };
         }
         const timestamp = now();
@@ -299,6 +303,8 @@ export function createProjectPurchaseOrderService(input: { audit: AuditService; 
         await audit(input.audit, actor.id, "project_purchase_order_decided", orderId, timestamp, { projectId, revision: revision.revision, decision: fields.decision, approvedTotalPaise: approvedTotals.approvedTotalPaise ?? null }, session, fields.reason ?? fields.budgetOverrideReason);
         return detail(projectId, orderId, session);
       });
+      if (result.status === "approved") await notifyIssuedWorkCommitted(input.onIssuedCommitted);
+      return result;
     },
     amend(actor, projectId, orderId, value) {
       return tx(actor, "procurement", projectId, async (session) => {

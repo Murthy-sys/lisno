@@ -30,7 +30,7 @@ async function mount() {
   const view = render(<QueryClientProvider client={client}><ProjectChatProvider><Conversation /></ProjectChatProvider></QueryClientProvider>);
   await settle();
   expect(fixture.streams).toHaveLength(1);
-  return view;
+  return { ...view, client };
 }
 beforeEach(() => {
   vi.useFakeTimers();
@@ -43,6 +43,15 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("project stream query scheduling", () => {
+  it.each(["participants.changed", "resync"])("clears retained assistant prices synchronously on %s", async change => {
+    const { client } = await mount();
+    const summaryKey = client.getQueryCache().getAll().find(query => query.queryKey.at(-1) === "summary" && query.queryKey[3] === "project-a")!.queryKey;
+    const resultKey = [...summaryKey.slice(0, -1), "assistant-result", "result-a"];
+    client.setQueryData(resultKey, { result: { commercial: { totalPaise: 123400 } } });
+    act(() => fixture.streams[0].onBatch({ events: change === "resync" ? [] : [{ id: "membership-a", type: "participants.changed", projectId: "project-a", recordId: "person-a", sequence: 8, version: 2, occurredAt: "2026-10-09T08:00:00Z" }], cursor: "next", hasMore: false, resync: change === "resync" }));
+    expect(client.getQueryData(resultKey)).toBeUndefined();
+    await settle();
+  });
   it("ignores duplicate live notifications and reconciles once after a real reconnect", async () => {
     await mount();
     const stream = fixture.streams[0];
@@ -81,7 +90,7 @@ describe("project stream query scheduling", () => {
     await settle();
     expect(projectChatApi.conversations).toHaveBeenCalledTimes(initial);
     let count = initial;
-    for (const type of ["message.created", "issue.changed", "participants.changed", "read.changed"] satisfies ChatEventType[]) {
+    for (const type of ["message.created", "assistant.changed", "issue.changed", "participants.changed", "read.changed"] satisfies ChatEventType[]) {
       act(() => stream.onBatch({ events: [{ id: type, type, projectId: "project-a", recordId: "record", sequence: ++count, version: 1, occurredAt: "2026-09-16T10:00:00Z" }], cursor: type, hasMore: false, resync: false }));
       await settle();
       expect(projectChatApi.conversations).toHaveBeenCalledTimes(count);

@@ -1,3 +1,5 @@
+import type { ProjectChatAssistantService } from "./project-chat-assistant.service.js";
+import { LISNO_AI } from "../contracts/project-chat-assistant.js";
 import { randomUUID } from "node:crypto";
 import type { ChatActionType, ChatActor, ChatAttachmentPolicy, ChatConversation, ChatConversationTotals, ChatCounts, ChatEvent, ChatLastMessage, ChatMessage, ChatParticipantPage, ChatPerson, ChatSummary, ProjectChatService } from "../contracts/project-chat.js";
 import { hasPermission, type PermissionCode } from "../domain/authorization.js";
@@ -29,6 +31,7 @@ export interface ProjectChatServiceOptions {
     clock?: Clock;
     chatRepository?: ProjectChatRepository;
     attachmentPolicy?: ChatAttachmentPolicy;
+    assistant?: ProjectChatAssistantService;
     onNotificationsCommitted?: (recipientIds: string[]) => void;
 }
 export function createProjectChatService(options: ProjectChatServiceOptions): ProjectChatService {
@@ -52,6 +55,7 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
         const admin = canManage(actor, ctx);
         const exclusions = ctx.sources.exclusions ?? [];
         return {
+            assistant: options.assistant?.participant ?? {...LISNO_AI, available: false},
             items: ctx.membership.participants.map(person => {
                 const removalBlockedReason = person.id === actor.id ? "You cannot remove yourself." : person.id === ctx.sources.project.clientId ? "The linked Client must remain in the conversation." : person.role === "super_admin" ? "The Super Admin must remain in the conversation." : null;
                 return { ...person, sources: admin ? person.sources : [], selection: admin ? person.selection : null, ...(admin ? { removalVersion: exclusions.find(row => row.userId === person.id)?.version ?? 0, canRemove: removalBlockedReason === null, removalBlockedReason } : {}) };
@@ -68,13 +72,15 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
         const state = await tx.state(project.id);
         const read = await tx.readState(project.id, actor.id);
         const writable = chatAvailability(actor.role, clock()).writable;
-        return { project: { id: project.id, name: project.name, status: project.status, nameVersion: project.nameVersion ?? 1 }, counts: counts ?? await tx.counts(project.id, actor.id, read?.sequence ?? 0), participantCount: ctx.membership.participants.length, cursor: chatCursor(project.id, state.sequence), lastReadSequence: read?.sequence ?? 0, latestMessageSequence: state.latestMessageSequence, capabilities: { canSend: writable && hasPermission(actor.role, "chat.send"), canManageParticipants: writable && canManage(actor, ctx), canManageIssues: writable && chatManager(actor), canRenameProject: writable && canManage(actor, ctx) && hasPermission(actor.role, "chat.project_name.manage") }, setupWarnings: canManage(actor, ctx) ? ctx.membership.warnings : [] };
+        return { assistant: options.assistant?.participant ?? {...LISNO_AI, available: false}, project: { id: project.id, name: project.name, status: project.status, nameVersion: project.nameVersion ?? 1 }, counts: counts ?? await tx.counts(project.id, actor.id, read?.sequence ?? 0), participantCount: ctx.membership.participants.length, cursor: chatCursor(project.id, state.sequence), lastReadSequence: read?.sequence ?? 0, latestMessageSequence: state.latestMessageSequence, capabilities: { canSend: writable && hasPermission(actor.role, "chat.send"), canManageParticipants: writable && canManage(actor, ctx), canManageIssues: writable && chatManager(actor), canRenameProject: writable && canManage(actor, ctx) && hasPermission(actor.role, "chat.project_name.manage") }, setupWarnings: canManage(actor, ctx) ? ctx.membership.warnings : [] };
     }
     async function present(tx: ChatTransaction, actor: ChatActor, ctx: Context, row: ChatStoredMessage): Promise<ChatMessage> {
         const responsible = row.responsible ? ctx.membership.participants.find((person) => person.id === row.responsible!.id) : null;
         const capabilities = issueCapabilities(actor, row);
         const writable = chatAvailability(actor.role, clock()).writable;
-        const message: ChatMessage = { ...row, attachments: row.attachments ?? [], responsible: row.responsible ? { ...row.responsible, ...(responsible ? chatPerson(responsible) : {}), available: Boolean(responsible) } : null, issueHistory: await tx.history(row.projectId, row.id), capabilities: writable ? capabilities : Object.fromEntries(Object.keys(capabilities).map(key => [key, false])) as ChatMessage["capabilities"] };
+        const {assistantRunId: _assistantRunId, ...publicRow} = row;
+        const assistant = await options.assistant?.present(tx, actor, row);
+        const message: ChatMessage = { ...publicRow, ...(assistant ? {assistant} : {}), attachments: row.attachments ?? [], responsible: row.responsible ? { ...row.responsible, ...(responsible ? chatPerson(responsible) : {}), available: Boolean(responsible) } : null, issueHistory: await tx.history(row.projectId, row.id), capabilities: writable ? capabilities : Object.fromEntries(Object.keys(capabilities).map(key => [key, false])) as ChatMessage["capabilities"] };
         return message;
     }
     async function conversationCounts(tx: ChatTransaction, actor: ChatActor, projectId: string): Promise<ChatCounts> {
@@ -87,7 +93,7 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
         if (!row)
             return null;
         const attachments = row.attachments ?? [];
-        return { id: row.id, author: chatPerson(row.author), excerpt: chatExcerpt(row.body), createdAt: row.createdAt, attachments: attachments.slice(0, 3).map((attachment) => ({ id: attachment.id, kind: attachment.kind, filename: attachment.filename, hasPreview: attachment.preview !== null })), attachmentCount: attachments.length };
+        return { id: row.id, author: row.author.kind === "service" ? LISNO_AI : chatPerson(row.author), excerpt: chatExcerpt(row.body), createdAt: row.createdAt, attachments: attachments.slice(0, 3).map((attachment) => ({ id: attachment.id, kind: attachment.kind, filename: attachment.filename, hasPreview: attachment.preview !== null })), attachmentCount: attachments.length };
     }
     const findMessage = async (tx: ChatTransaction, projectId: string, id: string) => { const row = await tx.message(projectId, id); if (!row)
         chatNotFound(); return row; };
@@ -406,17 +412,21 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
                     await recordIssue(tx, actor, ctx, message, "raise", "", at);
                 await audit(tx, { actorId: actor.id, action: "project_chat.message_created", entityType: "project_chat_message", entityId: message.id, occurredAt: at, newValues: { projectId, sequence, priority: message.priority, mentionUserIds: value.mentions.map((mention) => mention.userId), replyToId: value.replyToId } });
                 await event(tx, actor, projectId, "message.created", message.id, 1, at, sequence);
+                notificationRecipients.push(...(await options.assistant?.onMessage(tx, ctx.sources, message) ?? []));
                 return present(tx, actor, ctx, message);
             });
             // Durable records are committed before best-effort process-local wakeups.
             if (notificationRecipients.length) {
                 try { options.onNotificationsCommitted?.(notificationRecipients); } catch { /* Recovery reads committed rows. */ }
             }
+            options.assistant?.runtime.wake();
             return result;
         },
         async issue(actor, projectId, messageId, input) {
             const value = parseChatInput(chatIssueSchema, input);
-            return writableMutation(actor, async (tx) => {
+            let notificationRecipients: string[] = [];
+            const result = await writableMutation(actor, async (tx) => {
+                notificationRecipients = [];
                 const ctx = await context(tx, actor, projectId, "chat.issue");
                 const payload = { messageId, ...value };
                 const existing = await replay(tx, actor, projectId, "message.issue", value.idempotencyKey, payload);
@@ -429,15 +439,23 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
                 const responsible = value.responsibleUserId ? currentPerson(ctx, value.responsibleUserId) : null;
                 transitionChatIssue(actor, message, value, responsible, chatPerson(ctx.user));
                 message.version++;
-                const { capabilities, issueHistory, ...saved } = message;
+                const { capabilities, issueHistory, assistant: _assistant, ...saved } = message;
                 const at = clock().toISOString();
                 await tx.saveMessage(saved);
                 await recordIssue(tx, actor, ctx, saved, value.action, value.note ?? "", at);
                 await remember(tx, actor, projectId, "message.issue", value.idempotencyKey, payload, message.id);
                 await audit(tx, { actorId: actor.id, action: "project_chat.issue_changed", entityType: "project_chat_message", entityId: message.id, occurredAt: at, oldValues: { priority: stored.priority, status: stored.issueStatus, version: stored.version, responsibleUserId: stored.responsible?.id ?? null, actionMetadata: stored.action ?? null }, newValues: { projectId, action: value.action, priority: saved.priority, status: saved.issueStatus, version: saved.version, responsibleUserId: saved.responsible?.id ?? null, actionMetadata: saved.action ?? null }, reason: value.note ?? null });
                 await event(tx, actor, projectId, "issue.changed", message.id, message.version, at);
+                if (stored.author.kind !== "service" && stored.author.role === "client") {
+                    notificationRecipients = await options.assistant?.onMessage(tx, ctx.sources, saved, ["raise", "escalate", "reopen", "assign"].includes(value.action)) ?? [];
+                }
                 return present(tx, actor, ctx, saved);
             });
+            if (notificationRecipients.length) {
+                try { options.onNotificationsCommitted?.(notificationRecipients); } catch { /* Durable recovery remains available. */ }
+            }
+            options.assistant?.runtime.wake();
+            return result;
         },
         async read(actor, projectId, input) {
             const value = parseChatInput(chatReadSchema, input);

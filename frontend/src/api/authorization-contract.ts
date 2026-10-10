@@ -108,6 +108,18 @@ export const REQUESTABLE_MODULES_BY_ROLE = {
 } as const satisfies Record<Role, readonly RequestableProjectModule[]>;
 
 export const PERMISSION_CODES = [
+  "ask_lisno.request",
+  "chat.assistant.read",
+  "chat.assistant.request",
+  "procurement.vendor_access.read",
+  "procurement.vendor_access.manage",
+  "execution.tracker.read",
+  "execution.work.update",
+  "execution.staff.manage",
+  "execution.verify",
+  "execution.policy.manage",
+  "execution.notifications.read",
+  "execution.access.retry",
   "identity.self.read",
   "identity.self.profile_photo.manage",
   "projects.list",
@@ -283,7 +295,7 @@ export const PERMISSION_CODES = [
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-10-05.procurement-basket-work-orders.v1" as const;
+  "2026-10-09.ask-lisno.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

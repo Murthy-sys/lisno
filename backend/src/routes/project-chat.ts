@@ -1,3 +1,4 @@
+import { assistantRequestSchema, type ProjectChatAssistantService } from "../services/project-chat-assistant.service.js";
 import { Router, type Request, type Response, type RequestHandler } from "express";
 import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
@@ -7,7 +8,7 @@ import type { ProjectChatService, ProjectChatTypingService } from "../contracts/
 import { chatTypingSchema } from "../domain/project-chat-typing.js";
 import type { AuthService } from "../services/auth.service.js";
 import { chatActorFromAuthenticatedRequest } from "../services/project-chat-authentication.js";
-export function createProjectChatRouter(auth: AuthService, service: ProjectChatService, typing?: ProjectChatTypingService): Router {
+export function createProjectChatRouter(auth: AuthService, service: ProjectChatService, typing?: ProjectChatTypingService, assistant?: ProjectChatAssistantService): Router {
     const router = Router();
     const protectedRoute = authenticate(auth);
     const output = (handler: (request: Request, response: Response) => Promise<unknown>, status = 200): RequestHandler => async (request, response, next) => {
@@ -21,6 +22,11 @@ export function createProjectChatRouter(auth: AuthService, service: ProjectChatS
         }
     };
     const project = (request: Request) => request.params.projectId as string;
+    if (assistant) {
+        router.post("/projects/:projectId/chat/messages/:messageId/assistant/request", protectedRoute, requireOperation("POST /projects/:projectId/chat/messages/:messageId/assistant/request"), validateBody(assistantRequestSchema), output(request => assistant.request(chatActorFromAuthenticatedRequest(request), project(request), request.params.messageId as string, request.body)));
+        router.get("/projects/:projectId/chat/assistant/results/:resultId", protectedRoute, requireOperation("GET /projects/:projectId/chat/assistant/results/:resultId"), output(request => assistant.result(chatActorFromAuthenticatedRequest(request), project(request), request.params.resultId as string)));
+    }
+
     if (typing) router.put("/projects/:projectId/chat/typing", (_request, response, next) => {
         response.locals.typingReceivedAt = Date.now();
         next();

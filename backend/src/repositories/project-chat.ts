@@ -1,3 +1,4 @@
+import type { AssistantTransactions } from "./project-assistant.js";
 import type { NotificationTransactions } from "./notifications.js";
 import type { ChatActionType, ChatAttachment, ChatAttachmentPolicy, ChatEvent, ChatFilter, ChatMessage, ChatPerson } from "../contracts/project-chat.js";
 import type { Role } from "../domain/roles.js";
@@ -87,7 +88,7 @@ export interface ChatSelection {
     revokedAt: string | null;
     revocationReason: string | null;
 }
-export type ChatStoredMessage = Omit<ChatMessage, "capabilities" | "issueHistory">;
+export type ChatStoredMessage = Omit<ChatMessage, "capabilities" | "issueHistory" | "assistant"> & { assistantRunId?: string };
 export interface ChatStoredEvent extends ChatEvent {
     actorId: string;
     privateUserId: string | null;
@@ -195,6 +196,7 @@ export interface ChatTypingRateRecord {
     cleanupAt: string;
 }
 export interface ChatTransaction extends ChatAttachmentTransactions, NotificationTransactions {
+    assistant: AssistantTransactions;
     ensureDigestScheduleStart(localDate: string, now: string): Promise<string>;
     digestReceipts(userId: string, throughDate: string): Promise<DailyCriticalTaskReceipt[]>;
     ensureDigestReceipt(userId: string, localDate: string, now: string): Promise<boolean>;

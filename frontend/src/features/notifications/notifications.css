@@ -50,3 +50,8 @@
   .ui-app-shell:is([data-role="admin"], [data-role="super_admin"], [data-role="designer"]) .notification-workspace-bar { display: none; }
   .ui-app-shell:is([data-role="admin"], [data-role="super_admin"], [data-role="designer"]) .notification-banners { inset-block-start: calc(4.25rem + env(safe-area-inset-top) + 8px); }
 }
+
+.notification-sources { display: flex; gap: 0; border-block-end: 1px solid var(--color-border); }
+.notification-sources button { flex: 1; min-block-size: 44px; padding: 8px 12px; border: 0; border-block-end: 2px solid transparent; background: transparent; color: var(--color-text-muted); font: 600 .8rem/1.4 var(--font-interface, sans-serif); cursor: pointer; }
+.notification-sources button[aria-pressed="true"] { color: var(--color-text-strong); border-block-end-color: currentColor; }
+.notification-sources button:focus-visible { outline: 2px solid currentColor; outline-offset: -3px; }

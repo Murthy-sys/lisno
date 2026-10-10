@@ -129,8 +129,14 @@ const enquiries = createProcurementBasketEnquiryService({ audit, now: () => at,
     rawToken = message.rawToken; rawTokens.set(message.recipient.email, message.rawToken);
   } } });
 const awards = createProcurementBasketAwardService({ audit, now: () => at });
+const committedReads: unknown[] = [];
+const committed = vi.fn(async () => {
+  // Await a non-session read inside the hook. A premature transactional wake
+  // would observe no committed orders and cannot race the later commit.
+  committedReads.push(await ProjectPurchaseOrderModel.find({ status: "approved" }).lean().exec());
+});
 const issue = createProjectPurchaseOrderBasketIssueService({ audit, now: () => at,
-  onApproved: onPurchaseOrderApproved });
+  onApproved: onPurchaseOrderApproved, onIssuedCommitted: committed });
 const autoAwards = createProcurementBasketAwardService({ audit, now: () => at,
   onReadyToIssue: input => issue.issueAutomatically(input).then(() => undefined) });
 const orders = createProjectPurchaseOrderService({ audit, now: () => at, onApproved: onPurchaseOrderApproved });
@@ -148,6 +154,7 @@ beforeAll(async () => {
 }, 120_000);
 beforeEach(async () => {
   await replica.clear();
+  committed.mockClear(); committedReads.length = 0;
   rawToken = "";
   rawTokens.clear();
   basket.lines = [firstLine];
@@ -441,6 +448,8 @@ describe("approved basket award issuance", () => {
     const issued = await autoAwards.decide(buyer, awardId, decision);
     expect(issued).toMatchObject({ status: "issued", autoIssueOnApproval: true, issueBlocker: null });
     expect(issued.issuedPurchaseOrderId).toBeTruthy();
+    expect(committed).toHaveBeenCalledTimes(1);
+    expect(await committedReads[0]).toEqual([expect.objectContaining({ _id: issued.issuedPurchaseOrderId, status: "approved" })]);
     expect(await counts()).toEqual({ children: 1, orders: 1, revisions: 1, assignments: 1 });
     const replay = await autoAwards.decide(buyer, awardId, decision);
     expect(replay.issuedPurchaseOrderId).toBe(issued.issuedPurchaseOrderId);
@@ -790,12 +799,16 @@ describe("approved basket award issuance", () => {
     const request = { expectedVersion: ready.awardVersion, idempotencyKey: "issue-award-key" };
     const result = await issue.issue(buyer, "project-a", "basket-a", ready.enquiryId, ready.awardId, request);
     expect(result).toMatchObject({ awardId: ready.awardId, status: "issued", orderNumber: expect.stringMatching(/^PO-/u) });
+    expect(committed).toHaveBeenCalledTimes(1);
+    expect(await committedReads[0]).toEqual([expect.objectContaining({ _id: result.purchaseOrderId, status: "approved" })]);
     expect(await counts()).toEqual({ children: 1, orders: 1, revisions: 1, assignments: 1 });
     expect(await ProjectPurchaseOrderModel.findById(result.purchaseOrderId).lean()).toMatchObject({
       status: "approved", tenderAwardId: ready.awardId, approvedNetPaise: 1_000_000,
       approvedGstPaise: 0, approvedTotalPaise: 1_000_000 });
     expect((await AiEstimatorKnowledgeUomModel.findById("uom-a").lean())?.dependencyEpoch).toBe(3);
     expect(await issue.issue(buyer, "project-a", "basket-a", ready.enquiryId, ready.awardId, request)).toEqual(result);
+    expect(committed).toHaveBeenCalledTimes(2);
+    expect(await committedReads[1]).toEqual([expect.objectContaining({ _id: result.purchaseOrderId, status: "approved" })]);
     expect(await counts()).toEqual({ children: 1, orders: 1, revisions: 1, assignments: 1 });
     await expect(issue.issue(buyer, "project-a", "basket-a", ready.enquiryId, ready.awardId,
       { ...request, idempotencyKey: "different-issue-key" })).rejects.toMatchObject({ status: 409,
@@ -835,11 +848,12 @@ describe("approved basket award issuance", () => {
   it("rolls back the child, order and authority change if assignment creation fails late in the transaction", async () => {
     const ready = await approvedAward();
     const failing = createProjectPurchaseOrderBasketIssueService({ audit, now: () => at,
-      onApproved: async () => { throw new Error("assignment unavailable"); } });
+      onApproved: async () => { throw new Error("assignment unavailable"); }, onIssuedCommitted: committed });
     await expect(failing.issue(buyer, "project-a", "basket-a", ready.enquiryId, ready.awardId,
       { expectedVersion: ready.awardVersion, idempotencyKey: "failed-issue-key" })).rejects.toThrow("assignment unavailable");
     expect(await counts()).toEqual({ children: 0, orders: 0, revisions: 0, assignments: 0 });
     expect((await ProjectModel.findById("project-a").lean())?.completionAuthority).toBe("legacy_staff");
+    expect(committed).not.toHaveBeenCalled();
     expect((await ProcurementBasketAwardModel.findById(ready.awardId).lean())?.status).toBe("ready_to_issue");
     const result = await issue.issue(buyer, "project-a", "basket-a", ready.enquiryId, ready.awardId,
       { expectedVersion: ready.awardVersion, idempotencyKey: "retry-issue-key" });

@@ -60,6 +60,7 @@ const schema = new Schema({
   draftTotalPaise: amount,
   submittedRevisionId: { type: String, default: null },
   approvedRevisionId: { type: String, default: null },
+  accessAuthorityEpoch: { type: Number, default: 0, min: 0, validate: Number.isSafeInteger },
   approvedRevision: { type: Number, default: null, min: 1, validate: (value: number | null) => value === null || Number.isSafeInteger(value) },
   approvedNetPaise: { type: Number, default: null, min: 0, max: MAX_FINANCE_AMOUNT_PAISE, validate: (value: number | null) => value === null || Number.isSafeInteger(value) },
   approvedGstPaise: { type: Number, default: null, min: 0, max: MAX_FINANCE_AMOUNT_PAISE, validate: (value: number | null) => value === null || Number.isSafeInteger(value) },

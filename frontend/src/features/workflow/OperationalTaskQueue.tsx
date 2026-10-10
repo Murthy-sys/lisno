@@ -3,7 +3,7 @@ import { ProjectStatusButton } from "../project-status/ProjectStatusButton";
 import { ProjectChatLink } from "../messages";
 import { VendorWorkProgressPanel } from "./VendorWorkProgressPanel";
 import { SiteCompletionPanel } from "./SiteCompletionPanel";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError } from "../../api/client";
@@ -40,7 +40,7 @@ const progressRoleSet = new Set<Role>([
   ...WORKER_ROLES
 ]);
 
-export function OperationalTaskQueue({ role }: { role: Role }) {
+export function OperationalTaskQueue({ role, selectedProjectId, onDirty, onBusy }: { role: Role; selectedProjectId?: string; onDirty?: (dirty: boolean) => void; onBusy?: (busy: boolean) => void }) {
   const queryClient = useQueryClient();
   const [editingTask, setEditingTask] = useState<ProjectWorkflowTask>();
   const tasks = useQuery({
@@ -65,7 +65,9 @@ export function OperationalTaskQueue({ role }: { role: Role }) {
         queryClient.invalidateQueries({
           queryKey: projectFinanceKeys.bucket(updated.projectId)
         }),
-        queryClient.invalidateQueries({ queryKey: dashboardKeys.all })
+        queryClient.invalidateQueries({ queryKey: dashboardKeys.all }),
+        queryClient.invalidateQueries({ queryKey: ["execution"] }),
+        queryClient.invalidateQueries({ queryKey: ["designer", "kpi"] })
       ]);
       setEditingTask(undefined);
     },
@@ -79,9 +81,12 @@ export function OperationalTaskQueue({ role }: { role: Role }) {
     }
   });
 
+  useEffect(() => { onBusy?.(update.isPending); }, [update.isPending, onBusy]);
+  useEffect(() => () => { onDirty?.(false); onBusy?.(false); }, [onDirty, onBusy]);
   const siteManagerView = role === "site_manager";
   const canUpdateOwnTasks = progressRoleSet.has(role);
-  const allTasks = tasks.data ?? [];
+  const denied = tasks.error instanceof ApiError && [401, 403, 404].includes(tasks.error.status);
+  const allTasks = denied ? [] : (tasks.data ?? []).filter(task => !selectedProjectId || task.projectId === selectedProjectId);
   const coordinationTasks = siteManagerView
     ? allTasks.filter((task) => task.kind === "site_execution")
     : allTasks;
@@ -101,9 +106,9 @@ export function OperationalTaskQueue({ role }: { role: Role }) {
     >
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Approved design handoff</p>
+          {!selectedProjectId ? <p className="eyebrow">Approved design handoff</p> : null}
           <h2 id="workflow-task-queue-title">
-            {siteManagerView ? "Site execution overview" : "Your project tasks"}
+            {selectedProjectId ? "Coordination tasks" : siteManagerView ? "Site execution overview" : "Your project tasks"}
           </h2>
         </div>
         {tasks.data && !siteManagerView ? (
@@ -129,7 +134,7 @@ export function OperationalTaskQueue({ role }: { role: Role }) {
           </button>
         </p>
       ) : null}
-      {tasks.data?.length === 0 ? (
+      {tasks.data && allTasks.length === 0 && !denied ? (
         <p className="inline-empty">
           Tasks will appear here after the Client approves a design plan.
         </p>
@@ -140,6 +145,7 @@ export function OperationalTaskQueue({ role }: { role: Role }) {
           title={siteManagerView ? "Your coordination tasks" : undefined}
           tasks={siteManagerView ? legacySiteTasks : coordinationTasks}
           canUpdate={canUpdateOwnTasks}
+          showProjectActions={!selectedProjectId}
           onUpdate={(task) => {
             update.reset();
             setEditingTask(task);
@@ -147,16 +153,17 @@ export function OperationalTaskQueue({ role }: { role: Role }) {
         />
       ) : null}
 
-      {siteManagerView ? groupByProject(vendorSiteTasks).map(({ projectId, projectName }) => <div key={`site-${projectId}`}>
+      {siteManagerView && !selectedProjectId ? groupByProject(vendorSiteTasks).map(({ projectId, projectName }) => <div key={`site-${projectId}`}>
         <ProjectStatusButton projectId={projectId} projectName={projectName} />
         <SiteCompletionPanel projectId={projectId} projectName={projectName} />
         <VendorWorkProgressPanel projectId={projectId} projectName={projectName} />
       </div>) : null}
 
-      {editingTask ? (
+      {editingTask && !denied ? (
         <ProgressUpdateDialog
           key={`${editingTask.id}:${editingTask.version}`}
           task={editingTask}
+          onDirty={onDirty}
           busy={update.isPending}
           error={update.isError ? updateErrorMessage(update.error) : ""}
           onClose={() => {
@@ -173,20 +180,22 @@ function TaskSection({
   title,
   tasks,
   canUpdate,
-  onUpdate
+  onUpdate,
+  showProjectActions = true
 }: {
   title?: string;
   tasks: ProjectWorkflowTask[];
   canUpdate: boolean;
   onUpdate: (task: ProjectWorkflowTask) => void;
+  showProjectActions?: boolean;
 }) {
   const content = (
     <>
-    <div className="workflow-task-project-actions" aria-label="Project actions">{groupByProject(tasks).map(({projectId,projectName}) => <div className="workflow-task-project-actions__row" key={projectId}>
+    {showProjectActions ? <div className="workflow-task-project-actions" aria-label="Project actions">{groupByProject(tasks).map(({projectId,projectName}) => <div className="workflow-task-project-actions__row" key={projectId}>
       <strong>{projectName}</strong>
       <ProjectChatLink projectId={projectId}>Messages</ProjectChatLink>
       <ProjectStatusButton projectId={projectId} projectName={projectName} />
-    </div>)}</div>
+    </div>)}</div> : null}
     <div className="workflow-task-grid">
       {tasks.map((task) => (
         <WorkflowTaskCard
@@ -283,17 +292,21 @@ function ProgressUpdateDialog({
   busy,
   error,
   onClose,
-  onSubmit
+  onSubmit,
+  onDirty
 }: {
   task: ProjectWorkflowTask;
   busy: boolean;
   error: string;
   onClose: () => void;
   onSubmit: (progress: number) => void;
+  onDirty?: (dirty: boolean) => void;
 }) {
   const [progress, setProgress] = useState(String(task.progress));
   const [validation, setValidation] = useState("");
 
+  useEffect(() => { onDirty?.(progress !== String(task.progress)); }, [progress, task.progress, onDirty]);
+  useEffect(() => () => { onDirty?.(false); }, [onDirty]);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (busy) return;

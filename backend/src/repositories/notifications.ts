@@ -14,6 +14,8 @@ export interface NotificationRecord extends ChatNotification {
 }
 export interface NotificationTransactions {
   insertNotification(record: NotificationRecord): Promise<void>;
+  /** Reuse mention identity and reset delivery only for a later genuine routing trigger. */
+  routeNotification(record: NotificationRecord, resurface: boolean): Promise<void>;
   notification(id: string, recipientId: string): Promise<NotificationRecord | null>;
   notificationProjectIds(recipientId: string): Promise<string[]>;
   notificationPage(recipientId: string, projectIds: string[], limit: number, offset: number): Promise<{items: NotificationRecord[]; total: number; unreadCount: number}>;
@@ -23,7 +25,7 @@ export interface NotificationTransactions {
 }
 export function publicNotification(row: NotificationRecord): ChatNotification {
   const { id, type, projectId, projectName, messageId, actor, excerpt, createdAt, readAt } = row;
-  return { id, type, projectId, projectName, messageId, actor, excerpt, createdAt, readAt };
+  return { id, type, projectId, projectName, messageId, actor, excerpt, createdAt, readAt, ...(row.routing ? {routing: row.routing} : {}) };
 }
 export function notificationPage(rows: {items: NotificationRecord[]; total: number; unreadCount: number}, limit: number, offset: number): NotificationPage {
   return { items: rows.items.map(publicNotification), unreadCount: rows.unreadCount, pagination: {limit, offset, total: rows.total, hasMore: offset + limit < rows.total} };

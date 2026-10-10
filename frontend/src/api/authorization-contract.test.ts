@@ -89,13 +89,14 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-10-05.procurement-basket-work-orders.v1"
+      "2026-10-09.ask-lisno.v1"
     );
   });
 
-  it("publishes all 170 unique permissions in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(170);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(170);
+  it("publishes all 182 unique permissions in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(182);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(182);
+    expect(PERMISSION_CODES.slice(0, 12)).toEqual(["ask_lisno.request", "chat.assistant.read", "chat.assistant.request", "procurement.vendor_access.read", "procurement.vendor_access.manage", "execution.tracker.read", "execution.work.update", "execution.staff.manage", "execution.verify", "execution.policy.manage", "execution.notifications.read", "execution.access.retry"]);
     expect(PERMISSION_CODES).toContain("chat.action_types.manage");
     expect(PERMISSION_CODES).toContain("chat.project_name.manage");
     expect(PERMISSION_CODES).toContain("estimation.design_upload.delete");
@@ -182,10 +183,11 @@ describe("frontend authorization contract", () => {
     ).toEqual(projectFinancePermissions);
   });
 
-  it("keeps the protected frontend registry at exactly 43 routes", () => {
-    expect(ROUTE_REGISTRY).toHaveLength(43);
+  it("keeps the protected frontend registry at exactly 45 routes", () => {
+    expect(ROUTE_REGISTRY).toHaveLength(45);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).toEqual(
       expect.arrayContaining([
+        "/execution", "/projects/:projectId/execution",
         "/project-messages", "/projects/:projectId/messages",
         "/designer/design-plans",
         "/admin/dashboard",

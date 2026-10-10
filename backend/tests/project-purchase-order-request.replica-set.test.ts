@@ -43,7 +43,14 @@ const buyer: PublicUser = { id: "request-buyer", name: "Buyer", email: "request-
 const admin: PublicUser = { id: "request-admin", name: "Admin", email: "request-admin@example.test", role: "super_admin" };
 const client: PublicUser = { id: "request-client", name: "Client", email: "request-client@example.test", role: "client" };
 const audit = createAuditService(createMemoryRepository());
-const service = createProjectPurchaseOrderRequestService({ audit, onApproved: onPurchaseOrderApproved, now: () => now });
+const committedReads: unknown[] = [];
+const committed = vi.fn(async () => {
+  // Await a non-session read inside the hook. A premature transactional wake
+  // would observe no committed orders and cannot race the later commit.
+  committedReads.push(await ProjectPurchaseOrderModel.find({ status: "approved" }).lean().exec());
+});
+const service = createProjectPurchaseOrderRequestService({ audit, onApproved: onPurchaseOrderApproved,
+  onIssuedCommitted: committed, now: () => now });
 const modeDecisions = createProjectPurchaseOrderModeDecisionService({ audit, now: () => now });
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 
@@ -59,6 +66,7 @@ beforeAll(async () => {
 }, 120_000);
 beforeEach(async () => {
   await replica.clear();
+  committed.mockClear(); committedReads.length = 0;
   await UserModel.create([buyer, admin, client].map(user => ({ _id: user.id, name: user.name, email: user.email,
     emailNormalized: user.email, passwordHash: "fixture-only", role: user.role, active: true })));
   await seedProject("request-project-a", 10_000, 15_000);
@@ -373,6 +381,9 @@ describe("project purchase-order request transactions", () => {
     const approved = await service.decide(admin, submitted.id, approval);
     expect(approved.status).toBe("approved");
     expect(approved.approvedOrderIds).toHaveLength(2);
+    expect(committed).toHaveBeenCalledTimes(1);
+    expect(await committedReads[0]).toEqual(expect.arrayContaining(approved.approvedOrderIds.map(_id =>
+      expect.objectContaining({ _id, status: "approved", approvedRevisionId: expect.any(String) }))));
     expect(approved.revisions[0]).toMatchObject({ modeSnapshotStatus: "historical_unavailable", modeSnapshots: [] });
     expect(approved.totals).toEqual(submitted.totals);
   });
@@ -631,6 +642,9 @@ describe("project purchase-order request transactions", () => {
     const approved = await service.decide(admin, submitted.id, decision);
     expect(approved.status).toBe("approved");
     expect(approved.approvedOrderIds).toHaveLength(2);
+    expect(committed).toHaveBeenCalledTimes(1);
+    expect(await committedReads[0]).toEqual(expect.arrayContaining(approved.approvedOrderIds.map(_id =>
+      expect.objectContaining({ _id, status: "approved", approvedRevisionId: expect.any(String) }))));
     expect(await ProjectPurchaseOrderModel.countDocuments({ projectId: "request-project-a", status: "approved" })).toBe(2);
     expect(await VendorWorkAssignmentModel.countDocuments({ projectId: "request-project-a" })).toBe(2);
     const generated = await ProjectPurchaseOrderModel.findById(approved.approvedOrderIds[0]).lean();
@@ -642,6 +656,8 @@ describe("project purchase-order request transactions", () => {
     expect(await ProjectPurchaseOrderModel.countDocuments({ projectId: "request-project-b" })).toBe(0);
     expect(await service.decide(admin, submitted.id, decision)).toMatchObject({ id: submitted.id, status: "approved" });
     expect(await ProjectPurchaseOrderRequestRevisionModel.countDocuments({ requestId: submitted.id })).toBe(1);
+    expect(committed).toHaveBeenCalledTimes(2);
+    expect(await committedReads[1]).toHaveLength(2);
     expect(await AuditEventModel.countDocuments({ entityId: submitted.id, action: "project_purchase_order_request_decided" })).toBe(1);
   });
 
@@ -684,7 +700,7 @@ describe("project purchase-order request transactions", () => {
 
   it("rolls back every vendor order, assignment, and decision when one vendor task creation fails", async () => {
     const submitted = await service.submit(buyer, "request-project-a", submitInput((await preparation()).digest));
-    const failing = createProjectPurchaseOrderRequestService({ audit, now: () => now,
+    const failing = createProjectPurchaseOrderRequestService({ audit, now: () => now, onIssuedCommitted: committed,
       onApproved: async (approval, session: ClientSession) => {
         await onPurchaseOrderApproved(approval, session);
         if (approval.vendorId === "request-vendor-b") throw new Error("second vendor task failed");
@@ -695,5 +711,6 @@ describe("project purchase-order request transactions", () => {
     expect(await ProjectPurchaseOrderModel.countDocuments({ projectId: "request-project-a" })).toBe(0);
     expect(await VendorWorkAssignmentModel.countDocuments({ projectId: "request-project-a" })).toBe(0);
     expect(await ProjectPurchaseOrderRequestModel.findById(submitted.id).lean()).toMatchObject({ status: "pending_approval", version: 1 });
+    expect(committed).not.toHaveBeenCalled();
   });
 });

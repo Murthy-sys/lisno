@@ -1,6 +1,16 @@
 import { model, models, Schema } from "./mongoose.js";
 import { ROLE_CODES } from "../domain/roles.js";
 const person = new Schema({ id: { type: String, required: true }, name: { type: String, required: true, maxlength: 300 }, role: { type: String, enum: ROLE_CODES, required: true } }, { _id: false });
+// Service provenance is supported only for message authors, never human responsibility/history.
+const author = new Schema({
+    id: { type: String, required: true }, name: { type: String, required: true, maxlength: 300 },
+    kind: { type: String, enum: ["human", "service"] },
+    role: { type: String, enum: ROLE_CODES, required: function(this: {kind?: string}) { return this.kind !== "service"; } }
+}, { _id: false });
+author.pre("validate", function () {
+    if (this.kind === "service" && (this.id !== "lisno-ai" || this.name !== "Lisno AI" || this.role != null)) this.invalidate("id", "Invalid service author.");
+    if (this.kind !== "service" && this.id === "lisno-ai") this.invalidate("id", "Service identity cannot be a human author.");
+});
 const mention = new Schema({ userId: { type: String, required: true }, start: { type: Number, required: true, min: 0 }, end: { type: Number, required: true, min: 1 } }, { _id: false });
 const attachmentKinds = ["image", "video", "audio", "document", "archive"];
 const attachment = new Schema({
@@ -12,13 +22,14 @@ const attachmentSummary = new Schema({count: {type: Number, required: true, min:
 const actionMetadata = new Schema({ typeId: { type: String, required: true, immutable: true }, typeName: { type: String, required: true, maxlength: 60, immutable: true }, originalDueDate: { type: String, required: true, immutable: true }, dueDate: { type: String, required: true } }, { _id: false });
 const messageSchema = new Schema({
     _id: { type: String, required: true, immutable: true }, projectId: { type: String, required: true, immutable: true },
-    author: { type: person, required: true, immutable: true }, body: { type: String, default: "", maxlength: 4000, immutable: true, validate: {validator: function(this: {attachments?: unknown[]}, value: string) { return Boolean(value?.trim().length || this.attachments?.length); }, message: "A message requires text or attachments."} },
+    author: { type: author, required: true, immutable: true }, body: { type: String, default: "", maxlength: 4000, immutable: true, validate: {validator: function(this: {attachments?: unknown[]}, value: string) { return Boolean(value?.trim().length || this.attachments?.length); }, message: "A message requires text or attachments."} },
     attachments: {type: [attachment], default: [], immutable: true},
     mentions: { type: [mention], default: [], immutable: true }, createdAt: { type: String, required: true, immutable: true },
     sequence: { type: Number, required: true, immutable: true, min: 1 }, clientMessageId: { type: String, required: true, immutable: true },
-    replyTo: { type: new Schema({ id: { type: String, required: true }, author: { type: person, required: true }, body: { type: String, default: "", maxlength: 4000 }, attachmentSummary: {type: attachmentSummary} }, { _id: false }), default: null, immutable: true },
+    replyTo: { type: new Schema({ id: { type: String, required: true }, author: { type: author, required: true }, body: { type: String, default: "", maxlength: 4000 }, attachmentSummary: {type: attachmentSummary} }, { _id: false }), default: null, immutable: true },
     priority: { type: String, enum: ["normal", "important", "critical"], required: true }, issueStatus: { type: String, enum: ["open", "resolved", null], default: null },
     raisedBy: { type: person, default: null }, responsible: { type: new Schema({ id: { type: String, required: true }, name: { type: String, required: true }, role: { type: String, enum: ROLE_CODES, required: true }, available: { type: Boolean, default: true } }, { _id: false }), default: null },
+    assistantRunId: { type: String, immutable: true },
     action: { type: actionMetadata, default: null },
     version: { type: Number, required: true, min: 1 }
 }, { versionKey: false });
@@ -29,7 +40,7 @@ messageSchema.index({ projectId: 1, "mentions.userId": 1, sequence: -1 });
 messageSchema.index({ projectId: 1, "author.id": 1, createdAt: -1 });
 const eventSchema = new Schema({
     _id: { type: String, required: true, immutable: true }, projectId: { type: String, required: true, immutable: true }, sequence: { type: Number, required: true, immutable: true, min: 1 },
-    type: { type: String, enum: ["message.created", "issue.changed", "participants.changed", "read.changed"], required: true, immutable: true },
+    type: { type: String, enum: ["message.created", "assistant.changed", "issue.changed", "participants.changed", "read.changed"], required: true, immutable: true },
     recordId: { type: String, required: true, immutable: true }, version: { type: Number, required: true, min: 1, immutable: true }, occurredAt: { type: String, required: true, immutable: true },
     actorId: { type: String, required: true, immutable: true }, privateUserId: { type: String, default: null, immutable: true }
 }, { versionKey: false });

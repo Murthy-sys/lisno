@@ -24,6 +24,43 @@ export type UserInvitationPresentationStatus =
 export type UserInvitationDeliveryStatus = "queued" | "sent" | "failed";
 export type UserInvitationAction = "resend" | "revoke";
 
+/** Server-created authority. Missing authority on historical invitations means manual Super Admin. */
+export interface VendorWorkInvitationAuthority {
+  kind: "vendor_work_order";
+  sourceIntentId: string;
+  vendorId: string;
+  emailNormalized: string;
+}
+
+export interface ProcurementVendorInvitationAuthority {
+  kind: "procurement_vendor";
+  sourceIntentId: string;
+  vendorId: string;
+  emailNormalized: string;
+}
+export type VendorInvitationAuthority = VendorWorkInvitationAuthority | ProcurementVendorInvitationAuthority;
+/** Private proof of the command which produced the current credential generation. */
+export interface VendorInvitationGenerationReceipt {
+  sourceKind: VendorInvitationAuthority["kind"];
+  sourceIntentId: string;
+  commandId: string;
+  tokenGeneration: number;
+}
+export interface ProcurementVendorInvitationSource {
+  sourceIntentId: string; vendorId: string; actorId: string; actorVersion: number;
+  name: string; email: string; mobile: string;
+}
+
+export interface VendorWorkInvitationSource {
+  sourceIntentId: string;
+  vendorId: string;
+  projectId: string;
+  actorId: string;
+  name: string;
+  email: string;
+  mobile: string;
+}
+
 export const USER_INVITATION_TTL_MS = 24 * 60 * 60 * 1_000;
 export const USER_INVITATION_RECIPIENT_COOLDOWN_MS = 60_000;
 export const USER_INVITATION_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;

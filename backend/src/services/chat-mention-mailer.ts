@@ -6,7 +6,7 @@ export interface ChatMentionEmailInput {
   projectId: string;
   messageId: string;
   excerpt: string;
-  kind: "chat.mention" | "chat.mention.oversight";
+  kind: "chat.mention" | "chat.mention.oversight" | "chat.assistant.route";
 }
 
 export interface EnabledChatMentionMailer {

@@ -5,6 +5,30 @@ import { loadEnvironment } from "../src/config/env.js";
 const OCR_WORKER_TOKEN = "config-worker-token-with-at-least-32-characters";
 
 describe("environment authentication configuration", () => {
+  it("keeps project AI disabled by default with bounded server-only model settings", () => {
+    const config = loadEnvironment({JWT_SECRET: "runtime-secret-with-at-least-32-characters", OCR_WORKER_TOKEN});
+    expect(config.PROJECT_CHAT_AI_ENABLED).toBe("false");
+    expect(config.OPENAI_API_KEY).toBeUndefined();
+    expect(config.OPENAI_PROJECT_CHAT_MODEL).toBe("gpt-6-luna");
+    expect(config.PROJECT_CHAT_AI_DAILY_TOKEN_LIMIT).toBe(1_000_000);
+  });
+  it("allows missing provider credentials so optional AI cannot prevent human chat startup", () => {
+    const config = loadEnvironment({JWT_SECRET: "runtime-secret-with-at-least-32-characters", OCR_WORKER_TOKEN, PROJECT_CHAT_AI_ENABLED: "true"});
+    expect(config.OPENAI_API_KEY).toBeUndefined();
+  });
+  it.each(["0", "-1", "100000001", "1.5", "invalid"])("rejects invalid assistant token limit %s", limit => {
+    expect(() => loadEnvironment({JWT_SECRET: "runtime-secret-with-at-least-32-characters", OCR_WORKER_TOKEN, PROJECT_CHAT_AI_DAILY_TOKEN_LIMIT: limit})).toThrow();
+  });
+  it.each([undefined, "true", "false"] as const)("preserves the explicit vendor delivery override %s", (override) => {
+    const config = loadEnvironment({ JWT_SECRET: "runtime-secret-with-at-least-32-characters", OCR_WORKER_TOKEN,
+      ...(override === undefined ? {} : { VENDOR_ACCESS_DELIVERY_ENABLED: override }) });
+    expect(config.VENDOR_ACCESS_DELIVERY_ENABLED).toBe(override);
+    expect(config.EXECUTION_REMINDERS_ENABLED).toBe("false");
+  });
+  it("rejects an invalid vendor delivery override", () => {
+    expect(() => loadEnvironment({ JWT_SECRET: "runtime-secret-with-at-least-32-characters", OCR_WORKER_TOKEN,
+      VENDOR_ACCESS_DELIVERY_ENABLED: "enabled" })).toThrow();
+  });
   it("keeps bounded chat policy separate from older upload limits", () => {
     const env = loadEnvironment({ JWT_SECRET: "runtime-secret-with-at-least-32-characters", OCR_WORKER_TOKEN, MAX_UPLOAD_MB: "3" });
     expect(env.MAX_UPLOAD_MB).toBe(3);

@@ -1,9 +1,14 @@
+import type { ExecutionPolicy } from "../contracts/vendor-execution.js";
+import { VendorExecutionStateModel } from "../models/VendorExecutionState.js";
+import { assertExecutionEditable, assertExecutionVerified, assertNoExecutionActivityForAmendment, currentExecutionVerification, invalidateExecutionVerificationForClientChanges } from "./vendor-execution.service.js";
+import { assertCompletionReviewAllowsOrderChanges } from "./site-completion-fence.js";
+import { appendExecutionChange } from "./execution-change-events.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { Readable } from "node:stream";
 import mongoose, { type ClientSession } from "mongoose";
 import type { ZodType } from "zod";
 import {
-  clientVendorWorkDecisionSchema, mayUpdateVendorWork, nextVendorWorkProgressStatus,
+  clientVendorWorkDecisionSchema, mayUpdateVendorWork,
   vendorWorkAssignmentId, vendorWorkProgressSchema, vendorWorkReviewId, vendorWorkSubmitSchema,
   vendorWorkUploadSchema, vendorWorkQuerySchema, clientVendorWorkQuerySchema,
   type ClientVendorWorkDecisionInput, type ClientVendorWorkQuery, type VendorWorkProgressInput,
@@ -114,6 +119,7 @@ async function requireVendorAssignment(actor: PublicUser, assignmentId: string, 
   return assignment;
 }
 async function requireEditableVendorProject(projectId: string, session: ClientSession, submission = false): Promise<void> {
+  await assertCompletionReviewAllowsOrderChanges(projectId, session);
   const project = await ProjectModel.findById(projectId).select({ status: 1 }).session(session).lean() as Row | null;
   if (!project || project.status !== "active") throw new ApiError(409, "PROJECT_COMPLETED", "This project no longer accepts vendor work changes.");
   const site = await SiteCompletionStateModel.findById(projectId).select({ status: 1, currentRound: 1 }).session(session).lean() as Row | null;
@@ -124,15 +130,16 @@ async function requireEditableVendorProject(projectId: string, session: ClientSe
 async function requireClientProject(actor: PublicUser, projectId: string, session: ClientSession): Promise<Row> {
   await storedActor(actor, session);
   if (actor.role !== "client") forbidden();
-  const project = await ProjectModel.findOne({ _id: projectId, clientId: actor.id }).select({ _id: 1, clientId: 1 }).session(session).lean() as Row | null;
+  const project = await ProjectModel.findOne({ _id: projectId, clientId: actor.id }).select({ _id: 1, clientId: 1, programManagerId: 1 }).session(session).lean() as Row | null;
   if (!project) missing();
   return project;
 }
 async function requireProgressProject(actor: PublicUser, projectId: string, session: ClientSession): Promise<void> {
   await storedActor(actor, session);
-  const project = await ProjectModel.findById(projectId).select({ _id: 1, clientId: 1 }).session(session).lean() as Row | null;
+  const project = await ProjectModel.findById(projectId).select({ _id: 1, clientId: 1, programManagerId: 1 }).session(session).lean() as Row | null;
   if (!project) missing();
   if (actor.role === "super_admin") return;
+  if (actor.role === "program_manager" && project.programManagerId === actor.id) return;
   if (actor.role === "client" && project.clientId === actor.id) return;
   if (actor.role === "site_manager" || actor.role === "procurement") {
     const task = await ProjectWorkflowTaskModel.exists({ projectId, kind: actor.role === "site_manager" ? "site_execution" : "procurement", assigneeRole: actor.role, assigneeUserId: actor.id }).session(session);
@@ -166,7 +173,9 @@ async function taskDtoInSession(assignment: Row, session: ClientSession, siteSta
     ? await SiteCompletionStateModel.findById(assignment.projectId)
       .select({ progress: 1, updatedAt: 1, verifiedAssignmentIds: 1 }).session(session).lean() as Row | null
     : siteState;
-  if (isSiteVerifiedAssignment(site, assignment)) {
+  const executionState = await VendorExecutionStateModel.findById(assignment._id).session(session).lean();
+  const executionVerification = executionState ? await currentExecutionVerification(assignment, session) : null;
+  if (executionVerification || (!executionState && isSiteVerifiedAssignment(site, assignment))) {
     dto.displayProgress = 100;
     dto.progressSource = "site_manager";
   }
@@ -195,7 +204,8 @@ export async function onPurchaseOrderApproved(approval: { orderId: string; proje
   const existing = await VendorWorkAssignmentModel.find({ orderId: approval.orderId, orderRevision: { $lt: approval.revision }, status: { $ne: "superseded" } }).session(session).lean() as Row[];
   if (existing.some(row => !["awaiting_vendor_access", "ready"].includes(row.status))) throw new ApiError(409, "VENDOR_WORK_AMENDMENT_RECONCILIATION_REQUIRED", "Vendor work already started. Reconcile it before approving an amended order.");
   if (existing.length) {
-    const ids = existing.map(row => row._id);
+    const ids = existing.map(row => String(row._id));
+    await assertNoExecutionActivityForAmendment(ids, session);
     const image = await VendorWorkImageModel.exists({ assignmentId: { $in: ids } }).session(session);
     const review = await VendorWorkReviewModel.exists({ assignmentId: { $in: ids } }).session(session);
     if (image || review) throw new ApiError(409, "VENDOR_WORK_AMENDMENT_RECONCILIATION_REQUIRED", "Vendor work evidence or client review already exists. Reconcile it before approving an amended order.");
@@ -242,7 +252,7 @@ export async function readVendorWorkCompletion(projectId: string, session: Clien
     assignments: rows.map(row => ({ id: String(row._id), orderId: String(row.orderId), orderRevision: Number(row.orderRevision), lineId: String(row.lineId), sourceSectionId: String(row.sourceSectionId), sourceLineItemKey: String(row.sourceLineItemKey), status: row.status })) };
 }
 
-export function createVendorWorkService(input: { audit: AuditService; storage: FileStorage; maxUploadBytes: number; now?: () => Date }): VendorWorkService {
+export function createVendorWorkService(input: { audit: AuditService; storage: FileStorage; maxUploadBytes: number; now?: () => Date; readExecutionPolicy?: (projectId: string, session: ClientSession) => Promise<ExecutionPolicy> }): VendorWorkService {
   const now = input.now ?? (() => new Date());
   const evidence = createWorkflowEvidenceStorage(input.storage);
   async function deleteOrQueue(reference: string): Promise<void> {
@@ -293,14 +303,10 @@ export function createVendorWorkService(input: { audit: AuditService; storage: F
           return taskDtoInSession(assignment, session);
         }
         if (assignment.version !== fields.expectedVersion || !mayUpdateVendorWork(assignment.status)) conflict();
-        const at = now();
-        const updated = await VendorWorkAssignmentModel.findOneAndUpdate({ _id: assignmentId, vendorId: actor.vendorId, version: fields.expectedVersion, status: assignment.status }, {
-          $set: { status: nextVendorWorkProgressStatus(assignment.status), progress: fields.progress, note: fields.note, lastUpdatedById: actor.id, updatedAt: at },
-          $inc: { version: 1 }, $push: { receipts: { kind: "progress", idempotencyKey: fields.idempotencyKey, requestDigest, resultId: null, recordedAt: at } }
-        }, { session, returnDocument: "after", runValidators: true, timestamps: false }).lean() as Row | null;
-        if (!updated) conflict();
-        await appendAudit(input.audit, actor.id, "vendor_work_progress_updated", assignmentId, assignment.projectId, session, at, { progress: fields.progress, round: assignment.currentRound });
-        return taskDtoInSession(updated, session);
+        if (await VendorExecutionStateModel.exists({ _id: assignmentId }).session(session)) {
+          throw new ApiError(409, "EXECUTION_REPORT_REQUIRED", "Use the daily execution report to update tracked work.");
+        }
+        throw new ApiError(409, "EXECUTION_SETUP_REQUIRED", "Ask the project team to enable execution tracking before reporting work.");
       });
     },
     async uploadImage(actor, assignmentId, value, file) {
@@ -316,8 +322,8 @@ export function createVendorWorkService(input: { audit: AuditService; storage: F
           if (prior.requestDigest !== requestDigest) conflict("This request key was already used for another image.");
           return taskDtoInSession(assignment, session);
         }
-        if (assignment.version !== fields.expectedVersion || !mayUpdateVendorWork(assignment.status)) conflict();
-        if (await VendorWorkImageModel.countDocuments({ assignmentId, round: assignment.currentRound }).session(session) >= MAX_IMAGES_PER_ROUND) throw new ApiError(400, "VENDOR_WORK_IMAGE_LIMIT", "This section already has the maximum number of images for this round.");
+        if (assignment.version !== fields.expectedVersion || !(await mayEditVendorMedia(assignment, session))) conflict();
+        if (await VendorWorkImageModel.countDocuments(await mediaRoundFilter(assignment, session)).session(session) >= MAX_IMAGES_PER_ROUND) throw new ApiError(400, "VENDOR_WORK_IMAGE_LIMIT", "This section already has the maximum number of images for this round.");
         return null;
       });
       if (existing) return existing;
@@ -332,17 +338,18 @@ export function createVendorWorkService(input: { audit: AuditService; storage: F
             if (prior.requestDigest !== requestDigest) conflict("This request key was already used for another image.");
             return { dto: await taskDtoInSession(assignment, session), attached: false };
           }
-          if (assignment.version !== fields.expectedVersion || !mayUpdateVendorWork(assignment.status)) conflict();
-          if (await VendorWorkImageModel.countDocuments({ assignmentId, round: assignment.currentRound }).session(session) >= MAX_IMAGES_PER_ROUND) throw new ApiError(400, "VENDOR_WORK_IMAGE_LIMIT", "This section already has the maximum number of images for this round.");
+          if (assignment.version !== fields.expectedVersion || !(await mayEditVendorMedia(assignment, session))) conflict();
+          if (await VendorWorkImageModel.countDocuments(await mediaRoundFilter(assignment, session)).session(session) >= MAX_IMAGES_PER_ROUND) throw new ApiError(400, "VENDOR_WORK_IMAGE_LIMIT", "This section already has the maximum number of images for this round.");
           const at = now(); const imageId = `vendor-work-image-${randomUUID()}`;
           await VendorWorkImageModel.create([{ _id: imageId, projectId: assignment.projectId, vendorId: assignment.vendorId, assignmentId,
-            round: assignment.currentRound, storageReference: saved.reference, originalFilename: file.originalFilename, mimeType: file.mimeType,
+            round: assignment.currentRound, executionRound: (await VendorExecutionStateModel.findById(assignmentId).select({ executionRound: 1 }).session(session).lean())?.executionRound ?? null, storageReference: saved.reference, originalFilename: file.originalFilename, mimeType: file.mimeType,
             byteSize: file.sizeBytes, sha256, uploadedAt: at, uploadedById: actor.id, idempotencyKey: fields.idempotencyKey, requestDigest }], { session });
           const changed = await VendorWorkAssignmentModel.updateOne({ _id: assignmentId, version: fields.expectedVersion, status: assignment.status }, {
-            $inc: { version: 1 }, $set: { status: "in_progress", updatedAt: at, lastUpdatedById: actor.id }
+            $inc: { version: 1 }, $set: { status: assignment.status === "client_approved" ? "client_approved" : "in_progress", updatedAt: at, lastUpdatedById: actor.id }
           }, { session, timestamps: false });
           if (changed.matchedCount !== 1) conflict();
           await appendAudit(input.audit, actor.id, "vendor_work_media_uploaded", imageId, assignment.projectId, session, at, { assignmentId, round: assignment.currentRound, byteSize: file.sizeBytes });
+          await appendExecutionChange({ projectId: assignment.projectId, vendorId: assignment.vendorId, assignmentId, version: fields.expectedVersion + 1, kind: "evidence", occurredAt: at }, session);
           const updated = await VendorWorkAssignmentModel.findById(assignmentId).session(session).lean() as Row;
           return { dto: await taskDtoInSession(updated, session), attached: true };
         });
@@ -366,23 +373,28 @@ export function createVendorWorkService(input: { audit: AuditService; storage: F
           return reviewDto(review, assignment);
         }
         if (assignment.version !== fields.expectedVersion) conflict();
+        await assertExecutionVerified(assignment, session);
         if (assignment.progress !== 100) throw new ApiError(409, "VENDOR_WORK_INCOMPLETE", "Set this section to 100% before submitting it to the Client.");
         if (assignment.status !== "in_progress") conflict("Update this section before submitting it to the Client.");
         const project = await ProjectModel.findById(assignment.projectId).select({ clientId: 1, status: 1 }).session(session).lean() as Row | null;
         if (!project || !project.clientId || project.status === "completed") throw new ApiError(409, "VENDOR_WORK_CLIENT_UNAVAILABLE", "This project has no active client review owner.");
         const client = await UserModel.findOne({ _id: project.clientId, role: "client", active: true }).select({ _id: 1 }).session(session).lean();
         if (!client) throw new ApiError(409, "VENDOR_WORK_CLIENT_UNAVAILABLE", "The project client must be active before work can be submitted.");
-        const images = await VendorWorkImageModel.find({ assignmentId, round: assignment.currentRound }).sort({ uploadedAt: 1, _id: 1 }).select({ _id: 1 }).session(session).lean();
+        const verification = await currentExecutionVerification(assignment, session);
+        const images = verification ? verification.imageIds : (await VendorWorkImageModel.find({ assignmentId, round: assignment.currentRound }).sort({ uploadedAt: 1, _id: 1 }).select({ _id: 1 }).session(session).lean()).map(image => String(image._id));
         const at = now(); const reviewId = vendorWorkReviewId(assignmentId, assignment.currentRound);
         await VendorWorkReviewModel.create([{ _id: reviewId, projectId: assignment.projectId, vendorId: assignment.vendorId,
           assignmentId, clientId: project.clientId, round: assignment.currentRound, assignmentVersionAtSubmit: fields.expectedVersion,
-          note: fields.note, progress: assignment.progress, imageIds: images.map(image => String(image._id)), submittedById: actor.id,
+          note: fields.note, progress: assignment.progress, imageIds: images, submittedById: actor.id,
+          executionVerificationId: verification?.verificationId ?? null,
+          executionRound: verification?.executionRound ?? null, executionSubmissionVersion: verification?.submissionVersion ?? null,
           submittedAt: at, status: "pending", version: 1, decision: null }], { session });
         const changed = await VendorWorkAssignmentModel.updateOne({ _id: assignmentId, version: fields.expectedVersion, status: assignment.status }, {
           $set: { status: "submitted_for_client", note: fields.note, submittedAt: at, lastUpdatedById: actor.id, updatedAt: at }, $inc: { version: 1 },
           $push: { receipts: { kind: "submit", idempotencyKey: fields.idempotencyKey, requestDigest, resultId: reviewId, recordedAt: at } }
         }, { session, runValidators: true, timestamps: false });
         if (changed.matchedCount !== 1) conflict();
+        await appendExecutionChange({ projectId: assignment.projectId, vendorId: assignment.vendorId, assignmentId, version: fields.expectedVersion + 1, kind: "submitted_for_client", occurredAt: at }, session);
         await appendAudit(input.audit, actor.id, "vendor_work_submitted", reviewId, assignment.projectId, session, at, { assignmentId, round: assignment.currentRound, imageCount: images.length });
         const review = await VendorWorkReviewModel.findById(reviewId).session(session).lean() as Row;
         return reviewDto(review, assignment);
@@ -432,6 +444,7 @@ export function createVendorWorkService(input: { audit: AuditService; storage: F
           if (review.decision.idempotencyKey !== fields.idempotencyKey || review.decision.requestDigest !== requestDigest) conflict("This section already has a client decision.");
           return reviewDto(review, assignment);
         }
+        await assertCompletionReviewAllowsOrderChanges(projectId, session);
         if (review.version !== fields.expectedVersion || review.status !== "pending" || assignment.status !== "submitted_for_client" || assignment.currentRound !== review.round) conflict();
         const at = now();
         const changed = await VendorWorkReviewModel.updateOne({ _id: reviewId, projectId, version: fields.expectedVersion, status: "pending", decision: null }, {
@@ -443,6 +456,8 @@ export function createVendorWorkService(input: { audit: AuditService; storage: F
           $inc: { version: 1, ...(fields.decision === "request_changes" ? { currentRound: 1 } : {}) }
         }, { session, runValidators: true, timestamps: false });
         if (assignmentChanged.matchedCount !== 1) conflict();
+        if (fields.decision === "request_changes") await invalidateExecutionVerificationForClientChanges(String(assignment._id), actor.id, fields.reason ?? "Client requested changes", session, at, await input.readExecutionPolicy?.(assignment.projectId, session));
+        await appendExecutionChange({ projectId, vendorId: assignment.vendorId, assignmentId: String(assignment._id), version: assignment.version + 1, kind: "client_decision", occurredAt: at }, session);
         await appendAudit(input.audit, actor.id, "client_vendor_work_decided", reviewId, projectId, session, at, { assignmentId: String(assignment._id), round: review.round, decision: fields.decision }, fields.reason);
         const updated = await VendorWorkReviewModel.findById(reviewId).session(session).lean() as Row;
         return reviewDto(updated, assignment);
@@ -516,4 +531,14 @@ export function createVendorWorkService(input: { audit: AuditService; storage: F
       return { deleted, failed };
     }
   };
+}
+
+async function mayEditVendorMedia(assignment: Row, session: ClientSession): Promise<boolean> {
+  await assertExecutionEditable(assignment, session);
+  const tracked = await VendorExecutionStateModel.exists({ _id: assignment._id }).session(session);
+  return Boolean(tracked) || mayUpdateVendorWork(assignment.status);
+}
+async function mediaRoundFilter(assignment: Row, session: ClientSession): Promise<Row> {
+  const state = await VendorExecutionStateModel.findById(assignment._id).select({ executionRound: 1 }).session(session).lean();
+  return state ? { assignmentId: assignment._id, executionRound: state.executionRound } : { assignmentId: assignment._id, round: assignment.currentRound };
 }

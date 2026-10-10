@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type FormEvent } from "react";
 
+import { Link } from "react-router-dom";
+import { VendorAccessPanel } from "../execution/VendorAccessPanel";
 import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { Button } from "../../components/ui/Button";
@@ -31,6 +33,7 @@ export function SuperAdminPurchaseOrdersPage() {
   const canApprove = hasFrontendPermission(auth.authorization, "procurement.purchase_orders.approve");
   const queryClient = useQueryClient();
   const orders = useQuery({ queryKey: purchaseOrderKeys.pending, queryFn: allPendingOrders, enabled: canApprove });
+  const [issuedOrder, setIssuedOrder] = useState<PurchaseOrder | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [decision, setDecision] = useState<"approve" | "request_changes" | "reject">("approve");
   const [reason, setReason] = useState("");
@@ -49,6 +52,7 @@ export function SuperAdminPurchaseOrdersPage() {
       decision, reason: decision === "approve" ? null : reason.trim(), budgetOverrideReason: decision === "approve" ? overrideReason.trim() || null : null, idempotencyKey
     }),
     onSuccess: async (order) => {
+      if (decision === "approve") setIssuedOrder(order);
       queueHeadingRef.current?.focus();
       reviewOpenerRef.current = null;
       setPendingKey(null); setSelectedId(null); setReason(""); setOverrideReason(""); setError("");
@@ -82,7 +86,9 @@ export function SuperAdminPurchaseOrdersPage() {
   return <section className="purchase-orders purchase-orders--admin" aria-labelledby="super-admin-purchase-orders-title">
     <PageHeader id="super-admin-purchase-orders-title" eyebrow="Super Admin approval" title="Purchase order approvals" description="Review a full project request or an individual vendor order before releasing work." />
     {!canApprove ? <PageState state="error" message="You do not have permission to approve purchase orders." /> : <>
+      {hasFrontendPermission(auth.authorization, "execution.tracker.read") ? <p><Link to="/execution">View project execution</Link></p> : null}
       <SuperAdminProjectRequestReview />
+      {issuedOrder ? <VendorAccessPanel projectId={issuedOrder.projectId} orderId={issuedOrder.id} orderLabel={issuedOrder.orderNumber} /> : null}
       <section className="purchase-orders__individual-queue" aria-labelledby="individual-purchase-order-queue-title">
         <header className="purchase-orders__legacy-header"><div><p className="eyebrow">Individual approval queue</p><h2 id="individual-purchase-order-queue-title" ref={queueHeadingRef} tabIndex={-1}>Individual vendor orders</h2><p>Review vendor orders created separately or amended after approval.</p></div>
           {orders.isFetching && !orders.isPending ? <span className="purchase-orders__hint" role="status">Refreshing…</span> : null}</header>

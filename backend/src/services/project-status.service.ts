@@ -1,3 +1,4 @@
+import type { AssistantReadScope } from "../contracts/project-chat-assistant.js";
 import type { ChatActor } from "../contracts/project-chat.js";
 import type { ProjectStatusSummary } from "../contracts/project-status.js";
 import type { ProjectCompletionSummary } from "../domain/project-completion.js";
@@ -6,7 +7,7 @@ import { resolveChatMembership } from "../domain/project-chat-membership.js";
 import { chatNotFound } from "../domain/project-chat.js";
 import { ApiError } from "../middleware/errors.js";
 import { RepositoryConflictError, type AppRepository } from "../repositories/types.js";
-import type { ChatEstimateSource, ChatSources, ProjectChatRepository } from "../repositories/project-chat.js";
+import type { ChatEstimateSource, ChatSources, ChatTransaction, ProjectChatRepository } from "../repositories/project-chat.js";
 import { readMongoProjectStatusExecutionEvidence, type ProjectStatusEstimateEvidence, type ProjectStatusExecutionEvidence } from "../repositories/project-status.js";
 import { authenticatedChatUser } from "./project-chat-context.js";
 import type { Clock } from "./workflow.js";
@@ -16,6 +17,8 @@ import type { ClientSession } from "mongoose";
 
 export interface ProjectStatusService {
   get(actor: ChatActor, projectId: string): Promise<ProjectStatusSummary>;
+  /** Internal scoped read; never accepts a service identity as a human actor. */
+  getForClientScope(scope: AssistantReadScope, transaction?: ChatTransaction): Promise<ProjectStatusSummary>;
 }
 
 const validDate = (value: string | null) => Boolean(value && Number.isFinite(Date.parse(value)));
@@ -91,22 +94,8 @@ export function createProjectStatusService(options: {
     session ? readMongoProjectStatusExecutionEvidence(projectId, session) : Promise.resolve(emptyExecutionEvidence()));
   const completionSummary = options.completionSummary ?? ((projectId: string, session?: ClientSession) =>
     session ? readProjectCompletionSummary(projectId, session) : Promise.reject(new ApiError(409, "PROJECT_COMPLETION_LINEAGE_CONFLICT", "The completion snapshot is unavailable.")));
-  return {
-    async get(actor, projectId) {
-      return options.chatRepository.snapshot(async tx => {
-        // Membership and every source read share one snapshot; no chat office-hours or write path.
-        const user = await authenticatedChatUser(tx, actor, clock, "projects.status.read");
-        const sources = await tx.sources(projectId);
-        if (!sources) chatNotFound();
-        const membership = resolveChatMembership(sources, await tx.selections(projectId));
-        const execution = await executionEvidence(projectId, tx.session);
-        if (actor.role === "vendor") {
-          if (!user.vendorId || !execution.people.some(person => person.id === actor.id && person.role === "vendor" && person.vendorId === user.vendorId) ||
-            !execution.vendorMemberIds.includes(actor.id)) chatNotFound();
-        } else if (!membership.participants.some(person => person.id === actor.id) &&
-            !execution.people.some(person => person.id === actor.id && person.role === "procurement" && actor.role === "procurement")) {
-          chatNotFound();
-        }
+  const projectSnapshot = async (tx: ChatTransaction, sources: ChatSources, membership: ReturnType<typeof resolveChatMembership>, execution: ProjectStatusExecutionEvidence): Promise<ProjectStatusSummary> => {
+    const projectId = sources.project.id;
         const estimateEvidence = await tx.app.findProjectStatusEstimateEvidence(projectId);
         const selected = commercialSource(sources, estimateEvidence);
         const input: ProjectStatusInput = {
@@ -157,7 +146,37 @@ export function createProjectStatusService(options: {
           }
         }
         return deriveProjectStatus(input);
+  };
+  return {
+    async get(actor, projectId) {
+      return options.chatRepository.snapshot(async tx => {
+        // Membership and every source read share one snapshot; no chat office-hours or write path.
+        const user = await authenticatedChatUser(tx, actor, clock, "projects.status.read");
+        const sources = await tx.sources(projectId);
+        if (!sources) chatNotFound();
+        const membership = resolveChatMembership(sources, await tx.selections(projectId));
+        const execution = await executionEvidence(projectId, tx.session);
+        if (actor.role === "vendor") {
+          if (!user.vendorId || !execution.people.some(person => person.id === actor.id && person.role === "vendor" && person.vendorId === user.vendorId) ||
+            !execution.vendorMemberIds.includes(actor.id)) chatNotFound();
+        } else if (!membership.participants.some(person => person.id === actor.id) &&
+            !execution.people.some(person => person.id === actor.id && person.role === "procurement" && actor.role === "procurement")) {
+          chatNotFound();
+        }
+        return projectSnapshot(tx, sources, membership, execution);
       });
+    },
+    async getForClientScope(scope, transaction) {
+      const read = async (tx: ChatTransaction) => {
+        const user = await tx.app.findUserById(scope.clientId);
+        if (!user || !user.active || user.role !== "client" || (user.sessionVersion ?? 1) !== scope.sessionVersion) chatNotFound();
+        const sources = await tx.sources(scope.projectId);
+        if (!sources || sources.project.clientId !== user.id) chatNotFound();
+        const membership = resolveChatMembership(sources, await tx.selections(scope.projectId));
+        if (!membership.participants.some(person => person.id === user.id && person.role === "client")) chatNotFound();
+        return projectSnapshot(tx, sources, membership, await executionEvidence(scope.projectId, tx.session));
+      };
+      return transaction ? read(transaction) : options.chatRepository.snapshot(read);
     }
   };
 }

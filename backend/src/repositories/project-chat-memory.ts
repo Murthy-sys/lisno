@@ -1,3 +1,4 @@
+import { createMemoryAssistantOperations, createMemoryAssistantState, type MemoryAssistantState } from "./project-assistant-memory.js";
 import type { NotificationRecord } from "./notifications.js";
 import { chatConflict } from "../domain/project-chat.js";
 import type { ChatActionTypeRecord, ChatExclusion, ChatAttachmentRecord, ChatEstimateSource, ChatHistoryRow, ChatMessageScan, ChatOperation, ChatReadState, ChatSelection, ChatSources, ChatState, ChatStoredEvent, ChatStoredMessage, ChatTransaction, ChatTypingRecord, ChatTypingRateRecord, ChatWorkflowSource, DailyCriticalTaskReceipt, ProjectChatRepository } from "./project-chat.js";
@@ -11,6 +12,7 @@ export interface MemoryChatSources {
     projectIds?: string[];
 }
 interface MemoryChatState {
+    assistant: MemoryAssistantState;
     digestScheduleStartDate: string | null;
     digestReceipts: DailyCriticalTaskReceipt[];
     exclusions: ChatExclusion[];
@@ -30,7 +32,7 @@ interface MemoryChatState {
 const modules: ProjectModule[] = ["projects", "design", "procurement", "finance", "execution"];
 const copy = <T>(value: T): T => structuredClone(value);
 export function createMemoryProjectChatRepository(repository: AppRepository, supplemental: MemoryChatSources = {}): ProjectChatRepository {
-    let state: MemoryChatState = { digestScheduleStartDate: null, digestReceipts: [], exclusions: [], actionTypes: [], notifications: [], selections: [], messages: [], states: {}, reads: [], operations: [], events: [], histories: [], attachments: [], typing: [], typingRates: [] };
+    let state: MemoryChatState = { assistant: createMemoryAssistantState(), digestScheduleStartDate: null, digestReceipts: [], exclusions: [], actionTypes: [], notifications: [], selections: [], messages: [], states: {}, reads: [], operations: [], events: [], histories: [], attachments: [], typing: [], typingRates: [] };
     let tail: Promise<void> = Promise.resolve();
     const run = async <T>(write: boolean, operation: (tx: ChatTransaction) => Promise<T>): Promise<T> => {
         const previous = tail;
@@ -72,6 +74,7 @@ function memoryTransaction(app: AppRepository, state: MemoryChatState, supplemen
         return [...seen.values()];
     };
     return {
+        assistant: createMemoryAssistantOperations(state.assistant),
         app,
         async ensureDigestScheduleStart(localDate) { state.digestScheduleStartDate ??= localDate; return state.digestScheduleStartDate; },
         async digestReceipts(userId, throughDate) { return copy(state.digestReceipts.filter(row => row.userId === userId && row.localDate <= throughDate).sort((a,b) => a.localDate.localeCompare(b.localDate))); },
@@ -88,10 +91,17 @@ function memoryTransaction(app: AppRepository, state: MemoryChatState, supplemen
             if (state.notifications.some(item => item.recipientId === row.recipientId && item.messageId === row.messageId)) chatConflict();
             state.notifications.push(copy(row));
         },
+        async routeNotification(record, resurface) {
+            const prior = state.notifications.find(row => row.recipientId === record.recipientId && row.messageId === record.messageId);
+            if (!prior) { state.notifications.push(copy(record)); return; }
+            if (prior.routing && prior.routing.messageVersion >= record.routing!.messageVersion) return;
+            prior.routing = copy(record.routing);
+            if (resurface) { prior.readAt = null; prior.email = copy(record.email); }
+        },
         async notification(id, recipientId) { return copy(state.notifications.find(row => row.id === id && row.recipientId === recipientId) ?? null); },
         async notificationProjectIds(recipientId) { return [...new Set(state.notifications.filter(row => row.recipientId === recipientId).map(row => row.projectId))]; },
         async notificationPage(recipientId, projectIds, limit, offset) {
-            const rows = state.notifications.filter(row => row.recipientId === recipientId && projectIds.includes(row.projectId)).sort((a,b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+            const rows = state.notifications.filter(row => row.recipientId === recipientId && projectIds.includes(row.projectId)).sort((a,b) => (b.routing?.lastAlertAt ?? b.createdAt).localeCompare(a.routing?.lastAlertAt ?? a.createdAt) || b.id.localeCompare(a.id));
             return copy({items: rows.slice(offset, offset + limit), total: rows.length, unreadCount: rows.filter(row => row.readAt === null).length});
         },
         async readNotification(id, recipientId, now) { const row = state.notifications.find(row => row.id === id && row.recipientId === recipientId); if (row && !row.readAt) row.readAt = now; },

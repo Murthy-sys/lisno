@@ -1,3 +1,4 @@
+import { ExecutionLiveProvider } from "../../features/execution/ExecutionLiveProvider";
 import { Link, matchPath, Outlet, useLocation } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthProvider";
@@ -31,6 +32,7 @@ export function AppShell() {
   if (!auth.user || !auth.authorization) return null;
 
   return (
+    <ExecutionLiveProvider>
     <NotificationProvider>
     <ChatScheduleProvider>
     <ProjectChatProvider>
@@ -69,5 +71,6 @@ export function AppShell() {
     </ProjectChatProvider>
     </ChatScheduleProvider>
     </NotificationProvider>
+    </ExecutionLiveProvider>
   );
 }

@@ -299,7 +299,16 @@ function ChatSession({ children, userId, enabled }: { children: ReactNode; userI
     };
     const cachedHistory = queryClient.getQueryData<{ pages: ChatMessagePage[] }>(chatKeys.messages(scope, projectId, "all"));
     void runProjectChatStream({ projectId, cursor: cachedHistory?.pages[0]?.snapshotCursor ?? cursor.current, signal: controller.signal,
-      onBatch: batch => { if (batch.resync || batch.events.length) refresh(); if (batch.resync || batch.events.some(event => event.type === "participants.changed")) void queryClient.invalidateQueries({ queryKey: [...chatKeys.project(scope, projectId), "attachment-policy"] }); },
+      onBatch: batch => {
+        if (!valid() || controller.signal.aborted) return;
+        if (batch.resync || batch.events.some(event => event.type === "participants.changed")) {
+          // Reset synchronously before refetching. A price visible under old access
+          // must never survive a membership change while new permissions load.
+          void queryClient.resetQueries({ queryKey: [...chatKeys.project(scope, projectId), "assistant-result"] });
+          void queryClient.invalidateQueries({ queryKey: [...chatKeys.project(scope, projectId), "attachment-policy"] });
+        }
+        if (batch.resync || batch.events.length) refresh();
+      },
       onTyping: snapshot => {
         if (!valid() || controller.signal.aborted || snapshot.projectId !== projectId) return;
         const serverTime = Date.parse(snapshot.serverTime);

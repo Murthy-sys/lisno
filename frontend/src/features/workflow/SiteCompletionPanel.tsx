@@ -9,29 +9,37 @@ import { projectStatusKeys } from "../project-status/projectStatusApi";
 import { getSiteCompletion, siteCompletionKeys, submitSiteCompletion, updateSiteCompletion } from "./siteCompletionApi";
 import "./siteCompletion.css";
 
-export function SiteCompletionPanel({ projectId, projectName }: { projectId: string; projectName: string }) {
+export function SiteCompletionPanel({ projectId, projectName, onDirty, onBusy }: { projectId: string; projectName: string; onDirty?: (dirty: boolean) => void; onBusy?: (busy: boolean) => void }) {
   const auth = useAuth();
   const client = useQueryClient();
   const canManage = auth.user?.role === "site_manager" && hasFrontendPermission(auth.authorization, "procurement.site_completion.manage");
   const query = useQuery({ queryKey: siteCompletionKeys.project(projectId), queryFn: () => getSiteCompletion(projectId),
     enabled: canManage, refetchInterval: current => current.state.data?.status === "pending_client" ? 15_000 : false });
+  const [draftVersion, setDraftVersion] = useState<number | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const current = query.data;
-  useEffect(() => { setProgress(null); setNote(null); }, [current?.version]);
+  useEffect(() => { setProgress(null); setNote(null); setDraftVersion(null); }, [projectId]);
   const refresh = async () => Promise.all([
     client.invalidateQueries({ queryKey: siteCompletionKeys.project(projectId) }),
     client.invalidateQueries({ queryKey: projectStatusKeys.project(projectId) }),
     client.invalidateQueries({ queryKey: ["admin", "project-completion-tasks"] }),
-    client.invalidateQueries({ queryKey: ["vendor-work", "progress", projectId] })
+    client.invalidateQueries({ queryKey: ["vendor-work", "progress", projectId] }),
+    client.invalidateQueries({ queryKey: ["execution"] }),
+    client.invalidateQueries({ queryKey: ["project-workflow", "operational"] }),
+    client.invalidateQueries({ queryKey: ["designer", "kpi"] })
   ]);
   const save = useMutation({ mutationFn: (value: { progress: number; note: string }) => updateSiteCompletion(projectId, {
-    expectedVersion: current!.version, idempotencyKey: crypto.randomUUID(), ...value }),
-  onSuccess: async () => { setMessage("Site progress saved."); await refresh(); } });
+    expectedVersion: draftVersion ?? current!.version, idempotencyKey: crypto.randomUUID(), ...value }),
+  onSuccess: async () => { setProgress(null); setNote(null); setDraftVersion(null); setMessage("Site progress saved."); await refresh(); } });
   const submit = useMutation({ mutationFn: () => submitSiteCompletion(projectId, {
     expectedVersion: current!.version, idempotencyKey: crypto.randomUUID(), note: (note ?? current!.note).trim() }),
-  onSuccess: async () => { setMessage("Completion sent to the Client for review."); await refresh(); } });
+  onSuccess: async () => { setProgress(null); setNote(null); setDraftVersion(null); setMessage("Completion sent to the Client for review."); await refresh(); } });
+  const edited = Boolean(current && ((progress ?? String(current.progress)) !== String(current.progress) || (note ?? current.note) !== current.note));
+  useEffect(() => { onDirty?.(edited); }, [edited, onDirty]);
+  useEffect(() => { onBusy?.(save.isPending || submit.isPending); }, [save.isPending, submit.isPending, onBusy]);
+  useEffect(() => () => { onDirty?.(false); onBusy?.(false); }, [onDirty, onBusy]);
   if (!canManage) return null;
   if (query.isPending) return <section className="site-completion" aria-label={`Site completion for ${projectName}`}><p role="status">Loading site completion…</p></section>;
   if (query.isError || !current) return <section className="site-completion" aria-label={`Site completion for ${projectName}`}><p role="alert">Site completion could not be loaded.</p><Button variant="secondary" onClick={() => void query.refetch()}>Try again</Button></section>;
@@ -61,13 +69,13 @@ export function SiteCompletionPanel({ projectId, projectName }: { projectId: str
     {current.status === "client_approved" && current.projectStatus !== "completed" ? <p role="status">Client accepted completion. Super Admin will make the final decision.</p> : null}
     {current.projectStatus === "completed" ? <p role="status">Project completed. No further actions are pending.</p> : null}
     {editable ? <form onSubmit={saveProgress} className="site-completion__form">
-      <Field id={`site-progress-${projectId}`} label="Project execution progress (%)" required>{(props) => <Input {...props} type="number" min={0} max={100} step={1} value={shownProgress} onChange={event => { setProgress(event.target.value); setMessage(""); }} />}</Field>
-      <Field id={`site-note-${projectId}`} label="Completion note" hint="Summarize the work completed and what the Client should inspect.">{(props) => <Textarea {...props} rows={3} maxLength={2000} value={shownNote} onChange={event => { setNote(event.target.value); setMessage(""); }} />}</Field>
+      <Field id={`site-progress-${projectId}`} label="Project execution progress (%)" required>{(props) => <Input {...props} type="number" min={0} max={100} step={1} value={shownProgress} onChange={event => { setDraftVersion(version => version ?? current.version); setProgress(event.target.value); setMessage(""); }} />}</Field>
+      <Field id={`site-note-${projectId}`} label="Completion note" hint="Summarize the work completed and what the Client should inspect.">{(props) => <Textarea {...props} rows={3} maxLength={2000} value={shownNote} onChange={event => { setDraftVersion(version => version ?? current.version); setNote(event.target.value); setMessage(""); }} />}</Field>
       {sendHint ? <p className="site-completion__send-hint" role="status" id={`site-send-hint-${projectId}`}>{sendHint}</p> : null}
       <div className="site-completion__actions"><Button type="submit" variant="secondary" busy={save.isPending} disabled={!draftChanged && !current.needsReverification}>{saveLabel}</Button>
         <Button type="button" busy={submit.isPending} disabled={!current.canSubmit || draftChanged || save.isPending} aria-describedby={sendHint ? `site-send-hint-${projectId}` : undefined} onClick={() => submit.mutate()}>Complete and send to Client</Button></div>
     </form> : null}
     {editable && current.blockers.length ? <div className="site-completion__blockers"><h3>Before sending</h3><ul>{current.blockers.map((blocker, index) => <li key={`${index}-${blocker}`}>{blocker}</li>)}</ul></div> : null}
-    {save.isError || submit.isError ? <p role="alert">{actionError instanceof ApiError ? actionError.message : "The completion state changed or could not be saved."} <button type="button" onClick={() => void query.refetch()}>Refresh and try again</button>.</p> : null}
+    {save.isError || submit.isError ? <p role="alert">{actionError instanceof ApiError ? actionError.message : "The completion state changed or could not be saved."} <button type="button" onClick={() => { setProgress(null); setNote(null); setDraftVersion(null); void query.refetch(); }}>Reload latest values</button>.</p> : null}
   </section>;
 }

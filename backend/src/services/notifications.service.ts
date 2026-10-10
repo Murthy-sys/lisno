@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { chatConflict } from "../domain/project-chat.js";
 import type { ChatActor } from "../contracts/project-chat.js";
 import type { NotificationService } from "../contracts/notifications.js";
 import { resolveChatMembership } from "../domain/project-chat-membership.js";
@@ -6,6 +8,7 @@ import { notificationPage, publicNotification } from "../repositories/notificati
 import type { ChatTransaction, ProjectChatRepository } from "../repositories/project-chat.js";
 import { authenticatedChatUser, projectChatContext } from "./project-chat-context.js";
 import { systemClock, type Clock } from "./workflow.js";
+export const notificationReadSchema = z.object({routingMessageVersion: z.number().int().positive().optional()}).strict();
 export function createNotificationService(options: {repository: ProjectChatRepository; clock?: Clock; onChange?: (recipientId: string) => void}): NotificationService {
   const clock = options.clock ?? systemClock;
   async function page(tx: ChatTransaction, actor: ChatActor, query: {limit: number; offset: number}) {
@@ -22,12 +25,14 @@ export function createNotificationService(options: {repository: ProjectChatRepos
       const query = parseChatInput(chatListQuerySchema, input);
       return options.repository.snapshot(tx => page(tx, actor, query));
     },
-    async read(actor, id) {
+    async read(actor, id, input) {
+      const value = parseChatInput(notificationReadSchema, input ?? {});
       const result = await options.repository.mutate(async tx => {
         await authenticatedChatUser(tx, actor, clock, "chat.read_state");
         const row = await tx.notification(id, actor.id);
         if (!row) chatNotFound();
         await projectChatContext(tx, actor, row.projectId, clock);
+        if (row.routing && value.routingMessageVersion !== row.routing.messageVersion) chatConflict("This alert changed. Review the latest alert before marking it read.");
         await tx.readNotification(id, actor.id, clock().toISOString());
         return publicNotification((await tx.notification(id, actor.id))!);
       });

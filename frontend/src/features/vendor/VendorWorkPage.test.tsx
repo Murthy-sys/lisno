@@ -1,122 +1,107 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
+import { executionFixture, executionPageFixture } from "../execution/executionTestFixtures";
+import type { ExecutionCommand, ExecutionWork } from "../execution/executionApi";
 import { VendorWorkPage } from "./VendorWorkPage";
-import type { VendorWorkTask } from "./vendorWorkApi";
-
-vi.mock("../../auth/AuthProvider", () => ({
-  useAuth: () => ({ user: { id: "vendor-user", role: "vendor" }, status: "authenticated", authorization: { role: "vendor", permissions: ["projects.status.read", "procurement.vendor_work.read", "procurement.vendor_work.update", "procurement.vendor_work.media.upload"] } })
-}));
-
-const baseTask: VendorWorkTask = {
-  id: "assignment-one", projectId: "project-one", vendorId: "vendor-one", orderId: "order-one", orderRevision: 1,
-  lineId: "line-one", sourceSectionId: "CA", sourceLineItemKey: "estimate-line-one", sectionLabel: "Carpentry", roomName: "Living room",
-  itemName: "TV unit", scopeType: "supply_and_execution", description: "Build and fit oak TV unit", targetDate: "2026-11-01",
-  deliveryLocation: "Project site", status: "changes_requested", version: 3, progress: 100,
-  displayProgress: 100, progressSource: "vendor", currentRound: 2, note: "Original completion",
-  requestedChangeReason: "Align the cabinet doors", imageCount: 1, submittedAt: null, acceptedAt: null
-};
-
+const authState = vi.hoisted(() => ({ permissions: ["procurement.vendor_work.read","procurement.vendor_work.media.upload"] }));
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "vendor-user", role: "vendor" }, status: "authenticated", authorization: { role: "vendor", permissions: authState.permissions } }) }));
+vi.mock("../execution/ExecutionLiveProvider", () => ({ useExecutionConnection: () => "live" }));
+let work: ExecutionWork;
 beforeEach(() => {
-  vi.stubGlobal("crypto", { randomUUID: () => "key-12345678" });
-  server.use(http.get("/api/v1/vendor/purchase-orders/order-one", () => HttpResponse.json({ data: {
-    id: "order-one", orderNumber: "PO-ONE", projectId: "project-one", vendor: { id: "vendor-one", code: "VEN-1", name: "Oak Works" }, revision: 1,
-    approvedAt: "2026-10-01T00:00:00.000Z", terms: "Install at project site", lines: [{ id: "line-one", itemName: "TV unit", description: "Build and fit oak TV unit", quantityMilliUnits: 1000, uomCode: "unit", scopeType: "supply_and_execution", targetDate: "2026-11-01", deliveryLocation: "Project site", gstBasisPoints: 2000, totalPaise: 600000 }], totals: { netPaise: 500000, gstPaise: 100000, totalPaise: 600000 }
-  } })));
+  work = structuredClone(executionFixture);
+  authState.permissions = ["procurement.vendor_work.read","procurement.vendor_work.media.upload"];
+  server.use(
+    http.get("/api/v1/vendor/work/execution", () => HttpResponse.json({ data: executionPageFixture([work]) })),
+    http.get("/api/v1/execution/work/work-one", () => HttpResponse.json({ data: work })),
+    http.get("/api/v1/execution/work/work-one/history", () => HttpResponse.json({ data: { items: [], total: 0, limit: 20, offset: 0 } })),
+    http.get("/api/v1/vendor/purchase-orders/order-one", () => HttpResponse.json({ data: { id: "order-one", orderNumber: "PO-100", projectId: "project-one", vendor: { id: "vendor-one", code: "VEN-1", name: "Oak Works" }, revision: 2, approvedAt: "2026-10-01T00:00:00Z", terms: "Install at project site", lines: [{ id: "line-one", itemName: "Oak wall panelling", description: "Issued panelling", quantityMilliUnits: 125000, uomCode: "sq-ft", scopeType: "execution", targetDate: "2026-10-20", deliveryLocation: "Project site", gstBasisPoints: 1800, totalPaise: 118000 }], totals: { netPaise: 100000, gstPaise: 18000, totalPaise: 118000 } } }))
+  );
 });
-
-describe("vendor assigned work", () => {
-  it("shows Site Manager 100% separately from vendor progress and keeps vendor submit disabled", async () => {
-    const task: VendorWorkTask = { ...baseTask, status: "ready", version: 1, progress: 20,
-      displayProgress: 100, progressSource: "site_manager", note: "Vendor still working", requestedChangeReason: null };
-    server.use(
-      http.get("/api/v1/vendor/work", () => HttpResponse.json({ data: { items: [task], total: 1, limit: 50, offset: 0 } })),
-      http.get("/api/v1/vendor/work/assignment-one", () => HttpResponse.json({ data: task }))
-    );
-    renderWithQuery(<VendorWorkPage />);
-    const row = await screen.findByRole("button", { name: /TV unit/ });
-    expect(row).toHaveTextContent("100% · Site Manager verified");
-    await userEvent.click(row);
-    expect(await screen.findByText(/Your reported section progress remains 20%/)).toBeVisible();
-    expect(screen.getByRole("spinbutton", { name: "Vendor reported progress (%)" })).toHaveValue(20);
-    expect(screen.getByRole("button", { name: "Submit completed section" })).toBeDisabled();
+async function openWork() {
+  const user = userEvent.setup(); renderWithQuery(<VendorWorkPage />);
+  await user.click(await screen.findByRole("button",{ name: /Open Oak wall panelling/ }));
+  await screen.findByRole("form",{ name: "Update Main Line workflow" });
+  return user;
+}
+describe("vendor execution workspace", () => {
+  it("separates a 100% report from verified completion and retains the issued order", async () => {
+    work = { ...work, progress: 100, allowedActions: ["report","submit"] };
+    const user = await openWork();
+    expect(screen.getByText("100% vendor reported")).toBeVisible();
+    expect(screen.getByText("Not verified")).toBeVisible();
+    expect(screen.queryByRole("option",{ name: "Verify completion" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button",{ name: "Send to Client" })).not.toBeInTheDocument();
+    await user.click(screen.getByText("View approved purchase order PO-100"));
+    expect(screen.getByText(/Issued panelling · 125 sq-ft/)).toBeVisible();
   });
-
-  it("shows client change reason and requires a fresh update before resubmission", async () => {
-    let task = baseTask;
-    const progressWrites: unknown[] = [];
-    const submitWrites: unknown[] = [];
-    server.use(
-      http.get("/api/v1/vendor/work", () => HttpResponse.json({ data: { items: [task], total: 1, limit: 50, offset: 0 } })),
-      http.get("/api/v1/vendor/work/assignment-one", () => HttpResponse.json({ data: task })),
-      http.patch("/api/v1/vendor/work/assignment-one/progress", async ({ request }) => {
-        const body = await request.json() as Record<string, unknown>;
-        progressWrites.push(body);
-        task = { ...task, version: 4, status: "in_progress", note: String(body.note), progress: Number(body.progress) };
-        return HttpResponse.json({ data: task });
-      }),
-      http.post("/api/v1/vendor/work/assignment-one/submit", async ({ request }) => {
-        submitWrites.push(await request.json());
-        task = { ...task, version: 5, status: "submitted_for_client" };
-        return HttpResponse.json({ data: { id: "review-two", projectId: "project-one", assignmentId: task.id, round: 2, status: "pending", version: 1, imageIds: [], decision: null } });
-      })
-    );
-    const user = userEvent.setup();
-    renderWithQuery(<VendorWorkPage />);
-    await user.click(await screen.findByRole("button", { name: /TV unit/ }));
-    expect(await screen.findByText(/Align the cabinet doors/)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Submit completed section" })).toBeDisabled();
-    expect(screen.getByText(/Record a new progress update/)).toBeVisible();
-    await user.clear(screen.getByRole("textbox", { name: "Work note" }));
-    await user.type(screen.getByRole("textbox", { name: "Work note" }), "Cabinet doors aligned and checked");
-    await user.click(screen.getByRole("button", { name: "Save progress" }));
-    await waitFor(() => expect(progressWrites).toHaveLength(1));
-    expect(progressWrites[0]).toEqual({ expectedVersion: 3, idempotencyKey: "key-12345678", progress: 100, note: "Cabinet doors aligned and checked" });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Submit completed section" })).toBeEnabled());
-    await user.click(screen.getByRole("button", { name: "Submit completed section" }));
-    await waitFor(() => expect(submitWrites).toHaveLength(1));
-    expect(submitWrites[0]).toEqual({ expectedVersion: 4, idempotencyKey: "key-12345678", note: "Cabinet doors aligned and checked" });
-    expect(await screen.findByText("Section sent to the client for review.")).toBeVisible();
+  it("records a blocked daily report with reason, next action and the expected version", async () => {
+    const writes: ExecutionCommand[] = [];
+    server.use(http.post("/api/v1/vendor/work/work-one/execution", async ({request}) => { const input = await request.json() as ExecutionCommand; writes.push(input); work = { ...work, version: 5, status: "blocked", latestNote: input.note!, daily: { ...work.daily, state: "on_time" } }; return HttpResponse.json({ data: work }); }));
+    const user = await openWork();
+    await user.selectOptions(screen.getByRole("combobox",{name:"Work status"}),"blocked");
+    await user.type(screen.getByRole("textbox",{name:"Work note"}),"Awaiting site clearance");
+    await user.type(screen.getByRole("textbox",{name:"Next action to resolve blocker"}),"Site Manager to clear the work area");
+    await user.click(screen.getByRole("button",{name:"Daily update"}));
+    expect(await screen.findByText("Give a reason for no progress, rework or a blocker.")).toBeVisible();
+    await user.type(screen.getByRole("textbox",{name:"Reason"}),"Access is blocked");
+    await user.click(screen.getByRole("button",{name:"Daily update"}));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toMatchObject({ action:"report", expectedVersion:4, status:"blocked", progress:40, note:"Awaiting site clearance", reason:"Access is blocked", nextAction:"Site Manager to clear the work area",imageIds:[] });
+    expect(writes[0].idempotencyKey.length).toBeGreaterThan(7);
+    expect(await screen.findByText("Update saved.")).toBeVisible();
   });
-
-  it("loads every assignment page and shows one status control per project", async () => {
-    server.use(http.get("/api/v1/vendor/work", ({ request }) => {
-      const offset = Number(new URL(request.url).searchParams.get("offset"));
-      const second = { ...baseTask, id: "assignment-two", projectId: "project-two", orderId: "order-two", itemName: "Kitchen unit" };
-      return HttpResponse.json({ data: { items: [offset === 0 ? baseTask : second], total: 2, limit: 1, offset } });
-    }));
-    const user = userEvent.setup();
-    renderWithQuery(<VendorWorkPage />);
-    expect(await screen.findByRole("button", { name: /TV unit/ })).toBeVisible();
-    expect(screen.queryByRole("button", { name: /Kitchen unit/ })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Load more assignments" }));
-    expect(await screen.findByRole("button", { name: /Kitchen unit/ })).toBeVisible();
-    expect(screen.getAllByRole("button", { name: "Project status" })).toHaveLength(2);
+  it("retains dirty values after conflict and requires explicit latest-version review", async () => {
+    let writes = 0;
+    server.use(http.post("/api/v1/vendor/work/work-one/execution", () => { writes++; work = { ...work,version:5, latestNote:"A concurrent update" }; return HttpResponse.json({error:{code:"CONFLICT",message:"Assignment changed."}},{status:409}); }));
+    const user = await openWork();
+    await user.clear(screen.getByRole("spinbutton",{name:"Vendor reported progress (%)"}));
+    await user.type(screen.getByRole("spinbutton",{name:"Vendor reported progress (%)"}),"55");
+    await user.type(screen.getByRole("textbox",{name:"Work note"}),"Keep my work note");
+    await user.click(screen.getByRole("button",{name:"Daily update"}));
+    await screen.findByText("Assignment changed.");
+    expect(screen.getByRole("textbox",{name:"Work note"})).toHaveValue("Keep my work note");
+    expect(await screen.findByRole("button",{name:"Use reviewed version 5"})).toBeVisible();
+    expect(screen.getByRole("button",{name:"Daily update"})).toBeDisabled();
+    expect(writes).toBe(1);
+    await user.click(screen.getByRole("button",{name:"Use reviewed version 5"}));
+    expect(screen.getByRole("button",{name:"Daily update"})).toBeEnabled();
   });
-
-  it("shows tender work without invented scope, target date, or delivery location", async () => {
-    const task: VendorWorkTask = { ...baseTask, scopeType: null, targetDate: null, deliveryLocation: null };
-    server.use(
-      http.get("/api/v1/vendor/work", () => HttpResponse.json({ data: { items: [task], total: 1, limit: 50, offset: 0 } })),
-      http.get("/api/v1/vendor/work/assignment-one", () => HttpResponse.json({ data: task })),
-      http.get("/api/v1/vendor/purchase-orders/order-one", () => HttpResponse.json({ data: {
-        id: "order-one", orderNumber: "PO-ONE", projectId: "project-one", vendor: { id: "vendor-one", code: "VEN-1", name: "Oak Works" }, revision: 1,
-        approvedAt: "2026-10-01T00:00:00.000Z", terms: null, lines: [{ id: "line-one", itemName: "TV unit", description: "Build and fit oak TV unit", quantityMilliUnits: 1000, uomCode: "unit", scopeType: null, targetDate: null, deliveryLocation: null, gstBasisPoints: 2000, totalPaise: 600000 }], totals: { netPaise: 500000, gstPaise: 100000, totalPaise: 600000 }
-      } }))
-    );
-    const user = userEvent.setup();
+  it("guards closing a dirty panel and preserves edits when keeping it open", async () => {
+    const user = await openWork();
+    await user.type(screen.getByRole("textbox",{name:"Work note"}),"Unsaved note");
+    const panel = screen.getByRole("dialog",{name:"Oak wall panelling"});
+    await user.click(within(panel).getByRole("button",{name:"Close oak wall panelling"}));
+    expect(await screen.findByRole("alertdialog",{name:"Discard unsaved changes?"})).toBeVisible();
+    await user.click(screen.getByRole("button",{name:"Keep editing"}));
+    expect(screen.getByRole("textbox",{name:"Work note"})).toHaveValue("Unsaved note");
+  });
+  it("requires current-round photos or an exemption before completion submission", async () => {
+    work = { ...work,progress:100,allowedActions:["submit"] };
+    const user = await openWork();
+    await user.type(screen.getByRole("textbox",{name:"Completion note"}),"Completed the issued scope");
+    await user.click(screen.getByRole("button",{name:"Submit for site verification"}));
+    expect(await screen.findByText("Add a photo for the current round or request a Site Manager photo exemption.")).toBeVisible();
+  });
+  it("sends site-verified work through the existing Client review only when authorized", async () => {
+    work = { ...work, status:"site_verified",progress:100,allowedActions:[],canSubmitToClient:true,verification:{id:"verify-one",verifiedAt:"2026-10-08T10:00:00Z",verifiedById:"site-one",executionRound:1} };
+    const writes: unknown[]=[];
+    server.use(http.get("/api/v1/vendor/work/work-one",() => HttpResponse.json({data:{id:work.id,version:9,status:"in_progress"}})),http.post("/api/v1/vendor/work/work-one/submit",async ({request}) => {writes.push(await request.json());work={...work,canSubmitToClient:false,legacyStatus:"submitted_for_client"};return HttpResponse.json({data:{id:"client-review-one"}});}));
+    const user=userEvent.setup();renderWithQuery(<VendorWorkPage />);
+    await user.click(await screen.findByRole("button",{name:/Open Oak wall panelling/}));
+    await user.type(await screen.findByRole("textbox",{name:"Note for Client"}),"Site checked; ready for Client review");
+    await user.click(screen.getByRole("button",{name:"Send to Client"}));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toMatchObject({expectedVersion:9,note:"Site checked; ready for Client review"});
+    await waitFor(() => expect(screen.queryByRole("button",{name:"Send to Client"})).not.toBeInTheDocument());
+  });
+  it("does not fetch work when read permission is absent", () => {
+    authState.permissions = [];
     renderWithQuery(<VendorWorkPage />);
-    const row = await screen.findByRole("button", { name: /TV unit/ });
-    expect(row).toHaveTextContent("Living room · Not specified");
-    await user.click(row);
-    expect(await screen.findByText("Target date")).toBeVisible();
-    expect(screen.getByText("Delivery location").nextSibling).toHaveTextContent("Not specified");
-    await user.click(await screen.findByText("View approved purchase order PO-ONE"));
-    expect(screen.getByText(/Target Not specified · Not specified · GST/)).toBeVisible();
-    expect(screen.queryByText("Terms:")).not.toBeInTheDocument();
+    expect(screen.getByText("You do not have permission to view vendor work.")).toBeVisible();
+    expect(screen.queryByRole("button",{name:/Open Oak/})).not.toBeInTheDocument();
   });
 });

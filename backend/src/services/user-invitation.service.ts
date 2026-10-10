@@ -16,6 +16,9 @@ import {
   normalizeInvitationMobile,
   presentationStatusForInvitation,
   tokenValidityForInvitation,
+  type VendorWorkInvitationAuthority,
+  type VendorInvitationAuthority,
+  type ProcurementVendorInvitationAuthority,
   type InvitableRole,
   type UserInvitationAction,
   type UserInvitationDeliveryStatus,
@@ -89,6 +92,9 @@ export class InvitationUnavailableError extends ApiError {
 }
 
 export interface UserInvitationService {
+  /** Internal issuance dispatcher only; never exposed as a request-selectable authority. */
+  createForVendorWork(authority: VendorWorkInvitationAuthority, command?: { commandId: string; resend: boolean; invitationId: string | null; expectedInvitationVersion: number | null; actorId?: string }): Promise<UserInvitationDto>;
+  createForProcurement(authority: ProcurementVendorInvitationAuthority, command: { commandId: string; resend: boolean; invitationId: string | null; expectedInvitationVersion: number | null }): Promise<UserInvitationDto>;
   list(
     actor: PublicUser,
     filters: UserInvitationFilters,
@@ -160,7 +166,73 @@ export function createUserInvitationService(
     input.passwordHasher ??
     ((password: string, cost: number) => bcrypt.hash(password, cost));
 
+  async function createForVendorSource(authority: VendorInvitationAuthority, command?: { commandId: string; resend: boolean; invitationId: string | null; expectedInvitationVersion: number | null; actorId?: string }): Promise<UserInvitationDto> {
+      const enabledMailer = requireEnabledMailer(mailer);
+      let rawToken: string | undefined;
+      const prepared = await repository.runInTransaction(async transaction => {
+        await transaction.coordinateAuthorizationMutation();
+        const source = await (authority.kind === "procurement_vendor" ? transaction.findProcurementVendorInvitationSource : transaction.findVendorWorkInvitationSource)(authority.sourceIntentId, true);
+        if (!source || source.vendorId !== authority.vendorId || normalizeInvitationEmail(source.email) !== authority.emailNormalized) invitationUnavailable();
+        const createInput = parseCreateInput({ name: source.name, email: source.email, mobile: source.mobile, role: "vendor", vendorId: source.vendorId });
+        if (isReservedDemoEmail(createInput.emailNormalized)) emailNotAllowed();
+        await transaction.coordinateClientEmail(createInput.emailNormalized);
+        await assertCreateEmailAvailable(transaction, createInput.emailNormalized);
+        if ((await transaction.findVendorBoundUsers(source.vendorId)).length > 0) notActionable();
+        const actor = await transaction.findUserById(source.actorId);
+        if (!actor) invitationUnavailable();
+        if (enabledMailer.deliveryKind === "external" && isReservedDevelopmentDemoIdentity(actor) && !allowDemoAccountExternalEmail) throw new ApiError(409, "DEMO_EXTERNAL_DELIVERY_BLOCKED", "External delivery is unavailable for this issuing identity.");
+        const prior = await transaction.findPendingUserInvitationByEmail(createInput.emailNormalized);
+        const issuedAt = clock().toISOString();
+        if (command && ((prior?.id ?? null) !== command.invitationId || (prior?.version ?? null) !== command.expectedInvitationVersion)) {
+          const compatible = prior?.role === "vendor" && prior.vendorId === source.vendorId && !!prior.authority && await invitationAuthorityMatches(transaction, prior, true);
+          const receipt = prior?.generationReceipt;
+          const sameCommand = receipt?.sourceKind === authority.kind && receipt.sourceIntentId === authority.sourceIntentId && receipt.commandId === command.commandId && receipt.tokenGeneration === prior?.tokenGeneration;
+          const currentSent = compatible && prior?.deliveryStatus === "sent" && Date.parse(prior.expiresAt) > Date.parse(issuedAt);
+          // Only the exact current generation can acknowledge a resend whose worker lost its commit.
+          if (currentSent && sameCommand) return { record: prior!, deliver: false };
+          // Another authorized source can win first setup while this initial-send command waits.
+          if (!command.resend && command.invitationId === null && currentSent) return { record: prior!, deliver: false };
+          if (!command.resend && command.invitationId === null && compatible && prior?.deliveryStatus === "queued" && Date.parse(issuedAt) - Date.parse(prior.issuedAt) < 15 * 60_000) throw new ApiError(429, "INVITATION_DELIVERY_IN_PROGRESS", "The current invitation delivery is still pending.");
+          versionConflict();
+        }
+        if (prior) {
+          if (prior.role !== "vendor" || prior.vendorId !== source.vendorId) notActionable();
+          if (!command?.resend && await invitationAuthorityMatches(transaction, prior) && Date.parse(prior.expiresAt) > Date.parse(issuedAt) && prior.deliveryStatus === "sent") return { record: prior, deliver: false };
+          // Automatic dispatch must never take over an independently created staff invitation.
+          if (!prior.authority) notActionable();
+          if (!(await invitationAuthorityMatches(transaction, prior, true))) notActionable();
+          // Another order cannot rotate a generation while its external provider may still be sending.
+          if (prior.deliveryStatus === "queued" && Date.parse(issuedAt) - Date.parse(prior.issuedAt) < 15 * 60_000) {
+            throw new ApiError(429, "INVITATION_DELIVERY_IN_PROGRESS", "The current invitation delivery is still pending.");
+          }
+          await enforceRecipientCooldown(transaction, createInput.emailNormalized, issuedAt);
+          rawToken = randomBytes(32).toString("base64url");
+          const record = await transaction.resendUserInvitation(prior.id, prior.version, { tokenHash: hashUserInvitationToken(rawToken), tokenGeneration: prior.tokenGeneration + 1, generationReceipt: command ? { sourceKind: authority.kind, sourceIntentId: authority.sourceIntentId, commandId: command.commandId, tokenGeneration: prior.tokenGeneration + 1 } : null, issuedAt, expiresAt: expiresAtForInvitation(issuedAt), tokenIssuedById: prior.tokenIssuedById, tokenIssuerVersion: prior.tokenIssuerVersion, updatedAt: issuedAt });
+          await appendAdministrativeAudit(audit, transaction, command?.actorId ?? source.actorId, "user_invitation.resent", record, issuedAt, { deliveryState: "queued" });
+          return { record, deliver: true };
+        }
+        await enforceRecipientCooldown(transaction, createInput.emailNormalized, issuedAt);
+        rawToken = randomBytes(32).toString("base64url");
+        const record = await transaction.createUserInvitation({
+          id: `user-invitation-${randomUUID()}`, name: createInput.name, email: createInput.email,
+          emailNormalized: createInput.emailNormalized, role: "vendor", vendorId: source.vendorId, mobile: createInput.mobile,
+          authority, generationReceipt: command ? { sourceKind: authority.kind, sourceIntentId: authority.sourceIntentId, commandId: command.commandId, tokenGeneration: 1 } : null, tokenHash: hashUserInvitationToken(rawToken), tokenGeneration: 1, issuedAt, expiresAt: expiresAtForInvitation(issuedAt),
+          status: "pending", invitedById: actor.id, tokenIssuedById: actor.id, tokenIssuerVersion: actor.version,
+          acceptedUserId: null, acceptedAt: null, revokedById: null, revokedAt: null, supersededByInvitationId: null, supersededAt: null,
+          deliveryStatus: "queued", deliveryAttemptedAt: null, sentAt: null, deliveryFailureCode: null,
+          version: 1, createdAt: issuedAt, updatedAt: issuedAt
+        });
+        await appendAdministrativeAudit(audit, transaction, command?.actorId ?? source.actorId, "user_invitation.created", record, issuedAt, { deliveryState: "queued" });
+        return { record, deliver: true };
+      });
+      if (!prepared.deliver) return presentRecord(repository, prepared.record, clock().toISOString());
+      return deliverGeneration(repository, audit, enabledMailer, clock, { record: prepared.record, rawToken: rawToken!, actorId: command?.actorId ?? (authority.kind === "procurement_vendor" ? (await repository.findProcurementVendorInvitationSource(authority.sourceIntentId))?.actorId ?? prepared.record.tokenIssuedById : prepared.record.tokenIssuedById) }, allowDemoAccountExternalEmail);
+  }
+
   return {
+    createForVendorWork: (authority, command) => createForVendorSource(authority, command),
+    createForProcurement: (authority, command) => createForVendorSource(authority, command),
+
     async list(actor, filters, pagination) {
       await requireSoleSuperAdmin(repository, actor);
       const page = await repository.pageUserInvitations(
@@ -172,8 +244,8 @@ export function createUserInvitationService(
         items: await Promise.all(page.items.map(async (invitation) => {
           const dto = toDto(invitation);
           if (dto.role !== "vendor") return dto;
-          const target = await repository.findVendorInvitationTarget(dto.vendorId ?? "");
-          return target && target.status !== "archived" ? dto : { ...dto, currentLinkAvailable: false, availableActions: dto.status === "pending" ? ["revoke"] as const : [] as const };
+          const stored = await repository.findUserInvitationById(dto.id);
+          return stored ? presentRecord(repository, stored, clock().toISOString()) : dto;
         })),
         total: page.total,
         invitableRoles: INVITABLE_ROLE_CODES
@@ -301,6 +373,7 @@ export function createUserInvitationService(
         if (current.emailNormalized !== discovered!.emailNormalized) versionConflict();
         requirePendingVersion(current, versionInput.version);
         if (current.role === "vendor") await assertVendorInvitationTarget(transaction, current.vendorId);
+        if (current.authority && !(await invitationAuthorityMatches(transaction, current, true))) notActionable();
         const issuedAt = clock().toISOString();
         const expiresAt = expiresAtForInvitation(issuedAt);
         await enforceRecipientCooldown(
@@ -320,8 +393,8 @@ export function createUserInvitationService(
               tokenGeneration: current.tokenGeneration + 1,
               issuedAt,
               expiresAt,
-              tokenIssuedById: storedActor.id,
-              tokenIssuerVersion: storedActor.version,
+              tokenIssuedById: current.authority ? current.tokenIssuedById : storedActor.id,
+              tokenIssuerVersion: current.authority ? current.tokenIssuerVersion : storedActor.version,
               updatedAt: issuedAt
             }
           );
@@ -446,6 +519,8 @@ export function createUserInvitationService(
             acceptedAt
           );
           if (current!.role === "vendor") await assertVendorInvitationTarget(transaction, current!.vendorId);
+          if (current!.authority && !(await invitationAuthorityMatches(transaction, current!, true))) invitationUnavailable();
+          if (current!.authority && (await transaction.findVendorBoundUsers(current!.vendorId!)).length > 0) invitationUnavailable();
 
           const createdUser = await transaction.createUser({
             name: current!.name,
@@ -556,16 +631,7 @@ async function assertPublicInvitationAvailable(
   ) {
     invitationUnavailable();
   }
-  const issuer = await repository.findUserById(invitation.tokenIssuedById);
-  if (
-    !issuer ||
-    !issuer.active ||
-    issuer.role !== "super_admin" ||
-    issuer.version !== invitation.tokenIssuerVersion ||
-    (await repository.countActiveUsersByRole("super_admin")) !== 1
-  ) {
-    invitationUnavailable();
-  }
+  if (!(await invitationAuthorityMatches(repository, invitation))) invitationUnavailable();
   if (
     (await repository.findUserByEmail(invitation.emailNormalized)) ||
     (await repository.hasUnclaimedClientProjectByEmail(
@@ -761,20 +827,14 @@ async function deliverGeneration(
     | { status: "sent" }
     | { status: "failed"; failureCode: string };
 
-  if (
-    !issuingActor ||
-    !issuingActor.active ||
-    issuingActor.role !== "super_admin" ||
-    issuingActor.version !== attempt.record.tokenIssuerVersion ||
-    (await repository.countActiveUsersByRole("super_admin")) !== 1
-  ) {
-    delivery = {
-      status: "failed",
-      failureCode: "INVITATION_ISSUER_UNAVAILABLE"
-    };
+  const currentGeneration = await repository.findUserInvitationById(attempt.record.id);
+  const generationAvailable = currentGeneration?.status === "pending" && currentGeneration.tokenGeneration === attempt.record.tokenGeneration && currentGeneration.tokenHash === attempt.record.tokenHash;
+  const autoIdentityAvailable = !attempt.record.authority || (!(await repository.findUserByEmail(attempt.record.emailNormalized)) && (await repository.findVendorBoundUsers(attempt.record.vendorId!)).length === 0);
+  if (!generationAvailable || !autoIdentityAvailable || !(await invitationAuthorityMatches(repository, attempt.record))) {
+    delivery = { status: "failed", failureCode: "INVITATION_ISSUER_UNAVAILABLE" };
   } else if (
     mailer.deliveryKind === "external" &&
-    isReservedDevelopmentDemoIdentity(issuingActor) &&
+    issuingActor && isReservedDevelopmentDemoIdentity(issuingActor) &&
     !allowDemoAccountExternalEmail
   ) {
     delivery = {
@@ -809,13 +869,7 @@ async function deliverGeneration(
   try {
     deliveredRecord = await repository.runInTransaction(async (transaction) => {
       await transaction.coordinateAuthorizationMutation();
-      const currentIssuer = await transaction.findUserById(attempt.actorId);
-      const issuerStillAuthoritative =
-        currentIssuer !== null &&
-        currentIssuer.active &&
-        currentIssuer.role === "super_admin" &&
-        currentIssuer.version === attempt.record.tokenIssuerVersion &&
-        (await transaction.countActiveUsersByRole("super_admin")) === 1;
+      const issuerStillAuthoritative = await invitationAuthorityMatches(transaction, attempt.record, !!attempt.record.authority);
       const recordedDelivery =
         delivery.status === "sent" && !issuerStillAuthoritative
           ? {
@@ -880,25 +934,10 @@ async function presentRecord(
   invitation: UserInvitationRecord,
   now: string
 ): Promise<UserInvitationDto> {
-  const users = await repository.listUsers();
-  const inviter = users.find((user) => user.id === invitation.invitedById);
-  if (!inviter) {
-    throw new RepositoryConflictError(
-      `User invitation ${invitation.id} has no inviter.`
-    );
-  }
-  const issuer = users.find((user) => user.id === invitation.tokenIssuedById);
-  const activeSuperAdmins = users.filter(
-    (user) => user.active && user.role === "super_admin"
-  );
-  const issuerMatches =
-    issuer !== undefined &&
-    activeSuperAdmins.length === 1 &&
-    activeSuperAdmins[0]?.id === issuer.id &&
-    issuer.version === invitation.tokenIssuerVersion;
-  const claimed = users.some(
-    (user) => user.emailNormalized === invitation.emailNormalized
-  );
+  const inviter = await repository.findUserById(invitation.invitedById);
+  if (!inviter) throw new RepositoryConflictError(`User invitation ${invitation.id} has no inviter.`);
+  const issuerMatches = await invitationAuthorityMatches(repository, invitation);
+  const claimed = !!(await repository.findUserByEmail(invitation.emailNormalized));
   const reserved = await repository.hasUnclaimedClientProjectByEmail(
     invitation.emailNormalized
   );
@@ -935,7 +974,7 @@ async function presentRecord(
     status,
     currentLinkAvailable:
       tokenValidity === "current" && !claimed && !reserved && vendorAvailable,
-    availableActions: vendorAvailable ? availableActions : invitation.status === "pending" ? ["revoke"] : [],
+    availableActions: vendorAvailable && (!invitation.authority || issuerMatches) ? availableActions : invitation.status === "pending" ? ["revoke"] : [],
     invitedBy: {
       id: inviter.id,
       name: inviter.name,
@@ -1074,4 +1113,17 @@ function notActionable(): never {
 
 function invitationUnavailable(): never {
   throw new InvitationUnavailableError();
+}
+
+export async function invitationAuthorityMatches(repository: AppRepository, invitation: UserInvitationRecord, lock = false): Promise<boolean> {
+  if (invitation.authority) {
+    const authority = invitation.authority;
+    if (!["vendor_work_order", "procurement_vendor"].includes(authority.kind) || invitation.role !== "vendor" || authority.vendorId !== invitation.vendorId || authority.emailNormalized !== invitation.emailNormalized) return false;
+    const source = await (authority.kind === "procurement_vendor" ? repository.findProcurementVendorInvitationSource : repository.findVendorWorkInvitationSource)(authority.sourceIntentId, lock);
+    if (!source || source.vendorId !== authority.vendorId) return false;
+    const email = invitationEmailSchema.safeParse(source.email);
+    return email.success && normalizeInvitationEmail(email.data) === authority.emailNormalized;
+  }
+  const issuer = await repository.findUserById(invitation.tokenIssuedById);
+  return !!issuer && issuer.active && issuer.role === "super_admin" && issuer.version === invitation.tokenIssuerVersion && (await repository.countActiveUsersByRole("super_admin")) === 1;
 }

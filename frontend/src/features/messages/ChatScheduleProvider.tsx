@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
 import { useAuth } from "../../auth/AuthProvider";
+import { hasFrontendPermission } from "../../auth/authorization";
 import { projectChatApi } from "./projectChatApi";
 import type { ChatAvailability } from "../../../../shared/chat/dailyCriticalTasks";
 
@@ -17,7 +18,8 @@ const ChatScheduleContext = createContext<ChatScheduleState | null>(null);
 export function ChatScheduleProvider({ children }: { children: ReactNode }) {
   const auth = useAuth();
   const queryClient = useQueryClient();
-  const internal = Boolean(auth.user && auth.user.role !== "client");
+  const hasChatAccess = hasFrontendPermission(auth.authorization ?? null, "chat.read");
+  const internal = hasChatAccess && Boolean(auth.user && auth.user.role !== "client");
   const availability = useQuery<ChatAvailability>({
     queryKey: ["chat-availability", auth.user?.id],
     queryFn: ({ signal }) => projectChatApi.availability(signal),
@@ -45,11 +47,11 @@ export function ChatScheduleProvider({ children }: { children: ReactNode }) {
   }, [availability.refetch, internal, nextChangeAt]);
 
   const value: ChatScheduleState = {
-    canWrite: !internal || (!availability.isError && availability.data?.writable === true),
+    canWrite: hasChatAccess && (!internal || (!availability.isError && availability.data?.writable === true)),
     pending: internal && availability.isPending,
     error: internal && availability.isError,
     nextOpenAt: availability.data?.nextOpenAt ?? null,
-    refresh: () => { void availability.refetch(); }
+    refresh: () => { if (internal) void availability.refetch(); }
   };
   return <ChatScheduleContext.Provider value={value}>{children}</ChatScheduleContext.Provider>;
 }

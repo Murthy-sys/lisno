@@ -1,0 +1,55 @@
+/* Keep the launcher below its portalled conversation in themed and unthemed shells. */
+button.ask-lisno-launcher,
+.ui-app-shell[data-role] button.ask-lisno-launcher { z-index: calc(var(--z-modal, 30) - 2); }
+.ask-lisno-launcher .ask-lisno-launcher__icon,
+.ui-app-shell[data-role] .ask-lisno-launcher .ask-lisno-launcher__icon { background: var(--color-surface, #f8f9f6); box-shadow: none; }
+.ask-lisno-panel {
+  position: fixed; z-index: calc(var(--z-modal, 30) - 1);
+  right: max(20px, env(safe-area-inset-right)); bottom: calc(92px + var(--ask-keyboard-offset, 0px));
+  width: min(400px, calc(100vw - 32px)); height: min(600px, calc(var(--ask-visible-height, 100dvh) - 108px));
+  display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+  border: 1px solid var(--color-border, #d6dbd0); border-radius: 4px;
+  background: var(--color-surface, #f8f9f6); color: var(--color-text, #243128); isolation: isolate;
+}
+.ask-lisno-panel__header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--color-border, #d6dbd0); flex: 0 0 auto; }
+.ask-lisno-panel__identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ask-lisno-panel__identity .lisno-chat-mark { width: 32px; height: 32px; }
+.ask-lisno-panel__header h2 { margin: 0; font-size: 1rem; font-weight: 700; }
+.ask-lisno-panel p { margin: 0; font-size: .875rem; }
+.ask-lisno-panel__header p { margin-top: 2px; font-size: .75rem; color: var(--color-text-muted, #59645b); }
+.ask-lisno-panel__close { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; color: inherit; background: transparent; font-size: 1.6rem; cursor: pointer; }
+.ask-lisno-panel__conversation { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 20px; padding: 18px 16px; }
+.ask-lisno-panel__welcome { margin-block: auto; padding-block: 8px; }
+.ask-lisno-panel__welcome img { display: block; margin-bottom: 24px; object-fit: contain; object-position: left; }
+.ask-lisno-panel__welcome h3 { margin: 0 0 8px; font-size: 1.2rem; line-height: 1.4; }
+.ask-lisno-panel__welcome > p { color: var(--color-text-muted, #59645b); line-height: 1.6; }
+.ask-lisno-panel__suggestions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 24px; }
+.ask-lisno-panel__suggestions button, .ask-lisno-panel__clarification button { min-height: 40px; max-width: 100%; border: 1px solid var(--color-border, #d6dbd0); border-radius: 3px; padding: 8px 12px; background: var(--color-surface, #f8f9f6); color: inherit; font: inherit; font-size: .8125rem; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.ask-lisno-panel__clarification > div { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.ask-lisno-panel__clarification small { display: block; margin-top: 3px; color: var(--color-text-muted, #59645b); }
+.ask-lisno-panel__turn { display: grid; gap: 14px; min-width: 0; }
+.ask-lisno-panel .ask-lisno-panel__question { align-self: start; justify-self: end; max-width: 92%; padding: 9px 12px; background: var(--color-surface-muted, #e9eee4); border-radius: 4px; white-space: pre-wrap; }
+.ask-lisno-panel__speaker { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; font-size: .75rem; font-weight: 700; color: var(--color-primary, #31543c); }
+.ask-lisno-panel__speaker .lisno-chat-mark { width: 20px; height: 20px; }
+.ask-lisno-panel__project-name { font-weight: 400; }
+.ask-lisno-panel__projects { margin-top: 10px; min-width: 0; }
+.ask-lisno-panel__projects ul { list-style: none; margin: 0 0 6px; padding: 0; }
+.ask-lisno-panel__projects li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--color-border, #d6dbd0); }
+.ask-lisno-panel__projects li > div { min-width: 0; }
+.ask-lisno-panel__projects strong { display: block; font-size: .8125rem; line-height: 1.4; }
+.ask-lisno-panel__projects small { display: block; margin-top: 2px; font-size: .75rem; color: var(--color-text-muted, #59645b); }
+.ask-lisno-panel__projects li button { flex: 0 0 auto; min-height: 40px; padding: 7px 8px; border: 1px solid var(--color-border, #d6dbd0); border-radius: 3px; background: transparent; color: var(--color-primary, #31543c); font: inherit; font-size: .75rem; cursor: pointer; }
+.ask-lisno-panel__projects > p { margin-block: 8px; }
+.ask-lisno-panel__notice, .ask-lisno-panel__thinking { color: var(--color-text-muted, #59645b); }
+.ask-lisno-panel .project-chat-assistant__facts { grid-template-columns: minmax(0, 1fr); }
+.ask-lisno-panel .project-chat-assistant__lines li { gap: 8px; }
+.ask-lisno-panel__composer { flex: 0 0 auto; display: grid; gap: 8px; min-width: 0; padding: 12px 16px; border-top: 1px solid var(--color-border, #d6dbd0); }
+.ask-lisno-panel textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: 10px; font: inherit; font-size: .875rem; line-height: 1.5; border: 1px solid var(--color-border, #d6dbd0); background: var(--color-surface, #f8f9f6); color: inherit; border-radius: 3px; resize: none; }
+.ask-lisno-panel__actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.ask-lisno-panel__actions a { font-size: .75rem; }
+.ask-lisno-panel :is(button, textarea, a):focus-visible { outline: 2px solid var(--color-primary, #31543c); outline-offset: 2px; }
+.ask-lisno-panel button:disabled { cursor: default; opacity: .65; }
+@media (max-width: 560px) {
+  .ask-lisno-panel { width: calc(100vw - 16px); right: 8px; bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--ask-keyboard-offset, 0px)); height: min(600px, calc(var(--ask-visible-height, 100dvh) - 16px - env(safe-area-inset-bottom))); }
+  .ask-lisno-panel textarea { font-size: 1rem; }
+}

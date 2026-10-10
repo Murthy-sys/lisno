@@ -1,3 +1,5 @@
+import { readProcurementVendorInvitationSource } from "../services/procurement-vendor-invitation-authority.js";
+import { readVendorWorkInvitationSource } from "../services/vendor-work-invitation-authority.js";
 import { workflowSpacePlanningSource, type WorkflowDesignPlanData } from "../domain/workflow-space-planning.js";
 import { readMongoProjectStatusEstimateEvidence } from "./project-status.js";
 import { DesignPlanReviewRoundModel } from "../models/DesignPlanReviewRound.js";
@@ -441,6 +443,13 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
   };
 
   const repository: AppRepository = {
+    async findVendorBoundUsers(vendorId) {
+      const query = UserModel.find({ vendorId }).limit(2);
+      if (session) query.session(session);
+      return (await query.lean()).map(mapUser);
+    },
+    findProcurementVendorInvitationSource: (id, lock) => readProcurementVendorInvitationSource(id, session, lock),
+    findVendorWorkInvitationSource: (id, lock) => readVendorWorkInvitationSource(id, session, lock),
     async findVendorInvitationTarget(vendorId) {
       const query = AiEstimatorKnowledgeVendorModel.findById(vendorId).select("_id status");
       if (session) query.session(session);
@@ -842,6 +851,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         {
           tokenHash: change.tokenHash,
           tokenGeneration: change.tokenGeneration,
+          generationReceipt: change.generationReceipt ?? null,
           issuedAt: date(change.issuedAt),
           expiresAt: date(change.expiresAt),
           tokenIssuedById: change.tokenIssuedById,
@@ -3222,6 +3232,8 @@ function projectAccessGrantForMongo(
 
 function userInvitationForMongo(input: UserInvitationRecord): PlainDocument {
   return {
+    authority: input.authority ?? null,
+    generationReceipt: input.generationReceipt ?? null,
     _id: input.id,
     name: invitationNameSchema.parse(input.name),
     email: invitationEmailSchema.parse(input.email),
@@ -3528,6 +3540,9 @@ async function pageUserInvitations(
               email: 1,
               role: 1,
               vendorId: 1,
+              authority: 1,
+              emailClaimedOrReserved: 1,
+              status: 1,
               mobile: 1,
               tokenValidity: 1,
               presentationStatus: 1,
@@ -3554,8 +3569,18 @@ async function pageUserInvitations(
   );
   if (session) aggregate.session(session);
   const [result] = await aggregate.exec();
+  const items: UserInvitationAdminRecord[] = [];
+  for (const row of (result?.items ?? []) as PlainDocument[]) {
+      const presented = mapUserInvitationAdmin(row);
+      if (!row.authority) { items.push(presented); continue; }
+      const authority = row.authority;
+      const source = await (authority.kind === "procurement_vendor" ? readProcurementVendorInvitationSource : readVendorWorkInvitationSource)(authority.sourceIntentId, session);
+      const matches = ["vendor_work_order", "procurement_vendor"].includes(authority.kind) && row.role === "vendor" && authority.vendorId === row.vendorId && source !== null && source.vendorId === authority.vendorId && invitationEmailSchema.safeParse(source.email).success && normalizeInvitationEmail(source.email) === authority.emailNormalized && normalizeInvitationEmail(row.email) === authority.emailNormalized;
+      const tokenValidity = row.status !== "pending" ? "unavailable" : !matches ? "invalidated" : new Date(row.expiresAt).getTime() <= Date.parse(now) ? "expired" : "current";
+      items.push({ ...presented, tokenValidity, currentLinkAvailable: tokenValidity === "current" && !row.emailClaimedOrReserved, availableActions: row.status !== "pending" ? [] : !matches || row.emailClaimedOrReserved ? ["revoke"] : ["resend", "revoke"] } as UserInvitationAdminRecord);
+  }
   return {
-    items: (result?.items ?? []).map(mapUserInvitationAdmin),
+    items,
     total: result?.count?.[0]?.total ?? 0
   };
 }
@@ -3837,6 +3862,8 @@ function mapPasswordReset(document: PlainDocument): PasswordResetRequestRecord {
 
 function mapUserInvitation(document: PlainDocument): UserInvitationRecord {
   return {
+    ...(document.authority ? { authority: document.authority } : {}),
+    ...(document.generationReceipt ? { generationReceipt: document.generationReceipt } : {}),
     id: idOf(document),
     name: document.name,
     email: document.email,

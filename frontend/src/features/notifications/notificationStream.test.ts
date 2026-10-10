@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/client";
 import { parseNotificationSnapshot, runNotificationStream } from "./notificationStream";
+import { notificationTitle } from "./notificationApi";
 
 const snapshot = { items: [], unreadCount: 0, pagination: { limit: 20, offset: 0, total: 0, hasMore: false } };
 const frame = (value: unknown) => new TextEncoder().encode(`event: notifications\ndata: ${JSON.stringify(value)}\n\n`);
@@ -8,6 +9,13 @@ const response = (stream: ReadableStream<Uint8Array>) => new Response(stream, { 
 afterEach(() => vi.useRealTimers());
 
 describe("notification snapshot stream", () => {
+  it("accepts routed client alerts and resurfaced mention rows without mislabelling them as mentions", () => {
+    const item = { id: "notification-a", type: "chat.assistant.route" as const, projectId: "project-a", projectName: "Courtyard", messageId: "message-a", actor: { id: "client-a", name: "Maya" }, excerpt: "Please confirm the schedule", createdAt: "2026-10-09T08:00:00Z", readAt: null, routing: { priority: "critical" as const, messageVersion: 2, lastAlertAt: "2026-10-09T09:00:00Z" } };
+    const parsed = parseNotificationSnapshot(JSON.stringify({ ...snapshot, items: [item] }));
+    expect(notificationTitle(parsed.items[0])).toBe("Client critical request in Courtyard");
+    expect(notificationTitle({ ...item, type: "chat.mention" })).toBe("Client critical request in Courtyard");
+    expect(() => parseNotificationSnapshot(JSON.stringify({ ...snapshot, items: [{ ...item, routing: { ...item.routing, messageVersion: 0 } }] }))).toThrow();
+  });
   it("parses chunked snapshots and ignores heartbeat comments", async () => {
     const signal = new AbortController();
     const onSnapshot = vi.fn(() => signal.abort());

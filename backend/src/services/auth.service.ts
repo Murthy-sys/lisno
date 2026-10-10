@@ -69,7 +69,7 @@ export interface AuthPayload {
 }
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-10-05.procurement-basket-work-orders.v1" as const;
+  "2026-10-09.ask-lisno.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

@@ -26,6 +26,36 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("keeps Ask Lisno project listing optional and documents bounded continuation on its existing private route", () => {
+    const schemas = componentSchemas();
+    expect(schemas.AskLisnoRequest!.required).not.toContain("projectListPage");
+    expect(schemas.AskLisnoResponse!.required).not.toContain("projectList");
+    expect(schemas.AskLisnoRequest).toHaveProperty("properties.projectListPage.required", ["offset", "version"]);
+    expect(schemas.AskLisnoRequest).toHaveProperty("properties.projectListPage.properties.offset", {
+      type: "integer", minimum: 0, maximum: 1_000_000, multipleOf: 20
+    });
+    expect(schemas.AskLisnoProjectList).toHaveProperty("properties.items.maxItems", 20);
+    expect(schemas.AskLisnoProjectList).toHaveProperty("properties.nextOffset.nullable", true);
+    expect(schemas.AskLisnoProjectList).toHaveProperty("properties.version.pattern", "^[a-f0-9]{64}$");
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    expect(paths["/client/ask-lisno"]!.post!["x-lisno-permission"]).toBe("ask_lisno.request");
+  });
+
+  it("documents project-scoped execution metadata and isolates current-scope portfolio filtering", () => {
+    const schemas = componentSchemas();
+    expect(schemas.ExecutionPage!.required).toEqual(expect.arrayContaining(["project", "projectCounts"]));
+    expect(schemas.ExecutionPage).toHaveProperty("properties.project.nullable", true);
+    expect(schemas.ExecutionPage).toHaveProperty("properties.projectCounts.nullable", true);
+    expect(schemas.ExecutionWork!.required).toContain("latestVendorReport");
+    expect(schemas.ExecutionVendorReport!.required).toEqual(expect.arrayContaining(["eventId", "executionRound", "reportedAt", "reason", "nextAction"]));
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const queries = (path: string) => paths[path]!.get!.parameters as Array<{name: string; schema: unknown}>;
+    expect(queries("/execution/projects")).toContainEqual(expect.objectContaining({name: "projectScope", schema: {type: "string", enum: ["current", "all"], default: "all"}}));
+    for (const path of ["/vendor/work/execution", "/projects/{projectId}/execution", "/execution/work/{assignmentId}/history", "/execution/notifications"]) {
+      expect(queries(path).some(query => query.name === "projectScope")).toBe(false);
+    }
+  });
+
   it("documents the same-project client name in the existing Procurement project list", () => {
     const project = componentSchemas().ProcurementProject!;
     expect(project.required).toContain("clientName");
@@ -984,7 +1014,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 365 routes without versioning paths twice", () => {
+  it("contains all 386 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -993,7 +1023,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 19);
-    expect(operationCount).toBe(365);
+    expect(operationCount).toBe(386);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);

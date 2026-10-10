@@ -5,7 +5,7 @@ const roleHomePaths: Record<Role, string> = {
   admin: "/admin/projects",
   designer: "/designer",
   procurement: "/home",
-  program_manager: "/work-order-approvals",
+  program_manager: "/execution",
   vendor: "/vendor",
   finance_head: "/home",
   site_manager: "/home",
@@ -62,7 +62,9 @@ export function safeReturnPath(
     const canReturnToProjectMessages = parsed.pathname === "/project-messages" ||
       /^\/projects\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\/messages$/u.test(parsed.pathname);
     const canReturnToRoleHome =
-      parsed.pathname === home || parsed.pathname.startsWith(`${home}/`);
+      parsed.pathname === home || (role !== "program_manager" && parsed.pathname.startsWith(`${home}/`));
+    const canReturnToExecution = ["super_admin", "site_manager", "program_manager", "procurement"].includes(role) &&
+      (parsed.pathname === "/execution" || /^\/projects\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\/execution$/u.test(parsed.pathname));
     const canReturnToClientResponses =
       (role === "admin" || role === "super_admin") &&
       (parsed.pathname === "/admin/client-responses" ||
@@ -96,6 +98,7 @@ export function safeReturnPath(
       parsed.origin !== returnPathOrigin ||
       hasEncodedTraversal(parsed.pathname) ||
       (!canReturnToRoleHome &&
+        !canReturnToExecution &&
         !canReturnToProjectMessages &&
         !canReturnToClientResponses &&
         !canReturnToDesignApprovals &&

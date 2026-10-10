@@ -1,3 +1,8 @@
+import { createSmtpVendorWorkMailer } from "./services/smtp-vendor-work-mailer.js";
+import { createSendGridVendorWorkMailer } from "./services/sendgrid-vendor-work-mailer.js";
+import { createSmtpExecutionDigestMailer } from "./services/smtp-execution-digest-mailer.js";
+import { createSendGridExecutionDigestMailer } from "./services/sendgrid-execution-digest-mailer.js";
+import { createOpenAiAssistantProvider } from "./services/project-assistant-openai.js";
 import { createSmtpChatMentionMailer } from "./services/smtp-chat-mention-mailer.js";
 import { createSendGridChatMentionMailer } from "./services/sendgrid-chat-mention-mailer.js";
 import "dotenv/config";
@@ -36,6 +41,8 @@ import type { FileStorage } from "./storage/storage.js";
 
 type ServerApp = {
   startNotificationDelivery?: () => void;
+  startExecutionDelivery?: () => void;
+  closeExecutionDelivery?: () => Promise<void>;
   closeProjectChat?: () => Promise<void>;
   cleanupProjectChatAttachments?: () => Promise<unknown>;
   cleanupProcurementVendorPhotos?: () => Promise<unknown>;
@@ -109,6 +116,12 @@ export async function startServer(
       : mailDelivery.kind === "sendgrid_web_api"
         ? createSendGridInvitationMailer(mailDelivery)
       : { deliveryKind: "disabled" as const };
+    const vendorWorkMailer = mailDelivery.kind === "smtp"
+      ? createSmtpVendorWorkMailer(mailDelivery)
+      : mailDelivery.kind === "sendgrid_web_api" ? createSendGridVendorWorkMailer(mailDelivery) : { deliveryKind: "disabled" as const };
+    const executionDigestMailer = mailDelivery.kind === "smtp"
+      ? createSmtpExecutionDigestMailer(mailDelivery)
+      : mailDelivery.kind === "sendgrid_web_api" ? createSendGridExecutionDigestMailer(mailDelivery) : { deliveryKind: "disabled" as const };
     const vendorKpiMailer = mailDelivery.kind === "smtp"
       ? createSmtpVendorKpiMailer(mailDelivery)
       : mailDelivery.kind === "sendgrid_web_api"
@@ -146,15 +159,28 @@ export async function startServer(
       ? new URL("/vendor", mailDelivery.publicFrontendUrl).toString()
       : "http://localhost:5173/vendor";
     const storage = createLocalStorage(env.UPLOADS_DIR);
+    // Provider configuration failure disables only AI generation, never human chat or its alerts.
+    const assistantKey = env.OPENAI_API_KEY?.trim();
+    const assistantModel = env.OPENAI_PROJECT_CHAT_MODEL?.trim() ?? "gpt-6-luna";
+    const assistantEnabled = env.PROJECT_CHAT_AI_ENABLED === "true" && Boolean(assistantKey && assistantKey.length <= 1024 && !/\s/u.test(assistantKey)) && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/u.test(assistantModel);
     app = appFactory({
       repository: repositoryFactory(),
       chatRepository: createMongoProjectChatRepository(),
+      projectChatAssistant: {
+        enabled: assistantEnabled,
+        provider: assistantEnabled ? createOpenAiAssistantProvider({apiKey: assistantKey!, model: assistantModel}) : undefined,
+        tokensPerDay: env.PROJECT_CHAT_AI_DAILY_TOKEN_LIMIT ?? 1_000_000
+      },
       auth: {
         jwtSecret: env.JWT_SECRET,
         jwtExpiresInSeconds: env.JWT_EXPIRES_IN_SECONDS
       },
       corsOrigins: env.CORS_ORIGIN,
       vendorKpiMailer,
+      vendorWorkMailer,
+      executionDigestMailer,
+      enableVendorAccessDelivery: env.VENDOR_ACCESS_DELIVERY_ENABLED === undefined ? undefined : env.VENDOR_ACCESS_DELIVERY_ENABLED === "true",
+      enableExecutionReminders: env.EXECUTION_REMINDERS_ENABLED === "true",
       vendorInductionMailer,
       procurementBasketBoqMailer,
       vendorPortalUrl,
@@ -191,6 +217,7 @@ export async function startServer(
     });
     server = await listen(app, env.PORT, dependencies.bindHost);
     app.startNotificationDelivery?.();
+    app.startExecutionDelivery?.();
     receiptMaintenance = startReceiptMaintenanceScheduler(
       storage,
       dependencies,
@@ -200,6 +227,7 @@ export async function startServer(
       `Backend ready at http://${dependencies.bindHost ?? "localhost"}:${env.PORT}\n`
     );
   } catch (error) {
+    await app?.closeExecutionDelivery?.();
     await app?.closeProjectChat?.();
     await receiptMaintenance?.stop();
     if (server) await close(server).catch(() => undefined);
@@ -213,6 +241,7 @@ export async function startServer(
   const stop = () => {
     stopping ??= (async () => {
       const maintenanceStop = receiptMaintenance?.stop();
+      await app?.closeExecutionDelivery?.();
       await app?.closeProjectChat?.();
       await close(runningServer);
       await maintenanceStop;

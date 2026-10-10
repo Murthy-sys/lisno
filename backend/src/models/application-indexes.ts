@@ -1,3 +1,13 @@
+import { ProcurementVendorInvitationIntentModel } from "./ProcurementVendorInvitationIntent.js";
+import { projectAssistantModels } from "./ProjectChatAssistant.js";
+import { ExecutionReportingPolicyModel, ExecutionReportingPolicyHeadModel } from "./ExecutionReportingPolicy.js";
+import { ExecutionDailyObligationModel, ExecutionReportingCursorModel } from "./ExecutionDailyObligation.js";
+import { ExecutionNotificationModel, ExecutionNotificationAssignmentModel, ExecutionSchedulerLeaseModel } from "./ExecutionNotification.js";
+import { VendorAccessIntentModel } from "./VendorAccessIntent.js";
+import { VendorExecutionStateModel } from "./VendorExecutionState.js";
+import { VendorExecutionEventModel } from "./VendorExecutionEvent.js";
+import { VendorExecutionReviewModel } from "./VendorExecutionReview.js";
+import { ExecutionChangeEventModel } from "./ExecutionChangeEvent.js";
 import { ProcurementVendorCertificateUploadModel, ProcurementVendorCertificateCleanupModel } from "./ProcurementVendorCertificateUpload.js";
 import { ProcurementVendorSaveCommandModel } from "./ProcurementVendorSaveCommand.js";
 import { ProcurementVendorCityModel } from "./ProcurementVendorCity.js";
@@ -50,8 +60,17 @@ export async function initializeApplicationIndexes(): Promise<void> {
   await ChatNotificationModel.init();
   await ProjectChatAttachmentModel.init();
   for (const model of [ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel]) await model.init();
+  for (const model of projectAssistantModels) await model.init();
   await UserModel.init();
   await UserInvitationModel.init();
+  await VendorAccessIntentModel.init();
+  await ProcurementVendorInvitationIntentModel.init();
+  await VendorExecutionStateModel.init();
+  await VendorExecutionEventModel.init();
+  await VendorExecutionReviewModel.init();
+  await ExecutionChangeEventModel.init();
+  for (const model of [ExecutionDailyObligationModel, ExecutionReportingCursorModel, ExecutionNotificationModel, ExecutionNotificationAssignmentModel,
+    ExecutionSchedulerLeaseModel, ExecutionReportingPolicyHeadModel, ExecutionReportingPolicyModel]) await model.init();
   await PasswordResetRequestModel.init();
   await prepareEstimateClientReviewIndexes();
   await DesignPlanReviewRoundModel.init();

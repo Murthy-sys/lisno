@@ -6,6 +6,7 @@ import {
   Navigate,
   useLocation,
   useNavigationType,
+  useParams,
 } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 
@@ -61,6 +62,9 @@ import { ProcurementManagementPage } from "../features/procurement/ProcurementMa
 import { ProcurementDashboardPage } from "../features/procurement/ProcurementDashboardPage";
 import { ProcurementVendorDirectory } from "../features/procurement/ProcurementVendorDirectory";
 import { SuperAdminPurchaseOrdersPage } from "../features/procurement/SuperAdminPurchaseOrdersPage";
+import { ExecutionPortfolioPage, ProjectExecutionPage } from "../features/execution/ExecutionWorkspace";
+import { SiteManagerWorkspace } from "../features/site-manager/SiteManagerWorkspace";
+import { SiteManagerProjectPage } from "../features/site-manager/SiteManagerProjectPage";
 import { VendorWorkPage } from "../features/vendor/VendorWorkPage";
 import { VendorKpiStaffPage } from "../features/procurement/VendorKpiStaffPage";
 import { VendorKpiPublicPage } from "../features/procurement/VendorKpiPublicPage";
@@ -123,9 +127,9 @@ const roleHomeContent: Record<Role, RoleHomeContent> = {
   },
   program_manager: {
     heading: "Program Manager workspace",
-    eyebrow: "Work order approvals",
-    description: "Review work orders assigned to your projects.",
-    status: "Ready for approval review"
+    eyebrow: "Project execution",
+    description: "Track commitments, daily reports and verification for your projects.",
+    status: "Ready for project oversight"
   },
   vendor: {
     heading: "Vendor workspace",
@@ -231,7 +235,19 @@ function RoleLanding({ role }: { role: Role }) {
 function CurrentRoleLanding() {
   const auth = useAuth();
 
+  if (auth.user?.role === "site_manager") return <SiteManagerWorkspace />;
   return auth.user ? <RoleLanding role={auth.user.role} /> : null;
+}
+
+function ExecutionPortfolioRoute() {
+  const { user } = useAuth();
+  return user?.role === "site_manager" ? <Navigate to="/home" replace /> : <ExecutionPortfolioPage />;
+}
+
+function ProjectExecutionRoute() {
+  const { user } = useAuth();
+  const { projectId } = useParams();
+  return user?.role === "site_manager" ? <SiteManagerProjectPage key={projectId} /> : <ProjectExecutionPage />;
 }
 
 function LoginRoute() {
@@ -401,6 +417,8 @@ export function AppRoutes() {
         <Route path="/admin/procurement/vendors/:vendorId" element={registeredElement("/admin/procurement/vendors/:vendorId", <VendorKpiStaffPage />)} />
         <Route path="/admin/purchase-orders" element={registeredElement("/admin/purchase-orders", <SuperAdminPurchaseOrdersPage />)} />
         <Route path="/admin/project-completion" element={registeredElement("/admin/project-completion", <ProjectCompletionPage />)} />
+        <Route path="/execution" element={registeredElement("/execution", <ExecutionPortfolioRoute />)} />
+        <Route path="/projects/:projectId/execution" element={registeredElement("/projects/:projectId/execution", <ProjectExecutionRoute />)} />
         <Route path="/vendor" element={registeredElement("/vendor", <VendorWorkPage />)} />
         <Route path="/procurement" element={registeredElement("/procurement", <ProcurementWorkspace />)} />
         <Route path="/work-order-approvals" element={registeredElement("/work-order-approvals", <ProcurementBasketApprovalQueue />)} />

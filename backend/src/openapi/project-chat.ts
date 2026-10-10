@@ -1,3 +1,4 @@
+import { CHAT_ASSISTANT_SCHEMAS } from "./project-chat-assistant.js";
 import { ROLE_CODES } from "../domain/roles.js";
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
@@ -17,15 +18,17 @@ const issueAction = { type: "string", enum: ["raise", "escalate", "resolve", "re
 const json = (name: string) => ({ required: true, content: { "application/json": { schema: ref(name) } } });
 const query = (name: string, schema: unknown) => ({ name, in: "query", required: false, schema });
 
-const summaryProperties = { project: object({ id, name: { type: "string" }, status: { type: "string" }, nameVersion: version }, ["id", "name", "status"]), counts: ref("ChatCounts"), participantCount: integer, cursor: { type: "string" }, lastReadSequence: integer, latestMessageSequence: integer, capabilities: ref("ChatCapabilities"), setupWarnings: { type: "array", items: { type: "string" } } };
+const summaryProperties = { assistant: ref("ChatAssistantParticipant"), project: object({ id, name: { type: "string" }, status: { type: "string" }, nameVersion: version }, ["id", "name", "status"]), counts: ref("ChatCounts"), participantCount: integer, cursor: { type: "string" }, lastReadSequence: integer, latestMessageSequence: integer, capabilities: ref("ChatCapabilities"), setupWarnings: { type: "array", items: { type: "string" } } };
 
 export const CHAT_COMPONENT_SCHEMAS: Record<string, Record<string, unknown>> = {
+  ...CHAT_ASSISTANT_SCHEMAS,
   ChatAvailability: object({timezone: {type: "string", enum: ["Asia/Kolkata"]}, writable: {type: "boolean"}, nextOpenAt: {...timestamp, nullable: true}, nextChangeAt: timestamp}),
   DailyCriticalChatAction: object({kind: {type: "string", enum: ["chat_action"]}, id, projectId: id, projectName: {type: "string"}, title: {type: "string"}, dueDate: calendarDate, messageId: id}),
   DailyCriticalWorkflowTask: object({kind: {type: "string", enum: ["workflow_task"]}, id, projectId: id, projectName: {type: "string"}, title: {type: "string"}, dueAt: timestamp, status: {type: "string"}}),
   DailyCriticalTasks: object({timezone: {type: "string", enum: ["Asia/Kolkata"]}, localDate: calendarDate, scheduledAt: timestamp, acknowledgedAt: {...timestamp, nullable: true}, items: {type: "array", items: {oneOf: [ref("DailyCriticalChatAction"), ref("DailyCriticalWorkflowTask")]}}}),
   DailyCriticalAcknowledgment: object({localDate: calendarDate, acknowledgedAt: timestamp}),
-  ChatNotification: object({id, type: {type: "string", enum: ["chat.mention", "chat.mention.oversight"]}, projectId: id, projectName: {type: "string"}, messageId: id, actor: object({id, name: {type: "string"}}), excerpt: {type: "string", maxLength: 240}, createdAt: timestamp, readAt: {...timestamp, nullable: true}}),
+  ChatNotification: object({id, type: {type: "string", enum: ["chat.mention", "chat.mention.oversight", "chat.assistant.route"]}, projectId: id, projectName: {type: "string"}, messageId: id, actor: object({id, name: {type: "string"}}), excerpt: {type: "string", maxLength: 240}, createdAt: timestamp, readAt: {...timestamp, nullable: true}, routing: object({priority: {type: "string", enum: ["important", "critical"]}, messageVersion: version, lastAlertAt: timestamp})}, ["id", "type", "projectId", "projectName", "messageId", "actor", "excerpt", "createdAt", "readAt"]),
+  NotificationReadRequest: {type: "object", additionalProperties: false, properties: {routingMessageVersion: {...version, description: "Required for routed alerts; identifies the displayed alert generation."}}},
   NotificationPage: object({items: array("ChatNotification"), unreadCount: integer, pagination: ref("Pagination")}),
   ChatAttachment: object({ id, kind: attachmentKind, filename: { type: "string" }, mimeType: { type: "string" }, byteSize: version,
     preview: { ...object({ mimeType: { type: "string" }, byteSize: version, width: version, height: version }), nullable: true } }),
@@ -40,14 +43,14 @@ export const CHAT_COMPONENT_SCHEMAS: Record<string, Record<string, unknown>> = {
   ChatPerson: object({ id, name: { type: "string" }, role: { type: "string", enum: ROLE_CODES } }),
   ChatMembershipSource: object({ kind: { type: "string", enum: ["client", "super_admin", "project_assignment", "estimate_assignment", "workflow_assignment", "access_grant", "selection"] }, id }),
   ChatParticipant: object({ id, name: { type: "string" }, role: { type: "string", enum: ROLE_CODES }, sources: array("ChatMembershipSource"), selection: { ...object({ id, version }), nullable: true }, removalVersion: integer, canRemove: { type: "boolean" }, removalBlockedReason: { type: "string", nullable: true } }, ["id", "name", "role", "sources", "selection"]),
-  ChatParticipantPage: object({ items: array("ChatParticipant"), setupWarnings: { type: "array", items: { type: "string" } }, removed: { type: "array", items: object({ id, name: { type: "string" }, role: { type: "string", enum: ROLE_CODES }, removalVersion: version, canRestore: { type: "boolean" } }) } }, ["items", "setupWarnings"]),
+  ChatParticipantPage: object({ assistant: ref("ChatAssistantParticipant"), items: array("ChatParticipant"), setupWarnings: { type: "array", items: { type: "string" } }, removed: { type: "array", items: object({ id, name: { type: "string" }, role: { type: "string", enum: ROLE_CODES }, removalVersion: version, canRestore: { type: "boolean" } }) } }, ["items", "setupWarnings"]),
   ChatParticipantOptions: object({ items: array("ChatPerson"), hasMore: { type: "boolean" } }),
   ChatMention: object({ userId: id, start: integer, end: { type: "integer", minimum: 1 } }),
   ChatCounts: object({ openCritical: integer, openImportant: integer, unread: integer, unreadMentions: integer }),
   ChatCapabilities: object({ canSend: { type: "boolean" }, canManageParticipants: { type: "boolean" }, canManageIssues: { type: "boolean" }, canRenameProject: { type: "boolean" } }, ["canSend", "canManageParticipants", "canManageIssues"]),
   ChatSummary: object(summaryProperties),
   ChatLastMessageAttachment: object({ id, kind: attachmentKind, filename: { type: "string" }, hasPreview: { type: "boolean" } }),
-  ChatLastMessage: object({ id, author: ref("ChatPerson"), excerpt: { type: "string", maxLength: 120, description: "Plain-text preview; empty when the message has only attachments." }, createdAt: timestamp, attachments: { ...array("ChatLastMessageAttachment"), maxItems: 3 }, attachmentCount: integer }),
+  ChatLastMessage: object({ id, author: ref("ChatAuthor"), excerpt: { type: "string", maxLength: 120, description: "Plain-text preview; empty when the message has only attachments." }, createdAt: timestamp, attachments: { ...array("ChatLastMessageAttachment"), maxItems: 3 }, attachmentCount: integer }),
   ChatConversation: object({ ...summaryProperties, lastMessageAt: { ...timestamp, nullable: true }, lastMessage: nullable("ChatLastMessage") }),
   ChatConversationTotals: object({ unread: { ...integer, description: "Conversations with unread messages." }, critical: { ...integer, description: "Open critical issues." }, important: { ...integer, description: "Open important issues." } }),
   ChatConversationPage: object({ items: array("ChatConversation"), pagination: ref("Pagination"), totals: { allOf: [ref("ChatConversationTotals")], description: "Across every authorized conversation; ignores filter and search." } }),
@@ -60,10 +63,11 @@ export const CHAT_COMPONENT_SCHEMAS: Record<string, Record<string, unknown>> = {
   ChatIssueHistory: object({ id, action: issueAction, actor: ref("ChatPerson"), occurredAt: timestamp, note: { type: "string" }, priority, status: issueStatus, responsibleUserId: nullableId, actionMetadata: nullable("ChatActionMetadata") }, ["id", "action", "actor", "occurredAt", "note", "priority", "status", "responsibleUserId"]),
   ChatResponsible: object({ id, name: { type: "string" }, role: { type: "string", enum: ROLE_CODES }, available: { type: "boolean" } }),
   ChatMessage: object({
-    id, projectId: id, author: ref("ChatPerson"), body: { type: "string", maxLength: 4000 }, attachments: array("ChatAttachment"), mentions: array("ChatMention"),
+    id, projectId: id, author: ref("ChatAuthor"), body: { type: "string", maxLength: 4000 }, attachments: array("ChatAttachment"), mentions: array("ChatMention"),
     createdAt: timestamp, sequence: version, clientMessageId: id,
-    replyTo: { ...object({ id, author: ref("ChatPerson"), body: { type: "string" }, attachmentSummary: nullable("ChatAttachmentSummary") }, ["id", "author", "body"]), nullable: true },
+    replyTo: { ...object({ id, author: ref("ChatAuthor"), body: { type: "string" }, attachmentSummary: nullable("ChatAttachmentSummary") }, ["id", "author", "body"]), nullable: true },
     action: nullable("ChatActionMetadata"), priority, issueStatus, raisedBy: nullable("ChatPerson"), responsible: nullable("ChatResponsible"), version,
+    assistant: ref("ChatAssistantMessageState"),
     issueHistory: array("ChatIssueHistory"),
     capabilities: object(Object.fromEntries(["canRaise", "canResolve", "canReopen", "canAssign", "canAssignSelf", "canReschedule"].map((key) => [key, { type: "boolean" }])))
   }, ["id", "projectId", "author", "body", "attachments", "mentions", "createdAt", "sequence", "clientMessageId", "replyTo", "priority", "issueStatus", "raisedBy", "responsible", "version", "issueHistory", "capabilities"]),
@@ -77,11 +81,13 @@ export const CHAT_COMPONENT_SCHEMAS: Record<string, Record<string, unknown>> = {
   ChatTypingRequest: { ...object({ composerId: { type: "string", minLength: 16, maxLength: 100, pattern: "^[A-Za-z0-9_-]+$" }, sequence: { ...integer, maximum: Number.MAX_SAFE_INTEGER }, typing: { type: "boolean" } }), additionalProperties: false },
   ChatTypingResult: object({ sequence: integer, typing: { type: "boolean" }, expiresAt: { ...timestamp, nullable: true } }),
   ChatTypingSnapshot: object({ projectId: id, serverTime: timestamp, participants: { type: "array", maxItems: 100, items: object({ userId: id, name: { type: "string", minLength: 1, maxLength: 300 }, expiresAt: timestamp }) } }),
-  ChatEvent: object({ id, projectId: id, sequence: version, type: { type: "string", enum: ["message.created", "issue.changed", "participants.changed", "read.changed"] }, recordId: id, version, occurredAt: timestamp }),
+  ChatEvent: object({ id, projectId: id, sequence: version, type: { type: "string", enum: ["message.created", "assistant.changed", "issue.changed", "participants.changed", "read.changed"] }, recordId: id, version, occurredAt: timestamp }),
   ChatEventBatch: object({ events: array("ChatEvent"), cursor: { type: "string" }, hasMore: { type: "boolean" }, resync: { type: "boolean" }, membershipVersion: { type: "string" } }, ["events", "cursor", "hasMore", "resync"])
 };
 
 export const CHAT_REQUEST_BODIES = {
+  "PUT /notifications/:notificationId/read": {...json("NotificationReadRequest"), required: false},
+  "POST /projects/:projectId/chat/messages/:messageId/assistant/request": json("ChatAssistantRequest"),
   "POST /projects/:projectId/chat/action-types": json("ChatActionTypeRequest"),
   "PATCH /projects/:projectId/chat/project-name": json("ChatProjectNameRequest"),
   "POST /projects/:projectId/chat/participants/:userId/remove": json("ChatParticipantRemovalRequest"),
@@ -95,6 +101,8 @@ export const CHAT_REQUEST_BODIES = {
   "PUT /projects/:projectId/chat/typing": json("ChatTypingRequest")
 };
 export const CHAT_RESPONSE_SCHEMAS = {
+  "POST /projects/:projectId/chat/messages/:messageId/assistant/request": "ChatAssistantMessageState",
+  "GET /projects/:projectId/chat/assistant/results/:resultId": "ChatAssistantResult",
   "GET /chat/availability": "ChatAvailability",
   "GET /daily-critical-tasks": "DailyCriticalTasks",
   "PUT /daily-critical-tasks/:localDate/acknowledgment": "DailyCriticalAcknowledgment",

@@ -6,6 +6,7 @@ const schema = new Schema({
   vendorId: { type: String, required: true, immutable: true },
   assignmentId: { type: String, required: true, immutable: true },
   round: { type: Number, required: true, min: 1, immutable: true },
+  executionRound: { type: Number, default: null, min: 1, immutable: true },
   storageReference: { type: String, required: true, immutable: true },
   originalFilename: { type: String, required: true, maxlength: 255, immutable: true },
   mimeType: { type: String, required: true, enum: ["image/jpeg", "image/png", "image/webp"], immutable: true },

@@ -1,0 +1,5 @@
+- main [ref=e3]:
+  - heading "Client projects" [level=1] [ref=e4]
+  - paragraph [ref=e5]: Courtyard residence · City loft
+  - button "Open project dialog" [ref=e6]
+  - button "Ask Lisno" [ref=e7] [cursor=pointer]

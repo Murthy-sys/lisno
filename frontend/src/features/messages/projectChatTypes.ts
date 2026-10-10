@@ -1,3 +1,4 @@
+import type { ChatAuthor, ChatAssistantParticipant, ChatAssistantMessageState } from "./projectChatAssistantTypes";
 import type { Role } from "../../api/authorization-contract";
 
 export type ChatPriority = "normal" | "important" | "critical";
@@ -41,6 +42,7 @@ export interface ChatAttachmentPolicy {
 }
 
 export interface ChatPerson {
+  kind?: "human";
   id: string;
   name: string;
   role: Role;
@@ -99,16 +101,17 @@ export interface ChatIssueHistory {
   responsibleUserId: string | null;
 }
 export interface ChatMessage {
+  assistant?: ChatAssistantMessageState;
   id: string;
   projectId: string;
-  author: ChatPerson;
+  author: ChatAuthor;
   body: string;
   attachments: ChatAttachment[];
   mentions: ChatMention[];
   createdAt: string;
   sequence: number;
   clientMessageId: string;
-  replyTo: { id: string; author: ChatPerson; body: string; attachmentSummary?: ChatAttachmentSummary | null } | null;
+  replyTo: { id: string; author: ChatAuthor; body: string; attachmentSummary?: ChatAttachmentSummary | null } | null;
   priority: ChatPriority;
   issueStatus: ChatIssueStatus;
   raisedBy: ChatPerson | null;
@@ -132,6 +135,7 @@ export interface ChatCounts {
   unreadMentions: number;
 }
 export interface ChatSummary {
+  assistant?: ChatAssistantParticipant;
   project: { id: string; name: string; status: string; nameVersion?: number };
   counts: ChatCounts;
   participantCount: number;
@@ -149,6 +153,7 @@ export interface ChatConversationPage {
   pagination: { limit: number; offset: number; total: number; hasMore: boolean };
 }
 export interface ChatParticipantPage {
+  assistant?: ChatAssistantParticipant;
   removed?: ChatRemovedParticipant[];
   items: ChatParticipant[];
   setupWarnings: string[];
@@ -209,7 +214,7 @@ export interface ChatReadResult {
   lastReadSequence: number;
   counts: ChatCounts;
 }
-export type ChatEventType = "message.created" | "issue.changed" | "participants.changed" | "read.changed";
+export type ChatEventType = "message.created" | "assistant.changed" | "issue.changed" | "participants.changed" | "read.changed";
 export interface ChatEvent {
   id: string;
   projectId: string;

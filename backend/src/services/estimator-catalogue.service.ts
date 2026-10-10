@@ -173,16 +173,23 @@ export async function listEstimatorCatalogueRecommendations(
   includeReadyNonActive = false
 ): Promise<{ sources: EstimatorCatalogueRecommendationSource[] }> {
   await assertCatalogueReadActor(actor);
+  return readEstimatorCatalogueRecommendations(mainLineIds, includeReadyNonActive);
+}
+
+/** Internal reader. Callers must establish their own scoped authority before invoking it. */
+export async function readEstimatorCatalogueRecommendations(
+  mainLineIds: readonly string[], includeReadyNonActive = false, session?: mongoose.ClientSession
+): Promise<{ sources: EstimatorCatalogueRecommendationSource[] }> {
   const sourceRaw = await AiEstimatorKnowledgeMainLineModel.find({
     _id: { $in: mainLineIds },
     status: includeReadyNonActive ? { $in: ["active", "draft", "inactive"] } : "active"
   }).select({ _id: 1, basketId: 1, subBasketId: 1, name: 1, displayOrder: 1,
-    itemType: 1, status: 1, version: 1, activeRevisionId: 1, draftRevisionId: 1 }).lean().exec();
-  const sources = await eligibleCatalogueLines(sourceRaw);
+    itemType: 1, status: 1, version: 1, activeRevisionId: 1, draftRevisionId: 1 }).session(session ?? null).lean().exec();
+  const sources = await eligibleCatalogueLines(sourceRaw, session);
   const revisions = [...new Set([...sources.values()].map((line) => line.revisionId))];
   const sections = revisions.length === 0 ? [] : await AiEstimatorKnowledgeSectionModel.find({
     revisionId: { $in: revisions }, sectionKey: "recommendations"
-  }).select({ revisionId: 1, mainLineId: 1, applicability: 1, payload: 1 }).lean().exec();
+  }).select({ revisionId: 1, mainLineId: 1, applicability: 1, payload: 1 }).session(session ?? null).lean().exec();
   const sectionByRevision = new Map(sections.map((section) => [String(section.revisionId), section]));
   const rulesBySource = new Map<string, SavedRecommendationRule[]>();
   const guidanceBySource = new Map<string, RecommendationGuidance[]>();
@@ -202,26 +209,27 @@ export async function listEstimatorCatalogueRecommendations(
   const groupBasketIds = [...new Set(allRules.flatMap((rule) => rule.targetKind === "sub_basket"
     ? [rule.targetBasketId] : []))];
   const groupIdSet = new Set(groupIds);
-  const [directRaw, groupRaw, groupSubBaskets] = await Promise.all([
+  const directRaw = await (
     directIds.length
       ? AiEstimatorKnowledgeMainLineModel.find({ _id: { $in: directIds } })
         .select({ _id: 1, basketId: 1, subBasketId: 1, name: 1, displayOrder: 1,
-          itemType: 1, status: 1, version: 1, activeRevisionId: 1, draftRevisionId: 1 }).lean().exec()
-      : Promise.resolve([]),
+          itemType: 1, status: 1, version: 1, activeRevisionId: 1, draftRevisionId: 1 }).session(session ?? null).lean().exec()
+      : Promise.resolve([]));
+  const groupRaw = await (
     groupIds.length
       ? AiEstimatorKnowledgeMainLineModel.find({
           basketId: { $in: groupBasketIds }, subBasketId: { $in: groupIds }
         }).select({ _id: 1, basketId: 1, subBasketId: 1, name: 1, displayOrder: 1,
-          itemType: 1, status: 1, version: 1, activeRevisionId: 1, draftRevisionId: 1 }).lean().exec()
-      : Promise.resolve([]),
+          itemType: 1, status: 1, version: 1, activeRevisionId: 1, draftRevisionId: 1 }).session(session ?? null).lean().exec()
+      : Promise.resolve([]));
+  const groupSubBaskets = await (
     groupIds.length
       ? AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: groupIds } })
-          .select({ _id: 1, basketId: 1 }).lean().exec()
-      : Promise.resolve([])
-  ]);
+          .select({ _id: 1, basketId: 1 }).session(session ?? null).lean().exec()
+      : Promise.resolve([]));
   const targetRaw = [...new Map([...directRaw, ...groupRaw].map((line) => [String(line._id), line])).values()];
   const eligibleTargets = await eligibleCatalogueLines(targetRaw.filter((line) =>
-    line.status === "active" || (includeReadyNonActive && (line.status === "draft" || line.status === "inactive"))));
+    line.status === "active" || (includeReadyNonActive && (line.status === "draft" || line.status === "inactive"))), session);
   const groupById = new Map(groupSubBaskets.map((group) => [String(group._id), group]));
   const rawChildrenByGroup = new Map<string, typeof targetRaw>();
   for (const raw of groupRaw) {
@@ -293,17 +301,15 @@ async function assertCatalogueReadActor(actor: PublicUser): Promise<void> {
   }
 }
 
-async function eligibleCatalogueLines(rawLines: Parameters<typeof projectLines>[0]): Promise<Map<string, EstimatorCatalogueLine>> {
+async function eligibleCatalogueLines(rawLines: Parameters<typeof projectLines>[0], session?: mongoose.ClientSession): Promise<Map<string, EstimatorCatalogueLine>> {
   if (rawLines.length === 0) return new Map();
   const basketIds = [...new Set(rawLines.map((line) => String(line.basketId)))];
   const subBasketIds = [...new Set(rawLines.flatMap((line) => line.subBasketId ? [String(line.subBasketId)] : []))];
-  const [baskets, subBaskets, projected] = await Promise.all([
-    AiEstimatorKnowledgeBasketModel.find({ _id: { $in: basketIds }, status: "active" })
-      .select({ _id: 1 }).lean().exec(),
-    AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: subBasketIds } })
-      .select({ _id: 1, basketId: 1 }).lean().exec(),
-    projectLines(rawLines)
-  ]);
+  const baskets = await AiEstimatorKnowledgeBasketModel.find({ _id: { $in: basketIds }, status: "active" })
+    .select({ _id: 1 }).session(session ?? null).lean().exec();
+  const subBaskets = await AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: subBasketIds } })
+    .select({ _id: 1, basketId: 1 }).session(session ?? null).lean().exec();
+  const projected = await projectLines(rawLines, session);
   const activeBasketIds = new Set(baskets.map((basket) => String(basket._id)));
   const subBasketById = new Map(subBaskets.map((subBasket) => [String(subBasket._id), String(subBasket.basketId)]));
   for (const [id, line] of projected) {

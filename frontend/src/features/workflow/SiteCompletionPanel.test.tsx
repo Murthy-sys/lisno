@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
@@ -70,4 +71,31 @@ describe("Site Manager completion progress", () => {
       else expect(send).toBeDisabled();
     });
   });
+});
+
+
+it("preserves the edited note and its version when a live update arrives", async () => {
+  const original = { projectId: "project-1", projectStatus: "active", version: 1, progress: 50,
+    note: "Original note", status: "draft", currentRound: 0, canSubmit: false, needsReverification: false, blockers: [], review: null };
+  const writes: unknown[] = [];
+  server.use(
+    http.get("/api/v1/projects/project-1/site-completion", () => HttpResponse.json({ data: original })),
+    http.patch("/api/v1/projects/project-1/site-completion/progress", async ({ request }) => {
+      writes.push(await request.json());
+      return HttpResponse.json({ error: { code: "VERSION_CONFLICT", message: "State changed. Reload latest values." } }, { status: 409 });
+    })
+  );
+  function LiveUpdate() {
+    const client = useQueryClient();
+    return <button onClick={() => client.setQueryData(["site-completion", "project-1"], { ...original, version: 2, note: "Another manager update" })}>Simulate committed update</button>;
+  }
+  renderWithQuery(<><SiteCompletionPanel projectId="project-1" projectName="QA project" /><LiveUpdate /></>);
+  const field = await screen.findByRole("textbox", { name: "Completion note" });
+  await userEvent.clear(field); await userEvent.type(field, "My pending note");
+  await userEvent.click(screen.getByRole("button", { name: "Simulate committed update" }));
+  expect(field).toHaveValue("My pending note");
+  await userEvent.click(screen.getByRole("button", { name: "Save progress" }));
+  await waitFor(() => expect(writes).toHaveLength(1));
+  expect(writes[0]).toMatchObject({ expectedVersion: 1, note: "My pending note" });
+  expect(field).toHaveValue("My pending note");
 });

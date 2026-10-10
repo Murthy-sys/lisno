@@ -14,10 +14,11 @@ export function parseNotificationSnapshot(data: string): NotificationPage {
     !natural(value.pagination.total) || typeof value.pagination.hasMore !== "boolean") throw new Error("Invalid notification snapshot");
   const ids = new Set<string>();
   for (const item of value.items) {
-    if (!item || !text(item.id, 200) || ids.has(item.id) || !["chat.mention", "chat.mention.oversight"].includes(item.type) ||
+    if (!item || !text(item.id, 200) || ids.has(item.id) || !["chat.mention", "chat.mention.oversight", "chat.assistant.route"].includes(item.type) ||
       !text(item.projectId, 200) || !text(item.projectName, 1000) || !text(item.messageId, 200) || !item.actor ||
       !text(item.actor.id, 200) || !text(item.actor.name, 1000) || typeof item.excerpt !== "string" || item.excerpt.length > 4000 ||
       !date(item.createdAt) || (item.readAt !== null && !date(item.readAt))) throw new Error("Invalid notification");
+    if (item.routing && (!["important", "critical"].includes(item.routing.priority) || !natural(item.routing.messageVersion) || item.routing.messageVersion < 1 || !date(item.routing.lastAlertAt))) throw new Error("Invalid notification routing");
     ids.add(item.id);
   }
   return value;

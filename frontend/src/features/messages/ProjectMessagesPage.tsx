@@ -93,7 +93,7 @@ function ProjectConversation({ projectId }: { projectId: string }) {
       <div className="project-chat-identity">
         <button type="button" className="project-chat-identity__button" disabled={!summary.data || unavailable} onClick={() => setPanel("participants")} aria-label={summary.data && !unavailable ? `${summary.data.participantCount} participants` : "Group information"} aria-haspopup="dialog">
           <span className="project-chat-avatar" aria-hidden="true">{chatInitials(name)}</span>
-          <span className="project-chat-identity__copy"><span className="project-chat-identity__name" aria-hidden="true">{name}</span><span className="project-chat-identity__summary">{summary.data && !unavailable ? `${summary.data.participantCount} participants` : "Project messages"}</span></span>
+          <span className="project-chat-identity__copy"><span className="project-chat-identity__name" aria-hidden="true">{name}</span><span className="project-chat-identity__summary">{summary.data && !unavailable ? `${summary.data.participantCount} participants${summary.data.assistant ? " · Lisno AI" : ""}` : "Project messages"}</span></span>
         </button>
         <h1 id="project-chat-title" className="sr-only">{name}</h1>
       </div>
@@ -124,7 +124,7 @@ function ProjectConversation({ projectId }: { projectId: string }) {
           </div>
       </div></ChatMediaProvider>
       {panel ? <Drawer id="project-chat-group-info" open title="Project participants" eyebrow="Group information" variant="contextual" className="project-chat-details" onClose={() => setPanel(null)}>
-        {participants.isPending ? <p role="status">Loading participants…</p> : participants.isError ? <p role="alert">{chatErrorMessage(participants.error)} <Button variant="quiet" onClick={() => void participants.refetch()}>Retry</Button></p> : <ChatParticipants projectId={projectId} participants={participants.data?.items ?? []} removed={participants.data?.removed ?? []} warnings={participants.data?.setupWarnings ?? []} canManage={canWriteNow && summary.data.capabilities.canManageParticipants} />}
+        {participants.isPending ? <p role="status">Loading participants…</p> : participants.isError ? <p role="alert">{chatErrorMessage(participants.error)} <Button variant="quiet" onClick={() => void participants.refetch()}>Retry</Button></p> : <ChatParticipants projectId={projectId} assistant={participants.data?.assistant ?? summary.data.assistant} participants={participants.data?.items ?? []} removed={participants.data?.removed ?? []} warnings={participants.data?.setupWarnings ?? []} canManage={canWriteNow && summary.data.capabilities.canManageParticipants} />}
       </Drawer> : null}
       {renameOpen ? <ChatProjectNameDialog projectId={projectId} summary={summary.data} onClose={() => setRenameOpen(false)} /> : null}
       {selectedIssue ? <ChatIssueDialog projectId={projectId} message={messages.find(message => message.id === selectedIssue.id) ?? selectedIssue} participants={participants.data?.items ?? []} readOnly={!canWriteNow} onClose={() => setSelectedIssue(null)} /> : null}
