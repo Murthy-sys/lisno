@@ -11,6 +11,7 @@
     "dev:backend": "tsx watch src/dev.ts",
     "start": "node dist/server.js",
     "seed": "tsx src/seed/run.ts",
+    "sync:estimator-local": "tsx src/operations/estimator-sync/cli.ts",
     "bootstrap:production-super-admin": "tsx src/operations/production-super-admin-bootstrap.ts",
     "bootstrap:ai-estimator-knowledge": "tsx src/operations/ai-estimator-knowledge-bootstrap.ts",
     "provision:ai-estimator-knowledge-priorities": "tsx src/operations/ai-estimator-knowledge-priority-provision.ts",
