@@ -134,24 +134,26 @@ export function FilePreview({ version }: { version: ClientDesignVersion }) {
           onClose={() => setPreviewOpen(false)}
         >
           <div className="file-preview__modal">
-            {isImage ? (
-              <img
-                className="file-preview__modal-image"
-                src={previewUrl}
-                alt={`Preview of ${version.originalFilename}`}
-              />
-            ) : null}
-            {isPdf ? (
-              <iframe
-                className="file-preview__modal-document"
-                src={previewUrl}
-                title={`Preview of ${version.originalFilename}`}
-              />
-            ) : null}
-            <footer className="file-preview__modal-actions">
+            <div className="ui-dialog__body">
+              {isImage ? (
+                <img
+                  className="file-preview__modal-image"
+                  src={previewUrl}
+                  alt={`Preview of ${version.originalFilename}`}
+                />
+              ) : null}
+              {isPdf ? (
+                <iframe
+                  className="file-preview__modal-document"
+                  src={previewUrl}
+                  title={`Preview of ${version.originalFilename}`}
+                />
+              ) : null}
+            </div>
+            <footer className="file-preview__modal-actions ui-dialog__actions">
               <button
                 type="button"
-                className="button button--close"
+                className="button button--close ui-button ui-button--secondary"
                 onClick={() => setPreviewOpen(false)}
               >
                 <X aria-hidden="true" size={18} />

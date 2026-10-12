@@ -3227,7 +3227,7 @@
   background: var(--color-surface-subtle);
 }
 
-.supporting-document-preview > div {
+.supporting-document-preview > div:not(.ui-dialog__body, .ui-dialog__actions) {
   justify-self: end;
 }
 
@@ -4894,10 +4894,11 @@
 .annotation-text-dialog {
   z-index: 75;
   width: min(90vw, 25rem);
-  border: 0;
-  border-radius: var(--radius-field);
-  padding: 1rem;
-  box-shadow: 0 1.5rem 5rem rgb(10 15 31 / 35%);
+  border: 1px solid var(--dialog-border);
+  border-radius: 6px;
+  padding: 0;
+  background: var(--dialog-surface);
+  box-shadow: none;
 }
 
 .annotation-text-dialog form,
@@ -4908,6 +4909,7 @@
 
 .annotation-text-dialog h3 {
   margin: 0;
+  font-size: 18px;
 }
 
 .annotation-text-dialog textarea {
@@ -4915,7 +4917,7 @@
   resize: vertical;
 }
 
-.annotation-text-dialog form > div,
+.annotation-text-dialog .ui-dialog__actions,
 .annotation-close-confirmation {
   display: flex;
   justify-content: flex-end;

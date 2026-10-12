@@ -177,79 +177,81 @@ export function ClientResponseDecisionDialog({
       onClose={onClose}
     >
       <form
-        className="client-response-dialog"
+        className="client-response-dialog ui-dialog__form"
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
           submit();
         }}
       >
-        <dl className="client-response-dialog__summary">
-          <div><dt>Client</dt><dd>{task.client.name}</dd></div>
-          <div><dt>Estimate version</dt><dd>{task.estimate.version}</dd></div>
-          <div><dt>Task version</dt><dd>{task.version}</dd></div>
-        </dl>
+        <div className="ui-dialog__body">
+          <dl className="client-response-dialog__summary">
+            <div><dt>Client</dt><dd>{task.client.name}</dd></div>
+            <div><dt>Estimate version</dt><dd>{task.estimate.version}</dd></div>
+            <div><dt>Task version</dt><dd>{task.version}</dd></div>
+          </dl>
 
-        {!isCurrentRow ? (
-          <p className="client-response-dialog__error" role="alert">
-            This task is no longer pending in the current inbox view.
-          </p>
-        ) : requestError ? (
-          <p className="client-response-dialog__error" role="alert">
-            {requestError}
-          </p>
-        ) : null}
+          {!isCurrentRow ? (
+            <p className="client-response-dialog__error" role="alert">
+              This task is no longer pending in the current inbox view.
+            </p>
+          ) : requestError ? (
+            <p className="client-response-dialog__error" role="alert">
+              {requestError}
+            </p>
+          ) : null}
 
-        {rejected ? (
+          {rejected ? (
+            <Field
+              id={`client-response-reason-${task.id}`}
+              label="Reason"
+              required
+              error={reasonError ? <span role="alert">{reasonError}</span> : undefined}
+            >
+              {(controlProps) => (
+                <Textarea
+                  {...controlProps}
+                  ref={reasonRef}
+                  data-dialog-initial-focus
+                  rows={5}
+                  value={reason}
+                  disabled={interactionBlocked}
+                  onChange={(event) => {
+                    setReason(event.target.value);
+                    setReasonError("");
+                    setRequestError("");
+                  }}
+                />
+              )}
+            </Field>
+          ) : null}
+
           <Field
-            id={`client-response-reason-${task.id}`}
-            label="Reason"
+            id={`client-response-proof-${task.id}`}
+            label="Decision proof"
             required
-            error={reasonError ? <span role="alert">{reasonError}</span> : undefined}
+            hint="PDF, JPG, PNG, or WebP. Server validation remains authoritative."
+            error={proofError ? <span role="alert">{proofError}</span> : undefined}
           >
             {(controlProps) => (
-              <Textarea
+              <FileInput
                 {...controlProps}
-                ref={reasonRef}
-                data-dialog-initial-focus
-                rows={5}
-                value={reason}
+                ref={proofRef}
+                aria-label="Decision proof"
+                data-dialog-initial-focus={!rejected || undefined}
+                accept={proofAccept}
                 disabled={interactionBlocked}
-                onChange={(event) => {
-                  setReason(event.target.value);
-                  setReasonError("");
-                  setRequestError("");
-                }}
+                onChange={changeProof}
               />
             )}
           </Field>
-        ) : null}
 
-        <Field
-          id={`client-response-proof-${task.id}`}
-          label="Decision proof"
-          required
-          hint="PDF, JPG, PNG, or WebP. Server validation remains authoritative."
-          error={proofError ? <span role="alert">{proofError}</span> : undefined}
-        >
-          {(controlProps) => (
-            <FileInput
-              {...controlProps}
-              ref={proofRef}
-              aria-label="Decision proof"
-              data-dialog-initial-focus={!rejected || undefined}
-              accept={proofAccept}
-              disabled={interactionBlocked}
-              onChange={changeProof}
-            />
-          )}
-        </Field>
+          {mutation.isPending ? (
+            <ProgressBar value={progress} label="Decision proof upload" />
+          ) : null}
 
-        {mutation.isPending ? (
-          <ProgressBar value={progress} label="Decision proof upload" />
-        ) : null}
-
-        <div className="client-response-dialog__actions">
+        </div>
+        <div className="client-response-dialog__actions ui-dialog__actions">
           <Button
             className="client-response-dialog__cancel"
             variant="destructive-outline"

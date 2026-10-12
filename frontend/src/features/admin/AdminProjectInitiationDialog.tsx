@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Fragment,
   useEffect,
   useRef,
   useState,
@@ -37,6 +38,7 @@ interface ProjectInitiationForm {
   cityName: string;
   propertyType: string;
   source: string;
+  otherSource: string;
   nextAction: string;
   nextActionAt: string;
 }
@@ -49,9 +51,20 @@ const emptyForm: ProjectInitiationForm = {
   cityName: "",
   propertyType: "",
   source: "",
+  otherSource: "",
   nextAction: "",
   nextActionAt: ""
 };
+
+const sourceOptions = [
+  "Instagram", "Facebook", "YouTube", "Google Search", "Google Maps", "Website",
+  "Existing customer", "Customer referral", "Architect / designer referral",
+  "Builder / broker referral", "Walk-in", "Exhibition / event", "Other"
+] as const;
+
+function resolvedSource(form: ProjectInitiationForm) {
+  return (form.source === "Other" ? form.otherSource : form.source).trim();
+}
 
 const fields = [
   ["clientName", "Client name", "text", "Enter client name"],
@@ -60,7 +73,7 @@ const fields = [
   ["projectName", "Project / property name", "text", "Enter project / property name"],
   ["cityName", "Project city", "text", "Enter city for vendor matching"],
   ["propertyType", "Property type", "text", "Enter property type"],
-  ["source", "Source", "text", "Instagram, existing customer, social media…"],
+  ["source", "Source", "text", undefined],
   ["nextAction", "Next action", "text", "Enter next action"],
   ["nextActionAt", "Next action date", "date", undefined]
 ] as const satisfies ReadonlyArray<readonly [keyof ProjectInitiationForm, string, string, string | undefined]>;
@@ -76,7 +89,9 @@ function validate(
     if (key === "cityName" || key === "source") continue;
     if (!form[key].trim()) errors[key] = `${label} is required.`;
   }
-  if (form.source.trim().length > 200) errors.source = "Source must be 200 characters or fewer.";
+  const source = resolvedSource(form);
+  if (form.source === "Other" && !source) errors.source = "Other source is required.";
+  if (source.length > 200) errors.source = "Source must be 200 characters or fewer.";
   if (form.nextActionAt.trim() && Number.isNaN(new Date(`${form.nextActionAt}T00:00:00`).getTime())) {
     errors.nextActionAt = "Next action date must be valid.";
   }
@@ -129,7 +144,9 @@ export function AdminProjectInitiationDialog({
   });
 
   const focusFirst = (errors: Record<string, string>) => {
-    const firstKey = Object.keys(errors).find((key) => refs.current[key]);
+    const firstKey = Object.keys(errors)
+      .map((key) => key === "source" && form.source === "Other" ? "otherSource" : key)
+      .find((key) => refs.current[key]);
     if (firstKey) window.setTimeout(() => refs.current[firstKey]?.focus(), 0);
   };
 
@@ -162,11 +179,12 @@ export function AdminProjectInitiationDialog({
   });
 
   const updateValue = (key: keyof ProjectInitiationForm, value: string) => {
+      const errorKey = key === "otherSource" ? "source" : key;
       setForm((current) => ({ ...current, [key]: value }));
       setFieldErrors((current) => {
-        if (!current[key]) return current;
+        if (!current[errorKey]) return current;
         const next = { ...current };
-        delete next[key];
+        delete next[errorKey];
         return next;
       });
     };
@@ -186,6 +204,7 @@ export function AdminProjectInitiationDialog({
     }
     if (!selectedAssignee) return;
 
+    const source = resolvedSource(form);
     const input: InitiateAdminProjectInput = {
       clientName: form.clientName.trim(),
       clientEmail: form.clientEmail.trim(),
@@ -193,7 +212,7 @@ export function AdminProjectInitiationDialog({
       projectName: form.projectName.trim(),
       ...(form.cityName.trim() ? { cityName: form.cityName.trim() } : {}),
       propertyType: form.propertyType.trim(),
-      ...(form.source.trim() ? { source: form.source.trim() } : {}),
+      ...(source ? { source } : {}),
       nextAction: form.nextAction.trim(),
       // The initiation form collects a local calendar date; the API stores a timestamp.
       nextActionAt: new Date(`${form.nextActionAt}T00:00:00`).toISOString(),
@@ -240,39 +259,54 @@ export function AdminProjectInitiationDialog({
       <form id="admin-project-initiation-form" className="modal-form admin-project-form" onSubmit={submit} noValidate>
         {submissionError ? <div className="form-alert admin-project-form__alert" role="alert">{submissionError}</div> : null}
         {fields.map(([key, label, type, placeholder]) => (
-          <Field
-            key={key}
-            className={key === "clientName" || key === "projectName" || key === "source" || key === "nextAction" || key === "nextActionAt" ? "admin-project-form__wide" : undefined}
-            id={`admin-project-${key}`}
-            label={label}
-            required={key !== "cityName" && key !== "source"}
-            hint={key === "source" ? "How did the client hear about Lisno?" : undefined}
-            error={fieldErrors[key]}
-          >
-            {(controlProps) => (
-              <div className="admin-project-form__control">
-                {key === "propertyType" ? <Select {...controlProps}
-                  ref={(node) => { refs.current[key] = node; }} name={key}
-                  value={form.propertyType} onChange={update(key)} disabled={mutation.isPending}>
-                  <option value="">Select property type</option>
-                  {propertyTypes.map((option) => <option key={option} value={option}>{option}</option>)}
-                </Select> : key === "nextActionAt" ? <NextActionDateTime {...controlProps}
-                  value={form.nextActionAt} onChange={(value) => updateValue(key, value)}
-                  inputRef={(node) => { refs.current[key] = node; }} disabled={mutation.isPending}
-                /> : <Input
-                  {...controlProps}
-                  ref={(node) => { refs.current[key] = node; }}
-                  name={key}
-                  type={type}
-                  placeholder={placeholder}
-                  maxLength={key === "source" ? 200 : undefined}
-                  disabled={mutation.isPending}
-                  value={form[key]}
-                  onChange={update(key)}
-                />}
-              </div>
-            )}
-          </Field>
+          <Fragment key={key}>
+            <Field
+              className={key === "clientName" || key === "projectName" || key === "source" || key === "nextAction" || key === "nextActionAt" ? "admin-project-form__wide" : undefined}
+              id={`admin-project-${key}`}
+              label={label}
+              required={key !== "cityName" && key !== "source"}
+              hint={key === "source" ? "How did the client hear about Lisno?" : undefined}
+              error={key === "source" && form.source === "Other" ? undefined : fieldErrors[key]}
+            >
+              {(controlProps) => (
+                <div className="admin-project-form__control">
+                  {key === "propertyType" ? <Select {...controlProps}
+                    ref={(node) => { refs.current[key] = node; }} name={key}
+                    value={form.propertyType} onChange={update(key)} disabled={mutation.isPending}>
+                    <option value="">Select property type</option>
+                    {propertyTypes.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </Select> : key === "source" ? <Select {...controlProps}
+                    ref={(node) => { refs.current[key] = node; }} name={key}
+                    value={form.source} onChange={update(key)} disabled={mutation.isPending}>
+                    <option value="">Select source</option>
+                    {sourceOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </Select> : key === "nextActionAt" ? <NextActionDateTime {...controlProps}
+                    value={form.nextActionAt} onChange={(value) => updateValue(key, value)}
+                    inputRef={(node) => { refs.current[key] = node; }} disabled={mutation.isPending}
+                  /> : <Input
+                    {...controlProps}
+                    ref={(node) => { refs.current[key] = node; }}
+                    name={key}
+                    type={type}
+                    placeholder={placeholder}
+                    disabled={mutation.isPending}
+                    value={form[key]}
+                    onChange={update(key)}
+                  />}
+                </div>
+              )}
+            </Field>
+            {key === "source" && form.source === "Other" ? (
+              <Field className="admin-project-form__wide" id="admin-project-otherSource"
+                label="Other source" required error={fieldErrors.source}>
+                {(controlProps) => (
+                  <Input {...controlProps} ref={(node) => { refs.current.otherSource = node; }}
+                    name="otherSource" value={form.otherSource} onChange={update("otherSource")}
+                    placeholder="Enter source" maxLength={200} disabled={mutation.isPending} />
+                )}
+              </Field>
+            ) : null}
+          </Fragment>
         ))}
         <div className="admin-project-form__estimator">
           <SearchCombobox

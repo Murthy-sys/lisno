@@ -12,6 +12,7 @@ import type {
   AnnotationElement,
   AnnotationPoint
 } from "../../api/types";
+import { DialogToolbar } from "../ui/DialogToolbar";
 import {
   addElement,
   hitTestElements,
@@ -700,21 +701,25 @@ export function ImageAnnotationEditor({
       </div>
       {!readOnly ? <span className="sr-only" role="status" aria-live="polite">{announcement}</span> : null}
       {textDraft ? (
-        <dialog className="annotation-text-dialog" open aria-labelledby={`${markerId}-text-title`}>
-          <form method="dialog" onSubmit={submitText}>
-            <h3 id={`${markerId}-text-title`}>Add text note</h3>
-            <label>
-              Text note
-              <textarea
-                autoFocus
-                maxLength={500}
-                value={textDraft.text}
-                onChange={(event) => setTextDraft({ ...textDraft, text: event.target.value })}
-              />
-            </label>
-            <div>
-              <button type="button" onClick={() => setTextDraft(undefined)}>Cancel</button>
-              <button type="submit" disabled={!textDraft.text.trim()}>Add note</button>
+        <dialog className="annotation-text-dialog ui-dialog--reference" open aria-labelledby={`${markerId}-text-title`}>
+          <DialogToolbar title="Add text note" />
+          <form className="ui-dialog__form" method="dialog" onSubmit={submitText}>
+            <div className="ui-dialog__body">
+              <h3 id={`${markerId}-text-title`}>Add text note</h3>
+              <label>
+                Text note
+                <textarea
+                  className="ui-control"
+                  autoFocus
+                  maxLength={500}
+                  value={textDraft.text}
+                  onChange={(event) => setTextDraft({ ...textDraft, text: event.target.value })}
+                />
+              </label>
+            </div>
+            <div className="ui-dialog__actions">
+              <button type="button" className="ui-button ui-button--secondary" onClick={() => setTextDraft(undefined)}>Cancel</button>
+              <button type="submit" className="ui-button ui-button--primary" disabled={!textDraft.text.trim()}>Add note</button>
             </div>
           </form>
         </dialog>

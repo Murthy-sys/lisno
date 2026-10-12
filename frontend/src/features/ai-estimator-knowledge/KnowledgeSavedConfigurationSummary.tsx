@@ -4,5 +4,5 @@ import { useKnowledgeSavedSummary, type KnowledgeSavedSummaryInput } from "./use
 export function KnowledgeSavedConfigurationSummary(props: KnowledgeSavedSummaryInput) {
   const groups = useKnowledgeSavedSummary(props);
   return <KnowledgeHierarchySummary item={props.item} groups={groups}
-    sourceKey={JSON.stringify([props.item.mainLineId, props.revisionId, props.item.basketId])} />;
+    sourceKey={JSON.stringify([props.item.mainLineId, props.revisionId, props.item.basketId, props.dataSource?.scopeKey])} />;
 }

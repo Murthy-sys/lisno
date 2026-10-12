@@ -49,8 +49,8 @@ describe("safeReturnPath", () => {
     for (const role of ROLE_CODES) {
       expect(safeReturnPath(role, "/admin/procurement")).toBe(["admin", "super_admin"].includes(role) ? "/admin/procurement" : roleHomePath(role));
       expect(safeReturnPath(role, "/admin/procurement/vendors?view=active")).toBe(role === "super_admin" ? "/admin/procurement/vendors?view=active" : roleHomePath(role));
-      for (const path of ["/procurement", "/procurement/vendors#new", "/procurement/projects/project-two"]) expect(safeReturnPath(role, path)).toBe(role === "procurement" ? path : roleHomePath(role));
-      for (const path of ["/admin/procurement-extra", "/admin/procurement/vendors/private/extra", "/admin/procurement/vendors%2fprivate", "/procurement/vendors/private/extra", "/procurement/projects/a/other", "/procurement/projects/a%2fb"]) expect(safeReturnPath(role, path)).toBe(roleHomePath(role));
+      for (const path of ["/procurement", "/procurement/vendors#new", "/procurement/requests?status=pending", "/procurement/projects/project-two"]) expect(safeReturnPath(role, path)).toBe(role === "procurement" ? path : roleHomePath(role));
+      for (const path of ["/admin/procurement-extra", "/admin/procurement/vendors/private/extra", "/admin/procurement/vendors%2fprivate", "/procurement/vendors/private/extra", "/procurement/requests/private", "/procurement/requests-extra", "/procurement/requests%2fprivate", "/procurement/projects/a/other", "/procurement/projects/a%2fb"]) expect(safeReturnPath(role, path)).toBe(roleHomePath(role));
     }
   });
   it.each([

@@ -14,7 +14,7 @@ export function ChatEmojiPicker({ onSelect, onClose }: { onSelect: (emoji: strin
   const [category, setCategory] = useState("All");
   const grid = useRef<HTMLDivElement>(null);
   const emojis = Object.entries(groups).filter(([name]) => category === "All" || category === name).flatMap(([, values]) => values).filter(([, name]) => name.includes(search.toLowerCase()));
-  return <Dialog title="Choose an emoji" eyebrow="Project discussion" onClose={onClose}><div className="project-chat-form">
+  return <Dialog title="Choose an emoji" eyebrow="Project discussion" onClose={onClose}><div className="project-chat-form ui-dialog__body">
     <Field id={`${id}-search`} label="Search emojis">{props => <Input {...props} value={search} onChange={event => setSearch(event.target.value)} />}</Field>
     <Field id={`${id}-category`} label="Emoji category">{props => <Select {...props} value={category} onChange={event => setCategory(event.target.value)}>{["All", ...Object.keys(groups)].map(name => <option key={name}>{name}</option>)}</Select>}</Field>
     <div ref={grid} className="project-chat-emojis" role="group" aria-label="Emojis" onKeyDown={event => {

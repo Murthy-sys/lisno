@@ -59,7 +59,7 @@
 .client-estimate-decision-form__summary { display: grid; gap: var(--space-2); padding-block: var(--space-3); border-block: 1px solid var(--color-border); overflow-wrap: anywhere; }
 .client-estimate-decision-form__summary > span { font: var(--type-metadata); }
 .client-estimate-decision-form__summary > strong:last-child { font-size: var(--text-2xl); font-variant-numeric: tabular-nums; }
-.client-estimate-decision-form > label { display: grid; gap: var(--space-2); }
+.client-estimate-decision-form > label, .client-estimate-decision-form > .ui-dialog__body > label { display: grid; gap: var(--space-2); }
 .client-estimate-decision-form textarea { min-block-size: 8rem; inline-size: 100%; resize: vertical; }
 .client-estimate-decision-form__actions { display: flex; flex-wrap: wrap; justify-content: end; gap: var(--space-2); }
 .client-estimate-decision-form__actions .ui-button { white-space: normal; }

@@ -193,6 +193,11 @@ export const PROCUREMENT_AUDIT_ACTIONS = [
 
 export const AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS = [
   "vendor_basket_request_created",
+  "vendor_basket_proposal_created",
+  "vendor_basket_proposal_saved",
+  "vendor_basket_proposal_submitted",
+  "vendor_basket_proposal_decided",
+  "vendor_basket_proposal_revised",
   "vendor_basket_request_fulfilled",
   "vendor_basket_request_rejected",
   "ai_estimator_knowledge_basket_created",

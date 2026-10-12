@@ -60,6 +60,7 @@ import { ProcurementProjectPage } from "../features/procurement/ProcurementProje
 import { ProcurementWorkspace } from "../features/procurement/ProcurementWorkspace";
 import { ProcurementManagementPage } from "../features/procurement/ProcurementManagementPage";
 import { ProcurementDashboardPage } from "../features/procurement/ProcurementDashboardPage";
+import { ProcurementRequestsPage } from "../features/procurement/ProcurementRequestsPage";
 import { ProcurementVendorDirectory } from "../features/procurement/ProcurementVendorDirectory";
 import { SuperAdminPurchaseOrdersPage } from "../features/procurement/SuperAdminPurchaseOrdersPage";
 import { ExecutionPortfolioPage, ProjectExecutionPage } from "../features/execution/ExecutionWorkspace";
@@ -424,6 +425,7 @@ export function AppRoutes() {
         <Route path="/work-order-approvals" element={registeredElement("/work-order-approvals", <ProcurementBasketApprovalQueue />)} />
         <Route path="/procurement/vendors" element={registeredElement("/procurement/vendors", <VendorDirectoryRoute />)} />
         <Route path="/procurement/vendors/:vendorId" element={registeredElement("/procurement/vendors/:vendorId", <VendorKpiStaffPage />)} />
+        <Route path="/procurement/requests" element={registeredElement("/procurement/requests", <ProcurementRequestsPage />)} />
         <Route element={<ProjectChatLayout />}>
           <Route path="/project-messages" element={registeredElement("/project-messages", <ProjectMessagesListPage />)} />
           <Route path="/projects/:projectId/messages" element={registeredElement("/projects/:projectId/messages", <ProjectMessagesPage />)} />

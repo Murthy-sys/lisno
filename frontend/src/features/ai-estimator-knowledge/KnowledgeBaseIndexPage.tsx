@@ -480,7 +480,7 @@ export function KnowledgeBaseIndexPage() {
       {noticeDismissed ? null : (
         <KnowledgeSafetyNotice onDismiss={dismissNotice} />
       )}
-      {canReviewRequests && basketRequestsOpen ? <KnowledgeBasketRequestReview navigationKey={location.key} canDecide={canCreate} /> : null}
+      {canReviewRequests && basketRequestsOpen ? <KnowledgeBasketRequestReview navigationKey={location.key} requestId={searchParams.get("basketRequestId")} canDecide={canCreate} /> : null}
       {announcement ? (
         <p className="sr-only" role="status">
           {announcement}
@@ -1030,6 +1030,8 @@ function PermanentDeleteBasketDialog({
   return (
     <Dialog
       title="Delete basket?"
+      tone="danger"
+      icon={<Trash2 aria-hidden="true" />}
       eyebrow="Irrecoverable action"
       description={`“${impact?.basketName ?? basket.name}” and everything inside it will be permanently deleted. This cannot be undone.`}
       onClose={onClose}
@@ -1037,13 +1039,13 @@ function PermanentDeleteBasketDialog({
       role="alertdialog"
     >
       <form
-        className="knowledge-dialog-form"
+        className="ui-dialog__form knowledge-dialog-form"
         onSubmit={(event) => {
           event.preventDefault();
           if (canSubmit) mutation.mutate();
         }}
       >
-        <div className="knowledge-dialog-body knowledge-basket-delete">
+        <div className="ui-dialog__body knowledge-dialog-body knowledge-basket-delete">
           {refreshError ? <InlineMessage tone="warning" title="Main Basket deleted" role="status">{refreshError}</InlineMessage> : null}
           {!saved && impactQuery.isPending ? (
             <PageState state="loading" message="Checking whether this basket can be deleted…" />
@@ -1112,7 +1114,7 @@ function PermanentDeleteBasketDialog({
             </>
           ) : null}
         </div>
-        <div className="knowledge-dialog-actions">
+        <div className="ui-dialog__actions knowledge-dialog-actions">
           <Button type="button" variant={saved ? "quiet" : "destructive-outline"} onClick={onClose} disabled={mutation.isPending || refreshing}>
             {saved ? "Done" : "Cancel"}
           </Button>

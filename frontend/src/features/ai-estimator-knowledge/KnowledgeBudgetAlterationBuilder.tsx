@@ -14,13 +14,12 @@ import { InlineMessage } from "../../components/ui/InlineMessage";
 import { KnowledgeCatalogRenameDialog, KnowledgeSubItemRemovalDialog } from "./KnowledgeDraftSubBasketDialogs";
 import { KnowledgeSubBasketDeleteDialog } from "./KnowledgeSubBasketDialogs";
 import {
-  listKnowledgeSubBaskets,
   permanentlyDeleteKnowledgeMainLine,
   updateKnowledgeMainLine,
   updateKnowledgeSubBasket
 } from "./knowledgeApi";
 import { BUDGET_ACTIONS, budgetAlterationRows, recommendationItemRequiresCompletion, recommendationTargetKind, withExplicitRecommendationTargetKind } from "./knowledgeBudgetAlterations";
-import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
+import { liveKnowledgeEditorDataSource, type KnowledgeEditorDataSource } from "./knowledgeEditorDataSource";
 import {
   commitKnowledgeMainLineMutation,
   commitKnowledgeMainLineRemoval,
@@ -38,6 +37,7 @@ import "./knowledge-recommendations.css";
 const SUB_BASKET_CATALOG_STALE_TIME_MS = 30_000;
 
 interface Props {
+  dataSource?: KnowledgeEditorDataSource;
   value: KnowledgeJsonValue | undefined;
   mainLineId: string;
   mainLineName: string;
@@ -88,6 +88,7 @@ type CatalogDialogState = {
 type PendingGroupVersion = { readonly basketId: string; readonly subBasketId: string; readonly version: number };
 
 export function KnowledgeBudgetAlterationBuilder({ value, mainLineName, catalogState = { status: "ready" }, validationAttempt = 0, resetKey, savedValue, ...props }: Props) {
+  const dataSource = props.dataSource ?? liveKnowledgeEditorDataSource;
   const id = useId();
   const [createdBaskets, setCreatedBaskets] = useState<readonly KnowledgeBasket[]>([]);
   const [createdItems, setCreatedItems] = useState<readonly KnowledgeItemDetail[]>([]);
@@ -136,8 +137,8 @@ export function KnowledgeBudgetAlterationBuilder({ value, mainLineName, catalogS
     : []))];
   const targetSubBasketQueries = useQueries({
     queries: targetSubBasketBasketIds.map((basketId) => ({
-      queryKey: [...knowledgeQueryKeys.subBasketLists(basketId), "catalog"],
-      queryFn: () => collectAllKnowledgeMasterPages((params) => listKnowledgeSubBaskets(basketId, params), "Sub Basket"),
+      queryKey: dataSource.subBasketCatalogKey(basketId),
+      queryFn: () => dataSource.getSubBasketCatalog(basketId),
       staleTime: SUB_BASKET_CATALOG_STALE_TIME_MS
     }))
   });
@@ -333,7 +334,7 @@ function RuleActions({ index, readOnly, active, onEdit, onToggle, onRemove }: {
   </details>;
 }
 
-function BudgetAlterationRow({ row, index, mainLineId, mainLineName, baskets, items, removedSubBasketIds, readOnly, canCreate, canUpdate = false, canLifecycle = false, canReadCatalog = true, issues, catalogState, onItemCreated, onItemUpdated, onItemRemoved, onSubBasketRemoved, onBasketCreated, onBasketBusyChange,
+function BudgetAlterationRow({ dataSource = liveKnowledgeEditorDataSource, row, index, mainLineId, mainLineName, baskets, items, removedSubBasketIds, readOnly, canCreate, canUpdate = false, canLifecycle = false, canReadCatalog = true, issues, catalogState, onItemCreated, onItemUpdated, onItemRemoved, onSubBasketRemoved, onBasketCreated, onBasketBusyChange,
   onChange, onRemove }: Omit<Props, "value" | "onChange"> & { row: KnowledgeJsonObject; index: number; catalogState: KnowledgeBudgetCatalogState; removedSubBasketIds: ReadonlySet<string>; onSubBasketRemoved: (result: KnowledgePermanentDeleteSubBasketResult) => void; onItemCreated: (item: KnowledgeItemDetail) => void; onItemUpdated: (item: KnowledgeItemDetail) => void; onItemRemoved: (mainLineId: string) => void; onBasketCreated: (basket: KnowledgeBasket) => void; onBasketBusyChange: (busy: boolean) => void; onChange: (row: KnowledgeJsonObject) => void; onRemove: () => void }) {
   const id = useId();
   const queryClient = useQueryClient();
@@ -377,8 +378,8 @@ function BudgetAlterationRow({ row, index, mainLineId, mainLineName, baskets, it
   const targetKind = recommendationTargetKind(row);
   const temporary = row.targetType === "temporary";
   const subBaskets = useQuery({
-    queryKey: [...knowledgeQueryKeys.subBasketLists(basketId), "catalog"],
-    queryFn: () => collectAllKnowledgeMasterPages((params) => listKnowledgeSubBaskets(basketId, params), "Sub Basket"),
+    queryKey: dataSource.subBasketCatalogKey(basketId),
+    queryFn: () => dataSource.getSubBasketCatalog(basketId),
     enabled: Boolean(basketId),
     staleTime: SUB_BASKET_CATALOG_STALE_TIME_MS
   });

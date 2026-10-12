@@ -11,10 +11,10 @@ export function AskLisnoLauncher() {
   const token = tokenStorage.get();
   const scope = useMemo(() => crypto.randomUUID(), [auth.user?.id, auth.status, token]);
   if (auth.status !== "authenticated" || auth.user?.role !== "client" || !hasFrontendPermission(auth.authorization, "ask_lisno.request")) return null;
-  return <AskLisnoSession key={scope} scope={scope} />;
+  return <AskLisnoSession key={scope} scope={scope} displayName={auth.user.name} />;
 }
 
-function AskLisnoSession({ scope }: { scope: string }) {
+function AskLisnoSession({ scope, displayName }: { scope: string; displayName: string }) {
   const [open, setOpen] = useState(false);
   const launcher = useRef<HTMLButtonElement>(null);
   const projectId = useMatch("/client/projects/:projectId")?.params.projectId;
@@ -23,6 +23,6 @@ function AskLisnoSession({ scope }: { scope: string }) {
       <span className="ask-lisno-launcher__icon"><LisnoChatMark /></span>
       <span><strong>Ask Lisno</strong><small>Private AI chat</small></span>
     </button>
-    <AskLisnoPanel open={open} onClose={() => setOpen(false)} routeProjectId={projectId} scope={scope} returnFocusRef={launcher} />
+    <AskLisnoPanel open={open} onClose={() => setOpen(false)} routeProjectId={projectId} scope={scope} returnFocusRef={launcher} displayName={displayName} />
   </>;
 }

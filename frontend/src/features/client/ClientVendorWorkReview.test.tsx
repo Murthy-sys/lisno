@@ -45,6 +45,11 @@ describe("ClientVendorWorkReview", () => {
       expect(within(section).getByRole("button", { name: "View images (1)" })).toBeVisible();
       expect(within(screen.getByRole("heading", { name: "Floor finish" }).closest("article")!).getByText("No images supplied for this section")).toBeVisible();
       await userEvent.click(within(section).getByRole("button", { name: "View images (1)" }));
+      const imageDialog = screen.getByRole("dialog", { name: "Work images" });
+      expect(within(imageDialog).getAllByRole("button").map(button => button.textContent)).toEqual(["Close images", "Previous", "Next"]);
+      expect(within(imageDialog).getByRole("button", { name: "Close images" })).toHaveFocus();
+      expect(within(imageDialog).getByRole("button", { name: "Previous" })).toBeDisabled();
+      expect(within(imageDialog).getByRole("button", { name: "Next" })).toBeDisabled();
       expect(await screen.findByRole("img", { name: "Work evidence 1" })).toBeVisible();
       expect(imageFetch).toHaveBeenCalledTimes(1);
       await userEvent.click(screen.getByRole("button", { name: "Close images" }));

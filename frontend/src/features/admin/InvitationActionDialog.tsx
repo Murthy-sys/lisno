@@ -103,42 +103,45 @@ export function InvitationActionDialog({
 
   return (
     <Dialog
+      tone={selectedAction === "revoke" ? "danger" : "default"}
       title={title(selectedAction, snapshot.name)}
       eyebrow="Invitation administration"
       description="Review the selected invitation before continuing."
       busy={mutation.isPending}
       onClose={onClose}
     >
-      <div className="user-invitation-dialog">
-        <p
-          className="sr-only"
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          {mutation.isPending
-            ? `${selectedAction === "resend" ? "Resending" : "Revoking"} invitation. Please wait.`
-            : ""}
-        </p>
-        <div className="user-invitation-dialog__identity">
-          <strong>{snapshot.name}</strong>
-          <span>{snapshot.email}</span>
-          <span>{ROLE_LABELS[snapshot.role]}</span>
-        </div>
-        {error ? (
-          <p className="user-invitation-dialog__error" role="alert">{error}</p>
-        ) : null}
-        {!isCurrentRow && !conflicted ? (
-          <p className="user-invitation-dialog__error" role="alert">
-            This invitation is no longer current. Close this dialog and reopen it from the refreshed list.
+      <div className="user-invitation-dialog ui-dialog__form">
+        <div className="ui-dialog__body">
+          <p
+            className="sr-only"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            {mutation.isPending
+              ? `${selectedAction === "resend" ? "Resending" : "Revoking"} invitation. Please wait.`
+              : ""}
           </p>
-        ) : null}
-        <p>
-          {selectedAction === "resend"
-            ? "A new email will replace the current invitation link."
-            : "The current invitation will no longer be usable."}
-        </p>
-        <div className="user-invitation-dialog__actions">
+          <div className="user-invitation-dialog__identity">
+            <strong>{snapshot.name}</strong>
+            <span>{snapshot.email}</span>
+            <span>{ROLE_LABELS[snapshot.role]}</span>
+          </div>
+          {error ? (
+            <p className="user-invitation-dialog__error" role="alert">{error}</p>
+          ) : null}
+          {!isCurrentRow && !conflicted ? (
+            <p className="user-invitation-dialog__error" role="alert">
+              This invitation is no longer current. Close this dialog and reopen it from the refreshed list.
+            </p>
+          ) : null}
+          <p>
+            {selectedAction === "resend"
+              ? "A new email will replace the current invitation link."
+              : "The current invitation will no longer be usable."}
+          </p>
+        </div>
+        <div className="user-invitation-dialog__actions ui-dialog__actions">
           <Button
             variant="quiet"
             disabled={mutation.isPending}

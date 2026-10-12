@@ -26,6 +26,107 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents vendor-independent proposals and authenticated request filters without loosening legacy creation", () => {
+    const schemas = componentSchemas();
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    expect(schemas.VendorBasketProposalCreate!.required).toEqual(["name", "idempotencyKey"]);
+    expect(schemas.VendorBasketProposalCreate).toHaveProperty("properties.vendorName.nullable", true);
+    for (const name of ["VendorBasketProposalSummary", "KnowledgeVendorBasketRequest", "KnowledgeVendorBasketRequestNotification"]) {
+      expect(schemas[name]).toHaveProperty("properties.vendorName.nullable", true);
+    }
+    expect(schemas.KnowledgeVendorBasketRequestCreate!.required).toContain("vendorName");
+    expect(schemas.KnowledgeVendorBasketRequestCreate).not.toHaveProperty("properties.vendorName.nullable", true);
+    expect(paths["/procurement/vendor-basket-requests/mine"]!.get!.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "search", schema: { type: "string", maxLength: 240 } }),
+      expect.objectContaining({ name: "status", schema: { type: "string", enum: ["pending", "fulfilled", "rejected"] } }),
+      expect.objectContaining({ name: "targetKind", schema: { type: "string", enum: ["new_main_basket", "new_sub_basket"] } })
+    ]));
+    expect(paths["/procurement/vendor-basket-requests/mine"]!.get!.parameters).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: "requesterId" })]));
+  });
+  it("documents isolated proposal snapshots, scoped writes and complete publication outcomes", () => {
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const operations = HUMAN_JWT_OPERATION_LIST.filter(operation => /\/(basket-proposals|vendor-basket-proposals)(\/|$)/u.test(operation.key));
+    expect(operations).toHaveLength(44);
+    for (const operation of operations) {
+      const [method, route] = operation.key.split(" ") as [string, string];
+      const documented = paths[openApiPathForRoute(route)]![method.toLowerCase()]!;
+      expect(documented.security).toEqual([{ bearerAuth: [] }]);
+      expect(documented.responses).toHaveProperty("2XX.content.application/json.schema.properties.data.$ref");
+      if (method !== "GET") expect(documented.requestBody).toHaveProperty("content.application/json.schema.$ref");
+    }
+    const procurement = paths["/procurement/vendor-basket-proposals/{proposalId}/main-lines/{mainLineId}/sections/{sectionKey}"]!.put!;
+    const admin = paths["/admin/ai-estimator-knowledge/basket-proposals/{proposalId}/decision"]!.post!;
+    expect(procurement["x-lisno-permission"]).toBe("procurement.vendor_basket_proposal.update");
+    expect(admin["x-lisno-permission"]).toBe("ai_estimator_knowledge.configuration.lifecycle");
+    expect(paths["/procurement/vendor-basket-proposals/{proposalId}"]!.get!.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "snapshot", schema: expect.objectContaining({ enum: ["current", "submitted", "approved"] }) })
+    ]));
+    const schemas = componentSchemas();
+    expect(schemas.VendorBasketProposalDecisionInput!.required).toContain("expectedRequestVersion");
+    expect(schemas.KnowledgeVendorBasketRequest).toHaveProperty("properties.proposalCounts");
+    expect(schemas.KnowledgeVendorBasketRequest).not.toHaveProperty("properties.counts");
+    expect(schemas.VendorBasketProposalDecision).toHaveProperty("properties.published.required", ["basketId", "subBasketIds", "mainLines", "prices", "sections", "qualityRevisionId"]);
+    expect(schemas.VendorBasketProposalResource!.required).not.toContain("editorPayload");
+    expect(schemas.VendorBasketProposalResource).toHaveProperty("properties.editorPayload.type", "object");
+    expect(schemas.VendorBasketProposalSectionInput).toHaveProperty("properties.applicability.enum", ["configured", "not_applicable", "not_configured"]);
+  });
+
+  it("documents proposal-only UOM and Surface contracts without making new publication fields mandatory", () => {
+    const schemas = componentSchemas();
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const shapes = schemas.VendorBasketProposalMasterInput!.oneOf as OpenApiObject[];
+    expect(shapes).toHaveLength(2);
+    const [uom, surface] = shapes;
+    expect(uom!.required).toEqual(["expectedVersion", "name", "decimalScale"]);
+    expect(uom).toHaveProperty("properties.decimalScale", { type: "integer", minimum: 0, maximum: 3 });
+    expect(surface!.required).toEqual(["expectedVersion", "name"]);
+    expect(surface).not.toHaveProperty("properties.decimalScale");
+    for (const shape of shapes) {
+      expect(shape.additionalProperties).toBe(false);
+      expect(shape).toHaveProperty("properties.expectedRequestVersion.minimum", 1);
+      for (const field of ["status", "code", "displayOrder", "requesterId", "proposalId"]) {
+        expect(shape).not.toHaveProperty(`properties.${field}`);
+      }
+    }
+    expect(schemas.VendorBasketProposalMasterPage).toHaveProperty("properties.items.items.properties.kind.enum", ["uom", "surface"]);
+    expect(schemas.VendorBasketProposalMasterPage).toHaveProperty("properties.pagination.properties.limit.maximum", 100);
+    expect(schemas.VendorBasketProposalDecision).toHaveProperty("properties.published.properties.masters.items.required", ["kind", "resourceId", "masterId"]);
+    expect(schemas.VendorBasketProposalDecision).toHaveProperty("properties.published.required", ["basketId", "subBasketIds", "mainLines", "prices", "sections", "qualityRevisionId"]);
+    for (const [base, readPermission, writePermission] of [
+      ["/procurement/vendor-basket-proposals", "procurement.vendor_basket_proposal.read", "procurement.vendor_basket_proposal.update"],
+      ["/admin/ai-estimator-knowledge/basket-proposals", "ai_estimator_knowledge.configuration.read", "ai_estimator_knowledge.configuration.update"]
+    ]) {
+      const collection = paths[`${base}/{proposalId}/masters/{masterKind}`]!;
+      const resource = paths[`${base}/{proposalId}/masters/{masterKind}/{resourceId}`]!;
+      expect(collection.get!["x-lisno-permission"]).toBe(readPermission);
+      expect(collection.get!.responses).toHaveProperty("2XX.content.application/json.schema.properties.data.$ref", "#/components/schemas/VendorBasketProposalMasterPage");
+      expect(collection.get!.parameters).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "masterKind", in: "path", required: true, schema: { type: "string", enum: ["uoms", "surfaces"] } }),
+        expect.objectContaining({ name: "snapshot", schema: expect.objectContaining({ enum: ["current", "submitted", "approved"] }) }),
+        expect.objectContaining({ name: "limit", schema: expect.objectContaining({ maximum: 100 }) }),
+        expect.objectContaining({ name: "offset", schema: expect.objectContaining({ minimum: 0 }) })
+      ]));
+      for (const operation of [collection.post!, resource.patch!]) {
+        expect(operation["x-lisno-permission"]).toBe(writePermission);
+        expect(operation.requestBody).toHaveProperty("content.application/json.schema.$ref", "#/components/schemas/VendorBasketProposalMasterInput");
+        expect(operation.responses).toHaveProperty("2XX.content.application/json.schema.properties.data.$ref", "#/components/schemas/VendorBasketProposalMutation");
+      }
+      expect(resource.delete!["x-lisno-permission"]).toBe(writePermission);
+      expect(resource.delete!.requestBody).toHaveProperty("content.application/json.schema.$ref", "#/components/schemas/VendorBasketProposalVersionInput");
+    }
+  });
+
+  it("documents recipient-scoped basket alerts and stable request review links", () => {
+    const schemas = componentSchemas();
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    expect(schemas.KnowledgeVendorBasketRequestNotification!.required).toEqual(expect.arrayContaining(["requestId", "target", "requester", "status", "readAt"]));
+    expect(schemas.KnowledgeVendorBasketRequestNotification).not.toHaveProperty("properties.recipientId");
+    expect(schemas.KnowledgeVendorBasketRequestNotificationRead).toHaveProperty("additionalProperties", false);
+    expect(paths["/admin/ai-estimator-knowledge/basket-request-notifications"]!.get!["x-lisno-permission"]).toBe("ai_estimator_knowledge.configuration.read");
+    expect(paths["/admin/ai-estimator-knowledge/basket-requests/{requestId}"]!.get!.responses).toHaveProperty("2XX.content.application/json.schema.properties.data.$ref", "#/components/schemas/KnowledgeVendorBasketRequest");
+    expect(paths["/procurement/vendor-basket-proposals/{proposalId}/inherited-quality"]!.get!["x-lisno-permission"]).toBe("procurement.vendor_basket_proposal.read");
+  });
+
   it("documents the personal current-task review separately from scheduled digest acknowledgments", () => {
     const schemas = componentSchemas();
     expect(schemas.CurrentCriticalTaskReview!.required).toEqual(["timezone", "checkedAt", "items", "receipt"]);
@@ -1029,7 +1130,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 387 routes without versioning paths twice", () => {
+  it("contains all 434 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -1038,7 +1139,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 19);
-    expect(operationCount).toBe(387);
+    expect(operationCount).toBe(434);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -1046,9 +1147,9 @@ describe("OpenAPI and Swagger UI", () => {
 
   it("documents all AI Estimator Knowledge operations with exact schemas and 422", () => {
     const knowledgeOperations = HUMAN_JWT_OPERATION_LIST.filter(
-      ({ availability, key }) => availability === "ai_estimator_knowledge" && !key.includes("/procurement/vendor-kpis") && !key.includes("/procurement/vendor-inductions")
+      ({ availability, key }) => availability === "ai_estimator_knowledge" && !key.includes("/procurement/vendor-kpis") && !key.includes("/procurement/vendor-inductions") && !key.includes("basket-proposals")
     );
-    expect(knowledgeOperations).toHaveLength(67);
+    expect(knowledgeOperations).toHaveLength(70);
 
     for (const registered of knowledgeOperations) {
       const { method, path } = splitHumanOperationKey(registered.key);
@@ -1072,6 +1173,11 @@ describe("OpenAPI and Swagger UI", () => {
           required: true,
           "x-lisno-schema-completeness": "exact",
           content: { "multipart/form-data": { schema: { $ref: expect.stringMatching(/^#\/components\/schemas\/KnowledgeVendorCertificate/u) } } }
+        });
+      } else if (registered.key === "PUT /admin/ai-estimator-knowledge/basket-request-notifications/:notificationId/read") {
+        expect(documented?.requestBody).toMatchObject({
+          required: false, "x-lisno-schema-completeness": "exact",
+          content: { "application/json": { schema: { $ref: "#/components/schemas/KnowledgeVendorBasketRequestNotificationRead" } } }
         });
       } else if (method !== "GET") {
         expect(documented?.requestBody, registered.key).toMatchObject({

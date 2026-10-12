@@ -20,12 +20,14 @@ export function ChatProjectNameDialog({ projectId, summary, onClose }: { project
   const keyFor = useChatIdempotency();
   const changed = expectedVersion !== (summary.project.nameVersion ?? 1);
   return <Dialog title="Edit project name" description="Updates the project name across your workspace." onClose={onClose} busy={mutation.busy}>
-    <form className="project-chat-form" onSubmit={event => { event.preventDefault(); if (!canWriteNow || !name.trim() || name.trim().length > 200 || changed || !summary.capabilities.canRenameProject) return; const input = { name: name.trim(), expectedVersion }; void mutation.run(signal => projectChatApi.renameProject(projectId, { ...input, idempotencyKey: keyFor(input) }, signal), () => { void invalidateProjectNameQueries(queryClient, projectId); onClose(); }); }}>
-      <Field id={`${id}-name`} label="Project name" required hint="Up to 200 characters.">{props => <Input {...props} maxLength={200} value={name} onChange={event => setName(event.target.value)} />}</Field>
-      {changed ? <div className="project-chat-warning" role="status"><p>The current name is <strong>{summary.project.name}</strong>. Review this change before saving your name.</p><Button variant="secondary" onClick={() => setExpectedVersion(summary.project.nameVersion ?? 1)}>Review complete, keep my name</Button></div> : null}
-      {mutation.error ? <p role="alert" className="project-chat-error">{mutation.error}</p> : null}
-      {!canWriteNow ? <p role="status">Chat is read-only until 7:30 AM India time. Your entered name is retained here.</p> : null}
-      <div className="project-chat-form__actions"><Button variant="secondary" onClick={onClose} disabled={mutation.busy}>Cancel</Button><Button type="submit" busy={mutation.busy} disabled={!canWriteNow || !name.trim() || changed || !summary.capabilities.canRenameProject}>Save project name</Button></div>
+    <form className="project-chat-form ui-dialog__form" onSubmit={event => { event.preventDefault(); if (!canWriteNow || !name.trim() || name.trim().length > 200 || changed || !summary.capabilities.canRenameProject) return; const input = { name: name.trim(), expectedVersion }; void mutation.run(signal => projectChatApi.renameProject(projectId, { ...input, idempotencyKey: keyFor(input) }, signal), () => { void invalidateProjectNameQueries(queryClient, projectId); onClose(); }); }}>
+      <div className="ui-dialog__body">
+        <Field id={`${id}-name`} label="Project name" required hint="Up to 200 characters.">{props => <Input {...props} maxLength={200} value={name} onChange={event => setName(event.target.value)} />}</Field>
+        {changed ? <div className="project-chat-warning" role="status"><p>The current name is <strong>{summary.project.name}</strong>. Review this change before saving your name.</p><Button variant="secondary" onClick={() => setExpectedVersion(summary.project.nameVersion ?? 1)}>Review complete, keep my name</Button></div> : null}
+        {mutation.error ? <p role="alert" className="project-chat-error">{mutation.error}</p> : null}
+        {!canWriteNow ? <p role="status">Chat is read-only until 7:30 AM India time. Your entered name is retained here.</p> : null}
+      </div>
+      <div className="project-chat-form__actions ui-dialog__actions"><Button variant="secondary" onClick={onClose} disabled={mutation.busy}>Cancel</Button><Button type="submit" busy={mutation.busy} disabled={!canWriteNow || !name.trim() || changed || !summary.capabilities.canRenameProject}>Save project name</Button></div>
     </form>
   </Dialog>;
 }

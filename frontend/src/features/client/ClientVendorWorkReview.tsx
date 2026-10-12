@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
 import { apiClient } from "../../api/client";
+import { DialogToolbar } from "../../components/ui/DialogToolbar";
 import { projectStatusKeys } from "../project-status/projectStatusApi";
 import "./clientVendorWorkReview.css";
 
@@ -115,6 +116,24 @@ export function ClientVendorWorkReview({ projectId }: { projectId: string }) {
       {review.decision?.reason ? <p className="client-work-review__prior">Your response: {review.decision.reason}</p> : null}
     </article>)}</div>
     {total > limit ? <nav aria-label="Submitted work pages" className="client-work-review__actions"><button type="button" disabled={page === 0} onClick={() => { setReviewing(null); setViewing(null); setPage(current => current - 1); }}>Previous reviews</button><span>Showing {items.length ? offset + 1 : 0}–{Math.min(offset + items.length, total)} of {total}</span><button type="button" disabled={offset + limit >= total} onClick={() => { setReviewing(null); setViewing(null); setPage(current => current + 1); }}>Next reviews</button></nav> : null}
-    {viewing ? <div className="client-work-review__lightbox" role="dialog" aria-modal="true" aria-label="Work images"><div><div className="client-work-review__lightbox-head"><strong>Image {viewing.index + 1} of {viewing.imageIds.length}</strong><button type="button" autoFocus onClick={() => setViewing(null)}>Close images</button></div>{imageError ? <p role="alert">{imageError}</p> : imageUrl ? <img src={imageUrl} alt={`Work evidence ${viewing.index + 1}`} /> : <p role="status">Loading image…</p>}<div className="client-work-review__lightbox-actions"><button type="button" disabled={viewing.index === 0} onClick={() => setViewing({ ...viewing, index: viewing.index - 1 })}>Previous</button><button type="button" disabled={viewing.index >= viewing.imageIds.length - 1} onClick={() => setViewing({ ...viewing, index: viewing.index + 1 })}>Next</button></div></div></div> : null}
+    {viewing ? (
+      <div className="client-work-review__lightbox" role="dialog" aria-modal="true" aria-label="Work images">
+        <div className="ui-dialog--reference">
+          <DialogToolbar title="Work images">
+            <button type="button" autoFocus onClick={() => setViewing(null)}>Close images</button>
+          </DialogToolbar>
+          <div className="client-work-review__lightbox-body ui-dialog__body">
+            <strong>Image {viewing.index + 1} of {viewing.imageIds.length}</strong>
+            {imageError ? <p role="alert">{imageError}</p> : imageUrl ? (
+              <img className="client-work-review__lightbox-image" src={imageUrl} alt={`Work evidence ${viewing.index + 1}`} />
+            ) : <p role="status">Loading image…</p>}
+          </div>
+          <div className="client-work-review__lightbox-actions ui-dialog__actions">
+            <button type="button" disabled={viewing.index === 0} onClick={() => setViewing({ ...viewing, index: viewing.index - 1 })}>Previous</button>
+            <button type="button" disabled={viewing.index >= viewing.imageIds.length - 1} onClick={() => setViewing({ ...viewing, index: viewing.index + 1 })}>Next</button>
+          </div>
+        </div>
+      </div>
+    ) : null}
   </section>;
 }

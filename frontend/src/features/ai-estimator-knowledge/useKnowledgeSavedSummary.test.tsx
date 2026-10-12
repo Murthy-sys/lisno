@@ -8,6 +8,7 @@ import { item, section, squareFoot, squareMetre } from "../../test/fixtures/ente
 import * as api from "./knowledgeApi";
 import { commitKnowledgeSectionMutation } from "./knowledgeMutationSync";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
+import { liveKnowledgeEditorDataSource, type KnowledgeEditorDataSource } from "./knowledgeEditorDataSource";
 import { useKnowledgeSavedSummary, type KnowledgeSavedSummaryInput } from "./useKnowledgeSavedSummary";
 import type { KnowledgeBasketQuality, KnowledgeJsonObject, KnowledgeSectionEnvelope } from "./knowledgeTypes";
 
@@ -387,5 +388,36 @@ describe("saved summary queries", () => {
     await client.fetchQuery({ queryKey: [...knowledgeQueryKeys.subBasketLists("electrical"), "catalog"],
       queryFn: () => api.listKnowledgeSubBaskets("electrical", { limit: 100, offset: 0 }) });
     expect(api.listKnowledgeSubBaskets).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("proposal-scoped saved summary", () => {
+  it("isolates matching line IDs across actors and proposals and never reads live Configuration", async () => {
+    function source(scopeKey: string, description: string): KnowledgeEditorDataSource {
+      const keys = (...parts: unknown[]) => ["vendor-basket-proposals", scopeKey, ...parts];
+      return {
+        ...liveKnowledgeEditorDataSource, scopeKey, supportsLegacyQuality: false,
+        itemKey: id => keys("item", id), sectionKey: (id, revision, key) => keys("section", id, revision, key),
+        basketQualityKey: id => keys("quality", id), qualityControlOptionsKey: kind => keys("options", kind),
+        subBasketCatalogKey: id => keys("sub-baskets", id),
+        getSection: (async (id, revision, key) => ({ ...section(key, key === "advanced" ? { modeDescription: description } : {}), mainLineId: id, revisionId: revision })) as KnowledgeEditorDataSource["getSection"],
+        getBasketQuality: async () => ({ ...checklist, parameters: [] }),
+        listQualityControlOptions: async () => ({ items: [] }),
+        getItem: async () => item,
+        getSubBasketCatalog: async () => ({ items: [], pagination: { total: 0, limit: 100, offset: 0, hasMore: false } })
+      };
+    }
+    const first = source("requester-one/proposal-one/submitted-1", "First private saved mode");
+    const second = source("requester-two/proposal-two/review-3", "Second private saved mode");
+    const { result, client, rerender } = setup({ ...input, dataSource: first });
+    await waitFor(() => expect(JSON.stringify(result.current)).toContain("First private saved mode"));
+    rerender({ ...input, dataSource: second });
+    expect(JSON.stringify(result.current)).not.toContain("First private saved mode");
+    await waitFor(() => expect(JSON.stringify(result.current)).toContain("Second private saved mode"));
+    expect(api.getKnowledgeSection).not.toHaveBeenCalled();
+    expect(api.getKnowledgeBasketQuality).not.toHaveBeenCalled();
+    expect(api.listKnowledgeQualityControlOptions).not.toHaveBeenCalled();
+    expect(client.getQueryCache().getAll().every(query => query.queryKey[0] === "vendor-basket-proposals")).toBe(true);
   });
 });

@@ -1,3 +1,6 @@
+import { VendorBasketRequestNotificationModel } from "./VendorBasketRequestNotification.js";
+import { VendorBasketProposalModel } from "./VendorBasketProposal.js";
+import { VendorBasketProposalResourceModel } from "./VendorBasketProposalResource.js";
 import { ProcurementVendorInvitationIntentModel } from "./ProcurementVendorInvitationIntent.js";
 import { projectAssistantModels } from "./ProjectChatAssistant.js";
 import { ExecutionReportingPolicyModel, ExecutionReportingPolicyHeadModel } from "./ExecutionReportingPolicy.js";
@@ -85,6 +88,9 @@ export async function initializeApplicationIndexes(): Promise<void> {
   await ProcurementReceiptReconciliationJobModel.init();
   await AiEstimatorKnowledgeBasketModel.init();
   await VendorBasketRequestModel.init();
+  await VendorBasketProposalModel.init();
+  await VendorBasketProposalResourceModel.init();
+  await VendorBasketRequestNotificationModel.init();
   await AiEstimatorKnowledgeSubBasketModel.init();
   await AiEstimatorKnowledgeMainLineModel.init();
   await AiEstimatorKnowledgeRevisionModel.init();

@@ -78,6 +78,8 @@ import {
 import type { PublicUser } from "./auth.service.js";
 import { systemClock, type Clock } from "./workflow.js";
 
+import { generatedKnowledgeMasterCode, validateKnowledgeMasterName as validateName, validateKnowledgeMasterDescription as validateDescription, validateKnowledgeMasterScale } from "./ai-estimator-knowledge-master-values.js";
+
 type Row = Record<string, unknown>;
 type MutableMasterStatus = Exclude<KnowledgeMasterStatus, "archived">;
 
@@ -988,9 +990,9 @@ export function createAiEstimatorKnowledgeReferenceService(
         const timestamp = now();
         const id = `knowledge-${singular(masterType)}-${createId()}`;
         const code = masterType === "surfaces"
-          ? input.code ?? generatedSurfaceCode(id)
+          ? input.code ?? generatedKnowledgeMasterCode("surfaces", id)
           : masterType === "vendors" ? input.code ?? `PV-${createHash("sha256").update(id).digest("hex").slice(0, 36).toUpperCase()}`
-            : masterType === "uoms" ? input.code ?? `UOM-${createHash("sha256").update(id).digest("hex").slice(0, 48).toUpperCase()}` : input.code;
+            : masterType === "uoms" ? input.code ?? generatedKnowledgeMasterCode("uoms", id) : input.code;
         if (!code) {
           throw new ApiError(400, "VALIDATION_ERROR", "code is invalid.", {
             code: "Required bounded text."
@@ -1578,13 +1580,7 @@ function validateMasterSpecificInput(
   if (input.msmeCertificateUploadId !== undefined && (masterType !== "vendors" || input.procurementProfile === undefined || typeof input.msmeCertificateUploadId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/u.test(input.msmeCertificateUploadId) || input.idempotencyKey === undefined)) throw new ApiError(400, "VALIDATION_ERROR", "A certificate upload requires a vendor profile and stable save identity.", { msmeCertificate: "Upload a certificate and retry the vendor save." });
   if (input.idempotencyKey !== undefined && (masterType !== "vendors" || typeof input.idempotencyKey !== "string" || !/^[A-Za-z0-9_-]{8,200}$/u.test(input.idempotencyKey))) throw new ApiError(400, "VALIDATION_ERROR", "Use a stable vendor save identity.", { idempotencyKey: "Use 8 to 200 letters, digits, underscores, or hyphens." });
   if (input.confirmPhysicalAddressVerification !== undefined && (masterType !== "vendors" || input.procurementProfile === undefined || typeof input.confirmPhysicalAddressVerification !== "boolean")) throw new ApiError(400, "VALIDATION_ERROR", "Verification confirmation requires a vendor profile.");
-  if (masterType === "uoms") {
-    if ((creating || input.decimalScale !== undefined) && (!Number.isSafeInteger(input.decimalScale) || input.decimalScale! < 0 || input.decimalScale! > 3)) {
-      throw new ApiError(400, "VALIDATION_ERROR", "UOM decimalScale must be an integer from 0 to 3.", { decimalScale: "Invalid UOM scale." });
-    }
-  } else if (input.decimalScale !== undefined) {
-    throw new ApiError(400, "VALIDATION_ERROR", "decimalScale is valid only for UOM.", { decimalScale: "Field is not applicable." });
-  }
+  validateKnowledgeMasterScale(masterType, input.decimalScale, creating);
   if (masterType !== "taxes" && input.taxVersion !== undefined) {
     throw new ApiError(400, "VALIDATION_ERROR", "taxVersion is valid only for Tax.", { taxVersion: "Field is not applicable." });
   }
@@ -1617,11 +1613,6 @@ function validateStableServiceId(value: unknown, field: string): void {
   }
 }
 
-function generatedSurfaceCode(surfaceId: string): string {
-  const digest = createHash("sha256").update(surfaceId).digest("hex").slice(0, 48);
-  return `surface-${digest}`;
-}
-
 function validateTaxVersionInput(input: AiEstimatorKnowledgeTaxVersionInput): void {
   if (!Number.isSafeInteger(input.rateBps) || input.rateBps < 0 || input.rateBps > AI_ESTIMATOR_KNOWLEDGE_BASIS_POINTS * 10) {
     throw new ApiError(400, "VALIDATION_ERROR", "Tax rate is invalid.", { rateBps: "Use bounded integer basis points." });
@@ -1652,13 +1643,6 @@ function validateMutableStatus(value: MutableMasterStatus | undefined): void {
   }
 }
 
-function validateName(value: string, field: string, max = AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT): void {
-  if (typeof value !== "string" || value.normalize("NFKC").trim().length === 0 || value.length > max) throw new ApiError(400, "VALIDATION_ERROR", `${field} is invalid.`, { [field]: "Required bounded text." });
-}
-
-function validateDescription(value: string | null | undefined): void {
-  if (value !== undefined && value !== null && value.length > AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT) throw new ApiError(400, "VALIDATION_ERROR", "Description is too long.");
-}
 
 function validateDisplayOrder(value: number | undefined): void {
   if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) throw new ApiError(400, "VALIDATION_ERROR", "displayOrder must be a nonnegative integer.");

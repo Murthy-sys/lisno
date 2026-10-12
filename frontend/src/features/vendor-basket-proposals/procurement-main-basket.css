@@ -1,0 +1,777 @@
+/* Portal-local presentation shared by Procurement Main and Sub-Basket proposals.
+   Configuration and Super Admin review retain their default presentation. */
+.basket-proposal--procurement-reference.ui-drawer {
+  --proposal-reference-surface: color-mix(in srgb, var(--button-primary-bg) 1.5%, var(--color-surface));
+  --proposal-reference-tint: color-mix(in srgb, var(--button-primary-bg) 4%, var(--color-surface));
+  --proposal-reference-selected: color-mix(in srgb, var(--button-primary-bg) 11%, var(--color-surface));
+  container: procurement-reference / inline-size;
+  background: var(--proposal-reference-surface);
+  box-shadow: none;
+  font-family: var(--font-interface);
+}
+
+.basket-proposal--procurement-reference.ui-drawer--contextual > .ui-drawer__header {
+  min-block-size: 124px;
+}
+
+/* Match the Add Vendor header while keeping the basket workspace width. */
+.basket-proposal--procurement-reference.ui-drawer--contextual > .ui-drawer__header::before {
+  background: url("../../assets/vendor-drawer-header.webp") center bottom / contain no-repeat;
+  opacity: .3;
+  inline-size: clamp(220px, 32vw, 360px);
+  block-size: 120px;
+  inset-block: auto 0;
+  inset-inline-end: 64px;
+}
+
+.basket-proposal--procurement-reference.ui-drawer--contextual > .ui-drawer__header::after {
+  display: none;
+}
+
+.basket-proposal--procurement-reference.ui-drawer--wide > .ui-drawer__header > .ui-drawer__heading {
+  flex: 1 1 auto;
+  padding-inline-end: calc(clamp(220px, 32vw, 360px) + 16px);
+}
+
+.basket-proposal--procurement-reference .ui-drawer__description {
+  overflow-wrap: anywhere;
+}
+
+.basket-proposal--procurement-reference.ui-drawer--contextual > .ui-drawer__header .ui-drawer__close.ui-icon-button {
+  flex: 0 0 auto;
+  inline-size: 44px;
+  block-size: 44px;
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  padding: 0;
+  border: 0;
+}
+
+.basket-proposal--procurement-reference.ui-drawer--contextual > .ui-drawer__body {
+  padding: 0;
+  background: color-mix(in srgb, var(--button-primary-bg) 3%, var(--color-surface));
+}
+
+.basket-proposal--procurement-reference .basket-proposal__content {
+  padding: var(--space-6);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--proposal-reference-tint);
+}
+
+.basket-proposal--procurement-reference .basket-proposal__identity {
+  display: flex;
+  align-items: flex-start;
+  flex: 1 1 26rem;
+  gap: 16px;
+  min-inline-size: 0;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__identity-copy {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__icon {
+  display: block;
+  flex: 0 0 auto;
+  inline-size: 20px;
+  block-size: 20px;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__identity-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 64px;
+  inline-size: 64px;
+  block-size: 64px;
+  border-radius: var(--radius-control);
+  background: var(--proposal-reference-selected);
+  color: var(--button-primary-bg);
+}
+
+.basket-proposal--procurement-reference .basket-proposal__identity-icon .basket-proposal__icon {
+  inline-size: 34px;
+  block-size: 34px;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__identity-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__status {
+  flex: 0 0 auto;
+  padding: 3px 14px;
+  border-radius: 6px;
+  background: var(--color-table-header);
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__status[data-status="fulfilled"] {
+  background: var(--proposal-reference-selected);
+  color: var(--button-primary-bg);
+}
+
+.basket-proposal--procurement-reference .basket-proposal__status[data-status="rejected"] {
+  background: color-mix(in srgb, var(--color-danger) 8%, var(--color-surface));
+  color: var(--color-danger-strong);
+}
+
+.basket-proposal--procurement-reference .basket-proposal__identity-copy h3 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__identity-copy p {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__save-state {
+  display: grid;
+  gap: 2px;
+  margin-block-start: 5px;
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__save-state > :first-child {
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__save-state[data-state="saved"] > :first-child {
+  color: var(--button-primary-bg);
+}
+
+.basket-proposal--procurement-reference .basket-proposal__save-state[data-state="unsaved"] > :first-child {
+  color: var(--color-warning);
+}
+
+.basket-proposal--procurement-reference .basket-proposal__save-state[data-state="error"] > :first-child {
+  color: var(--color-danger);
+}
+
+.basket-proposal--procurement-reference .basket-proposal__summary-actions {
+  justify-content: flex-end;
+  align-self: flex-start;
+  gap: 10px;
+  margin-inline-start: auto;
+}
+
+.basket-proposal--procurement-reference.knowledge-context-panel .basket-proposal__summary-actions .ui-button:is(.ui-button--secondary, .ui-button--quiet) {
+  min-block-size: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--button-secondary-border);
+  background: transparent;
+  color: var(--button-secondary-ink);
+  font-size: 13px;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__body {
+  grid-template-columns: minmax(210px, 21%) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 20px;
+  margin-block-start: 20px;
+  padding-block-start: 0;
+  border: 0;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__hierarchy {
+  padding: 20px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--proposal-reference-tint);
+}
+
+.basket-proposal--procurement-reference .basket-proposal__hierarchy h3 {
+  margin: 0 0 20px;
+  font-size: 17px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__hierarchy-description {
+  margin: -12px 0 22px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__hierarchy > ul > li {
+  padding: 0 0 18px;
+  margin-block-end: 18px;
+  border-block-end: 1px solid var(--color-border);
+}
+
+.basket-proposal--procurement-reference .basket-proposal__node {
+  align-items: center;
+  gap: 8px;
+  margin-block-end: 10px;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__node > strong {
+  padding-block: 8px;
+  min-inline-size: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__hierarchy > ul > li > ul {
+  padding-inline-start: 0;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__line {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-block-size: 54px;
+  padding: 12px 14px 12px 20px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__line[aria-current="true"] {
+  border-color: transparent;
+  background: var(--proposal-reference-selected);
+  color: var(--button-secondary-ink);
+  font-weight: 600;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__line[aria-current="true"]::before {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: 4px;
+  border-radius: var(--radius-control) 0 0 var(--radius-control);
+  background: var(--button-primary-bg);
+  content: "";
+}
+
+.basket-proposal--procurement-reference .basket-proposal__line > span {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.basket-proposal--procurement-reference.knowledge-context-panel .basket-proposal__node .ui-button {
+  flex: 0 0 auto;
+  min-block-size: 40px;
+  padding: 8px 4px;
+  font-size: 13px;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__hierarchy > ul > li:last-child {
+  margin-block-end: 0;
+  border-block-end: 0;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__line:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__hierarchy .basket-proposal__actions {
+  margin-block-start: 10px;
+  gap: 4px;
+}
+
+.basket-proposal--procurement-reference.knowledge-context-panel .basket-proposal__hierarchy :is(.basket-proposal__add-line, .basket-proposal__add-sub).ui-button {
+  inline-size: 100%;
+  min-block-size: 48px;
+  justify-content: flex-start;
+  padding: 12px 18px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--button-secondary-ink);
+  font-size: 13px;
+}
+
+.basket-proposal--procurement-reference.knowledge-context-panel .basket-proposal__hierarchy .basket-proposal__add-line.ui-button {
+  inline-size: 100%;
+  margin-inline-start: 0;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__workspace {
+  padding: 8px 0 20px;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__line-toolbar {
+  align-items: center;
+  gap: 6px 12px;
+  padding: 0 0 18px;
+  border: 0;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__line-toolbar h3 {
+  flex: 1 1 10rem;
+  min-inline-size: 0;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.basket-proposal--procurement-reference.knowledge-context-panel .basket-proposal__line-toolbar .ui-button {
+  min-block-size: 40px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__line-toolbar .basket-proposal__actions {
+  gap: 2px;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__line-toolbar .basket-proposal__actions > .ui-button + .ui-button {
+  margin-inline-start: 6px;
+  padding-inline-start: 14px;
+  border-inline-start: 1px solid var(--color-border);
+  border-radius: 0;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__tabs {
+  gap: 0;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  padding: 0;
+  margin-block-end: 16px;
+  border-block-end: 1px solid var(--color-border);
+}
+
+/* Match the shared contextual-button specificity without changing its defaults. */
+.basket-proposal--procurement-reference.knowledge-context-panel .basket-proposal__tabs .ui-button[role="tab"],
+.basket-proposal--procurement-reference.knowledge-context-panel .basket-proposal__tabs .ui-button[role="tab"]:not(:disabled):hover {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  min-block-size: 44px;
+  padding: 11px 10px;
+  margin-block-end: -1px;
+  border: 0;
+  border-block-end: 2px solid transparent;
+  border-radius: var(--radius-control) var(--radius-control) 0 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  box-shadow: none;
+  transform: none;
+}
+
+.basket-proposal--procurement-reference.knowledge-context-panel .basket-proposal__tabs .ui-button[role="tab"][aria-selected="true"],
+.basket-proposal--procurement-reference.knowledge-context-panel .basket-proposal__tabs .ui-button[role="tab"][aria-selected="true"]:not(:disabled):hover {
+  color: var(--button-primary-bg);
+  border-block-end-color: var(--button-primary-bg);
+  background: var(--proposal-reference-selected);
+  font-weight: 600;
+}
+
+.basket-proposal--procurement-reference .knowledge-overview.knowledge-overview--surface-table {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+}
+
+.basket-proposal--procurement-reference .knowledge-overview .ui-surface.knowledge-overview__configuration-card {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  min-inline-size: 0;
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--proposal-reference-surface);
+  box-shadow: none;
+  overflow: visible;
+}
+
+.basket-proposal--procurement-reference .knowledge-overview .knowledge-section-heading {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.basket-proposal--procurement-reference .knowledge-overview .knowledge-card-heading__identity {
+  flex: 1 1 14rem;
+  align-items: center;
+  gap: 16px;
+}
+
+.basket-proposal--procurement-reference .knowledge-overview .knowledge-card-heading__icon {
+  inline-size: 48px;
+  block-size: 48px;
+  border-radius: 6px;
+  background: var(--proposal-reference-selected);
+  color: var(--button-primary-bg);
+}
+
+.basket-proposal--procurement-reference .knowledge-overview .knowledge-card-heading__icon svg {
+  inline-size: 26px;
+  block-size: 26px;
+}
+
+.basket-proposal--procurement-reference .knowledge-overview .knowledge-section-heading h2 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: -0.015em;
+}
+
+.basket-proposal--procurement-reference .knowledge-overview .knowledge-section-heading p {
+  margin: 4px 0 0;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.basket-proposal--procurement-reference .knowledge-overview :is(.ui-field__label, .knowledge-surface-multiselect__label) {
+  min-block-size: 0;
+  margin-block-end: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.basket-proposal--procurement-reference.knowledge-context-panel .knowledge-overview .knowledge-overview__uom-control-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.basket-proposal--procurement-reference.knowledge-context-panel .knowledge-overview :is(.ui-control, .knowledge-surface-multiselect__trigger) {
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 44px;
+  border-color: var(--color-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--proposal-reference-surface);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.basket-proposal--procurement-reference .knowledge-overview .knowledge-mode-surfaces--overview {
+  gap: 20px;
+}
+
+.basket-proposal--procurement-reference .knowledge-overview-surfaces__reference-empty {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  min-block-size: 190px;
+  padding: 28px 20px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.basket-proposal--procurement-reference .knowledge-overview-surfaces__reference-empty :is(h3, strong) {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.basket-proposal--procurement-reference .knowledge-overview-surfaces__reference-empty p {
+  margin: 0;
+  max-inline-size: 44ch;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.basket-proposal--procurement-reference .knowledge-overview-surfaces__table {
+  font-size: 12px;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__readiness {
+  margin-block-start: 24px;
+  padding-block: 20px 0;
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.basket-proposal--procurement-reference .knowledge-basket-quality {
+  padding: 20px;
+  background: var(--proposal-reference-surface);
+  border-radius: var(--radius-control);
+}
+
+.basket-proposal--procurement-reference [role="tabpanel"][aria-labelledby="proposal-tab-recommendations"] > .knowledge-section-editor {
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--proposal-reference-surface);
+}
+
+.basket-proposal--procurement-reference.basket-proposal--create .basket-proposal__content {
+  padding: var(--space-6);
+}
+
+.basket-proposal--procurement-reference.basket-proposal--create .basket-proposal__form {
+  gap: var(--space-4);
+}
+
+.basket-proposal--procurement-reference.basket-proposal--create .basket-proposal__parent {
+  margin: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--proposal-reference-tint);
+  color: var(--color-text-muted);
+  font-size: 14px;
+}
+
+.basket-proposal--procurement-reference.basket-proposal--create .basket-proposal__parent strong {
+  color: var(--color-text);
+}
+
+.basket-proposal--procurement-reference.basket-proposal--create .ui-field__label {
+  margin-block-end: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.basket-proposal--procurement-reference.basket-proposal--create .ui-control {
+  min-block-size: var(--control-height-large);
+  padding: 0 var(--space-3);
+  font-size: var(--text-md);
+}
+
+.basket-proposal--procurement-reference.basket-proposal--create .basket-proposal__actions .ui-button {
+  min-block-size: var(--control-height-large);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.basket-proposal--procurement-reference .basket-proposal__readiness h3 {
+  margin: 0 0 8px;
+  color: var(--color-text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__readiness .basket-proposal__actions {
+  margin-block-start: 16px;
+}
+
+.basket-proposal--procurement-reference > .ui-drawer__footer {
+  padding: 16px 24px max(16px, env(safe-area-inset-bottom));
+  border-block-start: 1px solid var(--color-border);
+  background: var(--proposal-reference-surface);
+  box-shadow: none;
+}
+
+.basket-proposal--procurement-reference .basket-proposal__footer {
+  inline-size: 100%;
+  justify-content: flex-end;
+  gap: 16px;
+}
+
+.basket-proposal--procurement-reference.knowledge-context-panel .basket-proposal__footer .ui-button {
+  min-block-size: 46px;
+  padding: 12px 24px;
+  font-size: 13px;
+}
+
+.basket-proposal--procurement-reference.knowledge-context-panel .basket-proposal__footer .ui-button.ui-button--secondary {
+  min-inline-size: auto;
+  border-color: transparent;
+  background: transparent;
+}
+
+.basket-proposal--procurement-reference.basket-proposal.knowledge-context-panel :is(.ui-button, .ui-icon-button, .basket-proposal__line, .knowledge-surface-multiselect__trigger):focus-visible {
+  outline: 2px solid var(--button-primary-bg);
+  outline-offset: 3px;
+  box-shadow: none;
+}
+
+@container procurement-reference (min-width: 72rem) {
+  .basket-proposal--procurement-reference .basket-proposal__hierarchy {
+    padding: 24px 18px;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-overview .ui-surface.knowledge-overview__configuration-card {
+    padding: 24px;
+    gap: 24px;
+  }
+
+  .basket-proposal--procurement-reference.knowledge-context-panel .basket-proposal__tabs .ui-button[role="tab"] {
+    font-size: 14px;
+  }
+}
+
+@container procurement-reference (max-width: 51.25rem) {
+  .basket-proposal--procurement-reference .basket-proposal__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .basket-proposal--procurement-reference .basket-proposal__hierarchy {
+    border-inline-end: 1px solid var(--color-border);
+    border-block-end: 1px solid var(--color-border);
+  }
+
+  .basket-proposal--procurement-reference .basket-proposal__workspace {
+    padding: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  .basket-proposal--procurement-reference.ui-drawer--contextual > .ui-drawer__header {
+    min-block-size: 0;
+  }
+
+  .basket-proposal--procurement-reference.ui-drawer--contextual > .ui-drawer__header::before {
+    display: none;
+  }
+
+  .basket-proposal--procurement-reference.ui-drawer--wide > .ui-drawer__header > .ui-drawer__heading {
+    padding-inline-end: 0;
+  }
+
+  .basket-proposal--procurement-reference .basket-proposal__content,
+  .basket-proposal--procurement-reference.basket-proposal--create .basket-proposal__content {
+    padding-inline: max(var(--space-4), env(safe-area-inset-left)) max(var(--space-4), env(safe-area-inset-right));
+  }
+
+  .basket-proposal--procurement-reference.basket-proposal--create .ui-control {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 600px) {
+  .basket-proposal--procurement-reference .basket-proposal__summary {
+    align-items: flex-start;
+    gap: 16px;
+    padding: 16px;
+  }
+
+  .basket-proposal--procurement-reference .basket-proposal__identity {
+    flex-basis: 100%;
+    gap: 12px;
+  }
+
+  .basket-proposal--procurement-reference .basket-proposal__identity-copy h3 {
+    font-size: 19px;
+  }
+
+  .basket-proposal--procurement-reference .basket-proposal__identity-icon {
+    flex-basis: 44px;
+    inline-size: 44px;
+    block-size: 44px;
+  }
+
+  .basket-proposal--procurement-reference .basket-proposal__identity-icon .basket-proposal__icon {
+    inline-size: 26px;
+    block-size: 26px;
+  }
+
+  .basket-proposal--procurement-reference .basket-proposal__summary-actions {
+    inline-size: 100%;
+    gap: 8px;
+  }
+
+  .basket-proposal--procurement-reference.knowledge-context-panel .basket-proposal__summary-actions .ui-button {
+    flex: 1 1 auto;
+    padding-inline: 12px;
+  }
+
+  .basket-proposal--procurement-reference .basket-proposal__body {
+    margin-block-start: 20px;
+  }
+
+  .basket-proposal--procurement-reference .basket-proposal__hierarchy {
+    padding: 16px;
+  }
+
+  .basket-proposal--procurement-reference.basket-proposal--create .basket-proposal__actions .ui-button {
+    inline-size: 100%;
+  }
+
+  .basket-proposal--procurement-reference .basket-proposal__line-toolbar {
+    align-items: flex-start;
+  }
+
+  .basket-proposal--procurement-reference.knowledge-context-panel .basket-proposal__line-toolbar .ui-button {
+    min-block-size: 44px;
+  }
+
+  .basket-proposal--procurement-reference .basket-proposal__tabs {
+    flex-wrap: wrap;
+    margin-block-end: 20px;
+  }
+
+  .basket-proposal--procurement-reference.knowledge-context-panel .basket-proposal__tabs .ui-button[role="tab"] {
+    flex-basis: 50%;
+    padding-inline: 4px;
+    font-size: 12px;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-overview .ui-surface.knowledge-overview__configuration-card {
+    padding: 16px;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-overview .knowledge-card-heading__identity {
+    flex: 0 1 auto;
+    gap: 12px;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-overview .knowledge-section-heading h2 {
+    font-size: 16px;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-overview-surfaces__reference-empty {
+    min-block-size: 170px;
+    padding: 24px 12px;
+  }
+
+  .basket-proposal--procurement-reference > .ui-drawer__footer {
+    padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+  }
+
+  .basket-proposal--procurement-reference .basket-proposal__footer {
+    gap: 8px;
+  }
+
+  .basket-proposal--procurement-reference.knowledge-context-panel .basket-proposal__footer .ui-button {
+    padding-inline: 16px;
+  }
+}

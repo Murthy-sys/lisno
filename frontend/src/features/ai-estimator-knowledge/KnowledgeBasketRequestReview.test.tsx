@@ -6,10 +6,18 @@ import { http, HttpResponse } from "msw";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { authorizationFor } from "../../test/authFixtures";
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
 import type { VendorBasketRequest } from "../procurement/vendorBasketRequestApi";
 import { KnowledgeBasketRequestReview } from "./KnowledgeBasketRequestReview";
+
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "super-admin-one", role: "super_admin" }, authorization: authorizationFor("super_admin") }) }));
+
+vi.mock("../vendor-basket-proposals/ProposalWorkspace", () => ({
+  ProposalWorkspace: ({ proposalId, scope, onClose }: { proposalId: string; scope: string; onClose: () => void }) =>
+    <div role="dialog" aria-label="Full basket review"><p>{proposalId} · {scope}</p><button onClick={onClose}>Close review</button></div>
+}));
 
 const request: VendorBasketRequest = {
   id: "basket-request-one",
@@ -71,6 +79,32 @@ beforeEach(() => {
 });
 
 describe("Super Admin Main Basket requests", () => {
+  it("opens the exact notification request beyond the first queue page", async () => {
+    const exact = { ...request, id: "request-on-page-five", kind: "configuration_proposal", proposalId: "sub-proposal-five", target: { kind: "new_sub_basket", basketId: "parent-paint" }, targetParentName: "Painting", proposedName: "Wall coating" };
+    server.use(http.get("/api/v1/admin/ai-estimator-knowledge/basket-requests/request-on-page-five", () => response(exact)));
+    renderWithQuery(<KnowledgeBasketRequestReview requestId={exact.id} navigationKey="notification-one" />);
+    expect(await screen.findByRole("dialog", { name: "Full basket review" })).toHaveTextContent("sub-proposal-five · admin");
+    expect(decisions).toHaveLength(0);
+  });
+
+  it("opens a decided legacy notification as history without offering a new decision", async () => {
+    server.use(http.get("/api/v1/admin/ai-estimator-knowledge/basket-requests/decided-request", () => response({ ...request, id: "decided-request", status: "rejected", reason: "Already supplied" })));
+    renderWithQuery(<KnowledgeBasketRequestReview requestId="decided-request" />);
+    const dialog = await screen.findByRole("dialog", { name: "Basket request history" });
+    expect(within(dialog).getByText("Status: rejected")).toBeVisible();
+    expect(within(dialog).getByText("Reason: Already supplied")).toBeVisible();
+    expect(within(dialog).queryByRole("button", { name: "Approve request" })).not.toBeInTheDocument();
+    expect(decisions).toHaveLength(0);
+  });
+
+  it("retries a failed exact-request lookup without opening an unrelated row", async () => {
+    let attempts = 0;
+    server.use(http.get("/api/v1/admin/ai-estimator-knowledge/basket-requests/retry-request", () => ++attempts === 1 ? HttpResponse.json({ error: { code: "TEMPORARY", message: "Request unavailable" } }, { status: 503 }) : response({ ...request, id: "retry-request", kind: "configuration_proposal", proposalId: "precise-proposal" })));
+    const user = userEvent.setup(); renderWithQuery(<KnowledgeBasketRequestReview requestId="retry-request" />);
+    await user.click(await screen.findByRole("button", { name: "Retry selected request" }));
+    expect(await screen.findByRole("dialog", { name: "Full basket review" })).toHaveTextContent("precise-proposal");
+  });
+
   it("fulfills a request into Configuration without selecting it for the vendor", async () => {
     const user = userEvent.setup();
     renderWithQuery(<KnowledgeBasketRequestReview />);
@@ -426,5 +460,31 @@ describe("Super Admin Main Basket requests", () => {
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Review Main Basket request" })).not.toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Review and approve" })).toHaveFocus();
+  });
+});
+
+
+describe("full proposal queue compatibility", () => {
+  it("opens a full proposal in the admin workspace without invoking the legacy decision endpoint", async () => {
+    rows = [{ ...request, kind: "configuration_proposal", proposalId: "proposal-one", proposalCounts: { subBaskets: 2, mainLines: 3 } }];
+    const user = userEvent.setup();
+    renderWithQuery(<KnowledgeBasketRequestReview />);
+    await user.click(await screen.findByRole("button", { name: "Review configuration" }));
+    const dialog = screen.getByRole("dialog", { name: "Full basket review" });
+    expect(within(dialog).getByText("proposal-one · admin")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Approve request" })).not.toBeInTheDocument();
+    expect(decisions).toHaveLength(0);
+    await user.click(within(dialog).getByRole("button", { name: "Close review" }));
+    expect(await screen.findByRole("button", { name: "Review configuration" })).toBeVisible();
+  });
+
+  it("never routes a malformed full proposal to legacy name-only approval", async () => {
+    rows = [{ ...request, kind: "configuration_proposal", proposalId: null }];
+    const user = userEvent.setup();
+    renderWithQuery(<KnowledgeBasketRequestReview />);
+    await user.click(await screen.findByRole("button", { name: "Review configuration" }));
+    expect(within(screen.getByRole("region", { name: "Main Basket requests" })).getByRole("status")).toHaveTextContent("This proposal could not be opened");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(decisions).toHaveLength(0);
   });
 });

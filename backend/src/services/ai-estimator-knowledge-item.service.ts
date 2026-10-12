@@ -801,99 +801,10 @@ export function createAiEstimatorKnowledgeItemService(
     async activate(actor, mainLineId, revisionId, input) {
       await mongoose.connection.transaction(async (session) => {
         const storedActor = await actorGuard.requireMutationActor(actor, session);
-        const lineDocument = await AiEstimatorKnowledgeMainLineModel.findById(mainLineId)
-          .session(session).lean().exec();
-        const revisionDocument = await AiEstimatorKnowledgeRevisionModel.findOne({ _id: revisionId, mainLineId })
-          .session(session).lean().exec();
-        const sectionDocuments = await AiEstimatorKnowledgeSectionModel.find({ mainLineId, revisionId })
-          .session(session).lean().exec();
-        const line = asRow(lineDocument);
-        const revision = asRow(revisionDocument);
-        if (!line || !revision) notFound();
-        if (requiredInteger(line.version) !== input.expectedVersion) versionConflict();
-        if (line.draftRevisionId !== revisionId || revision.status !== "draft") immutableHistory();
-        const rows = sectionDocuments.map((row) => asRow(row)!);
-        await validateRevisionRelationships(mainLineId, rows, session);
-        const completeness = completenessForRows(mainLineId, rows);
-        const graphIssues = sectionGraphIssues(rows);
-        if (graphIssues.length > 0 || completeness.blockers.length > 0) {
-          throw new ApiError(422, "KNOWLEDGE_ACTIVATION_BLOCKED", "Required knowledge is incomplete or invalid.", {
-            activation: [...completeness.blockers.map((finding) => finding.code), ...graphIssues].join(",")
-          });
-        }
-        const occurredAt = now();
-        await advanceDirectSubBasketAggregateForLine({
-          line,
-          actorId: storedActor.id,
-          occurredAt,
-          session
+        await activateKnowledgeRevisionInSession({
+          actorId: storedActor.id, mainLineId, revisionId, expectedVersion: input.expectedVersion,
+          occurredAt: now, session, audit: dependencies.audit
         });
-        const activeRevisionId = optionalString(line.activeRevisionId);
-        if (activeRevisionId) {
-          const superseded = await AiEstimatorKnowledgeRevisionModel.findOneAndUpdate(
-            { _id: activeRevisionId, mainLineId, status: "active" },
-            {
-              $set: {
-                status: "superseded",
-                supersededAt: occurredAt,
-                supersededById: storedActor.id,
-                updatedById: storedActor.id,
-                updatedAt: occurredAt
-              },
-              $inc: { version: 1 }
-            },
-            { new: true, runValidators: true, session }
-          ).lean().exec();
-          if (!superseded) versionConflict();
-        }
-        const digest = createKnowledgeRevisionDigest({
-          mainLineId,
-          revisionNumber: requiredInteger(revision.revisionNumber),
-          sections: completenessInputs(rows)
-        });
-        const activated = await AiEstimatorKnowledgeRevisionModel.findOneAndUpdate(
-          { _id: revisionId, mainLineId, status: "draft", version: revision.version },
-          {
-            $set: {
-              status: "active",
-              contentDigest: digest,
-              completeness,
-              activatedAt: occurredAt,
-              activatedById: storedActor.id,
-              updatedById: storedActor.id,
-              updatedAt: occurredAt
-            },
-            $inc: { version: 1 }
-          },
-          { new: true, runValidators: true, session }
-        ).lean().exec();
-        if (!activated) versionConflict();
-        const updatedLine = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
-          { _id: mainLineId, version: input.expectedVersion, draftRevisionId: revisionId },
-          {
-            $set: {
-              status: "active",
-              activeRevisionId: revisionId,
-              draftRevisionId: null,
-              deactivatedAt: null,
-              deactivatedById: null,
-              updatedById: storedActor.id,
-              updatedAt: occurredAt
-            },
-            $inc: { version: 1 }
-          },
-          { new: true, runValidators: true, session }
-        ).lean().exec();
-        if (!updatedLine) versionConflict();
-        await dependencies.audit.appendInMongoTransaction({
-          actorId: storedActor.id,
-          action: "ai_estimator_knowledge_revision_activated",
-          entityType: "ai_estimator_knowledge_revision",
-          entityId: revisionId,
-          occurredAt: occurredAt.toISOString(),
-          oldValues: { status: "draft", aggregateVersion: input.expectedVersion, priorActiveRevisionId: activeRevisionId ?? null },
-          newValues: { status: "active", aggregateVersion: input.expectedVersion + 1, contentDigest: digest }
-        }, session);
       });
       return getItemAfterMutation(actor, mainLineId, actorGuard);
     },
@@ -1092,7 +1003,111 @@ export function createAiEstimatorKnowledgeItemService(
   };
 }
 
-async function materializePriceCommands(input: {
+/** Canonical activation in a caller-owned transaction. The caller must authorize
+ * the actor in this session. A pending graph contains only newly created lines
+ * in the same transaction, each of which the caller must activate before commit. */
+export async function activateKnowledgeRevisionInSession(options: {
+  actorId: string; mainLineId: string; revisionId: string; expectedVersion: number;
+  occurredAt: Date | Clock; session: ClientSession; audit: Pick<AuditService, "appendInMongoTransaction">;
+  pendingGraph?: ReadonlyMap<string, Row[]>;
+}): Promise<void> {
+  const { actorId, mainLineId, revisionId, expectedVersion, session, audit } = options;
+  const lineDocument = await AiEstimatorKnowledgeMainLineModel.findById(mainLineId)
+    .session(session).lean().exec();
+  const revisionDocument = await AiEstimatorKnowledgeRevisionModel.findOne({ _id: revisionId, mainLineId })
+    .session(session).lean().exec();
+  const sectionDocuments = await AiEstimatorKnowledgeSectionModel.find({ mainLineId, revisionId })
+    .session(session).lean().exec();
+  const line = asRow(lineDocument);
+  const revision = asRow(revisionDocument);
+  if (!line || !revision) notFound();
+  if (requiredInteger(line.version) !== expectedVersion) versionConflict();
+  if (line.draftRevisionId !== revisionId || revision.status !== "draft") immutableHistory();
+  const rows = sectionDocuments.map((row) => asRow(row)!);
+  await validateRevisionRelationships(mainLineId, rows, session, undefined, options.pendingGraph);
+  const completeness = completenessForRows(mainLineId, rows);
+  const graphIssues = sectionGraphIssues(rows);
+  if (graphIssues.length > 0 || completeness.blockers.length > 0) {
+    throw new ApiError(422, "KNOWLEDGE_ACTIVATION_BLOCKED", "Required knowledge is incomplete or invalid.", {
+      activation: [...completeness.blockers.map((finding) => finding.code), ...graphIssues].join(",")
+    });
+  }
+  const occurredAt = typeof options.occurredAt === "function" ? options.occurredAt() : options.occurredAt;
+  await advanceDirectSubBasketAggregateForLine({
+    line,
+    actorId,
+    occurredAt,
+    session
+  });
+  const activeRevisionId = optionalString(line.activeRevisionId);
+  if (activeRevisionId) {
+    const superseded = await AiEstimatorKnowledgeRevisionModel.findOneAndUpdate(
+      { _id: activeRevisionId, mainLineId, status: "active" },
+      {
+        $set: {
+          status: "superseded",
+          supersededAt: occurredAt,
+          supersededById: actorId,
+          updatedById: actorId,
+          updatedAt: occurredAt
+        },
+        $inc: { version: 1 }
+      },
+      { new: true, runValidators: true, session }
+    ).lean().exec();
+    if (!superseded) versionConflict();
+  }
+  const digest = createKnowledgeRevisionDigest({
+    mainLineId,
+    revisionNumber: requiredInteger(revision.revisionNumber),
+    sections: completenessInputs(rows)
+  });
+  const activated = await AiEstimatorKnowledgeRevisionModel.findOneAndUpdate(
+    { _id: revisionId, mainLineId, status: "draft", version: revision.version },
+    {
+      $set: {
+        status: "active",
+        contentDigest: digest,
+        completeness,
+        activatedAt: occurredAt,
+        activatedById: actorId,
+        updatedById: actorId,
+        updatedAt: occurredAt
+      },
+      $inc: { version: 1 }
+    },
+    { new: true, runValidators: true, session }
+  ).lean().exec();
+  if (!activated) versionConflict();
+  const updatedLine = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
+    { _id: mainLineId, version: expectedVersion, draftRevisionId: revisionId },
+    {
+      $set: {
+        status: "active",
+        activeRevisionId: revisionId,
+        draftRevisionId: null,
+        deactivatedAt: null,
+        deactivatedById: null,
+        updatedById: actorId,
+        updatedAt: occurredAt
+      },
+      $inc: { version: 1 }
+    },
+    { new: true, runValidators: true, session }
+  ).lean().exec();
+  if (!updatedLine) versionConflict();
+  await audit.appendInMongoTransaction({
+    actorId,
+    action: "ai_estimator_knowledge_revision_activated",
+    entityType: "ai_estimator_knowledge_revision",
+    entityId: revisionId,
+    occurredAt: occurredAt.toISOString(),
+    oldValues: { status: "draft", aggregateVersion: expectedVersion, priorActiveRevisionId: activeRevisionId ?? null },
+    newValues: { status: "active", aggregateVersion: expectedVersion + 1, contentDigest: digest }
+  }, session);
+}
+
+export async function materializePriceCommands(input: {
   mainLineId: string;
   revisionId: string;
   payload: Row;
@@ -1444,6 +1459,9 @@ export async function createKnowledgeHierarchyInSession(options: {
   readonly uuid: () => string;
   readonly audit: Pick<AuditService, "appendInMongoTransaction">;
   readonly sourceRequestId?: string;
+  /** Proposal publication must create its reviewed child, never reuse an existing identity. */
+  readonly requireNewSubBasket?: boolean;
+  readonly newSubBasketId?: string;
 }): Promise<{ readonly subBasketId: string | null; readonly mainLineId: string | null }> {
   const { actorId, basketId, input, mainLineId, occurredAt, session, uuid, audit } = options;
   if ((mainLineId === null) !== (input.name === undefined)) {
@@ -1468,9 +1486,10 @@ export async function createKnowledgeHierarchyInSession(options: {
     // The parent dependency write above serializes name resolution with
     // other child creates and parent deletion in this same transaction.
     const existing = await AiEstimatorKnowledgeSubBasketModel.findOne({ basketId, nameNormalized }).session(session).lean().exec();
+    if (existing && options.requireNewSubBasket) throw new ApiError(409, "DUPLICATE_IDENTITY", "A Sub-Basket with this name already exists under the selected Main Basket.");
     if (existing) subBasketId = String(existing._id);
     else {
-      subBasketId = knowledgeId("sub-basket", uuid());
+      subBasketId = options.newSubBasketId ?? knowledgeId("sub-basket", uuid());
       createdSubBasketOrder = await allocateAiEstimatorKnowledgeDisplayOrder({
         scope: `sub-baskets:${basketId}`, resourceModel: AiEstimatorKnowledgeSubBasketModel,
         resourceFilter: { basketId }, session
@@ -1770,7 +1789,7 @@ async function assertResolvableRetainedPriceWindows(input: {
   }
 }
 
-function hasKnowledgeSectionContent(payload: unknown): boolean {
+export function hasKnowledgeSectionContent(payload: unknown): boolean {
   return payload !== null &&
     typeof payload === "object" &&
     !Array.isArray(payload) &&
@@ -2082,6 +2101,10 @@ async function loadItemDetail(mainLineId: string, includeArchived = false): Prom
   };
 }
 
+/** Read-only relationship projection. The proposal service must enforce its
+ * scoped actor guard and remove fields outside its reference allowlist. */
+export const loadKnowledgeItemDetailForProposalReference = loadItemDetail;
+
 async function getItemAfterMutation(
   actor: PublicUser,
   mainLineId: string,
@@ -2381,7 +2404,7 @@ function referencedPriceVersionIds(pricing: Row): string[] {
   });
 }
 
-function completenessForRows(mainLineId: string, rows: Row[]): KnowledgeCompletenessSummary {
+export function completenessForRows(mainLineId: string, rows: Row[]): KnowledgeCompletenessSummary {
   const overview = payloadFor(rows.find((row) => row.sectionKey === "overview"));
   return deriveKnowledgeCompleteness({
     identity: {
@@ -3024,7 +3047,8 @@ async function validateRevisionRelationships(
   mainLineId: string,
   rows: Row[],
   session: ClientSession,
-  context?: RevisionRelationshipValidationContext
+  context?: RevisionRelationshipValidationContext,
+  pendingGraph?: ReadonlyMap<string, Row[]>
 ): Promise<void> {
   validateStoredRevisionPayloads(rows, context?.updatedSectionKey);
   await validateRevisionMasterReferences(rows, session, context);
@@ -3048,8 +3072,10 @@ async function validateRevisionRelationships(
   if (targetIds.length > 0) {
     const targets = await AiEstimatorKnowledgeMainLineModel.find({
       _id: { $in: targetIds },
-      status: "active",
-      activeRevisionId: { $ne: null }
+      ...(pendingGraph ? { $or: [
+        { status: "active", activeRevisionId: { $ne: null } },
+        { _id: { $in: [...pendingGraph.keys()] }, status: "draft" }
+      ] } : { status: "active", activeRevisionId: { $ne: null } })
     }).select({ _id: 1, basketId: 1 }).session(session).lean().exec();
     const targetById = new Map(targets.map((target) => {
       const row = asRow(target)!;
@@ -3071,7 +3097,7 @@ async function validateRevisionRelationships(
   const activeLines = await AiEstimatorKnowledgeMainLineModel.find({
     status: "active",
     activeRevisionId: { $ne: null },
-    _id: { $ne: mainLineId }
+    _id: pendingGraph ? { $nin: [...pendingGraph.keys()] } : { $ne: mainLineId }
   }).select({ _id: 1, activeRevisionId: 1 }).session(session).lean().exec();
   const activeRevisionIds = activeLines
     .map((line) => optionalString(asRow(line)?.activeRevisionId))
@@ -3089,7 +3115,12 @@ async function validateRevisionRelationships(
       .filter((relation) => relation.dependency)
       .map((relation) => ({ fromId: requiredString(row.mainLineId), toId: relation.targetMainLineId }));
   });
-  const edges: KnowledgeItemEdge[] = [...activeEdges, ...candidateEdges];
+  const pendingEdges = pendingGraph ? [...pendingGraph.entries()]
+    .filter(([id]) => id !== mainLineId)
+    .flatMap(([id, sections]) => itemRelationsForRows(id, sections)
+      .filter((relation) => relation.dependency)
+      .map((relation) => ({ fromId: id, toId: relation.targetMainLineId }))) : [];
+  const edges: KnowledgeItemEdge[] = [...activeEdges, ...pendingEdges, ...candidateEdges];
   const nodes = [...new Set(edges.flatMap((edge) => [edge.fromId, edge.toId]))];
   const graphIssues = validateAcyclicGraph(nodes, edges);
   if (graphIssues.length > 0) {
@@ -3099,10 +3130,16 @@ async function validateRevisionRelationships(
   }
 }
 
+export interface KnowledgeProposalMasterResolver {
+  readonly uom: (id: string) => { readonly decimalScale: number } | undefined;
+  readonly hasSurface: (id: string) => boolean;
+}
+
 async function validateRevisionMasterReferences(
   rows: Row[],
   session: ClientSession,
-  context?: RevisionRelationshipValidationContext
+  context?: RevisionRelationshipValidationContext,
+  masters?: KnowledgeProposalMasterResolver
 ): Promise<void> {
   const overview = payloadFor(rows.find((row) => row.sectionKey === "overview"));
   const scope = payloadFor(rows.find((row) => row.sectionKey === "scope"));
@@ -3141,6 +3178,7 @@ async function validateRevisionMasterReferences(
     ...stringArray(scope.surfaceIds)
   ]);
 
+  for (const id of uomIds) if (masters?.uom(id)) uomIds.delete(id);
   if (uomIds.size > 0 && await AiEstimatorKnowledgeUomModel.countDocuments({
     _id: { $in: [...uomIds] },
     status: "active"
@@ -3169,8 +3207,8 @@ async function validateRevisionMasterReferences(
   }
   if (!context && surfaceIds.size > 0) {
     await requireActiveSurfaceReferences(
-      stringArray(overview.surfaceIds),
-      stringArray(scope.surfaceIds),
+      stringArray(overview.surfaceIds).filter((id) => !masters?.hasSurface(id)),
+      stringArray(scope.surfaceIds).filter((id) => !masters?.hasSurface(id)),
       session
     );
   }
@@ -3179,7 +3217,8 @@ async function validateRevisionMasterReferences(
 async function validateRevisionSectionRules(
   rows: Row[],
   session: ClientSession,
-  context?: RevisionRelationshipValidationContext
+  context?: RevisionRelationshipValidationContext,
+  masters?: KnowledgeProposalMasterResolver
 ): Promise<void> {
   const issues: KnowledgeValidationIssue[] = [];
   const overview = payloadFor(rows.find((row) => row.sectionKey === "overview"));
@@ -3201,7 +3240,7 @@ async function validateRevisionSectionRules(
       if (!overviewUomId) {
         invalidKnowledgeReference("Overview UOM");
       }
-      const uom = asRow(await AiEstimatorKnowledgeUomModel.findOne({
+      const uom = masters?.uom(overviewUomId!) ?? asRow(await AiEstimatorKnowledgeUomModel.findOne({
         _id: overviewUomId,
         status: "active"
       }).select({ decimalScale: 1 }).session(session).lean().exec());
@@ -3229,7 +3268,7 @@ async function validateRevisionSectionRules(
     }
   }
 
-  issues.push(...await slabRateRevisionIssues(rows, session, context));
+  issues.push(...await slabRateRevisionIssues(rows, session, context, masters));
 
   const productivity = activeStructuredRows(execution.productivity);
   const productivityUomIds = [...new Set(productivity
@@ -3245,6 +3284,10 @@ async function validateRevisionSectionRules(
     const row = asRow(document)!;
     return [requiredString(row._id), requiredInteger(row.decimalScale)] as const;
   }));
+  for (const id of productivityUomIds) {
+    const local = masters?.uom(id);
+    if (local) productivityScales.set(id, local.decimalScale);
+  }
   for (const [index, candidate] of structuredRows(execution.productivity).entries()) {
     if (candidate.active === false) continue;
     const uomId = optionalString(candidate.uomId);
@@ -3267,7 +3310,8 @@ async function validateRevisionSectionRules(
 async function slabRateRevisionIssues(
   rows: Row[],
   session: ClientSession,
-  context?: RevisionRelationshipValidationContext
+  context?: RevisionRelationshipValidationContext,
+  masters?: KnowledgeProposalMasterResolver
 ): Promise<KnowledgeValidationIssue[]> {
   const issues: KnowledgeValidationIssue[] = [];
   const pricing = payloadFor(rows.find((row) => row.sectionKey === "pricing"));
@@ -3305,13 +3349,14 @@ async function slabRateRevisionIssues(
         "The selected Specification does not exist in this revision's Pricing section."
       ));
     }
+    const localUom = masters?.uom(slabRate.uomId);
     const uom = uoms.get(slabRate.uomId);
     const prior = priorSlabRates?.get(slabRate.id);
     const retainedUnavailableReference = context !== undefined && (
       context.updatedSectionKey !== "quantity-margin" ||
       optionalString(prior?.uomId) === slabRate.uomId
     );
-    if (!uom || (uom.status !== "active" && !retainedUnavailableReference)) {
+    if (!localUom && (!uom || (uom.status !== "active" && !retainedUnavailableReference))) {
       issues.push(validationIssue(
         `${path}.uomId`,
         "INVALID_REFERENCE",
@@ -3322,7 +3367,7 @@ async function slabRateRevisionIssues(
     try {
       const scaledQuantity = parseScaledDecimal(
         slabRate.quantity,
-        requiredInteger(uom.decimalScale)
+        requiredInteger(localUom?.decimalScale ?? uom!.decimalScale)
       );
       if (scaledQuantity === 0n) {
         issues.push(validationIssue(
@@ -3335,7 +3380,7 @@ async function slabRateRevisionIssues(
       calculateSlabRateEstimatedCost({
         unitRatePaise: slabRate.unitRatePaise,
         quantity: slabRate.quantity,
-        quantityScale: requiredInteger(uom.decimalScale)
+        quantityScale: requiredInteger(localUom?.decimalScale ?? uom!.decimalScale)
       });
     } catch (error) {
       const calculationError = error instanceof KnowledgeCalculationError
@@ -3566,7 +3611,7 @@ function invalidMainLinePriority(): never {
   )]);
 }
 
-function itemRelationsForRows(mainLineId: string, rows: Row[]): Array<{
+export function itemRelationsForRows(mainLineId: string, rows: Row[]): Array<{
   targetMainLineId: string;
   targetBasketId: string | null;
   dependency: boolean;
@@ -3770,7 +3815,7 @@ function copyRevisionSections(
   });
 }
 
-function normalizeRecommendationPayload(payload: Row): Row {
+export function normalizeRecommendationPayload(payload: Row): Row {
   const normalized = structuredClone(payload);
   for (const field of ["recommendations", "exclusions", "budgetAlterations"] as const) {
     if (Array.isArray(normalized[field]) && normalized[field].length === 0) delete normalized[field];
@@ -3939,4 +3984,68 @@ function notFound(): never {
 
 function unresolved(message: string): never {
   throw new ApiError(422, "KNOWLEDGE_NOT_RESOLVABLE", message);
+}
+
+/** Read-only canonical checks used before an isolated proposal becomes live. */
+export async function validateKnowledgeProposalSectionRows(rows: Row[], session: ClientSession, masters?: KnowledgeProposalMasterResolver): Promise<void> {
+  validateStoredRevisionPayloads(rows);
+  await validateRevisionMasterReferences(rows, session, undefined, masters);
+  await validateRevisionSectionRules(rows, session, undefined, masters);
+  const issues = sectionGraphIssues(rows);
+  if (issues.length) throw new ApiError(409, "DEPENDENCY_CYCLE", "Execution dependencies are invalid.", { execution: issues.join(",") });
+}
+
+/** Apply precisely the normal section-save reference locks to new publication rows. */
+export async function coordinateKnowledgeProposalSectionReferences(sectionKey: KnowledgeSectionKey, payload: Row, session: ClientSession): Promise<void> {
+  await coordinateNewBasketReferences(sectionKey, {}, payload, session);
+  await coordinateNewModeConfigurationReferences(sectionKey, {}, payload, session);
+  await coordinateNewPriorityReferences(sectionKey, {}, payload, session);
+  await coordinateNewSurfaceReferences(sectionKey, {}, payload, session);
+  await coordinateNewSlabRateUomReferences(sectionKey, {}, payload, session);
+}
+
+/** Validate new price commands without writing shared prices or provisioning GST. */
+export async function validateKnowledgeProposalPriceCommands(payload: Row, session: ClientSession, masters?: KnowledgeProposalMasterResolver): Promise<void> {
+  validateSectionPayloadOrThrow("pricing", payload);
+  const commands = structuredRows(payload.priceEntries);
+  if (!commands.length) return;
+  const policy = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY;
+  const rule = asRow(await AiEstimatorKnowledgeTaxRuleModel.findById(policy.rule.id).session(session).lean().exec());
+  const version = asRow(await AiEstimatorKnowledgeTaxVersionModel.findById(policy.version.id).session(session).lean().exec());
+  if ((rule && !isExactFixedGstRule(rule)) || (version && !isExactFixedGstVersion(version))) fixedGstPolicyMismatch();
+  const windows = new Map<string, Array<{ id: string; effectiveFrom: Date; effectiveTo: Date | null }>>();
+  for (const [index, command] of commands.entries()) {
+    if (command.operation !== "set_budget" && command.operation !== "append") {
+      throw new ApiError(409, "KNOWLEDGE_REFERENCE_INVALID", "Proposal prices must contain saved budget values, not a live price reference.");
+    }
+    if (command.sourcePriceVersionId != null || command.specificationId != null) {
+      throw new ApiError(409, "KNOWLEDGE_REFERENCE_INVALID", "A proposal price cannot refer to a live price version or descriptive specification.");
+    }
+    if (command.operation === "append") assertCompatibilityAppendUsesFixedGst(command, index);
+    const vendor = await AiEstimatorKnowledgeVendorModel.findOne({ _id: command.vendorId, status: "active" }).session(session).lean().exec();
+    const uom = masters?.uom(String(command.uomId)) ?? await AiEstimatorKnowledgeUomModel.exists({ _id: command.uomId, status: "active" }).session(session);
+    const mode = command.modeId == null ? true : await AiEstimatorKnowledgeModeModel.exists({ _id: command.modeId, status: "active" }).session(session);
+    if (!vendor || (await vendorActivation(vendor, session)).effectiveStatus !== "active" || !uom || !mode) invalidKnowledgeReference("price");
+    const from = validDate(command.effectiveFrom, "effectiveFrom");
+    const to = command.effectiveTo == null ? null : validDate(command.effectiveTo, "effectiveTo");
+    if (to && from >= to) invalid("effectiveTo", "Effective end must be later than start.");
+    assertFixedGstCoverage(from, to, index);
+    deriveTaxAmounts({ inputAmountPaise: requiredInteger(command.inputAmountPaise), rateBps: policy.version.rateBps, treatment: policy.version.treatment });
+    if (command.operation === "set_budget" || command.status === "active") {
+      const key = JSON.stringify([command.uomId, command.modeId ?? null]);
+      const group = windows.get(key) ?? [];
+      group.push({ id: String(index), effectiveFrom: from, effectiveTo: to });
+      windows.set(key, group);
+      if (findOverlappingEffectiveWindows(group).length) effectiveBudgetOverlap(`payload.priceEntries.${index}.effectiveFrom`);
+    }
+  }
+}
+
+/** Preserve the ordinary editor's identity and legacy compatibility rules when
+ * saving isolated proposal resources. This helper performs no persistence. */
+export function normalizeKnowledgeProposalSectionPayload(sectionKey: KnowledgeSectionKey, payload: Row, previousPayload: Row): Row {
+  if (sectionKey === "advanced") return preserveModeConfigurationCompatibility(previousPayload, payload);
+  if (sectionKey === "pricing") return preserveTypedSpecificationCompatibility(previousPayload, payload);
+  if (sectionKey === "recommendations") return normalizeRecommendationPayload(payload);
+  return structuredClone(payload);
 }

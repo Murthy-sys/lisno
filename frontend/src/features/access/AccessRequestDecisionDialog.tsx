@@ -78,23 +78,14 @@ export function AccessRequestDecisionDialog({
   };
 
   const actions = (requestClose: () => void) => (
-    <div className="access-request-dialog__actions">
+    <div className={`access-request-dialog__actions${rejected ? "" : " ui-dialog__actions"}`}>
           <Button data-dialog-initial-focus={!rejected || undefined} variant="destructive-outline" disabled={mutation.isPending} onClick={requestClose}>Cancel</Button>
           <Button type="submit" form={`access-decision-${request.id}`} variant={rejected ? "destructive" : "primary"} busy={mutation.isPending} disabled={!isCurrentRow} busyLabel={rejected ? "Rejecting…" : "Approving…"}>
             {rejected ? "Reject request" : "Approve request"}
           </Button>
         </div>
   );
-  const content = (
-      <form
-        id={`access-decision-${request.id}`}
-        className="access-request-dialog"
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit();
-        }}
-      >
+  const fields = (<>
         <dl className="access-request-dialog__summary">
           <div><dt>Request ID</dt><dd>{request.id}</dd></div>
           <div><dt>Module</dt><dd>{request.module}</dd></div>
@@ -119,6 +110,18 @@ export function AccessRequestDecisionDialog({
             )}
           </Field>
         ) : null}
+  </>);
+  const content = (
+      <form
+        id={`access-decision-${request.id}`}
+        className={`access-request-dialog${rejected ? "" : " ui-dialog__form"}`}
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit();
+        }}
+      >
+        {rejected ? fields : <div className="ui-dialog__body">{fields}</div>}
         {!rejected ? actions(onClose) : null}
       </form>
   );

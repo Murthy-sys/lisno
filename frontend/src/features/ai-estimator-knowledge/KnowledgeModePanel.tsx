@@ -14,21 +14,13 @@ import {
   type ReactNode
 } from "react";
 
+import type { KnowledgeProposedMasterChoice } from "./KnowledgeSurfaceMultiSelect";
 import { ApiError } from "../../api/client";
 import { Button } from "../../components/ui/Button";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { PageState } from "../../components/ui/PageState";
 import { Surface } from "../../components/ui/Surface";
-import {
-  getKnowledgeItem,
-  getKnowledgeSection,
-  updateKnowledgeSection
-} from "./knowledgeApi";
-import {
-  commitKnowledgeSectionMutation,
-  invalidateKnowledgeSectionMutation
-} from "./knowledgeMutationSync";
-import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
+import { liveKnowledgeEditorDataSource, type KnowledgeEditorDataSource } from "./knowledgeEditorDataSource";
 import { knowledgeSectionPayloadForUpdate } from "./knowledgeSectionPayload";
 import { pendingValuesEqual, type KnowledgePendingChangesCallback } from "./knowledgePendingChanges";
 import { projectKnowledgeModePendingChanges, type KnowledgePendingCalculation } from "./knowledgeModePendingChanges";
@@ -116,6 +108,8 @@ export interface KnowledgeModePanelHandle {
 }
 
 export interface KnowledgeModePanelProps {
+  readonly proposedUoms?: readonly KnowledgeProposedMasterChoice[];
+  readonly dataSource?: KnowledgeEditorDataSource;
   readonly item: KnowledgeItemDetail;
   readonly revisionId: string;
   readonly masters: Readonly<
@@ -141,8 +135,10 @@ export const KnowledgeModePanel = forwardRef<
 >(function KnowledgeModePanel(
   {
     item,
+    dataSource = liveKnowledgeEditorDataSource,
     revisionId,
     masters,
+    proposedUoms = [],
     relationshipBaskets,
     relationshipItems,
     editable,
@@ -164,9 +160,9 @@ export const KnowledgeModePanel = forwardRef<
   const [draftSourceKey, setDraftSourceKey] = useState(sourceKey);
   const currentSource = useRef(sourceKey);
   currentSource.current = sourceKey;
-  const advancedQuery = useModeSectionQuery(mainLineId, revisionId, "advanced");
-  const pricingQuery = useModeSectionQuery(mainLineId, revisionId, "pricing");
-  const overviewQuery = useModeSectionQuery(mainLineId, revisionId, "overview");
+  const advancedQuery = useModeSectionQuery(mainLineId, revisionId, "advanced", dataSource);
+  const pricingQuery = useModeSectionQuery(mainLineId, revisionId, "pricing", dataSource);
+  const overviewQuery = useModeSectionQuery(mainLineId, revisionId, "overview", dataSource);
   const [drafts, setDrafts] = useState(createEmptyModeDrafts);
   const [calculationValidity, setCalculationValidity] = useState<Record<ModeCalculationScope, boolean>>({ pmc: true, sub_vendor: true, in_house_labor: true, in_house_material: true });
   const setCalculationValid = useCallback((scope: ModeCalculationScope, valid: boolean) => {
@@ -262,7 +258,7 @@ export const KnowledgeModePanel = forwardRef<
   const dirty = descriptionPending || MODE_SECTION_KEYS.some((sectionKey) => drafts[sectionKey].dirty);
   const busy = advancedQuery.isFetching || pricingQuery.isFetching || overviewQuery.isFetching;
   const savedUomId = overviewQuery.data?.payload.uomId;
-  const savedUom = (masters.uoms ?? []).find((uom) => uom.id === savedUomId);
+  const savedUom = (masters.uoms ?? []).find((uom) => uom.id === savedUomId) ?? proposedUoms.find(uom => uom.id === savedUomId);
   const uomScopeKey = `${mainLineId}:${revisionId}`;
   const calculationUom: KnowledgeModeCalculationUom = overviewQuery.isError
     ? { scopeKey: uomScopeKey, label: "Unavailable", message: "Could not load the UOM saved in Overview.", onRetry: () => void overviewQuery.refetch() }
@@ -470,7 +466,7 @@ export const KnowledgeModePanel = forwardRef<
         const payload = knowledgeSectionPayloadForUpdate(sectionKey, draft.payload);
         setSavingSection(sectionKey);
         try {
-          const saved = await updateKnowledgeSection(
+          const saved = await dataSource.updateSection(
             mainLineId,
             revisionId,
             sectionKey,
@@ -486,7 +482,7 @@ export const KnowledgeModePanel = forwardRef<
             revisionId,
             version: saved.aggregateVersion
           };
-          commitKnowledgeSectionMutation(queryClient, saved);
+          dataSource.commitSection(queryClient, saved);
           if (currentSource.current === sourceKey) {
             setDrafts((current) => ({
               ...current,
@@ -502,19 +498,19 @@ export const KnowledgeModePanel = forwardRef<
           ) {
             try {
               const [latestSection, latestItem] = await Promise.all([
-                getKnowledgeSection<KnowledgeJsonObject>(
+                dataSource.getSection<KnowledgeJsonObject>(
                   mainLineId,
                   revisionId,
                   sectionKey
                 ),
-                getKnowledgeItem(mainLineId)
+                dataSource.getItem(mainLineId)
               ]);
               queryClient.setQueryData(
-                knowledgeQueryKeys.section(mainLineId, revisionId, sectionKey),
+                dataSource.sectionKey(mainLineId, revisionId, sectionKey),
                 latestSection
               );
               queryClient.setQueryData(
-                knowledgeQueryKeys.item(mainLineId),
+                dataSource.itemKey(mainLineId),
                 latestItem
               );
               aggregateBaselineRef.current = {
@@ -561,14 +557,14 @@ export const KnowledgeModePanel = forwardRef<
       return true;
     } finally {
       if (committedAnySection) {
-        void invalidateKnowledgeSectionMutation(queryClient, mainLineId).catch(
+        void dataSource.invalidateSection(queryClient, mainLineId).catch(
           () => undefined
         );
       }
       setSavingSection(null);
       setSaving(false);
     }
-  }, [descriptionPending, drafts, editable, mainLineId, onAnnouncement, queryClient, revisionId, saving, sourceKey]);
+  }, [dataSource, descriptionPending, drafts, editable, mainLineId, onAnnouncement, queryClient, revisionId, saving, sourceKey]);
 
   useImperativeHandle(ref, () => ({ save, discard }), [discard, save]);
 
@@ -791,12 +787,13 @@ export const KnowledgeModePanel = forwardRef<
 function useModeSectionQuery(
   mainLineId: string,
   revisionId: string,
-  sectionKey: ModeSectionKey | "overview"
+  sectionKey: ModeSectionKey | "overview",
+  dataSource: KnowledgeEditorDataSource
 ) {
   return useQuery({
-    queryKey: knowledgeQueryKeys.section(mainLineId, revisionId, sectionKey),
+    queryKey: dataSource.sectionKey(mainLineId, revisionId, sectionKey),
     queryFn: () =>
-      getKnowledgeSection<KnowledgeJsonObject>(
+      dataSource.getSection<KnowledgeJsonObject>(
         mainLineId,
         revisionId,
         sectionKey

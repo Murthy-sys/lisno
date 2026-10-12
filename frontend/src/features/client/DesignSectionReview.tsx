@@ -183,10 +183,10 @@ export function DesignSectionReview({ projectId, mode, hideWhenEmpty = false, co
       ) : null}
       {choice?.decision === "approved" ? (
         <Dialog title={`Approve ${choice.section.label}?`} description="This section revision will be locked after approval." busy={mutation.isPending} onClose={() => setChoice(undefined)}>
-          {mutation.isError ? <p role="alert">{errorMessage(mutation.error)}</p> : null}
-          <div className="modal__actions">
-            <button type="button" onClick={() => mutation.mutate({ section: choice.section, decision: "approved" })} disabled={mutation.isPending}>Confirm approval</button>
-            <button type="button" className="secondary-button" onClick={() => setChoice(undefined)} disabled={mutation.isPending}>Cancel</button>
+          {mutation.isError ? <div className="ui-dialog__body"><p role="alert">{errorMessage(mutation.error)}</p></div> : null}
+          <div className="modal__actions ui-dialog__actions">
+            <button type="button" className="ui-button ui-button--primary" onClick={() => mutation.mutate({ section: choice.section, decision: "approved" })} disabled={mutation.isPending}>Confirm approval</button>
+            <button type="button" className="secondary-button ui-button ui-button--secondary" onClick={() => setChoice(undefined)} disabled={mutation.isPending}>Cancel</button>
           </div>
         </Dialog>
       ) : null}
@@ -202,9 +202,11 @@ export function DesignSectionReview({ projectId, mode, hideWhenEmpty = false, co
       /> : null}
       {sourcePreviewOpen && sourceImageUrl ? <Dialog title="Project source image" eyebrow="Project source" onClose={() => setSourcePreviewOpen(false)}>
         <div className="design-review__source-modal">
-          <img className="design-review__source-modal-image" src={sourceImageUrl} alt="Project source image" />
-          <div className="design-review__source-modal-actions">
-            <button type="button" className="button button--close" onClick={() => setSourcePreviewOpen(false)}>
+          <div className="ui-dialog__body">
+            <img className="design-review__source-modal-image" src={sourceImageUrl} alt="Project source image" />
+          </div>
+          <div className="design-review__source-modal-actions ui-dialog__actions">
+            <button type="button" className="button button--close ui-button ui-button--secondary" onClick={() => setSourcePreviewOpen(false)}>
               <X aria-hidden="true" size={18} />
               Close preview
             </button>

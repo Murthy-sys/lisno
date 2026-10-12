@@ -417,7 +417,7 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
     onClose={() => { if (!uomBusy) onClose(); }} footer={({ requestClose }) => actions(requestClose)}>{form}</ContextPanel> : <>{form}{confirmDiscard ? <Dialog
       title="Discard unsaved changes?" role="alertdialog" description="Your acknowledgement, notes, and selected evidence have not been saved."
       busy={mutation.isPending} onClose={() => setConfirmDiscard(false)}>
-      <div className="modal__actions">
+      <div className="modal__actions ui-dialog__actions">
         <Button variant="secondary" data-dialog-initial-focus disabled={mutation.isPending} onClick={() => setConfirmDiscard(false)}>Keep editing</Button>
         <Button variant="destructive" disabled={mutation.isPending} onClick={() => { if (!mutation.isPending) onClose(); }}>Discard changes</Button>
       </div>

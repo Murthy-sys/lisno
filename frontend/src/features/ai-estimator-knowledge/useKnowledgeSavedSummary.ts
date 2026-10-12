@@ -1,9 +1,7 @@
 import { useQueries, useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import { ApiError } from "../../api/client";
-import { getKnowledgeBasketQuality, getKnowledgeItem, getKnowledgeSection, listKnowledgeQualityControlOptions, listKnowledgeSubBaskets } from "./knowledgeApi";
-import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
-import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
+import { liveKnowledgeEditorDataSource, type KnowledgeEditorDataSource } from "./knowledgeEditorDataSource";
 import { projectKnowledgeSavedSummary } from "./knowledgeSavedSummary";
 import {
   SAVED_SUMMARY_SECTION_KEYS,
@@ -24,6 +22,7 @@ interface ReferenceState {
 }
 
 export interface KnowledgeSavedSummaryInput extends Pick<SavedSummaryProjectionInput, "masters" | "baskets" | "items"> {
+  readonly dataSource?: KnowledgeEditorDataSource;
   readonly item: KnowledgeItemDetail;
   readonly revisionId?: string;
   readonly referenceStates?: {
@@ -40,30 +39,30 @@ const SOURCE_LABELS = {
 };
 
 export function useKnowledgeSavedSummary(input: KnowledgeSavedSummaryInput): readonly SavedSummaryGroup[] {
-  const { item, revisionId, referenceStates } = input;
+  const { item, revisionId, referenceStates, dataSource = liveKnowledgeEditorDataSource } = input;
   const sectionQueries = useQueries({
     queries: SAVED_SUMMARY_SECTION_KEYS.map((key) => ({
-      queryKey: knowledgeQueryKeys.section(item.mainLineId, revisionId ?? "", key),
-      queryFn: () => getKnowledgeSection<KnowledgeJsonObject>(item.mainLineId, revisionId!, key),
+      queryKey: dataSource.sectionKey(item.mainLineId, revisionId ?? "", key),
+      queryFn: () => dataSource.getSection<KnowledgeJsonObject>(item.mainLineId, revisionId!, key),
       enabled: Boolean(revisionId),
       staleTime: 30_000
     }))
   });
   const qualityQuery = useQuery({
-    queryKey: knowledgeQueryKeys.basketQuality(item.basketId),
-    queryFn: () => getKnowledgeBasketQuality(item.basketId),
+    queryKey: dataSource.basketQualityKey(item.basketId),
+    queryFn: () => dataSource.getBasketQuality(item.basketId),
     enabled: Boolean(item.basketId),
     staleTime: 30_000
   });
   const frequencyOptionsQuery = useQuery({
-    queryKey: knowledgeQueryKeys.qualityControlOptions("frequency"),
-    queryFn: () => listKnowledgeQualityControlOptions("frequency"),
+    queryKey: dataSource.qualityControlOptionsKey("frequency"),
+    queryFn: () => dataSource.listQualityControlOptions("frequency"),
     enabled: Boolean(item.basketId),
     staleTime: 30_000
   });
   const performerOptionsQuery = useQuery({
-    queryKey: knowledgeQueryKeys.qualityControlOptions("performer"),
-    queryFn: () => listKnowledgeQualityControlOptions("performer"),
+    queryKey: dataSource.qualityControlOptionsKey("performer"),
+    queryFn: () => dataSource.listQualityControlOptions("performer"),
     enabled: Boolean(item.basketId),
     staleTime: 30_000
   });
@@ -96,7 +95,7 @@ export function useKnowledgeSavedSummary(input: KnowledgeSavedSummaryInput): rea
     && rule.targetMainLineId && !input.items.some((entry) => entry.mainLineId === rule.targetMainLineId)
     ? [rule.targetMainLineId] : []))].sort();
   const relatedQueries = useQueries({ queries: missingItemIds.map((id) => ({
-    queryKey: knowledgeQueryKeys.item(id), queryFn: () => getKnowledgeItem(id), enabled: relationshipsReady, staleTime: 30_000
+    queryKey: dataSource.itemKey(id), queryFn: () => dataSource.getItem(id), enabled: relationshipsReady, staleTime: 30_000
   })) });
   const items = relationshipsDenied ? [] : [...input.items];
   relatedQueries.forEach((query, index) => {
@@ -111,8 +110,8 @@ export function useKnowledgeSavedSummary(input: KnowledgeSavedSummaryInput): rea
     && !items.some((entry) => entry.basketId === rule.targetBasketId && entry.subBasketId === rule.targetSubBasketId && entry.subBasketName?.trim())
     ? [rule.targetBasketId] : []))].sort();
   const subBasketQueries = useQueries({ queries: missingSubBasketParents.map((id) => ({
-    queryKey: [...knowledgeQueryKeys.subBasketLists(id), "catalog"],
-    queryFn: () => collectAllKnowledgeMasterPages((params) => listKnowledgeSubBaskets(id, params), "Sub-Basket"),
+    queryKey: dataSource.subBasketCatalogKey(id),
+    queryFn: () => dataSource.getSubBasketCatalog(id),
     enabled: relationshipsReady, staleTime: 30_000
   })) });
   const subBaskets = subBasketQueries.flatMap((query, index) => {

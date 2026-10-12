@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../api/client";
+import { DialogToolbar } from "../../components/ui/DialogToolbar";
 import { projectStatusKeys } from "../project-status/projectStatusApi";
 import { decideSiteCompletion, getClientSiteCompletion, siteCompletionKeys, type SiteCompletionSection } from "../workflow/siteCompletionApi";
 import "./clientSiteCompletion.css";
@@ -54,6 +55,24 @@ export function ClientSiteCompletionReview({ projectId }: { projectId: string })
     {pending ? <div className="client-site-completion__actions"><button type="button" disabled={decision.isPending} onClick={() => decision.mutate("approve")}>Accept completion</button><button type="button" disabled={decision.isPending} onClick={() => setRequestingChanges(true)}>Request changes</button></div> : null}
     {pending && requestingChanges ? <div className="client-site-completion__reason"><label htmlFor={`site-completion-reason-${projectId}`}>Describe the changes needed</label><textarea id={`site-completion-reason-${projectId}`} value={reason} maxLength={2000} rows={3} onChange={event => setReason(event.target.value)} /><div><button type="button" onClick={() => setRequestingChanges(false)}>Cancel</button><button type="button" disabled={!reason.trim() || decision.isPending} onClick={() => decision.mutate("request_changes")}>Send changes to Site Manager</button></div></div> : null}
     {decision.isError ? <p role="alert">The review changed or your decision could not be saved. <button type="button" onClick={() => void query.refetch()}>Refresh and try again</button>.</p> : null}
-    {viewing ? <div className="client-site-completion__lightbox" role="dialog" aria-modal="true" aria-label="Completion images"><div><div className="client-site-completion__lightbox-head"><strong>Image {viewing.index + 1} of {viewing.section.imageIds.length}</strong><button type="button" autoFocus onClick={() => setViewing(null)}>Close images</button></div>{imageError ? <p role="alert">{imageError}</p> : imageUrl ? <img src={imageUrl} alt={`Completion evidence ${viewing.index + 1}`} /> : <p role="status">Loading image…</p>}<div className="client-site-completion__lightbox-actions"><button type="button" disabled={viewing.index === 0} onClick={() => setViewing({ ...viewing, index: viewing.index - 1 })}>Previous</button><button type="button" disabled={viewing.index >= viewing.section.imageIds.length - 1} onClick={() => setViewing({ ...viewing, index: viewing.index + 1 })}>Next</button></div></div></div> : null}
+    {viewing ? (
+      <div className="client-site-completion__lightbox" role="dialog" aria-modal="true" aria-label="Completion images">
+        <div className="ui-dialog--reference">
+          <DialogToolbar title="Completion images">
+            <button type="button" autoFocus onClick={() => setViewing(null)}>Close images</button>
+          </DialogToolbar>
+          <div className="client-site-completion__lightbox-body ui-dialog__body">
+            <strong>Image {viewing.index + 1} of {viewing.section.imageIds.length}</strong>
+            {imageError ? <p role="alert">{imageError}</p> : imageUrl ? (
+              <img className="client-site-completion__lightbox-image" src={imageUrl} alt={`Completion evidence ${viewing.index + 1}`} />
+            ) : <p role="status">Loading image…</p>}
+          </div>
+          <div className="client-site-completion__lightbox-actions ui-dialog__actions">
+            <button type="button" disabled={viewing.index === 0} onClick={() => setViewing({ ...viewing, index: viewing.index - 1 })}>Previous</button>
+            <button type="button" disabled={viewing.index >= viewing.section.imageIds.length - 1} onClick={() => setViewing({ ...viewing, index: viewing.index + 1 })}>Next</button>
+          </div>
+        </div>
+      </div>
+    ) : null}
   </section>;
 }

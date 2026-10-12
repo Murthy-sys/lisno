@@ -53,17 +53,19 @@ export function KnowledgeCatalogRenameDialog({
     returnFocusRef={returnFocusRef}
     fallbackFocusRef={fallbackFocusRef}
   >
-    <form className="knowledge-dialog-body knowledge-draft-catalog-dialog" onSubmit={submit}>
-      {reviewedVersion !== undefined ? <InlineMessage tone="info" role="status">Current saved name: “{currentName}” (version {reviewedVersion}). Your entered name is retained. Review it, then save when ready.</InlineMessage> : null}
-      {error ? <InlineMessage tone="error" role="alert">
-        {error}
-        {onRefresh ? <Button type="button" variant="quiet" size="compact" onClick={onRefresh} disabled={busy}>Refresh catalog</Button> : null}
-      </InlineMessage> : null}
-      <Field id={`${inputId}-name`} label={label} required>
-        {(control) => <Input {...control} ref={inputRef} value={name} maxLength={240} disabled={busy}
-          onChange={(event) => setName(event.target.value)} />}
-      </Field>
-      <div className="knowledge-dialog-actions">
+    <form className="ui-dialog__form knowledge-draft-catalog-dialog" onSubmit={submit}>
+      <div className="ui-dialog__body knowledge-dialog-body">
+        {reviewedVersion !== undefined ? <InlineMessage tone="info" role="status">Current saved name: “{currentName}” (version {reviewedVersion}). Your entered name is retained. Review it, then save when ready.</InlineMessage> : null}
+        {error ? <InlineMessage tone="error" role="alert">
+          {error}
+          {onRefresh ? <Button type="button" variant="quiet" size="compact" onClick={onRefresh} disabled={busy}>Refresh catalog</Button> : null}
+        </InlineMessage> : null}
+        <Field id={`${inputId}-name`} label={label} required>
+          {(control) => <Input {...control} ref={inputRef} value={name} maxLength={240} disabled={busy}
+            onChange={(event) => setName(event.target.value)} />}
+        </Field>
+      </div>
+      <div className="ui-dialog__actions knowledge-dialog-actions">
         <Button type="button" variant="destructive-outline" onClick={onClose} disabled={busy}>Cancel</Button>
         <Button type="submit" busy={busy} disabled={!trimmed || unchanged}>Save name</Button>
       </div>
@@ -98,6 +100,7 @@ export function KnowledgeSubItemRemovalDialog({
 }: KnowledgeSubItemRemovalDialogProps) {
   return <Dialog
     title={`Remove ${name}?`}
+    tone="danger"
     eyebrow="Estimation configuration"
     description="This permanently removes the real Draft Main Line from Configuration immediately. Save Recommendation & Exclusions remains a separate action."
     role="alertdialog"
@@ -106,15 +109,17 @@ export function KnowledgeSubItemRemovalDialog({
     returnFocusRef={returnFocusRef}
     fallbackFocusRef={fallbackFocusRef}
   >
-    <div className="knowledge-dialog-body knowledge-draft-catalog-dialog">
-      {context === "line_item" ? <InlineMessage tone="warning">This rule will still reference the removed item, which becomes unavailable. Choose another item or remove the rule before saving Recommendation & Exclusions.</InlineMessage> : lastChild ? <InlineMessage tone="warning" title="This is the last sub-item">
-        The Whole Sub-Basket will remain selected but empty. Add another sub-item or remove or retarget the rule before saving this section.
-      </InlineMessage> : null}
-      {error ? <InlineMessage tone="error" role="alert">
-        {error}
-        {onRefresh ? <Button type="button" variant="quiet" size="compact" onClick={onRefresh} disabled={busy}>Refresh catalog</Button> : null}
-      </InlineMessage> : null}
-      <div className="knowledge-dialog-actions">
+    <div className="knowledge-draft-catalog-dialog">
+      <div className="ui-dialog__body knowledge-dialog-body">
+        {context === "line_item" ? <InlineMessage tone="warning">This rule will still reference the removed item, which becomes unavailable. Choose another item or remove the rule before saving Recommendation & Exclusions.</InlineMessage> : lastChild ? <InlineMessage tone="warning" title="This is the last sub-item">
+          The Whole Sub-Basket will remain selected but empty. Add another sub-item or remove or retarget the rule before saving this section.
+        </InlineMessage> : null}
+        {error ? <InlineMessage tone="error" role="alert">
+          {error}
+          {onRefresh ? <Button type="button" variant="quiet" size="compact" onClick={onRefresh} disabled={busy}>Refresh catalog</Button> : null}
+        </InlineMessage> : null}
+      </div>
+      <div className="ui-dialog__actions knowledge-dialog-actions">
         <Button type="button" variant="destructive-outline" onClick={onClose} disabled={busy}>Cancel</Button>
         <Button type="button" variant="destructive" onClick={onConfirm} busy={busy}>Remove permanently</Button>
       </div>

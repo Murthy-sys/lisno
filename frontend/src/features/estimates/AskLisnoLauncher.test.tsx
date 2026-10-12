@@ -8,8 +8,8 @@ import { authorizationFor } from "../../test/authFixtures";
 import { askLisnoApi, type AskLisnoProjectList, type AskLisnoResponse } from "../ask-lisno/askLisnoApi";
 import { AskLisnoLauncher } from "./AskLisnoLauncher";
 
-const identity = vi.hoisted(() => ({ id: "client-a", role: "client" as "client" | "vendor" }));
-vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ status: "authenticated", user: { id: identity.id, role: identity.role }, authorization: authorizationFor(identity.role) }) }));
+const identity = vi.hoisted(() => ({ id: "client-a", role: "client" as "client" | "vendor", name: "Murthy Rao" as string | undefined }));
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ status: "authenticated", user: { id: identity.id, role: identity.role, name: identity.name }, authorization: authorizationFor(identity.role) }) }));
 function Location() { return <output aria-label="Current route">{useLocation().pathname}</output>; }
 function response(projectId: string | null, value = "Execution in progress"): AskLisnoResponse { return { projectId, resolution: { state: projectId ? "resolved" : "account", project: projectId ? { id: projectId, name: projectId === "project-a" ? "Villa" : "Loft" } : null, question: null, choices: [] }, checkedAt: "2026-10-09T08:00:00Z", answer: { kind: "status", facts: [{ id: "stage", label: "Status", value, source: { id: "status", label: "Current information", href: null } }], candidates: [], missingInputs: [], commercial: null } }; }
 function socialResponse(text: string): AskLisnoResponse { return { ...response(null), answer: { kind: "no_answer", narrative: [{ text, factIds: [] }], facts: [], candidates: [], missingInputs: [], commercial: null } }; }
@@ -24,13 +24,100 @@ function mount(path = "/client") {
 async function open() { await userEvent.click(screen.getByRole("button", { name: "Ask Lisno" })); await waitFor(() => expect(screen.getByLabelText("Your question")).toHaveFocus()); }
 async function ask(message = "What is the status?") { await userEvent.clear(screen.getByLabelText("Your question")); await userEvent.type(screen.getByLabelText("Your question"), message); await userEvent.click(screen.getByRole("button", { name: "Send" })); }
 beforeEach(() => {
-  vi.restoreAllMocks(); identity.id = "client-a"; identity.role = "client"; tokenStorage.clear();
+  vi.restoreAllMocks(); identity.id = "client-a"; identity.role = "client"; identity.name = "Murthy Rao"; tokenStorage.clear();
   vi.spyOn(askLisnoApi, "projects").mockResolvedValue([]);
   vi.spyOn(askLisnoApi, "verifyProject").mockResolvedValue(undefined);
   vi.spyOn(askLisnoApi, "ask").mockImplementation(async input => response(input.projectId));
 });
 
 describe("Ask Lisno conversational window", () => {
+  it("personalizes the welcome without an AI request and keeps it out of request history", async () => {
+    mount(); await open();
+    expect(screen.getByRole("heading", {name: "Hi Murthy!"})).toBeVisible();
+    expect(askLisnoApi.ask).not.toHaveBeenCalled();
+    await ask("Hello"); await screen.findByText("Execution in progress");
+    expect(screen.getByRole("heading", {name: "Hi Murthy!"})).toBeVisible();
+    expect(askLisnoApi.ask).toHaveBeenCalledWith(expect.objectContaining({message: "Hello", history: []}), expect.any(AbortSignal));
+    expect(screen.getByRole("button", {name: "Show my projects"})).toBeVisible();
+    expect(screen.getByRole("button", {name: "Timeline"})).toBeVisible();
+  });
+  it.each([undefined, "  "])("uses a neutral welcome when the user name is unavailable (%s)", async name => {
+    identity.name = name; mount(); await open();
+    expect(screen.getByRole("heading", {name: "Hi there!"})).toBeVisible();
+  });
+  it("expands the same conversation and restores size without a request or lost draft", async () => {
+    mount(); await open();
+    const dialog = screen.getByRole("dialog", {name: "Ask Lisno"});
+    await userEvent.type(screen.getByLabelText("Your question"), "My unsent question");
+    await userEvent.click(screen.getByRole("button", {name: "Expand Ask Lisno"}));
+    expect(screen.getByRole("dialog")).toBe(dialog);
+    expect(dialog).toHaveClass("ask-lisno-panel--expanded");
+    expect(screen.getByLabelText("Your question")).toHaveValue("My unsent question");
+    expect(screen.getByRole("button", {name: "Restore Ask Lisno size"})).toHaveFocus();
+    expect(askLisnoApi.ask).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", {name: "Restore Ask Lisno size"}));
+    expect(dialog).not.toHaveClass("ask-lisno-panel--expanded");
+    expect(dialog).toHaveAttribute("aria-modal", "false");
+  });
+  it("minimizes with focus return and retains a draft and verified conversation on reopen", async () => {
+    mount(); await open(); await ask("Villa status"); await screen.findByText("Execution in progress");
+    await userEvent.type(screen.getByLabelText("Your question"), "Follow-up draft");
+    await userEvent.click(screen.getByRole("button", {name: "Minimize Ask Lisno"}));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", {name: "Ask Lisno"})).toHaveFocus();
+    await open();
+    expect(screen.getByText("Villa status")).toBeVisible();
+    expect(screen.getByLabelText("Your question")).toHaveValue("Follow-up draft");
+  });
+  it("retains the original submission timestamp across a 503 retry and records response receipt separately", async () => {
+    vi.mocked(askLisnoApi.ask).mockRejectedValueOnce(new ApiError(503, "ASSISTANT_PROVIDER_ERROR", "Unavailable"));
+    mount(); await open(); await ask("Retry this question");
+    await screen.findByRole("alert");
+    const submitted = screen.getByLabelText(/^Sent at/).getAttribute("datetime");
+    expect(submitted).toBeTruthy();
+    expect(screen.queryByLabelText(/^Received at/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", {name: "Retry answer"}));
+    await screen.findByText("Execution in progress");
+    expect(screen.getByLabelText(/^Sent at/)).toHaveAttribute("datetime", submitted);
+    expect(screen.getByLabelText(/^Received at/)).not.toHaveAttribute("datetime", "2026-10-09T08:00:00Z");
+    expect(screen.getAllByText("Retry this question")).toHaveLength(1);
+  });
+  it("disables persistent quick prompts during a request and sends Timeline through the existing path", async () => {
+    let finish!: (value: AskLisnoResponse) => void;
+    vi.mocked(askLisnoApi.ask).mockImplementationOnce(() => new Promise(resolve => {finish = resolve;}));
+    mount(); await open();
+    await userEvent.click(screen.getByRole("button", {name: "Timeline"}));
+    expect(screen.getByRole("button", {name: "Show my projects"})).toBeDisabled();
+    expect(screen.getByRole("button", {name: "Send"})).toBeDisabled();
+    expect(askLisnoApi.ask).toHaveBeenCalledWith(expect.objectContaining({message: "Expected timeline"}), expect.any(AbortSignal));
+    await act(async () => finish(response("project-a")));
+    expect(screen.getByRole("button", {name: "Show my projects"})).toBeEnabled();
+  });
+  it("renders a verified project card from matching status facts without adding sample metrics", async () => {
+    const answer = response("project-b");
+    answer.answer.facts = [{id: "project-stage", label: "Current stage", value: "Estimation", source: {id: "project-b", label: "Current stage", href: null}}, {id: "project-status", label: "Project status", value: "In progress", source: {id: "project-b", label: "Project status", href: null}}];
+    answer.answer.narrative = [{text: "Your estimate is being prepared.", factIds: ["project-stage"]}];
+    vi.mocked(askLisnoApi.ask).mockResolvedValueOnce(answer);
+    mount("/client/projects/project-a"); await open(); await ask("Show progress for Loft");
+    const card = await screen.findByRole("region", {name: "Loft"});
+    expect(within(card).getByText("Estimation")).toBeVisible();
+    expect(within(card).getByText("In progress")).toBeVisible();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(within(card).queryByText(/60%|24 items|3 team members/)).not.toBeInTheDocument();
+    expect(screen.getByText("Sources and details")).toBeVisible();
+  });
+  it("keeps the resolved second project visible on a non-status estimate follow-up", async () => {
+    const price = response("project-b");
+    price.answer.kind = "price";
+    price.answer.narrative = [{text: "Please provide the room and quantity for this addition.", factIds: []}];
+    price.answer.facts = [];
+    vi.mocked(askLisnoApi.ask).mockResolvedValueOnce(response("project-a")).mockResolvedValueOnce(price);
+    mount(); await open(); await ask("Villa progress"); await screen.findByText("Execution in progress");
+    await ask("What would this addition cost in Loft?");
+    await screen.findByText("Please provide the room and quantity for this addition.");
+    expect(screen.getByText("Loft", {selector: ".ask-lisno-panel__project-name"})).toBeVisible();
+    expect(screen.queryByRole("region", {name: "Loft"})).not.toBeInTheDocument();
+  });
   it("opens a non-modal popup without querying a project list and sends the page only as a hint", async () => {
     mount("/client/projects/project-a"); await open();
     expect(screen.getByRole("dialog", { name: "Ask Lisno" })).toHaveAttribute("aria-modal", "false");
@@ -117,9 +204,11 @@ describe("Ask Lisno conversational window", () => {
   });
   it("clears history after an account switch", async () => {
     const { rerender } = mount(); await open(); await ask("My private question"); await screen.findByText("Execution in progress");
-    identity.id = "client-b";
+    identity.id = "client-b"; identity.name = "Ananya Kumar";
     rerender(<QueryClientProvider client={new QueryClient()}><MemoryRouter><AskLisnoLauncher /></MemoryRouter></QueryClientProvider>);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(); await open(); expect(screen.queryByText("My private question")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", {name: "Hi Ananya!"})).toBeVisible();
+    expect(screen.queryByText("Hi Murthy!")).not.toBeInTheDocument();
   });
   it("preserves the draft after an unavailable response and retries without duplicating a turn", async () => {
     vi.mocked(askLisnoApi.ask).mockRejectedValueOnce(new ApiError(503, "AI_UNAVAILABLE", "Unavailable"));

@@ -1,3 +1,5 @@
+import { VENDOR_BASKET_REQUEST_NOTIFICATION_SCHEMAS, VENDOR_BASKET_REQUEST_NOTIFICATION_RESPONSES, VENDOR_BASKET_REQUEST_NOTIFICATION_QUERIES, VENDOR_BASKET_REQUEST_NOTIFICATION_BODIES } from "./openapi/vendor-basket-request-notifications.js";
+import { VENDOR_BASKET_PROPOSAL_SCHEMAS, VENDOR_BASKET_PROPOSAL_BODIES, VENDOR_BASKET_PROPOSAL_RESPONSES, VENDOR_BASKET_PROPOSAL_QUERIES } from "./openapi/vendor-basket-proposals.js";
 import { ASK_LISNO_SCHEMAS } from "./openapi/ask-lisno.js";
 import { VENDOR_ACCESS_SCHEMAS, VENDOR_ACCESS_REQUESTS, VENDOR_ACCESS_RESPONSES } from "./openapi/vendor-access.js";
 import { EXECUTION_SCHEMAS, EXECUTION_REQUESTS, EXECUTION_RESPONSES, EXECUTION_QUERIES } from "./openapi/vendor-execution.js";
@@ -139,6 +141,8 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   ...PROCUREMENT_BASKET_TENDER_REQUESTS,
   ...PROCUREMENT_BASKET_OPERATION_REQUESTS,
   ...VENDOR_BASKET_REQUEST_BODIES,
+  ...VENDOR_BASKET_REQUEST_NOTIFICATION_BODIES,
+  ...VENDOR_BASKET_PROPOSAL_BODIES,
   ...VENDOR_WORK_REQUESTS,
   ...EXECUTION_REQUESTS,
   ...VENDOR_ACCESS_REQUESTS,
@@ -246,6 +250,8 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   ...PROCUREMENT_BASKET_TENDER_RESPONSES,
   ...PROCUREMENT_BASKET_OPERATION_RESPONSES,
   ...VENDOR_BASKET_REQUEST_RESPONSES,
+  ...VENDOR_BASKET_REQUEST_NOTIFICATION_RESPONSES,
+  ...VENDOR_BASKET_PROPOSAL_RESPONSES,
   ...VENDOR_WORK_RESPONSES,
   ...EXECUTION_RESPONSES,
   ...VENDOR_ACCESS_RESPONSES,
@@ -659,6 +665,8 @@ const queryParametersByOperation: Readonly<
   "GET /procurement/projects/:projectId/items": PROJECT_PROCUREMENT_ITEM_QUERY_PARAMETERS,
   ...PROCUREMENT_BASKET_OPERATION_QUERIES,
   ...VENDOR_BASKET_REQUEST_QUERIES,
+  ...VENDOR_BASKET_REQUEST_NOTIFICATION_QUERIES,
+  ...VENDOR_BASKET_PROPOSAL_QUERIES,
   "GET /procurement/projects/:projectId/purchase-orders": PROJECT_PURCHASE_ORDER_QUERY_PARAMETERS,
   "GET /procurement/projects/:projectId/purchase-order-requests": PROJECT_PURCHASE_ORDER_REQUEST_QUERY_PARAMETERS,
   "GET /admin/purchase-orders/pending": PROJECT_PURCHASE_ORDER_QUERY_PARAMETERS,
@@ -1476,6 +1484,8 @@ function pathParameters(path: string): OpenApiParameter[] {
       ? { type: "integer", minimum: 0 }
       : match[1] === "sectionKey"
         ? { $ref: "#/components/schemas/KnowledgeSectionKey" }
+      : match[1] === "masterKind" && /\/basket-proposals\/|\/vendor-basket-proposals\//u.test(path)
+        ? { type: "string", enum: ["uoms", "surfaces"] }
       : { type: "string", minLength: 1 }
   }));
 }
@@ -1575,6 +1585,8 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     ...PROCUREMENT_BASKET_TENDER_SCHEMAS,
     ...PROCUREMENT_BASKET_OPERATION_SCHEMAS,
     ...VENDOR_BASKET_REQUEST_SCHEMAS,
+  ...VENDOR_BASKET_REQUEST_NOTIFICATION_SCHEMAS,
+    ...VENDOR_BASKET_PROPOSAL_SCHEMAS,
     ...VENDOR_WORK_SCHEMAS,
   ...EXECUTION_SCHEMAS,
   ...VENDOR_ACCESS_SCHEMAS,

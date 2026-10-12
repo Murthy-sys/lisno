@@ -1261,8 +1261,7 @@
 .estimator-recommendations__unavailable-count { display: inline-block; padding: 1px 6px; border: 1px solid #d8d2c3; color: #605736; font-size: 10px; font-weight: 700; }
 .estimator-recommendations__review { min-height: 44px; padding: 7px 15px; border: 1px solid #1d6843; border-radius: 4px; background: #1d6843; color: #fff; font: 700 11px/1.35 "Poppins", sans-serif; cursor: pointer; }
 .modal-layer:has(.estimator-recommendations__detail) { align-items: center; justify-items: center; padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom)); }
-.ui-dialog.modal:has(.estimator-recommendations__detail) { width: min(100%, 34rem); max-height: calc(100dvh - 24px); overflow-y: auto; border: 1px solid #c9e1d3; border-radius: 5px; background: #f3faf5; box-shadow: none; color: #17213c; font-family: "Poppins", sans-serif; }
-.ui-dialog.modal:has(.estimator-recommendations__detail) > .ui-dialog__header { position: absolute; width: 1px; height: 1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.ui-dialog.modal:has(.estimator-recommendations__detail) { width: min(100%, 34rem); max-height: calc(100dvh - 24px); overflow-y: auto; }
 .estimator-recommendations__detail { min-width: 0; }
 .estimator-recommendations__detail:focus-visible { outline: 2px solid #1d6843; outline-offset: -3px; }
 .estimator-recommendations__card-header { display: grid; grid-template-columns: 40px minmax(0, 1fr) 44px; align-items: start; gap: 10px; padding: 17px 18px 13px; }

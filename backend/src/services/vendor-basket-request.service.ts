@@ -15,7 +15,13 @@ import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import { systemClock, type Clock } from "./workflow.js";
 
+import { appendSubmittedBasketNotification } from "./vendor-basket-request-notifications.service.js";
+
 type RequestRow = Record<string, unknown>;
+
+export interface OwnVendorBasketRequestQuery extends PaginationInput {
+  search?: string; status?: VendorBasketRequestStatus; targetKind?: "new_main_basket" | "new_sub_basket";
+}
 
 export interface VendorBasketRequestPage {
   readonly items: readonly VendorBasketRequestDto[];
@@ -64,25 +70,26 @@ export function createVendorBasketRequestService(dependencies: {
           const active = await AiEstimatorKnowledgeBasketModel.exists({ nameNormalized: proposedNameNormalized, status: "active" }).session(session);
           if (active) throw new ApiError(409, "BASKET_EXISTS", "This Main Basket is already in Configuration. Select it from the list.");
           const pending = await VendorBasketRequestModel.exists({
-            proposedNameNormalized, status: "pending",
+            proposedNameNormalized, targetParentBasketId: null, status: "pending",
             $or: [{ vendorKey }, { vendorNameNormalized }]
           }).session(session);
           if (pending) throw new ApiError(409, "REQUEST_PENDING", "A request for this vendor and Main Basket is already pending.");
           const createdAt = now();
           const [record] = await VendorBasketRequestModel.create([{
             _id: `vendor-basket-request-${createId()}`, requesterId: authorized.id, vendorId, vendorKey,
-            vendorName, vendorNameNormalized, proposedName, proposedNameNormalized, status: "pending", version: 1,
+            vendorName, vendorNameNormalized, proposedName, proposedNameNormalized, targetKind: "new_main_basket", targetParentBasketId: null, status: "pending", version: 1,
             basketId: null, subBasketId: null, mainLineId: null, reason: null, idempotencyKey: input.idempotencyKey, requestFingerprint: fingerprint,
             decisionIdempotencyKey: null, decisionFingerprint: null, createdAt,
             decidedAt: null, decidedById: null
           }], { session });
           if (!record) throw new Error("Vendor basket request creation did not complete.");
+          await appendSubmittedBasketNotification({ request: vendorBasketRequestDto(record.toObject() as RequestRow), requester: actor }, session);
           await dependencies.audit.appendInMongoTransaction({
             actorId: authorized.id, action: "vendor_basket_request_created", entityType: "vendor_basket_request",
             entityId: String(record._id), occurredAt: createdAt.toISOString(),
             newValues: { vendorId, vendorName, proposedName, status: "pending", version: 1 }
           }, session);
-          return dto(record.toObject() as RequestRow);
+          return vendorBasketRequestDto(record.toObject() as RequestRow);
         });
       } catch (error) {
         if (!duplicateKey(error)) throw error;
@@ -92,16 +99,30 @@ export function createVendorBasketRequestService(dependencies: {
       }
     },
 
-    async listMine(actor: PublicUser, pagination: PaginationInput): Promise<VendorBasketRequestPage> {
+    async listMine(actor: PublicUser, pagination: OwnVendorBasketRequestQuery): Promise<VendorBasketRequestPage> {
       requireProcurementRole(actor);
       const authorized = await aiEstimatorKnowledgeVendorActorGuard.requireReadActor(actor);
       if (authorized.role !== "procurement") forbidden();
-      return page({ requesterId: authorized.id }, pagination);
+      const search = pagination.search?.normalize("NFKC").trim().replace(/\s+/gu, " ") ?? "";
+      if (search.length > 240) throw new ApiError(400, "VALIDATION_ERROR", "Search must be no longer than 240 characters.");
+      const filter: Record<string, unknown> = { requesterId: authorized.id };
+      if (pagination.status) filter.status = pagination.status;
+      if (search) filter.proposedNameNormalized = { $regex: normalizeKnowledgeIdentity(search).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&") };
+      if (pagination.targetKind === "new_sub_basket") filter.targetKind = "new_sub_basket";
+      else if (pagination.targetKind === "new_main_basket") filter.$or = [{ targetKind: "new_main_basket" }, { targetKind: { $exists: false } }];
+      return page(filter, pagination);
     },
 
     async listForAdmin(actor: PublicUser, status: VendorBasketRequestStatus | undefined, pagination: PaginationInput): Promise<VendorBasketRequestPage> {
       await aiEstimatorKnowledgeActorGuard.requireReadActor(actor);
       return page(status ? { status } : {}, pagination);
+    },
+
+    async getForAdmin(actor: PublicUser, requestId: string): Promise<VendorBasketRequestDto> {
+      await aiEstimatorKnowledgeActorGuard.requireReadActor(actor);
+      const found = await VendorBasketRequestModel.findById(requestId).lean().exec();
+      if (!found) throw new ApiError(404, "NOT_FOUND", "The basket request was not found.");
+      return vendorBasketRequestDto(found as RequestRow);
     },
 
     async decide(actor: PublicUser, requestId: string, input: DecideVendorBasketRequestInput): Promise<VendorBasketRequestDto> {
@@ -120,9 +141,12 @@ export function createVendorBasketRequestService(dependencies: {
             const authorized = await aiEstimatorKnowledgeActorGuard.requireMutationActor(actor, session);
             const current = await VendorBasketRequestModel.findById(requestId).session(session).lean().exec() as RequestRow | null;
             if (!current) throw new ApiError(404, "NOT_FOUND", "The basket request was not found.");
+            if (current.kind === "configuration_proposal") {
+              throw new ApiError(409, "PROPOSAL_REVIEW_REQUIRED", "Open the full configuration proposal to review and decide this request.");
+            }
             if (current.decisionIdempotencyKey === input.idempotencyKey) {
               if (current.decisionFingerprint !== fingerprint) idempotencyConflict();
-              return dto(current);
+              return vendorBasketRequestDto(current);
             }
             if (current.status !== "pending" || Number(current.version) !== input.expectedVersion) {
               throw new ApiError(409, "VERSION_CONFLICT", "This request has changed. Refresh it before deciding.");
@@ -165,7 +189,7 @@ export function createVendorBasketRequestService(dependencies: {
               newValues: { status: input.decision === "fulfill" ? "fulfilled" : "rejected", version: input.expectedVersion + 1, basketId, subBasketId, mainLineId },
               reason
             }, session);
-            return dto({ ...updated, basketId, subBasketId, mainLineId });
+            return vendorBasketRequestDto({ ...updated, basketId, subBasketId, mainLineId });
           });
         } catch (error) {
           if (!duplicateKey(error) || attempt > 0) throw error;
@@ -211,9 +235,12 @@ async function findOrCreateBasket(request: RequestRow, actorId: string, timestam
   return String(created._id);
 }
 
-function dto(row: RequestRow): VendorBasketRequestDto {
-  return { id: String(row._id), requesterId: String(row.requesterId),
-    vendorId: row.vendorId == null ? null : String(row.vendorId), vendorName: String(row.vendorName),
+export function vendorBasketRequestDto(row: RequestRow): VendorBasketRequestDto {
+  return { target: row.targetKind === "new_sub_basket" ? { kind: "new_sub_basket", basketId: String(row.targetParentBasketId) } : { kind: "new_main_basket" },
+    targetParentName: row.targetParentName == null ? null : String(row.targetParentName), id: String(row._id), requesterId: String(row.requesterId),
+    ...(row.kind === "configuration_proposal" ? { kind: "configuration_proposal" as const,
+      proposalId: String(row.proposalId), proposalCounts: row.proposalCounts as { subBaskets: number; mainLines: number } } : {}),
+    vendorId: row.vendorId == null ? null : String(row.vendorId), vendorName: row.vendorName == null ? null : String(row.vendorName),
     proposedName: String(row.proposedName), status: row.status as VendorBasketRequestStatus,
     version: Number(row.version), basketId: row.basketId == null ? null : String(row.basketId),
     subBasketId: row.subBasketId == null ? null : String(row.subBasketId),
@@ -233,7 +260,7 @@ async function page(filter: Record<string, unknown>, pagination: PaginationInput
     VendorBasketRequestModel.find(filter).sort({ createdAt: -1, _id: 1 }).skip(pagination.offset).limit(pagination.limit).lean().exec(),
     VendorBasketRequestModel.countDocuments(filter).exec()
   ]);
-  return { items: rows.map((row) => dto(row as RequestRow)),
+  return { items: rows.map((row) => vendorBasketRequestDto(row as RequestRow)),
     pagination: { total, limit: pagination.limit, offset: pagination.offset, hasMore: pagination.offset + rows.length < total } };
 }
 
@@ -279,5 +306,5 @@ function requireProcurementRole(actor: PublicUser): void { if (actor.role !== "p
 function idempotencyConflict(): never { throw new ApiError(409, "IDEMPOTENCY_CONFLICT", "This request key was already used with different values."); }
 function replayRequest(row: RequestRow, fingerprint: string): VendorBasketRequestDto {
   if (row.requestFingerprint !== fingerprint) idempotencyConflict();
-  return dto(row);
+  return vendorBasketRequestDto(row);
 }

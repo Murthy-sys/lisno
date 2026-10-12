@@ -208,20 +208,14 @@
 .procurement-basket__drawer-actions { display: flex; justify-content: end; flex-wrap: wrap; gap: 7px; }
 .ui-overlay-layer.procurement-basket__award-layer { padding: 24px; place-items: center; }
 .procurement-basket__award-layer > .ui-overlay-backdrop { background: rgb(22 34 29 / 62%); backdrop-filter: none; animation: basket-award-backdrop-in 240ms ease-out both; }
-.ui-dialog.modal.procurement-basket__award-modal { display: grid; grid-template-rows: auto minmax(0,1fr) auto; width: min(100%,980px); max-height: calc(100dvh - 48px); overflow: hidden; border: 1px solid var(--basket-border); border-radius: 0; background: var(--basket-surface); color: var(--basket-ink); box-shadow: none; animation: basket-award-modal-in 340ms cubic-bezier(.2,.75,.2,1) both; }
+.ui-dialog.modal.procurement-basket__award-modal { display: grid; grid-template-rows: auto auto minmax(0,1fr) auto; width: min(100%,980px); max-height: calc(100dvh - 48px); overflow: hidden; animation: basket-award-modal-in 340ms cubic-bezier(.2,.75,.2,1) both; }
 .procurement-basket__award-modal, .procurement-basket__award-modal * { box-sizing: border-box; }
 .procurement-basket__award-modal :is(h3,h4,p,dl) { margin: 0; }
 .procurement-basket__award-modal button { font: inherit; cursor: pointer; }
 .procurement-basket__award-modal button:disabled { cursor: not-allowed; }
 .procurement-basket__award-modal :is(button,input,textarea,select,summary):focus-visible { outline: 2px solid var(--basket-forest); outline-offset: 3px; box-shadow: none; }
 .procurement-basket__award-modal :is(input,select,textarea) { min-width: 0; min-height: 42px; padding: 9px 11px; border: 1px solid var(--basket-border); border-radius: 0; background: #fbfbf8; color: var(--basket-ink); font: inherit; font-size: 13px; }
-.procurement-basket__award-modal > .ui-dialog__header { padding: 24px 82px 21px 28px; border-bottom: 1px solid var(--basket-border); background: #eeefe9; }
-.procurement-basket__award-modal > .ui-dialog__header .eyebrow { margin: 0 0 7px; color: var(--basket-forest); font-size: 11px; font-weight: 700; letter-spacing: .11em; }
-.procurement-basket__award-modal > .ui-dialog__header h2 { color: var(--basket-ink); font-size: clamp(24px,2.5vw,32px); line-height: 1.15; }
-.procurement-basket__award-modal > .ui-dialog__header p:last-child:not(.eyebrow) { max-width: 65ch; margin: 9px 0 0; color: var(--basket-muted); font-size: 13px; line-height: 1.5; }
-.procurement-basket__award-modal .procurement-basket__award-modal-close { position: absolute; top: 22px; right: 22px; z-index: 1; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 1px solid var(--basket-border); border-radius: 0; background: transparent; color: var(--basket-forest); font-size: 28px; font-weight: 400; line-height: 1; }
-.procurement-basket__award-modal-close:disabled { opacity: .5; }
-.procurement-basket__award-modal-body { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 24px 28px; }
+.procurement-basket__award-modal-body { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 16px 20px; }
 .procurement-basket__award-modal-body:focus-visible { outline: 2px solid var(--basket-forest); outline-offset: -3px; box-shadow: none; }
 .procurement-basket__award-modal .procurement-basket__award { gap: 20px; }
 .procurement-basket__award-modal .procurement-basket__award-vendor { padding: 16px; animation: basket-award-content-in 300ms 60ms ease-out both; }
@@ -235,9 +229,9 @@
 .procurement-basket__award-modal .procurement-basket__award-schedule ol { gap: 8px; }
 .procurement-basket__award-modal .procurement-basket__award-schedule li { gap: 14px; padding: 12px 14px; }
 .procurement-basket__award-modal .procurement-basket__reviewer-chips button { min-height: 42px; min-width: 42px; border-radius: 0; padding: 6px 10px; font-size: 11px; font-weight: 700; }
-.procurement-basket__award-modal-footer { padding: 16px 28px; border-top: 1px solid var(--basket-border); background: #eeefe9; }
+.procurement-basket__award-modal-footer .procurement-basket__drawer-actions { width: 100%; }
 .procurement-basket__award-modal-footer .procurement-basket__drawer-actions { gap: 10px; }
-.procurement-basket__award-modal-footer .procurement-basket__drawer-actions button { min-height: 44px; padding: 10px 18px; border-radius: 0; font-size: 13px; font-weight: 700; }
+.procurement-basket__award-modal-footer .procurement-basket__drawer-actions button { min-height: 36px; padding: 8px 14px; border-radius: 4px; font-size: 13px; font-weight: 600; }
 .procurement-basket__award-modal-footer .procurement-basket__drawer-actions button:disabled { opacity: .56; }
 .ui-dialog.modal.procurement-basket__award-modal.is-closing { animation: basket-award-modal-out 180ms cubic-bezier(.4,0,1,1) both; }
 .procurement-basket__award-layer.is-closing > .ui-overlay-backdrop { animation: basket-award-backdrop-out 180ms ease-in both; }
@@ -250,10 +244,8 @@
 @media (max-width: 760px) {
   .ui-overlay-layer.procurement-basket__award-layer { padding: 12px; }
   .ui-dialog.modal.procurement-basket__award-modal { max-height: calc(100dvh - 24px); }
-  .procurement-basket__award-modal > .ui-dialog__header { padding: 20px 68px 18px 20px; }
-  .procurement-basket__award-modal .procurement-basket__award-modal-close { top: 16px; right: 16px; }
-  .procurement-basket__award-modal-body { padding: 20px; }
-  .procurement-basket__award-modal-footer { padding: 14px 20px; }
+  .procurement-basket__award-modal-body { padding: 16px; }
+  .procurement-basket__award-modal :is(input,select,textarea) { font-size: 16px; }
 }
 @media (max-width: 580px) {
   .procurement-basket__award-modal .procurement-basket__award-vendor { align-items: start; flex-direction: column; gap: 8px; }

@@ -453,18 +453,24 @@ describe("LeadDashboard", () => {
     const dialog = screen.getByRole("dialog", { name: "Initiate project" });
     for (const [label, value] of Object.entries({
       "Client name": "Aurora Homes", "Client email": "aurora@example.com", Mobile: "9000000001",
-      "Project / property name": "Aurora Villa", Location: "Bengaluru", "Property type": "3BHK",
-      "Minimum budget": "2500000", "Maximum budget": "3500000", "Next action": "Site visit", "Next action date": "2026-10-01T10:30"
+      "Project / property name": "Aurora Villa", "Project city": "Bengaluru", "Next action": "Site visit"
     })) {
       await user.type(within(dialog).getByLabelText(new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\*?$`)), value);
     }
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Property type" }), "3BHK");
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Source" }), "Customer referral");
+    await user.click(within(dialog).getByRole("button", { name: "Next action date" }));
+    await user.click(within(dialog).getByRole("button", { name: "Today" }));
     await user.click(within(dialog).getByRole("combobox", { name: "Sales Manager" }));
     await user.click(await within(dialog).findByRole("option", { name: /Meera Manager/ }));
     await user.click(within(dialog).getByRole("button", { name: "Initiate project" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/estimator-sales/leads/lead-created"));
     expect(await screen.findByRole("heading", { name: "Aurora Homes" })).toBeVisible();
     expect(refreshed).toBe(true);
-    expect(payload).toMatchObject({ salesManagerId: "manager-1", projectName: "Aurora Villa" });
+    expect(payload).toMatchObject({ salesManagerId: "manager-1", projectName: "Aurora Villa", cityName: "Bengaluru", propertyType: "3BHK", source: "Customer referral" });
+    expect(payload).not.toHaveProperty("location");
+    expect(payload).not.toHaveProperty("budgetMin");
+    expect(payload).not.toHaveProperty("budgetMax");
     expect(payload).not.toHaveProperty("estimatorId");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });

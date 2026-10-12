@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/client";
 import { KnowledgeModePanel, type KnowledgeModePanelHandle } from "./KnowledgeModePanel";
 import * as api from "./knowledgeApi";
+import { liveKnowledgeEditorDataSource, type KnowledgeEditorDataSource } from "./knowledgeEditorDataSource";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import type { KnowledgePendingChangesSnapshot } from "./knowledgePendingChanges";
 import type { KnowledgeItemDetail, KnowledgeJsonObject, KnowledgeSectionEnvelope, KnowledgeSectionKey } from "./knowledgeTypes";
@@ -335,5 +336,54 @@ describe("Mode pending publication lifecycle", () => {
     expect(panel.latest()?.groups).toHaveLength(1);
     panel.rerenderProps({ editable: false });
     expect(panel.latest()?.groups).toEqual([]);
+  });
+});
+
+
+describe("proposal Mode data source", () => {
+  it("uses the saved private UOM precision without adding a shared catalog record", async () => {
+    const proposed = { id: "proposal-uom", name: "Panel bundle", decimalScale: 1 };
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key,
+      key === "overview" ? { uomId: proposed.id } : key === "pricing" ? savedPricing : {}, 1, revision));
+    const panel = setup({ proposedUoms: [proposed], masters: {} });
+
+    expect(await screen.findByText(proposed.name)).toBeVisible();
+    const limit = screen.getByRole("textbox", { name: "Low Quantity Limit" });
+    fireEvent.change(limit, { target: { value: "1.25" } });
+    expect(limit).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText("Enter a non-negative limit with up to 1 decimal places.")).toBeVisible();
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(false); });
+    expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
+
+    fireEvent.change(limit, { target: { value: "1.2" } });
+    expect(limit).not.toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByText("The saved UOM details are unavailable. Review the UOM in Overview.")).not.toBeInTheDocument();
+    expect(panel.queryClient.getQueryCache().getAll().some(query => query.queryKey.includes("masters"))).toBe(false);
+  });
+
+  it("chains aggregate versions across two scoped saves without any live read or write", async () => {
+    const update = vi.fn<KnowledgeEditorDataSource["updateSection"]>().mockImplementation(async (_id, revision, key, input) => ({
+      ...section(key, input.payload, input.expectedVersion + 1, revision), aggregateVersion: (input.expectedAggregateVersion ?? 10) + 1
+    }));
+    const keys = (...parts: unknown[]) => ["vendor-basket-proposals", "actor-a", "proposal-a", ...parts];
+    const dataSource: KnowledgeEditorDataSource = {
+      ...liveKnowledgeEditorDataSource, scopeKey: "actor-a/proposal-a/review", supportsLegacyQuality: false,
+      sectionKey: (id, revision, key) => keys(id, revision, key), itemKey: id => keys(id),
+      getSection: (async (_id, revision, key) => section(key, key === "pricing" ? savedPricing : {}, 1, revision)) as KnowledgeEditorDataSource["getSection"],
+      getItem: async () => item, updateSection: update as KnowledgeEditorDataSource["updateSection"],
+      commitSection: (client, value) => { client.setQueryData(keys(value.mainLineId, value.revisionId, value.sectionKey), value); },
+      invalidateSection: async () => undefined
+    };
+    const panel = setup({ dataSource });
+    fireEvent.change(await openSavedSpecificationEditor(), { target: { value: "Proposal-only specification" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Min. PMC Margin (%)" }), { target: { value: "15" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" }), { target: { value: "15" } });
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
+    expect(update).toHaveBeenNthCalledWith(1, item.mainLineId, "revision-1", "advanced", expect.objectContaining({ expectedAggregateVersion: 10 }));
+    expect(update).toHaveBeenNthCalledWith(2, item.mainLineId, "revision-1", "pricing", expect.objectContaining({ expectedAggregateVersion: 11 }));
+    expect(api.getKnowledgeSection).not.toHaveBeenCalled();
+    expect(api.getKnowledgeItem).not.toHaveBeenCalled();
+    expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
+    expect(panel.queryClient.getQueryCache().getAll().every(query => query.queryKey[0] === "vendor-basket-proposals")).toBe(true);
   });
 });

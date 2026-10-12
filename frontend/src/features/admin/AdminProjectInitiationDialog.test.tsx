@@ -26,6 +26,17 @@ const salesManager = {
   title: "Sales Manager"
 };
 
+const assignmentFlows = [
+  { assignmentMode: "estimator" as const, label: "Sales", endpoint: "/api/v1/admin/estimators", option: estimator },
+  { assignmentMode: "sales-manager" as const, label: "Sales Manager", endpoint: "/api/v1/admin/sales-managers", option: salesManager }
+];
+
+const sourceOptions = [
+  "Select source", "Instagram", "Facebook", "YouTube", "Google Search", "Google Maps", "Website",
+  "Existing customer", "Customer referral", "Architect / designer referral", "Builder / broker referral",
+  "Walk-in", "Exhibition / event", "Other"
+];
+
 afterEach(() => vi.restoreAllMocks());
 
 const createdProject: AdminProjectSummary = {
@@ -144,10 +155,12 @@ describe("AdminProjectInitiationDialog", () => {
     expect(screen.getByRole("button", { name: "Next action date" })).toHaveAccessibleDescription("Required");
     expect(screen.queryByLabelText("Next action time")).not.toBeInTheDocument();
     expect(within(screen.getByRole("combobox", { name: "Property type" })).getAllByRole("option").map((option) => option.textContent)).toEqual(["Select property type", "1BHK", "2BHK", "2.5BHK", "3BHK", "3.5BHK", "4BHK", "Villa", "Penthouse", "Studio", "Duplex"]);
-    const source = within(dialog).getByRole("textbox", { name: "Source" });
+    const source = within(dialog).getByRole("combobox", { name: "Source" });
     expect(source).not.toBeRequired();
-    expect(source).toHaveAttribute("maxlength", "200");
+    expect(source).toHaveValue("");
+    expect(within(source).getAllByRole("option").map((option) => option.textContent)).toEqual(sourceOptions);
     expect(source).toHaveAccessibleDescription("How did the client hear about Lisno?");
+    expect(screen.queryByRole("textbox", { name: "Other source" })).not.toBeInTheDocument();
     for (const name of ["Location", "Minimum budget", "Maximum budget", "Lead source", "Builder", "Area", "Target handover", "Notes"]) {
       expect(within(dialog).queryByLabelText(name)).not.toBeInTheDocument();
     }
@@ -227,7 +240,7 @@ describe("AdminProjectInitiationDialog", () => {
     const user = userEvent.setup();
     renderDialog();
     await fillForm(user);
-    await user.type(screen.getByRole("textbox", { name: "Source" }), "   ");
+    expect(screen.getByRole("combobox", { name: "Source" })).toHaveValue("");
     const submit = screen.getByRole("button", { name: "Initiate project" });
     fireEvent.click(submit);
     fireEvent.click(submit);
@@ -235,6 +248,7 @@ describe("AdminProjectInitiationDialog", () => {
     await waitFor(() => expect(requests).toBe(1));
     expect(submit).toBeDisabled();
     expect(submit).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("combobox", { name: "Source" })).toBeDisabled();
     expect(body).toEqual({
       clientName: "Asha Shah",
       clientEmail: "asha@example.com",
@@ -275,10 +289,7 @@ describe("AdminProjectInitiationDialog", () => {
     await waitFor(() => expect(body).toMatchObject({ cityName: "Pune" }));
   });
 
-  it.each([
-    { assignmentMode: "estimator" as const, label: "Sales", endpoint: "/api/v1/admin/estimators", option: estimator, source: "Instagram" },
-    { assignmentMode: "sales-manager" as const, label: "Sales Manager", endpoint: "/api/v1/admin/sales-managers", option: salesManager, source: "Existing customer" }
-  ])("saves a trimmed Source in the $label assignment flow", async ({ assignmentMode, label, endpoint, option, source }) => {
+  it.each(assignmentFlows)("saves a preset Source in the $label assignment flow", async ({ assignmentMode, label, endpoint, option }) => {
     let body: Record<string, unknown> | undefined;
     server.use(
       http.get(endpoint, () => HttpResponse.json(estimatorPage([option]))),
@@ -292,19 +303,87 @@ describe("AdminProjectInitiationDialog", () => {
     await fillForm(user, false);
     await user.click(screen.getByRole("combobox", { name: label }));
     await user.click(await screen.findByRole("option", { name: new RegExp(option.name) }));
-    await user.type(screen.getByRole("textbox", { name: "Source" }), `  ${source}  `);
+    const source = screen.getByRole("combobox", { name: "Source" });
+    expect(source).not.toBeRequired();
+    expect(source).toHaveValue("");
+    expect(within(source).getAllByRole("option").map((item) => item.textContent)).toEqual(sourceOptions);
+    await user.selectOptions(source, "Existing customer");
     await user.click(screen.getByRole("button", { name: "Initiate project" }));
-    await waitFor(() => expect(body).toMatchObject({ source }));
+    await waitFor(() => expect(body).toMatchObject({ source: "Existing customer" }));
     expect(body).toHaveProperty(assignmentMode === "estimator" ? "estimatorId" : "salesManagerId", option.id);
   });
 
-  it("focuses an overlong Source and allows correction after server field feedback", async () => {
+  it.each(assignmentFlows)("saves trimmed Other source text in the $label assignment flow", async ({ assignmentMode, label, endpoint, option }) => {
+    let body: Record<string, unknown> | undefined;
+    server.use(
+      http.get(endpoint, () => HttpResponse.json(estimatorPage([option]))),
+      http.post("/api/v1/admin/projects", async ({ request }) => {
+        body = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ data: createdProject }, { status: 201 });
+      })
+    );
+    const user = userEvent.setup();
+    renderDialog({ assignmentMode });
+    await fillForm(user, false);
+    await user.click(screen.getByRole("combobox", { name: label }));
+    await user.click(await screen.findByRole("option", { name: new RegExp(option.name) }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Source" }), "Other");
+    const customSource = screen.getByRole("textbox", { name: "Other source" });
+    expect(customSource).toBeRequired();
+    expect(customSource).toHaveAttribute("maxlength", "200");
+    await user.type(customSource, "  Resident association newsletter  ");
+    await user.click(screen.getByRole("button", { name: "Initiate project" }));
+    await waitFor(() => expect(body).toMatchObject({ source: "Resident association newsletter" }));
+    expect(body).not.toHaveProperty("otherSource");
+    expect(body).toHaveProperty(assignmentMode === "estimator" ? "estimatorId" : "salesManagerId", option.id);
+  });
+
+  it.each([
+    { description: "empty", value: "", error: "Other source is required." },
+    { description: "whitespace-only", value: "   ", error: "Other source is required." },
+    { description: "overlong", value: "x".repeat(201), error: "Source must be 200 characters or fewer." }
+  ])("rejects $description Other source before requesting and focuses its associated error", async ({ value, error }) => {
     let requests = 0;
-    const onCreated = vi.fn();
     server.use(
       http.get("/api/v1/admin/estimators", () => HttpResponse.json(estimatorPage())),
       http.post("/api/v1/admin/projects", () => {
         requests += 1;
+        return HttpResponse.json({ data: createdProject }, { status: 201 });
+      })
+    );
+    const user = userEvent.setup();
+    renderDialog();
+    await fillForm(user);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Source" }), "Other");
+    const customSource = screen.getByRole("textbox", { name: "Other source" });
+    fireEvent.change(customSource, { target: { value } });
+    await user.click(screen.getByRole("button", { name: "Initiate project" }));
+    await waitFor(() => expect(customSource).toHaveFocus());
+    expect(customSource).toHaveAccessibleDescription(error);
+    expect(customSource).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("combobox", { name: "Source" })).not.toHaveAttribute("aria-invalid", "true");
+    expect(requests).toBe(0);
+    await user.clear(customSource);
+    await user.type(customSource, "Community newsletter");
+    expect(customSource).not.toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByText(error)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Initiate project" }));
+    await waitFor(() => expect(requests).toBe(1));
+  });
+
+  it.each([
+    { description: "preset selection", initial: "Instagram", useCustom: false, switchToPreset: true },
+    { description: "custom text correction", initial: "Other", useCustom: true, switchToPreset: false },
+    { description: "custom-to-preset selection", initial: "Other", useCustom: true, switchToPreset: true }
+  ])("retains Source, focuses the active control, and clears server feedback on $description", async ({ initial, useCustom, switchToPreset }) => {
+    let requests = 0;
+    let body: Record<string, unknown> | undefined;
+    const onCreated = vi.fn();
+    server.use(
+      http.get("/api/v1/admin/estimators", () => HttpResponse.json(estimatorPage())),
+      http.post("/api/v1/admin/projects", async ({ request }) => {
+        requests += 1;
+        body = await request.json() as Record<string, unknown>;
         return requests === 1
           ? HttpResponse.json({ error: { code: "VALIDATION_ERROR", message: "Request validation failed.", fields: { source: "Enter a valid source." } } }, { status: 400 })
           : HttpResponse.json({ data: createdProject }, { status: 201 });
@@ -313,34 +392,116 @@ describe("AdminProjectInitiationDialog", () => {
     const user = userEvent.setup();
     renderDialog({ onCreated });
     await fillForm(user);
-    const source = screen.getByRole("textbox", { name: "Source" });
-    fireEvent.change(source, { target: { value: "x".repeat(201) } });
+    const source = screen.getByRole("combobox", { name: "Source" });
+    await user.selectOptions(source, initial);
+    const activeControl = useCustom ? screen.getByRole("textbox", { name: "Other source" }) : source;
+    if (useCustom) await user.type(activeControl, "Local newspaper");
     await user.click(screen.getByRole("button", { name: "Initiate project" }));
-    await waitFor(() => expect(source).toHaveFocus());
-    expect(source).toHaveAccessibleDescription(/Source must be 200 characters or fewer/);
-    expect(requests).toBe(0);
-    await user.clear(source);
-    await user.type(source, "Instagram");
-    await user.click(screen.getByRole("button", { name: "Initiate project" }));
-    await waitFor(() => expect(source).toHaveAccessibleDescription(/Enter a valid source/));
-    await waitFor(() => expect(source).toHaveFocus());
-    expect(source).toHaveValue("Instagram");
-    await user.clear(source);
-    await user.type(source, "Customer referral");
+    await waitFor(() => expect(activeControl).toHaveAccessibleDescription(/Enter a valid source/));
+    await waitFor(() => expect(activeControl).toHaveFocus());
+    expect(activeControl).toHaveValue(useCustom ? "Local newspaper" : initial);
+    expect(activeControl).toHaveAttribute("aria-invalid", "true");
+    if (switchToPreset) {
+      await user.selectOptions(source, "Customer referral");
+    } else {
+      await user.clear(activeControl);
+      await user.type(activeControl, "Resident association");
+    }
+    expect(screen.queryByText("Enter a valid source.")).not.toBeInTheDocument();
+    expect(source).not.toHaveAttribute("aria-invalid", "true");
     await user.click(screen.getByRole("button", { name: "Initiate project" }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledOnce());
+    expect(requests).toBe(2);
+    expect(body).toMatchObject({ source: switchToPreset ? "Customer referral" : "Resident association" });
   });
 
-  it("guards an otherwise empty form when only Source was entered", async () => {
+  it.each(["Google Maps", ""])("retains a custom draft but submits only the final Source selection %j", async (selection) => {
+    let body: Record<string, unknown> | undefined;
+    server.use(
+      http.get("/api/v1/admin/estimators", () => HttpResponse.json(estimatorPage())),
+      http.post("/api/v1/admin/projects", async ({ request }) => {
+        body = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ data: createdProject }, { status: 201 });
+      })
+    );
+    const user = userEvent.setup();
+    renderDialog();
+    await fillForm(user);
+    const source = screen.getByRole("combobox", { name: "Source" });
+    await user.selectOptions(source, "Other");
+    await user.type(screen.getByRole("textbox", { name: "Other source" }), "Community newsletter");
+    await user.selectOptions(source, "Instagram");
+    expect(screen.queryByRole("textbox", { name: "Other source" })).not.toBeInTheDocument();
+    await user.selectOptions(source, "Other");
+    expect(screen.getByRole("textbox", { name: "Other source" })).toHaveValue("Community newsletter");
+    await user.selectOptions(source, selection);
+    expect(screen.queryByRole("textbox", { name: "Other source" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Initiate project" }));
+    await waitFor(() => expect(body).toBeDefined());
+    if (selection) expect(body).toHaveProperty("source", selection);
+    else expect(body).not.toHaveProperty("source");
+    expect(body).not.toHaveProperty("otherSource");
+  });
+
+  it("guards an otherwise empty form when only a preset Source was selected", async () => {
     server.use(http.get("/api/v1/admin/estimators", () => HttpResponse.json(estimatorPage())));
     const user = userEvent.setup();
     const { onClose } = renderDialog();
-    await user.type(screen.getByRole("textbox", { name: "Source" }), "Social media");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Source" }), "Facebook");
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByRole("alertdialog", { name: "Discard unsaved changes?" })).toBeVisible();
     expect(onClose).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Keep editing" }));
-    expect(screen.getByRole("textbox", { name: "Source" })).toHaveValue("Social media");
+    expect(screen.getByRole("combobox", { name: "Source" })).toHaveValue("Facebook");
+  });
+
+  it("guards a hidden custom-source draft after Source is cleared", async () => {
+    server.use(http.get("/api/v1/admin/estimators", () => HttpResponse.json(estimatorPage())));
+    const user = userEvent.setup();
+    const { onClose } = renderDialog();
+    const source = screen.getByRole("combobox", { name: "Source" });
+    await user.selectOptions(source, "Other");
+    await user.type(screen.getByRole("textbox", { name: "Other source" }), "Community newsletter");
+    await user.selectOptions(source, "");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("alertdialog", { name: "Discard unsaved changes?" })).toBeVisible();
+    expect(onClose).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(source).toHaveValue("");
+    await user.selectOptions(source, "Other");
+    expect(screen.getByRole("textbox", { name: "Other source" })).toHaveValue("Community newsletter");
+  });
+
+  it("disables both visible source controls and blocks duplicate submission while Other is pending", async () => {
+    let requests = 0;
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const onCreated = vi.fn();
+    server.use(
+      http.get("/api/v1/admin/estimators", () => HttpResponse.json(estimatorPage())),
+      http.post("/api/v1/admin/projects", async () => {
+        requests += 1;
+        await pending;
+        return HttpResponse.json({ data: createdProject }, { status: 201 });
+      })
+    );
+    const user = userEvent.setup();
+    renderDialog({ onCreated });
+    await fillForm(user);
+    const source = screen.getByRole("combobox", { name: "Source" });
+    await user.selectOptions(source, "Other");
+    const customSource = screen.getByRole("textbox", { name: "Other source" });
+    await user.type(customSource, "Local newspaper");
+    const submit = screen.getByRole("button", { name: "Initiate project" });
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+    await waitFor(() => expect(requests).toBe(1));
+    expect(source).toBeDisabled();
+    expect(customSource).toBeDisabled();
+    expect(submit).toBeDisabled();
+    expect(submit).toHaveAttribute("aria-busy", "true");
+    release();
+    await waitFor(() => expect(onCreated).toHaveBeenCalledOnce());
   });
 
   it("retains every value, renders field feedback, and focuses the first server-invalid control", async () => {

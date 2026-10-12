@@ -9,13 +9,19 @@ export function certificateFileError(file: File, policy: ProcurementVendorCertif
   if (file.size > policy.maxUploadBytes) return `The certificate must be ${policy.maxUploadBytes.toLocaleString()} bytes or smaller.`;
 }
 
-export function useVendorMsmeCertificate(enabled: boolean) {
+export interface VendorCertificateDraft {
+  file: File | null;
+  uploadError: string;
+  command: { file: File; key: string; target: string; result?: ProcurementVendorCertificateUploadResult } | null;
+}
+
+export function useVendorMsmeCertificate(enabled: boolean, initial?: VendorCertificateDraft) {
   const policy = useQuery({ queryKey: ["procurement-vendor-certificate-upload-policy"], queryFn: ({ signal }) => getVendorCertificateUploadPolicy(signal), enabled, retry: false });
-  const [file, setFile] = useState<File | null>(null);
+  const [file, setFile] = useState<File | null>(initial?.file ?? null);
   const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState("");
+  const [uploadError, setUploadError] = useState(initial?.uploadError ?? "");
   const [revision, setRevision] = useState(0);
-  const command = useRef<{ file: File; key: string; target: string; result?: ProcurementVendorCertificateUploadResult } | null>(null);
+  const command = useRef<VendorCertificateDraft["command"]>(initial?.command ?? null);
   function resetStage() { command.current = null; setUploadError(""); }
   function select(next: File | null) { setFile(next); resetStage(); if (!next) setRevision((value) => value + 1); }
   function validation(existing?: ProcurementVendorCertificateDescriptor | null) {
@@ -42,5 +48,5 @@ export function useVendorMsmeCertificate(enabled: boolean) {
       throw error;
     } finally { setUploading(false); }
   }
-  return { file, policy, uploading, uploadError, revision, select, resetStage, validation, stage };
+  return { file, policy, uploading, uploadError, revision, select, resetStage, validation, stage, getSnapshot: (): VendorCertificateDraft => ({ file, uploadError, command: command.current }) };
 }

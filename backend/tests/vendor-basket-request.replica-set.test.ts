@@ -15,6 +15,7 @@ import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowle
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoordination.js";
 import { UserModel } from "../src/models/User.js";
+import { VendorBasketRequestNotificationModel } from "../src/models/VendorBasketRequestNotification.js";
 import { VendorBasketRequestModel } from "../src/models/VendorBasketRequest.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { createVendorBasketRequestRouter } from "../src/routes/vendor-basket-requests.js";
@@ -36,7 +37,7 @@ beforeAll(async () => {
   await Promise.all([AuditEventModel, AuthorizationCoordinationModel, AiEstimatorKnowledgeBasketModel,
     AiEstimatorKnowledgeDisplayOrderSequenceModel, AiEstimatorKnowledgeVendorModel,
     AiEstimatorKnowledgeSubBasketModel, AiEstimatorKnowledgeMainLineModel, AiEstimatorKnowledgeRevisionModel, AiEstimatorKnowledgeSectionModel,
-    UserModel, VendorBasketRequestModel].map((model) => model.syncIndexes()));
+    UserModel, VendorBasketRequestModel, VendorBasketRequestNotificationModel].map((model) => model.syncIndexes()));
 }, 120_000);
 beforeEach(async () => {
   await replica.clear();
@@ -67,6 +68,48 @@ function api() {
 }
 
 describe("Configuration Main Basket requests", { timeout: 30_000 }, () => {
+  it("filters only the authenticated requester's items before counting and paging, including legacy rows", async () => {
+    const { service } = fixture();
+    const created = [];
+    for (const [index, name] of ["Stone [Premium]", "Stone basic", "Stone [Premium] sub", "Painting"].entries()) {
+      created.push(await service.create(PROCUREMENT, { ...input, proposedName: name, idempotencyKey: `filter-own-${index}` }));
+    }
+    await service.create(OTHER, { ...input, vendorName: "Other vendor", proposedName: "Stone [Premium]", idempotencyKey: "filter-other-user" });
+    await VendorBasketRequestModel.collection.updateOne({ _id: created[0]!.id }, { $unset: { targetKind: "" } });
+    await VendorBasketRequestModel.collection.updateOne({ _id: created[2]!.id }, { $set: { kind: "configuration_proposal", proposalId: "filter-proposal", vendorName: null, vendorNameNormalized: null, vendorKey: "scope:configuration", targetKind: "new_sub_basket", targetParentBasketId: "filter-parent", targetParentName: "Parent fixture" } });
+    await service.decide(ADMIN, created[1]!.id, { expectedVersion: 1, decision: "reject", reason: "Filter fixture", idempotencyKey: "filter-reject-own" });
+    const query = { search: "  STONE   [Premium]  ", status: "pending" as const, limit: 1, offset: 0 };
+    const first = await service.listMine(PROCUREMENT, query);
+    const second = await service.listMine(PROCUREMENT, { ...query, offset: 1 });
+    expect(first.pagination).toEqual({ total: 2, limit: 1, offset: 0, hasMore: true });
+    expect(second.pagination).toEqual({ total: 2, limit: 1, offset: 1, hasMore: false });
+    expect(new Set([...first.items, ...second.items].map((row) => row.id))).toEqual(new Set([created[0]!.id, created[2]!.id]));
+    const main = await service.listMine(PROCUREMENT, { ...query, targetKind: "new_main_basket" });
+    expect(main.pagination.total).toBe(1); expect(main.items[0]!.id).toBe(created[0]!.id);
+    const sub = await service.listMine(PROCUREMENT, { ...query, targetKind: "new_sub_basket" });
+    expect(sub.pagination.total).toBe(1); expect(sub.items[0]).toMatchObject({ id: created[2]!.id, vendorName: null });
+    expect((await service.listMine(PROCUREMENT, { limit: 20, offset: 0, search: ".*" })).pagination.total).toBe(0);
+    expect((await service.listMine(PROCUREMENT, { limit: 20, offset: 0, status: "rejected" })).items.map((row) => row.id)).toEqual([created[1]!.id]);
+    expect((await service.listMine(PROCUREMENT, { limit: 20, offset: 0 })).pagination.total).toBe(4);
+    expect((await service.listMine(OTHER, { limit: 20, offset: 0, search: "Stone" })).pagination.total).toBe(1);
+  });
+  it("strictly validates private request filters while retaining the legacy required vendor name", async () => {
+    const app = api(); const path = "/api/v1/procurement/vendor-basket-requests/mine";
+    const response = await request(app).get(path).query({ search: "Stone", status: "pending", targetKind: "new_sub_basket", limit: 10, offset: 0 }).set("Authorization", "Bearer procurement").expect(200);
+    expect(response.headers["cache-control"]).toBe("private, no-store");
+    for (const query of [{ requesterId: OTHER.id }, { status: "draft" }, { targetKind: "all" }, { search: "x".repeat(241) }]) {
+      await request(app).get(path).query(query).set("Authorization", "Bearer procurement").expect(400);
+    }
+    await request(app).get(`${path}?search=a&search=b`).set("Authorization", "Bearer procurement").expect(400);
+    await request(app).get(path).set("Authorization", "Bearer admin").expect(403);
+    for (const body of [{ proposedName: "Legacy name only", idempotencyKey: "legacy-no-vendor" }, { ...input, vendorName: null }]) {
+      await request(app).post("/api/v1/procurement/vendor-basket-requests").set("Authorization", "Bearer procurement").send(body).expect(400);
+    }
+    const invalidLegacy = new VendorBasketRequestModel({ _id: "invalid-vendorless-legacy", vendorName: null, vendorNameNormalized: null });
+    const errors = invalidLegacy.validateSync()?.errors;
+    expect(errors).toHaveProperty("vendorName"); expect(errors).toHaveProperty("vendorNameNormalized");
+    expect(new VendorBasketRequestNotificationModel({ _id: "invalid-vendorless-notification", vendorName: null }).validateSync()?.errors).toHaveProperty("vendorName");
+  });
   it("keeps a Procurement proposal pending without creating or assigning a Configuration basket", async () => {
     const { service } = fixture();
     const created = await service.create(PROCUREMENT, input);
@@ -459,6 +502,39 @@ describe("Configuration Main Basket requests", { timeout: 30_000 }, () => {
       configuration: { subBasketName: "Walls", mainLineName: "Primer" } });
     expect(saved.status).toBe(200);
     expect(saved.body.data).toMatchObject({ status: "fulfilled", subBasketId: expect.any(String), mainLineId: expect.any(String) });
+  });
+
+  it("persists one Super Admin notification on legacy first-submit and none on replay or rollback", async () => {
+    const { service } = fixture();
+    const write = vi.spyOn(VendorBasketRequestNotificationModel, "updateOne").mockImplementationOnce(() => { throw new Error("notification fixture failure"); });
+    await expect(service.create(PROCUREMENT, input)).rejects.toThrow("notification fixture failure"); write.mockRestore();
+    expect(await VendorBasketRequestModel.countDocuments()).toBe(0);
+    expect(await VendorBasketRequestNotificationModel.countDocuments()).toBe(0);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+    const created = await service.create(PROCUREMENT, input);
+    await service.create(PROCUREMENT, input);
+    expect(await VendorBasketRequestNotificationModel.findOne({ requestId: created.id }).lean()).toMatchObject({ recipientId: ADMIN.id, requesterId: PROCUREMENT.id, proposedName: input.proposedName });
+    expect(await VendorBasketRequestNotificationModel.countDocuments()).toBe(1);
+  });
+  it.each(["missing", "inactive"])("does not submit with a %s Super Admin recipient", async (state) => {
+    const { service } = fixture();
+    if (state === "missing") await UserModel.deleteOne({ _id: ADMIN.id });
+    else await UserModel.updateOne({ _id: ADMIN.id }, { $set: { active: false } });
+    await expect(service.create(PROCUREMENT, input)).rejects.toMatchObject({ code: "SOLE_SUPER_ADMIN_REQUIRED" });
+    expect(await VendorBasketRequestModel.countDocuments()).toBe(0);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+    expect(await VendorBasketRequestNotificationModel.countDocuments()).toBe(0);
+  });
+  it("resolves an exact pending or decided request privately without widening Procurement access", async () => {
+    const { service } = fixture(); const created = await service.create(PROCUREMENT, input); const app = api();
+    const path = `/api/v1/admin/ai-estimator-knowledge/basket-requests/${created.id}`;
+    const response = await request(app).get(path).set("Authorization", "Bearer admin");
+    expect(response.status).toBe(200); expect(response.headers["cache-control"]).toBe("private, no-store"); expect(response.body.data.id).toBe(created.id);
+    expect((await request(app).get(path).set("Authorization", "Bearer procurement")).status).toBe(403);
+    expect((await request(app).get(`${path}?limit=5`).set("Authorization", "Bearer admin")).status).toBe(400);
+    await service.decide(ADMIN, created.id, { decision: "reject", reason: "Refine", expectedVersion: 1, idempotencyKey: "exact-reject-key" });
+    expect((await request(app).get(path).set("Authorization", "Bearer admin")).body.data.status).toBe("rejected");
+    expect((await request(app).get("/api/v1/admin/ai-estimator-knowledge/basket-requests/missing-fixture").set("Authorization", "Bearer admin")).status).toBe(404);
   });
 
 });

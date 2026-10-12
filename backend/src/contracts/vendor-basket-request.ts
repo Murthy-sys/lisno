@@ -1,10 +1,16 @@
+import type { ProposalTarget } from "./vendor-basket-proposal.js";
 export type VendorBasketRequestStatus = "pending" | "fulfilled" | "rejected";
 
 export interface VendorBasketRequestDto {
+  readonly target?: ProposalTarget;
+  readonly targetParentName?: string | null;
   readonly id: string;
+  readonly kind?: "configuration_proposal";
+  readonly proposalId?: string;
+  readonly proposalCounts?: { readonly subBaskets: number; readonly mainLines: number };
   readonly requesterId: string;
   readonly vendorId: string | null;
-  readonly vendorName: string;
+  readonly vendorName: string | null;
   readonly proposedName: string;
   readonly status: VendorBasketRequestStatus;
   readonly version: number;

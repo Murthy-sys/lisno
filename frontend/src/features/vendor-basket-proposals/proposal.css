@@ -1,0 +1,59 @@
+@import "./proposal-quality.css";
+.basket-proposal.ui-drawer.ui-drawer--contextual { width: 70vw; inline-size: 70vw; max-width: none; max-inline-size: none; }
+.basket-proposal .ui-drawer__body { padding: 0; }
+.basket-proposal__content { padding: 24px; color: var(--color-text); min-inline-size: 0; }
+.basket-proposal__metadata .basket-proposal__form:where(:not(.ui-dialog__form)) { padding: 24px; }
+.basket-proposal__parent { line-height: 1.6; overflow-wrap: anywhere; }
+.basket-proposal__form:where(:not(.ui-dialog__form)) { display: grid; gap: 18px; }
+.basket-proposal__actions:where(:not(.ui-dialog__actions)) { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
+.basket-proposal__toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding-block: 0 18px; border-bottom: 1px solid var(--color-border, #d4d9d4); }
+.basket-proposal__toolbar p { margin: 0; }
+.basket-proposal__body { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 24px; padding-top: 20px; }
+.basket-proposal__hierarchy { min-width: 0; border-right: 1px solid var(--color-border, #d4d9d4); padding-right: 16px; }
+.basket-proposal__hierarchy h3 { margin-block: 0 14px; font-size: 15px; }
+.basket-proposal__hierarchy ul { list-style: none; margin: 0; padding: 0; }
+.basket-proposal__hierarchy > ul > li { padding-block: 12px; border-bottom: 1px solid var(--color-border, #d4d9d4); }
+.basket-proposal__node { display: flex; align-items: center; gap: 6px; justify-content: space-between; overflow-wrap: anywhere; }
+.basket-proposal__line { display: block; width: 100%; border: 0; padding: 10px 8px; margin-top: 4px; text-align: left; background: transparent; color: inherit; font: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.basket-proposal__line[aria-current="true"] { background: var(--color-surface-muted, #e8ece7); font-weight: 650; }
+.basket-proposal__line:focus-visible { outline: 2px solid var(--color-primary, #3f6754); outline-offset: 2px; }
+.basket-proposal__workspace { min-width: 0; }
+.basket-proposal__workspace h3 { overflow-wrap: anywhere; }
+.basket-proposal__tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--color-border, #d4d9d4); padding-bottom: 8px; margin-bottom: 20px; }
+.basket-proposal__tabs [role="tab"] { border-radius: 0; border: 0; border-bottom: 2px solid transparent; background: transparent; }
+.basket-proposal__tabs [aria-selected="true"] { font-weight: 600; color: var(--color-primary); border-bottom-color: var(--color-primary); }
+.basket-proposal__state { padding-block: 14px; }
+.basket-proposal__readiness { padding-block: 20px; border-top: 1px solid var(--color-border, #d4d9d4); margin-top: 20px; }
+.basket-proposal__readiness ul { padding-left: 20px; }
+.basket-proposal__request-list { list-style: none; padding: 0; margin: 0; }
+.basket-proposal__request-list > li { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding-block: 18px; border-bottom: 1px solid var(--color-border, #d4d9d4); }
+.basket-proposal__request-list h3, .basket-proposal__request-list p { margin: 0 0 5px; overflow-wrap: anywhere; }
+.basket-proposal__diff { margin-block: 12px; padding-block: 12px; border-bottom: 1px solid var(--color-border, #d4d9d4); }
+.basket-proposal__diff dd { margin: 0 0 8px; overflow-wrap: anywhere; }
+.basket-proposal__diff dt { font-weight: 650; }
+.basket-proposal__readiness button { text-align: left; white-space: normal; }
+@media (max-width: 1199px) {
+  .basket-proposal.ui-drawer.ui-drawer--contextual { width: 100vw; inline-size: 100vw; }
+}
+@media (max-width: 740px) {
+  .basket-proposal__content { padding: 16px; }
+  .basket-proposal__body { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .basket-proposal__hierarchy { border-right: 0; border-bottom: 1px solid var(--color-border, #d4d9d4); padding: 0 0 16px; }
+  .basket-proposal__request-list > li { align-items: flex-start; flex-direction: column; }
+}
+
+/* Drawer portals reuse Configuration controls while keeping all layout overrides local. */
+.basket-proposal .knowledge-mode-block, .basket-proposal .knowledge-basket-quality { padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-control); box-shadow: none; min-inline-size: 0; max-inline-size: 100%; }
+.basket-proposal .knowledge-section-command-bar { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 10px 16px; box-shadow: none; padding: 12px; }
+.basket-proposal :is(.knowledge-section-heading, .knowledge-basket-quality__intro) h2 { font-size: 20px; line-height: 1.3; font-weight: 600; }
+.basket-proposal :is(.knowledge-section-heading, .knowledge-basket-quality__intro) p { font-size: 13px; }
+.basket-proposal :is(.ui-field, .knowledge-section-editor, [role="tabpanel"], .knowledge-form-grid) { min-inline-size: 0; max-inline-size: 100%; }
+.basket-proposal :is(.ui-field__label, .ui-field__hint, .ui-field__error, .knowledge-help-text) { overflow-wrap: anywhere; }
+
+.basket-proposal__masters { margin-block: 20px; padding-block: 16px; border-block: 1px solid var(--color-border); }
+.basket-proposal__masters ul { list-style: none; padding: 0; margin: 0; }
+.basket-proposal__masters li { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding-block: 12px; }
+.basket-proposal__masters li > div:first-child { min-inline-size: 0; flex: 1 1 180px; }
+.basket-proposal__masters p, .basket-proposal__masters strong { overflow-wrap: anywhere; }
+.basket-proposal__masters p { margin-block: 4px; }
+.basket-proposal.knowledge-context-panel .knowledge-overview .knowledge-overview__quick-add--named { inline-size: auto; min-inline-size: max-content; max-inline-size: none; flex: 0 0 auto; padding-inline: 12px; }

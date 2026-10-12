@@ -30,14 +30,14 @@ export function KnowledgeVersionConflictDialog({
       busy={busy}
       onClose={onKeepEditing}
     >
-      <div className="knowledge-dialog-body">
+      <div className="ui-dialog__body knowledge-dialog-body">
         <InlineMessage tone="warning" title="Version conflict">
           {sectionLabel ? <><strong>{sectionLabel}</strong>: </> : null}
           You edited version {localVersion}, while the server now has version {serverVersion}.
           Review both versions before deciding what to keep.
         </InlineMessage>
       </div>
-      <div className="knowledge-dialog-actions knowledge-dialog-actions--triple">
+      <div className="ui-dialog__actions knowledge-dialog-actions knowledge-dialog-actions--triple">
         <Button variant="quiet" onClick={onKeepEditing} disabled={busy}>
           Keep editing
         </Button>

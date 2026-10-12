@@ -181,10 +181,12 @@ export function ChatComposer({ draft, participants, disabled, onChange, onSend, 
     {addTypeOpen && projectId ? <AddChatActionTypeDialog projectId={projectId} onClose={() => setAddTypeOpen(false)} onCreated={type => { setCreatedType(type); setAddTypeOpen(false); selectAction(type); }} /> : null}
     {emojiOpen ? <ChatEmojiPicker onSelect={insertEmoji} onClose={() => setEmojiOpen(false)} /> : null}
     {optionsOpen ? <Dialog title="Message importance" eyebrow="Project discussion" description="Importance is chosen by a person. A mention does not assign responsibility." onClose={() => setOptionsOpen(false)}>
-      <div className="project-chat-form">
-        <Field id={`${id}-priority`} label="Importance">{props => <Select {...props} value={draft.priority} disabled={disabled} onChange={event => onChange({ ...draft, priority: event.target.value as ChatPriority, responsibleUserId: event.target.value === "normal" ? "" : draft.responsibleUserId })}><option value="normal">Normal</option><option value="important">Important</option><option value="critical">Critical</option></Select>}</Field>
-        {draft.priority !== "normal" ? <Field id={`${id}-owner`} label="Responsible person (optional)">{props => <Select {...props} value={draft.responsibleUserId} disabled={disabled} onChange={event => onChange({ ...draft, responsibleUserId: event.target.value })}><option value="">Unassigned</option>{unavailableOwner ? <option value={draft.responsibleUserId} disabled>Previously selected person (unavailable)</option> : null}{participants.map(person => <option key={person.id} value={person.id}>{person.name} · {ROLE_LABELS[person.role]}</option>)}</Select>}</Field> : null}
-        <div className="project-chat-form__actions"><Button onClick={() => setOptionsOpen(false)}>Done</Button></div>
+      <div className="project-chat-form ui-dialog__form">
+        <div className="ui-dialog__body">
+          <Field id={`${id}-priority`} label="Importance">{props => <Select {...props} value={draft.priority} disabled={disabled} onChange={event => onChange({ ...draft, priority: event.target.value as ChatPriority, responsibleUserId: event.target.value === "normal" ? "" : draft.responsibleUserId })}><option value="normal">Normal</option><option value="important">Important</option><option value="critical">Critical</option></Select>}</Field>
+          {draft.priority !== "normal" ? <Field id={`${id}-owner`} label="Responsible person (optional)">{props => <Select {...props} value={draft.responsibleUserId} disabled={disabled} onChange={event => onChange({ ...draft, responsibleUserId: event.target.value })}><option value="">Unassigned</option>{unavailableOwner ? <option value={draft.responsibleUserId} disabled>Previously selected person (unavailable)</option> : null}{participants.map(person => <option key={person.id} value={person.id}>{person.name} · {ROLE_LABELS[person.role]}</option>)}</Select>}</Field> : null}
+        </div>
+        <div className="project-chat-form__actions ui-dialog__actions"><Button onClick={() => setOptionsOpen(false)}>Done</Button></div>
       </div>
     </Dialog> : null}
   </form>;

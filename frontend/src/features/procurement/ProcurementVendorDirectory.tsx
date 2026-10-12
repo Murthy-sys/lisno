@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
@@ -20,19 +20,24 @@ import { procurementError } from "./procurementPresentation";
 import { DirectoryIcon, VendorDirectoryHeader, VendorDirectoryOverview } from "./VendorDirectoryOverview";
 import { VendorDirectoryPagination, VendorDirectoryTable, type VendorDirectoryPageSize } from "./VendorDirectoryTable";
 import "./vendorDirectory.css";
+import { useProcurementVendorDraft } from "./ProcurementVendorDraftProvider";
 
 const emptyFilters = { search: "", effectiveStatus: "" as VendorEffectiveStatus | "", vendorType: "" as "" | "execution" | "supplier", mainBasketId: "", subBasketId: "" };
 const denied = (error: unknown) => error instanceof ApiError && (error.status === 401 || error.status === 403);
 
 export function ProcurementVendorDirectory() {
   const navigate = useNavigate();
+  const vendorDraftState = useProcurementVendorDraft();
   const auth = useAuth();
   const client = useQueryClient();
   const id = useId();
+  const resumeButton = useRef<HTMLButtonElement>(null);
   const canRead = hasFrontendPermission(auth.authorization, "procurement.vendor_directory.read");
   const canCreate = hasFrontendPermission(auth.authorization, "procurement.vendor_directory.create");
   const canUpdate = hasFrontendPermission(auth.authorization, "procurement.vendor_directory.update");
   const canArchive = hasFrontendPermission(auth.authorization, "procurement.vendor_directory.lifecycle");
+  const canReadRequests = auth.user?.role === "procurement" && canRead;
+  const canCreateProposal = auth.user?.role === "procurement" && hasFrontendPermission(auth.authorization, "procurement.vendor_basket_proposal.create");
   const canCreateBasket = hasFrontendPermission(auth.authorization, "procurement.vendor_classification.create");
   const canCorrectBaseline = hasFrontendPermission(auth.authorization, "procurement.vendor_allocation_baseline.correct");
   const canReadKpi = hasFrontendPermission(auth.authorization, "procurement.vendor_kpi.read");
@@ -41,6 +46,8 @@ export function ProcurementVendorDirectory() {
   const [offset, setOffset] = useState(0);
   const [pageSize, setPageSize] = useState<VendorDirectoryPageSize>(10);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [resumeDraft, setResumeDraft] = useState(false);
+  const [submittedRequest, setSubmittedRequest] = useState(false);
   const [editor, setEditor] = useState<{ vendor: KnowledgeMaster; readOnly: boolean } | "new" | null>(null);
   const [archive, setArchive] = useState<KnowledgeMaster | null>(null);
   const [reason, setReason] = useState("");
@@ -56,6 +63,15 @@ export function ProcurementVendorDirectory() {
     onSuccess: async (vendor) => { await syncKnowledgeMasterMutation(client, "vendors"); setArchive(null); setNotice(`${vendor.name} archived.`); },
     onError: () => { void client.invalidateQueries({ queryKey: knowledgeQueryKeys.masterLists("vendors") }); }
   });
+  const accessDenied = !canRead || denied(query.error) || denied(overview.error) || denied(baskets.error) || denied(subs.error) || denied(mutation.error);
+  useEffect(() => { if (accessDenied) vendorDraftState.clear(); }, [accessDenied, vendorDraftState.clear]);
+  function editVendor(vendor: KnowledgeMaster) {
+    const retained = vendorDraftState.retained;
+    if (retained && retained.base?.id !== vendor.id) {
+      setNotice("Resume your saved vendor draft and save or discard it before editing another vendor."); setSubmittedRequest(false); return;
+    }
+    setResumeDraft(Boolean(retained)); setEditor({ vendor, readOnly: false });
+  }
   function cancelSearch() { if (searchTimer.current !== null) { clearTimeout(searchTimer.current); searchTimer.current = null; } }
   useEffect(() => () => { if (searchTimer.current !== null) clearTimeout(searchTimer.current); }, []);
   const total = query.data?.pagination.total;
@@ -77,12 +93,12 @@ export function ProcurementVendorDirectory() {
   function reset() { cancelSearch(); setSearch(""); setFilters(emptyFilters); setOffset(0); setSelected(new Set()); }
   function pageChanged(next: number) { setOffset(next); setSelected(new Set()); }
   function pageSizeChanged(next: VendorDirectoryPageSize) { setPageSize(next); setOffset(0); setSelected(new Set()); }
-  if (!canRead || denied(query.error) || denied(overview.error) || denied(baskets.error) || denied(subs.error) || denied(mutation.error)) return <PageState state="error" message="You do not have permission to manage vendors." />;
+  if (accessDenied) return <PageState state="error" message="You do not have permission to manage vendors." />;
   return <div className="vendor-directory">
     <VendorDirectoryHeader />
     <VendorDirectoryOverview overview={overview.data?.directoryOverview} loading={overview.isPending} error={overview.isError} refreshing={overview.isFetching} retry={() => void overview.refetch()} />
     <section className="vendor-directory__workspace" aria-labelledby={`${id}-title`}>
-      <div className="vendor-directory__heading"><div><h2 id={`${id}-title`}>Configured vendors</h2><p>Active vendors are available to Sales Managers and Procurement.</p></div>{canCreate ? <Button leadingIcon={<DirectoryIcon name="plus" />} onClick={() => setEditor("new")}>Add vendor</Button> : null}</div>
+      <div className="vendor-directory__heading"><div><h2 id={`${id}-title`}>Configured vendors</h2><p>Active vendors are available to Sales Managers and Procurement.</p></div>{canReadRequests ? <Button variant="secondary" onClick={() => navigate("/procurement/requests")}>All my requests</Button> : null}{vendorDraftState.retained ? <Button ref={resumeButton} variant="secondary" onClick={() => { const retained = vendorDraftState.retained!; setResumeDraft(true); setEditor(retained.base ? { vendor: retained.base, readOnly: false } : "new"); }}>Resume vendor draft</Button> : null}{canCreate ? <Button leadingIcon={<DirectoryIcon name="plus" />} disabled={Boolean(vendorDraftState.retained)} onClick={() => { setResumeDraft(false); setEditor("new"); }}>Add vendor</Button> : null}</div>
       <form className="vendor-directory__filters" role="search" aria-label="Search configured vendors" onSubmit={apply}>
         <Field id={`${id}-search`} label="Search vendors" className="vendor-directory__search">{(props) => <div className="vendor-directory__search-control"><DirectoryIcon name="search" /><Input {...props} type="search" value={search} maxLength={100} placeholder="Vendor name or code" onChange={(event) => searchChanged(event.target.value)} /></div>}</Field>
         <Field id={`${id}-status`} label="Status">{(props) => <Select {...props} value={filters.effectiveStatus} onChange={(event) => changeFilters({ effectiveStatus: event.target.value as VendorEffectiveStatus | "" })}><option value="">All current</option><option value="active">Active</option><option value="under_review">Under Review</option><option value="inactive">Inactive</option><option value="archived">Archived</option></Select>}</Field>
@@ -92,17 +108,19 @@ export function ProcurementVendorDirectory() {
         <Button variant="secondary" leadingIcon={<DirectoryIcon name="reset" />} onClick={reset}>Reset</Button>
       </form>
       {baskets.isError || (filters.mainBasketId && subs.isError) ? <InlineMessage tone="error" action={<Button variant="secondary" onClick={() => { void baskets.refetch(); if (filters.mainBasketId) void subs.refetch(); }}>Retry classification filters</Button>}>Classification filters could not be loaded.</InlineMessage> : null}
-      {notice ? <p className="vendor-directory__notice" role="status">{notice}</p> : null}
+      {notice ? <p className="vendor-directory__notice" role="status">{notice}{submittedRequest ? <> <Link to="/procurement/requests">View all my requests</Link></> : null}</p> : null}
       {selected.size ? <div className="vendor-directory__selected"><span role="status">{selected.size} {selected.size === 1 ? "vendor" : "vendors"} selected on this page</span><Button variant="quiet" onClick={() => setSelected(new Set())}>Clear selection</Button></div> : null}
-      {query.isPending ? <PageState state="loading" message="Loading vendors…" /> : query.isError ? <PageState state="error" message={procurementError(query.error, "Vendors could not be loaded.")} action={{ label: "Retry vendors", onAction: () => void query.refetch() }} /> : !query.data.items.length ? <PageState state="empty" message={Object.values(filters).some(Boolean) ? "No vendors match this view. Adjust the filters or reset your search." : "No vendors configured yet. Add a vendor to get started."} /> : <VendorDirectoryTable items={query.data.items} selected={selected} onSelection={setSelected} canUpdate={canUpdate} canArchive={canArchive} canOpenKpi={canReadKpi} onOpen={(vendor) => navigate(`${auth.user?.role === "super_admin" ? "/admin/procurement/vendors" : "/procurement/vendors"}/${encodeURIComponent(vendor.id)}`)} onEdit={(vendor) => setEditor({ vendor, readOnly: false })} onView={(vendor) => setEditor({ vendor, readOnly: true })} onArchive={(vendor) => { setArchive(vendor); setReason(""); mutation.reset(); }} />}
+      {query.isPending ? <PageState state="loading" message="Loading vendors…" /> : query.isError ? <PageState state="error" message={procurementError(query.error, "Vendors could not be loaded.")} action={{ label: "Retry vendors", onAction: () => void query.refetch() }} /> : !query.data.items.length ? <PageState state="empty" message={Object.values(filters).some(Boolean) ? "No vendors match this view. Adjust the filters or reset your search." : "No vendors configured yet. Add a vendor to get started."} /> : <VendorDirectoryTable items={query.data.items} selected={selected} onSelection={setSelected} canUpdate={canUpdate} canArchive={canArchive} canOpenKpi={canReadKpi} onOpen={(vendor) => navigate(`${auth.user?.role === "super_admin" ? "/admin/procurement/vendors" : "/procurement/vendors"}/${encodeURIComponent(vendor.id)}`)} onEdit={editVendor} onView={(vendor) => { setResumeDraft(false); setEditor({ vendor, readOnly: true }); }} onArchive={(vendor) => { setArchive(vendor); setReason(""); mutation.reset(); }} />}
       {query.isFetching && !query.isPending ? <p className="vendor-directory__notice" role="status">Refreshing vendors…</p> : null}
       {!query.isError && query.data ? <VendorDirectoryPagination offset={offset} count={query.data.items.length} total={query.data.pagination.total} pageSize={pageSize} busy={query.isFetching} onPage={pageChanged} onPageSize={pageSizeChanged} /> : null}
     </section>
-    {editor && (editor === "new" ? canCreate : canRead) ? <ProcurementVendorEditor key={editor === "new" ? "new" : `${editor.vendor.id}-${editor.readOnly}`} canCreateBasket={canCreateBasket && (editor === "new" || !editor.readOnly)} canRequestMainBasket={auth.user?.role === "procurement" && canCreateBasket && (editor === "new" || !editor.readOnly)} canUpdate={canUpdate && (editor === "new" || !editor.readOnly)} canCorrectBaseline={canCorrectBaseline} existing={editor === "new" ? undefined : editor.vendor} onClose={() => setEditor(null)} onSaved={(vendor) => setNotice(`${vendor.name} saved.`)} /> : null}
-    {archive && canArchive ? <Dialog title="Archive vendor?" eyebrow="Vendor directory" description={`${archive.name} will no longer be available for new selections. Existing project records remain available.`} onClose={() => setArchive(null)} busy={mutation.isPending} role="alertdialog">
-      <Field id={`${id}-reason`} label="Reason" required>{(props) => <Textarea {...props} disabled={mutation.isPending} maxLength={1000} value={reason} onChange={(event) => setReason(event.target.value)} />}</Field>
-      {mutation.isError ? <InlineMessage tone="error">{procurementError(mutation.error, "The vendor could not be archived. Refresh and try again.")}</InlineMessage> : null}
-      <div className="vendor-procurement__actions"><Button variant="secondary" disabled={mutation.isPending} onClick={() => setArchive(null)}>Cancel</Button><Button variant="destructive" disabled={!reason.trim()} busy={mutation.isPending} onClick={() => mutation.mutate(archive)}>Archive vendor</Button></div>
+    {editor && (editor === "new" ? canCreate : canRead) ? <ProcurementVendorEditor key={`${editor === "new" ? "new" : `${editor.vendor.id}-${editor.readOnly}`}-${resumeDraft}`} retainedDraft={resumeDraft ? vendorDraftState.retained ?? undefined : undefined} canCreateBasket={canCreateBasket && (editor === "new" || !editor.readOnly)} canRequestMainBasket={canCreateProposal && (editor === "new" || !editor.readOnly)} canUpdate={canUpdate && (editor === "new" || !editor.readOnly)} canCorrectBaseline={canCorrectBaseline} existing={editor === "new" ? undefined : editor.vendor} onClose={() => { setEditor(null); if (resumeDraft) vendorDraftState.clear(); setResumeDraft(false); }} onSaved={(vendor) => { if (resumeDraft) vendorDraftState.clear(); setNotice(`${vendor.name} saved.`); setSubmittedRequest(false); }} onRequestSubmitted={() => { setEditor(null); setResumeDraft(false); setSubmittedRequest(true); setNotice("Request submitted to Super Admin. Your vendor draft is available to resume."); requestAnimationFrame(() => resumeButton.current?.focus()); }} onOpenRequests={() => { setEditor(null); setResumeDraft(false); navigate("/procurement/requests"); }} /> : null}
+    {archive && canArchive ? <Dialog tone="danger" title="Archive vendor?" eyebrow="Vendor directory" description={`${archive.name} will no longer be available for new selections. Existing project records remain available.`} onClose={() => setArchive(null)} busy={mutation.isPending} role="alertdialog">
+      <div className="ui-dialog__body">
+        <Field id={`${id}-reason`} label="Reason" required>{(props) => <Textarea {...props} disabled={mutation.isPending} maxLength={1000} value={reason} onChange={(event) => setReason(event.target.value)} />}</Field>
+        {mutation.isError ? <InlineMessage tone="error">{procurementError(mutation.error, "The vendor could not be archived. Refresh and try again.")}</InlineMessage> : null}
+      </div>
+      <div className="vendor-procurement__actions ui-dialog__actions"><Button variant="secondary" disabled={mutation.isPending} onClick={() => setArchive(null)}>Cancel</Button><Button variant="destructive" disabled={!reason.trim()} busy={mutation.isPending} onClick={() => mutation.mutate(archive)}>Archive vendor</Button></div>
     </Dialog> : null}
   </div>;
 }

@@ -84,7 +84,9 @@ describe("EstimatorRecommendations", () => {
     expect(within(panel).getByText(/1 related recommendation has unavailable items/)).toBeVisible();
     await user.click(within(panel).getByText("Other guidance"));
     expect(within(panel).getByText("Confirm it is dry.", { exact: false })).toBeVisible();
-    expect(panel.querySelector(".ui-dialog__close")).not.toBeInTheDocument();
+    expect(within(panel).getAllByRole("button", { name: "Close recommendations" })).toHaveLength(1);
+    expect(panel.querySelector(".ui-dialog-toolbar .ui-dialog__close")).toBe(within(panel).getByRole("button", { name: "Close recommendations" }));
+    expect(panel.querySelector(".estimator-recommendations__card-close")).not.toBeInTheDocument();
     expect(panel.querySelectorAll(".estimator-recommendations__card-header")).toHaveLength(1);
     expect(panel.querySelector(".estimator-recommendations__card-header")?.tagName).toBe("DIV");
     expect(within(panel).queryByRole("banner")).not.toBeInTheDocument();

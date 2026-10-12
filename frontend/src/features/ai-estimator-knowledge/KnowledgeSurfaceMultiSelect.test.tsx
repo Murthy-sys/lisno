@@ -4,7 +4,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { KnowledgeSurfaceMultiSelect } from "./KnowledgeSurfaceMultiSelect";
+import { KnowledgeSurfaceMultiSelect, type KnowledgeProposedMasterChoice } from "./KnowledgeSurfaceMultiSelect";
 import type { KnowledgeMaster, KnowledgeMasterStatus } from "./knowledgeTypes";
 
 const floor = surface("surface-floor", "Floor", 10);
@@ -18,6 +18,7 @@ const ceiling = surface(
 function ControlledSurfaces({
   initialSelectedIds = [],
   masters = [wall, ceiling, floor],
+  proposedMasters,
   label,
   placeholder,
   searchable = false,
@@ -29,6 +30,7 @@ function ControlledSurfaces({
 }: {
   readonly initialSelectedIds?: readonly string[];
   readonly masters?: readonly KnowledgeMaster[];
+  readonly proposedMasters?: readonly KnowledgeProposedMasterChoice[];
   readonly label?: string;
   readonly placeholder?: string;
   readonly searchable?: boolean;
@@ -43,6 +45,7 @@ function ControlledSurfaces({
   return (
     <KnowledgeSurfaceMultiSelect
       selectedIds={selectedIds}
+      proposedMasters={proposedMasters}
       masters={masters}
       label={label}
       placeholder={placeholder}
@@ -60,6 +63,57 @@ function ControlledSurfaces({
 }
 
 describe("KnowledgeSurfaceMultiSelect", () => {
+  it("selects a private surface by keyboard with explicit provenance and restores trigger focus", async () => {
+    const user = userEvent.setup();
+    const proposed = { id: "proposal-wall", name: "Wall" };
+    const onChange = vi.fn();
+    render(<ControlledSurfaces masters={[wall]} proposedMasters={[proposed]} onChange={onChange} />);
+
+    const trigger = screen.getByRole("button", { name: "Surfaces" });
+    trigger.focus();
+    await user.keyboard("{ArrowDown}{End}");
+    const option = screen.getByRole("option", { name: "Wall (Proposed)" });
+    expect(option).toHaveFocus();
+    expect(screen.getByRole("option", { name: "Wall" })).toHaveAttribute("aria-selected", "false");
+    await user.keyboard("{Enter}");
+    expect(onChange).toHaveBeenLastCalledWith([proposed.id]);
+    expect(option).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+    expect(trigger).toHaveAccessibleDescription("Wall");
+    expect(document.body).not.toHaveTextContent(proposed.id);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("does not promote inactive shared values when proposed options are available", async () => {
+    const user = userEvent.setup();
+    const proposed = { id: "proposal-panel", name: "Acoustic panel" };
+    const inactive = { ...wall, status: "inactive" as const };
+    render(<ControlledSurfaces masters={[inactive]} proposedMasters={[proposed]} searchable />);
+
+    await user.click(screen.getByRole("button", { name: "Surfaces" }));
+    await user.type(screen.getByRole("searchbox", { name: "Search surfaces" }), "panel");
+    expect(screen.getByRole("option", { name: "Acoustic panel (Proposed)" })).toBeVisible();
+    expect(screen.queryByRole("option", { name: /Wall/ })).not.toBeInTheDocument();
+    const result = await axe.run(document.body, { rules: { "color-contrast": { enabled: false }, region: { enabled: false } } });
+    expect(result.violations).toEqual([]);
+  });
+
+  it("stops displaying a private name when that proposal catalog leaves the current scope", async () => {
+    const user = userEvent.setup();
+    const proposed = { id: "private-proposal-surface", name: "Private proposal finish" };
+    const { rerender } = render(<ControlledSurfaces masters={[]} proposedMasters={[proposed]} initialSelectedIds={[proposed.id]} />);
+    expect(screen.getByRole("button", { name: "Surfaces" })).toHaveAccessibleDescription(proposed.name);
+
+    rerender(<ControlledSurfaces masters={[]} proposedMasters={[]} initialSelectedIds={[proposed.id]} />);
+    const trigger = screen.getByRole("button", { name: "Surfaces" });
+    expect(trigger).toHaveAccessibleDescription("Unavailable value");
+    expect(document.body).not.toHaveTextContent(proposed.name);
+    await user.click(trigger);
+    expect(screen.getByRole("option", { name: "Unavailable value" })).toHaveAttribute("aria-disabled", "true");
+    expect(document.body).not.toHaveTextContent(proposed.id);
+  });
+
   it("selects and deselects without modifier keys and returns IDs in normalized-name order", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

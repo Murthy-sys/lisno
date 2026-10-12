@@ -178,7 +178,8 @@ describe("role navigation", () => {
       icon: ShoppingCart,
       children: [
         { label: primaryLabel, to: primaryRoute, sidebarIcon: "procurement-dashboard" },
-        { label: "Vendors", to: vendors, sidebarIcon: "procurement-vendors" }
+        { label: "Vendors", to: vendors, sidebarIcon: "procurement-vendors" },
+        ...(role === "procurement" ? [{ label: "All my requests", to: "/procurement/requests" }] : [])
       ]
     });
     expect(navigationForAuthorization("admin", navigationAuthorization("admin")).filter(isNavigationGroup)).toEqual([]);
@@ -186,8 +187,20 @@ describe("role navigation", () => {
 
   it("filters Procurement children by capability and hides an empty group", () => {
     expect(navigationForAuthorization("procurement", authorizationFor("procurement", ["identity.self.read"])) .filter(isNavigationGroup)).toEqual([]);
-    expect(navigationForAuthorization("procurement", authorizationFor("procurement", ["procurement.vendor_directory.read"])) .filter(isNavigationGroup)[0]?.children.map((child) => child.label)).toEqual(["Vendors"]);
+    expect(navigationForAuthorization("procurement", authorizationFor("procurement", ["procurement.vendor_directory.read"])) .filter(isNavigationGroup)[0]?.children.map((child) => child.label)).toEqual(["Vendors", "All my requests"]);
     expect(navigationForAuthorization("super_admin", authorizationFor("super_admin", ["procurement.vendor_suggestions.read"])) .filter(isNavigationGroup)).toEqual([]);
+  });
+
+  it("highlights All my requests inside the Procurement group without selecting Vendors", () => {
+    render(<MemoryRouter initialEntries={["/procurement/requests"]}>
+      <Sidebar user={{ id: "procurement-one", name: "Procurement User", email: "procurement@lisno.example", role: "procurement" }}
+        authorization={navigationAuthorization("procurement")} />
+    </MemoryRouter>);
+    expect(screen.getByRole("button", { name: "Procurement" })).toHaveAttribute("aria-expanded", "true");
+    const sections = screen.getByRole("group", { name: "Procurement sections" });
+    expect(within(sections).getByRole("link", { name: "All my requests" })).toHaveAttribute("href", "/procurement/requests");
+    expect(within(sections).getByRole("link", { name: "All my requests" })).toHaveAttribute("aria-current", "page");
+    expect(within(sections).getByRole("link", { name: "Vendors" })).not.toHaveAttribute("aria-current");
   });
 
   it("keeps the Procurement group expanded on a project route and supports keyboard toggling", async () => {

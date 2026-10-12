@@ -173,6 +173,7 @@ export function UserMutationDialog({
   if (confirmingDeactivation) {
     return (
       <Dialog
+        tone="danger"
         key="deactivation-confirmation"
         title={`Deactivate ${user.name}?`}
         eyebrow="Confirm account change"
@@ -181,12 +182,14 @@ export function UserMutationDialog({
         busy={mutation.isPending}
         onClose={() => setConfirmingDeactivation(false)}
       >
-        <div className="admin-user-dialog">
-          <p className="admin-user-dialog__warning">
-            Project access grants will be revoked immediately. Existing
-            assignments remain in place and must be reassigned separately.
-          </p>
-          <div className="admin-user-dialog__actions">
+        <div className="admin-user-dialog ui-dialog__form">
+          <div className="ui-dialog__body">
+            <p className="admin-user-dialog__warning">
+              Project access grants will be revoked immediately. Existing
+              assignments remain in place and must be reassigned separately.
+            </p>
+          </div>
+          <div className="admin-user-dialog__actions ui-dialog__actions">
             <Button
               data-dialog-initial-focus
               variant="quiet"
