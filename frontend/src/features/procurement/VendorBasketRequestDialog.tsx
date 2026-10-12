@@ -75,23 +75,25 @@ export function VendorBasketRequestDialog({ vendorName, vendorId, activeBasketNa
   }
   const fieldErrors = request.error instanceof ApiError ? request.error.fields : undefined;
   return <Dialog title="Request Main Basket" eyebrow="Vendor classification" description="Send a new Main Basket request to Super Admin. It will appear in Configuration after approval." busy={pending} onClose={close} initialFocusRef={initialFocus}>
-    <form className="vendor-profile__basket-request" noValidate onSubmit={submit}>
-      <Field id={`${id}-vendor`} label="Vendor name" required={!vendorId} error={validation.vendorName || fieldErrors?.vendorName} hint={vendorId ? "Saved vendor" : "Updates Entity Name in the vendor form. The vendor is not saved yet."}>
-        {(props) => <Input {...props} ref={vendorInput} value={vendorName} maxLength={240} readOnly={Boolean(vendorId)} disabled={disabled || pending} onChange={(event) => {
-          if (vendorId || disabled || pending || submission.current) return;
-          onVendorNameChange(event.target.value);
-          resetRequest();
-        }} />}
-      </Field>
-      <Field id={`${id}-name`} label="New Main Basket name" required error={validation.proposedName || fieldErrors?.proposedName}>
-        {(props) => <Input {...props} ref={proposedInput} maxLength={240} value={proposedName} disabled={disabled || pending} onChange={(event) => {
-          if (disabled || pending || submission.current) return;
-          setProposedName(event.target.value);
-          resetRequest();
-        }} />}
-      </Field>
-      {request.isError ? <InlineMessage tone="error" role="alert">{procurementError(request.error, "The request could not be sent. Your entries are preserved; retry.")}</InlineMessage> : null}
-      <div className="vendor-profile__basket-request-actions">
+    <form className="vendor-profile__basket-request ui-dialog__form" noValidate onSubmit={submit}>
+      <div className="ui-dialog__body">
+        <Field id={`${id}-vendor`} label="Vendor name" required={!vendorId} error={validation.vendorName || fieldErrors?.vendorName} hint={vendorId ? "Saved vendor" : "Updates Entity Name in the vendor form. The vendor is not saved yet."}>
+          {(props) => <Input {...props} ref={vendorInput} value={vendorName} maxLength={240} readOnly={Boolean(vendorId)} disabled={disabled || pending} onChange={(event) => {
+            if (vendorId || disabled || pending || submission.current) return;
+            onVendorNameChange(event.target.value);
+            resetRequest();
+          }} />}
+        </Field>
+        <Field id={`${id}-name`} label="New Main Basket name" required error={validation.proposedName || fieldErrors?.proposedName}>
+          {(props) => <Input {...props} ref={proposedInput} maxLength={240} value={proposedName} disabled={disabled || pending} onChange={(event) => {
+            if (disabled || pending || submission.current) return;
+            setProposedName(event.target.value);
+            resetRequest();
+          }} />}
+        </Field>
+        {request.isError ? <InlineMessage tone="error" role="alert">{procurementError(request.error, "The request could not be sent. Your entries are preserved; retry.")}</InlineMessage> : null}
+      </div>
+      <div className="vendor-profile__basket-request-actions ui-dialog__actions">
         <Button variant="secondary" disabled={pending} onClick={close}>Cancel</Button>
         <Button type="submit" busy={pending} disabled={disabled || !vendorName.trim() || !proposedName.trim() || pending}>Send request</Button>
       </div>

@@ -551,8 +551,8 @@ export function KnowledgeSpecificationBuilder({
           initialFocusRef={brandNameRef}
           returnFocusRef={brandSelectRef}
         >
-          <form className="knowledge-dialog-form knowledge-brand-dialog" onSubmit={submitBrand} noValidate>
-            <div className="knowledge-dialog-body">
+          <form className="ui-dialog__form knowledge-dialog-form knowledge-brand-dialog" onSubmit={submitBrand} noValidate>
+            <div className="ui-dialog__body knowledge-dialog-body">
               <Field id="knowledge-new-brand-name" label="Brand name" required error={brandNameError}>
                 {(props) => (
                   <Input
@@ -569,7 +569,7 @@ export function KnowledgeSpecificationBuilder({
                 )}
               </Field>
             </div>
-            <div className="knowledge-dialog-actions">
+            <div className="ui-dialog__actions knowledge-dialog-actions">
               <Button type="button" variant="destructive-outline" onClick={closeBrandDialog}>Cancel</Button>
               <Button type="submit">{brandDialogBrandId ? "Save" : "Add"}</Button>
             </div>

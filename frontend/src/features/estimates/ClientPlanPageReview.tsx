@@ -82,20 +82,22 @@ export function ClientPlanPageReview({
           onClose={() => setPending(undefined)}
           busy={submitting}
         >
-          <div className="client-plan-targets">
-            {pending.preview.targets.map((target) => (
-              <label key={target.drawingId}>
-                <input
-                  type="checkbox"
-                  checked={pending.selected.includes(target.drawingId)}
-                  onChange={(event) => setPending({ ...pending, selected: event.target.checked ? [...pending.selected, target.drawingId] : pending.selected.filter((id) => id !== target.drawingId) })}
-                />
-                {target.title}
-              </label>
-            ))}
-            {!pending.preview.targets.length ? <p>No drawing overlap detected. Staff will map or resolve this page feedback.</p> : null}
-            {error ? <p role="alert">{error}</p> : null}
-            <button
+          <div className="client-plan-targets ui-dialog__form">
+            <div className="ui-dialog__body">
+              {pending.preview.targets.map((target) => (
+                <label key={target.drawingId}>
+                  <input
+                    type="checkbox"
+                    checked={pending.selected.includes(target.drawingId)}
+                    onChange={(event) => setPending({ ...pending, selected: event.target.checked ? [...pending.selected, target.drawingId] : pending.selected.filter((id) => id !== target.drawingId) })}
+                  />
+                  {target.title}
+                </label>
+              ))}
+              {!pending.preview.targets.length ? <p>No drawing overlap detected. Staff will map or resolve this page feedback.</p> : null}
+              {error ? <p role="alert">{error}</p> : null}
+            </div>
+            <div className="ui-dialog__actions"><button
               type="button"
               className="button button--primary"
               disabled={submitting || (pending.preview.targets.length > 0 && pending.selected.length === 0)}
@@ -107,7 +109,7 @@ export function ClientPlanPageReview({
                 } catch { setError("The request changed or could not be submitted. Refresh and try again."); }
                 finally { setSubmitting(false); }
               }}
-            >Request changes</button>
+            >Request changes</button></div>
           </div>
         </Dialog>
       ) : null}

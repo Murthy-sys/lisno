@@ -362,26 +362,28 @@ function ProjectCompletionControl({ projectId, projectName, projectStatus, onCom
 
   return <>
     <Button ref={openerRef} onClick={() => { requestRef.current = null; completion.reset(); setOpen(true); }}>Close</Button>
-    {open ? <Dialog title={`Close ${projectName}?`} eyebrow="Final project approval" role="alertdialog"
+    {open ? <Dialog tone="danger" title={`Close ${projectName}?`} eyebrow="Final project approval" role="alertdialog"
       description="This marks the project completed and records its completion date. No project cost will be added."
       busy={completion.isPending} onClose={close} returnFocusRef={openerRef}>
-      {readiness.isPending || readiness.isFetching ? <p role="status">Checking project completion readiness…</p> :
-        readiness.isError ? <InlineMessage tone="error" action={<Button variant="secondary" onClick={() => void readiness.refetch()}>Retry readiness</Button>}>
-          {readiness.error instanceof ApiError && readiness.error.code === "PROJECT_COMPLETION_LINEAGE_CONFLICT"
-            ? `This project cannot be closed through this workflow. ${readiness.error.message}`
-            : readiness.error instanceof ApiError ? readiness.error.message : "Completion readiness could not be loaded."}
-        </InlineMessage> : summary?.projectId !== projectId ? <InlineMessage tone="error">Completion details do not match this project. Refresh before continuing.</InlineMessage> :
-        summary.projectStatus === "completed" ? <p role="status">Completed</p> :
-        !sameActiveProject ? <InlineMessage tone="warning">The project is not active. Refresh its status before closing.</InlineMessage> :
-        !validAuthority || !blockers ? <InlineMessage tone="error">Completion authority is unavailable. Refresh the project before continuing.</InlineMessage> :
-        blockers.length ? <section aria-label="Completion blockers"><p>Resolve these items before closing the project:</p><ul>{blockers.map((blocker, index) => <li key={`${blocker.code}-${index}`}>{blocker.message}</li>)}</ul></section> :
-        !summary.readyForCompletion ? <InlineMessage tone="warning">The project is not ready for completion. Refresh the current review state.</InlineMessage> :
-        <p>All completion requirements are satisfied. Closing records the final project decision.</p>}
-      {completion.isError ? <InlineMessage tone="error">{completion.error instanceof ApiError && completion.error.status === 409
-        ? "Completion changed before the decision was recorded. Review the refreshed requirements and try again."
-        : completion.error instanceof ApiError ? completion.error.message
-          : "The completion request may have reached the server. Retry to check the same decision safely."}</InlineMessage> : null}
-      <div className="finance-panel-actions"><Button variant="secondary" disabled={completion.isPending} onClick={close}>Cancel</Button><Button variant="destructive" busy={completion.isPending} disabled={!canConfirm} onClick={confirm}>Close project</Button></div>
+      <div className="ui-dialog__body">
+        {readiness.isPending || readiness.isFetching ? <p role="status">Checking project completion readiness…</p> :
+          readiness.isError ? <InlineMessage tone="error" action={<Button variant="secondary" onClick={() => void readiness.refetch()}>Retry readiness</Button>}>
+            {readiness.error instanceof ApiError && readiness.error.code === "PROJECT_COMPLETION_LINEAGE_CONFLICT"
+              ? `This project cannot be closed through this workflow. ${readiness.error.message}`
+              : readiness.error instanceof ApiError ? readiness.error.message : "Completion readiness could not be loaded."}
+          </InlineMessage> : summary?.projectId !== projectId ? <InlineMessage tone="error">Completion details do not match this project. Refresh before continuing.</InlineMessage> :
+          summary.projectStatus === "completed" ? <p role="status">Completed</p> :
+          !sameActiveProject ? <InlineMessage tone="warning">The project is not active. Refresh its status before closing.</InlineMessage> :
+          !validAuthority || !blockers ? <InlineMessage tone="error">Completion authority is unavailable. Refresh the project before continuing.</InlineMessage> :
+          blockers.length ? <section aria-label="Completion blockers"><p>Resolve these items before closing the project:</p><ul>{blockers.map((blocker, index) => <li key={`${blocker.code}-${index}`}>{blocker.message}</li>)}</ul></section> :
+          !summary.readyForCompletion ? <InlineMessage tone="warning">The project is not ready for completion. Refresh the current review state.</InlineMessage> :
+          <p>All completion requirements are satisfied. Closing records the final project decision.</p>}
+        {completion.isError ? <InlineMessage tone="error">{completion.error instanceof ApiError && completion.error.status === 409
+          ? "Completion changed before the decision was recorded. Review the refreshed requirements and try again."
+          : completion.error instanceof ApiError ? completion.error.message
+            : "The completion request may have reached the server. Retry to check the same decision safely."}</InlineMessage> : null}
+      </div>
+      <div className="finance-panel-actions ui-dialog__actions"><Button variant="secondary" disabled={completion.isPending} onClick={close}>Cancel</Button><Button variant="destructive" busy={completion.isPending} disabled={!canConfirm} onClick={confirm}>Close project</Button></div>
     </Dialog> : null}
   </>;
 }

@@ -770,16 +770,18 @@ export function ProjectPurchaseOrderRequestPanel({ projectId, projectName, canMa
         setNotice(`${saved.itemName} ${editor.item ? "updated" : "added"} in this project.`);
         void refresh();
       }} /> : null}
-    {removing && (!projectSourceMismatch || (removing.recovery && canUseRecoveryFailure)) && canReadItems && canManageItems ? <Dialog title={`Remove ${removing.itemName}?`} eyebrow="Procurement item"
+    {removing && (!projectSourceMismatch || (removing.recovery && canUseRecoveryFailure)) && canReadItems && canManageItems ? <Dialog tone="danger" title={`Remove ${removing.itemName}?`} eyebrow="Procurement item"
       description="This removes the item from active procurement and releases its uncommitted vendor allocation. Submitted orders retain their history and can prevent removal."
       role="alertdialog" busy={removeItem.isPending} onClose={() => setRemoving(null)}
       returnFocusRef={itemReturnFocusRef} fallbackFocusRef={itemFallbackFocusRef}>
-      <Field id={`purchase-order-remove-${removing.id}`} label="Reason" required>
-        {(field) => <Textarea {...field} maxLength={1000} value={removeReason} disabled={removeItem.isPending || removalBlocked}
-          onChange={(event) => setRemoveReason(event.target.value)} />}
-      </Field>
-      {removeItem.isError ? <InlineMessage tone="error">{procurementError(removeItem.error, "The item could not be removed. Refresh and try again.")}</InlineMessage> : null}
-      <div className="modal__actions"><Button variant="quiet" disabled={removeItem.isPending} onClick={() => setRemoving(null)}>Cancel</Button>
+      <div className="ui-dialog__body">
+        <Field id={`purchase-order-remove-${removing.id}`} label="Reason" required>
+          {(field) => <Textarea {...field} maxLength={1000} value={removeReason} disabled={removeItem.isPending || removalBlocked}
+            onChange={(event) => setRemoveReason(event.target.value)} />}
+        </Field>
+        {removeItem.isError ? <InlineMessage tone="error">{procurementError(removeItem.error, "The item could not be removed. Refresh and try again.")}</InlineMessage> : null}
+      </div>
+      <div className="modal__actions ui-dialog__actions"><Button variant="quiet" disabled={removeItem.isPending} onClick={() => setRemoving(null)}>Cancel</Button>
         <Button variant="destructive" busy={removeItem.isPending} disabled={removeReason.trim().length < 3 || removeItem.isPending || removalBlocked || removeItem.error instanceof ApiError && removeItem.error.status === 409}
           onClick={() => removeItem.mutate({ target: removing, reason: removeReason.trim() })}>Remove item</Button></div>
     </Dialog> : null}

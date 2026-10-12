@@ -1,0 +1,22 @@
+.procurement-requests { inline-size: 100%; }
+.procurement-requests .vendor-directory__hero { padding-bottom: 24px; }
+.procurement-requests .vendor-directory__intro { max-width: 68%; }
+.procurement-requests__actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.procurement-requests__name-column { width: 23%; }
+.procurement-requests__status-column { width: 21%; }
+.procurement-requests .vendor-directory__status { white-space: normal; }
+.procurement-requests .vendor-directory__status::before { flex-shrink: 0; }
+:is(.ui-app-shell[data-role], body) .procurement-requests .vendor-directory__footer .ui-button { width: auto; padding-inline: 12px; }
+.procurement-requests .vendor-directory__footer nav > span { color: var(--directory-muted); font-size: 13px; padding-inline: 5px; }
+.procurement-requests__summary { display: grid; gap: 20px; margin: 0; padding: 24px; }
+.procurement-requests__summary dt { font-size: 13px; color: var(--ui-text-muted, #676c74); margin-bottom: 5px; }
+.procurement-requests__summary dd { margin: 0; overflow-wrap: anywhere; }
+@container (max-width: 950px) {
+  :is(.ui-app-shell[data-role], body) .procurement-requests .vendor-directory__table-wrap .vendor-directory__table tbody [data-placement="identity"] { padding-left: 0; min-height: 0; }
+}
+@media (max-width: 650px) {
+  .procurement-requests .vendor-directory__intro { max-width: 100%; }
+  .procurement-requests__actions { width: 100%; }
+  .procurement-requests__actions > button { flex: 1; }
+  .procurement-requests .vendor-directory__footer nav { width: 100%; justify-content: space-between; }
+}

@@ -1,0 +1,54 @@
+import axe from "axe-core";
+import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
+import { beforeEach, expect, it, vi } from "vitest";
+import { authorizationFor } from "../../test/authFixtures";
+import { renderWithQuery } from "../../test/render";
+import { server } from "../../test/server";
+import { CreateProposalPanel } from "./CreateProposalPanel";
+import { proposalFixture } from "./proposal.fixtures";
+import type { ProposalDetail } from "./proposalTypes";
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "procurement-one", role: "procurement" }, authorization: authorizationFor("procurement") }) }));
+vi.mock("./ProposalWorkspace", () => ({ ProposalWorkspace: ({ onSubmitted }: { onSubmitted?: (proposal: ProposalDetail) => void }) => <section aria-label="Saved basket configuration"><button onClick={() => onSubmitted?.(proposalFixture({ status: "pending", vendorName: null }))}>Submit saved configuration</button></section> }));
+let writes: Record<string, unknown>[];
+let fail: boolean;
+beforeEach(() => { writes = []; fail = false; server.use(http.post("/api/v1/procurement/vendor-basket-proposals", async ({ request }) => {
+  writes.push(await request.json() as Record<string, unknown>);
+  return fail ? HttpResponse.json({ error: { code: "UNAVAILABLE", message: "Temporarily unavailable" } }, { status: 503 }) : HttpResponse.json({ data: proposalFixture({ vendorName: null }) });
+})); });
+it.each([undefined, { id: "parent-pop", name: "POP / Gypsum" }])("creates a basket without a vendor field or required vendor value (%j)", async parentBasket => {
+  const user = userEvent.setup(); const onSubmitted = vi.fn();
+  renderWithQuery(<CreateProposalPanel parentBasket={parentBasket} activeBasketNames={[]} onClose={vi.fn()} onBusyChange={vi.fn()} onSubmitted={onSubmitted} />);
+  const name = screen.getByRole("textbox", { name: parentBasket ? "New Sub-Basket name" : "New Main Basket name" });
+  const dialog = screen.getByRole("dialog", { name: parentBasket ? "Configure Sub-Basket" : "Configure Main Basket" });
+  expect(dialog).toHaveClass("basket-proposal--procurement-reference");
+  expect(screen.getAllByRole("textbox")).toHaveLength(1);
+  expect(screen.queryByRole("textbox", { name: "Vendor name" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Draft")).not.toBeInTheDocument();
+  expect(screen.queryByText("Configuration saved")).not.toBeInTheDocument();
+  expect(screen.queryByRole("navigation", { name: "Proposed basket hierarchy" })).not.toBeInTheDocument();
+  if (parentBasket) expect(screen.getByText(parentBasket.name)).toBeVisible();
+  await waitFor(() => expect(name).toHaveFocus());
+  const accessibility = await axe.run(dialog, { rules: { "color-contrast": { enabled: false } } });
+  expect(accessibility.violations).toEqual([]);
+  await user.type(name, "  New  stone "); await user.click(screen.getByRole("button", { name: "Create configuration draft" }));
+  await screen.findByRole("button", { name: "Submit saved configuration" });
+  expect(writes[0]).toMatchObject({ name: "New stone", vendorId: null }); expect(writes[0]).not.toHaveProperty("vendorName");
+  if (parentBasket) expect(writes[0].target).toEqual({ kind: "new_sub_basket", basketId: parentBasket.id });
+  await user.click(screen.getByRole("button", { name: "Submit saved configuration" })); expect(onSubmitted).toHaveBeenCalledWith(expect.objectContaining({ status: "pending", vendorName: null }));
+});
+it("keeps uncertain draft creation retry identical and retains entered values", async () => {
+  fail = true; const user = userEvent.setup(); const close = vi.fn();
+  renderWithQuery(<CreateProposalPanel vendorId="saved-vendor" activeBasketNames={[]} onClose={close} onBusyChange={vi.fn()} />);
+  await user.type(screen.getByRole("textbox", { name: "New Main Basket name" }), "Stone"); await user.click(screen.getByRole("button", { name: "Create configuration draft" }));
+  await screen.findByRole("button", { name: "Retry draft creation" }); expect(close).not.toHaveBeenCalled();
+  expect(screen.getByRole("textbox", { name: "New Main Basket name" })).toHaveValue("Stone"); fail = false;
+  await user.click(screen.getByRole("button", { name: "Retry draft creation" })); await screen.findByRole("button", { name: "Submit saved configuration" });
+  expect(writes).toHaveLength(2); expect(writes[1]).toEqual(writes[0]); expect(writes[0].vendorId).toBe("saved-vendor");
+});
+it("still rejects an existing Main Basket name without sending a create request", async () => {
+  const user = userEvent.setup(); renderWithQuery(<CreateProposalPanel activeBasketNames={["Stone finishes"]} onClose={vi.fn()} onBusyChange={vi.fn()} />);
+  await user.type(screen.getByRole("textbox", { name: "New Main Basket name" }), "STONE finishes"); await user.click(screen.getByRole("button", { name: "Create configuration draft" }));
+  expect(screen.getByText("This Main Basket already exists. Select it in the vendor form.")).toBeVisible(); expect(writes).toEqual([]);
+});

@@ -6,6 +6,7 @@ import { hasFrontendPermission } from "../../auth/authorization";
 import { notificationApi, notificationDenied, notificationKeys, type NotificationPage, type ProjectNotification } from "./notificationApi";
 import { runNotificationStream, type NotificationConnection } from "./notificationStream";
 
+import { BasketNotificationProvider } from "./BasketNotifications";
 import { ExecutionNotificationProvider } from "./ExecutionNotifications";
 
 const foreground = () => document.visibilityState === "visible" && navigator.onLine;
@@ -45,7 +46,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const token = tokenStorage.get();
   const enabled = auth.status === "authenticated" && Boolean(auth.user && token) && hasFrontendPermission(auth.authorization, "chat.read");
   const identity = useMemo(() => crypto.randomUUID(), [auth.user?.id, enabled, token]);
-  return <ExecutionNotificationProvider><NotificationSession key={identity} enabled={enabled} sessionToken={token}>{children}</NotificationSession></ExecutionNotificationProvider>;
+  return <BasketNotificationProvider><ExecutionNotificationProvider><NotificationSession key={identity} enabled={enabled} sessionToken={token}>{children}</NotificationSession></ExecutionNotificationProvider></BasketNotificationProvider>;
 }
 
 function NotificationSession({ children, enabled, sessionToken }: { children: ReactNode; enabled: boolean; sessionToken: string | null }) {

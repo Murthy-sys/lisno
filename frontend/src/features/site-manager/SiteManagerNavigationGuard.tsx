@@ -23,5 +23,5 @@ function RouterGuard({ dirty, busy, allowedClose }: { dirty: boolean; busy: bool
     return (dirty || busy) && (currentLocation.pathname !== nextLocation.pathname || assignmentChanged);
   });
   if (blocker.state !== "blocked") return null;
-  return <Dialog title="Leave project with unsaved changes?" eyebrow="Unsaved changes" description="Your pending changes will be lost if you leave this project." role="alertdialog" busy={busy} onClose={() => blocker.reset()}><div className="modal__actions"><Button variant="secondary" data-dialog-initial-focus disabled={busy} onClick={() => blocker.reset()}>Keep editing</Button><Button variant="destructive" disabled={busy} onClick={() => blocker.proceed()}>Discard and leave</Button></div></Dialog>;
+  return <Dialog title="Leave project with unsaved changes?" eyebrow="Unsaved changes" description="Your pending changes will be lost if you leave this project." role="alertdialog" busy={busy} onClose={() => blocker.reset()}><div className="modal__actions ui-dialog__actions"><Button variant="secondary" data-dialog-initial-focus disabled={busy} onClick={() => blocker.reset()}>Keep editing</Button><Button variant="destructive" disabled={busy} onClick={() => blocker.proceed()}>Discard and leave</Button></div></Dialog>;
 }

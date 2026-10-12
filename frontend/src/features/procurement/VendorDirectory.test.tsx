@@ -1,7 +1,7 @@
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PermissionCode, Role } from "../../api/authorization-contract";
@@ -11,6 +11,9 @@ import { server } from "../../test/server";
 import { knowledgeQueryKeys } from "../ai-estimator-knowledge/knowledgeQueryKeys";
 import type { KnowledgeMaster } from "../ai-estimator-knowledge/knowledgeTypes";
 import { ProcurementVendorDirectory } from "./ProcurementVendorDirectory";
+import { ProcurementVendorDraftProvider } from "./ProcurementVendorDraftProvider";
+import { proposalFixture, proposalHierarchyFixture, proposalSectionFixture } from "../vendor-basket-proposals/proposal.fixtures";
+import type { KnowledgeSectionKey } from "../ai-estimator-knowledge/knowledgeTypes";
 import { completeVendor, vendorBasket, vendorSubBasket } from "./vendorProfile.fixtures";
 import { vendorDirectoryColumns, type VendorDirectoryColumn } from "./vendorDirectoryColumns";
 import { vendorColumnWidth, VendorDirectoryTable } from "./VendorDirectoryTable";
@@ -26,11 +29,17 @@ let requests: URLSearchParams[];
 let overviewMissing: boolean;
 let overviewFailed: boolean;
 let listFailed: boolean;
-function start() {
+function start(withNavigation = false) {
   let client!: QueryClient;
-  function Capture() { client = useQueryClient(); return <ProcurementVendorDirectory />; }
+  function Capture() {
+    client = useQueryClient();
+    const location = useLocation(); const navigate = useNavigate();
+    return withNavigation && location.pathname === "/procurement/requests"
+      ? <><h1>Requests route</h1><button onClick={() => navigate("/procurement/vendors")}>Return to Vendors</button></>
+      : <ProcurementVendorDirectory />;
+  }
   function Location() { const location = useLocation(); return <output data-testid="vendor-directory-location">{location.pathname}</output>; }
-  return { ...renderWithQuery(<MemoryRouter initialEntries={[role === "super_admin" ? "/admin/procurement/vendors" : "/procurement/vendors"]}><Capture /><Location /></MemoryRouter>), client };
+  return { ...renderWithQuery(<MemoryRouter initialEntries={[role === "super_admin" ? "/admin/procurement/vendors" : "/procurement/vendors"]}><ProcurementVendorDraftProvider><Capture /><Location /></ProcurementVendorDraftProvider></MemoryRouter>), client };
 }
 const pageRequests = () => requests.filter((params) => !params.has("includeDirectoryOverview"));
 beforeEach(() => {
@@ -59,6 +68,152 @@ beforeEach(() => {
 });
 
 describe("reference vendor directory", () => {
+  it.each(["main", "sub"] as const)("closes all panels after confirmed %s basket submission and resumes the untouched vendor draft after navigation", async target => {
+    role = "procurement";
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:synthetic-vendor-draft") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    let proposal = proposalFixture({ vendorName: null, ...(target === "sub" ? { target: { kind: "new_sub_basket", basketId: vendorBasket.id }, targetParentName: vendorBasket.name, basketId: vendorBasket.id, name: "Kitchen joinery", counts: { subBaskets: 1, mainLines: 0 } } : {}) });
+    const commands: unknown[] = []; const vendorWrites: unknown[] = [];
+    const proposalPath = "/api/v1/procurement/vendor-basket-proposals";
+    server.use(
+      http.post(proposalPath, () => data(proposal)),
+      http.get(`${proposalPath}/proposal-one`, () => data(proposal)),
+      http.get(`${proposalPath}/proposal-one/hierarchy`, () => data({ items: proposalHierarchyFixture(proposal).filter(row => target !== "sub" || row.kind === "sub_basket"), pagination: { total: target === "sub" ? 1 : 2, limit: 100, offset: 0, hasMore: false } })),
+      http.get(`${proposalPath}/proposal-one/masters/:masterKind`, () => data({ items: [], pagination: { total: 0, limit: 100, offset: 0, hasMore: false } })),
+      http.get(`${proposalPath}/references`, () => data({ items: [], pagination: { total: 0, limit: 100, offset: 0, hasMore: false } })),
+      http.get(`${proposalPath}/proposal-one/resources/:resourceId`, ({ params }) => data(proposalSectionFixture(String(params.resourceId).replace("resource-", "") as KnowledgeSectionKey, {}, proposal))),
+      http.get(`${proposalPath}/proposal-one/inherited-quality`, () => data({ basketId: vendorBasket.id, basketName: vendorBasket.name, basketStatus: "active", version: 1, revisionId: null, revisionNumber: null, contentDigest: "empty-quality", parameters: [], updatedAt: proposal.updatedAt })),
+      http.get(`${proposalPath}/proposal-one/readiness`, () => data({ head: proposal.head, version: proposal.version, requestVersion: proposal.requestVersion, ready: true, findings: [] })),
+      http.post(`${proposalPath}/proposal-one/submit`, async ({ request }) => {
+        commands.push(await request.json());
+        if (target === "sub" && commands.length === 1) return error();
+        proposal = { ...proposal, status: "pending", requestId: "request-submitted", requestVersion: 1, version: 2, capabilities: { ...proposal.capabilities, edit: false, submit: false } };
+        return data(proposal);
+      }),
+      http.post(endpoint, async ({ request }) => { vendorWrites.push(await request.json()); return data(completeVendor); })
+    );
+    start(true); const user = userEvent.setup(); await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: "Add vendor" }));
+    const entity = await screen.findByRole("textbox", { name: "Entity Name" });
+    fireEvent.change(entity, { target: { value: "Unsaved procurement vendor" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Position" }), { target: { value: "Preserved vendor contact" } });
+    const picture = new File(["synthetic image"], "synthetic-draft.png", { type: "image/png" });
+    await user.upload(screen.getByLabelText("Geo Tagged Picture of the Vendor"), picture);
+    if (target === "sub") {
+      await user.click(screen.getByRole("button", { name: /^Main Baskets,/ }));
+      await user.click(await screen.findByRole("checkbox", { name: vendorBasket.name }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Add Sub Basket" })).toBeEnabled());
+    }
+    await user.click(screen.getByRole("button", { name: target === "sub" ? "Add Sub Basket" : "Add Main Basket" }));
+    const panel = screen.getByRole("dialog", { name: target === "sub" ? "Configure Sub-Basket" : "Configure Main Basket" });
+    expect(within(panel).queryByRole("textbox", { name: "Vendor name" })).not.toBeInTheDocument();
+    await user.type(within(panel).getByRole("textbox", { name: target === "sub" ? "New Sub-Basket name" : "New Main Basket name" }), proposal.name);
+    await user.click(within(panel).getByRole("button", { name: "Create configuration draft" }));
+    const submit = await screen.findByRole("button", { name: "Send for approval and activation" });
+    await waitFor(() => expect(submit).toBeEnabled()); await user.click(submit);
+    if (target === "sub") {
+      expect(await screen.findByText(/Try again/)).toBeVisible();
+      expect(screen.getByRole("dialog", { name: "Configure Sub-Basket" })).toBeVisible();
+      expect(screen.getByRole("dialog", { name: "Add vendor" })).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Retry same action" }));
+    }
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    const resume = screen.getByRole("button", { name: "Resume vendor draft" });
+    expect(resume).toBeVisible(); expect(vendorWrites).toEqual([]);
+    if (target === "sub") expect(commands[1]).toEqual(commands[0]);
+    await user.click(screen.getByRole("button", { name: "All my requests" }));
+    expect(await screen.findByRole("heading", { name: "Requests route" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Return to Vendors" }));
+    await user.click(await screen.findByRole("button", { name: "Resume vendor draft" }));
+    expect(await screen.findByRole("textbox", { name: "Entity Name" })).toHaveValue("Unsaved procurement vendor");
+    expect(screen.getByRole("textbox", { name: "Position" })).toHaveValue("Preserved vendor contact");
+    expect(await screen.findByRole("img", { name: "Selected vendor picture preview" })).toBeVisible();
+    expect(vi.mocked(URL.createObjectURL).mock.calls.at(-1)?.[0]).toBe(picture);
+    expect(vendorWrites).toEqual([]);
+  });
+
+  it("preserves an existing vendor's original version until explicit reload and clears a discarded resumed draft", async () => {
+    role = "procurement";
+    let detail = structuredClone(completeVendor);
+    let proposal = proposalFixture({ vendorId: detail.id, vendorName: detail.name });
+    const vendorWrites: unknown[] = [];
+    const proposalPath = "/api/v1/procurement/vendor-basket-proposals";
+    server.use(
+      http.get(`${endpoint}/vendor-one`, () => data(detail)),
+      http.patch(`${endpoint}/vendor-one`, async ({ request }) => { vendorWrites.push(await request.json()); return data(detail); }),
+      http.post(proposalPath, () => data(proposal)),
+      http.get(`${proposalPath}/proposal-one`, () => data(proposal)),
+      http.get(`${proposalPath}/proposal-one/hierarchy`, () => data({ items: proposalHierarchyFixture(proposal), pagination: { total: 2, limit: 100, offset: 0, hasMore: false } })),
+      http.get(`${proposalPath}/proposal-one/masters/:masterKind`, () => data({ items: [], pagination: { total: 0, limit: 100, offset: 0, hasMore: false } })),
+      http.get(`${proposalPath}/references`, () => data({ items: [], pagination: { total: 0, limit: 100, offset: 0, hasMore: false } })),
+      http.get(`${proposalPath}/proposal-one/resources/:resourceId`, ({ params }) => data(proposalSectionFixture(String(params.resourceId).replace("resource-", "") as KnowledgeSectionKey, {}, proposal))),
+      http.get(`${proposalPath}/proposal-one/readiness`, () => data({ head: proposal.head, version: proposal.version, requestVersion: proposal.requestVersion, ready: true, findings: [] })),
+      http.post(`${proposalPath}/proposal-one/submit`, () => {
+        proposal = { ...proposal, status: "pending", requestId: "request-existing", requestVersion: 1, version: 2, capabilities: { ...proposal.capabilities, edit: false, submit: false } };
+        return data(proposal);
+      })
+    );
+    start(true); const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Edit Timber House" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Position" }), { target: { value: "Preserved original draft" } });
+    await user.click(screen.getByRole("button", { name: "Add Main Basket" }));
+    await user.type(screen.getByRole("textbox", { name: "New Main Basket name" }), proposal.name);
+    await user.click(screen.getByRole("button", { name: "Create configuration draft" }));
+    const submit = await screen.findByRole("button", { name: "Send for approval and activation" });
+    await waitFor(() => expect(submit).toBeEnabled()); await user.click(submit);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit Vendor 2" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText("Resume your saved vendor draft and save or discard it before editing another vendor.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Resume vendor draft" })).toBeVisible();
+    detail = { ...detail, version: detail.version + 1, procurementProfile: { ...detail.procurementProfile!, position: "New server contact" } };
+    await user.click(screen.getByRole("button", { name: "All my requests" }));
+    await user.click(await screen.findByRole("button", { name: "Return to Vendors" }));
+    await user.click(await screen.findByRole("button", { name: "Resume vendor draft" }));
+    expect(await screen.findByRole("textbox", { name: "Position" })).toHaveValue("Preserved original draft");
+    expect(screen.getByText("This vendor changed. Your entries are preserved until you reload the latest record.")).toBeVisible();
+    const save = screen.getByRole("button", { name: "Save changes" });
+    expect(save).toBeDisabled(); await user.click(save); expect(vendorWrites).toEqual([]);
+    detail = { ...detail, version: detail.version + 1, procurementProfile: { ...detail.procurementProfile!, position: "Newest server contact" } };
+    await user.click(screen.getByRole("button", { name: "Reload latest and replace entries" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Position" })).toHaveValue("Newest server contact"));
+    await waitFor(() => expect(save).toBeEnabled());
+    expect(screen.queryByText("This vendor changed. Your entries are preserved until you reload the latest record.")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "Position" }), { target: { value: "Explicitly discarded change" } });
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume vendor draft" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add vendor" })).toBeEnabled();
+    expect(vendorWrites).toEqual([]);
+  });
+
+  it("clears the retained vendor draft after the directory API denies access", async () => {
+    role = "procurement";
+    let accessDenied = false;
+    server.use(http.get(endpoint, ({ request }) => {
+      if (accessDenied) return error(403);
+      const params = new URL(request.url).searchParams;
+      return data({ items: rows.slice(0, 10), pagination: { total: rows.length, limit: Number(params.get("limit") ?? 10), offset: 0, hasMore: true }, directoryOverview: { totalVendors: rows.length, activeVendors: rows.length, underReviewVendors: 0 } });
+    }));
+    const view = start(true); const user = userEvent.setup(); await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: "Add vendor" }));
+    const panel = await screen.findByRole("dialog", { name: "Add vendor" });
+    fireEvent.change(within(panel).getByRole("textbox", { name: "Entity Name" }), { target: { value: "Private retained vendor" } });
+    await user.click(within(panel).getByRole("button", { name: "All my requests" }));
+    await user.click(await screen.findByRole("button", { name: "Return to Vendors" }));
+    expect(await screen.findByRole("button", { name: "Resume vendor draft" })).toBeVisible();
+    accessDenied = true;
+    await act(async () => { await view.client.invalidateQueries({ queryKey: knowledgeQueryKeys.masterLists("vendors") }); });
+    expect(await screen.findByText("You do not have permission to manage vendors.")).toBeVisible();
+    accessDenied = false;
+    await act(async () => { await view.client.invalidateQueries({ queryKey: knowledgeQueryKeys.masterLists("vendors") }); });
+    await screen.findByRole("table");
+    expect(screen.queryByRole("button", { name: "Resume vendor draft" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add vendor" }));
+    expect(await screen.findByRole("textbox", { name: "Entity Name" })).toHaveValue("");
+  });
+
   it.each(["super_admin", "procurement"] as const)("shows the same vendor management screen for %s", async (actor) => {
     role = actor;
     start(); const user = userEvent.setup();

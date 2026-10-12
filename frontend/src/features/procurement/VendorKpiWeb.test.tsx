@@ -1,8 +1,8 @@
 import { vendorLoginAccessFixture } from "./vendorLoginAccessFixtures";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { act, screen, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PermissionCode, Role } from "../../api/authorization-contract";
@@ -16,6 +16,41 @@ import { VendorKpiPublicPage } from "./VendorKpiPublicPage";
 import { vendorKpiKeys } from "./vendorKpiApi";
 import { projectProcurementKeys } from "./projectProcurementApi";
 import { captureVendorKpiTokenBeforeRouterMount } from "./vendorKpiTokenVault";
+import { useState, type ComponentProps } from "react";
+import { ProcurementVendorDraftProvider, useProcurementVendorDraft, type RetainedVendorDraft } from "./ProcurementVendorDraftProvider";
+import { completeVendor } from "./vendorProfile.fixtures";
+import { vendorDraft } from "./vendorProfileDraft";
+import { proposalFixture } from "../vendor-basket-proposals/proposal.fixtures";
+import type { ProcurementVendorEditor } from "./ProcurementVendorEditor";
+
+let editorHarness = false;
+let editorProps: ComponentProps<typeof ProcurementVendorEditor> | null = null;
+let retainedAtDestination: RetainedVendorDraft | null = null;
+let editorSnapshot: RetainedVendorDraft;
+vi.mock("./ProcurementVendorEditor", async importOriginal => {
+  const actual = await importOriginal<typeof import("./ProcurementVendorEditor")>();
+  return { ...actual, ProcurementVendorEditor: (props: ComponentProps<typeof ProcurementVendorEditor>) => editorHarness ? <EditorCallbackHarness {...props} /> : <actual.ProcurementVendorEditor {...props} /> };
+});
+function EditorCallbackHarness(props: ComponentProps<typeof ProcurementVendorEditor>) {
+  editorProps = props;
+  const retained = useProcurementVendorDraft();
+  const [name, setName] = useState(props.retainedDraft?.draft.name ?? "Unsaved profile");
+  function preserve() { retained.retain({ ...editorSnapshot, draft: { ...editorSnapshot.draft, name } }); }
+  return <section role="dialog" aria-label="Vendor editor callback fixture"><label>Draft entity name<input value={name} onChange={event => setName(event.target.value)} /></label>
+    <button onClick={() => { preserve(); props.onRequestSubmitted?.(proposalFixture({ status: "pending", vendorName: null })); }}>Confirm basket request submitted</button>
+    <button onClick={() => { preserve(); props.onOpenRequests?.(); }}>Open all my requests</button><button onClick={props.onClose}>Discard vendor draft</button></section>;
+}
+function RequestsDestination() {
+  retainedAtDestination = useProcurementVendorDraft().retained;
+  return <section><h1>Requests destination</h1><p>{retainedAtDestination?.draft.name}</p><Link to="/procurement/vendors/vendor-one">Return to vendor</Link><Link to="/procurement/vendors/vendor-two">Open another vendor</Link></section>;
+}
+function staffWithDrafts() {
+  editorHarness = true;
+  const file = new File(["Synthetic image"], "retained-site.png", { type: "image/png" });
+  editorSnapshot = { base: { ...completeVendor, version: 4 }, draft: vendorDraft(completeVendor), photo: file, removePhoto: false, confirmAddress: true, certificate: { file: null, uploadError: "", command: null } };
+  server.use(http.get("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-one", () => data({ ...completeVendor, version: 5 })));
+  return renderWithQuery(<ProcurementVendorDraftProvider><MemoryRouter initialEntries={["/procurement/vendors/vendor-one"]}><Routes><Route path="/procurement/vendors/:vendorId" element={<VendorKpiStaffPage />} /><Route path="/procurement/requests" element={<RequestsDestination />} /></Routes></MemoryRouter></ProcurementVendorDraftProvider>);
+}
 
 const token = "abcdefghijklmnopqrstuvwxyzABCDEFGH123456789";
 const data = (value: unknown) => HttpResponse.json({ data: value });
@@ -59,7 +94,7 @@ function publicPage() {
 
 beforeEach(() => {
   server.use(http.get("/api/v1/procurement/vendors/vendor-one/login-access", () => HttpResponse.json({ data: vendorLoginAccessFixture })));
-  role = "procurement"; permissions = undefined;
+  role = "procurement"; permissions = undefined; editorHarness = false; editorProps = null; retainedAtDestination = null;
   window.history.replaceState(null, "", "/");
   captureVendorKpiTokenBeforeRouterMount();
   server.use(http.get("/api/v1/procurement/vendor-kpis/vendor-one", () => data(base)));
@@ -290,5 +325,64 @@ describe("one-time public vendor form", () => {
     expect(writes[0].scores.find(({ key }) => key === "rates_offered")?.score).toBe(86);
     expect(writes[1].scores.find(({ key }) => key === "rates_offered")?.score).toBe(87);
     expect(writes[1].idempotencyKey).not.toBe(writes[0].idempotencyKey);
+  });
+});
+
+
+describe("staff vendor basket request completion", () => {
+  it("closes the vendor editor after a basket request and resumes the retained original draft", async () => {
+    const user = userEvent.setup(); staffWithDrafts();
+    await user.click(await screen.findByRole("button", { name: "Edit vendor" }));
+    await screen.findByRole("dialog", { name: "Vendor editor callback fixture" });
+    await user.clear(screen.getByRole("textbox", { name: "Draft entity name" }));
+    await user.type(screen.getByRole("textbox", { name: "Draft entity name" }), "Preserved local vendor name");
+    await user.click(screen.getByRole("button", { name: "Confirm basket request submitted" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText("Request submitted to Super Admin. Your vendor draft is available to resume.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "View all my requests" })).toHaveAttribute("href", "/procurement/requests");
+    const resume = screen.getByRole("button", { name: "Resume vendor draft" }); await waitFor(() => expect(resume).toHaveFocus());
+    await user.click(resume); await screen.findByRole("dialog", { name: "Vendor editor callback fixture" });
+    expect(screen.getByRole("textbox", { name: "Draft entity name" })).toHaveValue("Preserved local vendor name");
+    expect(editorProps?.retainedDraft?.base).toBe(editorSnapshot.base);
+    expect(editorProps?.retainedDraft?.base?.version).toBe(4);
+    expect(editorProps?.retainedDraft?.photo).toBe(editorSnapshot.photo);
+    expect(editorProps?.existing?.version).toBe(5);
+  });
+
+  it("retains the vendor draft across requests navigation and returns it to the same vendor", async () => {
+    const user = userEvent.setup(); staffWithDrafts();
+    await user.click(await screen.findByRole("button", { name: "Edit vendor" }));
+    await screen.findByRole("dialog", { name: "Vendor editor callback fixture" });
+    await user.click(screen.getByRole("button", { name: "Open all my requests" }));
+    expect(await screen.findByRole("heading", { name: "Requests destination" })).toBeVisible();
+    expect(retainedAtDestination?.photo).toBe(editorSnapshot.photo);
+    expect(retainedAtDestination?.base).toBe(editorSnapshot.base);
+    await user.click(screen.getByRole("link", { name: "Return to vendor" }));
+    await user.click(await screen.findByRole("button", { name: "Resume vendor draft" }));
+    await screen.findByRole("dialog", { name: "Vendor editor callback fixture" });
+    expect(editorProps?.retainedDraft).toBe(retainedAtDestination);
+    await user.click(screen.getByRole("button", { name: "Discard vendor draft" }));
+    expect(screen.queryByRole("button", { name: "Resume vendor draft" })).not.toBeInTheDocument();
+  });
+
+  it("does not replace a retained vendor draft while opening a different vendor", async () => {
+    const user = userEvent.setup(); staffWithDrafts();
+    server.use(
+      http.get("/api/v1/procurement/vendor-kpis/vendor-two", () => data({ ...base, vendor: { ...base.vendor, id: "vendor-two", name: "Other vendor" } })),
+      http.get("/api/v1/procurement/vendor-inductions/vendor-two", () => data({ ...inductionBase, vendor: { ...inductionBase.vendor, id: "vendor-two", name: "Other vendor" } })),
+      http.get("/api/v1/procurement/vendors/vendor-two/login-access", () => data({ ...vendorLoginAccessFixture, vendorId: "vendor-two" }))
+    );
+    await user.click(await screen.findByRole("button", { name: "Edit vendor" })); await screen.findByRole("dialog", { name: "Vendor editor callback fixture" });
+    await user.click(screen.getByRole("button", { name: "Open all my requests" })); await user.click(await screen.findByRole("link", { name: "Open another vendor" }));
+    await screen.findByRole("heading", { name: "Other vendor" }); await user.click(screen.getByRole("button", { name: "Edit vendor" }));
+    expect(screen.getByText("Resume your saved vendor draft from Vendors and save or discard it before editing another vendor.")).toBeVisible();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it.each([true, false])("uses the proposal creation permission for editor basket requests (allowed=%s)", async allowed => {
+    permissions = ["procurement.vendor_kpi.read", "procurement.vendor_directory.read", "procurement.vendor_directory.update", ...(allowed ? ["procurement.vendor_basket_proposal.create" as const] : ["procurement.vendor_classification.create" as const])];
+    const user = userEvent.setup(); staffWithDrafts();
+    await user.click(await screen.findByRole("button", { name: "Edit vendor" })); await screen.findByRole("dialog", { name: "Vendor editor callback fixture" });
+    expect(editorProps?.canRequestMainBasket).toBe(allowed);
   });
 });

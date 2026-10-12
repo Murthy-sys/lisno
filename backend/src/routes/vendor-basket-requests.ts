@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 
+import { ApiError } from "../middleware/errors.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
 import { validateBody, validateQuery } from "../middleware/validate.js";
@@ -34,7 +35,11 @@ const pagination = {
   limit: z.coerce.number().int().min(1).max(100).default(20),
   offset: z.coerce.number().int().min(0).default(0)
 };
-const mineQuery = z.object(pagination).strict();
+const mineQuery = z.object({ ...pagination,
+  search: z.string().max(240).transform((value) => value.normalize("NFKC").trim().replace(/\s+/gu, " ")).pipe(z.string().max(240)).optional(),
+  status: z.enum(["pending", "fulfilled", "rejected"]).optional(),
+  targetKind: z.enum(["new_main_basket", "new_sub_basket"]).optional()
+}).strict();
 const adminQuery = z.object({ ...pagination, status: z.enum(["pending", "fulfilled", "rejected"]).optional() }).strict();
 
 export function createVendorBasketRequestRouter(auth: AuthService,
@@ -62,6 +67,14 @@ export function createVendorBasketRequestRouter(auth: AuthService,
       try {
         const { status, limit, offset } = response.locals.validatedQuery;
         response.set("Cache-Control", "private, no-store").json({ data: await service.listForAdmin(request.authenticatedUser!, status, { limit, offset }) });
+      } catch (error) { next(error); }
+    });
+  router.get(`${adminPath}/:requestId`, protectedRoute, requireOperation("GET /admin/ai-estimator-knowledge/basket-requests/:requestId"), validateQuery(z.object({}).strict()),
+    async (request, response, next) => {
+      try {
+        const result = z.string().min(1).max(128).regex(/^[A-Za-z0-9:_-]+$/u).safeParse(request.params.requestId);
+        if (!result.success) throw new ApiError(400, "VALIDATION_ERROR", "The request identifier is invalid.");
+        response.set("Cache-Control", "private, no-store").json({ data: await service.getForAdmin(request.authenticatedUser!, result.data) });
       } catch (error) { next(error); }
     });
   router.post(decisionPath, protectedRoute, requireOperation(`POST ${decisionPath}`), validateBody(decisionSchema),

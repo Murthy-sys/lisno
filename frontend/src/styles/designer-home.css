@@ -227,7 +227,7 @@ body:has(.ui-app-shell[data-role="designer"]) .ui-button--primary:not(:focus-vis
    3-field form, and tall enough to force its own scrollbar. Rounded on all
    four corners (border-radius applies to the whole box; nothing here clips
    or squares any edge). */
-body:has(.ui-app-shell[data-role="designer"]) .modal:has(.access-request-dialog) {
+body:has(.ui-app-shell[data-role="designer"]) .modal:where(:not(.ui-dialog--reference)):has(.access-request-dialog) {
   width: min(100%, 32rem);
   max-height: 90vh;
   border: 1px solid var(--color-border);
@@ -237,23 +237,23 @@ body:has(.ui-app-shell[data-role="designer"]) .modal:has(.access-request-dialog)
 }
 
 /* Compact and readable eyebrow-to-title-to-description header block. */
-body:has(.ui-app-shell[data-role="designer"]) .modal:has(.access-request-dialog) .modal__header {
+body:has(.ui-app-shell[data-role="designer"]) .modal:where(:not(.ui-dialog--reference)):has(.access-request-dialog) .modal__header {
   padding-block: var(--space-4) var(--space-3);
 }
 
-body:has(.ui-app-shell[data-role="designer"]) .modal:has(.access-request-dialog) .eyebrow {
+body:has(.ui-app-shell[data-role="designer"]) .modal:where(:not(.ui-dialog--reference)):has(.access-request-dialog) .eyebrow {
   color: var(--color-primary);
   margin-block-end: var(--space-1);
   font-weight: 400;
 }
 
-body:has(.ui-app-shell[data-role="designer"]) .modal:has(.access-request-dialog) .modal__header p:last-child {
+body:has(.ui-app-shell[data-role="designer"]) .modal:where(:not(.ui-dialog--reference)):has(.access-request-dialog) .modal__header p:last-child {
   margin-block-start: var(--space-1);
 }
 
 /* Stays scrollable by wheel/touch/keyboard on short windows; just hides the
    visible scrollbar track, which squared off against the rounded corners. */
-body:has(.ui-app-shell[data-role="designer"]) .modal:has(.access-request-dialog)::-webkit-scrollbar {
+body:has(.ui-app-shell[data-role="designer"]) .modal:where(:not(.ui-dialog--reference)):has(.access-request-dialog)::-webkit-scrollbar {
   display: none;
 }
 

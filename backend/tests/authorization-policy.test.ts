@@ -106,6 +106,10 @@ const VENDOR_DIRECTORY_PERMISSIONS = [
   "procurement.vendor_directory.update",
   "procurement.vendor_directory.lifecycle",
   "procurement.vendor_classification.create",
+      "procurement.vendor_basket_proposal.read",
+      "procurement.vendor_basket_proposal.create",
+      "procurement.vendor_basket_proposal.update",
+      "procurement.vendor_basket_proposal.submit",
   "procurement.vendor_allocation_baseline.correct"
 ] as const;
 const VENDOR_KPI_PERMISSIONS = ["procurement.vendor_kpi.read", "procurement.vendor_kpi.rate", "procurement.vendor_kpi.request"] as const;
@@ -264,8 +268,8 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(182);
-    expect(new Set(PERMISSION_CODES).size).toBe(182);
+    expect(PERMISSION_CODES).toHaveLength(186);
+    expect(new Set(PERMISSION_CODES).size).toBe(186);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
@@ -603,6 +607,11 @@ describe("authorization policy", () => {
   it("registers only bounded AI Estimator Knowledge audit action names", () => {
     expect(AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS).toEqual([
       "vendor_basket_request_created",
+      "vendor_basket_proposal_created",
+      "vendor_basket_proposal_saved",
+      "vendor_basket_proposal_submitted",
+      "vendor_basket_proposal_decided",
+      "vendor_basket_proposal_revised",
       "vendor_basket_request_fulfilled",
       "vendor_basket_request_rejected",
       "ai_estimator_knowledge_basket_created",

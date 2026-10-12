@@ -1,10 +1,11 @@
 import { Box, Plus } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, type RefObject } from "react";
 
 import { Button } from "../../components/ui/Button";
 import { Field, Select } from "../../components/ui/Field";
 import { Surface } from "../../components/ui/Surface";
 import { KnowledgeCardHeading } from "./KnowledgeCardHeading";
+import type { KnowledgeProposedMasterChoice } from "./KnowledgeSurfaceMultiSelect";
 import { KnowledgeModeSurfacePanel } from "./KnowledgeModeSurfacePanel";
 import type { KnowledgeOverviewEditableField } from "./knowledgeSectionPayload";
 import type {
@@ -30,6 +31,13 @@ export interface KnowledgeOverviewReferenceStates {
 }
 
 export interface KnowledgeOverviewPanelProps {
+  readonly proposedUoms?: readonly KnowledgeProposedMasterChoice[];
+  readonly proposedSurfaces?: readonly KnowledgeProposedMasterChoice[];
+  readonly quickAddUomLabel?: string;
+  readonly proposalActions?: boolean;
+  readonly quickAddUomButtonRef?: RefObject<HTMLButtonElement | null>;
+  readonly quickAddSurfaceButtonRef?: RefObject<HTMLButtonElement | null>;
+  readonly presentation?: "default" | "procurement-basket";
   readonly overviewPayload: KnowledgeJsonObject;
   readonly masters: Readonly<
     Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>
@@ -47,6 +55,13 @@ export interface KnowledgeOverviewPanelProps {
 }
 
 export function KnowledgeOverviewPanel({
+  presentation = "default",
+  proposedUoms = [],
+  proposedSurfaces = [],
+  quickAddUomLabel,
+  proposalActions = false,
+  quickAddUomButtonRef,
+  quickAddSurfaceButtonRef,
   overviewPayload,
   masters,
   referenceStates,
@@ -69,7 +84,7 @@ export function KnowledgeOverviewPanel({
     () => orderedSelectableMasters(masters.uoms ?? [], uomId),
     [masters.uoms, uomId]
   );
-  const uomResolved = !uomId || uomOptions.some(({ id }) => id === uomId);
+  const uomResolved = !uomId || [...uomOptions, ...proposedUoms].some(({ id }) => id === uomId);
   const uomReferenceState = referenceStates?.masters?.uoms;
 
   function changeOverviewValue(value: string) {
@@ -86,7 +101,7 @@ export function KnowledgeOverviewPanel({
         <KnowledgeCardHeading
           icon={<Box />}
           titleId="knowledge-overview-configured-title"
-          title="UOM"
+          title={presentation === "procurement-basket" ? "Unit of measure" : "UOM"}
           description="Choose the unit used to measure this Main Line."
           trailing={!editable ? <span className="knowledge-readonly-label">Read-only revision</span> : null}
         />
@@ -106,17 +121,19 @@ export function KnowledgeOverviewPanel({
                     {uomOptions.map((master) => (
                       <option key={master.id} value={master.id}>{master.name}</option>
                     ))}
+                    {proposedUoms.map(master => <option key={master.id} value={master.id}>{master.name} (Proposed)</option>)}
                   </Select>
                   {editable && canQuickAdd ? (
                     <Button
-                      className="knowledge-overview__quick-add"
+                      ref={quickAddUomButtonRef}
+                      className={`knowledge-overview__quick-add${quickAddUomLabel ? " knowledge-overview__quick-add--named" : ""}`}
                       variant="secondary"
-                      leadingIcon={<Plus />}
-                      aria-label="Add Unit"
-                      title="Add Unit"
+                      leadingIcon={quickAddUomLabel ? undefined : <Plus />}
+                      aria-label={quickAddUomLabel ?? "Add Unit"}
+                      title={quickAddUomLabel ?? "Add Unit"}
                       disabled={saving || referenceUnavailable(uomReferenceState)}
                       onClick={() => onQuickAddUom((master) => changeOverviewValue(master.id))}
-                    />
+                    >{quickAddUomLabel}</Button>
                   ) : null}
                 </div>
               )}
@@ -132,11 +149,14 @@ export function KnowledgeOverviewPanel({
         </div>
       </Surface>
 
-      <Surface as="section" className="knowledge-overview__summary-panel knowledge-overview__configuration-card" aria-label="Surfaces">
+      <Surface as="section" className="knowledge-overview__summary-panel knowledge-overview__configuration-card" aria-label={presentation === "procurement-basket" ? "Applicable surfaces" : "Surfaces"}>
         <KnowledgeModeSurfacePanel
-          presentation="overview"
+          presentation={presentation === "procurement-basket" ? "procurement-basket" : "overview"}
           selectedIds={surfaceIds}
           surfaces={masters.surfaces ?? []}
+          proposedSurfaces={proposedSurfaces}
+          proposalActions={proposalActions}
+          quickAddButtonRef={quickAddSurfaceButtonRef}
           catalogState={surfaceCatalogState}
           sectionState={{ status: "ready" }}
           readOnly={!editable}

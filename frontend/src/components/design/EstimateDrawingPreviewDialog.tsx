@@ -265,13 +265,15 @@ export function EstimateDrawingPreviewDialog({
           eyebrow="Unsaved drawing review"
           description="Your unsaved markings and change summary will be lost."
           role="alertdialog"
+          tone="danger"
           onClose={() => setConfirmClose(false)}
           showCloseButton={false}
         >
-          <div className="annotation-close-confirmation">
+          <div className="annotation-close-confirmation ui-dialog__actions">
             <button
               type="button"
               data-dialog-initial-focus
+              className="ui-button ui-button--secondary"
               onClick={() => setConfirmClose(false)}
             >
               Keep editing

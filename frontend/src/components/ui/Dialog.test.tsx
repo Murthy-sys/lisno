@@ -1,4 +1,4 @@
-import { StrictMode, useState } from "react";
+import { createRef, StrictMode, useState } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -37,6 +37,25 @@ function NestedDialogHarness({ discardAll = false }: { discardAll?: boolean }) {
 }
 
 describe("Dialog accessibility contract", () => {
+  it("preserves a custom close label and initial-focus ref in the branded toolbar", async () => {
+    const closeRef = createRef<HTMLButtonElement>();
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(<Dialog title="Review recommendation" eyebrow="Recommendations" description="Review the saved details."
+      closeButtonLabel="Close recommendation" closeButtonRef={closeRef} initialFocusRef={closeRef} onClose={onClose}>
+      <button type="button">Use recommendation</button>
+    </Dialog>);
+    const popup = screen.getByRole("dialog", { name: "Review recommendation" });
+    const close = screen.getByRole("button", { name: "Close recommendation" });
+    expect(closeRef.current).toBe(close);
+    await waitFor(() => expect(close).toHaveFocus());
+    expect(popup).toHaveAccessibleDescription("Review the saved details.");
+    expect(screen.getAllByRole("heading", { name: "Review recommendation" })).toHaveLength(1);
+    expect(screen.queryByRole("img", { name: "LISNO" })).not.toBeInTheDocument();
+    await user.click(close);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps alertdialog, description, inert content, and optional close controls compatible", () => {
     render(
       <Dialog

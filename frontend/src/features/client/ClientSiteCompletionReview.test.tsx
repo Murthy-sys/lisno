@@ -1,7 +1,7 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
@@ -18,6 +18,40 @@ const pending = () => ({
 });
 
 describe("ClientSiteCompletionReview", () => {
+  it("preserves the image viewer controls, navigation and image failure state", async () => {
+    const current = pending();
+    current.review.sections[0].imageIds = ["image-a", "image-b"];
+    server.use(
+      http.get("/api/v1/clients/projects/project-a/site-completion", () => HttpResponse.json({ data: current })),
+      http.get("/api/v1/projects/project-a/vendor-work/work-a/images/image-a", () => new HttpResponse(new Blob(["image"], { type: "image/png" }), { headers: { "Content-Type": "image/png" } })),
+      http.get("/api/v1/projects/project-a/vendor-work/work-a/images/image-b", () => new HttpResponse(null, { status: 500 }))
+    );
+    const create = URL.createObjectURL;
+    const revoke = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn(() => "blob:completion-image");
+    URL.revokeObjectURL = vi.fn();
+    try {
+      renderWithQuery(<ClientSiteCompletionReview projectId="project-a" />);
+      await userEvent.click(await screen.findByRole("button", { name: "View images (2)" }));
+      const imageDialog = screen.getByRole("dialog", { name: "Completion images" });
+      expect(within(imageDialog).getAllByRole("button").map(button => button.textContent)).toEqual(["Close images", "Previous", "Next"]);
+      expect(within(imageDialog).getByRole("button", { name: "Close images" })).toHaveFocus();
+      expect(within(imageDialog).getByRole("button", { name: "Previous" })).toBeDisabled();
+      expect(await within(imageDialog).findByRole("img", { name: "Completion evidence 1" })).toBeVisible();
+      await userEvent.click(within(imageDialog).getByRole("button", { name: "Next" }));
+      expect(await within(imageDialog).findByRole("alert")).toBeVisible();
+      expect(within(imageDialog).getByText("Image 2 of 2")).toBeVisible();
+      expect(within(imageDialog).getByRole("button", { name: "Next" })).toBeDisabled();
+      await userEvent.click(within(imageDialog).getByRole("button", { name: "Previous" }));
+      expect(await within(imageDialog).findByRole("img", { name: "Completion evidence 1" })).toBeVisible();
+      await userEvent.click(within(imageDialog).getByRole("button", { name: "Close images" }));
+      expect(screen.queryByRole("dialog", { name: "Completion images" })).not.toBeInTheDocument();
+    } finally {
+      URL.createObjectURL = create;
+      URL.revokeObjectURL = revoke;
+    }
+  });
+
   it("shows an unspecified scope in a completion review", async () => {
     const current = pending();
     server.use(http.get("/api/v1/clients/projects/project-a/site-completion", () => HttpResponse.json({

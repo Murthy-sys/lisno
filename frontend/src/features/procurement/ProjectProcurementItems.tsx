@@ -186,10 +186,12 @@ function ProjectProcurementItemsTable({ projectId, projectName, source, estimate
         source={source} assignmentOptions={assignmentOptions} parentLabel={parentLabel}
         onClose={() => setEditor(null)} returnFocusRef={returnFocusRef} fallbackFocusRef={headingRef}
         onSaved={(saved) => { setEditor(null); setNotice(`${saved.itemName} ${editor.item ? "updated" : "added"} in this project.`); }} /> : null}
-      {removing && canManage && !accessDenied && !projectUnavailable ? <Dialog title={`Remove ${removing.itemName}?`} eyebrow="Procurement item" description="This removes the item from active procurement and releases its uncommitted vendor allocation. Submitted purchase orders retain their history and prevent removal." role="alertdialog" busy={remove.isPending} onClose={() => setRemoving(null)} returnFocusRef={returnFocusRef} fallbackFocusRef={headingRef}>
-        <Field id={`${id}-remove-reason`} label="Reason" required>{(field) => <Textarea {...field} maxLength={1000} value={removeReason} disabled={remove.isPending} onChange={(event) => setRemoveReason(event.target.value)} />}</Field>
-        {remove.isError ? <InlineMessage tone="error">{procurementError(remove.error, "The item could not be removed. Refresh and try again.")}</InlineMessage> : null}
-        <div className="project-procurement-items__remove-actions"><Button variant="quiet" disabled={remove.isPending} onClick={() => setRemoving(null)}>Cancel</Button><Button variant="destructive" busy={remove.isPending} disabled={!removeReason.trim()} onClick={() => remove.mutate({ item: removing, reason: removeReason.trim() })}>Remove item</Button></div>
+      {removing && canManage && !accessDenied && !projectUnavailable ? <Dialog tone="danger" title={`Remove ${removing.itemName}?`} eyebrow="Procurement item" description="This removes the item from active procurement and releases its uncommitted vendor allocation. Submitted purchase orders retain their history and prevent removal." role="alertdialog" busy={remove.isPending} onClose={() => setRemoving(null)} returnFocusRef={returnFocusRef} fallbackFocusRef={headingRef}>
+        <div className="ui-dialog__body">
+          <Field id={`${id}-remove-reason`} label="Reason" required>{(field) => <Textarea {...field} maxLength={1000} value={removeReason} disabled={remove.isPending} onChange={(event) => setRemoveReason(event.target.value)} />}</Field>
+          {remove.isError ? <InlineMessage tone="error">{procurementError(remove.error, "The item could not be removed. Refresh and try again.")}</InlineMessage> : null}
+        </div>
+        <div className="project-procurement-items__remove-actions ui-dialog__actions"><Button variant="quiet" disabled={remove.isPending} onClick={() => setRemoving(null)}>Cancel</Button><Button variant="destructive" busy={remove.isPending} disabled={!removeReason.trim()} onClick={() => remove.mutate({ item: removing, reason: removeReason.trim() })}>Remove item</Button></div>
       </Dialog> : null}
     </Surface>
   );

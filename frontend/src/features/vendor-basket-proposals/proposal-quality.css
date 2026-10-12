@@ -1,0 +1,79 @@
+/* Configuration checklist layout scoped to proposal portals; shared screen rules stay unchanged. */
+.basket-proposal .knowledge-quality-workspace { container-type: inline-size; display: grid; gap: 10px; min-width: 0; }
+.basket-proposal .knowledge-quality-stage-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.basket-proposal .knowledge-quality-stage-filters .ui-button { border: 1px solid var(--color-border); border-radius: 5px; min-height: 34px; min-block-size: 34px; inline-size: auto; max-inline-size: 100%; padding: 5px 9px; font-size: 11px; font-weight: 500; color: var(--color-text); background: var(--color-surface); }
+.basket-proposal .knowledge-quality-stage-filters .ui-button[aria-pressed="true"] { color: var(--color-primary); border-color: color-mix(in srgb, var(--color-primary) 48%, var(--color-border)); background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface)); }
+.basket-proposal .knowledge-quality-stage-filters .ui-button__busy { display: none; }
+.basket-proposal .knowledge-quality-stage-count { display: inline-block; margin-inline-start: 6px; min-width: 17px; border-radius: 4px; padding: 1px 4px; background: var(--color-table-header); line-height: 1.3; font-variant-numeric: tabular-nums; }
+.basket-proposal .knowledge-quality-stage-filters .ui-button[aria-pressed="true"] .knowledge-quality-stage-count { color: var(--color-surface); background: var(--color-primary); }
+.basket-proposal .knowledge-quality-workspace__count { margin: 0; color: var(--color-text-muted); font-size: 11px; font-weight: 500; line-height: 1.5; }
+.basket-proposal .knowledge-quality-workspace__count span { font-weight: 400; }
+.basket-proposal .knowledge-quality-table-region { min-width: 0; border: 1px solid var(--color-border); border-radius: 5px; overflow: visible; }
+.basket-proposal .knowledge-quality-table { border-collapse: collapse; width: 100%; inline-size: 100%; min-inline-size: 0; max-inline-size: 100%; table-layout: fixed; text-align: left; font-size: 11px; line-height: 1.5; color: var(--color-text); }
+.basket-proposal .knowledge-quality-table th, .basket-proposal .knowledge-quality-table td { font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: normal; line-height: 1.5; padding: 12px 9px; vertical-align: top; overflow-wrap: anywhere; border-bottom: 1px solid var(--color-border); }
+.basket-proposal .knowledge-quality-table th { font-weight: 500; }
+.basket-proposal .knowledge-quality-table thead { background: var(--color-table-header); color: var(--color-text-muted); }
+.basket-proposal .knowledge-quality-table thead th { padding-block: 9px; font-size: 10px; }
+.basket-proposal .knowledge-quality-table thead th:nth-child(1) { width: 3%; }
+.basket-proposal .knowledge-quality-table thead th:nth-child(2) { width: 18%; }
+.basket-proposal .knowledge-quality-table thead th:nth-child(3) { width: 10%; }
+.basket-proposal .knowledge-quality-table thead th:nth-child(4) { width: 10%; }
+.basket-proposal .knowledge-quality-table thead th:nth-child(5) { width: 19%; }
+.basket-proposal .knowledge-quality-table thead th:nth-child(6) { width: 13%; }
+.basket-proposal .knowledge-quality-table thead th:nth-child(7) { width: 12%; }
+.basket-proposal .knowledge-quality-table thead th:nth-child(8) { width: 9%; }
+.basket-proposal .knowledge-quality-table thead th:nth-child(9) { width: 62px; }
+.basket-proposal .knowledge-quality-table tbody tr:last-child > * { border-bottom: 0; }
+.basket-proposal .knowledge-quality-table__question strong { display: block; font-size: 12px; font-weight: 600; }
+.basket-proposal .knowledge-quality-table__question > span, .basket-proposal .knowledge-quality-table small { display: block; margin-top: 3px; font-size: 10px; line-height: 1.5; font-weight: 400; color: var(--color-text-muted); }
+.basket-proposal .knowledge-quality-table__muted, .basket-proposal .knowledge-quality-table__number { color: var(--color-text-muted); }
+.basket-proposal .knowledge-quality-control-summary { display: grid; gap: 4px; margin: 0; }
+.basket-proposal .knowledge-quality-control-summary > div { display: grid; grid-template-columns: minmax(58px, .7fr) minmax(0, 1.3fr); gap: 5px; }
+.basket-proposal .knowledge-quality-control-summary :is(dt, dd) { min-width: 0; margin: 0; font-size: 10px; line-height: 1.45; }
+.basket-proposal .knowledge-quality-control-summary dt { color: var(--color-text-muted); }
+.basket-proposal .knowledge-quality-control-summary dd { color: var(--color-text); font-weight: 500; overflow-wrap: anywhere; }
+.basket-proposal .knowledge-quality-control-summary dd small { font-weight: 400; }
+.basket-proposal .knowledge-quality-severity { display: inline-flex; border-radius: 4px; padding: 1px 5px; }
+.basket-proposal .knowledge-quality-severity--critical { color: var(--color-danger-strong); background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface)); }
+.basket-proposal .knowledge-quality-stage, .basket-proposal .knowledge-quality-status { display: inline-block; padding: 3px 6px; border-radius: 4px; font-size: 10px; font-weight: 500; line-height: 1.4; }
+.basket-proposal .knowledge-quality-stage { color: var(--color-text-muted); background: var(--color-table-header); }
+.basket-proposal .knowledge-quality-status--active { color: #22694e; background: #e8f5ed; }
+.basket-proposal .knowledge-quality-status--draft { color: #805719; background: #fff5df; }
+.basket-proposal .knowledge-quality-status--invalid { color: var(--color-danger-strong); background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface)); }
+.basket-proposal .knowledge-quality-table__actions > div { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
+.basket-proposal .knowledge-quality-table__actions > div > .ui-button { flex: 0 0 auto; inline-size: auto; width: auto; min-inline-size: 28px; min-height: 30px; min-block-size: 30px; padding: 5px; border: 0; border-radius: 4px; background: transparent; }
+.basket-proposal .knowledge-quality-table__actions > div > .ui-button .ui-button__busy { display: none; }
+.basket-proposal .knowledge-quality-table__actions > div > .ui-button .ui-button__content { gap: 0; }
+.basket-proposal .knowledge-quality-table__actions .ui-button__icon svg, .basket-proposal .knowledge-quality-row-menu summary svg { width: 14px; height: 14px; }
+.basket-proposal .knowledge-quality-row-menu { position: relative; }
+.basket-proposal .knowledge-quality-row-menu > summary { display: flex; align-items: center; justify-content: center; width: 28px; min-height: 30px; cursor: pointer; list-style: none; border-radius: 4px; }
+.basket-proposal .knowledge-quality-row-menu > summary::-webkit-details-marker { display: none; }
+.basket-proposal .knowledge-quality-row-menu > summary:hover { background: var(--color-table-header); }
+.basket-proposal .knowledge-quality-row-menu__items { position: absolute; z-index: 10; right: 0; top: 100%; display: grid; width: 186px; padding: 4px; background: var(--color-surface); box-shadow: none; border: 1px solid var(--color-border); border-radius: 6px; }
+.basket-proposal .knowledge-quality-row-menu__items .ui-button { justify-content: flex-start; inline-size: 100%; min-height: 36px; min-block-size: 36px; padding: 6px 8px; border: 0; font-size: 12px; }
+.basket-proposal .knowledge-quality-table tbody tr:nth-last-child(-n+2) .knowledge-quality-row-menu__items { top: auto; bottom: 100%; }
+.basket-proposal .knowledge-quality-table tbody tr:first-child .knowledge-quality-row-menu__items { top: 100%; bottom: auto; }
+.basket-proposal .knowledge-quality-table__mobile-details.ui-button { display: none; }
+.basket-proposal .knowledge-quality-workspace__empty { padding: 32px 20px; text-align: center; font-size: 13px; }
+.basket-proposal .knowledge-quality-workspace__empty p { max-width: 420px; margin: 6px auto 0; color: var(--color-text-muted); line-height: 1.6; }
+@container (max-width: 620px) {
+  .basket-proposal .knowledge-quality-table { display: block; }
+  .basket-proposal .knowledge-quality-table thead { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); }
+  .basket-proposal .knowledge-quality-table tbody { display: block; }
+  .basket-proposal .knowledge-quality-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 12px; padding: 16px; border-bottom: 1px solid var(--color-border); }
+  .basket-proposal .knowledge-quality-table tr:last-child { border-bottom: 0; }
+  .basket-proposal .knowledge-quality-table th, .basket-proposal .knowledge-quality-table td { border: 0; padding: 0; }
+  .basket-proposal .knowledge-quality-table__number { display: none; }
+  .basket-proposal .knowledge-quality-table__question { grid-row: 1; grid-column: 1; }
+  .basket-proposal .knowledge-quality-table__actions { grid-row: 1; grid-column: 2; }
+  .basket-proposal .knowledge-quality-table__stage { grid-row: 2; grid-column: 1; }
+  .basket-proposal .knowledge-quality-table__status { grid-row: 2; grid-column: 2; text-align: right; }
+  .basket-proposal .knowledge-quality-table__detail { grid-column: 1 / -1; font-size: 12px; }
+  .basket-proposal .knowledge-quality-table__detail::before { display: block; margin-bottom: 3px; font-size: 10px; font-weight: 600; color: var(--color-text-muted); content: attr(data-label); }
+  .basket-proposal .knowledge-quality-table tr:not([data-expanded="true"]) .knowledge-quality-table__detail:not(.knowledge-quality-table__controls) { display: none; }
+  .basket-proposal .knowledge-quality-control-summary > div { grid-template-columns: 88px minmax(0, 1fr); }
+  .basket-proposal .knowledge-quality-table__mobile-details.ui-button { display: inline-flex; min-height: 32px; min-block-size: 32px; padding: 2px 0; border: 0; background: transparent; font-size: 11px; margin-top: 4px; }
+  .basket-proposal .knowledge-quality-table__mobile-details svg { width: 12px; height: 12px; margin-inline-start: 5px; }
+  .basket-proposal .knowledge-quality-table__question strong { font-size: 13px; }
+  .basket-proposal .knowledge-quality-row-menu__items { top: 100%; bottom: auto; }
+}

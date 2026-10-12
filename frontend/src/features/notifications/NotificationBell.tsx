@@ -7,6 +7,7 @@ import { IconButton } from "../../components/ui/IconButton";
 import { useExecutionNotifications, executionNotificationPath } from "./ExecutionNotifications";
 import { useExecutionConnection } from "../execution/ExecutionLiveProvider";
 import type { ExecutionNotificationDto } from "../execution/executionApi";
+import { BasketNotificationInbox, useBasketNotifications } from "./BasketNotifications";
 import { useNotifications } from "./NotificationProvider";
 import { notificationApi, notificationKeys, notificationPath, notificationTitle, type ProjectNotification } from "./notificationApi";
 
@@ -15,7 +16,8 @@ const timestamp = (value: string) => new Intl.DateTimeFormat(undefined, { month:
 export function NotificationBell() {
   const notifications = useNotifications();
   const execution = useExecutionNotifications();
-  const [source, setSource] = useState<"execution" | "chat" | null>(null);
+  const baskets = useBasketNotifications();
+  const [source, setSource] = useState<"execution" | "chat" | "baskets" | null>(null);
   const [open, setOpen] = useState(false);
   const [offset, setOffset] = useState(0);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -33,10 +35,12 @@ export function NotificationBell() {
   const page = offset ? older.data : notifications.page;
   const pending = offset ? older.isFetching && !page : notifications.loading;
   const error = offset ? older.isError : notifications.error;
-  const unread = (notifications.page?.unreadCount ?? 0) + (execution?.unread ?? 0);
+  const unread = (notifications.page?.unreadCount ?? 0) + (execution?.unread ?? 0) + (baskets?.unread ?? 0);
   const executionAvailable = Boolean(execution?.enabled && !execution.denied);
-  const selectedSource = source ?? (executionAvailable ? "execution" : "chat");
   const available = notifications.enabled && !notifications.denied;
+  const basketsAvailable = Boolean(baskets?.enabled && !baskets.denied);
+  const sources = [basketsAvailable ? "baskets" : null, executionAvailable ? "execution" : null, available ? "chat" : null].filter((value): value is "baskets" | "execution" | "chat" => value !== null);
+  const selectedSource = source && sources.includes(source) ? source : sources[0];
   const select = async (item: ProjectNotification) => {
     if (await notifications.read(item)) {
       setOpen(false);
@@ -49,14 +53,15 @@ export function NotificationBell() {
       label={unread ? `Notifications, ${unread} unread` : "Notifications"}
       aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? "notification-inbox" : undefined}
       icon={<><Bell size={21} aria-hidden="true" />{unread > 0 ? <span className="notification-bell__count" aria-hidden="true">{unread > 99 ? "99+" : unread}</span> : null}</>}
-      onClick={() => { setOffset(0); execution?.setOffset(0); setSource(null); setOpen(true); }} />
+      onClick={() => { setOffset(0); execution?.setOffset(0); baskets?.setOffset(0); baskets?.refresh(); setSource(null); setOpen(true); }} />
     <Drawer id="notification-inbox" open={open} title="Notifications" variant="contextual" width="narrow"
-      description={executionAvailable ? available ? "Work updates and project mentions" : "Daily work updates and reminders" : "Project mentions and updates"} onClose={() => setOpen(false)} returnFocusRef={trigger} className="notification-inbox">
-      {executionAvailable && available ? <div className="notification-sources" role="group" aria-label="Notification source">
-        <button type="button" aria-pressed={selectedSource === "execution"} onClick={() => setSource("execution")}>Execution{execution?.unread ? ` (${execution.unread})` : ""}</button>
-        <button type="button" aria-pressed={selectedSource === "chat"} onClick={() => setSource("chat")}>Project messages{notifications.page?.unreadCount ? ` (${notifications.page.unreadCount})` : ""}</button>
+      description={basketsAvailable ? "Basket requests and work updates" : executionAvailable ? available ? "Work updates and project mentions" : "Daily work updates and reminders" : "Project mentions and updates"} onClose={() => setOpen(false)} returnFocusRef={trigger} className="notification-inbox">
+      {sources.length > 1 ? <div className="notification-sources" role="group" aria-label="Notification source">
+        {basketsAvailable ? <button type="button" aria-pressed={selectedSource === "baskets"} onClick={() => { setSource("baskets"); baskets?.refresh(); }}>Basket requests{baskets?.unread ? ` (${baskets.unread})` : ""}</button> : null}
+        {executionAvailable ? <button type="button" aria-pressed={selectedSource === "execution"} onClick={() => setSource("execution")}>Execution{execution?.unread ? ` (${execution.unread})` : ""}</button> : null}
+        {available ? <button type="button" aria-pressed={selectedSource === "chat"} onClick={() => setSource("chat")}>Project messages{notifications.page?.unreadCount ? ` (${notifications.page.unreadCount})` : ""}</button> : null}
       </div> : null}
-      {selectedSource === "execution" && executionAvailable ? <ExecutionInbox onNavigate={path => { setOpen(false); navigate(path); }} /> : !available ? <p role="status" className="notification-state">Notifications are unavailable for your current access.</p> : <>
+      {selectedSource === "baskets" && basketsAvailable ? <BasketNotificationInbox onNavigate={path => { setOpen(false); navigate(path); }} /> : selectedSource === "execution" && executionAvailable ? <ExecutionInbox onNavigate={path => { setOpen(false); navigate(path); }} /> : !available ? <p role="status" className="notification-state">Notifications are unavailable for your current access.</p> : <>
         {pending ? <p role="status" className="notification-state">Loading notifications…</p> : null}
         {!notifications.active ? <p role="status" className="notification-state">You’re offline. Updates will resume when you reconnect.</p> :
           notifications.connection === "reconnecting" ? <p role="status" className="notification-state">Reconnecting to live updates…</p> : null}

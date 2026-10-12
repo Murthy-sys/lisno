@@ -185,6 +185,10 @@ describe("ImageAnnotationEditor", () => {
     fireEvent.pointerDown(canvas, { pointerId: 2, clientX: 250, clientY: 320 });
     fireEvent.pointerUp(canvas, { pointerId: 2, clientX: 250, clientY: 320 });
     const dialog = screen.getByRole("dialog", { name: "Add text note" });
+    expect(within(dialog).getAllByRole("textbox")).toHaveLength(1);
+    expect(within(dialog).getAllByRole("button").map(button => button.textContent)).toEqual(["Cancel", "Add note"]);
+    expect(within(dialog).getByRole("button", { name: "Add note" })).toBeDisabled();
+    expect(within(dialog).getByLabelText("Text note")).toHaveFocus();
     await user.type(within(dialog).getByLabelText("Text note"), "Move this wall");
     await user.click(within(dialog).getByRole("button", { name: "Add note" }));
 

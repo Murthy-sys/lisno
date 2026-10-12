@@ -292,7 +292,12 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
       log(method, path, 200);
       return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } });
     }
-    const data = readRecommendationChat(path) ?? estimateModes?.read(path, url.searchParams) ?? enterpriseDataFor(path, url.searchParams, scenario, projectRates);
+    const basketNotifications = path === "/admin/ai-estimator-knowledge/basket-request-notifications"
+      ? scenario.role === "super_admin"
+        ? { items: [], unreadCount: 0, pagination: { limit: 20, offset: Number(url.searchParams.get("offset") ?? 0), total: 0, hasMore: false } }
+        : failure(403, "FORBIDDEN", "Super Admin access is required.")
+      : undefined;
+    const data = basketNotifications ?? readRecommendationChat(path) ?? estimateModes?.read(path, url.searchParams) ?? enterpriseDataFor(path, url.searchParams, scenario, projectRates);
     if (data === undefined) { log(method, path, 501, true); return failure(501, "UNEXPECTED_QA_REQUEST", `No synthetic response registered for ${path}.`); }
     if (scenario.state === "loading") { log(method, path, 0); return new Promise<Response>((_resolve, reject) => { const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined); if (signal?.aborted) reject(new DOMException("Aborted", "AbortError")); signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true }); }); }
     if (scenario.state === "error") { log(method, path, 503); return failure(503, "SYNTHETIC_UNAVAILABLE", "Synthetic QA: this information could not be loaded."); }

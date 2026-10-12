@@ -39,6 +39,63 @@ function renderPanel(
 }
 
 describe("KnowledgeModeSurfacePanel", () => {
+  it("labels proposed surface rows and permits line unselection without routing them to shared editing", async () => {
+    const user = userEvent.setup();
+    const proposed = { id: "proposal-surface", name: "Acoustic panel", description: "Timber backing" };
+    const onEditSurface = vi.fn();
+    const { props } = renderPanel({
+      presentation: "overview", proposalActions: true, proposedSurfaces: [proposed],
+      selectedIds: [wallSurface.id, proposed.id], onEditSurface
+    });
+
+    const table = screen.getByRole("table", { name: "Selected surface details" });
+    expect(within(table).getByRole("rowheader", { name: "Acoustic panel Proposed" })).toBeVisible();
+    expect(within(table).getByText("Timber backing")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Edit reusable surface Acoustic panel" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit reusable surface Wall surface" })).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Add Surface" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Create Surface" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove Acoustic panel from Main Line" }));
+    expect(props.onChange).toHaveBeenCalledExactlyOnceWith([wallSurface.id]);
+    expect(onEditSurface).not.toHaveBeenCalled();
+  });
+
+  it("allows a proposal-only surface catalog while preventing creation during a save", async () => {
+    const user = userEvent.setup();
+    const proposed = { id: "proposal-surface", name: "Acoustic panel" };
+    const { props } = renderPanel({
+      presentation: "overview", proposalActions: true, surfaces: [], proposedSurfaces: [proposed],
+      selectedIds: [proposed.id], saving: true
+    });
+
+    expect(screen.queryByText("No surfaces have been added.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Unavailable value")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add Surface" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Applicable surfaces" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Add Surface" }));
+    expect(props.onQuickAdd).not.toHaveBeenCalled();
+  });
+
+  it.each(["loading", "error"] as const)("does not show a Procurement empty state while the surface catalog is %s", status => {
+    renderPanel({ presentation: "procurement-basket", selectedIds: [], catalogState: { status }, canQuickAdd: false });
+    expect(screen.getByRole("heading", { name: "Applicable surfaces" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Applicable surfaces" })).toBeDisabled();
+    expect(screen.queryByText("No surfaces selected yet")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Selected surface details" })).not.toBeInTheDocument();
+    expect(screen.getByText(status === "loading" ? "Loading surfaces…" : "Surfaces could not be loaded.")).toBeVisible();
+  });
+
+  it("keeps Procurement surface inspection read-only without hiding saved rows", async () => {
+    const user = userEvent.setup();
+    const { props } = renderPanel({ presentation: "procurement-basket", readOnly: true });
+    expect(screen.getByRole("table", { name: "Selected surface details" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Remove Wall surface from Main Line" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Applicable surfaces" }));
+    expect(screen.getByRole("listbox", { name: "Surface options" })).toHaveAttribute("aria-readonly", "true");
+    await user.click(screen.getByRole("option", { name: "Floor surface" }));
+    expect(props.onChange).not.toHaveBeenCalled();
+  });
+
   it("shows each selected Surface's shared description as read-only context", () => {
     const described = { ...wallSurface, description: "Paint, wallpaper, texture, paneling" };
     renderPanel({

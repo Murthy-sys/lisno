@@ -27,13 +27,13 @@ export function KnowledgeUnsavedChangesDialog({
       onClose={onStay}
     >
       {error ? (
-        <div className="knowledge-dialog-body">
+        <div className="ui-dialog__body knowledge-dialog-body">
           <InlineMessage tone="error" role="alert">
             {error}
           </InlineMessage>
         </div>
       ) : null}
-      <div className="knowledge-dialog-actions knowledge-dialog-actions--triple">
+      <div className="ui-dialog__actions knowledge-dialog-actions knowledge-dialog-actions--triple">
         <Button variant="quiet" onClick={onStay} disabled={busy}>
           Stay here
         </Button>

@@ -303,6 +303,7 @@ function installAuthorizationSession(
     if (path.startsWith("/api/v1/projects/project-one/execution")) return Response.json({ data: { project: { id: "project-one", name: "Oak residence", status: "active", completionAuthority: "vendor_client" }, projectCounts: { total: 0, open: 0, reported: 0, verified: 0, clientAccepted: 0, missing: 0, blocked: 0, overdue: 0, awaitingVerification: 0, setupRequired: 0 }, items: [], total: 0, limit: 25, offset: 0, counts: { total: 0, open: 0, reported: 0, verified: 0, clientAccepted: 0, missing: 0, blocked: 0, overdue: 0, awaitingVerification: 0, setupRequired: 0 }, policy: null, canManagePolicy: false } });
     if (path.startsWith("/api/v1/procurement/suggestion-projects?")) return Response.json({ data: { items: [], total: 0, limit: 20, offset: 0 } });
     if (path.startsWith("/api/v1/admin/ai-estimator-knowledge/vendors?")) return Response.json({ data: { items: [], pagination: { total: 0, limit: 20, offset: 0, hasMore: false } } });
+    if (path.startsWith("/api/v1/procurement/vendor-basket-requests/mine?")) return Response.json({ data: { items: [], pagination: { total: 0, limit: 10, offset: 0, hasMore: false } } });
     if (path === "/api/v1/procurement/projects") return Response.json({ data: [] });
     if (path === "/api/v1/admin/dashboard/overview?periodDays=30") {
       return Response.json({ data: superAdminDashboardOverviewFixture });
@@ -612,7 +613,7 @@ describe("role landing staging contract", () => {
 
 describe("public invitation route", () => {
   it("mounts directly while staying outside the protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(45);
+    expect(ROUTE_REGISTRY).toHaveLength(46);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -730,7 +731,8 @@ describe("registered permission routes", () => {
     ["super_admin", "/admin/procurement", "Procurement dashboard"],
     ["super_admin", "/admin/procurement/vendors", "Vendor directory"],
     ["procurement", "/procurement", "Procurement"],
-    ["procurement", "/procurement/vendors", "Vendor directory"]
+    ["procurement", "/procurement/vendors", "Vendor directory"],
+    ["procurement", "/procurement/requests", "All my requests"]
   ] as const)("renders %s procurement independently of the chat layout", async (role, path, title) => {
     installAuthorizationSession(role, authorizationFor(role).permissions);
     renderApp([path]);
@@ -744,14 +746,14 @@ describe("registered permission routes", () => {
       (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
     );
 
-    expect(paths).toHaveLength(historicalProtectedPaths.length + 24);
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 25);
     expect(additions).toEqual([
       "/execution", "/projects/:projectId/execution",
       "/project-messages", "/projects/:projectId/messages",
       "/designer/design-plans",
       "/vendor",
       knowledgeConfigurationPaths[0],
-      "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/admin/purchase-orders", "/admin/project-completion", "/procurement", "/work-order-approvals", "/procurement/vendors", "/procurement/vendors/:vendorId",
+      "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/admin/purchase-orders", "/admin/project-completion", "/procurement", "/work-order-approvals", "/procurement/vendors", "/procurement/vendors/:vendorId", "/procurement/requests",
       ...knowledgeConfigurationPaths.slice(1),
       ...clientResponsePaths,
       "/admin/design-approvals",
@@ -765,7 +767,7 @@ describe("registered permission routes", () => {
         "/designer/design-plans",
         "/vendor",
         ...knowledgeConfigurationPaths,
-        "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/admin/purchase-orders", "/admin/project-completion", "/procurement", "/work-order-approvals", "/procurement/vendors", "/procurement/vendors/:vendorId",
+        "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/admin/purchase-orders", "/admin/project-completion", "/procurement", "/work-order-approvals", "/procurement/vendors", "/procurement/vendors/:vendorId", "/procurement/requests",
         ...clientResponsePaths,
         "/admin/design-approvals",
         ...procurementPaths,
@@ -1126,6 +1128,20 @@ describe("registered permission routes", () => {
       await screen.findByRole("heading", { name: "Access denied" })
     ).toBeVisible();
     expect(router.state.location.pathname).toBe("/procurement/projects/project-1");
+  });
+
+  it.each(["super_admin", "admin", "finance_head"] as const)("denies personal Procurement requests to %s even with directory read permission", async role => {
+    installAuthorizationSession(role, ["identity.self.read", "procurement.vendor_directory.read"]);
+    renderApp(["/procurement/requests"]);
+    expect(await screen.findByRole("heading", { name: "Access denied" })).toBeVisible();
+    expect(vi.mocked(globalThis.fetch).mock.calls.some(([input]) => apiRequestPath(input).startsWith("/api/v1/procurement/vendor-basket-requests/mine"))).toBe(false);
+  });
+
+  it("does not fetch personal basket requests when Procurement loses directory read permission", async () => {
+    installAuthorizationSession("procurement", ["identity.self.read"]);
+    renderApp(["/procurement/requests"]);
+    expect(await screen.findByRole("heading", { name: "Access denied" })).toBeVisible();
+    expect(vi.mocked(globalThis.fetch).mock.calls.some(([input]) => apiRequestPath(input).startsWith("/api/v1/procurement/vendor-basket-requests/mine"))).toBe(false);
   });
 
   it("keeps an unknown route as Not Found without request context", async () => {

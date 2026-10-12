@@ -1,3 +1,4 @@
+import type { KnowledgeEditorDataSource } from "./knowledgeEditorDataSource";
 import { Fragment, useEffect, useMemo, useRef, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/Button";
@@ -85,6 +86,7 @@ const SECTION_MASTER_CATALOGS = {
 } as const satisfies Readonly<Record<KnowledgeSectionKey, readonly KnowledgeMasterType[]>>;
 
 export interface KnowledgeSectionEditorProps {
+  readonly dataSource?: KnowledgeEditorDataSource;
   readonly sectionKey: KnowledgeSectionKey;
   readonly payload: KnowledgeJsonObject;
   readonly savedPayload?: KnowledgeJsonObject;
@@ -179,6 +181,7 @@ export function KnowledgePrimaryUomEditor({
 }
 
 export function KnowledgeSectionEditor({
+  dataSource,
   sectionKey,
   payload,
   savedPayload,
@@ -274,7 +277,7 @@ export function KnowledgeSectionEditor({
 
       {sectionKey !== "recommendations" || objectArray(payload.recommendations).length > 0 ? <MasterCatalogNotices sectionKey={sectionKey} masters={masters} states={masterCatalogStates} /> : null}
 
-      {sectionKey === "recommendations" && <KnowledgeBudgetAlterationBuilder value={payload.budgetAlterations}
+      {sectionKey === "recommendations" && <KnowledgeBudgetAlterationBuilder dataSource={dataSource} value={payload.budgetAlterations}
         savedValue={savedPayload?.budgetAlterations} validationAttempt={validationAttempt} resetKey={resetKey}
         mainLineId={currentMainLineId} mainLineName={mainLineName} baskets={relationshipBaskets} items={relationshipItems}
         catalogState={relationshipCatalogState} readOnly={readOnly} canCreate={canQuickAdd} canUpdate={canUpdateCatalog}

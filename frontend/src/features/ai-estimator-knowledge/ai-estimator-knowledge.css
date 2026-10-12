@@ -590,7 +590,7 @@
 .knowledge-repeater__header,
 .knowledge-repeater__row,
 .knowledge-repeater__actions,
-.knowledge-dialog-actions {
+.knowledge-dialog-actions:where(:not(.ui-dialog__actions)) {
   display: flex;
   align-items: center;
 }
@@ -1317,7 +1317,7 @@
   min-width: 0;
 }
 
-.knowledge-dialog-body {
+.knowledge-dialog-body:where(:not(.ui-dialog__body)) {
   display: grid;
   gap: var(--space-4);
   min-width: 0;
@@ -1326,16 +1326,16 @@
 
 /* Row gap is owned by the grid rule below (subgrid multiplies it across four
    tracks), so only widen the columns here. */
-.knowledge-dialog-body > .knowledge-form-grid {
+.knowledge-dialog-body:where(:not(.ui-dialog__body)) > .knowledge-form-grid {
   column-gap: var(--space-4);
 }
 
-.knowledge-dialog-body > ul {
+.knowledge-dialog-body:where(:not(.ui-dialog__body)) > ul {
   margin: 0;
   padding-inline-start: var(--space-5);
 }
 
-.knowledge-dialog-actions {
+.knowledge-dialog-actions:where(:not(.ui-dialog__actions)) {
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: var(--space-2);
@@ -1411,17 +1411,17 @@
     justify-content: flex-end;
   }
 
-  .knowledge-dialog-body {
+  .knowledge-dialog-body:where(:not(.ui-dialog__body)) {
     padding: var(--space-5);
   }
 
-  .knowledge-dialog-actions {
+  .knowledge-dialog-actions:where(:not(.ui-dialog__actions)) {
     align-items: stretch;
     flex-direction: column-reverse;
     padding-inline: var(--space-5);
   }
 
-  .knowledge-dialog-actions .ui-button {
+  .knowledge-dialog-actions:where(:not(.ui-dialog__actions)) .ui-button {
     width: 100%;
     min-height: 44px;
   }
@@ -2762,29 +2762,29 @@
  * well behind it. Every state is restated so the stronger default does not
  * flatten hover, focus, validation or read-only feedback.
  */
-body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body .ui-control {
+body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body:where(:not(.ui-dialog__body)) .ui-control {
   border-color: color-mix(in srgb, var(--role-line-strong, var(--color-border-strong)) 72%, var(--role-ink, var(--color-text)));
   background-color: color-mix(in srgb, var(--role-deck, var(--color-surface)) 78%, var(--role-deck-tint, var(--color-surface-subtle)));
 }
 
-body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body .ui-control:hover:not(:disabled):not([aria-invalid="true"]) {
+body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body:where(:not(.ui-dialog__body)) .ui-control:hover:not(:disabled):not([aria-invalid="true"]) {
   border-color: var(--role-accent, var(--color-border-strong));
   background-color: var(--role-deck, var(--color-surface));
 }
 
-body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body .ui-control:focus-visible {
+body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body:where(:not(.ui-dialog__body)) .ui-control:focus-visible {
   border-color: var(--role-focus, var(--role-accent, var(--color-border-strong)));
   background-color: var(--role-deck, var(--color-surface));
   box-shadow: var(--focus-ring);
   outline: none;
 }
 
-body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body .ui-control[aria-invalid="true"] {
+body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body:where(:not(.ui-dialog__body)) .ui-control[aria-invalid="true"] {
   border-color: var(--color-danger);
   background-color: color-mix(in srgb, var(--color-danger) 6%, var(--role-deck, var(--color-surface)));
 }
 
-body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body .ui-control:disabled {
+body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body:where(:not(.ui-dialog__body)) .ui-control:disabled {
   border-color: var(--role-line, var(--color-border));
   background-color: var(--role-deck-tint, var(--color-surface-subtle));
   color: var(--role-ink-muted, var(--color-text-muted));
@@ -2794,7 +2794,7 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body .ui-control:dis
 
 /* An optional one-line description does not need the 8rem well the shared
    textarea reserves; it still grows by drag. */
-.knowledge-dialog-body .ui-textarea {
+.knowledge-dialog-body:where(:not(.ui-dialog__body)) .ui-textarea {
   min-block-size: 6rem;
 }
 
@@ -2802,7 +2802,7 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body .ui-control:dis
 
 /* A transparent accent mix over the deck muddied into neither band nor
    ground. A solid tint separates the commands from the form cleanly. */
-body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions {
+body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions:where(:not(.ui-dialog__actions)) {
   align-items: center;
   border-block-start-color: var(--role-line, var(--color-border));
   background: var(--role-deck-tint, var(--color-surface-subtle));
@@ -2813,19 +2813,19 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions {
    Configuration settles on one radius for both. */
 .knowledge-page .ui-button,
 .knowledge-page .ui-icon-button,
-.knowledge-dialog-actions .ui-button {
+.knowledge-dialog-actions:where(:not(.ui-dialog__actions)) .ui-button {
   border-radius: var(--radius-field);
 }
 
 /* Quiet dialog actions ("Done", "Close") follow the quiet button tokens; Cancel
    now uses the negative destructive-outline variant. */
-body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--quiet {
+body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions:where(:not(.ui-dialog__actions)) .ui-button--quiet {
   border-color: transparent;
   background: transparent;
   color: var(--button-quiet-ink);
 }
 
-body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--quiet:not(:disabled):hover {
+body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions:where(:not(.ui-dialog__actions)) .ui-button--quiet:not(:disabled):hover {
   background: var(--button-quiet-hover);
   color: var(--button-quiet-ink);
 }

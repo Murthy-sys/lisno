@@ -80,6 +80,7 @@ export function KnowledgeLifecycleDialog({
   return (
     <Dialog
       title={copy.title}
+      tone={action === "activate" ? "default" : "danger"}
       eyebrow="Estimation configuration"
       description={copy.description}
       role="alertdialog"
@@ -89,7 +90,7 @@ export function KnowledgeLifecycleDialog({
       fallbackFocusRef={fallbackFocusRef}
     >
       {hasBody ? (
-        <div className="knowledge-dialog-body">
+        <div className="ui-dialog__body knowledge-dialog-body">
           {content}
           {blockers.length ? (
             <InlineMessage tone="error" title="Activation is blocked" role="alert">
@@ -137,7 +138,7 @@ export function KnowledgeLifecycleDialog({
           ) : null}
         </div>
       ) : null}
-      <div className="knowledge-dialog-actions">
+      <div className="ui-dialog__actions knowledge-dialog-actions">
         {actions ?? <><Button variant="destructive-outline" onClick={onClose} disabled={busy}>
           Cancel
         </Button>

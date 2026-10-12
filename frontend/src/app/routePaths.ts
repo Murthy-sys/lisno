@@ -92,6 +92,7 @@ export function safeReturnPath(
       (role === "super_admin" && (parsed.pathname === "/admin/procurement/vendors" || /^\/admin\/procurement\/vendors\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(parsed.pathname))) ||
       (role === "procurement" && (parsed.pathname === "/procurement" ||
         parsed.pathname === "/procurement/vendors" ||
+        parsed.pathname === "/procurement/requests" ||
         /^\/procurement\/vendors\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(parsed.pathname) ||
         /^\/procurement\/projects\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(parsed.pathname)));
     if (

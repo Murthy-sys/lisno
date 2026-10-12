@@ -110,15 +110,17 @@ export function SectionReviewCard({
           onClose={() => setPreviewOpenSectionId(undefined)}
         >
           <div className="section-review-card__modal">
-            <img
-              className="section-review-card__modal-image"
-              src={previewSource}
-              alt={`Full preview of ${section.label}`}
-            />
-            <div className="section-review-card__modal-actions">
+            <div className="ui-dialog__body">
+              <img
+                className="section-review-card__modal-image"
+                src={previewSource}
+                alt={`Full preview of ${section.label}`}
+              />
+            </div>
+            <div className="section-review-card__modal-actions ui-dialog__actions">
               <button
                 type="button"
-                className="button button--close"
+                className="button button--close ui-button ui-button--secondary"
                 onClick={() => setPreviewOpenSectionId(undefined)}
               >
                 <X aria-hidden="true" size={18} />

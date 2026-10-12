@@ -111,10 +111,12 @@ function CompletionConfirmation({ workflow, stage, source, expectedVersion, stal
   return <Dialog title="Complete space planning?" eyebrow="Client approval"
     description={`You are completing “${stage.name}” for approved design plan version ${source.designPlanVersion}. All ${source.totalImages} images have been approved.`}
     busy={mutation.isPending} onClose={onClose} returnFocusRef={returnFocusRef} fallbackFocusRef={fallbackFocusRef}>
-    {blocked ? <p id={descriptionId} role="alert">The plan or workflow changed. Close this confirmation and review the latest state before approving again.</p>
-      : refreshing ? <p id={descriptionId} role="status">Checking the latest workflow…</p> : null}
-    {mutation.isError && !conflict ? <p role="alert">{mutation.error instanceof ApiError ? mutation.error.message : "Stage approval could not be saved. Please try again."}</p> : null}
-    <div className="modal__actions">
+    <div className="ui-dialog__body">
+      {blocked ? <p id={descriptionId} role="alert">The plan or workflow changed. Close this confirmation and review the latest state before approving again.</p>
+        : refreshing ? <p id={descriptionId} role="status">Checking the latest workflow…</p> : null}
+      {mutation.isError && !conflict ? <p role="alert">{mutation.error instanceof ApiError ? mutation.error.message : "Stage approval could not be saved. Please try again."}</p> : null}
+    </div>
+    <div className="modal__actions ui-dialog__actions">
       <Button variant="destructive-outline" disabled={mutation.isPending} onClick={onClose}>Cancel</Button>
       <Button disabled={blocked || refreshing || mutation.isPending} busy={mutation.isPending} aria-describedby={blocked || refreshing ? descriptionId : undefined}
         onClick={() => { if (!blocked && !refreshing && !mutation.isPending && !inFlight.current) { inFlight.current = true; mutation.mutate(); } }}>

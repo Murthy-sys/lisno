@@ -89,13 +89,13 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-10-09.ask-lisno.v1"
+      "2026-10-11.vendor-basket-proposals.v1"
     );
   });
 
-  it("publishes all 182 unique permissions in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(182);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(182);
+  it("publishes all 186 unique permissions in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(186);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(186);
     expect(PERMISSION_CODES.slice(0, 12)).toEqual(["ask_lisno.request", "chat.assistant.read", "chat.assistant.request", "procurement.vendor_access.read", "procurement.vendor_access.manage", "execution.tracker.read", "execution.work.update", "execution.staff.manage", "execution.verify", "execution.policy.manage", "execution.notifications.read", "execution.access.retry"]);
     expect(PERMISSION_CODES).toContain("chat.action_types.manage");
     expect(PERMISSION_CODES).toContain("chat.project_name.manage");
@@ -117,7 +117,7 @@ describe("frontend authorization contract", () => {
       ...invitationPermissions,
       "access_request.create"
     ]);
-    expect(PERMISSION_CODES.slice(-61)).toEqual([
+    expect(PERMISSION_CODES.slice(-65)).toEqual([
       "access_request.review.read",
       "access_request.review.decide",
       "project_access_grant.revoke",
@@ -149,6 +149,10 @@ describe("frontend authorization contract", () => {
       "procurement.vendor_directory.update",
       "procurement.vendor_directory.lifecycle",
       "procurement.vendor_classification.create",
+      "procurement.vendor_basket_proposal.read",
+      "procurement.vendor_basket_proposal.create",
+      "procurement.vendor_basket_proposal.update",
+      "procurement.vendor_basket_proposal.submit",
       "procurement.vendor_allocation_baseline.correct",
       "procurement.vendor_kpi.read",
       "procurement.vendor_kpi.rate",

@@ -56,6 +56,10 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "procurement.vendor_induction.request",
     "procurement.vendor_induction.review",
     "procurement.vendor_classification.create",
+    "procurement.vendor_basket_proposal.read",
+    "procurement.vendor_basket_proposal.create",
+    "procurement.vendor_basket_proposal.update",
+    "procurement.vendor_basket_proposal.submit",
     "procurement.vendor_allocation_baseline.correct"
   ],
   admin: [
@@ -111,6 +115,10 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "procurement.vendor_induction.request",
     "procurement.vendor_induction.review",
     "procurement.vendor_classification.create",
+    "procurement.vendor_basket_proposal.read",
+    "procurement.vendor_basket_proposal.create",
+    "procurement.vendor_basket_proposal.update",
+    "procurement.vendor_basket_proposal.submit",
     "procurement.vendor_allocation_baseline.correct",
     "access_request.self.read"
   ],

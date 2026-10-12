@@ -192,7 +192,7 @@ export function EstimatorRecommendations({
         aria-haspopup="dialog" aria-expanded={open}>Review recommendations</button>
     </section>
     {open ? <Dialog title={`Recommendations for ${roomName}`} eyebrow="Configuration guidance"
-      onClose={onClose} showCloseButton={false} initialFocusRef={detailBodyRef}
+      onClose={onClose} closeButtonRef={closeButtonRef} closeButtonLabel="Close recommendations" initialFocusRef={detailBodyRef}
       returnFocusRef={reviewButtonRef} fallbackFocusRef={fallbackFocusRef}>
       <div ref={detailBodyRef} className="estimator-recommendations__detail" role="region" aria-label="Recommendation details" tabIndex={-1}>
           <div className="estimator-recommendations__card-header">
@@ -206,8 +206,6 @@ export function EstimatorRecommendations({
               </div>
               {activeLine ? <p>{relationshipMessage(activeLine) ?? "A related item is recommended for this room."}</p> : null}
             </div>
-            <button ref={closeButtonRef} className="estimator-recommendations__card-close" type="button" onClick={onClose}
-              aria-label="Close recommendations">×</button>
           </div>
           {state === "loading" ? <p className="estimator-recommendations__state" role="status">Checking configured recommendations…</p> : null}
           {state === "error" ? <div className="estimator-recommendations__state" role="alert"><p>Recommendations could not be loaded. Your estimate items are unchanged.</p><button type="button" onClick={onRetry}>Retry recommendations</button></div> : null}
@@ -251,7 +249,7 @@ export function EstimatorRecommendations({
                 ? "Use Not necessary to skip a Probable Addition. Closing with unanswered recommendations and no related item added will uncheck newly selected items that still need a response."
                 : "Closing without adding a related item will uncheck any newly selected item that still needs one."}
             </p> : null}
-            <div className="estimator-recommendations__card-actions">
+            <div className="estimator-recommendations__card-actions ui-dialog__actions">
               <button className="estimator-recommendations__not-now" type="button" onClick={onClose}>Not now</button>
               {activeLine.requirement === "can" ? <button className="estimator-recommendations__skip" type="button"
                 onClick={() => skipItem(activeLine)} disabled={!editable || state !== "ready" || !onSkip}

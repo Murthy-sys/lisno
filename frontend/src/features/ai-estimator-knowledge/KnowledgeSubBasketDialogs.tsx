@@ -276,17 +276,17 @@ export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocu
   const canDelete = Boolean(impact && !(impact.vendorReferenceCount ?? 0) && confirmationName === impact.subBasketName && reason.trim()
     && identityMatches && !blockReason && !busy && !impactQuery.isFetching && !impactQuery.isError && !saved);
 
-  return <Dialog title={inline ? "Remove Sub-Basket?" : "Delete Sub-Basket?"} eyebrow={basket.name} role="alertdialog"
+  return <Dialog title={inline ? "Remove Sub-Basket?" : "Delete Sub-Basket?"} tone="danger" eyebrow={basket.name} role="alertdialog"
     description={`“${impact?.subBasketName ?? subBasket.name}” and its items will be permanently deleted. This cannot be undone.`}
     onClose={onClose} busy={busy} initialFocusRef={inline ? cancelRef : undefined} returnFocusRef={returnFocusRef} fallbackFocusRef={fallbackFocusRef}
   >
-    <form className={`knowledge-dialog-form${inline ? " knowledge-draft-catalog-dialog" : ""}`} onSubmit={(event) => {
+    <form className={`ui-dialog__form knowledge-dialog-form${inline ? " knowledge-draft-catalog-dialog" : ""}`} onSubmit={(event) => {
       event.preventDefault();
       if (!canDelete || submissionLocked.current || committed.current) return;
       submissionLocked.current = true;
       mutation.mutate();
     }}>
-      <div className="knowledge-dialog-body knowledge-basket-delete">
+      <div className="ui-dialog__body knowledge-dialog-body knowledge-basket-delete">
         {saved ? <InlineMessage tone="warning" title="Sub-Basket deleted" role="status">{refreshError || "Refreshing the catalog…"}</InlineMessage>
           : <>
             {inline ? <InlineMessage tone="warning" title="Removes this group from Configuration immediately">
@@ -322,7 +322,7 @@ export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocu
             </> : null}
           </>}
       </div>
-      <div className="knowledge-dialog-actions">
+      <div className="ui-dialog__actions knowledge-dialog-actions">
         <Button ref={cancelRef} variant={saved ? "quiet" : "destructive-outline"} onClick={onClose} disabled={busy}>{saved ? "Done" : "Cancel"}</Button>
         {saved ? <Button variant="secondary" busy={busy} onClick={() => void refreshDeleted(saved)}>Retry catalog refresh</Button>
           : <Button type="submit" variant="destructive" busy={busy} busyLabel={inline ? "Removing…" : "Deleting…"} disabled={!canDelete}>{inline ? "Remove permanently" : "Delete Sub-Basket"}</Button>}

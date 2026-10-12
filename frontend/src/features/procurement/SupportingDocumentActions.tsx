@@ -113,8 +113,11 @@ export function SupportingDocumentActions({
           description="Authenticated image preview for this recorded purchase."
           onClose={closePreview}
         >
-          <div className="supporting-document-preview">
-            <img src={preview.url} alt={`Receipt ${preview.filename}`} />
+          <div className="supporting-document-preview ui-dialog__form">
+            <div className="ui-dialog__body">
+              <img src={preview.url} alt={`Receipt ${preview.filename}`} />
+            </div>
+            <div className="ui-dialog__actions">
             <DownloadButton
               label="Download receipt"
               loadingLabel="Preparing download…"
@@ -123,6 +126,7 @@ export function SupportingDocumentActions({
               getFile={getFile}
               className="button button--secondary"
             />
+            </div>
           </div>
         </Dialog>
       ) : null}

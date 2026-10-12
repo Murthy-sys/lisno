@@ -169,14 +169,12 @@
   .project-chat-page *, .project-chat-popover *, .project-chat-details * { scroll-behavior: auto !important; transition: none !important; }
 }
 /* Chat-owned portals sit outside the route host; scope by their actual content. */
-.ui-dialog:has(> .project-chat-form), .project-chat-details {
+.project-chat-details {
   background: #fff; color: #111b21; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
-.ui-dialog:has(> .project-chat-form) { max-height: calc(100dvh - 24px); border-radius: 10px; }
-.ui-dialog:has(> .project-chat-form) .ui-dialog__header, .project-chat-details .ui-drawer__header { background: #f0f2f5; border-color: #dbe1e3; }
-.ui-dialog:has(> .project-chat-form) .ui-dialog__header .eyebrow, .project-chat-details .ui-drawer__eyebrow { color: #08705d; }
-.ui-dialog:has(> .project-chat-form) .ui-dialog__header p:not(.eyebrow) { color: #56616f; }
-.ui-dialog:has(> .project-chat-form) .ui-dialog__header h2, .project-chat-details .ui-drawer__header h2 { color: #111b21; font-family: inherit; font-size: 18px; }
+.project-chat-details .ui-drawer__header { background: #f0f2f5; border-color: #dbe1e3; }
+.project-chat-details .ui-drawer__eyebrow { color: #08705d; }
+.project-chat-details .ui-drawer__header h2 { color: #111b21; font-family: inherit; font-size: 18px; }
 .project-chat-form .ui-control { font-family: inherit; background: #fff; color: #111b21; }
 .project-chat-form :is(button,input,select,textarea):focus-visible, .project-chat-details :is(button,input,select,textarea):focus-visible { outline-color: #006b5d; }
 /* Attachments and local tools share the compact composer and media sizing rules. */
@@ -210,8 +208,8 @@
 .project-chat-attachment__label small { font-size: 10px; color: #54656f; }
 .project-chat-attachment__actions { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 5px 5px; }
 .project-chat-attachment__actions button { display: inline-flex; align-items: center; gap: 4px; padding: 5px; min-height: 30px; border: 0; border-radius: 4px; background: transparent; color: #08705d; font: inherit; font-size: 11px; cursor: pointer; }
-.project-chat-media-viewer > img, .project-chat-media-viewer > video { display: block; max-width: 100%; max-height: 60dvh; margin: auto; object-fit: contain; }
-.project-chat-media-viewer > audio { width: 100%; }
+.project-chat-media-viewer > .ui-dialog__body > img, .project-chat-media-viewer > .ui-dialog__body > video { display: block; max-width: 100%; max-height: 60dvh; margin: auto; object-fit: contain; }
+.project-chat-media-viewer > .ui-dialog__body > audio { width: 100%; }
 .project-chat-download { padding: 9px 12px; border-radius: 5px; background: #087f69; color: #fff; text-decoration: none; font-weight: 600; }
 @media (max-width: 540px) {
   .project-chat-composer__row { flex-wrap: wrap; }

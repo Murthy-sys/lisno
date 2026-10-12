@@ -1593,24 +1593,24 @@ body:has(.ui-app-shell[data-role]) .knowledge-dialog-body .ui-field__hint {
 }
 
 /* Dialog chrome: the shared .modal is a cool parchment; warm it to the deck. */
-body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.knowledge-dialog-body) {
+body:has(.ui-app-shell[data-role="super_admin"]) .modal:where(:not(.ui-dialog--reference)):has(.knowledge-dialog-body) {
   background: var(--role-deck);
 }
 
-body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.knowledge-dialog-body) > .modal__header {
+body:has(.ui-app-shell[data-role="super_admin"]) .modal:where(:not(.ui-dialog--reference)):has(.knowledge-dialog-body) > .modal__header {
   border-block-end-color: var(--role-line);
 }
 
-body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.knowledge-dialog-body) .eyebrow {
+body:has(.ui-app-shell[data-role="super_admin"]) .modal:where(:not(.ui-dialog--reference)):has(.knowledge-dialog-body) .eyebrow {
   color: var(--role-accent);
 }
 
 /* .modal__header hardcodes the navy/cool-grey pair from index.css. */
-body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.knowledge-dialog-body) .modal__header h2 {
+body:has(.ui-app-shell[data-role="super_admin"]) .modal:where(:not(.ui-dialog--reference)):has(.knowledge-dialog-body) .modal__header h2 {
   color: var(--role-ink);
 }
 
-body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.knowledge-dialog-body) .modal__header p:last-child:not(.eyebrow) {
+body:has(.ui-app-shell[data-role="super_admin"]) .modal:where(:not(.ui-dialog--reference)):has(.knowledge-dialog-body) .modal__header p:last-child:not(.eyebrow) {
   color: var(--role-ink-muted);
 }
 

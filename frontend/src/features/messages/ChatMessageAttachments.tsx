@@ -67,12 +67,14 @@ export function ChatMediaProvider({ projectId, children }: { projectId: string; 
       if (downloading) save(run.url, attachment.filename);
     }).catch(error => { if (valid()) { if (isChatDenied(error)) void verifyAccess(projectId); setViewer({ attachment, downloading, error: chatErrorMessage(error) }); } });
   }, [audio, isCurrent, projectId, release, transfer, verifyAccess]);
-  return <ChatAudioContext.Provider value={audio}><MediaContext.Provider value={{ preview, open }}>{children}{viewer ? <Dialog title={viewer.attachment.filename} eyebrow="Shared attachment" onClose={() => { release(); setViewer(null); }}><div className="project-chat-form project-chat-media-viewer">
-    {!viewer.url && !viewer.error ? <p role="status">Loading attachment{viewer.progress === undefined ? "…" : ` · ${viewer.progress}%`}</p> : null}
-    {viewer.error ? <p role="alert">{viewer.error}</p> : null}
-    {viewer.url && !viewer.downloading && !viewer.error ? viewer.attachment.kind === "image" ? <img src={viewer.url} alt={viewer.attachment.filename} onError={() => setViewer(value => value ? { ...value, error: "This browser cannot preview this image. Download the original file." } : value)} /> : viewer.attachment.kind === "video" ? <video src={viewer.url} controls preload="metadata" onError={() => setViewer(value => value ? { ...value, error: "This browser cannot play this video. Download the original file." } : value)} /> : null : null}
-    <p>{chatFileSize(viewer.attachment.byteSize)} · {viewer.attachment.mimeType}</p>
-    <div className="project-chat-form__actions">{viewer.url ? <a className="project-chat-download" href={viewer.url} download={viewer.attachment.filename}>Download original</a> : viewer.error ? <Button onClick={() => open(viewer.attachment, viewer.downloading)}>Retry attachment</Button> : null}<Button variant="secondary" onClick={() => { release(); setViewer(null); }}>Close</Button></div>
+  return <ChatAudioContext.Provider value={audio}><MediaContext.Provider value={{ preview, open }}>{children}{viewer ? <Dialog title={viewer.attachment.filename} eyebrow="Shared attachment" onClose={() => { release(); setViewer(null); }}><div className="project-chat-form project-chat-media-viewer ui-dialog__form">
+    <div className="ui-dialog__body">
+      {!viewer.url && !viewer.error ? <p role="status">Loading attachment{viewer.progress === undefined ? "…" : ` · ${viewer.progress}%`}</p> : null}
+      {viewer.error ? <p role="alert">{viewer.error}</p> : null}
+      {viewer.url && !viewer.downloading && !viewer.error ? viewer.attachment.kind === "image" ? <img src={viewer.url} alt={viewer.attachment.filename} onError={() => setViewer(value => value ? { ...value, error: "This browser cannot preview this image. Download the original file." } : value)} /> : viewer.attachment.kind === "video" ? <video src={viewer.url} controls preload="metadata" onError={() => setViewer(value => value ? { ...value, error: "This browser cannot play this video. Download the original file." } : value)} /> : null : null}
+      <p>{chatFileSize(viewer.attachment.byteSize)} · {viewer.attachment.mimeType}</p>
+    </div>
+    <div className="project-chat-form__actions ui-dialog__actions">{viewer.url ? <a className="project-chat-download" href={viewer.url} download={viewer.attachment.filename}>Download original</a> : viewer.error ? <Button onClick={() => open(viewer.attachment, viewer.downloading)}>Retry attachment</Button> : null}<Button variant="secondary" onClick={() => { release(); setViewer(null); }}>Close</Button></div>
   </div></Dialog> : null}</MediaContext.Provider></ChatAudioContext.Provider>;
 }
 

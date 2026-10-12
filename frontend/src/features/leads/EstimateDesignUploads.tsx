@@ -679,6 +679,7 @@ export function EstimateDesignUploads({
       ) : null}
       {uploadToDelete ? (
         <Dialog
+          tone="danger"
           title="Delete design upload?"
           eyebrow="Uploaded design"
           description="This removes the uploaded file and its extracted drawings from the workspace."
@@ -686,25 +687,27 @@ export function EstimateDesignUploads({
           busy={deleteUpload.isPending}
           onClose={closeDeleteDialog}
         >
-          <div className="estimate-design-uploads__delete-confirmation">
-            <p className="estimate-design-uploads__delete-filename">{uploadToDelete.originalFilename}</p>
-            <p>
-              If this design is awaiting Client approval, its pending review will be withdrawn.
-              You can then upload and submit an updated design.
-            </p>
-            {deleteUpload.isError ? (
-              <p role="alert" className="estimate-design-uploads__error">
-                {deleteUpload.error instanceof ApiError
-                  ? deleteUpload.error.message
-                  : "The design upload could not be deleted. Try again."}
+          <div className="estimate-design-uploads__delete-confirmation ui-dialog__form">
+            <div className="ui-dialog__body">
+              <p className="estimate-design-uploads__delete-filename">{uploadToDelete.originalFilename}</p>
+              <p>
+                If this design is awaiting Client approval, its pending review will be withdrawn.
+                You can then upload and submit an updated design.
               </p>
-            ) : null}
-            {(!allowDeletion || !currentUploadToDelete?.canDelete) && !deleteUpload.isPending ? (
-              <p role="status">
-                {!allowDeletion ? "Refresh the project workflow before changing this upload." : currentUploadToDelete?.deleteBlockedReason ?? "This upload is no longer available to delete."}
-              </p>
-            ) : null}
-            <div className="estimate-design-uploads__delete-actions">
+              {deleteUpload.isError ? (
+                <p role="alert" className="estimate-design-uploads__error">
+                  {deleteUpload.error instanceof ApiError
+                    ? deleteUpload.error.message
+                    : "The design upload could not be deleted. Try again."}
+                </p>
+              ) : null}
+              {(!allowDeletion || !currentUploadToDelete?.canDelete) && !deleteUpload.isPending ? (
+                <p role="status">
+                  {!allowDeletion ? "Refresh the project workflow before changing this upload." : currentUploadToDelete?.deleteBlockedReason ?? "This upload is no longer available to delete."}
+                </p>
+              ) : null}
+            </div>
+            <div className="estimate-design-uploads__delete-actions ui-dialog__actions">
               <Button variant="destructive-outline" disabled={deleteUpload.isPending} onClick={closeDeleteDialog}>
                 Cancel
               </Button>
@@ -876,7 +879,7 @@ function ManualDrawingDialog({
       busy={busy}
     >
       <form
-        className="estimate-drawing-correction"
+        className="estimate-drawing-correction ui-dialog__form"
         onSubmit={(event) => {
           event.preventDefault();
           if (!valid) return;
@@ -888,71 +891,73 @@ function ManualDrawingDialog({
           });
         }}
       >
-        <label>
-          Source page
-          <select
-            value={page.id}
-            onChange={(event) => {
-              const next = pages.find(
-                (candidate) => candidate.id === event.target.value
-              );
-              if (!next) return;
-              setPageId(next.id);
-              setCrop({
-                x: 0,
-                y: 0,
-                width: next.width,
-                height: next.height
-              });
-            }}
-          >
-            {pages.map((candidate) => (
-              <option value={candidate.id} key={candidate.id}>
-                Page {candidate.pageNumber}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Drawing title
-          <input
-            value={displayTitle}
-            onChange={(event) => setDisplayTitle(event.target.value)}
+        <div className="ui-dialog__body">
+          <label>
+            Source page
+            <select
+              value={page.id}
+              onChange={(event) => {
+                const next = pages.find(
+                  (candidate) => candidate.id === event.target.value
+                );
+                if (!next) return;
+                setPageId(next.id);
+                setCrop({
+                  x: 0,
+                  y: 0,
+                  width: next.width,
+                  height: next.height
+                });
+              }}
+            >
+              {pages.map((candidate) => (
+                <option value={candidate.id} key={candidate.id}>
+                  Page {candidate.pageNumber}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Drawing title
+            <input
+              value={displayTitle}
+              onChange={(event) => setDisplayTitle(event.target.value)}
+            />
+          </label>
+          <label>
+            Room
+            <select
+              value={roomId}
+              onChange={(event) => { setRoomId(event.target.value); setCatalogueId(""); }}
+            >
+              <option value="">Choose room</option>
+              {rooms.map((room) => (
+                <option value={room.id} key={room.id}>{room.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Exact estimate item
+            <select
+              value={catalogueId}
+              disabled={!roomId}
+              onChange={(event) => setCatalogueId(event.target.value)}
+            >
+              <option value="">Choose included item</option>
+              {roomItems.map((item) => (
+                <option value={item.catalogueId} key={`${item.roomId}:${item.catalogueId}`}>{item.label} · {item.scopeLabel}</option>
+              ))}
+            </select>
+          </label>
+          <CropEditor
+            label={displayTitle.trim() || "Missing drawing"}
+            crop={crop}
+            page={cropPage}
+            onChange={setCrop}
           />
-        </label>
-        <label>
-          Room
-          <select
-            value={roomId}
-            onChange={(event) => { setRoomId(event.target.value); setCatalogueId(""); }}
-          >
-            <option value="">Choose room</option>
-            {rooms.map((room) => (
-              <option value={room.id} key={room.id}>{room.label}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Exact estimate item
-          <select
-            value={catalogueId}
-            disabled={!roomId}
-            onChange={(event) => setCatalogueId(event.target.value)}
-          >
-            <option value="">Choose included item</option>
-            {roomItems.map((item) => (
-              <option value={item.catalogueId} key={`${item.roomId}:${item.catalogueId}`}>{item.label} · {item.scopeLabel}</option>
-            ))}
-          </select>
-        </label>
-        <CropEditor
-          label={displayTitle.trim() || "Missing drawing"}
-          crop={crop}
-          page={cropPage}
-          onChange={setCrop}
-        />
-        {error ? <p role="alert">{error}</p> : null}
-        <div className="estimate-drawing-correction__actions">
+          {error ? <p role="alert">{error}</p> : null}
+        </div>
+        <div className="estimate-drawing-correction__actions ui-dialog__actions">
           <button type="button" className="secondary-button ui-button ui-button--destructive-outline" onClick={onClose}>
             Cancel
           </button>

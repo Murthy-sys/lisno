@@ -287,8 +287,7 @@ function AwardModal({ projectId, basketId, enquiry, bid, awardId, frozen, onClos
   return <Dialog title="Award vendor" eyebrow="Vendor award" description="Review the vendor, payment schedule and required approvals."
     className={`procurement-basket__award-modal${closing ? " is-closing" : ""}`}
     layerClassName={`procurement-basket__award-layer${closing ? " is-closing" : ""}`}
-    showCloseButton={false} onClose={closeModal} initialFocusRef={closeButtonRef} returnFocusRef={returnFocusRef} busy={dismissBusy}>
-    <button ref={closeButtonRef} type="button" className="procurement-basket__award-modal-close" aria-label="Close award vendor" onClick={closeModal} disabled={dismissBusy}><span aria-hidden="true">×</span></button>
+    closeButtonRef={closeButtonRef} closeButtonLabel="Close award vendor" onClose={closeModal} initialFocusRef={closeButtonRef} returnFocusRef={returnFocusRef} busy={dismissBusy}>
     <div className="procurement-basket__award-modal-body" role="region" aria-label="Award details" tabIndex={0}><div className="procurement-basket__award">{award.isPending && activeAwardId ? <PageState state="loading" message="Loading saved award…" /> : award.isError ? <p role="alert" className="procurement-basket__error">{procurementError(award.error, "The saved award could not be loaded.")}</p> : null}
       {!bid && current ? <p role="alert" className="procurement-basket__notice">This saved bid is no longer current. Review its frozen proposal below, then choose an eligible current bid and send a new revision for approvals.</p> : null}
       {current?.requiresRevision ? <p role="alert" className="procurement-basket__notice">This award was withdrawn for a BOQ revision. Resend the revised BOQ and choose a current bid before sending it again.</p> : null}
@@ -311,7 +310,7 @@ function AwardModal({ projectId, basketId, enquiry, bid, awardId, frozen, onClos
       {approverBlockers.map((blocker) => <p key={`${blocker.slot}:${blocker.code}`} role="alert" className="procurement-basket__error">{blocker.message}</p>)}
       {message ? <p role={sendForApprovals.isError || issue.isError ? "alert" : "status"} className={sendForApprovals.isError || issue.isError ? "procurement-basket__error" : "procurement-basket__notice"}>{message}</p> : null}
     </div></div>
-    <div className="procurement-basket__award-modal-footer"><div className="procurement-basket__drawer-actions"><button type="button" onClick={closeModal} disabled={dismissBusy}>Close</button>{canSend ? <button type="button" disabled={busy || missingReviewers.length > 0 || bps === null || !previewReady || approverBlockers.length > 0 || missingAssignment} onClick={() => sendForApprovals.mutate()}>{directIssue ? "Issue work order & lock payment" : "Send for approvals"}</button> : null}{canRetryIssue ? <button type="button" disabled={busy} onClick={() => issue.mutate()}>Retry issue and lock</button> : null}</div></div>
+    <div className="procurement-basket__award-modal-footer ui-dialog__actions"><div className="procurement-basket__drawer-actions"><button type="button" onClick={closeModal} disabled={dismissBusy}>Close</button>{canSend ? <button type="button" disabled={busy || missingReviewers.length > 0 || bps === null || !previewReady || approverBlockers.length > 0 || missingAssignment} onClick={() => sendForApprovals.mutate()}>{directIssue ? "Issue work order & lock payment" : "Send for approvals"}</button> : null}{canRetryIssue ? <button type="button" disabled={busy} onClick={() => issue.mutate()}>Retry issue and lock</button> : null}</div></div>
   </Dialog>;
 }
 

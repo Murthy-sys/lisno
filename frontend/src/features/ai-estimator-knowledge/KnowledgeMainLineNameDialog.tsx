@@ -43,7 +43,7 @@ export function KnowledgeMainLineNameDialog({ item, mainLineId, listedName, onCl
     onClose={onClose}
     returnFocusRef={returnFocusRef}
   >
-    <div className="knowledge-dialog-body">
+    <div className="ui-dialog__body knowledge-dialog-body">
       {detailQuery.isError || detailQuery.data?.mainLineId !== undefined && detailQuery.data.mainLineId !== selectedId
         ? <PageState state="error" message={detailQuery.isError ? detailQuery.error.message : "The selected Main Line could not be verified."}
             action={{ label: "Retry Main Line", onAction: () => void detailQuery.refetch() }} />
@@ -130,13 +130,13 @@ function MainLineNameEditor({ item, onClose, onSaved, returnFocusRef }: {
     initialFocusRef={nameRef}
     returnFocusRef={returnFocusRef}
   >
-    <form className="knowledge-dialog-form" onSubmit={(event) => {
+    <form className="ui-dialog__form knowledge-dialog-form" onSubmit={(event) => {
       event.preventDefault();
       if (!canSave || submissionLocked.current) return;
       submissionLocked.current = true;
       mutation.mutate({ expectedVersion: currentItem.version, submittedName: trimmedName });
     }}>
-      <div className="knowledge-dialog-body">
+      <div className="ui-dialog__body knowledge-dialog-body">
         {mutation.error && !conflict ? <InlineMessage tone="error" role="alert">{mutation.error.message}</InlineMessage> : null}
         {conflict ? <InlineMessage tone="warning" title="Main Line changed" role="alert">
           Load its current name and version before saving your entered name.
@@ -152,7 +152,7 @@ function MainLineNameEditor({ item, onClose, onSaved, returnFocusRef }: {
           }} />}
         </Field>
       </div>
-      <div className="knowledge-dialog-actions">
+      <div className="ui-dialog__actions knowledge-dialog-actions">
         <Button type="button" variant={saved ? "quiet" : "destructive-outline"} onClick={onClose} disabled={busy}>{saved ? "Done" : "Cancel"}</Button>
         {saved ? <Button type="button" variant="secondary" busy={busy} onClick={() => void refreshSaved(saved)}>Retry catalog refresh</Button>
           : <Button type="submit" busy={busy} disabled={!canSave}>Save Main Line</Button>}

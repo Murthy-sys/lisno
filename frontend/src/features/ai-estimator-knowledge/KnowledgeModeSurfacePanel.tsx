@@ -1,10 +1,10 @@
 import { Plus, UserRound } from "lucide-react";
-import { useId } from "react";
+import { useId, type RefObject } from "react";
 
 import { Button } from "../../components/ui/Button";
 import { KnowledgeCardHeading } from "./KnowledgeCardHeading";
 import type { KnowledgeMaster } from "./knowledgeTypes";
-import { KnowledgeSurfaceMultiSelect } from "./KnowledgeSurfaceMultiSelect";
+import { KnowledgeSurfaceMultiSelect, type KnowledgeProposedMasterChoice } from "./KnowledgeSurfaceMultiSelect";
 
 export interface KnowledgeSurfaceCatalogState {
   readonly status: "loading" | "ready" | "error";
@@ -20,7 +20,10 @@ export interface KnowledgeSurfaceSectionState {
 }
 
 export interface KnowledgeModeSurfacePanelProps {
-  readonly presentation?: "default" | "overview";
+  readonly proposedSurfaces?: readonly KnowledgeProposedMasterChoice[];
+  readonly proposalActions?: boolean;
+  readonly quickAddButtonRef?: RefObject<HTMLButtonElement | null>;
+  readonly presentation?: "default" | "overview" | "procurement-basket";
   readonly selectedIds: readonly string[];
   readonly surfaces: readonly KnowledgeMaster[];
   readonly catalogState: KnowledgeSurfaceCatalogState;
@@ -39,6 +42,9 @@ export function KnowledgeModeSurfacePanel({
   presentation = "default",
   selectedIds,
   surfaces,
+  proposedSurfaces = [],
+  proposalActions = false,
+  quickAddButtonRef,
   catalogState,
   sectionState,
   readOnly,
@@ -52,11 +58,12 @@ export function KnowledgeModeSurfacePanel({
 }: KnowledgeModeSurfacePanelProps) {
   const generatedId = useId().replaceAll(":", "");
   const errorId = `${generatedId}-error`;
-  const hasSurfaces = surfaces.length > 0;
+  const hasSurfaces = surfaces.length + proposedSurfaces.length > 0;
   const controlsDisabled = saving
     || sectionState.status !== "ready"
     || catalogState.status !== "ready";
-  const overview = presentation === "overview";
+  const procurementBasket = presentation === "procurement-basket";
+  const overview = presentation === "overview" || procurementBasket;
   const canAddSurface = canQuickAdd && !readOnly;
   const selectionReady = sectionState.status === "ready" && catalogState.status === "ready";
   const stateLabel = readOnly ? (
@@ -77,15 +84,16 @@ export function KnowledgeModeSurfacePanel({
         className="knowledge-mode-surfaces__heading"
         icon={<UserRound />}
         titleId="knowledge-mode-surfaces-heading"
-        title="Surfaces"
+        title={procurementBasket ? "Applicable surfaces" : "Surfaces"}
         description="Select every surface where this Main Line can be used."
         trailing={overview ? (
           <div className="knowledge-overview-surfaces__header-actions">
             {stateLabel}
             {canAddSurface ? (
               <Button
+                ref={quickAddButtonRef}
                 variant="primary"
-                leadingIcon={<Plus />}
+                leadingIcon={proposalActions ? undefined : <Plus />}
                 disabled={controlsDisabled}
                 onClick={addSurface}
               >
@@ -100,6 +108,7 @@ export function KnowledgeModeSurfacePanel({
         <KnowledgeSurfaceMultiSelect
           selectedIds={selectedIds}
           masters={surfaces}
+          proposedMasters={proposedSurfaces}
           label="Applicable surfaces"
           placeholder="Select surfaces"
           searchable
@@ -109,11 +118,11 @@ export function KnowledgeModeSurfacePanel({
           readOnly={readOnly}
           onChange={onChange}
         />
-        {canAddSurface ? (
+        {canAddSurface && !proposalActions ? (
           <Button
             type="button"
             variant="secondary"
-            leadingIcon={<Plus />}
+            leadingIcon={proposalActions ? undefined : <Plus />}
             className={overview ? "knowledge-overview-surfaces__create" : undefined}
             aria-label={overview ? "Create Surface" : undefined}
             title={overview ? "Create Surface" : undefined}
@@ -125,7 +134,12 @@ export function KnowledgeModeSurfacePanel({
         ) : null}
       </div>
 
-      {overview && selectionReady ? (
+      {procurementBasket && selectionReady && selectedIds.length === 0 ? (
+        <div className="knowledge-overview-surfaces__reference-empty">
+          <strong>No surfaces selected yet</strong>
+          <p>Choose one or more surfaces from the dropdown above.</p>
+        </div>
+      ) : overview && selectionReady ? (
         <table className="knowledge-overview-surfaces__table" aria-label="Selected surface details">
           <colgroup>
             <col className="knowledge-overview-surfaces__number-column" />
@@ -143,16 +157,18 @@ export function KnowledgeModeSurfacePanel({
           </thead>
           <tbody>
             {selectedIds.map((surfaceId, index) => {
-              const surface = surfaces.find(({ id }) => id === surfaceId);
+              const sharedSurface = surfaces.find(({ id }) => id === surfaceId);
+              const surface = sharedSurface ?? proposedSurfaces.find(({ id }) => id === surfaceId);
               const name = surface?.name ?? "Unavailable value";
               return (
                 <tr key={surfaceId}>
                   <td className="knowledge-overview-surfaces__number">{index + 1}</td>
                   <th scope="row">
                     <span>{name}</span>
-                    {surface && surface.status !== "active" ? (
+                    {surface && !sharedSurface ? <span className="knowledge-overview-surfaces__surface-status">Proposed</span> : null}
+                    {sharedSurface && sharedSurface.status !== "active" ? (
                       <span className="knowledge-overview-surfaces__surface-status">
-                        {surface.status === "archived" ? "Archived" : "Inactive"}
+                        {sharedSurface.status === "archived" ? "Archived" : "Inactive"}
                       </span>
                     ) : null}
                   </th>
@@ -163,7 +179,7 @@ export function KnowledgeModeSurfacePanel({
                   </td>
                   <td>
                     <div className="knowledge-overview-surfaces__row-actions">
-                      {surface && surface.status !== "archived" && onEditSurface && !readOnly ? (
+                      {sharedSurface && sharedSurface.status !== "archived" && onEditSurface && !readOnly ? (
                         <Button
                           variant="quiet"
                           className="knowledge-overview-surfaces__row-action"
@@ -171,7 +187,7 @@ export function KnowledgeModeSurfacePanel({
                           title={`Edit reusable surface ${name}`}
                           leadingIcon={<SurfaceActionIcon action="edit" />}
                           disabled={controlsDisabled}
-                          onClick={() => onEditSurface(surface)}
+                          onClick={() => onEditSurface(sharedSurface)}
                         />
                       ) : null}
                       <Button
@@ -196,7 +212,8 @@ export function KnowledgeModeSurfacePanel({
       ) : !overview && selectedIds.length && selectionReady ? (
         <ul className="knowledge-mode-surfaces__selected" aria-label="Selected surface details">
           {selectedIds.map((surfaceId) => {
-            const surface = surfaces.find(({ id }) => id === surfaceId);
+            const sharedSurface = surfaces.find(({ id }) => id === surfaceId);
+              const surface = sharedSurface ?? proposedSurfaces.find(({ id }) => id === surfaceId);
             return (
               <li key={surfaceId}>
                 <p className="knowledge-mode-surfaces__selected-name">

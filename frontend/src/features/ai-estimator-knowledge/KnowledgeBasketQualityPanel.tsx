@@ -5,8 +5,7 @@ import { Button } from "../../components/ui/Button";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { PageState } from "../../components/ui/PageState";
 import { Surface } from "../../components/ui/Surface";
-import { getKnowledgeBasketQuality, getKnowledgeSection, listKnowledgeQualityControlOptions, updateKnowledgeBasketQuality } from "./knowledgeApi";
-import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
+import { liveKnowledgeEditorDataSource, type KnowledgeEditorDataSource } from "./knowledgeEditorDataSource";
 import type { KnowledgePendingChangesCallback } from "./knowledgePendingChanges";
 import { qualityPendingChanges, qualityPendingRowState, type QualityPendingRowState } from "./knowledgeQualityPendingChanges";
 import { mandatoryQualityParameters, qualityImportIssues, validateQualityParametersForSave, QUALITY_MAX_PARAMETERS, type QualityControlOptionCatalog } from "./knowledgeQuality";
@@ -31,6 +30,7 @@ export interface KnowledgeQualitySaveCommandState {
 }
 
 interface KnowledgeBasketQualityPanelProps {
+  readonly dataSource?: KnowledgeEditorDataSource;
   readonly item: KnowledgeItemDetail;
   readonly revisionId?: string;
   readonly canUpdate: boolean;
@@ -45,15 +45,15 @@ interface KnowledgeBasketQualityPanelProps {
 
 // A checklist draft belongs to one mounted item/revision/basket editing session.
 export const KnowledgeBasketQualityPanel = forwardRef<KnowledgeBasketQualityPanelHandle, KnowledgeBasketQualityPanelProps>(function KnowledgeBasketQualityPanel(props, ref) {
-  const source = JSON.stringify([props.item.mainLineId, props.revisionId, props.item.basketId, props.pendingChangesSourceKey]);
+  const source = JSON.stringify([props.item.mainLineId, props.revisionId, props.item.basketId, props.pendingChangesSourceKey, props.dataSource?.scopeKey]);
   return <KnowledgeBasketQualityEditor key={source} {...props} ref={ref} />;
 });
 
-const KnowledgeBasketQualityEditor = forwardRef<KnowledgeBasketQualityPanelHandle, KnowledgeBasketQualityPanelProps>(function KnowledgeBasketQualityEditor({ item, revisionId, canUpdate, canCreateQualityOptions = false, onDirtyChange, onSavingChange, pendingChangesSourceKey, onPendingChanges, onSaveCommandChange, pinnedSaveActive = false }, ref) {
+const KnowledgeBasketQualityEditor = forwardRef<KnowledgeBasketQualityPanelHandle, KnowledgeBasketQualityPanelProps>(function KnowledgeBasketQualityEditor({ item, dataSource = liveKnowledgeEditorDataSource, revisionId, canUpdate, canCreateQualityOptions = false, onDirtyChange, onSavingChange, pendingChangesSourceKey, onPendingChanges, onSaveCommandChange, pinnedSaveActive = false }, ref) {
   const queryClient = useQueryClient();
-  const query = useQuery({ queryKey: knowledgeQueryKeys.basketQuality(item.basketId), queryFn: () => getKnowledgeBasketQuality(item.basketId) });
-  const frequencyOptionsQuery = useQuery({ queryKey: knowledgeQueryKeys.qualityControlOptions("frequency"), queryFn: () => listKnowledgeQualityControlOptions("frequency"), staleTime: 30_000 });
-  const performerOptionsQuery = useQuery({ queryKey: knowledgeQueryKeys.qualityControlOptions("performer"), queryFn: () => listKnowledgeQualityControlOptions("performer"), staleTime: 30_000 });
+  const query = useQuery({ queryKey: dataSource.basketQualityKey(item.basketId), queryFn: () => dataSource.getBasketQuality(item.basketId) });
+  const frequencyOptionsQuery = useQuery({ queryKey: dataSource.qualityControlOptionsKey("frequency"), queryFn: () => dataSource.listQualityControlOptions("frequency"), staleTime: 30_000 });
+  const performerOptionsQuery = useQuery({ queryKey: dataSource.qualityControlOptionsKey("performer"), queryFn: () => dataSource.listQualityControlOptions("performer"), staleTime: 30_000 });
   const qualityOptions = useMemo<QualityControlOptionCatalog>(() => ({
     frequency: frequencyOptionsQuery.data?.items ?? [],
     performer: performerOptionsQuery.data?.items ?? []
@@ -82,7 +82,7 @@ const KnowledgeBasketQualityEditor = forwardRef<KnowledgeBasketQualityPanelHandl
   const saveCommandDirty = Boolean(draft);
   const onSaveCommandChangeRef = useRef(onSaveCommandChange);
   onSaveCommandChangeRef.current = onSaveCommandChange;
-  const legacy = useQuery({ queryKey: knowledgeQueryKeys.section(item.mainLineId, revisionId ?? "", "quality"), queryFn: () => getKnowledgeSection<KnowledgeJsonObject>(item.mainLineId, revisionId!, "quality"), enabled: showLegacy && Boolean(revisionId) });
+  const legacy = useQuery({ queryKey: dataSource.sectionKey(item.mainLineId, revisionId ?? "", "quality"), queryFn: () => dataSource.getSection<KnowledgeJsonObject>(item.mainLineId, revisionId!, "quality"), enabled: dataSource.supportsLegacyQuality && showLegacy && Boolean(revisionId) });
   useEffect(() => onDirtyChange(Boolean(draft)), [draft, onDirtyChange]);
   useEffect(() => onSavingChange(saving), [saving, onSavingChange]);
   useEffect(() => {
@@ -126,17 +126,11 @@ const KnowledgeBasketQualityEditor = forwardRef<KnowledgeBasketQualityPanelHandl
     if (validateQualityParametersForSave(draft.parameters, qualityOptions).length) { setValidationAttempt(value => value + 1); return false; }
     setSaving(true); setError(null);
     try {
-      const saved = await updateKnowledgeBasketQuality(item.basketId, { expectedVersion: draft.version, parameters: draft.parameters });
-      queryClient.setQueryData(knowledgeQueryKeys.basketQuality(item.basketId), saved);
+      const saved = await dataSource.updateBasketQuality(item.basketId, { expectedVersion: draft.version, parameters: draft.parameters });
+      dataSource.commitQuality(queryClient, saved);
       setDraft(null); setConflict(false); setValidationAttempt(0);
       setAnnouncement(`Shared checklist saved for all items in ${saved.basketName}.`);
-      await Promise.allSettled([
-        queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketLists() }),
-        queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketDeletionImpacts() }),
-        queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }),
-        queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }),
-        queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.items(), predicate: (entry) => entry.queryKey.length === 3 && (entry.state.data as KnowledgeItemDetail | undefined)?.basketId === item.basketId })
-      ]);
+      await dataSource.invalidateQuality(queryClient, item.basketId);
       return true;
     } catch (failure) {
       if (failure instanceof ApiError && failure.code === "VERSION_CONFLICT") {
@@ -200,7 +194,7 @@ const KnowledgeBasketQualityEditor = forwardRef<KnowledgeBasketQualityPanelHandl
     {conflict ? <Button variant={query.isError ? "secondary" : "destructive-outline"} onClick={() => { if (query.isError) void query.refetch(); else discard(); }} disabled={query.isFetching}>{query.isError ? "Retry loading saved checklist" : "Discard edits and reload saved checklist"}</Button> : null}
     {announcement ? <InlineMessage tone="success" role="status">{announcement}</InlineMessage> : null}
     <KnowledgeQualityChecklistEditor ref={editorRef} parameters={parameters} savedParameters={saved.parameters} basketName={saved.basketName} disabled={!editable || saving || conflict} readOnly={!editable} validationAttempt={validationAttempt} qualityOptions={qualityOptions} qualityOptionsLoading={{ frequency: frequencyOptionsQuery.isPending, performer: performerOptionsQuery.isPending }} canCreateQualityOptions={editable && canCreateQualityOptions} onAnnouncement={setAnnouncement} onChange={next => change({ parameters: next })} />
-    {revisionId ? <details className="knowledge-quality-details" onToggle={(event) => setShowLegacy(event.currentTarget.open)}>
+    {dataSource.supportsLegacyQuality && revisionId ? <details className="knowledge-quality-details" onToggle={(event) => setShowLegacy(event.currentTarget.open)}>
       <summary>Previous item-specific quality parameters</summary>
       <p className="knowledge-help-text">Saved item history is retained. A saved basket checklist takes precedence for future AI analysis; these older rows do not change the shared checklist.</p>
       {showLegacy && (legacy.isPending ? <p role="status">Loading previous parameters…</p> : legacy.isError ? <InlineMessage tone="error">Previous parameters could not be loaded. <Button variant="quiet" onClick={() => void legacy.refetch()}>Retry</Button></InlineMessage> : legacy.data ? <LegacyQualityParameters payload={legacy.data.payload} qualityOptions={qualityOptions} /> : null)}

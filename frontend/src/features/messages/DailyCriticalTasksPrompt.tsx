@@ -140,11 +140,13 @@ function SessionCriticalTasksPrompt({ sessionId, userId, stillEligible }: { sess
     <Button ref={triggerRef} type="button" variant="quiet" size="compact" busy={opening} onClick={() => void readCurrent(false)} aria-label={readError ? "Retry critical tasks" : "View daily critical tasks"}>{readError ? "Retry critical tasks" : "Critical tasks"}</Button>
     {readError ? <span role="alert">{chatErrorMessage(readError)}</span> : null}
     {review && list ? <Dialog title="Daily critical tasks" eyebrow="Current task review" description={`Your open critical actions and overdue assigned tasks. Checked ${checkedAt}. Reviewing this list does not complete these tasks.`} role={review.automatic || requiresAcknowledgment ? "alertdialog" : "dialog"} showCloseButton={!requiresAcknowledgment} busy={acknowledging} onClose={close} returnFocusRef={triggerRef}>
-      <div className="daily-critical-tasks">
-        {list.items.length ? <ol className="daily-critical-tasks__list">{list.items.map(item => <li key={`${item.kind}:${item.id}`}><span className="daily-critical-tasks__kind">{item.kind === "chat_action" ? "Critical chat action" : "Overdue workflow task"}</span><strong>{item.title}</strong><span>{item.projectName}</span><TaskDue item={item} />{item.kind === "chat_action" ? <Link to={`/projects/${encodeURIComponent(item.projectId)}/messages?message=${encodeURIComponent(item.messageId)}`}>Open conversation</Link> : null}</li>)}</ol>
-          : <p role="status">No open critical chat actions or overdue assigned workflow tasks right now.</p>}
-        {ackError ? <p role="alert">{chatErrorMessage(ackError)} Please try again.</p> : null}
-        <div className="daily-critical-tasks__actions"><Button type="button" busy={acknowledging} onClick={() => void acknowledgeReview()}>I have reviewed this list</Button></div>
+      <div className="daily-critical-tasks ui-dialog__form">
+        <div className="ui-dialog__body">
+          {list.items.length ? <ol className="daily-critical-tasks__list">{list.items.map(item => <li key={`${item.kind}:${item.id}`}><span className="daily-critical-tasks__kind">{item.kind === "chat_action" ? "Critical chat action" : "Overdue workflow task"}</span><strong>{item.title}</strong><span>{item.projectName}</span><TaskDue item={item} />{item.kind === "chat_action" ? <Link to={`/projects/${encodeURIComponent(item.projectId)}/messages?message=${encodeURIComponent(item.messageId)}`}>Open conversation</Link> : null}</li>)}</ol>
+            : <p role="status">No open critical chat actions or overdue assigned workflow tasks right now.</p>}
+          {ackError ? <p role="alert">{chatErrorMessage(ackError)} Please try again.</p> : null}
+        </div>
+        <div className="daily-critical-tasks__actions ui-dialog__actions"><Button type="button" busy={acknowledging} onClick={() => void acknowledgeReview()}>I have reviewed this list</Button></div>
       </div>
     </Dialog> : null}
   </>;

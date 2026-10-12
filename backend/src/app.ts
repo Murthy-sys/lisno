@@ -1,3 +1,5 @@
+import { createVendorBasketRequestNotificationService } from "./services/vendor-basket-request-notifications.service.js";
+import { createVendorBasketRequestNotificationsRouter } from "./routes/vendor-basket-request-notifications.js";
 import { createProcurementVendorAccessRouter } from "./routes/procurement-vendor-access.js";
 import { createVendorExecutionService, initializeIssuedExecution } from "./services/vendor-execution.service.js";
 import { createVendorExecutionDeliveryService } from "./services/vendor-execution-delivery.service.js";
@@ -146,6 +148,8 @@ import { createAiEstimatorKnowledgeQualityControlOptionService } from "./service
 import { createAiEstimatorKnowledgeReferenceService } from "./services/ai-estimator-knowledge-reference.service.js";
 import { createVendorBasketRequestService } from "./services/vendor-basket-request.service.js";
 import { createVendorBasketRequestRouter } from "./routes/vendor-basket-requests.js";
+import { createVendorBasketProposalRouter } from "./routes/vendor-basket-proposals.js";
+import { createVendorBasketProposalService } from "./services/vendor-basket-proposal.service.js";
 import { createAccessRequestService } from "./services/access-request.service.js";
 import { createAdminProjectService } from "./services/admin-project.service.js";
 import { createSuperAdminDashboardService } from "./services/super-admin-dashboard.service.js";
@@ -274,7 +278,9 @@ export function createApp(dependencies: AppDependencies) {
       qualityControlOptionValidator:
         aiEstimatorKnowledgeQualityControlOptionService
     });
+  const vendorBasketRequestNotifications = createVendorBasketRequestNotificationService({ now: clock });
   const vendorBasketRequestService = createVendorBasketRequestService({ audit: auditService, now: clock });
+  const vendorBasketProposalService = createVendorBasketProposalService({ audit: auditService, now: clock });
   const aiEstimatorKnowledgeItemService = createAiEstimatorKnowledgeItemService({
     audit: auditService,
     now: clock
@@ -638,7 +644,9 @@ export function createApp(dependencies: AppDependencies) {
     createSuperAdminDashboardRouter(authService, superAdminDashboardService)
   );
   app.use("/api/v1", createProcurementVendorCertificateRouter({ authService, certificateService: procurementVendorCertificateService, maxUploadBytes }));
+  app.use("/api/v1", createVendorBasketRequestNotificationsRouter(authService, vendorBasketRequestNotifications));
   app.use("/api/v1", createVendorBasketRequestRouter(authService, vendorBasketRequestService));
+  app.use("/api/v1", createVendorBasketProposalRouter(authService, vendorBasketProposalService));
   app.use(
     "/api/v1",
     createAiEstimatorKnowledgeAdminRouter(authService, {

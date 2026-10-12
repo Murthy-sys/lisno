@@ -46,6 +46,71 @@ function renderPanel(overrides: Partial<KnowledgeOverviewPanelProps> = {}) {
 }
 
 describe("KnowledgeOverviewPanel", () => {
+  it("offers named proposal actions and selects a proposed UOM without changing hidden fields", async () => {
+    const user = userEvent.setup();
+    const proposedUom = { id: "proposal-uom", name: "Panel bundle", decimalScale: 1 };
+    const props = renderPanel({ proposedUoms: [proposedUom], quickAddUomLabel: "Add UOM", proposalActions: true });
+
+    const addUom = screen.getByRole("button", { name: "Add UOM" });
+    expect(addUom).toHaveTextContent("Add UOM");
+    expect(screen.getAllByRole("button", { name: "Add Surface" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Create Surface" })).not.toBeInTheDocument();
+    await user.click(addUom);
+    expect(props.onQuickAddUom).toHaveBeenCalledOnce();
+    const proposedOption = screen.getByRole("option", { name: "Panel bundle (Proposed)" });
+    expect(proposedOption).toHaveValue(proposedUom.id);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Unit of measure (UOM)" }), proposedUom.id);
+    expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({ ...overviewPayload, uomId: proposedUom.id });
+    expect(props.onOverviewDirty).toHaveBeenLastCalledWith("uomId");
+    expect(masters.uoms.some(({ id }) => id === proposedUom.id)).toBe(false);
+  });
+
+  it("keeps proposed selections readable and mutation actions unavailable in a saved snapshot", async () => {
+    const user = userEvent.setup();
+    const proposedUom = { id: "proposal-uom", name: "Panel bundle", decimalScale: 1 };
+    const proposedSurface = { id: "proposal-surface", name: "Acoustic panel", description: "Timber backing" };
+    const props = renderPanel({
+      editable: false, proposalActions: true, quickAddUomLabel: "Add UOM",
+      proposedUoms: [proposedUom], proposedSurfaces: [proposedSurface],
+      overviewPayload: { ...overviewPayload, uomId: proposedUom.id, surfaceIds: [proposedSurface.id] }
+    });
+
+    expect(screen.getByRole("combobox", { name: "Unit of measure (UOM)" })).toHaveValue(proposedUom.id);
+    expect(screen.getByRole("combobox", { name: "Unit of measure (UOM)" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Add UOM" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add Surface" })).not.toBeInTheDocument();
+    expect(screen.getByRole("rowheader", { name: "Acoustic panel Proposed" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Remove Acoustic panel from Main Line" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Applicable surfaces" }));
+    await user.click(screen.getByRole("option", { name: "Acoustic panel (Proposed)" }));
+    expect(props.onOverviewPayloadChange).not.toHaveBeenCalled();
+  });
+
+  it("uses Procurement headings and an actionable empty surface area only when requested", async () => {
+    const user = userEvent.setup();
+    const props = renderPanel({ presentation: "procurement-basket", overviewPayload: { uomId: squareFoot.id }, canQuickAdd: false });
+    expect(screen.getAllByRole("heading").map(heading => heading.textContent)).toEqual(["Unit of measure", "Applicable surfaces"]);
+    expect(screen.getByText("No surfaces selected yet")).toBeVisible();
+    expect(screen.getByText("Choose one or more surfaces from the dropdown above.")).toBeVisible();
+    expect(screen.queryByRole("table", { name: "Selected surface details" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Applicable surfaces" }));
+    await user.click(screen.getByRole("option", { name: "Floor" }));
+    expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({ uomId: squareFoot.id, surfaceIds: [floor.id] });
+    expect(props.onOverviewDirty).toHaveBeenLastCalledWith("surfaceIds");
+  });
+
+  it("preserves populated and unavailable saved surfaces in the Procurement table", async () => {
+    const user = userEvent.setup();
+    const props = renderPanel({ presentation: "procurement-basket", overviewPayload: { ...overviewPayload, surfaceIds: [wall.id, "missing-surface"] }, canQuickAdd: false });
+    const table = screen.getByRole("table", { name: "Selected surface details" });
+    expect(within(table).getByRole("rowheader", { name: "Wall" })).toBeVisible();
+    expect(within(table).getByRole("rowheader", { name: "Unavailable value" })).toBeVisible();
+    expect(screen.queryByText("No surfaces selected yet")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove Wall from Main Line" }));
+    expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({ ...overviewPayload, surfaceIds: ["missing-surface"] });
+    expect(screen.getByRole("button", { name: "Remove Unavailable value from Main Line" })).toBeDisabled();
+  });
+
   it("shows only UOM and Surface configuration without context or saved section summaries", async () => {
     renderPanel();
 

@@ -1,3 +1,4 @@
+import { ProcurementVendorDraftProvider } from "../../features/procurement/ProcurementVendorDraftProvider";
 import { ExecutionLiveProvider } from "../../features/execution/ExecutionLiveProvider";
 import { Link, matchPath, Outlet, useLocation } from "react-router-dom";
 
@@ -57,7 +58,7 @@ export function AppShell() {
         data-role={messaging ? undefined : auth.user.role}
         tabIndex={-1}
       >
-        <Outlet />
+        <ProcurementVendorDraftProvider><Outlet /></ProcurementVendorDraftProvider>
       </main>
       <NotificationBanners />
       {/*

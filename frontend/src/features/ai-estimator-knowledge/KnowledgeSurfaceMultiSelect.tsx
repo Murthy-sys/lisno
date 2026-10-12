@@ -9,7 +9,16 @@ import {
 
 import type { KnowledgeMaster } from "./knowledgeTypes";
 
+/** A value saved privately in the current proposal; deliberately has no catalog lifecycle. */
+export interface KnowledgeProposedMasterChoice {
+  readonly id: string;
+  readonly name: string;
+  readonly description?: string | null;
+  readonly decimalScale?: number;
+}
+
 export interface KnowledgeSurfaceMultiSelectProps {
+  readonly proposedMasters?: readonly KnowledgeProposedMasterChoice[];
   readonly selectedIds: readonly string[];
   readonly masters: readonly KnowledgeMaster[];
   readonly label?: string;
@@ -34,6 +43,7 @@ interface SurfaceOption {
 export function KnowledgeSurfaceMultiSelect({
   selectedIds,
   masters,
+  proposedMasters = [],
   label = "Surfaces",
   placeholder = "Not configured",
   searchable = false,
@@ -58,8 +68,8 @@ export function KnowledgeSurfaceMultiSelect({
   const orderedMasters = useMemo(() => orderUniqueMasters(masters), [masters]);
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const knownIds = useMemo(
-    () => new Set(orderedMasters.map(({ id }) => id)),
-    [orderedMasters]
+    () => new Set([...orderedMasters, ...proposedMasters].map(({ id }) => id)),
+    [orderedMasters, proposedMasters]
   );
   const allOptions = useMemo<readonly SurfaceOption[]>(() => {
     const available = orderedMasters
@@ -83,8 +93,10 @@ export function KnowledgeSurfaceMultiSelect({
         unavailable: true
       }));
 
-    return [...available, ...unresolved];
-  }, [knownIds, orderedMasters, selectedIds, selectedSet]);
+    const proposed = proposedMasters.map(master => ({ id: master.id, label: master.name, searchText: master.name,
+      statusLabel: "Proposed", selected: selectedSet.has(master.id), unavailable: false }));
+    return [...available, ...proposed, ...unresolved];
+  }, [knownIds, orderedMasters, proposedMasters, selectedIds, selectedSet]);
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const options = useMemo(
     () => normalizedSearch
@@ -97,7 +109,7 @@ export function KnowledgeSurfaceMultiSelect({
     [options]
   );
   const selectedSummary = useMemo(() => {
-    const selectedNames = orderedMasters
+    const selectedNames = [...orderedMasters, ...proposedMasters]
       .filter(({ id }) => selectedSet.has(id))
       .map((master) => master.name);
     const unresolvedCount = unique(selectedIds).filter((id) => !knownIds.has(id)).length;
@@ -108,7 +120,7 @@ export function KnowledgeSurfaceMultiSelect({
     const labels = [...selectedNames, ...unresolvedLabels];
 
     return labels.length > 0 ? labels.join(", ") : placeholder;
-  }, [knownIds, orderedMasters, placeholder, selectedIds, selectedSet]);
+  }, [knownIds, orderedMasters, proposedMasters, placeholder, selectedIds, selectedSet]);
 
   useEffect(() => {
     if (!open) return;
@@ -169,7 +181,7 @@ export function KnowledgeSurfaceMultiSelect({
     const next = new Set(unique(selectedIds));
     if (next.has(id)) next.delete(id);
     else next.add(id);
-    onChange(orderSelectedIds(next, orderedMasters, selectedIds));
+    onChange(orderSelectedIds(next, [...orderedMasters, ...proposedMasters], selectedIds));
   }
 
   function moveActive(direction: 1 | -1) {
@@ -390,7 +402,7 @@ function orderUniqueMasters(masters: readonly KnowledgeMaster[]) {
 
 function orderSelectedIds(
   selected: ReadonlySet<string>,
-  orderedMasters: readonly KnowledgeMaster[],
+  orderedMasters: readonly { id: string }[],
   previousSelectedIds: readonly string[]
 ) {
   const known = orderedMasters

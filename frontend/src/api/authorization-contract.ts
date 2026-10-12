@@ -282,6 +282,10 @@ export const PERMISSION_CODES = [
   "procurement.vendor_directory.update",
   "procurement.vendor_directory.lifecycle",
   "procurement.vendor_classification.create",
+  "procurement.vendor_basket_proposal.read",
+  "procurement.vendor_basket_proposal.create",
+  "procurement.vendor_basket_proposal.update",
+  "procurement.vendor_basket_proposal.submit",
   "procurement.vendor_allocation_baseline.correct",
   "procurement.vendor_kpi.read",
   "procurement.vendor_kpi.rate",
@@ -295,7 +299,7 @@ export const PERMISSION_CODES = [
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-10-09.ask-lisno.v1" as const;
+  "2026-10-11.vendor-basket-proposals.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

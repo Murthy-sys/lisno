@@ -12,7 +12,12 @@ const pageQuery = [
 export const VENDOR_BASKET_REQUEST_SCHEMAS = {
   KnowledgeVendorBasketRequest: { type: "object", additionalProperties: false,
     required: ["id", "requesterId", "vendorId", "vendorName", "proposedName", "status", "version", "basketId", "subBasketId", "mainLineId", "reason", "createdAt", "decidedAt", "decidedById"],
-    properties: { id, requesterId: id, vendorId: { ...id, nullable: true }, vendorName: { type: "string" },
+    properties: { target: { oneOf: [
+        { type: "object", additionalProperties: false, required: ["kind"], properties: { kind: { type: "string", enum: ["new_main_basket"] } } },
+        { type: "object", additionalProperties: false, required: ["kind", "basketId"], properties: { kind: { type: "string", enum: ["new_sub_basket"] }, basketId: id } }
+      ] }, targetParentName: { type: "string", nullable: true }, kind: { type: "string", enum: ["configuration_proposal", "name_only"] }, proposalId: { ...id, nullable: true },
+      proposalCounts: { type: "object", properties: { subBaskets: { type: "integer" }, mainLines: { type: "integer" } } },
+      id, requesterId: id, vendorId: { ...id, nullable: true }, vendorName: { type: "string", nullable: true },
       proposedName: { type: "string" }, status: { type: "string", enum: ["pending", "fulfilled", "rejected"] },
       version: { type: "integer", minimum: 1 }, basketId: { ...id, nullable: true },
       subBasketId: { ...id, nullable: true }, mainLineId: { ...id, nullable: true },
@@ -54,11 +59,16 @@ export const VENDOR_BASKET_REQUEST_RESPONSES = {
   "POST /procurement/vendor-basket-requests": "KnowledgeVendorBasketRequest",
   "GET /procurement/vendor-basket-requests/mine": "KnowledgeVendorBasketRequestPage",
   "GET /admin/ai-estimator-knowledge/basket-requests": "KnowledgeVendorBasketRequestPage",
+  "GET /admin/ai-estimator-knowledge/basket-requests/:requestId": "KnowledgeVendorBasketRequest",
   "POST /admin/ai-estimator-knowledge/basket-requests/:requestId/decision": "KnowledgeVendorBasketRequest"
 } as const;
 
 export const VENDOR_BASKET_REQUEST_QUERIES = {
-  "GET /procurement/vendor-basket-requests/mine": pageQuery,
+  "GET /procurement/vendor-basket-requests/mine": [...pageQuery,
+    { name: "search", in: "query", required: false, schema: { type: "string", maxLength: 240 }, description: "Literal, case-insensitive requested basket name search." },
+    { name: "status", in: "query", required: false, schema: { type: "string", enum: ["pending", "fulfilled", "rejected"] } },
+    { name: "targetKind", in: "query", required: false, schema: { type: "string", enum: ["new_main_basket", "new_sub_basket"] } }
+  ],
   "GET /admin/ai-estimator-knowledge/basket-requests": [
     ...pageQuery,
     { name: "status", in: "query", required: false,

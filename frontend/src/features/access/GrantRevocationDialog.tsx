@@ -52,13 +52,15 @@ export function GrantRevocationDialog({ request, isCurrentRow, onClose }: GrantR
   };
 
   return (
-    <Dialog title="Revoke project access" eyebrow="Access review" description={grant ? `Grant ${grant.id} for request ${request.id}.` : "This grant is no longer active."} busy={mutation.isPending} onClose={onClose}>
-      <form className="access-request-dialog" noValidate onSubmit={(event) => { event.preventDefault(); submit(); }}>
-        {!isCurrentRow || !grant ? <p className="access-request-dialog__error" role="alert">This grant is no longer in the current review view.</p> : null}
-        <Field id={`grant-revocation-reason-${grant?.id ?? request.id}`} label="Reason" required error={error ? <span role="alert">{error}</span> : undefined}>
-          {(controlProps) => <Textarea {...controlProps} data-dialog-initial-focus rows={5} value={reason} disabled={mutation.isPending || !isCurrentRow || !grant} onChange={(event) => { setReason(event.target.value); setError(""); }} />}
-        </Field>
-        <div className="access-request-dialog__actions">
+    <Dialog tone="danger" title="Revoke project access" eyebrow="Access review" description={grant ? `Grant ${grant.id} for request ${request.id}.` : "This grant is no longer active."} busy={mutation.isPending} onClose={onClose}>
+      <form className="access-request-dialog ui-dialog__form" noValidate onSubmit={(event) => { event.preventDefault(); submit(); }}>
+        <div className="ui-dialog__body">
+          {!isCurrentRow || !grant ? <p className="access-request-dialog__error" role="alert">This grant is no longer in the current review view.</p> : null}
+          <Field id={`grant-revocation-reason-${grant?.id ?? request.id}`} label="Reason" required error={error ? <span role="alert">{error}</span> : undefined}>
+            {(controlProps) => <Textarea {...controlProps} data-dialog-initial-focus rows={5} value={reason} disabled={mutation.isPending || !isCurrentRow || !grant} onChange={(event) => { setReason(event.target.value); setError(""); }} />}
+          </Field>
+        </div>
+        <div className="access-request-dialog__actions ui-dialog__actions">
           <Button variant="destructive-outline" disabled={mutation.isPending} onClick={onClose}>Cancel</Button>
           <Button type="submit" variant="destructive" busy={mutation.isPending} disabled={!isCurrentRow || !grant} busyLabel="Revoking…">Revoke access</Button>
         </div>

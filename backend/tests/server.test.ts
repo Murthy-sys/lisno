@@ -1,3 +1,6 @@
+import { VendorBasketProposalModel } from "../src/models/VendorBasketProposal.js";
+import { VendorBasketProposalResourceModel } from "../src/models/VendorBasketProposalResource.js";
+import { VendorBasketRequestNotificationModel } from "../src/models/VendorBasketRequestNotification.js";
 import { ProcurementVendorInvitationIntentModel } from "../src/models/ProcurementVendorInvitationIntent.js";
 import { projectAssistantModels } from "../src/models/ProjectChatAssistant.js";
 import { executionDeliveryModels } from "../src/services/vendor-execution-delivery.service.js";
@@ -640,6 +643,8 @@ describe("production server bootstrap", () => {
       events.push("vendor-basket-request-index");
       return VendorBasketRequestModel as never;
     });
+    const proposalModels = [VendorBasketProposalModel, VendorBasketProposalResourceModel, VendorBasketRequestNotificationModel];
+    for (const model of proposalModels) vi.spyOn(model, "init").mockImplementation(async () => { events.push(model.modelName + "-index"); return model as never; });
     vi.spyOn(AiEstimatorKnowledgeSubBasketModel, "init").mockImplementation(async () => {
       events.push("ai-estimator-knowledge-sub-basket-index");
       return AiEstimatorKnowledgeSubBasketModel as never;
@@ -753,6 +758,7 @@ describe("production server bootstrap", () => {
       "procurement-receipt-reconciliation-index",
       "ai-estimator-knowledge-basket-index",
       "vendor-basket-request-index",
+      ...proposalModels.map(model => model.modelName + "-index"),
       "ai-estimator-knowledge-sub-basket-index",
       "ai-estimator-knowledge-main-line-index",
       "ai-estimator-knowledge-revision-index",

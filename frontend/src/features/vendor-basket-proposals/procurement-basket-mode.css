@@ -1,0 +1,615 @@
+/* Proposal drawers render outside Configuration's app-shell ancestry. */
+.basket-proposal--procurement-reference .knowledge-mode-panel {
+  container: procurement-basket-mode / inline-size;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  min-inline-size: 0;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .ui-surface.knowledge-mode-block {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+  min-inline-size: 0;
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--proposal-reference-surface, var(--color-surface));
+  box-shadow: none;
+  overflow: visible;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-block__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 0 0 14px;
+  border-block-end: 1px solid var(--color-border);
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-section-toolbar__meta {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-block__dirty {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+  min-inline-size: 0;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel :is(
+  .knowledge-mode-configuration__intro,
+  .knowledge-mode-configuration__mode-selector,
+  .knowledge-mode-configuration__execution-source
+) {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel :is(
+  .knowledge-mode-configuration__mode-selector legend,
+  .knowledge-mode-configuration__execution-source legend
+) {
+  margin: 0 0 8px;
+  padding: 0;
+  color: var(--color-text);
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel :is(
+  .knowledge-mode-configuration__mode-options,
+  .knowledge-mode-configuration__execution-source-options
+) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel :is(
+  .knowledge-mode-configuration__mode-choice,
+  .knowledge-mode-configuration__source-choice,
+  .knowledge-mode-configuration__section
+) {
+  --knowledge-mode-accent: var(--button-primary-bg, #405334);
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__mode-options .knowledge-mode-configuration__mode-choice,
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__execution-source-options .knowledge-mode-configuration__source-choice {
+  display: flex;
+  flex: 0 1 188px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  min-block-size: 48px;
+  padding: 10px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--proposal-reference-surface, var(--color-surface));
+  color: var(--color-text);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__mode-options .knowledge-mode-configuration__mode-choice[data-selected="true"],
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__execution-source-options .knowledge-mode-configuration__source-choice[data-selected="true"] {
+  border-color: var(--knowledge-mode-accent);
+  background: var(--proposal-reference-selected, var(--color-surface-subtle));
+  color: var(--knowledge-mode-accent);
+}
+
+/* Keep a visible native checkbox alongside the existing mode symbol. */
+.basket-proposal--procurement-reference .knowledge-mode-panel :is(
+  .knowledge-mode-configuration__mode-choice,
+  .knowledge-mode-configuration__source-choice
+) .ui-checkbox {
+  position: static;
+  flex: 0 0 20px;
+  inline-size: 20px;
+  block-size: 20px;
+  min-inline-size: 20px;
+  min-block-size: 20px;
+  margin: 0;
+  opacity: 1;
+  accent-color: var(--knowledge-mode-accent);
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__choice-glyph {
+  display: grid;
+  place-items: center;
+  flex: 0 0 26px;
+  inline-size: 26px;
+  block-size: 26px;
+  color: inherit;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__choice-glyph svg {
+  inline-size: 26px;
+  block-size: 26px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__sections {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--proposal-reference-surface, var(--color-surface));
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section-header {
+  border-inline-start: 4px solid var(--knowledge-mode-accent);
+  border-block-end-color: var(--color-border);
+  border-start-start-radius: 7px;
+  border-start-end-radius: 7px;
+  background: var(--proposal-reference-tint, var(--color-surface-subtle));
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section-header[data-expanded="false"] {
+  border-end-start-radius: 7px;
+  border-end-end-radius: 7px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration .knowledge-mode-configuration__section-header .knowledge-mode-configuration__section-toggle {
+  grid-template-columns: 44px minmax(0, 1fr) auto auto;
+  gap: 12px;
+  min-block-size: 76px;
+  padding: 14px 18px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section-icon {
+  inline-size: 44px;
+  block-size: 44px;
+  border-radius: 6px;
+  background: var(--proposal-reference-selected, var(--color-surface-subtle));
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section-icon svg {
+  inline-size: 26px;
+  block-size: 26px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section-labels {
+  gap: 2px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section-title {
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__mode-context {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section-tag {
+  padding: 5px 10px;
+  border-color: var(--color-border);
+  border-radius: 5px;
+  background: var(--proposal-reference-surface, var(--color-surface));
+  color: var(--color-text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section-disclosure {
+  gap: 8px;
+  color: var(--color-text);
+  font-size: 13px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section-body {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  padding: 20px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__shared {
+  gap: 6px;
+  padding: 0 0 18px;
+  border-block-end: 1px solid var(--color-border);
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__shared-title {
+  color: var(--color-text-muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-description__display {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 16px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-description__value {
+  min-inline-size: 0;
+  padding-block: 6px;
+  color: var(--color-text);
+  font-size: 14px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-description__display .ui-icon-button {
+  inline-size: 40px;
+  block-size: 40px;
+  min-inline-size: 40px;
+  min-block-size: 40px;
+  padding: 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--button-primary-bg);
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-description__display .ui-icon-button svg {
+  inline-size: 20px;
+  block-size: 20px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-description__preview {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  background: var(--proposal-reference-tint, var(--color-surface-subtle));
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__source-hint {
+  margin: 0 0 12px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section--source .knowledge-mode-configuration__section-title {
+  font-size: 17px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation-editor {
+  container: procurement-basket-calculation / inline-size;
+  min-inline-size: 0;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation {
+  gap: 14px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__header {
+  align-items: center;
+  gap: 12px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__groups {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__group {
+  gap: 14px;
+  padding: 16px;
+  border-color: var(--color-border);
+  border-radius: 6px;
+  background: transparent;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__group h4 {
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__rate-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 12px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel :is(
+  .knowledge-mode-calculation__group .ui-field__label,
+  .knowledge-mode-calculation__fixed dt
+) {
+  min-block-size: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__control,
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-pmc-margin__control .ui-input {
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 44px;
+  block-size: 44px;
+  border-color: var(--color-border-strong);
+  border-radius: 5px;
+  background: var(--proposal-reference-surface, var(--color-surface));
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__fixed dd {
+  min-block-size: 44px;
+  border-radius: 5px;
+  background: var(--proposal-reference-tint, var(--color-surface-subtle));
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__fixed dd > span {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__guidance {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  color: var(--color-text-muted);
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__guidance > svg {
+  margin-block-start: 1px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel :is(
+  .knowledge-mode-calculation__note,
+  .knowledge-mode-calculation__hint,
+  .knowledge-lisno-margin > .ui-field__hint
+) {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-lisno-margin > .ui-field__hint {
+  margin-block-start: 10px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__actions .ui-button {
+  min-block-size: 44px;
+  padding: 10px 16px;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__actions svg {
+  inline-size: 18px;
+  block-size: 18px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-pmc-scope {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-pmc-scope__list {
+  min-inline-size: 0;
+  padding: 14px;
+  border-color: var(--color-border);
+  border-radius: 6px;
+  background: var(--proposal-reference-tint, var(--color-surface-subtle));
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-pmc-scope__body {
+  display: grid;
+  gap: 12px;
+  min-inline-size: 0;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel :is(
+  .knowledge-pmc-scope__title,
+  .knowledge-pmc-scope__empty
+) {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-pmc-scope__title {
+  font-weight: 650;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-pmc-scope__items {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-pmc-scope__items label {
+  min-block-size: 36px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel :is(
+  .knowledge-mode-configuration__recovery,
+  .knowledge-mode-configuration__recovery-actions
+) {
+  display: grid;
+  gap: 12px;
+  min-inline-size: 0;
+}
+
+.basket-proposal--procurement-reference .knowledge-mode-panel :is(
+  .knowledge-mode-description__value,
+  .knowledge-mode-calculation__control,
+  .knowledge-pmc-margin__control .ui-input
+):focus-visible {
+  outline: 2px solid var(--button-primary-bg);
+  outline-offset: 3px;
+  box-shadow: none;
+}
+
+@container procurement-basket-mode (min-width: 48rem) {
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-pmc-scope {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container procurement-basket-calculation (min-width: 40rem) {
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__groups {
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  }
+}
+
+@container procurement-basket-calculation (min-width: 54rem) {
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__rate-fields {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.8fr) minmax(0, 1.2fr) minmax(0, 0.8fr);
+  }
+}
+
+@container procurement-basket-mode (max-width: 36rem) {
+  .basket-proposal--procurement-reference .knowledge-mode-panel .ui-surface.knowledge-mode-block {
+    padding: 14px;
+    gap: 16px;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration .knowledge-mode-configuration__section-header .knowledge-mode-configuration__section-toggle {
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    gap: 6px 10px;
+    padding: 12px;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section-icon {
+    inline-size: 36px;
+    block-size: 36px;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section-icon svg {
+    inline-size: 24px;
+    block-size: 24px;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section-labels {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section-title {
+    font-size: 18px;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section-tag {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section-disclosure {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section-toggle-label {
+    display: none;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__section-body {
+    padding: 14px;
+  }
+}
+
+@container procurement-basket-mode (max-width: 24rem) {
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__mode-options .knowledge-mode-configuration__mode-choice {
+    flex-basis: calc(50% - 5px);
+    gap: 8px;
+    padding-inline: 10px;
+    font-size: 13px;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__choice-glyph {
+    flex-basis: 22px;
+    inline-size: 22px;
+    block-size: 22px;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-configuration__choice-glyph svg {
+    inline-size: 22px;
+    block-size: 22px;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-description__display {
+    gap: 10px;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__actions {
+    justify-content: flex-start;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__group {
+    padding: 12px;
+  }
+}
+
+@container procurement-basket-calculation (max-width: 18rem) {
+  .basket-proposal--procurement-reference .knowledge-mode-panel :is(
+    .knowledge-mode-calculation__rate-fields,
+    .knowledge-mode-calculation__markup-fields,
+    .knowledge-lisno-margin__fields
+  ) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 600px), (pointer: coarse) {
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-description__display .ui-icon-button,
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-pmc-scope__delete {
+    flex-basis: 44px;
+    inline-size: 44px;
+    block-size: 44px;
+    min-inline-size: 44px;
+    min-block-size: 44px;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-pmc-scope__items label {
+    min-block-size: 44px;
+  }
+
+  .basket-proposal--procurement-reference .knowledge-mode-panel .ui-control {
+    font-size: 16px;
+  }
+}
