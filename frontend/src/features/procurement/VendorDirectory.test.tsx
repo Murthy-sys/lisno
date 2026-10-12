@@ -1,6 +1,7 @@
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useEffect } from "react";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,10 +12,11 @@ import { server } from "../../test/server";
 import { knowledgeQueryKeys } from "../ai-estimator-knowledge/knowledgeQueryKeys";
 import type { KnowledgeMaster } from "../ai-estimator-knowledge/knowledgeTypes";
 import { ProcurementVendorDirectory } from "./ProcurementVendorDirectory";
-import { ProcurementVendorDraftProvider } from "./ProcurementVendorDraftProvider";
+import { ProcurementVendorDraftProvider, useProcurementVendorDraft, type RetainedVendorDraft } from "./ProcurementVendorDraftProvider";
 import { proposalFixture, proposalHierarchyFixture, proposalSectionFixture } from "../vendor-basket-proposals/proposal.fixtures";
 import type { KnowledgeSectionKey } from "../ai-estimator-knowledge/knowledgeTypes";
 import { completeVendor, vendorBasket, vendorSubBasket } from "./vendorProfile.fixtures";
+import { vendorDraft } from "./vendorProfileDraft";
 import { vendorDirectoryColumns, type VendorDirectoryColumn } from "./vendorDirectoryColumns";
 import { vendorColumnWidth, VendorDirectoryTable } from "./VendorDirectoryTable";
 
@@ -29,8 +31,13 @@ let requests: URLSearchParams[];
 let overviewMissing: boolean;
 let overviewFailed: boolean;
 let listFailed: boolean;
-function start(withNavigation = false) {
+function start(withNavigation = false, initialRetainedDraft?: RetainedVendorDraft) {
   let client!: QueryClient;
+  function InitialDraft() {
+    const { retain } = useProcurementVendorDraft();
+    useEffect(() => { if (initialRetainedDraft) retain(initialRetainedDraft); }, [retain, initialRetainedDraft]);
+    return null;
+  }
   function Capture() {
     client = useQueryClient();
     const location = useLocation(); const navigate = useNavigate();
@@ -39,7 +46,7 @@ function start(withNavigation = false) {
       : <ProcurementVendorDirectory />;
   }
   function Location() { const location = useLocation(); return <output data-testid="vendor-directory-location">{location.pathname}</output>; }
-  return { ...renderWithQuery(<MemoryRouter initialEntries={[role === "super_admin" ? "/admin/procurement/vendors" : "/procurement/vendors"]}><ProcurementVendorDraftProvider><Capture /><Location /></ProcurementVendorDraftProvider></MemoryRouter>), client };
+  return { ...renderWithQuery(<MemoryRouter initialEntries={[role === "super_admin" ? "/admin/procurement/vendors" : "/procurement/vendors"]}><ProcurementVendorDraftProvider><InitialDraft /><Capture /><Location /></ProcurementVendorDraftProvider></MemoryRouter>), client };
 }
 const pageRequests = () => requests.filter((params) => !params.has("includeDirectoryOverview"));
 beforeEach(() => {
@@ -68,6 +75,40 @@ beforeEach(() => {
 });
 
 describe("reference vendor directory", () => {
+  it.each(["main", "sub"] as const)("keeps Add Vendor's %s basket error recovery without catalog shortcuts", async (catalog) => {
+    role = "procurement";
+    let failed = true;
+    const basketPage = (items: unknown[]) => data({ items, pagination: { total: items.length, limit: 100, offset: 0, hasMore: false } });
+    server.use(
+      http.get("/api/v1/admin/ai-estimator-knowledge/baskets", ({ request }) => {
+        const activeCatalog = new URL(request.url).searchParams.get("status") === "active";
+        return catalog === "main" && activeCatalog && failed ? error() : basketPage([vendorBasket]);
+      }),
+      http.get("/api/v1/admin/ai-estimator-knowledge/baskets/basket-one/sub-baskets", () => catalog === "sub" && failed ? error() : basketPage([vendorSubBasket]))
+    );
+    start(); const user = userEvent.setup(); await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: "Add vendor" }));
+    const panel = await screen.findByRole("dialog", { name: "Add vendor" });
+    if (catalog === "sub") {
+      await user.click(within(panel).getByRole("button", { name: /^Main Baskets,/ }));
+      await user.click(await within(panel).findByRole("checkbox", { name: vendorBasket.name }));
+    }
+    const retry = await within(panel).findByRole("button", { name: "Retry baskets" });
+    fireEvent.change(within(panel).getByRole("textbox", { name: "Entity Name" }), { target: { value: "Preserved catalog retry draft" } });
+    expect(within(panel).queryByRole("button", { name: "Refresh baskets" })).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "All my requests" })).not.toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Save vendor" })).toBeDisabled();
+    failed = false;
+    await user.click(retry);
+    await waitFor(() => expect(within(panel).queryByRole("button", { name: "Retry baskets" })).not.toBeInTheDocument());
+    expect(within(panel).getByRole("textbox", { name: "Entity Name" })).toHaveValue("Preserved catalog retry draft");
+    expect(within(panel).getByRole("button", { name: "Save vendor" })).toBeEnabled();
+    expect(within(panel).queryByRole("button", { name: "Refresh baskets" })).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "All my requests" })).not.toBeInTheDocument();
+    await user.click(within(panel).getByRole("button", { name: catalog === "main" ? /^Main Baskets,/ : /^Sub Baskets,/ }));
+    expect(await within(panel).findByRole("checkbox", { name: catalog === "main" ? vendorBasket.name : `${vendorSubBasket.name} in ${vendorBasket.name}` })).toBeEnabled();
+  });
+
   it.each(["main", "sub"] as const)("closes all panels after confirmed %s basket submission and resumes the untouched vendor draft after navigation", async target => {
     role = "procurement";
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:synthetic-vendor-draft") });
@@ -126,6 +167,9 @@ describe("reference vendor directory", () => {
     await user.click(screen.getByRole("button", { name: "Return to Vendors" }));
     await user.click(await screen.findByRole("button", { name: "Resume vendor draft" }));
     expect(await screen.findByRole("textbox", { name: "Entity Name" })).toHaveValue("Unsaved procurement vendor");
+    const resumedPanel = screen.getByRole("dialog", { name: "Add vendor" });
+    expect(within(resumedPanel).queryByRole("button", { name: "Refresh baskets" })).not.toBeInTheDocument();
+    expect(within(resumedPanel).queryByRole("button", { name: "All my requests" })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Position" })).toHaveValue("Preserved vendor contact");
     expect(await screen.findByRole("img", { name: "Selected vendor picture preview" })).toBeVisible();
     expect(vi.mocked(URL.createObjectURL).mock.calls.at(-1)?.[0]).toBe(picture);
@@ -196,11 +240,10 @@ describe("reference vendor directory", () => {
       const params = new URL(request.url).searchParams;
       return data({ items: rows.slice(0, 10), pagination: { total: rows.length, limit: Number(params.get("limit") ?? 10), offset: 0, hasMore: true }, directoryOverview: { totalVendors: rows.length, activeVendors: rows.length, underReviewVendors: 0 } });
     }));
-    const view = start(true); const user = userEvent.setup(); await screen.findByRole("table");
-    await user.click(screen.getByRole("button", { name: "Add vendor" }));
-    const panel = await screen.findByRole("dialog", { name: "Add vendor" });
-    fireEvent.change(within(panel).getByRole("textbox", { name: "Entity Name" }), { target: { value: "Private retained vendor" } });
-    await user.click(within(panel).getByRole("button", { name: "All my requests" }));
+    const view = start(true, { draft: { ...vendorDraft(), name: "Private retained vendor" }, photo: null, removePhoto: false, confirmAddress: false, certificate: { file: null, uploadError: "", command: null } });
+    const user = userEvent.setup(); await screen.findByRole("table");
+    expect(await screen.findByRole("button", { name: "Resume vendor draft" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "All my requests" }));
     await user.click(await screen.findByRole("button", { name: "Return to Vendors" }));
     expect(await screen.findByRole("button", { name: "Resume vendor draft" })).toBeVisible();
     accessDenied = true;
@@ -220,12 +263,18 @@ describe("reference vendor directory", () => {
     expect(await screen.findByRole("table")).toBeVisible();
     expect(screen.getByRole("region", { name: "Vendor overview" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Add vendor" }));
-    expect(await screen.findByRole("dialog", { name: "Add vendor" })).toBeVisible();
+    const newPanel = await screen.findByRole("dialog", { name: "Add vendor" });
+    expect(newPanel).toBeVisible();
+    expect(within(newPanel).queryByRole("button", { name: "Refresh baskets" })).not.toBeInTheDocument();
+    expect(within(newPanel).queryByRole("button", { name: "All my requests" })).not.toBeInTheDocument();
     if (actor === "procurement") expect(screen.getByRole("button", { name: "Add Main Basket" })).toBeVisible();
     else expect(screen.queryByRole("button", { name: "Add Main Basket" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     await user.click(screen.getByRole("button", { name: "Edit Timber House" }));
     expect(await screen.findByRole("textbox", { name: "Entity Name" })).toHaveValue("Timber House");
+    const existingPanel = screen.getByRole("dialog", { name: "Vendor details" });
+    expect(within(existingPanel).getByRole("button", { name: "Refresh baskets" })).toBeVisible();
+    if (actor === "procurement") expect(within(existingPanel).getByRole("button", { name: "All my requests" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Save changes" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Review missing historical allocations" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Cancel" }));

@@ -778,7 +778,9 @@ describe("Procurement vendor profile", () => {
     stored.procurementProfile = { ...stored.procurementProfile!, vendorType: "supplier", executionType: null, supplier: false };
     const view = start(); const user = userEvent.setup(); expect(await screen.findByRole("radio", { name: "Supplier" })).toBeChecked();
     expect(screen.queryByRole("group", { name: /^Supplier/ })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Save changes" })); await waitFor(() => expect(view.saved).toHaveBeenCalledOnce()); expect(writes[0]).toMatchObject({ procurementProfile: { supplier: true, executionType: null } });
+    const save = screen.getByRole("button", { name: "Save changes" });
+    await waitFor(() => expect(save).toBeEnabled());
+    await user.click(save); await waitFor(() => expect(view.saved).toHaveBeenCalledOnce()); expect(writes[0]).toMatchObject({ procurementProfile: { supplier: true, executionType: null } });
   });
 
   it("allows create-only users to save the profile and required certificate while keeping optional photo controls disabled", async () => {

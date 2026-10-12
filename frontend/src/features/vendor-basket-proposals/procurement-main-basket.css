@@ -11,56 +11,49 @@
 }
 
 .basket-proposal--procurement-reference.ui-drawer--contextual > .ui-drawer__header {
-  padding: max(18px, env(safe-area-inset-top)) 24px 18px;
-  border-block-end: 0;
-  background: var(--proposal-reference-surface);
+  min-block-size: 124px;
 }
 
-.basket-proposal--procurement-reference.ui-drawer--contextual > .ui-drawer__header::before,
+/* Match the Add Vendor header while keeping the basket workspace width. */
+.basket-proposal--procurement-reference.ui-drawer--contextual > .ui-drawer__header::before {
+  background: url("../../assets/vendor-drawer-header.webp") center bottom / contain no-repeat;
+  opacity: .3;
+  inline-size: clamp(220px, 32vw, 360px);
+  block-size: 120px;
+  inset-block: auto 0;
+  inset-inline-end: 64px;
+}
+
 .basket-proposal--procurement-reference.ui-drawer--contextual > .ui-drawer__header::after {
   display: none;
 }
 
 .basket-proposal--procurement-reference.ui-drawer--wide > .ui-drawer__header > .ui-drawer__heading {
   flex: 1 1 auto;
-  padding-inline-end: 0;
-}
-
-.basket-proposal--procurement-reference .ui-drawer__eyebrow {
-  margin-block-end: 5px;
-  color: var(--button-primary-bg);
-  font-size: 12px;
-  letter-spacing: 0.09em;
-}
-
-.basket-proposal--procurement-reference .ui-drawer__header h2 {
-  font-size: clamp(22px, 2vw, 28px);
-  font-weight: 600;
-  line-height: 1.2;
-  letter-spacing: -0.025em;
+  padding-inline-end: calc(clamp(220px, 32vw, 360px) + 16px);
 }
 
 .basket-proposal--procurement-reference .ui-drawer__description {
-  margin-block-start: 10px;
-  max-inline-size: 74ch;
-  font-size: 14px;
-  line-height: 1.6;
   overflow-wrap: anywhere;
 }
 
-.basket-proposal--procurement-reference.ui-drawer--contextual .ui-drawer__close {
-  margin: 0;
-  border: 1px solid var(--color-border);
-  background: transparent;
+.basket-proposal--procurement-reference.ui-drawer--contextual > .ui-drawer__header .ui-drawer__close.ui-icon-button {
+  flex: 0 0 auto;
+  inline-size: 44px;
+  block-size: 44px;
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  padding: 0;
+  border: 0;
 }
 
 .basket-proposal--procurement-reference.ui-drawer--contextual > .ui-drawer__body {
   padding: 0;
-  background: var(--proposal-reference-surface);
+  background: color-mix(in srgb, var(--button-primary-bg) 3%, var(--color-surface));
 }
 
 .basket-proposal--procurement-reference .basket-proposal__content {
-  padding: 0 16px 24px;
+  padding: var(--space-6);
   font-size: 14px;
   line-height: 1.5;
 }
@@ -549,11 +542,11 @@
 }
 
 .basket-proposal--procurement-reference.basket-proposal--create .basket-proposal__content {
-  padding: 12px 24px 28px;
+  padding: var(--space-6);
 }
 
 .basket-proposal--procurement-reference.basket-proposal--create .basket-proposal__form {
-  gap: 22px;
+  gap: var(--space-4);
 }
 
 .basket-proposal--procurement-reference.basket-proposal--create .basket-proposal__parent {
@@ -571,25 +564,22 @@
 }
 
 .basket-proposal--procurement-reference.basket-proposal--create .ui-field__label {
-  margin-block-end: 8px;
-  font-size: 14px;
+  margin-block-end: 0;
+  font-size: var(--text-sm);
   font-weight: 600;
-  line-height: 1.5;
+  line-height: 1.4;
 }
 
 .basket-proposal--procurement-reference.basket-proposal--create .ui-control {
-  min-block-size: 48px;
-  padding: 12px 14px;
-  border-color: var(--color-border-strong);
-  border-radius: var(--radius-control);
-  background: var(--proposal-reference-surface);
-  font-size: 15px;
+  min-block-size: var(--control-height-large);
+  padding: 0 var(--space-3);
+  font-size: var(--text-md);
 }
 
 .basket-proposal--procurement-reference.basket-proposal--create .basket-proposal__actions .ui-button {
-  min-block-size: 46px;
-  padding: 12px 20px;
-  font-size: 14px;
+  min-block-size: var(--control-height-large);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
 }
 
 .basket-proposal--procurement-reference .basket-proposal__readiness h3 {
@@ -664,23 +654,30 @@
   }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 767px) {
   .basket-proposal--procurement-reference.ui-drawer--contextual > .ui-drawer__header {
-    padding: max(16px, env(safe-area-inset-top)) 16px 16px;
+    min-block-size: 0;
   }
 
-  .basket-proposal--procurement-reference .ui-drawer__header h2 {
-    font-size: 24px;
+  .basket-proposal--procurement-reference.ui-drawer--contextual > .ui-drawer__header::before {
+    display: none;
   }
 
-  .basket-proposal--procurement-reference .ui-drawer__description {
-    font-size: 13px;
+  .basket-proposal--procurement-reference.ui-drawer--wide > .ui-drawer__header > .ui-drawer__heading {
+    padding-inline-end: 0;
   }
 
-  .basket-proposal--procurement-reference .basket-proposal__content {
-    padding: 0 16px 20px;
+  .basket-proposal--procurement-reference .basket-proposal__content,
+  .basket-proposal--procurement-reference.basket-proposal--create .basket-proposal__content {
+    padding-inline: max(var(--space-4), env(safe-area-inset-left)) max(var(--space-4), env(safe-area-inset-right));
   }
 
+  .basket-proposal--procurement-reference.basket-proposal--create .ui-control {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 600px) {
   .basket-proposal--procurement-reference .basket-proposal__summary {
     align-items: flex-start;
     gap: 16px;
@@ -723,10 +720,6 @@
 
   .basket-proposal--procurement-reference .basket-proposal__hierarchy {
     padding: 16px;
-  }
-
-  .basket-proposal--procurement-reference.basket-proposal--create .basket-proposal__content {
-    padding: 8px 16px 24px;
   }
 
   .basket-proposal--procurement-reference.basket-proposal--create .basket-proposal__actions .ui-button {
